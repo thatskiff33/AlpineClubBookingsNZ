@@ -1258,8 +1258,8 @@ merge or a move can quietly disarm; a hard-coded path is the other.
 [`money-number-input-guard.test.ts`](../src/lib/__tests__/money-number-input-guard.test.ts)
 is in this family and is worth knowing about **before** you trip it, because it
 polices markup rather than a call site. `INV-MONEY-003` says a box someone types
-dollars into is `type="text"` with `inputMode="decimal"` — `MONEY_INPUT_PROPS`
-from [`money-input.ts`](../src/lib/money-input.ts) — never `type="number"`, and
+dollars into is `type="text"` with `inputMode="decimal"` through
+[`MoneyInput`](../src/components/ui/money-input.tsx), never `type="number"`, and
 this guard is the mechanical half of that rule. It walks every non-test `.tsx`
 under `src/` with the TypeScript parser, decides from each `type="number"`
 control's own `id`, `value`, `placeholder` and bound label whether it holds

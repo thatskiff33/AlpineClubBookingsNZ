@@ -14,7 +14,7 @@
  */
 
 /**
- * What a dollars box must be, for the parser above to ever see what was typed.
+ * What a dollars box must be, for the parser below to ever see what was typed.
  *
  * A money box is `type="text"` with a decimal keypad, NOT `type="number"`
  * (owner decision, 14 Aug 2026). This is not a style preference — it is what
@@ -39,20 +39,11 @@
  * so it cannot be unit-tested at all, and the payments amount filter had
  * already shipped the text+`inputMode` pattern by hand.
  *
- * SPREAD THIS, including on a filter. A hand-written `inputMode="decimal"` with
- * no `type` at all was a fifth spelling of the same box and outlived #2932's
- * first pass on four of them, the payments filter among them; they spread the
- * constant now (#2932 review). There is no entry-versus-search distinction to
- * draw: these are two presentational attributes, and an omitted `type` was
- * already `text` by the HTML default, so the constant states what the markup
- * meant rather than changing it.
- *
- * ACCEPTED COST: no spinner arrows, and a decimal rather than numeric keypad.
+ * Use `MoneyInput` from `@/components/ui/money-input` for person-entered money,
+ * including filters (#3414). It owns the text attributes, two-decimal editing
+ * filter and accessible whole-dollar controls. The older `MONEY_INPUT_PROPS`
+ * spread was retired so a caller cannot miss those behaviours.
  */
-export const MONEY_INPUT_PROPS = {
-  type: "text",
-  inputMode: "decimal",
-} as const;
 
 /** Parse a non-negative decimal amount input exactly, without binary float math. */
 export function parseDecimalDollarsToCents(value: string): number | null {

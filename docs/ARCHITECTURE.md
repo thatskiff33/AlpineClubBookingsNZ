@@ -630,7 +630,9 @@ dollar. It delegates exact cents conversion to the canonical parsers in
 `onValueChange`, use `allowNegative` only for genuine signed adjustments, and
 retain existing `FieldHint` ids through `aria-describedby`. This keeps
 `INV-MONEY-001` and `INV-MONEY-003` at one input boundary rather than recreating
-editing rules in each admin form.
+editing rules in each admin form. Seed an existing cents amount with
+`formatCentsPlain`; the `money-input-component-guard` rejects a return to the
+older `MONEY_INPUT_PROPS` spread.
 
 **Placeholder ink is its own token.** `--placeholder-foreground` is declared in
 every scope that restates `--muted-foreground` — a `var()`-bearing custom

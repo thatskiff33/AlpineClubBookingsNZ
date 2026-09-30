@@ -12,6 +12,7 @@ import {
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -26,7 +27,7 @@ import {
   calendarDayFromPayload,
   formatPayloadCalendarDay,
 } from "../_lib/calendar-day";
-import { formatCents } from "@/lib/pricing";
+import { formatCents, formatCentsPlain } from "@/lib/utils";
 import { useLodgeOptions } from "@/components/lodge-select";
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status";
 import {
@@ -35,7 +36,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope";
 import { PromoRedemptionsPanel } from "./promo-redemptions-panel";
 import { type ClubDateFormat } from "@/lib/club-time";
@@ -492,7 +493,7 @@ export function PromoCodesPageClient({
     setType(promo.type);
     setPercentOff(promo.percentOff != null ? String(promo.percentOff) : "");
     setValueDollars(
-      promo.valueCents != null ? (promo.valueCents / 100).toFixed(2) : ""
+      promo.valueCents != null ? formatCentsPlain(promo.valueCents) : ""
     );
     setFreeNightsPerIndividual(
       promo.freeNightsPerIndividual != null ? String(promo.freeNightsPerIndividual) : ""
@@ -502,13 +503,13 @@ export function PromoCodesPageClient({
     );
     setFixedNightlyPriceDollars(
       promo.fixedNightlyPriceCents != null
-        ? (promo.fixedNightlyPriceCents / 100).toFixed(2)
+        ? formatCentsPlain(promo.fixedNightlyPriceCents)
         : ""
     );
     setFixedNightlyMode(promo.fixedNightlyMode ?? "CAP_ONLY");
     setMaxNightlyValueDollars(
       promo.maxNightlyValueCents != null
-        ? (promo.maxNightlyValueCents / 100).toFixed(2)
+        ? formatCentsPlain(promo.maxNightlyValueCents)
         : ""
     );
     setMaxGuestsPerBooking(
@@ -1167,12 +1168,11 @@ export function PromoCodesPageClient({
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
                         $
                       </span>
-                      <Input
+                      <MoneyInput
                         id="valueDollars"
-                        {...MONEY_INPUT_PROPS}
                         className="pl-7"
                         value={valueDollars}
-                        onChange={(e) => setValueDollars(e.target.value)}
+                        onValueChange={setValueDollars}
                         required
                         {...valueDollarsHint.fieldProps}
                       />
@@ -1237,12 +1237,11 @@ export function PromoCodesPageClient({
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
                           $
                         </span>
-                        <Input
+                        <MoneyInput
                           id="fixedNightlyPrice"
-                          {...MONEY_INPUT_PROPS}
                           className="pl-7"
                           value={fixedNightlyPriceDollars}
-                          onChange={(e) => setFixedNightlyPriceDollars(e.target.value)}
+                          onValueChange={setFixedNightlyPriceDollars}
                           required
                           {...fixedNightlyPriceHint.fieldProps}
                         />
@@ -1284,12 +1283,11 @@ export function PromoCodesPageClient({
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
                       $
                     </span>
-                    <Input
+                    <MoneyInput
                       id="maxNightlyValue"
-                      {...MONEY_INPUT_PROPS}
                       className="pl-7"
                       value={maxNightlyValueDollars}
-                      onChange={(e) => setMaxNightlyValueDollars(e.target.value)}
+                      onValueChange={setMaxNightlyValueDollars}
                       placeholder="Unlimited"
                     />
                   </div>

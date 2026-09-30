@@ -7,7 +7,7 @@ import {
   parseDecimalDollarsToCents,
   parseSignedDecimalDollarsToCents,
 } from "@/lib/money-input";
-import { cn } from "@/lib/utils";
+import { cn, formatCentsPlain } from "@/lib/utils";
 
 import { Input, type InputProps } from "./input";
 import { Label } from "./label";
@@ -40,12 +40,6 @@ function hasThirdFractionalDigit(value: string): boolean {
   // Preserve malformed text for the caller's visible validation. Only reject the
   // one edit this control owns: a plain decimal amount gaining a third digit.
   return /^[+-]?\d*\.\d{3,}$/.test(value.trim());
-}
-
-function formatCents(cents: number): string {
-  const sign = cents < 0 ? "-" : "";
-  const magnitude = Math.abs(cents);
-  return `${sign}${Math.floor(magnitude / 100)}.${String(magnitude % 100).padStart(2, "0")}`;
 }
 
 function validBound(value: number | undefined): value is number {
@@ -97,7 +91,7 @@ export function MoneyInput({
     if (validBound(minCents) && next < minCents) return false;
     if (validBound(maxCents) && next > maxCents) return false;
     // The exact parser owns the int32-safe cents ceiling for this boundary.
-    return parser(formatCents(next)) !== null;
+    return parser(formatCentsPlain(next)) !== null;
   };
 
   const changeValue = (next: string) => {
@@ -109,7 +103,7 @@ export function MoneyInput({
     const parsed = parser(value);
     if (parsed === null) return; // narrowed by canStep; keeps the value explicit.
     const next = parsed + direction * 100;
-    onValueChange(formatCents(next));
+    onValueChange(formatCentsPlain(next));
   };
 
   const increaseDisabled = !canStep(1);

@@ -23,6 +23,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -37,8 +38,8 @@ import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubTime } from "@/components/club-time-provider";
 import { formatStayDate } from "@/lib/club-time";
 import { countNightsDateOnly } from "@/lib/date-only";
-import { formatCents } from "@/lib/utils";
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import { formatCents, formatCentsPlain } from "@/lib/utils";
+import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { FocusedActionError } from "@/components/focused-action-error";
 import {
   BookingRequestContactPicker,
@@ -593,7 +594,7 @@ export function PublicBookingRequestsPanel({
   // figure to show when the officer has not typed in that option's box.
   function priceInputValue(request: PublicBookingRequestData) {
     const cents = request.priceCents ?? request.indicativePriceCents;
-    return cents != null ? (cents / 100).toFixed(2) : "";
+    return cents != null ? formatCentsPlain(cents) : "";
   }
 
   function quoteOptionIds(request: PublicBookingRequestData) {
@@ -630,7 +631,7 @@ export function PublicBookingRequestsPanel({
     ageTier: string,
   ) {
     const cents = request.suggestedGuestNightRates[ageTier]?.nonMemberCents;
-    return cents != null ? (cents / 100).toFixed(2) : "";
+    return cents != null ? formatCentsPlain(cents) : "";
   }
 
   // #2749: the suggested pre-fill value for a rate field. A member combo, or any
@@ -644,7 +645,7 @@ export function PublicBookingRequestsPanel({
     if (!tierRates) return "";
     const useMemberRate = combo.isMember || request.otherLodgeId != null;
     const cents = useMemberRate ? tierRates.memberCents : tierRates.nonMemberCents;
-    return cents != null ? (cents / 100).toFixed(2) : "";
+    return cents != null ? formatCentsPlain(cents) : "";
   }
 
   function activeMemberLinks(request: PublicBookingRequestData): UiMemberLink[] {
@@ -677,7 +678,7 @@ export function PublicBookingRequestsPanel({
     if (typed !== undefined) return typed;
     if (request.latestQuote) {
       const option = request.latestQuote.options.find((item) => item.id === optionId);
-      if (option) return (option.totalCents / 100).toFixed(2);
+      if (option) return formatCentsPlain(option.totalCents);
     }
     if (optionId === "STANDARD") return priceInputValue(request);
     return "";
@@ -899,7 +900,7 @@ export function PublicBookingRequestsPanel({
   }
 
   // #2685: the canonical exact parser. `null` already reaches the officer as a
-  // thrown "Enter a valid …" message below, and now covers a malformed suffix or
+  // thrown format-specific message below, and now covers a malformed suffix or
   // a third decimal place rather than silently keeping the leading digits.
   function dollarsToCents(raw: string) {
     return parseDecimalDollarsToCents(raw);
@@ -919,7 +920,7 @@ export function PublicBookingRequestsPanel({
         if (pricingMode === "OVERALL_TOTAL") {
           const totalCents = dollarsToCents(optionTotalInputValue(request, optionId));
           if (totalCents == null) {
-            throw new Error(`Enter a valid ${optionLabel(optionId).toLowerCase()} total`);
+            throw new Error(`Enter ${optionLabel(optionId).toLowerCase()} total in dollars and cents, up to 2 decimal places`);
           }
           return {
             id: optionId,
@@ -937,7 +938,7 @@ export function PublicBookingRequestsPanel({
           );
           if (rateCents == null) {
             throw new Error(
-              `Enter a valid ${optionLabel(optionId).toLowerCase()} ${combo.ageTier} ${combo.isMember ? "member" : "non-member"} rate`
+              `Enter ${optionLabel(optionId).toLowerCase()} ${combo.ageTier} ${combo.isMember ? "member" : "non-member"} rate in dollars and cents, up to 2 decimal places`
             );
           }
           return { ...combo, rateCents };
@@ -2076,17 +2077,16 @@ export function PublicBookingRequestsPanel({
                                     <Label htmlFor={`price-${request.id}-${optionId}`}>
                                       Total ({currencyCode})
                                     </Label>
-                                    <Input
+                                    <MoneyInput
                                       id={`price-${request.id}-${optionId}`}
-                                      {...MONEY_INPUT_PROPS}
                                       className="w-32"
                                       disabled={actionsBlocked}
                                       value={optionTotalInputValue(request, optionId)}
-                                      onChange={(event) =>
+                                      onValueChange={(value) =>
                                         setPriceInputs((prev) => ({
                                           ...prev,
                                           [priceInputKey(request.id, optionId)]:
-                                            event.target.value,
+                                            value,
                                         }))
                                       }
                                     />
@@ -2117,19 +2117,18 @@ export function PublicBookingRequestsPanel({
                                           {combo.ageTier}{" "}
                                           {combo.isMember ? "member" : "non-member"}
                                         </Label>
-                                        <Input
+                                        <MoneyInput
                                           id={key}
-                                          {...MONEY_INPUT_PROPS}
                                           className="w-32"
                                           disabled={actionsBlocked}
                                           value={
                                             rateInputs[key] ??
                                             suggestedRateDollars(request, combo)
                                           }
-                                          onChange={(event) =>
+                                          onValueChange={(value) =>
                                             setRateInputs((prev) => ({
                                               ...prev,
-                                              [key]: event.target.value,
+                                              [key]: value,
                                             }))
                                           }
                                         />
