@@ -1353,6 +1353,22 @@ describe("finance net collected cash: the one Net Collected scope (#3637)", () =
     });
   });
 
+  it("reads a lodge's Net collected payments from that lodge only", async () => {
+    mockBookingRows([]);
+
+    await getFinanceBookingMetrics({ ...QUERY, lodgeId: "lodge-b" });
+
+    // Both reads carry the lodge: a payment read without it would put another
+    // lodge's cash in this lodge's figure, and no figure assertion would see it.
+    expect(mockPrisma.payment.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.payment.findMany.mock.calls[0][0].where.booking.is).toMatchObject({
+      lodgeId: "lodge-b",
+    });
+    expect(mockPrisma.booking.findMany.mock.calls[0][0].where).toMatchObject({
+      lodgeId: "lodge-b",
+    });
+  });
+
   it("runs the ledger-gap warning over the same payments the figure counts", async () => {
     // Both payments claim a collected $21 increase with no ADDITIONAL ledger
     // row behind it. The cancelled one is in the figure, so its gap is warned
