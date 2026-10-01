@@ -28,6 +28,7 @@ import { Label } from "@/components/ui/label";
 import { BackLink } from "@/components/admin/back-link";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { LodgeCapacityGuidance } from "@/components/admin/lodge-capacity-guidance";
+import { LODGE_CAPACITY_OVERRIDE_FIELD_ID } from "@/components/admin/lodge-capacity-settings-link";
 import {
   MAX_CONFIGURED_LODGE_CAPACITY,
   MIN_CONFIGURED_LODGE_CAPACITY,
@@ -484,12 +485,12 @@ export default function LodgeConfigurationHubPage() {
             )}
           </div>
           <div className="space-y-1 max-w-xs">
-            <Label htmlFor="lodge-capacity-override">
+            <Label htmlFor={LODGE_CAPACITY_OVERRIDE_FIELD_ID}>
               Capacity for this lodge
             </Label>
             <div className="flex items-center gap-2">
               <Input
-                id="lodge-capacity-override"
+                id={LODGE_CAPACITY_OVERRIDE_FIELD_ID}
                 type="number"
                 min={MIN_CONFIGURED_LODGE_CAPACITY}
                 max={MAX_CONFIGURED_LODGE_CAPACITY}

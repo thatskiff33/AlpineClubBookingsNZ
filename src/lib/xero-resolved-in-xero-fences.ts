@@ -9,6 +9,7 @@ import { parsePaymentCreditNoteRetryInput } from "@/lib/xero-payment-credit-note
 import { sumCoveredRefundCreditNoteCents } from "@/lib/xero-sync";
 
 type OperationReader = Pick<Prisma.TransactionClient, "xeroSyncOperation">;
+type CoverageReader = Pick<Prisma.TransactionClient, "xeroSyncOperation" | "xeroObjectLink">;
 
 export interface ResolvedInXeroOperation {
   id: string;
@@ -32,6 +33,12 @@ function toResolved(
  * hand-made one is never covered twice. The amount is read by the one reader
  * the retry replays with (`parsePaymentCreditNoteRetryInput`).
  *
+ * A resolved row whose own note has an active `REFUND_CREDIT_NOTE` link adds
+ * nothing to `coveredCents` (#3548 round 3): the link already counts that note
+ * in `sumRefundCreditNoteCoverageCents`. That is a crashed row (the note is
+ * linked the moment Xero returns it) or a PARTIAL one, resolved by hand. Its
+ * keys and id are still reported, so the fences still see it.
+ *
  * A resolved row whose amount cannot be read is reported in
  * `unreadableOperationIds`; callers must refuse loudly on it rather than guess.
  */
@@ -44,7 +51,7 @@ export interface ResolvedRefundCreditNoteCoverage {
 
 export async function readResolvedRefundCreditNoteCoverage(
   paymentId: string,
-  db: OperationReader = prisma,
+  db: CoverageReader = prisma,
 ): Promise<ResolvedRefundCreditNoteCoverage> {
   const rows = await db.xeroSyncOperation.findMany({
     where: {
@@ -59,8 +66,26 @@ export async function readResolvedRefundCreditNoteCoverage(
       OR: [{ queueType: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE }, { queueType: null }],
     },
     orderBy: { createdAt: "asc" },
-    select: { id: true, correlationKey: true, requestPayload: true },
+    select: { id: true, correlationKey: true, requestPayload: true, xeroObjectId: true },
   });
+  const noteIds = [...new Set((rows ?? []).flatMap((row) => (row.xeroObjectId ? [row.xeroObjectId] : [])))];
+  const linkedNoteIds = new Set(
+    noteIds.length > 0
+      ? (
+          await db.xeroObjectLink.findMany({
+            where: {
+              localModel: "Payment",
+              localId: paymentId,
+              xeroObjectType: "CREDIT_NOTE",
+              role: "REFUND_CREDIT_NOTE",
+              active: true,
+              xeroObjectId: { in: noteIds },
+            },
+            select: { xeroObjectId: true },
+          })
+        ).map((link) => link.xeroObjectId)
+      : [],
+  );
   const coverage: ResolvedRefundCreditNoteCoverage = {
     coveredCents: 0,
     correlationKeys: [],
@@ -74,7 +99,9 @@ export async function readResolvedRefundCreditNoteCoverage(
       continue;
     }
     if (recorded.kind !== "refund") continue;
-    coverage.coveredCents += recorded.amountCents;
+    if (!row.xeroObjectId || !linkedNoteIds.has(row.xeroObjectId)) {
+      coverage.coveredCents += recorded.amountCents;
+    }
     coverage.operationIds.push(row.id);
     if (row.correlationKey) coverage.correlationKeys.push(row.correlationKey);
   }

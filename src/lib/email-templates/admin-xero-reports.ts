@@ -71,6 +71,8 @@ export interface XeroReconciliationReportEmail {
     recentFailedOperations: number;
     recentPartialOperations: number;
     unsupportedPartialOperations: number;
+    /** #3548: refund notes left with neither a settling payment nor the skip. */
+    unsettledRefundCreditNotes?: number;
     repeatedFailureCorrelations: number;
     failedInboundEvents: number;
     issueCategoryCount: number;
@@ -237,6 +239,9 @@ export function adminXeroReconciliationReportTemplate(report: XeroReconciliation
     { label: "Recent failed operations", value: String(report.summary.recentFailedOperations) },
     { label: "Recent partial operations", value: String(report.summary.recentPartialOperations) },
     { label: "Unsupported partial operations", value: String(report.summary.unsupportedPartialOperations) },
+    ...(report.summary.unsettledRefundCreditNotes === undefined
+      ? []
+      : [{ label: "Refund credit notes left unsettled", value: String(report.summary.unsettledRefundCreditNotes) }]),
     { label: "Repeated-failure correlations", value: String(report.summary.repeatedFailureCorrelations) },
     { label: "Persistently failing inbound events", value: String(report.summary.failedInboundEvents) },
   ];

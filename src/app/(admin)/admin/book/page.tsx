@@ -5,6 +5,7 @@ import { useCallback, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BookingCalendar } from "@/components/booking-calendar";
+import { useLodgeCapacitySettingsHref } from "@/components/admin/lodge-capacity-settings-link";
 import { GuestForm, type GuestData } from "@/components/guest-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -145,6 +146,7 @@ export default function AdminBookPage() {
     reload: reloadLodges,
   } = useLodgeOptions("admin");
   const [lodgeId, setLodgeId] = useState<string | null>(null);
+  const lodgeSettingsHref = useLodgeCapacitySettingsHref(lodgeId);
   const activeLodgeIdRef = useRef<string | null>(lodgeId);
   const dateSelectionSequenceRef = useRef(0);
   const dateSelectionAbortRef = useRef<AbortController | null>(null);
@@ -211,10 +213,9 @@ export default function AdminBookPage() {
    *
    * IT DOES NOT MAKE SUCH A LODGE BOOKABLE. `POST /api/bookings` refuses any
    * party above the lodge's capacity before the waitlist fallback, so at zero
-   * the create still fails — with "a booking cannot exceed 0 guests", which at
-   * least names the cause. Whether such a lodge should be bookable at all is a
-   * product question this issue does not settle; the member path meets the same
-   * refusal.
+   * the create still fails. Since #3407 (owner decision, 14 Sep 2026) the
+   * refusal says the lodge is not set up for bookings yet, and the calendar
+   * offers the officer no night there; the member path is the same.
    */
   const partySizeCeiling = resolvedCapacity > 0 ? resolvedCapacity : null;
   /** Derived once, so the three add-guest affordances cannot disagree. */
@@ -1090,6 +1091,7 @@ export default function AdminBookPage() {
               lodgeId={lodgeId}
               allowPastDates={allowPastDates}
               allowFullDates
+              lodgeSettingsHref={lodgeSettingsHref}
             />
           </CardContent>
         </Card>
