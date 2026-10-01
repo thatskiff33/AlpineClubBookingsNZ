@@ -11,6 +11,7 @@ import {
   parseBookingRequestGuests,
 } from "@/lib/booking-request";
 import { parseBookingRequestQuoteOptions } from "@/lib/booking-request-quotes";
+import { releasePendingAdultNights } from "@/lib/booking-request-pending-adult-reservations";
 import { sendBookingRequestQuoteEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -267,6 +268,7 @@ async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
           data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
         });
         if (releasedRows.count === 0) return false;
+        await releasePendingAdultNights({ db: tx, bookingId: heldBookingId });
         await reconcileBedAllocationsForBookingWithGlobalLockHeld({
           bookingId: heldBookingId,
           db: tx,
@@ -455,6 +457,7 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
           data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
         });
         if (releasedRows.count === 0) return false;
+        await releasePendingAdultNights({ db: tx, bookingId: heldBookingId });
         await reconcileBedAllocationsForBookingWithGlobalLockHeld({
           bookingId: heldBookingId,
           db: tx,

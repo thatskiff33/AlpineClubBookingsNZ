@@ -1405,7 +1405,8 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 364 -> 365 (#3639 review): the setting-change record, unpinned
     // `payment`. RE-MEASURED with `npm run audit:census`.
     // 365 -> 364 (#3415): the accept-time capacity-block/revert writer retired.
-    ).toEqual({ pinned: 128, unpinned: 364 });
+    // 364 -> 365 (#3413): pending-adult identity resolution is classified.
+    ).toEqual({ pinned: 128, unpinned: 365 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

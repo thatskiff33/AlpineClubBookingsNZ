@@ -1980,6 +1980,9 @@ model Booking {
   // before the requester accepts a quote. Acceptance converts this row rather
   // than creating a duplicate booking.
   heldForBookingRequest       BookingRequest?                 @relation("BookingRequestHeldBooking")
+  // #3413: unnamed adults on a school quote are capacity-only rows. They are
+  // attached to this held booking and never create anonymous BookingGuest rows.
+  pendingAdultReservationNights BookingRequestPendingAdultReservationNight[] @relation("BookingRequestPendingAdultReservationBooking")
   paymentLinks                PaymentLink[]
   // Durable per-transition fact store (issue #740). Unlike AuditLog these rows
   // are never retention-pruned, so booking/payment-link narratives survive.
@@ -2444,6 +2447,9 @@ model BookingRequest {
   teachers           Json?
   // School quote intake preference. GENERAL requests leave this null.
   cateringPreference SchoolCateringPreference?
+  // #3413: adults included in a school quote before their names are supplied.
+  // They are a headcount only; `teachers` remains the real named-adult list.
+  pendingAdultCount Int @default(0)
   // Admin-linked member guests: array of { guestIndex, memberId }. Linked
   // adults are copied into BookingGuest.memberId on hold/acceptance.
   linkedGuestMembers Json?
@@ -2539,6 +2545,7 @@ model BookingRequest {
   acceptedQuote    BookingRequestQuote?  @relation("BookingRequestAcceptedQuote", fields: [acceptedQuoteId], references: [id], onDelete: SetNull)
   quotes           BookingRequestQuote[]
   paymentLinks     PaymentLink[]
+  pendingAdultReservationNights BookingRequestPendingAdultReservationNight[] @relation("BookingRequestPendingAdultReservationRequest")
 
   @@index([status, createdAt])
   @@index([contactEmail])
@@ -2553,6 +2560,33 @@ model BookingRequest {
   // member's non-terminal rows — both are (member, status) lookups.
   @@index([requestedByMemberId, status])
   @@index([organisationId])
+}
+
+// #3413: one capacity-only count for each unnamed-school-adult lodge night.
+// A row exists only while its request's AWAITING_REVIEW booking holds that
+// night. It deliberately has no person, member, contact, price, or provider
+// identity: named adults remain BookingGuest rows.
+model BookingRequestPendingAdultReservationNight {
+  id               String   @id @default(cuid())
+  bookingRequestId String
+  bookingId        String
+  lodgeId          String
+  // NZ lodge night (date-only), matching BookingGuestNight and Booking dates.
+  night            DateTime @db.Date
+  // Number of unnamed ADULT slots reserved for this request on this night.
+  adultCount       Int
+  createdAt        DateTime @default(now())
+
+  bookingRequest BookingRequest @relation("BookingRequestPendingAdultReservationRequest", fields: [bookingRequestId], references: [id], onDelete: Cascade)
+  booking        Booking        @relation("BookingRequestPendingAdultReservationBooking", fields: [bookingId], references: [id], onDelete: Cascade)
+  lodge          Lodge          @relation("BookingRequestPendingAdultReservationLodge", fields: [lodgeId], references: [id], onDelete: Restrict)
+
+  // One request has one count per night; updating the held party replaces that
+  // count in the same globally-then-lodge-locked transaction.
+  @@unique([bookingRequestId, night])
+  // The canonical capacity read sums a lodge's rows over a night window.
+  @@index([lodgeId, night])
+  @@index([bookingId])
 }
 
 // Versioned public booking request quotes. The raw response token is emailed
@@ -5100,6 +5134,9 @@ model Lodge {
   // change requests at this lodge. RESTRICT (below), so a lodge with live
   // reservations cannot be deleted out from under the capacity view.
   policyExceptionReservationNights PolicyExceptionReservationNight[] @relation("PolicyExceptionReservationLodge")
+  // #3413: provisional unnamed-school-adult capacity counts. RESTRICT keeps a
+  // lodge with a live capacity reservation from disappearing under the reader.
+  pendingAdultReservationNights BookingRequestPendingAdultReservationNight[] @relation("BookingRequestPendingAdultReservationLodge")
   newBookingPolicyExceptionRequests NewBookingPolicyExceptionRequest[]
   // #2780 maintenance reports: both are lodge-scoped by a direct NOT NULL
   // lodgeId, and both CASCADE — a deleted lodge takes its fault history and its

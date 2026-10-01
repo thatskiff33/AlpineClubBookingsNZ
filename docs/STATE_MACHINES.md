@@ -1345,6 +1345,17 @@ CANCELLED (cancel), MODIFICATION_REQUESTED, or QUERY_PENDING. When an admin
 sends a quote, the email-delivery result is recorded so the team can tell whether the
 requester actually received the link.
 
+On a SCHOOL request, `pendingAdultCount` is a count of unnamed adults in the
+quoted party, not a teacher identity. A sent quote's `AWAITING_REVIEW` hold has
+one `BookingRequestPendingAdultReservationNight` count per lodge night in
+addition to its named `BookingGuestNight` rows. An ACCEPTED quote keeps both
+until an officer names the adults or declines the request. Naming one accepted
+adult keeps the request ACCEPTED and the accepted snapshot immutable; under
+global then lodge locks it creates the real guest nights and reduces the
+anonymous count in one transaction. Approval is refused while any pending count
+or reservation remains. Hold cancellation removes the reservation in the same
+transaction as the booking status flip.
+
 The response window (default 14 days) and a pre-expiry reminder lead time are
 admin-configurable under Booking Policies -> Public Booking Requests. The
 `quote-expiry-reminders` cron sends one reminder per quote inside the lead window,

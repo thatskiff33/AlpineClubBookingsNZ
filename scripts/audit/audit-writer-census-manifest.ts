@@ -584,7 +584,9 @@ export const AUDIT_CENSUS_TOTALS = {
   // 493 -> 492 (#3415): accepted quotes keep their held beds for officer
   // review, removing the former accept-time capacity-block/revert writer.
   // RE-MEASURED on the composed tree with #3639.
-  writeSites: 492,
+  // 492 -> 493 (#3413): pending-adult identity resolution adds one classified
+  // booking-category logAudit site. RE-MEASURED on the composed tree.
+  writeSites: 493,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -669,7 +671,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 268 -> 270 (#3639): the two late-capture approval writers, above.
     // 270 -> 271 (#3639 review): the setting-change record, above.
     // 271 -> 270 (#3415): no accept-time capacity-block/revert writer.
-    logAudit: { total: 270, uncategorised: 0 },
+    // 270 -> 271 (#3413): pending-adult identity resolution, above.
+    logAudit: { total: 271, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -870,7 +873,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // note is booking data, read by booking officers, so `booking` is its
     // affected domain (`INV-PRIV-012`); the row names the field, never its value.
     // 105 -> 104 (#3415): the removed capacity-block/revert record was `booking`.
-    booking: 104,
+    booking: 105,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the

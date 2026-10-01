@@ -26,8 +26,9 @@ interface QuoteOption {
   totalCents: number;
   guestBreakdown: Array<{
     guestIndex: number;
-    firstName: string;
-    lastName: string;
+    kind?: "NAMED" | "PENDING_ADULT";
+    firstName?: string;
+    lastName?: string;
     ageTier: string;
     isMember: boolean;
     nightCount: number;
@@ -375,7 +376,9 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
                       <div className="mt-2 flex flex-wrap gap-1">
                         {option.guestBreakdown.map((guest) => (
                           <Badge key={guest.guestIndex} variant="outline">
-                            {guest.firstName} {guest.lastName}:{" "}
+                            {guest.kind === "PENDING_ADULT"
+                              ? "Adult name pending"
+                              : `${guest.firstName} ${guest.lastName}`}:{" "}
                             {formatCents(guest.totalCents, format)}
                           </Badge>
                         ))}

@@ -40,6 +40,7 @@ import { countNightsDateOnly } from "@/lib/date-only";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
 import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { ResolvePendingSchoolAdults } from "@/components/admin/booking-requests/resolve-pending-school-adults";
 import {
   BookingRequestContactPicker,
   type OwnerContactChoice,
@@ -204,6 +205,8 @@ interface PublicBookingRequestData {
   // hint and the actual warning threshold cannot diverge per lodge (#1656).
   schoolGroupSoftCap: number;
   cateringPreference: "CATERED" | "NON_CATERED" | "QUOTE_BOTH" | null;
+  pendingAdultCount: number;
+  pendingAdultsWriteEnabled?: boolean;
   teachers: Array<{ firstName: string; lastName: string; email: string | null }>;
   linkedGuestMembers: Array<{ guestIndex: number; memberId: string }>;
   contactFirstName: string;
@@ -658,14 +661,19 @@ export function PublicBookingRequestsPanel({
   function pricingCombos(request: PublicBookingRequestData) {
     const seen = new Set<string>();
     const combos: Array<{ ageTier: string; isMember: boolean }> = [];
-    plannedGuests(request).forEach((guest, guestIndex) => {
-      const isMember = Boolean(linkedMemberIdFor(request, guestIndex));
-      const key = `${guest.ageTier}:${isMember}`;
+    function addCombo(ageTier: string, isMember: boolean) {
+      const key = `${ageTier}:${isMember}`;
       if (!seen.has(key)) {
         seen.add(key);
-        combos.push({ ageTier: guest.ageTier, isMember });
+        combos.push({ ageTier, isMember });
       }
+    }
+    plannedGuests(request).forEach((guest, guestIndex) => {
+      addCombo(guest.ageTier, Boolean(linkedMemberIdFor(request, guestIndex)));
     });
+    if (request.type === "SCHOOL" && request.pendingAdultCount > 0) {
+      addCombo("ADULT", false);
+    }
     return combos;
   }
 
@@ -895,7 +903,7 @@ export function PublicBookingRequestsPanel({
       (sum, tier) => sum + parseCount(counts[tier]),
       0,
     );
-    return request.teachers.length + children;
+    return request.teachers.length + (request.pendingAdultCount ?? 0) + children;
   }
 
   // #2685: the canonical exact parser. `null` already reaches the officer as a
@@ -1632,7 +1640,8 @@ export function PublicBookingRequestsPanel({
                       {nightsBetween(request.checkIn, request.checkOut)}
                     </div>
                     <div>
-                      <span className="text-muted-foreground">Guests:</span> {request.guests.length}
+                      <span className="text-muted-foreground">Guests:</span> {request.guests.length + (request.pendingAdultCount ?? 0)}
+                      {request.pendingAdultCount > 0 ? ` (${request.pendingAdultCount} adult names pending)` : ""}
                     </div>
                     {request.indicativePriceCents != null ? (
                       <div>
@@ -1983,7 +1992,7 @@ export function PublicBookingRequestsPanel({
                             </p>
                           ) : (
                             <p className="text-xs text-muted-foreground">
-                              {request.teachers.length} teachers &amp; helpers + children ={" "}
+                              {request.teachers.length} named teachers &amp; helpers + {request.pendingAdultCount ?? 0} adults awaiting names + children ={" "}
                               {plannedGuestTotal(request)} total. These boxes change only the
                               booking you are about to quote or approve, not what the school
                               asked for. To change the request itself — its dates, its teachers
@@ -2390,6 +2399,7 @@ export function PublicBookingRequestsPanel({
                           // The service refuses it as well.
                           disabled={
                             actionsBlocked ||
+                            request.pendingAdultCount > 0 ||
                             !request.latestQuote ||
                             schoolCountsChanged(request)
                           }
@@ -2575,8 +2585,17 @@ export function PublicBookingRequestsPanel({
                       <p className="text-sm text-warning-11">
                         The requester accepted this quote. Review the accepted price and request details, then approve or decline it. Quote editing and contact changes are locked after acceptance.
                       </p>
+                      {request.type === "SCHOOL" ? (
+                        <ResolvePendingSchoolAdults
+                          requestId={request.id}
+                          expectedVersion={request.version}
+                          pendingAdultCount={request.pendingAdultCount ?? 0}
+                          canEdit={canEdit}
+                          onResolved={fetchRequests}
+                        />
+                      ) : null}
                       <div className="flex flex-wrap gap-2">
-                        <Button size="sm" variant="outline" onClick={() => handleApprove(request)} disabled={actionsBlocked || misplacedSchoolLinkOnApprove(request) !== null}>
+                        <Button size="sm" variant="outline" onClick={() => handleApprove(request)} disabled={actionsBlocked || request.pendingAdultCount > 0 || misplacedSchoolLinkOnApprove(request) !== null}>
                           {request.type === "SCHOOL" ? "Approve & invoice school" : "Approve & send payment link"}
                         </Button>
                         <Button size="sm" variant="destructive" onClick={() => openDeclineChoice(request)} disabled={isActioning}>

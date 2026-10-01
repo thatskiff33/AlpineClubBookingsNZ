@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
     $executeRaw: vi.fn(),
     bookingRequest: { findUnique: vi.fn(), update: vi.fn() },
     booking: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    bookingRequestPendingAdultReservationNight: { deleteMany: vi.fn() },
     bookingRequestQuote: { count: vi.fn(), findUnique: vi.fn() },
   };
   return {
@@ -261,6 +262,9 @@ describe("sendQuoteExpiryReminders — expired hold release (issue #1254)", () =
     expect(mocks.mockReconcile).toHaveBeenCalledWith(
       expect.objectContaining({ bookingId: "held-9" }),
     );
+    expect(mocks.tx.bookingRequestPendingAdultReservationNight.deleteMany).toHaveBeenCalledWith({
+      where: { bookingId: "held-9" },
+    });
     expect(mocks.tx.bookingRequest.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "req-9" },
@@ -287,6 +291,7 @@ describe("sendQuoteExpiryReminders — expired hold release (issue #1254)", () =
     const result = await sendQuoteExpiryReminders();
 
     expect(result.releasedHoldCount).toBe(0);
+    expect(mocks.tx.bookingRequestPendingAdultReservationNight.deleteMany).not.toHaveBeenCalled();
     expect(mocks.tx.booking.update).not.toHaveBeenCalled();
     expect(mocks.tx.bookingRequest.update).not.toHaveBeenCalled();
   });
@@ -356,6 +361,9 @@ describe("sendQuoteExpiryReminders — stale MODIFY/QUERY hold release (issue #1
     expect(mocks.mockReconcile).toHaveBeenCalledWith(
       expect.objectContaining({ bookingId: "held-m" }),
     );
+    expect(mocks.tx.bookingRequestPendingAdultReservationNight.deleteMany).toHaveBeenCalledWith({
+      where: { bookingId: "held-m" },
+    });
     expect(mocks.tx.bookingRequest.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "req-m" },

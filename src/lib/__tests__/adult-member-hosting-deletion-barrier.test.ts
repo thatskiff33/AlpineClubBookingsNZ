@@ -228,14 +228,19 @@ describe("standing fanout and booking-request linked-member fencing (#2597)", ()
     expect(hasLinkedMemberHoldContract(postCreate, participants)).toBe(false);
   });
 
-  it("keeps the hold on lodge -> linked Member rows without a new global or source Booking lock", () => {
+  it("keeps linked-member fencing and adds global before lodge only for unnamed-adult holds", () => {
     const hold = holdBody(quotes);
     const reconcile = hold.indexOf(
       "reconcileAdultMemberHostingReviewWithSiblings(held.id, tx)",
     );
 
     expect(reconcile).toBeGreaterThanOrEqual(0);
-    expect(hold.slice(0, reconcile)).not.toContain("pg_advisory_xact_lock(1)");
+    expect(hold).toMatch(/if \(request\.pendingAdultCount > 0\) \{\s*await prisma\.\$transaction\(async \(tx\) => \{\s*await tx\.\$executeRaw`SELECT pg_advisory_xact_lock\(1\)`;\s*await acquireLodgeCapacityLock\(tx, existingHold\.lodgeId\)/);
+    expect(hold).toMatch(/if \(pendingAdultCount > 0\) \{\s*await tx\.\$executeRaw`SELECT pg_advisory_xact_lock\(1\)`;\s*}/);
+    const createPath = hold.slice(hold.indexOf("const booking = await prisma.$transaction"));
+    expect(createPath.indexOf("pg_advisory_xact_lock(1)")).toBeLessThan(
+      createPath.indexOf("await acquireLodgeCapacityLock(tx, bookingLodgeId)"),
+    );
     expect(hold.slice(0, reconcile)).not.toMatch(
       /FROM "Booking"[\s\S]*?FOR (?:KEY SHARE|UPDATE)/,
     );

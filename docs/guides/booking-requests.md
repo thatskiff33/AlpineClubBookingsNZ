@@ -140,6 +140,13 @@ are listed on the booking for you to relay.
    booking created at approval. The named teachers and parent helpers are kept
    exactly as submitted, and the group can never exceed the lodge's capacity.
 
+   When the school knows the adult headcount but not every name, use **Correct
+   this request** to enter **Adult names pending** separately from the named
+   teachers. The quote prices those adults as adults and labels them *Adult name
+   pending*; sending it reserves a bed for each one on every lodge night. No
+   teacher, member, school contact or hut-leader PIN is invented for them. Keep
+   at least one real named teacher on the request.
+
    **Save quote applies the numbers and prices them. It does not reserve any
    beds.** The beds are reserved when you send the quote, or when you press
    **Hold slots** — so set the numbers, save, and then reserve. Until you save,
@@ -230,6 +237,22 @@ the list exactly where it was, so it leaves the links alone.
 **Once the requester has accepted a quote you cannot correct it.** At that point
 you have an agreement, and changing it underneath them is a new offer rather than
 a correction. Decline that quote or issue a fresh one first, deliberately.
+
+**Naming an already-accepted pending adult is a separate action.** On an
+accepted school request, choose **Name one pending adult**, enter the real first
+and last name, then **Save real name**. Repeat until the count is zero. Each save
+replaces one unnamed held bed with a named guest on the same nights; the
+accepted price, quote and bed total stay fixed. The original quote continues to
+show that the name was pending when the school accepted it. **Approve & invoice
+school** stays disabled until every adult has a real name. If a name matches a
+club member or the held party, reservations or prices no longer match the
+accepted terms, the save stops: review the rate, consent and terms with the
+school before issuing a new quote. Ordinary **Correct this request** cannot
+change an accepted quote.
+
+Declining or cancelling the request clears its pending adult count and releases
+the held capacity. The original quote snapshot remains as the record of what
+was offered or accepted.
 
 You also cannot correct a request that has already become a booking (edit the
 booking instead), one that is closed, one that a member submitted through the
@@ -631,6 +654,7 @@ cannot, so that is an ordinary bit of tidying rather than something to report.
 | The requester's dates or party were wrong | They told you after they submitted | **Correct this request**, then price and quote it again — the correction re-opens it and retires the old quote |
 | **Save correction** is greyed out | On a school request you have not yet ticked the box confirming which school the name refers to, or you have not written why you are correcting it | Read what the form says about the school, tick **"Yes, this is that school."** / **"Yes, add it as a new school."**, and record your reason. Retyping the name takes the tick back on purpose |
 | A correction is refused because the requester has already accepted a quote | You have an agreement at that price for those dates; changing it is a new offer, not a correction | Decline that quote or issue a fresh one, then correct the request |
+| **Approve & invoice school** is disabled on an accepted quote | Adult names are still pending, so conversion cannot create real teacher and contact records yet | Use **Name one pending adult** for each real person. If it detects a club member or a changed hold, review the accepted terms before quoting again |
 | A correction is refused because the request "changed while you were correcting it" | Somebody else priced, quoted, declined or accepted it since your screen loaded | Reload the queue, look at the request as it is now, and correct it again |
 | A correction is refused and names the school | The club's record of that school changed while your form was open, or you edited the name after ticking the confirmation | Re-open the correction, read which school it now says the name refers to, confirm that, and save |
 | A correction says it **saved** but something afterwards did not finish | The correction is real and committed; what failed came after it — usually the bed release, because the requester accepted the hold in the same moment | Do NOT correct it again: a second attempt is refused anyway, because the first one really did save. Open the request, check whether it is still holding beds, and use **Release hold** before you quote it again |
