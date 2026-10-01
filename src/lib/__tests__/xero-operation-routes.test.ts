@@ -20,7 +20,39 @@ const mocks = vi.hoisted(() => ({
   processQueuedXeroOperationRetries: vi.fn(),
   getXeroOperationRetryMeta: vi.fn(),
   getXeroApiErrorInfo: vi.fn(),
+  transaction: vi.fn(),
 }));
+
+// The client the routes' transactions hand their writes and audit rows
+// (#3462): its own object, so a test can tell an audit written inside the
+// transaction from one written on the bare client.
+const txClient = {
+  xeroSyncOperation: {
+    findUnique: mocks.xeroOperationFindUnique,
+    update: mocks.xeroOperationUpdate,
+    updateMany: mocks.xeroOperationUpdateMany,
+  },
+};
+
+/**
+ * A transaction that really rolls back: the row the test watches is restored
+ * when the callback throws, as Postgres would restore it. An audit written
+ * outside the transaction cannot undo the write, so only an audit inside it
+ * leaves the row as it was.
+ */
+function simulateRollback(row: Record<string, unknown>) {
+  mocks.transaction.mockImplementation(
+    async (run: (tx: typeof txClient) => Promise<unknown>) => {
+      const snapshot = { ...row };
+      try {
+        return await run(txClient);
+      } catch (error) {
+        Object.assign(row, snapshot);
+        throw error;
+      }
+    },
+  );
+}
 
 vi.mock("next/server", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("next/server");
@@ -48,6 +80,7 @@ vi.mock("@/lib/audit", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $transaction: mocks.transaction,
     xeroSyncOperation: {
       findUnique: mocks.xeroOperationFindUnique,
       findMany: mocks.xeroOperationFindMany,
@@ -127,6 +160,9 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 describe("Xero operation admin retry routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.transaction.mockImplementation(
+      async (run: (tx: typeof txClient) => Promise<unknown>) => run(txClient),
+    );
     mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.enqueueXeroSyncOperationRetry.mockResolvedValue({
@@ -384,12 +420,35 @@ describe("Xero operation admin retry routes", () => {
         actorMemberId: "admin-1",
         targetId: "op_failed",
         details: "Payload was manually repaired in Xero.",
-      })
+      }),
+      txClient,
     );
     await expect(response.json()).resolves.toEqual({
       ok: true,
       message: "Xero operation marked non-replayable with an audit record.",
     });
+  });
+
+  it("leaves the operation replayable when its non-replayable audit cannot be written (#3462)", async () => {
+    const row: Record<string, unknown> = { replayable: true };
+    simulateRollback(row);
+    mocks.xeroOperationUpdate.mockImplementation(async ({ data }: { data: { replayable: boolean } }) => {
+      row.replayable = data.replayable;
+      return { id: "op_failed" };
+    });
+    mocks.createAuditLog.mockRejectedValue(new Error("audit insert failed"));
+
+    const response = await markNonReplayableOperation(
+      new NextRequest("http://localhost", {
+        method: "POST",
+        body: JSON.stringify({ reason: "Payload was manually repaired in Xero." }),
+      }),
+      { params: Promise.resolve({ id: "op_failed" }) }
+    );
+
+    expect(response.status).toBe(500);
+    expect(mocks.xeroOperationUpdate).toHaveBeenCalled();
+    expect(row.replayable).toBe(true);
   });
 
   it("marks a failed operation resolved in Xero and audits it", async () => {
@@ -728,7 +787,40 @@ describe("Xero operation admin retry routes", () => {
     await expect(response.json()).resolves.toEqual(
       expect.objectContaining({ ok: true, count: 3 })
     );
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "XERO_OPERATIONS_RESET_STALE_RUNNING",
+        category: "xero",
+        details: "Reset 3 stale RUNNING Xero operations to FAILED",
+      }),
+      txClient,
+    );
   });
+
+  it("leaves stale operations RUNNING when the bulk reset's audit cannot be written (#3462)", async () => {
+    const row: Record<string, unknown> = { status: "RUNNING" };
+    simulateRollback(row);
+    mocks.xeroOperationUpdateMany.mockImplementation(async ({ data }: { data: { status: string } }) => {
+      row.status = data.status;
+      return { count: 1 };
+    });
+    mocks.createAuditLog.mockRejectedValue(new Error("audit insert failed"));
+
+    const response = await resetStaleRunning();
+
+    expect(response.status).toBe(500);
+    expect(row.status).toBe("RUNNING");
+  });
+
+  it("writes no audit row when no operation was stale", async () => {
+    mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 0 });
+
+    const response = await resetStaleRunning();
+
+    expect(response.status).toBe(200);
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
   describe("Mark failed on one stale running operation (#3462)", () => {
     // Past the real threshold (now is frozen at 2026-07-01, so 15 minutes
     // before it).
@@ -784,8 +876,59 @@ describe("Xero operation admin retry routes", () => {
             startedAt: stuckSince.toISOString(),
             previousErrorMessage: stuckRow.lastErrorMessage,
           }),
-        })
+        }),
+        txClient,
       );
+    });
+
+    it("leaves the row RUNNING and answers 500 when the audit row cannot be written", async () => {
+      const row: Record<string, unknown> = { status: "RUNNING" };
+      simulateRollback(row);
+      mocks.xeroOperationFindUnique.mockResolvedValue(stuckRow);
+      mocks.xeroOperationUpdateMany.mockImplementation(async ({ data }: { data: { status: string } }) => {
+        row.status = data.status;
+        return { count: 1 };
+      });
+      mocks.createAuditLog.mockRejectedValue(new Error("audit insert failed"));
+
+      const response = await markFailedOperation(markRequest(), params);
+
+      expect(response.status).toBe(500);
+      expect(mocks.xeroOperationUpdateMany).toHaveBeenCalled();
+      expect(row.status).toBe("RUNNING");
+    });
+
+    const markedMessage =
+      "Operation was stuck RUNNING past the staleness threshold and was marked FAILED by an operator.";
+    const cause = "Matched Xero contact is already linked to another member";
+    it.each([
+      [
+        "an earlier Mark failed that carried a cause",
+        `${markedMessage} The last error recorded before it stuck: ${cause}`,
+        `${markedMessage} The last error recorded before it stuck: ${cause}`,
+      ],
+      [
+        "an earlier Mark failed nested before this fix",
+        `${markedMessage} The last error recorded before it stuck: ${markedMessage} The last error recorded before it stuck: ${cause}`,
+        `${markedMessage} The last error recorded before it stuck: ${cause}`,
+      ],
+      [
+        "an earlier bulk reset, which carried no cause",
+        "Operation was stuck RUNNING past the staleness threshold and was reset to FAILED by an operator.",
+        markedMessage,
+      ],
+    ])("does not nest the carried error when the row was stuck after %s", async (_case, previous, expected) => {
+      mocks.xeroOperationFindUnique.mockResolvedValue({
+        ...stuckRow,
+        lastErrorCode: "ORPHANED_STALE_RUNNING",
+        lastErrorMessage: previous,
+      });
+      mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 1 });
+
+      const response = await markFailedOperation(markRequest(), params);
+
+      expect(response.status).toBe(200);
+      expect(mocks.xeroOperationUpdateMany.mock.calls[0][0].data.lastErrorMessage).toBe(expected);
     });
 
     it("refuses a RUNNING row that is not stale yet, writing and auditing nothing", async () => {
@@ -837,8 +980,11 @@ describe("Xero operation admin retry routes", () => {
       mocks.xeroOperationFindMany.mockResolvedValue([
         { ...stuckRow, direction: "OUTBOUND", replayable: true, requestPayload: {}, responsePayload: null, createdAt, updatedAt: createdAt },
         { ...stuckRow, id: "op_fresh", startedAt: new Date("2026-06-30T23:55:00.000Z"), direction: "OUTBOUND", replayable: true, requestPayload: {}, responsePayload: null, createdAt, updatedAt: createdAt },
+        // Completing a row never clears its startedAt, so an old finished row
+        // has the stuck row's timestamp - only its status says it is not stuck.
+        { ...stuckRow, id: "op_done", status: "SUCCEEDED", direction: "OUTBOUND", replayable: true, requestPayload: {}, responsePayload: null, createdAt, updatedAt: createdAt },
       ]);
-      mocks.xeroOperationCount.mockResolvedValue(2);
+      mocks.xeroOperationCount.mockResolvedValue(3);
 
       const response = await listOperations(
         new NextRequest("http://localhost/api/admin/xero/operations?status=RUNNING")
@@ -848,6 +994,7 @@ describe("Xero operation admin retry routes", () => {
         data: [
           { id: "op_stuck", staleRunning: true },
           { id: "op_fresh", staleRunning: false },
+          { id: "op_done", staleRunning: false },
         ],
       });
     });

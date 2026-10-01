@@ -176,9 +176,7 @@ export async function GET(request: NextRequest) {
         localUrl: buildLocalAdminUrl(operation.localModel, operation.localId),
         // #3462: the server's clock decides "stale", so the panel's Mark failed
         // button agrees with the route that will accept it.
-        staleRunning:
-          operation.status === "RUNNING" &&
-          isStaleRunningXeroOperation(operation.startedAt, now),
+        staleRunning: isStaleRunningXeroOperation(operation, now),
       })),
       total,
       page,

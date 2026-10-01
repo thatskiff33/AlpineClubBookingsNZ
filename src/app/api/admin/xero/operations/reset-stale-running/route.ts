@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { logAudit } from "@/lib/audit";
+import { createAuditLog } from "@/lib/audit";
+import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   STALE_RUNNING_XERO_OPERATION_BULK_RESET_MESSAGE,
@@ -17,20 +18,28 @@ export async function POST() {
 
   try {
     const now = new Date();
-    const count = await writeStaleRunningXeroOperationReset(
-      staleRunningXeroOperationFilter(now),
-      now,
-      STALE_RUNNING_XERO_OPERATION_BULK_RESET_MESSAGE,
-    );
-
-    if (count > 0) {
-      logAudit({
-        action: "XERO_OPERATIONS_RESET_STALE_RUNNING",
-        category: "xero",
-        memberId: session.user.id,
-        details: `Reset ${count} stale RUNNING Xero operation${count === 1 ? "" : "s"} to FAILED`,
-      });
-    }
+    // #3462: the reset and its audit row commit together or not at all, so a
+    // failed audit never leaves an unattributed bulk override behind.
+    const count = await prisma.$transaction(async (tx) => {
+      const reset = await writeStaleRunningXeroOperationReset(
+        staleRunningXeroOperationFilter(now),
+        now,
+        STALE_RUNNING_XERO_OPERATION_BULK_RESET_MESSAGE,
+        tx,
+      );
+      if (reset > 0) {
+        await createAuditLog(
+          {
+            action: "XERO_OPERATIONS_RESET_STALE_RUNNING",
+            category: "xero",
+            memberId: session.user.id,
+            details: `Reset ${reset} stale RUNNING Xero operation${reset === 1 ? "" : "s"} to FAILED`,
+          },
+          tx,
+        );
+      }
+      return reset;
+    });
 
     return NextResponse.json({
       ok: true,

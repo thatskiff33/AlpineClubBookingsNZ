@@ -16,8 +16,8 @@ const markFailedSchema = z.object({
  * #3462: **Mark failed** on one stale RUNNING Xero operation - the runbook's
  * hand `UPDATE`, as a guarded, audited button. Finance edit, like every other
  * write on the operations panel. The write and its guard live in
- * `markStaleRunningXeroOperationFailed`; this route only authorises, audits
- * and answers.
+ * `markStaleRunningXeroOperationFailed`, which runs this route's audit inside
+ * the write's transaction; this route only authorises, audits and answers.
  */
 export async function POST(
   request: NextRequest,
@@ -40,7 +40,37 @@ export async function POST(
   const { id } = await params;
 
   try {
-    const result = await markStaleRunningXeroOperationFailed(id);
+    // The audit row is written in the same transaction as the state change,
+    // so a failed audit rolls the row back rather than leaving an
+    // unattributed override behind a 500.
+    const result = await markStaleRunningXeroOperationFailed(id, (tx, operation) =>
+      createAuditLog(
+        {
+          action: "xero.operation.marked_failed",
+          memberId: session.user.id,
+          actorMemberId: session.user.id,
+          targetId: operation.id,
+          entityType: "XeroSyncOperation",
+          entityId: operation.id,
+          category: "xero",
+          severity: "critical",
+          outcome: "success",
+          summary: "Stale running Xero operation marked failed",
+          details: parsed.data.reason,
+          metadata: {
+            operationId: operation.id,
+            entityType: operation.entityType,
+            operationType: operation.operationType,
+            localModel: operation.localModel,
+            localId: operation.localId,
+            startedAt: operation.startedAt.toISOString(),
+            previousErrorCode: operation.previousErrorCode,
+            previousErrorMessage: operation.previousErrorMessage,
+          },
+        },
+        tx,
+      ),
+    );
     if (result.outcome === "not-found") {
       return NextResponse.json({ error: "Xero operation not found." }, { status: 404 });
     }
@@ -55,31 +85,6 @@ export async function POST(
         { status: 409 }
       );
     }
-
-    const { operation } = result;
-    await createAuditLog({
-      action: "xero.operation.marked_failed",
-      memberId: session.user.id,
-      actorMemberId: session.user.id,
-      targetId: operation.id,
-      entityType: "XeroSyncOperation",
-      entityId: operation.id,
-      category: "xero",
-      severity: "critical",
-      outcome: "success",
-      summary: "Stale running Xero operation marked failed",
-      details: parsed.data.reason,
-      metadata: {
-        operationId: operation.id,
-        entityType: operation.entityType,
-        operationType: operation.operationType,
-        localModel: operation.localModel,
-        localId: operation.localId,
-        startedAt: operation.startedAt.toISOString(),
-        previousErrorCode: operation.previousErrorCode,
-        previousErrorMessage: operation.previousErrorMessage,
-      },
-    });
 
     return NextResponse.json({
       ok: true,
