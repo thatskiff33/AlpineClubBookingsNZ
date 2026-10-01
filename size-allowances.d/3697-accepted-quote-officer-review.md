@@ -25,14 +25,14 @@ reason: the accepted-quote claim, hold retention and response state share the
   and held reservations use that same transaction.
 
 file: src/lib/booking-request.ts
-lines: 3073
+lines: 3074
 reason: #3415's accepted status and #3416's portable booking-policy setting
   join the established request queue and settings updater; moving those small
   branches would split their atomic persistence and audit rules; #3413 adds a
   conversion gate for unresolved school adults in the same approval claim.
 
 file: src/lib/school-booking-request.ts
-lines: 3006
+lines: 3007
 reason: #3415's accepted status and #3416's optional teacher assignment share
   the existing school conversion claim and contact reconciliation; moving
   either branch would split its organisation, booking and bed-allocation
