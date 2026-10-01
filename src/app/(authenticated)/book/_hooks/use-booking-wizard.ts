@@ -376,12 +376,11 @@ export function useBookingWizard() {
    *
    * AT ZERO THE SERVER STILL REFUSES OUTRIGHT, and says so rather than offering
    * a queue: `POST /api/bookings` rejects any party larger than the lodge's
-   * capacity before the waitlist fallback is reached, so an unconfigured lodge
-   * answers "a booking cannot exceed 0 guests" (#2930 second fix round). What
-   * this ceiling change buys is a usable form and a refusal that names its
-   * cause, not a waitlist place. Whether such a lodge should be bookable or
-   * waitlistable at all is a capacity product question this issue does not
-   * settle.
+   * capacity before the waitlist fallback is reached. Since #3407 (owner
+   * decision, 14 Sep 2026) that refusal says the lodge is not set up for
+   * bookings yet rather than quoting a limit of zero, and the calendar offers
+   * no night there at all, so the guests step is not reached at such a lodge.
+   * Such a lodge is neither bookable nor waitlistable until it has a capacity.
    */
   const partySizeCeiling =
     resolvedLodgeCapacity !== null && resolvedLodgeCapacity > 0

@@ -21,6 +21,11 @@ import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import { invalidatePublicClubIdentity } from "@/lib/public-layout-cache";
 import { primeClubIdentitySync } from "@/lib/club-identity-settings";
 import { acquireConfigImportLock } from "@/lib/config-transfer-lock";
+import {
+  MAX_CONFIGURED_LODGE_CAPACITY,
+  MIN_CONFIGURED_LODGE_CAPACITY,
+} from "@/lib/lodge-effective-capacity";
+import { createNewLodgeSettings } from "@/lib/lodge-settings";
 
 const createSchema = z
   .object({
@@ -29,6 +34,22 @@ const createSchema = z
     doorCode: z.string().trim().max(80).nullable().optional(),
     travelNote: z.string().trim().max(2000).nullable().optional(),
     active: z.boolean().optional().default(true),
+    /*
+      REQUIRED (#3407, owner decision 14 Sep 2026). A lodge used to be born with
+      no `LodgeSettings` row, so with Bed Allocation off — the default — it
+      resolved to capacity 0 (`unconfigured_lodge`) and refused every booking,
+      while the setup wizard, which has no rooms step in that mode, told the
+      officer it was ready. Asking for the number here is what closes that gap.
+      The bounds are the save bounds every other editor of the field reads
+      (`INV-SSOT-001`), so a figure accepted here is exactly one
+      `/api/admin/lodge-settings` would accept. It is per-deployment data a
+      club types, never a default this code supplies (`INV-CONFIG-001`).
+    */
+    capacity: z
+      .number()
+      .int()
+      .min(MIN_CONFIGURED_LODGE_CAPACITY)
+      .max(MAX_CONFIGURED_LODGE_CAPACITY),
   })
   .strict();
 
@@ -162,6 +183,15 @@ export async function POST(request: Request) {
       select: lodgeSelect,
     });
 
+    // The lodge's own settings row, in the SAME transaction as the lodge
+    // (#3407): a lodge that exists can always say how many guests it takes, and
+    // a failed write leaves no lodge behind to resolve to zero.
+    await createNewLodgeSettings(tx, {
+      lodgeId: lodge.id,
+      capacity: parsed.data.capacity,
+      updatedByMemberId: session.user.id,
+    });
+
     await tx.auditLog.create(
       buildStructuredAuditLogCreateArgs({
         action: "LODGE_CREATED",
@@ -171,7 +201,10 @@ export async function POST(request: Request) {
         severity: "important",
         outcome: "success",
         summary: "Lodge created",
-        metadata: { newLodge: redactLodgeForAudit(serializeLodge(lodge)) },
+        metadata: {
+          newLodge: redactLodgeForAudit(serializeLodge(lodge)),
+          capacity: parsed.data.capacity,
+        },
         request: getAuditRequestContext(request),
       }),
     );

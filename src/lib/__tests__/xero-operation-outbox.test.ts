@@ -2194,6 +2194,51 @@ describe("processQueuedXeroOutboxOperations", () => {
     });
   });
 
+  // #3548 (`INV-PAY-111`): the outbox's half of the crash-window contract. A
+  // refund-note handler that dies after raising its note leaves the row
+  // FAILED, never PENDING, so no second dispatch re-enters the builder; the
+  // retry leg finishes the note the row names
+  // (xero-refund-note-crash-window.test.ts drives both halves for real).
+  it("fails, and never re-queues, a refund-note row whose handler dies after raising its note", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_credit_note_1",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: null,
+        requestPayload: {
+          queueType: "REFUND_CREDIT_NOTE",
+          refundAmountCents: 5000,
+          watermarkCents: 5000,
+          refundMethod: "card",
+        },
+      },
+    ]);
+    const crash = new Error("process died after the note was recorded");
+    mocks.createXeroCreditNote.mockRejectedValue(crash);
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toEqual(
+      expect.objectContaining({ processed: 1, succeeded: 0, failed: 1 })
+    );
+
+    expect(mocks.createXeroCreditNote).toHaveBeenCalledTimes(1);
+    expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("payment_1", 5000, {
+      syncOperationId: "op_credit_note_1",
+      watermarkCents: 5000,
+      refundMethod: "card",
+    });
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(
+      "op_credit_note_1",
+      crash,
+      undefined,
+      { keepCancelled: true }
+    );
+    // The un-claim back to PENDING is only for a refusal before any HTTP call.
+    expect(mocks.updateManyOperation).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "PENDING" }) })
+    );
+  });
+
   it("claims and processes queued account-credit note operations", async () => {
     mocks.findManyOperations.mockResolvedValue([
       {

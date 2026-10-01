@@ -13,6 +13,7 @@ import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { nameField } from "@/lib/zod-helpers";
 import logger from "@/lib/logger";
+import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -95,7 +96,7 @@ export async function POST(request: NextRequest) {
       : await getDefaultLodgeCapacity();
     if (guests.length > lodgeCapacity) {
       return NextResponse.json(
-        { error: `A booking request cannot exceed ${lodgeCapacity} guests` },
+        { error: lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A booking request cannot exceed ${limit} guests`) },
         { status: 400 }
       );
     }

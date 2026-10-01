@@ -522,7 +522,8 @@ below that count, which caps it (the lower of the two applies, so a lodge may
 have more beds than it is allowed to sleep). If the module is disabled, or the
 module is enabled but no active beds exist yet, the system falls back to the
 per-lodge `LodgeSettings.capacity`; if that is also unset the lodge resolves to
-**0** (unbookable) and the setup-readiness Club Config check warns.
+**0** (unbookable) and the setup-readiness Club Config check warns, naming every
+active lodge in that state — the default lodge and any additional one (#3407).
 
 Since #1982 the DB is the **sole runtime source** of booking capacity —
 `beds[].capacity` in `config/club.json` is **not** read at runtime. Instead the
@@ -1005,7 +1006,8 @@ once a *second active lodge actually exists*.
 
 ### 2. Create the lodge
 
-On the Lodges page, create the new lodge: name, and optionally its address, door
+On the Lodges page, create the new lodge: its name and its **capacity** (how many
+guests it can sleep — required since #3407), and optionally its address, door
 code, and travel note (the door code and travel note are used in that lodge's
 confirmation and pre-arrival emails; the name and address are also public — the
 contact page and the `{{lodge-name}}` / `{{lodge-address}}` content tokens read
@@ -1016,8 +1018,9 @@ Lodge details** without opening the multi-lodge management UI.
 ### 3. Run the setup wizard
 
 Creating a lodge lands in a guided setup wizard (`/admin/lodges/[id]/setup`):
-identity → rooms/beds → lockers → seasons/rates → chores. Every step is
-skippable, and rooms/beds/lockers support bulk seeding ("8 rooms of 4 beds",
+identity → capacity (Bed Allocation off) or rooms/beds (on) → lockers →
+seasons/rates → chores. Every step is skippable, but the finish step calls the
+lodge ready only when it can take a booking, and rooms/beds/lockers support bulk seeding ("8 rooms of 4 beds",
 "N lockers" with a name prefix) plus copy-from-another-lodge for seasons/rates
 and chores. The lodge configuration hub (`/admin/lodges/[id]`) is the
 "what does this lodge still need?" view and links into each editor pre-filtered
@@ -1026,29 +1029,26 @@ lockers, chores) appear only when that module is enabled.
 
 ### 4. Capacity and the 0-capacity fail-safe (read this first)
 
-**A newly created lodge is unbookable until you give it beds or a capacity
-override.** This is deliberate, and it will look like a bug the first time:
-a lodge with no configured beds and no override resolves to **capacity 0**, so
-the booking flow refuses all bookings at it rather than risk overbooking an
-unconfigured lodge.
+**A lodge with no capacity cannot take a booking.** Since #3407 Add lodge asks
+for the capacity, so a new lodge is bookable from the start. A lodge created
+before that, or one whose capacity was cleared, resolves to **capacity 0**: the
+booking flow refuses every booking there rather than risk overbooking it, the
+refusal says the lodge is not set up for bookings yet, and the member calendar
+shows the same instead of offering a night.
 
-Each lodge's capacity resolves in this order (`getLodgeCapacityStatus`):
+Each lodge's capacity resolves in this order (`getLodgeCapacityStatus`, full
+table in [`docs/CAPACITY_MODEL.md`](docs/CAPACITY_MODEL.md)):
 
-1. Active configured beds, when the Bed Allocation module is on and the lodge
-   has active beds.
-2. Otherwise, the per-lodge **capacity override** on the lodge's
-   `LodgeSettings` (set it on the lodge hub or Admin > Setup). This works even
-   with Bed Allocation off.
-3. Otherwise, the club-config bed total — but **only for the original default
-   lodge**. Any *additional* lodge falls through to 0.
+1. With the Bed Allocation module on and at least one active bed: the active
+   bed count, capped by the lodge's capacity when that is lower.
+2. Otherwise, the lodge's own **capacity** on its `LodgeSettings` (set it on
+   Add lodge, in the setup wizard, on the lodge hub, or under Admin > Setup).
+3. Otherwise **0**, for every lodge including the default. `club.json` is not
+   read at runtime (#1982): the default lodge's capacity is copied into the
+   database from the config bed total once, by the boot-time self-heal.
 
-So to make a new lodge bookable, either configure its beds (Bed Allocation
-module) or set its capacity override. Until then it correctly shows as
-unavailable.
-
-Per-lodge overrides *replace*, they do not merge: setting a lodge's capacity
-override does not add to the club-config total, it substitutes for it at that
-lodge.
+So to make an existing capacity-0 lodge bookable, set its capacity on the lodge
+hub, or give it active beds with the Bed Allocation module on.
 
 ### 5. Bind the kiosk account to the lodge
 
@@ -1313,6 +1313,11 @@ still surfaces loudly as **blocked**. When the database is not reachable
 (pre-migration), the DB-backed steps are reported as "not checked" and the
 club-config step is a warning that points at `/admin/setup` rather than a hard
 block.
+
+The club-config step also warns when any **active lodge** resolves as not set up
+for bookings (no capacity and no active beds, through the same resolver every
+booking path reads), and lists those lodges by name so each can be given a
+capacity on its configuration page (#3407).
 
 After signing in as an administrator, open `/admin/setup` to review:
 

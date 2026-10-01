@@ -213,6 +213,13 @@ export interface SetupDatabaseSnapshot {
   // skipped. Undefined when the snapshot omits it (older callers / no DB) → no
   // capacity warning is raised.
   defaultLodgeCapacity?: number | null;
+  // The name of every ACTIVE lodge — the default one included — that resolves
+  // as not set up for bookings (#3407 review): the one resolver
+  // (`getLodgeCapacityStatus`) read through `isLodgeSetUpForBookings`. The
+  // default-lodge signal above only ever saw one lodge, so an additional lodge
+  // created before #3407, imported without settings, or cleared to no capacity
+  // took no booking with nothing saying so. Undefined when not checked.
+  lodgesNotSetUpForBookings?: string[];
 }
 
 /*
@@ -535,6 +542,24 @@ function buildClubConfigCheck(
     db?.defaultLodgeCapacity != null && db.defaultLodgeCapacity <= 0;
   const capacityWarningDetail =
     "Resolved default-lodge capacity is 0 — configure beds or a capacity override before taking bookings.";
+  const lodgesNotSetUp = db?.lodgesNotSetUpForBookings ?? [];
+  const capacityWarning = capacityUnconfigured || lodgesNotSetUp.length > 0;
+  const capacityDetails = [
+    ...(capacityUnconfigured ? [capacityWarningDetail] : []),
+    ...(lodgesNotSetUp.length > 0
+      ? [
+          `Not set up for bookings yet (no capacity): ${lodgesNotSetUp.join(", ")}. Set a capacity on each lodge's configuration page (/admin/lodges).`,
+        ]
+      : []),
+  ];
+  const capacityWarningMessage = (clubName: string) =>
+    capacityUnconfigured
+      ? `${clubName} is configured, but its default lodge has no bookable capacity yet.`
+      : `${clubName} is configured, but ${
+          lodgesNotSetUp.length === 1
+            ? "one lodge is"
+            : `${lodgesNotSetUp.length} lodges are`
+        } not set up for bookings yet.`;
 
   // 2. Configured via the DB identity.
   if (dbClubName) {
@@ -542,9 +567,9 @@ function buildClubConfigCheck(
     return applyProgress(
       {
         ...base,
-        status: capacityUnconfigured ? "warning" : "complete",
-        message: capacityUnconfigured
-          ? `${dbClubName} is configured, but its default lodge has no bookable capacity yet.`
+        status: capacityWarning ? "warning" : "complete",
+        message: capacityWarning
+          ? capacityWarningMessage(dbClubName)
           : capacity != null
             ? `${dbClubName} is configured with ${capacity} total beds.`
             : `${dbClubName} is configured. Set the default-lodge capacity in /admin/setup if it is not yet defined.`,
@@ -554,7 +579,7 @@ function buildClubConfigCheck(
           capacity != null
             ? `Configured capacity: ${capacity} beds`
             : "Configured capacity: not set (falls back to lodge beds)",
-          ...(capacityUnconfigured ? [capacityWarningDetail] : []),
+          ...capacityDetails,
         ],
       },
       progress,
@@ -570,16 +595,16 @@ function buildClubConfigCheck(
     return applyProgress(
       {
         ...base,
-        status: capacityUnconfigured ? "warning" : "complete",
-        message: capacityUnconfigured
-          ? `${club.config.name} is configured, but its default lodge has no bookable capacity yet.`
+        status: capacityWarning ? "warning" : "complete",
+        message: capacityWarning
+          ? capacityWarningMessage(club.config.name)
           : `${club.config.name} is configured with ${capacity} total beds.`,
         details: [
           `Source: ${club.sourcePath}`,
           `Club: ${club.config.name}`,
           `Configured capacity: ${capacity} beds`,
           "Admin edits in /admin/setup override these seed values in the database.",
-          ...(capacityUnconfigured ? [capacityWarningDetail] : []),
+          ...capacityDetails,
         ],
       },
       progress,
