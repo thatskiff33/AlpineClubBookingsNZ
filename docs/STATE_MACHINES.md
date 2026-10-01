@@ -3135,6 +3135,25 @@ failure -> run/failure visible and retryable where business-critical
 To verify: which cron jobs record `CronJobRun`, exact statuses, stale queue
 health thresholds, and skipped-module reporting.
 
+### Edit review-charge recovery row (#3402)
+
+One booking edit's review charge has ONE payment-recovery row. Unlike other
+recovery rows, a finished one can be reopened, because a later share of the
+same edit can still defer to it:
+
+```text
+PENDING -> PROCESSING (worker claim) -> SUCCEEDED (replay raised everything owed)
+SUCCEEDED -> PENDING   (a later share deferred, or its raise was refused: re-armed, attempts reset)
+PROCESSING             (re-arm moves only nextRetryAt; the close is fenced on processingStartedAt
+                        and the claimed nextRetryAt, else the row is handed back to PENDING)
+terminal FAILED        (never re-armed: the edit belongs to the booking-vs-Xero repair pass, INV-PAY-057)
+```
+
+The rule and its stated limits are `INV-PAY-112`; the interleavings are in
+`docs/CONCURRENCY_AND_LOCKING.md`. To verify:
+`edit-financial-review-charge-raise-claim.realdb.test.ts` and
+`payment-recovery.test.ts` ("#3402").
+
 ### Confirm-pending saved-card charge (#3268)
 
 `confirmPendingBookings` claims a hold-expired booking (PENDING -> CONFIRMED

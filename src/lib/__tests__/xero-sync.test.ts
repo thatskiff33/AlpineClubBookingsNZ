@@ -60,6 +60,13 @@ vi.mock("@/lib/xero-links", async (importOriginal) => {
   };
 });
 
+// The repeated-failure notifier is imported lazily by the fail/complete writers;
+// a cold dynamic import of its real module chain could exceed the 5s test
+// timeout (#3752 composed review). Nothing here asserts on it.
+vi.mock("@/lib/xero-hardening", () => ({
+  maybeNotifyXeroRepeatedFailure: vi.fn(),
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: {
     error: vi.fn(),
