@@ -35,6 +35,7 @@ import {
 } from "@/lib/subscription-lockout-enforcement";
 import {
   checkOwnDependantIdentityForParty,
+  claimedMemberPathIds,
   dependantIdentityDeclarationSchema,
 } from "@/lib/booking-dependant-identity";
 import {
@@ -403,6 +404,185 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  /*
+   * THE INPUT-ONLY REFUSALS RUN BEFORE THE MEMBER LOOKUP (#3770).
+   *
+   * Each refusal from here to the lookup depends on the request and the booker
+   * alone, never on whether a member id in the party resolves. Below the lookup
+   * each was reachable only once every claimed id had resolved, so meeting one,
+   * rather than the lookup's collapsed refusal (#2388), told a caller probing a
+   * beyond-family id that the member exists. Up here the answer is the same
+   * either way. What each one says is unchanged; only the order moved, so a
+   * party naming an id that does not resolve now meets one of these first when
+   * both apply. A new refusal that reads nothing about the party's members
+   * belongs here too, not below the lookup.
+   *
+   * The stay ranges are validated here on the request's own rows. The lookup
+   * changes a row's name and tier, never its dates, so the normalisation below
+   * cannot refuse what this one accepted.
+   */
+  try {
+    normalizeGuestStayRanges(guests, { checkIn, checkOut });
+  } catch (error) {
+    if (error instanceof BookingGuestStayRangeValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    throw error;
+  }
+
+  /**
+   * OWN-DEPENDANT IDENTITY (#2721, `INV-GUEST-019`).
+   *
+   * BEFORE THE MEMBER LOOKUP, against the CLAIMED ids (`claimedMemberPathIds`,
+   * #3770), exactly as the edit doors ask it (#3451). After the lookup, this 409
+   * versus the lookup's collapsed refusal told a caller whether another claimed
+   * id was a real member. A forged member link still cannot walk past it: a row
+   * claiming an id that does not resolve is refused by the lookup below,
+   * whatever this said. It is also before the person-night, hosting and capacity
+   * pre-flights and before any create service, so a party that is about to put a
+   * member on the bumpable non-member queue is stopped while it is still only a
+   * proposal.
+   *
+   * IT RUNS ON THE AUTHORISED ON-BEHALF CREATE TOO, and unlike the member-guest
+   * boundary check beside it there is no `isAuthorizedOnBehalf` arm here (owner
+   * decision on #2721, 15 Sep 2026). The two are not the same class of check.
+   * The boundary check gates the OFFICER'S OWN AUTHORITY, which the officer can
+   * see in front of them. This one protects A THIRD PARTY'S BED — a real child
+   * on a provisional, bumpable, separately invoiced guest row at non-member
+   * prices — and the parent is not at the screen to notice. A silent path is
+   * worst exactly where the affected person cannot see it, so do not restore the
+   * skip; the admin booking screen carries the control to answer it with.
+   *
+   * WHOSE DEPENDANTS ARE READ IS `effectiveMemberId`, WHICH IS THE MEMBER THE
+   * BOOKING IS FOR — `forMemberId` on an on-behalf create, the session user
+   * otherwise. Never `session.user.id`, which on this path is the officer: that
+   * would both miss every real collision and start answering questions about the
+   * officer's own family on somebody else's booking, which is the disclosure
+   * half of this rule (`INV-GUEST-019`).
+   *
+   * The dependant read is skipped entirely for a party that is all member-linked
+   * and carries no declaration — the common family booking — so the ordinary
+   * path pays nothing for this — the skip rule and the read are
+   * `checkOwnDependantIdentityForParty`'s, the one entry point every door shares.
+   */
+  {
+    const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(
+      prisma,
+      {
+        bookerMemberId: effectiveMemberId,
+        party: guests,
+        memberPathMemberIds: claimedMemberPathIds(guests),
+        declarations: dependantIdentityDeclarations,
+      },
+    );
+    if (dependantIdentityRefusal) {
+      // The CODE is the same on both paths — each client keys on it to send
+      // whoever is at the screen back to the guest step — but the SENTENCE is
+      // not: "your dependant" is wrong in both halves when the reader is an
+      // officer. Chosen here because this handler is the only place that knows
+      // which of the two people is reading the response; the body is the shared
+      // one, which deliberately does not echo the collisions (#2721 review).
+      return NextResponse.json(
+        dependantIdentityRefusalBody(dependantIdentityRefusal, {
+          onBehalf: dependantIdentitySpeaksOnBehalf({
+            actorIsAdmin: isAuthorizedOnBehalf,
+            actorId: session.user.id,
+            ownerMemberId: effectiveMemberId,
+          }),
+          surface: "create",
+        }),
+        { status: dependantIdentityRefusal.status },
+      );
+    }
+  }
+
+  // CT-4 (#2870): the club's day, from the persisted ClubTimeSettings zone and
+  // not the container's TZ (INV-CONFIG-002, INV-DATE-019), encoded at UTC
+  // midnight so it shares a frame with the parsed dates and addDaysDateOnly.
+  //
+  // #3123 review — resolved HERE, above the person-night pre-flight, and used by
+  // everything on this route that needs a day: the retroactive gate below, the
+  // conflict scan's self-removal window, and `createConfirmedBooking`, which is
+  // transaction-aware and so cannot resolve one for itself (`INV-LOCK-004`).
+  // `clubTime()` is request-memoised, but ONE binding is what makes "one club
+  // day per request" a property of the code rather than of the cache.
+  const todayAtClub = (await clubTime()).today();
+  const today = dateOnlyInstantOf(todayAtClub);
+
+  // Retroactive booking (#1695): a past check-in is allowed only for an admin
+  // on-behalf create that opted into allowPastDates, and only within the
+  // rolling lookback (checked below the member lookup, on the resolved stay
+  // envelope). Everything else keeps the original today-or-future rule.
+  const retroactiveCreate =
+    parsed.data.allowPastDates === true && isAuthorizedOnBehalf;
+  // The flag is strictly retroactive: a today-or-future check-in carrying it is
+  // rejected rather than silently widening normal-create behaviour (lead-time
+  // skip, capacity warn-and-confirm belong to past stays only).
+  if (retroactiveCreate && checkIn >= today) {
+    return NextResponse.json(
+      { error: "allowPastDates requires a check-in in the past" },
+      { status: 400 },
+    );
+  }
+  if (checkIn < today && !retroactiveCreate) {
+    return NextResponse.json({ error: "Cannot book in the past" }, { status: 400 });
+  }
+
+  /*
+   * A BOOKING MUST NAME ITS LODGE. THE SERVER NO LONGER FILLS THE BLANK (#2701).
+   *
+   * `resolveOptionalActiveLodgeId` answers a missing id with the club's DEFAULT
+   * lodge. On a read that is a reasonable convenience; on a CREATE it is how a
+   * guest ends up booked — and paid up — at a lodge nobody ever showed them.
+   * The reachable path was not a hand-made request: when `/api/admin/lodges` or
+   * `/api/lodges` fails, `useLodgeOptions` returns an empty list, `LodgeSelect`
+   * normalises the selection to `null` and renders nothing at all (ADR-002),
+   * and both booking wizards then posted `lodgeId: undefined`. In a multi-lodge
+   * club that silently stamped the default lodge on a real booking, and the
+   * member's own review step suppressed its "Lodge:" line in exactly that
+   * state, so nothing on screen contradicted it.
+   *
+   * Ten client surfaces are fixed alongside this, but the refusal is what closes
+   * the class: one gate instead of ten, so the eleventh screen somebody writes
+   * next year fails loudly here rather than writing quietly to the wrong lodge.
+   *
+   * Deliberately NOT done by making the shared helper strict. That helper also
+   * serves reads where an omitted lodge legitimately means "the whole club", and
+   * `INV-INT-016` retains exactly such a mode on `GET /api/bookings/rooms` for
+   * consumers outside this repository. The two are consistent rather than in
+   * tension: an unscoped DISCOVERY read is a real question ("where could I
+   * book?"), an unscoped CREATE is not — you cannot book "somewhere". So the
+   * strictness lives here, on the write, and the read contract is untouched.
+   */
+  if (!parsed.data.lodgeId) {
+    return NextResponse.json(
+      {
+        error:
+          "This booking did not say which lodge it is for. Choose a lodge and try again.",
+        code: BOOKING_LODGE_REQUIRED_CODE,
+      },
+      { status: 400 },
+    );
+  }
+  const bookingLodgeId = await resolveOptionalActiveLodgeId(
+    prisma,
+    parsed.data.lodgeId,
+  );
+  if (!bookingLodgeId) {
+    return NextResponse.json(
+      { error: "Unknown or inactive lodgeId" },
+      { status: 400 },
+    );
+  }
+
+  const lodgeCapacity = await getLodgeCapacity(bookingLodgeId);
+  if (guests.length > lodgeCapacity) {
+    return NextResponse.json(
+      { error: lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A booking cannot exceed ${limit} guests`) },
+      { status: 400 },
+    );
+  }
+
   // "+ Add Member Guest" (epic #2305, MG2 #2307). Read the module flag and the
   // policy singleton HERE — one read each, before any transaction is opened —
   // then pass the answers down. The create service opens the booking transaction
@@ -417,14 +597,6 @@ export async function POST(request: NextRequest) {
     ? { kind: "ADMIN", adminMemberId: session.user.id }
     : { kind: "MEMBER" };
   let memberGuestEntries = new Map<string, MemberGuestConsentWritePlanEntry>();
-  /**
-   * The member ids on this party that actually resolved to a bookable member —
-   * the own-dependant guard's forgery defence (#2721, `INV-GUEST-019`). Hoisted
-   * out of the try so the guard below can be handed it; see
-   * `checkOwnDependantIdentity` for why it is an argument rather than a
-   * precondition about the party's provenance.
-   */
-  let memberPathMemberIds: ReadonlySet<string> = new Set<string>();
 
   try {
     const { members: linkedMembers, boundary } =
@@ -461,7 +633,6 @@ export async function POST(request: NextRequest) {
         crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
       }
     );
-    memberPathMemberIds = new Set(linkedMembers.keys());
     const normalizedGuests = normalizeBookingGuestInputs(guests, linkedMembers);
     const consentPlan = planMemberGuestConsentWrites({
       guests: normalizeGuestStayRanges(normalizedGuests, { checkIn, checkOut }),
@@ -494,72 +665,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     throw error;
-  }
-
-  /**
-   * OWN-DEPENDANT IDENTITY (#2721, `INV-GUEST-019`).
-   *
-   * `memberPathMemberIds` is what makes "already on the member path" a fact
-   * rather than a claim: it holds the ids that really resolved to a bookable
-   * member, so a forged `isMember: true` or an invented member id is read as
-   * the free-text row it is. The guard takes it as a required argument, so this
-   * cannot be weakened by moving the call or by passing a different party.
-   *
-   * Placed BEFORE the person-night, hosting and capacity pre-flights and before
-   * any create service, so a party that is about to put a member on the
-   * bumpable non-member queue is stopped while it is still only a proposal.
-   *
-   * IT RUNS ON THE AUTHORISED ON-BEHALF CREATE TOO, and unlike the member-guest
-   * boundary check beside it there is no `isAuthorizedOnBehalf` arm here (owner
-   * decision on #2721, 15 Sep 2026). The two are not the same class of check.
-   * The boundary check gates the OFFICER'S OWN AUTHORITY, which the officer can
-   * see in front of them. This one protects A THIRD PARTY'S BED — a real child
-   * on a provisional, bumpable, separately invoiced guest row at non-member
-   * prices — and the parent is not at the screen to notice. A silent path is
-   * worst exactly where the affected person cannot see it, so do not restore the
-   * skip; the admin booking screen carries the control to answer it with.
-   *
-   * WHOSE DEPENDANTS ARE READ IS `effectiveMemberId`, WHICH IS THE MEMBER THE
-   * BOOKING IS FOR — `forMemberId` on an on-behalf create, the session user
-   * otherwise. Never `session.user.id`, which on this path is the officer: that
-   * would both miss every real collision and start answering questions about the
-   * officer's own family on somebody else's booking, which is the disclosure
-   * half of this rule (`INV-GUEST-019`).
-   *
-   * The dependant read is skipped entirely for a party that is all member-linked
-   * and carries no declaration — the common family booking — so the ordinary
-   * path pays nothing for this — the skip rule and the read are
-   * `checkOwnDependantIdentityForParty`'s, the one entry point every door shares.
-   */
-  {
-    const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(
-      prisma,
-      {
-        bookerMemberId: effectiveMemberId,
-        party: guestInputs,
-        memberPathMemberIds,
-        declarations: dependantIdentityDeclarations,
-      },
-    );
-    if (dependantIdentityRefusal) {
-      // The CODE is the same on both paths — each client keys on it to send
-      // whoever is at the screen back to the guest step — but the SENTENCE is
-      // not: "your dependant" is wrong in both halves when the reader is an
-      // officer. Chosen here because this handler is the only place that knows
-      // which of the two people is reading the response; the body is the shared
-      // one, which deliberately does not echo the collisions (#2721 review).
-      return NextResponse.json(
-        dependantIdentityRefusalBody(dependantIdentityRefusal, {
-          onBehalf: dependantIdentitySpeaksOnBehalf({
-            actorIsAdmin: isAuthorizedOnBehalf,
-            actorId: session.user.id,
-            ownerMemberId: effectiveMemberId,
-          }),
-          surface: "create",
-        }),
-        { status: dependantIdentityRefusal.status },
-      );
-    }
   }
 
   /**
@@ -648,19 +753,6 @@ export async function POST(request: NextRequest) {
     }
   };
 
-  // CT-4 (#2870): the club's day, from the persisted ClubTimeSettings zone and
-  // not the container's TZ (INV-CONFIG-002, INV-DATE-019), encoded at UTC
-  // midnight so it shares a frame with the parsed dates and addDaysDateOnly.
-  //
-  // #3123 review — resolved HERE, above the person-night pre-flight, and used by
-  // everything on this route that needs a day: the retroactive gate below, the
-  // conflict scan's self-removal window, and `createConfirmedBooking`, which is
-  // transaction-aware and so cannot resolve one for itself (`INV-LOCK-004`).
-  // `clubTime()` is request-memoised, but ONE binding is what makes "one club
-  // day per request" a property of the code rather than of the cache.
-  const todayAtClub = (await clubTime()).today();
-  const today = dateOnlyInstantOf(todayAtClub);
-
   // D-8: with a cross-family guest in the party this refuses NEUTRALLY rather
   // than returning the conflict body, because that body would name the nights a
   // member the caller may never have met is already booked for.
@@ -699,20 +791,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Retroactive booking (#1695): a past check-in is allowed only for an admin
-  // on-behalf create that opted into allowPastDates, and only within the
-  // rolling lookback. Everything else keeps the original today-or-future rule.
-  const retroactiveCreate =
-    parsed.data.allowPastDates === true && isAuthorizedOnBehalf;
-  // The flag is strictly retroactive: a today-or-future check-in carrying it is
-  // rejected rather than silently widening normal-create behaviour (lead-time
-  // skip, capacity warn-and-confirm belong to past stays only).
-  if (retroactiveCreate && checkIn >= today) {
-    return NextResponse.json(
-      { error: "allowPastDates requires a check-in in the past" },
-      { status: 400 },
-    );
-  }
+  // Retroactive booking (#1695), the half that needs the resolved party: the
+  // rolling lookback and the Xero lock date. The plain past-date refusals run
+  // above the member lookup (#3770), so only a retroactive create gets here
+  // with a past check-in.
   // Guards run on the RESOLVED stay envelope: guest nights can expand the stay
   // before the requested check-in (#713), and the envelope check-in is what the
   // booking — and its Xero invoice issue date — persists.
@@ -720,9 +802,6 @@ export async function POST(request: NextRequest) {
     ? resolveBookingDateEnvelope(guestInputs, checkIn, checkOut).checkIn
     : checkIn;
   if (checkIn < today) {
-    if (!retroactiveCreate) {
-      return NextResponse.json({ error: "Cannot book in the past" }, { status: 400 });
-    }
     if (envelopeCheckIn < addDaysDateOnly(today, -RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS)) {
       return NextResponse.json(
         {
@@ -749,61 +828,6 @@ export async function POST(request: NextRequest) {
       }
       throw error;
     }
-  }
-
-  /*
-   * A BOOKING MUST NAME ITS LODGE. THE SERVER NO LONGER FILLS THE BLANK (#2701).
-   *
-   * `resolveOptionalActiveLodgeId` answers a missing id with the club's DEFAULT
-   * lodge. On a read that is a reasonable convenience; on a CREATE it is how a
-   * guest ends up booked — and paid up — at a lodge nobody ever showed them.
-   * The reachable path was not a hand-made request: when `/api/admin/lodges` or
-   * `/api/lodges` fails, `useLodgeOptions` returns an empty list, `LodgeSelect`
-   * normalises the selection to `null` and renders nothing at all (ADR-002),
-   * and both booking wizards then posted `lodgeId: undefined`. In a multi-lodge
-   * club that silently stamped the default lodge on a real booking, and the
-   * member's own review step suppressed its "Lodge:" line in exactly that
-   * state, so nothing on screen contradicted it.
-   *
-   * Ten client surfaces are fixed alongside this, but the refusal is what closes
-   * the class: one gate instead of ten, so the eleventh screen somebody writes
-   * next year fails loudly here rather than writing quietly to the wrong lodge.
-   *
-   * Deliberately NOT done by making the shared helper strict. That helper also
-   * serves reads where an omitted lodge legitimately means "the whole club", and
-   * `INV-INT-016` retains exactly such a mode on `GET /api/bookings/rooms` for
-   * consumers outside this repository. The two are consistent rather than in
-   * tension: an unscoped DISCOVERY read is a real question ("where could I
-   * book?"), an unscoped CREATE is not — you cannot book "somewhere". So the
-   * strictness lives here, on the write, and the read contract is untouched.
-   */
-  if (!parsed.data.lodgeId) {
-    return NextResponse.json(
-      {
-        error:
-          "This booking did not say which lodge it is for. Choose a lodge and try again.",
-        code: BOOKING_LODGE_REQUIRED_CODE,
-      },
-      { status: 400 },
-    );
-  }
-  const bookingLodgeId = await resolveOptionalActiveLodgeId(
-    prisma,
-    parsed.data.lodgeId,
-  );
-  if (!bookingLodgeId) {
-    return NextResponse.json(
-      { error: "Unknown or inactive lodgeId" },
-      { status: 400 },
-    );
-  }
-
-  const lodgeCapacity = await getLodgeCapacity(bookingLodgeId);
-  if (guestInputs.length > lodgeCapacity) {
-    return NextResponse.json(
-      { error: lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A booking cannot exceed ${limit} guests`) },
-      { status: 400 },
-    );
   }
 
   try {

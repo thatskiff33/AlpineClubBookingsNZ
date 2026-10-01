@@ -32,6 +32,7 @@ import type { GuestStayRange } from "@/lib/booking-guest-stay-ranges";
 import { resolveModificationStayRanges } from "@/lib/booking-modification-stay-ranges";
 import {
   assertLinkedBookingMembersCanBeBooked,
+  memberGuestCrossFamilyRefusal,
   resolveLinkedBookingMembersWithBoundary,
 } from "@/lib/booking-guests";
 import {
@@ -1155,12 +1156,28 @@ interface FrozenProposal {
  * review), otherwise build the canonical snapshot + hash and the #2363 evidence
  * aggregate. `aggregateCapacityMode` is guaranteed non-null because a non-empty
  * violation set always resolves HOLD-if-any-HOLD.
+ *
+ * "NOTHING TO REVIEW" IS COLLAPSED FOR A BEYOND-FAMILY MEMBER GUEST (#3770,
+ * `INV-EXCEPT-011`). It cannot be moved above the member lookup the way the
+ * input-only refusals were, because whether anything trips reads the named
+ * members themselves: their subscription for the paid-up-adult rule, their age
+ * and membership for hosting. And it is reachable only once every claimed id
+ * resolved, so "nothing to review" against the lookup's collapsed refusal
+ * told a caller that a beyond-family id they named is a real member. With one
+ * in the party it is therefore answered with that same collapsed refusal (D-8,
+ * #2388), byte for byte. `beyondFamilyMemberIds` is the RESOLVED beyond-family
+ * set from `assertRequestedPartyMemberGuestsAllowed`, and it is required so a
+ * new caller has to answer the question.
  */
 function freezeProposal(
   snapshotInput: NewBookingProposalSnapshot | ModificationProposalSnapshot,
   violations: PolicyExceptionViolation[],
+  beyondFamilyMemberIds: readonly string[],
 ): FrozenProposal {
   if (violations.length === 0) {
+    if (beyondFamilyMemberIds.length > 0) {
+      throw memberGuestCrossFamilyRefusal(beyondFamilyMemberIds);
+    }
     throw new NoEligiblePolicyExceptionError();
   }
   const frozenEvidence = freezePolicyExceptionEvidence(violations);
@@ -1253,9 +1270,9 @@ export interface CreatedExceptionRequest {
 async function assertRequestedPartyMemberGuestsAllowed(args: {
   requestedByMemberId: string;
   memberIds: Array<string | null | undefined>;
-}): Promise<ReadonlySet<string>> {
+}): Promise<{ beyondFamilyMemberIds: readonly string[] }> {
   if (!args.memberIds.some((memberId) => Boolean(memberId)))
-    return new Set<string>();
+    return { beyondFamilyMemberIds: [] };
   const policy = await loadMemberGuestAddPolicy();
   const { members, boundary } = await resolveLinkedBookingMembersWithBoundary(
     prisma,
@@ -1276,10 +1293,10 @@ async function assertRequestedPartyMemberGuestsAllowed(args: {
       crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
     },
   );
-  // The ids that really resolved, for the own-dependant guard (#2721). It must
-  // not take a row's word for being on the member path, and this call has
-  // already done the work of finding out.
-  return new Set(members.keys());
+  // Every id resolved (an unresolved one threw above), so these beyond-family
+  // ids are real members: `freezeProposal` collapses "nothing to review" for
+  // them (#3770).
+  return { beyondFamilyMemberIds: boundary.beyondFamilyMemberIds };
 }
 
 /**
@@ -1326,26 +1343,32 @@ export async function createNewBookingExceptionRequest(
 ): Promise<CreatedExceptionRequest> {
   const memberMessage = normalizeMemberMessage(input.memberMessage);
 
-  const memberPathMemberIds = await assertRequestedPartyMemberGuestsAllowed({
-    requestedByMemberId: input.requestedByMemberId,
-    memberIds: input.guests.map((guest) => guest.memberId),
-  });
-
   // #2721: a policy-exception request is a create door, so it asks the
-  // own-dependant question before anything is frozen.
+  // own-dependant question before anything is frozen. #3770: BEFORE the member
+  // lookup, against the CLAIMED ids, as the create route and the edit doors ask
+  // it; after the lookup, this refusal versus the lookup's collapsed one told a
+  // caller whether another claimed id was a real member. The lookup below still
+  // refuses any claimed id that does not resolve.
   const dependantIdentityDeclarations =
     await resolveRequestedPartyDependantIdentity({
       requestedByMemberId: input.requestedByMemberId,
       guests: input.guests,
-      memberPathMemberIds,
+      memberPathMemberIds: claimedMemberPathIds(input.guests),
       declarations: input.dependantIdentityDeclarations,
     });
 
+  // #3770: input-only, so above the lookup for the same reason — a stay-range
+  // refusal reads nothing about the party's members.
   const proposedParty = buildProposalPartyFromGuests(
     input.checkIn,
     input.checkOut,
     input.guests,
   );
+
+  const { beyondFamilyMemberIds } = await assertRequestedPartyMemberGuestsAllowed({
+    requestedByMemberId: input.requestedByMemberId,
+    memberIds: input.guests.map((guest) => guest.memberId),
+  });
 
   const violations = await evaluateProposalPartyViolations(
     prisma,
@@ -1359,6 +1382,7 @@ export async function createNewBookingExceptionRequest(
   const frozen = freezeProposal(
     { kind: "NEW_BOOKING", lodgeId: input.lodgeId, proposed: proposedParty },
     violations,
+    beyondFamilyMemberIds,
   );
 
   const openStateKey = newBookingExceptionOpenStateKey(
@@ -1536,7 +1560,7 @@ export async function createModificationExceptionRequest(
   }
   const dependantIdentityDeclarations = input.dependantIdentityDeclarations ?? [];
 
-  await assertRequestedPartyMemberGuestsAllowed({
+  const { beyondFamilyMemberIds } = await assertRequestedPartyMemberGuestsAllowed({
     requestedByMemberId: input.requestedByMemberId,
     memberIds: (input.delta.addGuests ?? []).map((guest) => guest.memberId),
   });
@@ -1563,6 +1587,7 @@ export async function createModificationExceptionRequest(
       proposed: input.proposed,
     },
     violations,
+    beyondFamilyMemberIds,
   );
 
   const openStateKey = modificationExceptionOpenStateKey(
