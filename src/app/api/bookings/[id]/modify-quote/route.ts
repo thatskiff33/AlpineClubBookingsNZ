@@ -81,9 +81,13 @@ import {
 } from "@/lib/booking-modify-quote-request";
 import {
   checkOwnDependantIdentityForParty,
-  dependantIdentityRefusalBody,
-  renamedGuestsForDependantCheck,
+  claimedMemberPathIds,
 } from "@/lib/booking-dependant-identity";
+import {
+  dependantIdentityRefusalBody,
+  dependantIdentitySpeaksOnBehalf,
+  renamedGuestsForDependantCheck,
+} from "@/lib/booking-dependant-identity-doors";
 import {
   assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
@@ -780,12 +784,13 @@ export async function POST(
    * new name, against the booking OWNER's dependants, never the officer's. Run
    * on every preview — the identity-only and credit-only echoes below included —
    * so preview and save cannot disagree about a declaration. After the
-   * owner-or-admin 403, and (for adds) after the member resolution's D-8
-   * refusals, so it only ever speaks about the owner's own parent links.
+   * owner-or-admin 403 and BEFORE the member resolution, so its answer never
+   * depends on whether another claimed id is a real member.
    */
   const renamedForDependantCheck = renamedGuestsForDependantCheck(
     booking.guests,
     guestUpdates,
+    removeGuestIds,
   );
   const dependantIdentityResponse = async (
     party: ReadonlyArray<{ firstName: string; lastName: string; memberId?: string | null }>,
@@ -801,7 +806,11 @@ export async function POST(
     return refusal
       ? NextResponse.json(
           dependantIdentityRefusalBody(refusal, {
-            onBehalf: isAdmin && ownerMemberId !== session.user.id,
+            onBehalf: dependantIdentitySpeaksOnBehalf({
+              actorIsAdmin: isAdmin,
+              actorId: session.user.id,
+              ownerMemberId,
+            }),
             surface: "edit",
           }),
           { status: refusal.status },
@@ -853,9 +862,18 @@ export async function POST(
   // it plans no consent and notifies nobody, but it must resolve a cross-family
   // member or the quote it shows disagrees with what the apply path will charge.
   const memberGuestPolicy = await loadMemberGuestAddPolicy();
-  // The ids that really resolved — the own-dependant guard's forgery defence
-  // (#3451, `INV-GUEST-019`), hoisted exactly as the create route hoists it.
-  let memberPathMemberIds: ReadonlySet<string> = new Set<string>();
+  {
+    // #3451: the own-dependant guard (see `dependantIdentityResponse` above),
+    // BEFORE the member resolution and against the ids the party CLAIMS
+    // (`claimedMemberPathIds`): after it, this 409 versus the resolution's
+    // collapsed refusal answered "is that other id a real member?". The
+    // resolution below still refuses any claimed id that does not resolve.
+    const refused = await dependantIdentityResponse(
+      addGuests ?? [],
+      claimedMemberPathIds(addGuests ?? []),
+    );
+    if (refused) return refused;
+  }
 
   try {
     const { members: linkedMembers, boundary } =
@@ -904,7 +922,6 @@ export async function POST(
         crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
       }
     );
-    memberPathMemberIds = new Set(linkedMembers.keys());
     normalizedAddGuests = addGuests
       ? markCrossFamilyMemberGuests(
           normalizeBookingGuestInputs(addGuests, linkedMembers).map((guest, index) => ({
@@ -937,16 +954,6 @@ export async function POST(
       );
     }
     throw error;
-  }
-
-  {
-    // #3451: the own-dependant guard (see `dependantIdentityResponse` above),
-    // now that the ids that really resolved are known.
-    const refused = await dependantIdentityResponse(
-      normalizedAddGuests ?? [],
-      memberPathMemberIds,
-    );
-    if (refused) return refused;
   }
 
   // Determine new dates

@@ -61,6 +61,10 @@ import {
   NoEligiblePolicyExceptionError,
   PolicyExceptionDependantIdentityError,
 } from "@/lib/booking-exception-request-service";
+import {
+  DEPENDANT_IDENTITY_UNRESOLVED_EDIT_MESSAGE,
+  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_EDIT_MESSAGE,
+} from "@/lib/booking-dependant-identity-doors";
 
 const CREATED = {
   id: "bcr-1",
@@ -215,7 +219,12 @@ describe("POST /api/bookings/[id]/exception-requests", () => {
     );
   });
 
-  it("answers the service's own-dependant refusal with the create route's code", async () => {
+  it.each([
+    ["the member", "m1", "USER", DEPENDANT_IDENTITY_UNRESOLVED_EDIT_MESSAGE],
+    ["an officer acting for them", "officer-1", "ADMIN", DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_EDIT_MESSAGE],
+  ])("answers the service's own-dependant refusal to %s in the edit wording", async (_who, userId, role, message) => {
+    mocks.auth.mockResolvedValue({ user: { id: userId, email: "x@x.nz", name: "X", role: "member" } });
+    mocks.authzRole.mockReturnValue(role);
     mocks.createMod.mockRejectedValue(
       new PolicyExceptionDependantIdentityError({
         code: "DEPENDANT_IDENTITY_UNRESOLVED",
@@ -234,7 +243,7 @@ describe("POST /api/bookings/[id]/exception-requests", () => {
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({
       code: "DEPENDANT_IDENTITY_UNRESOLVED",
-      error: "say which person",
+      error: message,
     });
   });
 

@@ -20,11 +20,11 @@ import {
   resolveLinkedBookingMembersWithBoundary,
 } from "@/lib/booking-guests";
 import {
-  checkOwnDependantIdentity,
-  loadBookerDependants,
+  checkOwnDependantIdentityForParty,
   OwnDependantIdentityRefusedError,
   parseStoredDependantIdentityDeclarations,
   type DependantIdentityDeclaration,
+  type DependantIdentityRefusal,
 } from "@/lib/booking-dependant-identity";
 import {
   loadMemberGuestAddPolicy,
@@ -168,6 +168,16 @@ export class PolicyExceptionDependantIdentityUnresolvedError extends Error {
     );
     this.name = "PolicyExceptionDependantIdentityUnresolvedError";
   }
+}
+
+/**
+ * The guard's refusal, as the officer's send-it-back refusal — the ONE mapping
+ * both approval executors use (#3451 review), new booking and modification.
+ */
+function approvalDependantIdentityRefusal(
+  refusal: DependantIdentityRefusal,
+): PolicyExceptionDependantIdentityUnresolvedError {
+  return new PolicyExceptionDependantIdentityUnresolvedError(refusal.error);
 }
 
 // ---------------------------------------------------------------------------
@@ -844,9 +854,7 @@ async function executeApprovedModification(args: {
     preTransaction: context.batchPreTransaction,
   }).catch((error: unknown) => {
     if (error instanceof OwnDependantIdentityRefusedError) {
-      throw new PolicyExceptionDependantIdentityUnresolvedError(
-        error.refusal.error,
-      );
+      throw approvalDependantIdentityRefusal(error.refusal);
     }
     throw error;
   });
@@ -993,19 +1001,17 @@ async function executeApprovedNewBooking(args: {
    * declaration that no longer describes a real collision for this requester is
    * refused exactly as a forged one is.
    */
-  const dependantIdentityRefusal = checkOwnDependantIdentity({
+  const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(tx, {
+    bookerMemberId: request.requestedByMemberId,
     party: normalizedGuests,
     memberPathMemberIds: new Set(linkedMembers.keys()),
-    dependants: await loadBookerDependants(tx, request.requestedByMemberId),
     declarations: parseStoredDependantIdentityDeclarations(
       (snapshot as { dependantIdentityDeclarations?: unknown })
         .dependantIdentityDeclarations,
     ),
   });
   if (dependantIdentityRefusal) {
-    throw new PolicyExceptionDependantIdentityUnresolvedError(
-      dependantIdentityRefusal.error,
-    );
+    throw approvalDependantIdentityRefusal(dependantIdentityRefusal);
   }
 
   const consentPlan = planMemberGuestConsentWrites({

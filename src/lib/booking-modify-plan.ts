@@ -17,9 +17,12 @@ import {
 import { bookingOwner } from "@/lib/booking-owner";
 import {
   checkOwnDependantIdentityForParty,
+  claimedMemberPathIds,
   OwnDependantIdentityRefusedError,
-  renamedGuestsForDependantCheck,
 } from "@/lib/booking-dependant-identity";
+import {
+  renamedGuestsForDependantCheck,
+} from "@/lib/booking-dependant-identity-doors";
 import { ApiError } from "@/lib/api-error";
 import type {
   CalendarDate,
@@ -853,6 +856,41 @@ export async function prepareGuestPlan(
   if (otherLodgeElection.requested) {
     await assertOtherLodgeExists(tx, otherLodgeElection.otherLodgeId);
   }
+  /**
+   * OWN-DEPENDANT IDENTITY (#3451, `INV-GUEST-019`) — the save half of what
+   * `modify-quote` asked. A free-text row this edit ADDS, or an existing one it
+   * RENAMES onto a new name, named as one of the booking OWNER's recorded
+   * dependants needs a live declaration; untouched rows are not re-asked.
+   *
+   * BEFORE the member resolution below, against the ids the party CLAIMS
+   * (`claimedMemberPathIds`, #3451 review): after it, this 409 versus the
+   * resolution's collapsed refusal answered "is that other id a real member?" for
+   * free. The resolution still refuses any claimed id that does not resolve. The
+   * read runs on `tx` (`INV-LOCK-004`) and takes no lock. An approved policy
+   * exception's replay is checked too, against the answers frozen on the request.
+   */
+  {
+    const ownerMemberId = bookingOwner(booking).memberId;
+    const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(tx, {
+      bookerMemberId: ownerMemberId,
+      party: [
+        ...(input.addGuests ?? []),
+        ...renamedGuestsForDependantCheck(
+          booking.guests,
+          input.guestUpdates,
+          input.removeGuestIds,
+        ),
+      ],
+      memberPathMemberIds: claimedMemberPathIds(input.addGuests ?? []),
+      declarations: input.dependantIdentityDeclarations,
+    });
+    if (dependantIdentityRefusal) {
+      throw new OwnDependantIdentityRefusedError(
+        dependantIdentityRefusal,
+        ownerMemberId,
+      );
+    }
+  }
   const { members: linkedMembers, boundary } =
     await resolveLinkedBookingMembersWithBoundary(
       tx,
@@ -883,36 +921,6 @@ export async function prepareGuestPlan(
     crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
     },
   );
-  /**
-   * OWN-DEPENDANT IDENTITY (#3451, `INV-GUEST-019`) — the save half of what
-   * `modify-quote` asked. A free-text row this edit ADDS, or an existing one it
-   * RENAMES onto a new name, named as one of the booking OWNER's recorded
-   * dependants needs a live declaration; untouched rows are not re-asked.
-   * `linkedMembers` is what really resolved, so a forged member link reads as
-   * free text. Here because the save resolves its members here: the read runs on
-   * `tx` (`INV-LOCK-004`), takes no lock, and precedes every write.
-   *
-   * An approved policy exception's replay is checked too, against the answers
-   * frozen on the request (`booking-exception-approval.ts` passes them in).
-   */
-  {
-    const ownerMemberId = bookingOwner(booking).memberId;
-    const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(tx, {
-      bookerMemberId: ownerMemberId,
-      party: [
-        ...(input.addGuests ?? []),
-        ...renamedGuestsForDependantCheck(booking.guests, input.guestUpdates),
-      ],
-      memberPathMemberIds: new Set(linkedMembers.keys()),
-      declarations: input.dependantIdentityDeclarations,
-    });
-    if (dependantIdentityRefusal) {
-      throw new OwnDependantIdentityRefusedError(
-        dependantIdentityRefusal,
-        ownerMemberId === actorId,
-      );
-    }
-  }
   const consentPlan = planMemberGuestConsentWrites({
     guests: input.addGuests
       ? normalizeBookingGuestInputs(input.addGuests, linkedMembers).map((guest, index) => ({

@@ -814,6 +814,37 @@ describe("POST /api/bookings/[id]/guests refuses the owner's dependant as a type
     expect(tx.bookingGuest.create).not.toHaveBeenCalled();
   });
 
+  // #3451 review, B1: the answer must not depend on whether ANOTHER claimed
+  // member id is real — the guard runs before the member lookup reads it.
+  it.each([["X is a real member", true], ["X is nobody", false]])(
+    "answers identically whether another claimed id resolves (%s)",
+    async (_label, xExists) => {
+      const booking = makeBooking();
+      const tx = makeTx(booking);
+      const findMany = withDependants(tx, [DEPENDANT]);
+      mockTransaction.mockImplementation((fn: any) => fn(tx));
+      const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+      const res = await POST(
+        guestsRequest({
+          guests: [
+            { firstName: "Grace", lastName: "Hopper", ageTier: "ADULT", isMember: true, memberId: xExists ? "member-x" : "nobody" },
+            { firstName: "Sam", lastName: "Smith", ageTier: "CHILD", isMember: false },
+          ],
+        }),
+        params,
+      );
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("DEPENDANT_IDENTITY_UNRESOLVED");
+      // Only the parent-link read happened: no member row was looked up by id.
+      const idLookups = findMany.mock.calls.filter(
+        ([args]) => (args as { where?: { id?: unknown } })?.where?.id !== undefined,
+      );
+      expect(idLookups).toHaveLength(0);
+    },
+  );
+
   it("adds a guest who is nobody's dependant exactly as before", async () => {
     const booking = makeBooking();
     const tx = makeTx(booking);

@@ -15,9 +15,12 @@ import { auth } from "@/lib/auth";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import {
   dependantIdentityDeclarationSchema,
-  dependantIdentityRefusalBody,
   OwnDependantIdentityRefusedError,
 } from "@/lib/booking-dependant-identity";
+import {
+  dependantIdentityRefusalBody,
+  dependantIdentitySpeaksOnBehalf,
+} from "@/lib/booking-dependant-identity-doors";
 import {
   BookingGuestValidationError,
   getBookingGuestValidationErrorResponse,
@@ -354,7 +357,11 @@ export async function PUT(
     if (err instanceof OwnDependantIdentityRefusedError) {
       return NextResponse.json(
         dependantIdentityRefusalBody(err.refusal, {
-          onBehalf: actorRole === "ADMIN" && !err.actorIsBookingOwner,
+          onBehalf: dependantIdentitySpeaksOnBehalf({
+            actorIsAdmin: actorRole === "ADMIN",
+            actorId: session.user.id,
+            ownerMemberId: err.ownerMemberId,
+          }),
           surface: "edit",
         }),
         { status: err.refusal.status },

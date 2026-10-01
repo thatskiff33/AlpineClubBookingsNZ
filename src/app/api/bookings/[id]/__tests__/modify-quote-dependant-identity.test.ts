@@ -3,10 +3,12 @@ import { NextRequest } from "next/server";
 import {
   DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
   DEPENDANT_IDENTITY_UNRESOLVED_CODE,
-  DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE,
-  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_EDIT_MESSAGE,
   DIFFERENT_PERSON_SAME_NAME,
 } from "@/lib/booking-dependant-identity";
+import {
+  DEPENDANT_IDENTITY_UNRESOLVED_EDIT_MESSAGE,
+  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_EDIT_MESSAGE,
+} from "@/lib/booking-dependant-identity-doors";
 
 /*
   #3451 — own-dependant identity on the edit panel's PREVIEW door
@@ -300,7 +302,7 @@ describe("POST /api/bookings/[id]/modify-quote — #3451 own-dependant collision
     const body = await res.json();
     expect(body).toEqual({
       code: DEPENDANT_IDENTITY_UNRESOLVED_CODE,
-      error: DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE,
+      error: DEPENDANT_IDENTITY_UNRESOLVED_EDIT_MESSAGE,
     });
     // The OWNER's parent links — the privacy boundary of the rule.
     expect(h.memberFindMany).toHaveBeenCalledWith(
@@ -341,15 +343,46 @@ describe("POST /api/bookings/[id]/modify-quote — #3451 own-dependant collision
     expect(h.priceGuests).toHaveBeenCalled();
   });
 
-  it("reads a forged member link as the free-text row it is", async () => {
+  it("leaves a CLAIMED member id to the member lookup, which refuses one that does not resolve", async () => {
+    // The guard runs before the lookup and trusts the claim; the lookup is
+    // what refuses a forged id (it throws for any id that does not resolve).
     const res = await POST(
       req({ addGuests: [added("Sam", "Smith", { isMember: true, memberId: "made-up" })] }),
       { params },
     );
 
+    expect((await res.json()).code).not.toBe(DEPENDANT_IDENTITY_UNRESOLVED_CODE);
+    expect(h.resolveLinkedBookingMembersWithBoundary).toHaveBeenCalled();
+  });
+
+  /*
+    #3451 review, B1 — the membership-existence oracle. A party carrying another
+    member's id X beside a free-text own-dependant name must answer the SAME way
+    whether X is a real, bookable member or not. The guard therefore runs BEFORE
+    the member lookup and never reaches it.
+  */
+  it.each([
+    ["X is a real member", () =>
+      h.resolveLinkedBookingMembersWithBoundary.mockResolvedValue(resolved(["member-x"]))],
+    ["X is nobody", () =>
+      h.resolveLinkedBookingMembersWithBoundary.mockRejectedValue(
+        new Error("lookup must not run"),
+      )],
+  ])("answers identically whether another claimed id resolves (%s)", async (_label, arrange) => {
+    arrange();
+    const res = await POST(
+      req({
+        addGuests: [
+          added("Grace", "Hopper", { isMember: true, memberId: "member-x" }),
+          added("Sam", "Smith"),
+        ],
+      }),
+      { params },
+    );
+
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe(DEPENDANT_IDENTITY_UNRESOLVED_CODE);
-    expect(h.priceGuests).not.toHaveBeenCalled();
+    expect(h.resolveLinkedBookingMembersWithBoundary).not.toHaveBeenCalled();
   });
 
   it("refuses a declaration about a dependant the owner does not have", async () => {

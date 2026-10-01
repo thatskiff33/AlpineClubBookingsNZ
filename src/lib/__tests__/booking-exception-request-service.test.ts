@@ -1020,6 +1020,34 @@ describe("createModificationExceptionRequest", () => {
       expect(mocks.bcrCreate).not.toHaveBeenCalled();
     });
 
+    // #3451 review, B1: the answer never depends on whether ANOTHER claimed
+    // member id is real, because the guard runs before the member lookup.
+    it.each([
+      ["X is a real member", () =>
+        mocks.resolveLinkedMembers.mockResolvedValue({
+          members: new Map([["member-x", { id: "member-x", ageTier: "ADULT" }]]),
+          boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: [] },
+        })],
+      ["X is nobody", () =>
+        mocks.resolveLinkedMembers.mockRejectedValue(new Error("not found"))],
+    ])("answers identically whether another claimed id resolves (%s)", async (_label, arrange) => {
+      arrange();
+      mocks.memberFindMany.mockResolvedValue([
+        { id: "dep-sam", firstName: "Sam", lastName: "Smith" },
+      ]);
+      await expect(
+        request({
+          delta: {
+            addGuests: [
+              { firstName: "Grace", lastName: "Hopper", ageTier: "ADULT", isMember: true, memberId: "member-x" },
+              ...addSam.addGuests,
+            ],
+          },
+        }),
+      ).rejects.toBeInstanceOf(PolicyExceptionDependantIdentityError);
+      expect(mocks.resolveLinkedMembers).not.toHaveBeenCalled();
+    });
+
     it("has nobody's dependants to ask about on a booking with no member owner", async () => {
       mocks.memberFindMany.mockResolvedValue([
         { id: "dep-sam", firstName: "Sam", lastName: "Smith" },

@@ -4,11 +4,15 @@ import {
   DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
   DEPENDANT_IDENTITY_UNRESOLVED_CODE,
   DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE,
-  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_EDIT_MESSAGE,
   DIFFERENT_PERSON_SAME_NAME,
   OwnDependantIdentityRefusedError,
   type DependantIdentityRefusal,
 } from "@/lib/booking-dependant-identity";
+import {
+  DEPENDANT_IDENTITY_DECLARATION_INVALID_EDIT_MESSAGE,
+  DEPENDANT_IDENTITY_UNRESOLVED_EDIT_MESSAGE,
+  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_EDIT_MESSAGE,
+} from "@/lib/booking-dependant-identity-doors";
 
 // #3451 (`INV-GUEST-019`): the SAVE door's wiring. The guard itself runs in the
 // guest planner and is pinned in `booking-modify-plan-dependant-identity.test.ts`;
@@ -144,9 +148,9 @@ describe("PUT /api/bookings/[id]/modify — own-dependant identity (#3451)", () 
     expect(h.modifyBookingBatch).not.toHaveBeenCalled();
   });
 
-  it("answers the planner's refusal with the create route's body", async () => {
+  it("answers the planner's refusal with the create route's code, in the edit wording", async () => {
     h.modifyBookingBatch.mockRejectedValue(
-      new OwnDependantIdentityRefusedError(unresolved, true),
+      new OwnDependantIdentityRefusedError(unresolved, "m1"),
     );
 
     const res = await PUT(req(addSam), { params });
@@ -154,7 +158,7 @@ describe("PUT /api/bookings/[id]/modify — own-dependant identity (#3451)", () 
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({
       code: DEPENDANT_IDENTITY_UNRESOLVED_CODE,
-      error: DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE,
+      error: DEPENDANT_IDENTITY_UNRESOLVED_EDIT_MESSAGE,
     });
   });
 
@@ -162,7 +166,7 @@ describe("PUT /api/bookings/[id]/modify — own-dependant identity (#3451)", () 
     h.auth.mockResolvedValue({ user: { id: "admin1" } });
     h.authorizationRole.mockReturnValue("ADMIN");
     h.modifyBookingBatch.mockRejectedValue(
-      new OwnDependantIdentityRefusedError(unresolved, false),
+      new OwnDependantIdentityRefusedError(unresolved, "m1"),
     );
 
     const res = await PUT(req(addSam), { params });
@@ -178,12 +182,12 @@ describe("PUT /api/bookings/[id]/modify — own-dependant identity (#3451)", () 
     h.auth.mockResolvedValue({ user: { id: "admin1" } });
     h.authorizationRole.mockReturnValue("ADMIN");
     h.modifyBookingBatch.mockRejectedValue(
-      new OwnDependantIdentityRefusedError(unresolved, true),
+      new OwnDependantIdentityRefusedError(unresolved, "admin1"),
     );
 
     const res = await PUT(req(addSam), { params });
 
-    expect((await res.json()).error).toBe(DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE);
+    expect((await res.json()).error).toBe(DEPENDANT_IDENTITY_UNRESOLVED_EDIT_MESSAGE);
   });
 
   it("passes a tampering refusal through with its own status and sentence", async () => {
@@ -195,7 +199,7 @@ describe("PUT /api/bookings/[id]/modify — own-dependant identity (#3451)", () 
           error: "stale",
           collisions: [],
         },
-        true,
+        "m1",
       ),
     );
 
@@ -204,7 +208,7 @@ describe("PUT /api/bookings/[id]/modify — own-dependant identity (#3451)", () 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
       code: DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
-      error: "stale",
+      error: DEPENDANT_IDENTITY_DECLARATION_INVALID_EDIT_MESSAGE,
     });
   });
 

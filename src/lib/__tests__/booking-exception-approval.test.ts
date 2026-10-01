@@ -739,7 +739,7 @@ describe("executeApprovedProposal — modification", () => {
           error: "member sentence",
           collisions: [],
         },
-        false,
+        "member-1",
       ),
     );
     await expect(runExecution(MIN_STAY_OVERRIDE)).rejects.toBeInstanceOf(

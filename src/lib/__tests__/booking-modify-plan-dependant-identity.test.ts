@@ -9,11 +9,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
   so the guard lives there and this suite drives the planner directly. It pins:
   an added free-text guest named as one of the booking OWNER's recorded
   dependants is refused unless a live declaration covers them; a declaration that
-  describes no collision is refused as tampering; a forged member link is read as
-  the free-text row it is; the dependants read are the OWNER's on an officer's
-  edit, never the officer's; rows already on the booking are not re-asked about;
-  and an approved policy-exception replay is not re-guarded (that door carries no
-  declarations — see the planner's note).
+  describes no collision is refused as tampering; the guard runs BEFORE the member
+  lookup, so its answer never depends on whether another claimed id is a real
+  member (#3451 review, B1); the dependants read are the OWNER's on an officer's
+  edit, never the officer's; untouched rows are not re-asked about; and an
+  approved policy-exception replay is checked against its frozen answers.
 */
 
 const h = vi.hoisted(() => ({
@@ -186,7 +186,7 @@ describe("#3451: the modify save refuses an added guest named as the owner's dep
     expect(refusal).not.toBeNull();
     expect(refusal?.refusal.code).toBe(DEPENDANT_IDENTITY_UNRESOLVED_CODE);
     expect(refusal?.refusal.status).toBe(409);
-    expect(refusal?.actorIsBookingOwner).toBe(true);
+    expect(refusal?.ownerMemberId).toBe(OWNER);
     // The candidate set is the owner's own parent links, nothing wider.
     expect(h.memberFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -229,16 +229,38 @@ describe("#3451: the modify save refuses an added guest named as the owner's dep
     expect(refusal).toBeNull();
   });
 
-  it("reads a forged member link as the free-text row it is", async () => {
-    // The row CLAIMS a member id, but nothing resolved behind it.
-    const refusal = await refusalOf(
+  it("leaves a CLAIMED member id to the member lookup, which refuses one that does not resolve", async () => {
+    h.resolveLinkedBookingMembersWithBoundary.mockRejectedValue(
+      new Error("Linked member is inactive or not found"),
+    );
+    await expect(
       plan({
         addGuests: [
           addGuest("Sam", "Smith", { isMember: true, memberId: "made-up" }),
         ],
       }),
+    ).rejects.toThrow("Linked member is inactive or not found");
+  });
+
+  // B1: the membership-existence oracle. Same answer whether X resolves or not,
+  // because the guard answers before the lookup runs at all.
+  it.each([
+    ["X is a real member", () =>
+      h.resolveLinkedBookingMembersWithBoundary.mockResolvedValue(resolved(["member-x"]))],
+    ["X is nobody", () =>
+      h.resolveLinkedBookingMembersWithBoundary.mockRejectedValue(new Error("not found"))],
+  ])("answers identically whether another claimed id resolves (%s)", async (_label, arrange) => {
+    arrange();
+    const refusal = await refusalOf(
+      plan({
+        addGuests: [
+          addGuest("Grace", "Hopper", { isMember: true, memberId: "member-x" }),
+          addGuest("Sam", "Smith"),
+        ],
+      }),
     );
     expect(refusal?.refusal.code).toBe(DEPENDANT_IDENTITY_UNRESOLVED_CODE);
+    expect(h.resolveLinkedBookingMembersWithBoundary).not.toHaveBeenCalled();
   });
 
   it("refuses a declaration about a dependant the owner does not have", async () => {
@@ -301,7 +323,7 @@ describe("#3451: the modify save refuses an added guest named as the owner's dep
       plan({ addGuests: [addGuest("Sam", "Smith")] }, { role: "ADMIN", id: "admin-1" }),
     );
     expect(refusal?.refusal.code).toBe(DEPENDANT_IDENTITY_UNRESOLVED_CODE);
-    expect(refusal?.actorIsBookingOwner).toBe(false);
+    expect(refusal?.ownerMemberId).toBe(OWNER);
     const where = h.memberFindMany.mock.calls[0]?.[0]?.where;
     expect(where.OR).toEqual([
       { parentMemberId: OWNER },

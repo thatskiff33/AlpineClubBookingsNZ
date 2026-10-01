@@ -13,7 +13,12 @@ import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
-import { dependantIdentityDeclarationSchema } from "@/lib/booking-dependant-identity";
+import {
+  dependantIdentityDeclarationSchema,
+} from "@/lib/booking-dependant-identity";
+import {
+  dependantIdentitySpeaksOnBehalf,
+} from "@/lib/booking-dependant-identity-doors";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
@@ -298,6 +303,13 @@ export async function POST(
 
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
-    return mapExceptionRequestError(error);
+    return mapExceptionRequestError(error, {
+      onBehalf: dependantIdentitySpeaksOnBehalf({
+        actorIsAdmin: isAdmin,
+        actorId: session.user.id,
+        ownerMemberId: bookingOwner(booking).memberId,
+      }),
+      surface: "edit",
+    });
   }
 }
