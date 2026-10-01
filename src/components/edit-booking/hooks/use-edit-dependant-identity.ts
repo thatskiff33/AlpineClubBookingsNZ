@@ -4,7 +4,9 @@ import { useCallback, type Dispatch, type SetStateAction } from "react";
 import {
   DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
   type BookerDependant,
+  type DependantIdentityPartyMember,
 } from "@/lib/booking-dependant-identity";
+import { normalizePersonFullName } from "@/lib/person-name-normalization";
 import {
   relinkCollidingGuestToMember,
   useDependantIdentityAnswers,
@@ -21,8 +23,9 @@ import type { FamilyMember, NewGuest } from "@/components/edit-booking/types";
  * `useDependantIdentityAnswers`, the relink is `relinkCollidingGuestToMember`,
  * and the question is drawn by the wizard's own components; this hook only
  * wires them to the panel's state. The party it asks about is the ADDED guests
- * and nothing else — rows already on the booking were admitted under the create
- * door's own question and are not re-litigated — and the dependants are the
+ * plus any existing free-text guest RENAMED onto a new name (the same split by
+ * another route, `renamedGuestsForDependantCheck`); untouched rows were admitted
+ * under their own door's question and are not re-litigated. The dependants are the
  * booking OWNER's, from the family route the panel already reads (the owner's
  * own on a member's panel, the booking's `eligible-family` on an officer's).
  *
@@ -32,11 +35,21 @@ import type { FamilyMember, NewGuest } from "@/components/edit-booking/types";
 export function useEditDependantIdentity({
   addedGuests,
   setAddedGuests,
+  renamedGuests,
+  replaceRenamedGuest,
   ownDependants,
   reloadFamilyOptions,
 }: {
   addedGuests: NewGuest[];
   setAddedGuests: Dispatch<SetStateAction<NewGuest[]>>;
+  /** Existing free-text rows this edit renames onto a new name. */
+  renamedGuests: ReadonlyArray<DependantIdentityPartyMember & { guestId: string }>;
+  /**
+   * "This is my dependant" about a RENAMED row: take that row off and add the
+   * dependant as a member instead. An existing row cannot be relinked in place —
+   * a rename never touches member identity (`resolveGuestNameUpdates`).
+   */
+  replaceRenamedGuest: (guestId: string, familyMember: FamilyMember) => void;
   ownDependants: BookerDependant[];
   reloadFamilyOptions: () => void;
 }): DependantIdentityAnswers & {
@@ -49,7 +62,7 @@ export function useEditDependantIdentity({
   handleRefusal: (code: string) => void;
 } {
   const answers = useDependantIdentityAnswers({
-    party: addedGuests,
+    party: [...addedGuests, ...renamedGuests],
     ownDependants,
   });
   const { clearDeclarations } = answers;
@@ -58,13 +71,22 @@ export function useEditDependantIdentity({
     (normalizedName: string, familyMember: FamilyMember) => {
       // Matched by NORMALISED NAME, never by row position — the shared relink is
       // the whole defence against answering for whoever now occupies a slot.
-      setAddedGuests(
-        (current) =>
-          relinkCollidingGuestToMember(current, normalizedName, familyMember) ??
-          current,
+      if (relinkCollidingGuestToMember(addedGuests, normalizedName, familyMember)) {
+        setAddedGuests(
+          (current) =>
+            relinkCollidingGuestToMember(current, normalizedName, familyMember) ??
+            current,
+        );
+        return;
+      }
+      const renamed = renamedGuests.find(
+        (guest) =>
+          normalizePersonFullName(guest.firstName, guest.lastName) ===
+          normalizedName,
       );
+      if (renamed) replaceRenamedGuest(renamed.guestId, familyMember);
     },
-    [setAddedGuests],
+    [addedGuests, renamedGuests, replaceRenamedGuest, setAddedGuests],
   );
 
   const handleRefusal = useCallback(

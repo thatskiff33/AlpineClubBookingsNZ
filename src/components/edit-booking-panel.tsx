@@ -45,7 +45,10 @@ import { EditDatesCard } from "@/components/edit-booking/edit-dates-card";
 import { EditGuestsCard } from "@/components/edit-booking/edit-guests-card";
 import { EditDependantIdentityQuestion } from "@/components/edit-booking/edit-dependant-identity-question";
 import { useEditDependantIdentity } from "@/components/edit-booking/hooks/use-edit-dependant-identity";
-import { isDependantIdentityRefusalCode } from "@/lib/booking-dependant-identity";
+import {
+  isDependantIdentityRefusalCode,
+  renamedGuestsForDependantCheck,
+} from "@/lib/booking-dependant-identity";
 import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
 import { PromoCodeCard } from "@/components/edit-booking/promo-code-card";
 import { ReviewJustificationField } from "@/components/edit-booking/review-justification-field";
@@ -202,13 +205,6 @@ export function EditBookingPanel({
     viewerRole: booking.viewerRole,
   });
   const { familyMembers, familyMembersLoaded, partnerCandidates } = familyOptions;
-  // #3451 (`INV-GUEST-019`): an ADDED guest named as one of the owner's
-  // recorded dependants is asked about here, as the create wizard asks.
-  const dependantIdentity = useEditDependantIdentity({
-    addedGuests,
-    setAddedGuests,
-    ...familyOptions,
-  });
   const availablePromoCodes = useAvailablePromoCodes(booking.viewerRole);
 
   // #2266: account credit. `useCredit` is seeded from the stored election
@@ -550,6 +546,18 @@ export function EditBookingPanel({
     ]
   );
   const guestNamesChanged = guestNameUpdates.length > 0;
+  // #3451 (`INV-GUEST-019`): an ADDED guest, or an existing one RENAMED, named
+  // as one of the owner's recorded dependants is asked about, as create asks.
+  const dependantIdentity = useEditDependantIdentity({
+    addedGuests,
+    setAddedGuests,
+    renamedGuests: renamedGuestsForDependantCheck(booking.guests, guestNameUpdates),
+    replaceRenamedGuest: (guestId, familyMember) => {
+      handleRemoveGuest(guestId);
+      handleAddFamilyMember(familyMember);
+    },
+    ...familyOptions,
+  });
   // A night toggle in the grid (issue #713) is a change even when it leaves the
   // guest's overall envelope unchanged (e.g. switching off a middle night).
   const guestNightsChanged =
@@ -739,11 +747,6 @@ export function EditBookingPanel({
     if (effectiveCheckOut !== booking.checkOut) body.checkOut = effectiveCheckOut;
     if (addedGuests.length > 0) {
       body.addGuests = rangeAwareAddedGuests;
-      // #3451: only the answers that still describe a live collision travel.
-      if (dependantIdentity.declarationsPayload) {
-        body.dependantIdentityDeclarations =
-          dependantIdentity.declarationsPayload;
-      }
       // #1746: partner-sharer flags for admin-added partner guests still in
       // the proposal — capacity then runs through the reserved double slots.
       const partnerSharedGuests = addedGuests
@@ -761,6 +764,10 @@ export function EditBookingPanel({
     }
     if (guestNameUpdates.length > 0) {
       body.guestUpdates = guestNameUpdates;
+    }
+    // #3451: only the answers that still describe a live collision travel.
+    if (dependantIdentity.declarationsPayload) {
+      body.dependantIdentityDeclarations = dependantIdentity.declarationsPayload;
     }
     // Other Lodges epic: the other-club rate election, sent only when this edit
     // actually proposes a change to it — an unchanged election must not travel,

@@ -321,4 +321,93 @@ describe("EditBookingPanel — an added guest named as the owner's dependant (#3
       expect(lastQuoteBody()?.dependantIdentityDeclarations).toHaveLength(1),
     );
   });
+
+  describe("an existing guest RENAMED onto the dependant's name", () => {
+    const ALEX = {
+      id: "g2",
+      firstName: "Alex",
+      lastName: "Brown",
+      ageTier: "CHILD",
+      isMember: false,
+      memberId: null,
+      stayStart: null,
+      stayEnd: null,
+      nights: null,
+      priceCents: 3000,
+    };
+
+    function bookingWithAlex() {
+      const booking = makeBooking();
+      return { ...booking, guests: [...booking.guests, ALEX] };
+    }
+
+    function renameAlexToSam() {
+      fireEvent.change(document.getElementById("guest-g2-first") as HTMLElement, {
+        target: { value: "Sam" },
+      });
+      fireEvent.change(document.getElementById("guest-g2-last") as HTMLElement, {
+        target: { value: "Smith" },
+      });
+    }
+
+    it("asks, and resends the rename with the 'different person' answer", async () => {
+      installFetch([FAMILY]);
+      render(<EditBookingPanel booking={bookingWithAlex()} onDone={vi.fn()} />);
+      await waitFor(() =>
+        expect(fetchCalls.some((call) => call.url.includes("/api/members/family"))).toBe(true),
+      );
+
+      renameAlexToSam();
+      await vi.advanceTimersByTimeAsync(600);
+
+      expect(
+        await screen.findByText("Is this your own family member?"),
+      ).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "This is a different person with the same name",
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(600);
+
+      await waitFor(() =>
+        expect(lastQuoteBody()?.dependantIdentityDeclarations).toEqual([
+          {
+            kind: DIFFERENT_PERSON_SAME_NAME,
+            dependantMemberId: SAM.id,
+            normalizedName: "sam smith",
+          },
+        ]),
+      );
+      expect(
+        (lastQuoteBody() as { guestUpdates?: unknown[] } | undefined)?.guestUpdates,
+      ).toEqual([{ guestId: "g2", firstName: "Sam", lastName: "Smith" }]);
+    });
+
+    it("replaces the renamed row with the dependant as a member when it IS them", async () => {
+      installFetch([FAMILY]);
+      render(<EditBookingPanel booking={bookingWithAlex()} onDone={vi.fn()} />);
+      await waitFor(() =>
+        expect(fetchCalls.some((call) => call.url.includes("/api/members/family"))).toBe(true),
+      );
+
+      renameAlexToSam();
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: /This is my dependant — book them as a member/,
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(600);
+
+      await waitFor(() => {
+        const body = lastQuoteBody() as
+          | (AddGuestBody & { removeGuestIds?: string[]; guestUpdates?: unknown[] })
+          | undefined;
+        expect(body?.removeGuestIds).toEqual(["g2"]);
+        expect(body?.addGuests?.[0]).toMatchObject({ memberId: SAM.id, isMember: true });
+        expect(body?.guestUpdates).toBeUndefined();
+      });
+      expect(screen.queryByText("Is this your own family member?")).toBeNull();
+    });
+  });
 });
