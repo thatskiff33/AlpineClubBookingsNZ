@@ -438,4 +438,80 @@ describe("POST /api/bookings/[id]/modify-quote — #3451 own-dependant collision
     expect(res.status).toBe(403);
     expect(h.memberFindMany).not.toHaveBeenCalled();
   });
+
+  describe("renames and the identity-only echo (#3451)", () => {
+    function withTypedGuest() {
+      h.bookingFindUnique.mockResolvedValue(
+        futureBooking([
+          {
+            id: "g2",
+            firstName: "Alex",
+            lastName: "Brown",
+            ageTier: "CHILD",
+            isMember: false,
+            memberId: null,
+            stayStart: D("2026-08-10"),
+            stayEnd: D("2026-08-12"),
+            priceCents: 6000,
+            nights: [
+              { stayDate: D("2026-08-10"), priceCents: 3000, priceSource: "SOLD" },
+              { stayDate: D("2026-08-11"), priceCents: 3000, priceSource: "SOLD" },
+            ],
+          },
+        ]),
+      );
+    }
+
+    it("asks about an existing guest renamed onto the dependant's name", async () => {
+      withTypedGuest();
+      const res = await POST(
+        req({ guestUpdates: [{ guestId: "g2", firstName: "Sam", lastName: "Smith" }] }),
+        { params },
+      );
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe(DEPENDANT_IDENTITY_UNRESOLVED_CODE);
+    });
+
+    it("echoes the rename once the member says it is a different person", async () => {
+      withTypedGuest();
+      const res = await POST(
+        req({
+          guestUpdates: [{ guestId: "g2", firstName: "Sam", lastName: "Smith" }],
+          dependantIdentityDeclarations: [declaration(DEPENDANT.id)],
+        }),
+        { params },
+      );
+
+      expect(res.status).toBe(200);
+      expect((await res.json()).code).toBeUndefined();
+    });
+
+    it("refuses a parked declaration on a name-fix-only preview, exactly as the save does", async () => {
+      withTypedGuest();
+      const res = await POST(
+        req({
+          guestUpdates: [{ guestId: "g2", firstName: "Alexa", lastName: "Brown" }],
+          dependantIdentityDeclarations: [declaration(DEPENDANT.id)],
+        }),
+        { params },
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe(DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE);
+    });
+
+    it("refuses a parked declaration on a credit-only preview too", async () => {
+      const res = await POST(
+        req({
+          applyCreditCents: 0,
+          dependantIdentityDeclarations: [declaration(DEPENDANT.id)],
+        }),
+        { params },
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe(DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE);
+    });
+  });
 });

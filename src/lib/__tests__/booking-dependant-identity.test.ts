@@ -7,6 +7,7 @@ import {
   DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_EDIT_MESSAGE,
   DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,
   isDependantIdentityRefusalCode,
+  renamedGuestsForDependantCheck,
   standaloneAddGuestDependantRefusalMessage,
   DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
   DEPENDANT_IDENTITY_UNRESOLVED_CODE,
@@ -535,5 +536,32 @@ describe("what each door says (#3451)", () => {
     ).toBe(true);
     expect(isDependantIdentityRefusalCode("MEMBER_GUEST_NOT_ADDABLE")).toBe(false);
     expect(isDependantIdentityRefusalCode(undefined)).toBe(false);
+  });
+});
+
+describe("renamedGuestsForDependantCheck: a rename is checked like an add (#3451)", () => {
+  const existing = [
+    { id: "g1", firstName: "Alex", lastName: "Brown", isMember: false, memberId: null },
+    { id: "g2", firstName: "sam", lastName: "smith", isMember: false, memberId: null },
+    { id: "g3", firstName: "Pat", lastName: "Owner", isMember: true, memberId: "m1" },
+  ];
+
+  it("returns a free-text row renamed onto a new name, as free text", () => {
+    expect(
+      renamedGuestsForDependantCheck(existing, [
+        { guestId: "g1", firstName: "Sam", lastName: "Smith" },
+      ]),
+    ).toEqual([{ guestId: "g1", firstName: "Sam", lastName: "Smith", memberId: null }]);
+  });
+
+  it("skips a casing fix, a member row and an unknown id", () => {
+    expect(
+      renamedGuestsForDependantCheck(existing, [
+        { guestId: "g2", firstName: "Sam", lastName: "Smith" },
+        { guestId: "g3", firstName: "Sam", lastName: "Smith" },
+        { guestId: "ghost", firstName: "Sam", lastName: "Smith" },
+      ]),
+    ).toEqual([]);
+    expect(renamedGuestsForDependantCheck(existing, undefined)).toEqual([]);
   });
 });

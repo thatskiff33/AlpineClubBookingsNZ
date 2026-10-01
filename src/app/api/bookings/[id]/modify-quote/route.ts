@@ -82,6 +82,7 @@ import {
 import {
   checkOwnDependantIdentityForParty,
   dependantIdentityRefusalBody,
+  renamedGuestsForDependantCheck,
 } from "@/lib/booking-dependant-identity";
 import {
   assertLinkedBookingMembersCanBeBooked,
@@ -770,11 +771,51 @@ export async function POST(
     throw error;
   }
 
+  /**
+   * OWN-DEPENDANT IDENTITY (#3451, `INV-GUEST-019`; option C, "ask in place").
+   * Refusing the preview with the create route's code is what makes the edit
+   * panel ask the wizard's question; the answer comes back as
+   * `dependantIdentityDeclarations` and is re-checked here and by the save. It
+   * covers the rows this edit ADDS and existing free-text rows it RENAMES onto a
+   * new name, against the booking OWNER's dependants, never the officer's. Run
+   * on every preview — the identity-only and credit-only echoes below included —
+   * so preview and save cannot disagree about a declaration. After the
+   * owner-or-admin 403, and (for adds) after the member resolution's D-8
+   * refusals, so it only ever speaks about the owner's own parent links.
+   */
+  const renamedForDependantCheck = renamedGuestsForDependantCheck(
+    booking.guests,
+    guestUpdates,
+  );
+  const dependantIdentityResponse = async (
+    party: ReadonlyArray<{ firstName: string; lastName: string; memberId?: string | null }>,
+    memberPathMemberIds: ReadonlySet<string>,
+  ) => {
+    const ownerMemberId = bookingOwner(booking).memberId;
+    const refusal = await checkOwnDependantIdentityForParty(prisma, {
+      bookerMemberId: ownerMemberId,
+      party: [...party, ...renamedForDependantCheck],
+      memberPathMemberIds,
+      declarations: parsed.data.dependantIdentityDeclarations,
+    });
+    return refusal
+      ? NextResponse.json(
+          dependantIdentityRefusalBody(refusal, {
+            onBehalf: isAdmin && ownerMemberId !== session.user.id,
+            surface: "edit",
+          }),
+          { status: refusal.status },
+        )
+      : null;
+  };
+
   // Identity-only preview (#1099): a name fix never reprices, so the quote is
   // the stored state with zero deltas — no pricing engine, no capacity check,
   // safe for quoted and legacy bookings alike. #2266 routes a credit-only
   // election through the same echo for the same reason.
   if (requestIsIdentityOnly || requestIsCreditElectionOnly) {
+    const refused = await dependantIdentityResponse([], new Set());
+    if (refused) return refused;
     return NextResponse.json({
       availableCreditCents,
       newTotalPriceCents: booking.totalPriceCents,
@@ -898,32 +939,14 @@ export async function POST(
     throw error;
   }
 
-  /**
-   * OWN-DEPENDANT IDENTITY ON AN ADDED GUEST (#3451, `INV-GUEST-019`; option C,
-   * "ask in place on add-guest"). Refusing the preview with the create route's
-   * code is what makes the edit panel ask the wizard's question; the answer comes
-   * back as `dependantIdentityDeclarations` and is re-checked here and by the
-   * save. Only the rows this edit ADDS, and the booking OWNER's dependants, never
-   * the officer's. After the owner-or-admin 403 and the member resolution's D-8
-   * refusals, so it only ever speaks about the owner's own parent links.
-   */
   {
-    const ownerMemberId = bookingOwner(booking).memberId;
-    const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(prisma, {
-      bookerMemberId: ownerMemberId,
-      party: normalizedAddGuests ?? [],
+    // #3451: the own-dependant guard (see `dependantIdentityResponse` above),
+    // now that the ids that really resolved are known.
+    const refused = await dependantIdentityResponse(
+      normalizedAddGuests ?? [],
       memberPathMemberIds,
-      declarations: parsed.data.dependantIdentityDeclarations,
-    });
-    if (dependantIdentityRefusal) {
-      return NextResponse.json(
-        dependantIdentityRefusalBody(dependantIdentityRefusal, {
-          onBehalf: isAdmin && ownerMemberId !== session.user.id,
-          surface: "edit",
-        }),
-        { status: dependantIdentityRefusal.status },
-      );
-    }
+    );
+    if (refused) return refused;
   }
 
   // Determine new dates

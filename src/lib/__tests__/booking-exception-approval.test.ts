@@ -129,6 +129,7 @@ import type { ConfirmedOverride } from "@/lib/booking-exception-execution";
 import { requireCalendarDate } from "@/lib/club-time";
 import type { BatchModificationPreTransaction } from "@/lib/booking-batch-modification-service";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { OwnDependantIdentityRefusedError } from "@/lib/booking-dependant-identity";
 
 // #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
 // its transaction and threaded in. Pinned to the frozen clock's club day, so
@@ -641,6 +642,7 @@ describe("executeApprovedProposal — modification", () => {
         strandedStateKey: string;
       };
     } = {},
+    txOverrides: Record<string, unknown> = {},
   ) {
     const snapshot = frozenModificationSnapshot();
     const { hooks, outcome } = buildPolicyExceptionApprovalHooks({
@@ -653,7 +655,7 @@ describe("executeApprovedProposal — modification", () => {
       adminNotes: "Long-standing member, one-off.",
       ...contextOverrides,
     });
-    const tx = makeTx();
+    const tx = makeTx(txOverrides);
     // The engine always runs the integrity hook first; it is what seeds the
     // verified delta the executor replays.
     await hooks.verifyLiveProposalIntegrity?.(snapshot, tx);
@@ -693,6 +695,56 @@ describe("executeApprovedProposal — modification", () => {
         nights: ["2026-07-02"],
       },
     ]);
+  });
+
+  // #3451 (`INV-GUEST-019`): the edit's exception door freezes the member's
+  // own-dependant answers beside the delta, and the replay hands them back to
+  // the planner, which re-checks the added guests against the owner's records.
+  it("replays the frozen own-dependant answers with the delta", async () => {
+    const declaration = {
+      kind: "different_person_same_name",
+      dependantMemberId: "dep-grace",
+      normalizedName: "grace hopper",
+    };
+    await runExecution(MIN_STAY_OVERRIDE, {}, {
+      bookingChangeRequest: {
+        findUnique: vi.fn(async () => ({
+          requestedChanges: {
+            source: "POLICY_EXCEPTION",
+            delta: DELTA,
+            dependantIdentityDeclarations: [declaration],
+          },
+        })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+      },
+    });
+    const { input } = modifyBookingBatch.mock.calls[0][0];
+    expect(input.dependantIdentityDeclarations).toEqual([declaration]);
+    // Still the member's reviewed proposal: the planner is NOT told to skip.
+    expect(input.reviewedMemberProposal).toBe(true);
+  });
+
+  it("carries no answers when none were frozen", async () => {
+    await runExecution(MIN_STAY_OVERRIDE);
+    const { input } = modifyBookingBatch.mock.calls[0][0];
+    expect(input.dependantIdentityDeclarations).toBeUndefined();
+  });
+
+  it("turns the planner's own-dependant refusal into the officer's send-it-back refusal", async () => {
+    modifyBookingBatch.mockRejectedValueOnce(
+      new OwnDependantIdentityRefusedError(
+        {
+          code: "DEPENDANT_IDENTITY_UNRESOLVED",
+          status: 409,
+          error: "member sentence",
+          collisions: [],
+        },
+        false,
+      ),
+    );
+    await expect(runExecution(MIN_STAY_OVERRIDE)).rejects.toBeInstanceOf(
+      PolicyExceptionDependantIdentityUnresolvedError,
+    );
   });
 
   it("records the officer's hosting decision when that rule was overridden", async () => {

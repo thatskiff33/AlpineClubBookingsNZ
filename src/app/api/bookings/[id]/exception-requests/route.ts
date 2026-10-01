@@ -13,6 +13,7 @@ import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
+import { dependantIdentityDeclarationSchema } from "@/lib/booking-dependant-identity";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
@@ -69,6 +70,12 @@ const createSchema = z.object({
       }),
     )
     .max(200)
+    .optional(),
+  // #3451 (`INV-GUEST-019`): the edit panel's answers about an added guest who
+  // shares a name with one of the owner's dependants, re-verified by the service.
+  dependantIdentityDeclarations: z
+    .array(dependantIdentityDeclarationSchema)
+    .max(50)
     .optional(),
   memberMessage: z.string().max(5000),
   supersedeRequestId: z.string().trim().min(1).optional(),
@@ -162,6 +169,7 @@ export async function POST(
     guestStayRanges,
     memberMessage,
     supersedeRequestId,
+    dependantIdentityDeclarations,
   } = parsed.data;
 
   const removeSet = new Set(removeGuestIds ?? []);
@@ -237,6 +245,8 @@ export async function POST(
         guestStayRanges,
       },
       supersedeRequestId: supersedeRequestId ?? null,
+      bookingOwnerMemberId: bookingOwner(booking).memberId,
+      dependantIdentityDeclarations,
       // Drives the provisional reservation footprint (#2525 FIX 7): a non-holding
       // base (DRAFT / generic PENDING / un-held PAYMENT_PENDING / WAITLISTED /
       // BUMPED) reserves the FULL proposed footprint, a holding base only the delta.

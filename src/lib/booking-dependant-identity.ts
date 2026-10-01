@@ -591,3 +591,52 @@ export function isDependantIdentityRefusalCode(
     code === DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE
   );
 }
+
+/**
+ * The existing free-text guests an edit RENAMES onto a new name (#3451) — the
+ * same split as adding a guest, reached by retyping one already on the booking.
+ * Each is checked as if it were added: a rename onto one of the owner's recorded
+ * dependants' names gets the same question.
+ *
+ * Only a rename that changes the NORMALISED name counts. A casing or spacing fix
+ * leaves the person the row always was, and that row was admitted under whatever
+ * its own door asked then, so it is not re-asked. Member-linked rows cannot be
+ * renamed at all (`resolveGuestNameUpdates` refuses them), and are skipped here.
+ *
+ * Pure, so the edit panel and both server doors derive the same rows from the
+ * same rule. Each row carries its `guestId` so the panel can act on it.
+ */
+export function renamedGuestsForDependantCheck(
+  existingGuests: ReadonlyArray<{
+    id: string;
+    firstName: string;
+    lastName: string;
+    isMember?: boolean | null;
+    memberId?: string | null;
+  }>,
+  guestUpdates: ReadonlyArray<{
+    guestId: string;
+    firstName: string;
+    lastName: string;
+  }> | null | undefined,
+): Array<DependantIdentityPartyMember & { guestId: string; memberId: null }> {
+  if (!guestUpdates?.length) return [];
+  const byId = new Map(existingGuests.map((guest) => [guest.id, guest]));
+  const renamed: Array<
+    DependantIdentityPartyMember & { guestId: string; memberId: null }
+  > = [];
+  for (const update of guestUpdates) {
+    const guest = byId.get(update.guestId);
+    if (!guest || guest.isMember || guest.memberId?.trim()) continue;
+    const before = normalizePersonFullName(guest.firstName, guest.lastName);
+    const after = normalizePersonFullName(update.firstName, update.lastName);
+    if (!after || after === before) continue;
+    renamed.push({
+      guestId: guest.id,
+      firstName: update.firstName,
+      lastName: update.lastName,
+      memberId: null,
+    });
+  }
+  return renamed;
+}

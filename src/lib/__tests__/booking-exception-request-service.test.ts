@@ -675,6 +675,7 @@ describe("createModificationExceptionRequest", () => {
 
   it("writes a POLICY_EXCEPTION BookingChangeRequest and never touches the live booking", async () => {
     const result = await createModificationExceptionRequest({
+      bookingOwnerMemberId: null,
       requestedByMemberId: "m1",
       bookingId: "booking-1",
       lodgeId: "lodge_1",
@@ -699,6 +700,7 @@ describe("createModificationExceptionRequest", () => {
     mocks.bcrUpdateMany.mockResolvedValue({ count: 0 });
     await expect(
       createModificationExceptionRequest({
+        bookingOwnerMemberId: null,
         requestedByMemberId: "m1",
         bookingId: "booking-1",
         lodgeId: "lodge_1",
@@ -730,6 +732,7 @@ describe("createModificationExceptionRequest", () => {
     };
 
     await createModificationExceptionRequest({
+      bookingOwnerMemberId: null,
       requestedByMemberId: "m1",
       bookingId: "booking-1",
       lodgeId: "lodge_1",
@@ -761,6 +764,7 @@ describe("createModificationExceptionRequest", () => {
     // base === proposed: the live booking already holds every bed, so the
     // incremental reservation is empty even though the aggregate mode is HOLD.
     await createModificationExceptionRequest({
+      bookingOwnerMemberId: null,
       requestedByMemberId: "m1",
       bookingId: "booking-1",
       lodgeId: "lodge_1",
@@ -794,6 +798,7 @@ describe("createModificationExceptionRequest", () => {
     };
 
     await createModificationExceptionRequest({
+      bookingOwnerMemberId: null,
       requestedByMemberId: "m1",
       bookingId: "booking-1",
       lodgeId: "lodge_1",
@@ -821,6 +826,7 @@ describe("createModificationExceptionRequest", () => {
     };
 
     await createModificationExceptionRequest({
+      bookingOwnerMemberId: null,
       requestedByMemberId: "m1",
       bookingId: "booking-1",
       lodgeId: "lodge_1",
@@ -849,6 +855,7 @@ describe("createModificationExceptionRequest", () => {
     // rows (a lost claim) and is never cross-released under the wrong lock.
     const supersedeClaim = mocks.bcrUpdateMany;
     await createModificationExceptionRequest({
+      bookingOwnerMemberId: null,
       requestedByMemberId: "m1",
       bookingId: "booking-1",
       lodgeId: "lodge_1",
@@ -889,6 +896,7 @@ describe("createModificationExceptionRequest", () => {
     };
     await expect(
       createModificationExceptionRequest({
+        bookingOwnerMemberId: null,
         requestedByMemberId: "m1",
         bookingId: "booking-1",
         lodgeId: "lodge_1",
@@ -917,6 +925,7 @@ describe("createModificationExceptionRequest", () => {
     // night): with a holding base the incremental hold is empty, but with a
     // NON-holding base the full one bed must be reserved.
     await createModificationExceptionRequest({
+      bookingOwnerMemberId: null,
       requestedByMemberId: "m1",
       bookingId: "booking-1",
       lodgeId: "lodge_1",
@@ -934,6 +943,90 @@ describe("createModificationExceptionRequest", () => {
       changeRequestId: "bcr-1",
       lodgeId: "lodge_1",
       beds: 1,
+    });
+  });
+  /*
+    #3451 (`INV-GUEST-019`): an edit's exception request is an add-guest door
+    too, so it asks the own-dependant question about the guests it ADDS, against
+    the booking OWNER's dependants, before anything is frozen — and freezes the
+    answers beside the delta for the approval's replay.
+  */
+  describe("own-dependant identity on an added guest (#3451)", () => {
+    const withSam = {
+      checkIn: "2026-07-04",
+      checkOut: "2026-07-05",
+      guests: [
+        ...base.guests,
+        { firstName: "Sam", lastName: "Smith", ageTier: "CHILD", isMember: false, memberId: null, nights: ["2026-07-04"] },
+      ],
+    };
+    const addSam = {
+      addGuests: [{ firstName: "Sam", lastName: "Smith", ageTier: "CHILD", isMember: false }],
+    };
+    const DECLARATION = {
+      kind: "different_person_same_name" as const,
+      dependantMemberId: "dep-sam",
+      normalizedName: "sam smith",
+    };
+    const request = (extra: Record<string, unknown> = {}) =>
+      createModificationExceptionRequest({
+        bookingOwnerMemberId: "owner-1",
+        requestedByMemberId: "owner-1",
+        bookingId: "booking-1",
+        lodgeId: "lodge_1",
+        base,
+        proposed: withSam,
+        memberMessage: "please allow",
+        requestedSummary: "add 1 guest(s)",
+        delta: addSam,
+        baseHoldsCapacity: true,
+        ...extra,
+      });
+
+    it("REFUSES an unanswered collision, freezing nothing", async () => {
+      mocks.memberFindMany.mockResolvedValue([
+        { id: "dep-sam", firstName: "Sam", lastName: "Smith" },
+      ]);
+      await expect(request()).rejects.toBeInstanceOf(
+        PolicyExceptionDependantIdentityError,
+      );
+      expect(mocks.bcrCreate).not.toHaveBeenCalled();
+    });
+
+    it("freezes the answer beside the delta, outside the proposal hash", async () => {
+      mocks.memberFindMany.mockResolvedValue([
+        { id: "dep-sam", firstName: "Sam", lastName: "Smith" },
+      ]);
+      await request({ dependantIdentityDeclarations: [DECLARATION] });
+      const data = mocks.bcrCreate.mock.calls[0][0].data;
+      expect(data.requestedChanges.dependantIdentityDeclarations).toEqual([
+        DECLARATION,
+      ]);
+      expect(data.requestedChanges.delta.dependantIdentityDeclarations).toBeUndefined();
+      expect(data.proposalSnapshot.dependantIdentityDeclarations).toBeUndefined();
+    });
+
+    it("refuses a forged answer about somebody who is not the owner's dependant", async () => {
+      mocks.memberFindMany.mockResolvedValue([
+        { id: "dep-sam", firstName: "Sam", lastName: "Smith" },
+      ]);
+      await expect(
+        request({
+          dependantIdentityDeclarations: [
+            { ...DECLARATION, dependantMemberId: "another-familys-child" },
+          ],
+        }),
+      ).rejects.toBeInstanceOf(PolicyExceptionDependantIdentityError);
+      expect(mocks.bcrCreate).not.toHaveBeenCalled();
+    });
+
+    it("has nobody's dependants to ask about on a booking with no member owner", async () => {
+      mocks.memberFindMany.mockResolvedValue([
+        { id: "dep-sam", firstName: "Sam", lastName: "Smith" },
+      ]);
+      await request({ bookingOwnerMemberId: null });
+      expect(mocks.bcrCreate).toHaveBeenCalledTimes(1);
+      expect(mocks.memberFindMany).not.toHaveBeenCalled();
     });
   });
 });

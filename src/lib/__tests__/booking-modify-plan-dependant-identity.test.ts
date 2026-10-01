@@ -310,15 +310,68 @@ describe("#3451: the modify save refuses an added guest named as the owner's dep
     expect(JSON.stringify(where)).not.toContain("admin-1");
   });
 
-  it("does not re-guard an approved policy exception's replay", async () => {
-    const refusal = await refusalOf(
+  it("guards an approved policy exception's replay, against its frozen answers", async () => {
+    // No answer frozen: the replay is refused, as the save would be.
+    const unanswered = await refusalOf(
       plan(
         { addGuests: [addGuest("Sam", "Smith")], reviewedMemberProposal: true },
         { role: "ADMIN", id: "admin-1" },
       ),
     );
+    expect(unanswered?.refusal.code).toBe(DEPENDANT_IDENTITY_UNRESOLVED_CODE);
+
+    // The member's answer, frozen on the request and passed back in, holds.
+    const answered = await refusalOf(
+      plan(
+        {
+          addGuests: [addGuest("Sam", "Smith")],
+          reviewedMemberProposal: true,
+          dependantIdentityDeclarations: [
+            {
+              kind: DIFFERENT_PERSON_SAME_NAME,
+              dependantMemberId: DEPENDANT.id,
+              normalizedName: "sam smith",
+            },
+          ],
+        },
+        { role: "ADMIN", id: "admin-1" },
+      ),
+    );
+    expect(answered).toBeNull();
+  });
+
+  it("asks about an existing guest RENAMED onto the dependant's name", async () => {
+    const refusal = await refusalOf(
+      plan({
+        guestUpdates: [{ guestId: "g1", firstName: "Sam", lastName: "Smith" }],
+      }),
+    );
+    expect(refusal?.refusal.code).toBe(DEPENDANT_IDENTITY_UNRESOLVED_CODE);
+
+    const answered = await refusalOf(
+      plan({
+        guestUpdates: [{ guestId: "g1", firstName: "Sam", lastName: "Smith" }],
+        dependantIdentityDeclarations: [
+          {
+            kind: DIFFERENT_PERSON_SAME_NAME,
+            dependantMemberId: DEPENDANT.id,
+            normalizedName: "sam smith",
+          },
+        ],
+      }),
+    );
+    expect(answered).toBeNull();
+  });
+
+  it("does not re-ask about a casing fix to a guest already carrying the name", async () => {
+    const refusal = await refusalOf(
+      plan(
+        { guestUpdates: [{ guestId: "g1", firstName: "Sam", lastName: "SMITH" }] },
+        { role: "MEMBER", id: OWNER },
+        booking([existingGuest("g1", "sam", "smith")]),
+      ),
+    );
     expect(refusal).toBeNull();
-    expect(h.memberFindMany).not.toHaveBeenCalled();
   });
 
   it("pays nothing on an all-member edit with no declaration", async () => {

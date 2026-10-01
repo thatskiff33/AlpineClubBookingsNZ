@@ -18,6 +18,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import {
   checkOwnDependantIdentityForParty,
   OwnDependantIdentityRefusedError,
+  renamedGuestsForDependantCheck,
 } from "@/lib/booking-dependant-identity";
 import { ApiError } from "@/lib/api-error";
 import type {
@@ -883,24 +884,25 @@ export async function prepareGuestPlan(
     },
   );
   /**
-   * OWN-DEPENDANT IDENTITY ON AN ADDED GUEST (#3451, `INV-GUEST-019`) — the save
-   * half of what `modify-quote` asked. An ADDED free-text row named as one of the
-   * booking OWNER's recorded dependants needs a live declaration; rows already on
-   * the booking are not re-asked. `linkedMembers` is what really resolved, so a
-   * forged member link reads as free text. Here because the save resolves its
-   * members here: the read runs on `tx` (`INV-LOCK-004`), takes no lock, and
-   * precedes the person-night guard and every write.
+   * OWN-DEPENDANT IDENTITY (#3451, `INV-GUEST-019`) — the save half of what
+   * `modify-quote` asked. A free-text row this edit ADDS, or an existing one it
+   * RENAMES onto a new name, named as one of the booking OWNER's recorded
+   * dependants needs a live declaration; untouched rows are not re-asked.
+   * `linkedMembers` is what really resolved, so a forged member link reads as
+   * free text. Here because the save resolves its members here: the read runs on
+   * `tx` (`INV-LOCK-004`), takes no lock, and precedes every write.
    *
-   * NOT on an approved policy exception's replay: that proposal was frozen by
-   * `POST /api/bookings/[id]/exception-requests`, which carries no declarations,
-   * so the guard would refuse at approval a guest already answered for. That door
-   * is outside #3451's decision and the invariant records it as not covered.
+   * An approved policy exception's replay is checked too, against the answers
+   * frozen on the request (`booking-exception-approval.ts` passes them in).
    */
-  if (input.reviewedMemberProposal !== true) {
+  {
     const ownerMemberId = bookingOwner(booking).memberId;
     const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(tx, {
       bookerMemberId: ownerMemberId,
-      party: input.addGuests ?? [],
+      party: [
+        ...(input.addGuests ?? []),
+        ...renamedGuestsForDependantCheck(booking.guests, input.guestUpdates),
+      ],
       memberPathMemberIds: new Set(linkedMembers.keys()),
       declarations: input.dependantIdentityDeclarations,
     });

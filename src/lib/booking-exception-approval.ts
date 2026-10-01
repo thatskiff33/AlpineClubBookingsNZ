@@ -22,7 +22,9 @@ import {
 import {
   checkOwnDependantIdentity,
   loadBookerDependants,
+  OwnDependantIdentityRefusedError,
   parseStoredDependantIdentityDeclarations,
+  type DependantIdentityDeclaration,
 } from "@/lib/booking-dependant-identity";
 import {
   loadMemberGuestAddPolicy,
@@ -530,6 +532,10 @@ export function buildPolicyExceptionApprovalHooks(
   context: PolicyExceptionApprovalContext,
 ): PolicyExceptionApprovalHookSet {
   let verifiedDelta: ModificationDeltaInput | null = null;
+  // #3451: the own-dependant answers frozen beside the delta, read in the same
+  // row read as the delta itself and replayed with it. Not trusted: the planner
+  // re-checks each one against the owner's records as they stand now.
+  let verifiedDependantIdentityDeclarations: DependantIdentityDeclaration[] = [];
   const outcome: PolicyExceptionApprovalOutcome = {
     createdBookingId: null,
     hostingDecisionRecorded: false,
@@ -631,6 +637,11 @@ export function buildPolicyExceptionApprovalHooks(
         return { intact: false, reason: "drift" };
       }
       verifiedDelta = delta;
+      verifiedDependantIdentityDeclarations =
+        parseStoredDependantIdentityDeclarations(
+          (row?.requestedChanges as { dependantIdentityDeclarations?: unknown })
+            ?.dependantIdentityDeclarations,
+        );
       return { intact: true };
     },
 
@@ -715,6 +726,7 @@ export function buildPolicyExceptionApprovalHooks(
           overrideReason,
           context,
           delta: verifiedDelta,
+          dependantIdentityDeclarations: verifiedDependantIdentityDeclarations,
           outcome,
         });
       }
@@ -745,6 +757,7 @@ async function executeApprovedModification(args: {
   overrideReason: string;
   context: PolicyExceptionApprovalContext;
   delta: ModificationDeltaInput | null;
+  dependantIdentityDeclarations: DependantIdentityDeclaration[];
   outcome: PolicyExceptionApprovalOutcome;
 }): Promise<{ deferredPostCommit: () => Promise<void> }> {
   const { tx, request, snapshot, override, overrideReason, context, delta, outcome } =
@@ -764,6 +777,9 @@ async function executeApprovedModification(args: {
   // Deliberately NOT passed: `confirmOverCapacity` (capacity stays a HARD refusal
   // — an approving officer is not a capacity-override actor) and `adminOverride`
   // (this is not a date-override edit; it is the member's reviewed proposal).
+  // #3451: the planner's own-dependant refusal is translated into the approval's
+  // own one, so the officer is told to send the request back rather than seeing
+  // a sentence written for the member at the edit panel.
   const result = await modifyBookingBatch({
     bookingId: snapshot.bookingId,
     actor: { id: context.actorMemberId, role: "ADMIN" },
@@ -795,6 +811,11 @@ async function executeApprovedModification(args: {
       })),
       removeGuestIds: delta.removeGuestIds,
       guestStayRanges: delta.guestStayRanges,
+      // #3451: the member's frozen own-dependant answers. The planner re-checks
+      // the added guests against the owner's records as they stand NOW.
+      ...(args.dependantIdentityDeclarations.length > 0
+        ? { dependantIdentityDeclarations: args.dependantIdentityDeclarations }
+        : {}),
       ...(context.settlementMethod
         ? { settlementMethod: context.settlementMethod }
         : {}),
@@ -821,6 +842,13 @@ async function executeApprovedModification(args: {
     // opened. Without it the service would read the club's settings and reach
     // Xero from inside a transaction holding two keys.
     preTransaction: context.batchPreTransaction,
+  }).catch((error: unknown) => {
+    if (error instanceof OwnDependantIdentityRefusedError) {
+      throw new PolicyExceptionDependantIdentityUnresolvedError(
+        error.refusal.error,
+      );
+    }
+    throw error;
   });
 
   // The service reconciles the hosting hazard from the rows it just wrote and
