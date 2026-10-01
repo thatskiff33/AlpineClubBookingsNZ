@@ -131,6 +131,7 @@ describe("membership cancellation blockers", () => {
               invoiceStatus: "AUTHORISED",
               direction: "receivable",
               amountDueCents: 12050,
+              amountDueTenThousandths: 1205000,
               currency: "NZD",
               dueDate: "2026-06-30",
               xeroUrl: null,
