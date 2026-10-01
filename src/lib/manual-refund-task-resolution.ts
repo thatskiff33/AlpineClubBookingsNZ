@@ -16,8 +16,8 @@ import {
   chooseEditReviewSettlementRoute,
   executeEditReviewSettlement,
   type EditReviewSettlementRoute,
-  writeEditReviewAccountCredit,
 } from "@/lib/edit-financial-review-settlement";
+import { writeEditReviewAccountCredit } from "@/lib/edit-financial-review-account-credit";
 import { refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero-leg";
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { requireMemberCreditRecipient, SchoolHasNoCreditAccountError } from "@/lib/member-credit";
