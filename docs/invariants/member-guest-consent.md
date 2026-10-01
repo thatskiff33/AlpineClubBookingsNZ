@@ -307,8 +307,9 @@ leave a stale row here.
   `modify-quote` and `modify`, asking about guests an edit **adds** or
   **renames** onto a new name, while `POST /api/bookings/[id]/guests` refuses
   with a pointer to Edit Booking. Untouched guests are not re-asked.
-- **The server re-resolves both from authenticated data**, taking the member ids
-  that really resolved rather than trusting a row, so a forged member link, a
+- **The server re-resolves both from authenticated data**, asking before the
+  member lookup (after it at approval), which refuses any claimed id that does
+  not resolve, so a forged member link, a
   fabricated or unrelated dependant id and a stale declaration are refused.
   **Identity is keyed by the normalised name, never a party position.** Home:
   `src/lib/booking-dependant-identity.ts`.

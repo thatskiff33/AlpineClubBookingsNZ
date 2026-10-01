@@ -183,6 +183,9 @@ hold in addition to every #2365 invariant above:
   re-derives from current policy for the proposed party (minimum stay + adult
   member hosting); a proposal that trips none is refused (nothing to review), and
   a non-allowlisted code can never be stored (`freezePolicyExceptionEvidence`).
+  With a beyond-family member guest named, "nothing to review" is the member
+  lookup's collapsed refusal instead, because what trips reads the named
+  members, so it cannot say whether one exists (#3770).
 
 ### INV-EXCEPT-012
 

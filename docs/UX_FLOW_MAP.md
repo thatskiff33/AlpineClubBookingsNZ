@@ -1228,6 +1228,13 @@ answered) and built to it:
   outright. The floor is a MINIMUM, not a budget: refusals raised late in a
   request (the person-night guard, the unpaid-subscription check) still report
   whatever the pricing path cost, and this map does not claim otherwise.
+- **Refusals that read nothing about the named members come before the member
+  lookup** (#3770). On create and the new-booking exception request, a bad stay
+  range, the own-dependant question, a past date, a missing or unknown lodge and
+  the guest-count cap answer the same whether a member id in the party is real,
+  because the lookup has not run yet. "Nothing to review" on either exception
+  request reads the members, so with a beyond-family member named it is the
+  neutral refusal instead.
 - **Every collapsed refusal is audited** naming actor and target, and a run of
   them against the same target raises a flagged row an admin can find — ONCE per
   actor/target per 24 hours, on the crossing rather than on every refusal past
