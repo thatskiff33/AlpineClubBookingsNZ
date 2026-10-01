@@ -1,0 +1,1 @@
+- School requests can name pending adults after accepting a differently priced option or a revised quote: provisional held prices reconcile atomically to the immutable accepted breakdown, with identity, capacity and membership-policy checks (#3794).

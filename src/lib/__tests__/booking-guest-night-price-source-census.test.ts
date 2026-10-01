@@ -12,6 +12,9 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
 const REPO = process.cwd();
 
 const REQUIRED_WRITER_SHAPES = new Map<string, RegExp[]>([
+  ["src/lib/school-pending-adult-resolution.ts", [
+    /bookingGuestNight\.update\([\s\S]*?priceSource:\s*night\.priceSource/,
+  ]],
   [
     "e2e/setup/seed-second-lodge.ts",
     [/bookingGuestNight\.create\([\s\S]*?data:\s*\{[\s\S]*?priceSource:\s*"SOLD"/],
@@ -94,6 +97,7 @@ const REQUIRED_WRITER_SITE_COUNTS = new Map<
   string,
   { direct: number; nested: number }
 >([
+  ["src/lib/school-pending-adult-resolution.ts", { direct: 1, nested: 0 }],
   ["e2e/setup/seed-second-lodge.ts", { direct: 1, nested: 0 }],
   ["prisma/demo-seed.ts", { direct: 1, nested: 0 }],
   ["src/app/api/bookings/[id]/guests/route.ts", { direct: 0, nested: 1 }],

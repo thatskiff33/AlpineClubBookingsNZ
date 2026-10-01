@@ -3880,8 +3880,16 @@ request, held booking and exact reservation nights before returning it. The
 quote-expiry worker's two direct hold-release paths also delete it under their existing
 global lifecycle lock. `resolveAcceptedSchoolPendingAdults` takes global then
 lodge in the same order,
-checks the accepted snapshot, hold and reservation after locking, and claims the
-request version before replacing one anonymous slot with named guest nights.
+checks the accepted snapshot, hold and reservation after locking, and proves a
+unique mapping from original named/pending ordinals to the current party,
+including previously named adults. After claiming the request version, it
+reconciles provisional held guest/night and booking cents to the accepted
+snapshot before replacing anonymous slots (#3794). Existing guest/night ids,
+member links, consent, dietary and bed identities stay intact. A lost claim
+writes nothing; any failure rolls back prices, names and reservations together.
+Accepted terms and settlement remain unchanged; this writer adds no lock tier
+or provider call. Active matching identities use canonical seasonal membership
+policy, so login-disabled member-rate adults still require terms review.
 Terminal decline and requester-cancel claims clear the pending adult count;
 quote snapshots remain unchanged. A generic hold release retains the request's
 count so that an open request can be held again. School and general approval
