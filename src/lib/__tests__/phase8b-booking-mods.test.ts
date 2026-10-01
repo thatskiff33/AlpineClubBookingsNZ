@@ -77,8 +77,7 @@ vi.mock("@/lib/prisma", () => ({
     member: { count: mockMemberCount, findUnique: mockFindUnique, findMany: mockFindMany },
     familyGroupMember: { findMany: mockFindMany },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
-    // #1982: default lodge capacity is a self-healed DB override (the route's
-    // getDefaultLodgeCapacity guest-count guard reads it off the singleton).
+    // #1982: a lodge's capacity is a self-healed DB override.
     lodgeSettings: { findUnique: async () => ({ capacity: 29 }) },
   },
 }));
@@ -1607,7 +1606,13 @@ describe("POST /api/bookings/[id]/guests", () => {
   });
 
   it("returns 400 when the add-guests request exceeds lodge capacity in one payload", async () => {
+    // #3407 review: the refusal comes from the booking's OWN lodge, inside the
+    // transaction under its capacity lock. The payload pre-check that used to
+    // answer this before the booking was loaded measured the DEFAULT lodge and
+    // is gone; this pins that the real rule still refuses and writes nothing.
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const tx = makeTx(makeBooking());
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
     const guests = Array.from({ length: 30 }, (_, index) => ({
       firstName: `Guest${index}`,
       lastName: "Overflow",
@@ -1623,9 +1628,9 @@ describe("POST /api/bookings/[id]/guests", () => {
     const body = await res.json();
 
     expect(res.status).toBe(400);
-    expect(body.error).toBe("Invalid input");
-    expect(body.details.fieldErrors.guests?.[0]).toBeDefined();
-    expect(mockTransaction).not.toHaveBeenCalled();
+    expect(body.error).toBe("A booking cannot exceed 29 guests");
+    expect(tx.bookingGuest.create).not.toHaveBeenCalled();
+    expect(tx.booking.update).not.toHaveBeenCalled();
   });
 
   it("returns 404 for nonexistent booking", async () => {

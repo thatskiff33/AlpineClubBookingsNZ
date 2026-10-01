@@ -152,6 +152,7 @@ import { getMemberCreditBalance } from "@/lib/member-credit";
 import logger from "@/lib/logger";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 /*
   #2563: this preview holds NO stay-range arithmetic of its own.
@@ -1166,7 +1167,7 @@ export async function POST(
   const lodgeCapacity = await getLodgeCapacity(bookingLodgeId);
   if (totalGuestCount > lodgeCapacity) {
     return NextResponse.json(
-      { error: `A booking cannot exceed ${lodgeCapacity} guests` },
+      { error: lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A booking cannot exceed ${limit} guests`) },
       { status: 400 }
     );
   }

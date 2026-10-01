@@ -34,7 +34,7 @@ import { shouldRepairXeroContactNameOrder } from "@/lib/xero-contact-sync";
 import { parseXeroContactDateOfBirth } from "@/lib/xero-contact-date-of-birth";
 import { buildXeroIdempotencyKey, completeXeroSyncOperation } from "@/lib/xero-sync";
 import { CLUB_NAME } from "@/config/club-identity";
-import { defaultRefundMethodForPaymentSource } from "@/lib/xero-refund-method";
+import { resolveRefundNoteMethod } from "@/lib/xero-refund-method";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
 import {
   readBookingClearingNoteRetryInput,
@@ -43,7 +43,12 @@ import {
   unallocatedClearingTargets,
   type ClearingAllocationTarget,
 } from "@/lib/xero-clearing-allocations";
-import { resolveRefundSettlement } from "@/lib/xero-invoice-payments";
+import {
+  recordedRefundNoteOutcome,
+  refundCreditNoteCompletion,
+} from "@/lib/xero-refund-note-settlement";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import type { ClubFormat } from "@/lib/club-format";
 
 /**
@@ -334,8 +339,6 @@ function isLegacyContextlessAppliedCreditAllocationChild(
   );
 }
 
-const REFUND_CREDIT_NOTE_ALLOCATION_SKIP_REASON =
-  "Refund credit notes are settled via a credit-note payment instead of invoice allocation.";
 const REDACTED_SECRET = "[REDACTED]";
 
 const MEMBER_CONTACT_RETRY_SELECT = {
@@ -702,7 +705,8 @@ function parseRefundCreditNoteRepairInput(
 }
 
 async function repairRefundCreditNoteFollowUpActions(
-  operation: Pick<RetryableOperation, "id" | "localId" | "responsePayload" | "xeroObjectNumber">,
+  operation: Pick<RetryableOperation, "id" | "localId" | "responsePayload" | "xeroObjectNumber"> &
+    Partial<Pick<XeroSyncOperation, "correlationKey" | "idempotencyKey">>,
   xero: XeroModule,
   repair: {
     creditNoteId: string;
@@ -711,7 +715,6 @@ async function repairRefundCreditNoteFollowUpActions(
     needsRefundPaymentRepair: boolean;
     refundMethod?: CashRefundMethod;
   },
-  createdByMemberId?: string
 ) {
   await prisma.payment.update({
     where: { id: operation.localId! },
@@ -722,63 +725,50 @@ async function repairRefundCreditNoteFollowUpActions(
 
   // `INV-PAY-101`: the SAME decision the inline leg makes. A row that recorded
   // its method settles as it said; a row from before #3529 carries none, so
-  // the payment's source decides — Stripe money is a card refund, anything
-  // else is a bank transfer nobody vouched for, and that note stays unsettled.
-  let refundPaymentSkipReason: string | null = null;
+  // the payment's source decides (`resolveRefundNoteMethod`).
+  const { refundMethod, refundMethodRecorded } = resolveRefundNoteMethod(
+    repair.refundMethod,
+    (
+      await prisma.payment.findUnique({
+        where: { id: operation.localId! },
+        select: { source: true },
+      })
+    )?.source,
+  );
+  const priorResponse = asRecord(operation.responsePayload);
   if (repair.needsRefundPaymentRepair) {
-    const methodRecorded = repair.refundMethod !== undefined;
-    const method =
-      repair.refundMethod ??
-      defaultRefundMethodForPaymentSource(
-        (
-          await prisma.payment.findUnique({
-            where: { id: operation.localId! },
-            select: { source: true },
-          })
-        )?.source,
-      );
-    const settlement = await resolveRefundSettlement({ method, methodRecorded });
-    if (settlement.kind === "record") {
-      await xero.createXeroRefundPaymentForInvoice({
-        paymentId: operation.localId!,
-        invoiceId: repair.invoiceId,
-        creditNoteId: repair.creditNoteId,
-        refundAmountCents: repair.amountCents,
-        createdByMemberId,
-        refundMethod: method,
-      });
-    } else {
-      refundPaymentSkipReason = settlement.reason;
-    }
+    // #3548: the one read-back-then-settle every leg uses. It records what
+    // Xero already shows (a payment whose response was lost, a concurrent
+    // retry's, an officer's), pays only a note nothing settles, under the one
+    // note-keyed key, and completes this row PARTIAL if that payment fails.
+    const outcome = await xero.finishRefundCreditNoteSettlement({
+      operationId: operation.id,
+      paymentId: operation.localId!,
+      creditNoteId: repair.creditNoteId,
+      creationKeys: [operation.correlationKey, operation.idempotencyKey],
+      originalInvoiceId: repair.invoiceId,
+      refundMethod,
+      refundMethodRecorded,
+      fallbackPaymentDate: async () =>
+        xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
+      priorResponse,
+    });
+    if (outcome.refundPaymentErr) throw outcome.refundPaymentErr;
+    return;
   }
 
-  const existingResponsePayload = asRecord(operation.responsePayload);
-  await completeXeroSyncOperation(operation.id, {
-    status: "SUCCEEDED",
-    responsePayload: {
-      ...(existingResponsePayload ?? {}),
-      allocation: null,
-      allocationSkipped: true,
-      allocationSkipReason: REFUND_CREDIT_NOTE_ALLOCATION_SKIP_REASON,
-      refundPaymentError: null,
-      ...(refundPaymentSkipReason
-        ? { refundPaymentSkipped: true, refundPaymentSkipReason }
-        : {}),
-    },
-    xeroObjectType: "CREDIT_NOTE",
-    xeroObjectId: repair.creditNoteId,
-    xeroObjectNumber: operation.xeroObjectNumber ?? null,
-    extraLinks: [
-      {
-        localModel: "Payment",
-        localId: operation.localId!,
-        xeroObjectType: "CREDIT_NOTE",
-        xeroObjectId: repair.creditNoteId,
-        xeroObjectNumber: operation.xeroObjectNumber ?? null,
-        role: "REFUND_CREDIT_NOTE",
-      },
-    ],
-  });
+  await completeXeroSyncOperation(
+    operation.id,
+    refundCreditNoteCompletion({
+      paymentId: operation.localId!,
+      creditNoteId: repair.creditNoteId,
+      creditNoteNumber: operation.xeroObjectNumber ?? null,
+      originalInvoiceId: repair.invoiceId,
+      refundMethod,
+      outcome: recordedRefundNoteOutcome(priorResponse),
+      priorResponse,
+    })
+  );
 }
 
 function parseModificationCreditNoteRepairInput(
@@ -1279,7 +1269,6 @@ export async function retryXeroSyncOperation(
         operation,
         xero,
         refundCreditNoteRepair,
-        createdByMemberId
       );
 
       return { message: "Repaired Xero refund credit note follow-up actions." };
@@ -1565,7 +1554,6 @@ export async function retryXeroSyncOperation(
           operation,
           xero,
           refundCreditNoteRepair,
-          createdByMemberId
         );
         return { message: "Repaired Xero refund credit note follow-up actions." };
       }

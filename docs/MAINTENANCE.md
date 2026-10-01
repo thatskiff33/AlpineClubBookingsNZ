@@ -1394,6 +1394,37 @@ hand and resolved it in Xero, the app raises no refund note for it, so a refund
 of that capture raises the report-only
 `KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND`: record the refund by hand as well.
 
+### Refund credit notes with no settlement on record (#3548)
+
+Before #3548, a refund credit note whose first attempt died between raising the
+note in Xero and recording its settling payment could be closed by a later
+replay as SUCCEEDED carrying neither the payment nor the "no payment due" flag
+(`INV-PAY-111`). The note then reads as still owed in Xero, and nothing flagged
+it. New attempts can no longer end that way, but rows written before the fix
+remain.
+
+Two readers find them, both through the one predicate
+(`refundNoteSettlementOnRecord` in `src/lib/xero-refund-note-settlement.ts`),
+over the same evidence: refund notes only, never an account-credit note, and
+each note's payment links whether active or not:
+
+- the reconciliation report's **"Refund credit notes with no settlement on
+  record"** section (`unsettled-refund-credit-notes`), which also lists a note
+  Xero shows **part-settled**, with the amount still outstanding; and
+- the booking repair tool's `REFUND_CREDIT_NOTE_UNSETTLED` finding.
+
+**Nothing is settled automatically.** An officer may have left an old note open
+on purpose, and a settle would pay it from the Stripe account. For a note that
+should be paid, review it in Xero, then apply the finding's
+`SETTLE_REFUND_CREDIT_NOTE` action by its key from the dry-run report
+(`--apply --apply-action <actionKey>`). The action re-reads the row first, reads the note back
+from Xero, and pays it only if nothing settles it yet: under the note's one
+payment key, dated the note's own day, and never over a payment or allocation
+Xero already shows. For a part-settled note, settle its remainder in Xero by
+hand, then apply the same action: on that row it only reads the note back and
+records the payments Xero now shows, never paying, and the listing clears once
+the note is fully settled.
+
 ### Backfill cancel-flattened payment statuses (#1473 / #1506)
 
 `scripts/backfill-cancel-flattened-payments.ts` is a one-off, idempotent,

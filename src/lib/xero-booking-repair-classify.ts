@@ -49,6 +49,7 @@ import {
 import {
   addAction,
   addFinding,
+  addUnsettledRefundCreditNoteFindings,
   addXeroAmountMismatchFinding,
   buildBookingSummary,
   buildLinkRepairAction,
@@ -1327,6 +1328,7 @@ export function classifyBookingContext(
     });
   }
 
+  if (payment) addUnsettledRefundCreditNoteFindings(findings, actionMap, booking.id, context.paymentRefundPaymentLinks, paymentOperations);
   if (payment && refundCreditNote) {
     const refundAmountCents = getCashCancellationRefundCandidateCents(booking);
     if (refundAmountCents !== null && refundAmountCents > 0) {

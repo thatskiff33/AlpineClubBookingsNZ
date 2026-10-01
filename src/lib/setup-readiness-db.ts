@@ -3,7 +3,11 @@ import { prisma } from "@/lib/prisma";
 import { CLUB_TIME_SETTINGS_ID } from "@/lib/club-time-zone";
 import { resolveEnvironmentRole } from "@/lib/environment-role";
 import { readWithheldApplicationEmail } from "@/lib/environment-safety-withheld";
-import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
+import {
+  getDefaultLodgeCapacity,
+  getLodgeCapacityStatus,
+} from "@/lib/lodge-capacity";
+import { isLodgeSetUpForBookings } from "@/lib/lodge-booking-readiness";
 import { BOOKABLE_AGE_TIER_VALUES } from "@/lib/age-tier-schema";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -460,6 +464,30 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     defaultLodgeCapacity = null;
   }
 
+  // Every active lodge that cannot take a booking (#3407 review), through the
+  // same resolver every booking path reads. Guarded like the default-lodge read
+  // above: an unreadable lodge list omits the signal rather than sinking the
+  // snapshot.
+  let lodgesNotSetUpForBookings: string[] | undefined;
+  try {
+    const activeLodges = await prisma.lodge.findMany({
+      where: { active: true },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    });
+    const resolved = await Promise.all(
+      activeLodges.map(async (lodge) => ({
+        name: lodge.name,
+        capacity: (await getLodgeCapacityStatus(lodge.id, prisma)).capacity,
+      })),
+    );
+    lodgesNotSetUpForBookings = resolved
+      .filter((lodge) => !isLodgeSetUpForBookings(lodge.capacity))
+      .map((lodge) => lodge.name);
+  } catch {
+    lodgesNotSetUpForBookings = undefined;
+  }
+
   // Truthful Xero connection state (#2079): a token row that no longer decrypts
   // (env→DB upgrade or an auth-secret change) must read as "needs reconnect",
   // not "connected". The readability probe is side-effect-free (peeks the key,
@@ -550,6 +578,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     publicHutFeeSingleColumnSeasons,
     basedOnAgeTierTypesWithoutSubscribingTier,
     defaultLodgeCapacity,
+    lodgesNotSetUpForBookings,
     clubIdentityName,
     configuredCapacity: lodgeSettings?.capacity ?? null,
     // Reported EXACTLY as stored, not trimmed or blank-collapsed. A row holding

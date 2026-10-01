@@ -105,6 +105,7 @@ import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
 import { storedSchoolTeacherListSchema } from "@/lib/school-teacher-schema";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 export const BOOKING_REQUEST_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
 /** Privacy Act 2020 retention: purge declined and never-verified requests. */
@@ -860,7 +861,7 @@ export async function createMemberWholeLodgeRequest(input: {
     : await getDefaultLodgeCapacity();
   if (input.headcount > lodgeCapacity) {
     throw new BookingRequestError(
-      `A whole-lodge request cannot exceed the lodge capacity of ${lodgeCapacity} guests`,
+      lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A whole-lodge request cannot exceed the lodge capacity of ${limit} guests`),
       422
     );
   }

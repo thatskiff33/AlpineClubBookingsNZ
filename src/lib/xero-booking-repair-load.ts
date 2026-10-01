@@ -45,6 +45,7 @@ import {
 } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { isPartPaymentReviewTask } from "@/lib/manual-refund-task-settlement-rules";
+import { refundPaymentLinkWhere } from "@/lib/xero-refund-note-settlement";
 
 /** A settled edit-review charge share, carrying the booking it was raised on. */
 type EditReviewChargeShareRecord = EditReviewChargeShareRow & {
@@ -444,6 +445,15 @@ export async function loadAuditData(
     ])
   );
 
+  // #3548 round 3: the unsettled-refund-note finding's links, active or not.
+  const refundPaymentLinks: XeroObjectLinkRecord[] =
+    paymentIds.length > 0
+      ? await deps.prisma.xeroObjectLink.findMany({
+          where: refundPaymentLinkWhere(paymentIds),
+          select: xeroObjectLinkSelect,
+        })
+      : [];
+
   const linksByLocalKey = new Map<string, XeroObjectLinkRecord[]>();
   for (const link of links) {
     const key = makeLocalKey(link.localModel, link.localId);
@@ -612,6 +622,9 @@ export async function loadAuditData(
     booking,
     paymentLinks: booking.payment
       ? linksByLocalKey.get(makeLocalKey("Payment", booking.payment.id)) ?? []
+      : [],
+    paymentRefundPaymentLinks: booking.payment
+      ? refundPaymentLinks.filter((link) => link.localModel === "Payment" && link.localId === booking.payment!.id)
       : [],
     bookingLinks: linksByLocalKey.get(makeLocalKey("Booking", booking.id)) ?? [],
     modificationLinksById: new Map(
