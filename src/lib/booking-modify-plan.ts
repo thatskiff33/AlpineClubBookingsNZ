@@ -154,6 +154,7 @@ import {
   resolveBookingGuestDietary,
   type BookingGuestDietarySeeding,
 } from "@/lib/member-dietary-booking-writes";
+import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 type ProposedGuestPricingInput = {
   bookingGuestId?: string | null;
@@ -1090,7 +1091,7 @@ export async function prepareGuestPlan(
   const lodgeCapacity = await getLodgeCapacity(bookingLodgeId, tx);
   if (totalGuestCount > lodgeCapacity) {
     throw new ApiError(
-      `A booking cannot exceed ${lodgeCapacity} guests`,
+      lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A booking cannot exceed ${limit} guests`),
       400,
     );
   }

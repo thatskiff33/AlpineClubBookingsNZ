@@ -56,6 +56,8 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
   useAdminAreaEditAccess: () => true,
+  // /admin/book also reads lodge-area view access for its not-set-up link (#3407).
+  useAdminAreaViewAccess: () => true,
 }))
 
 vi.mock("@/components/club-identity-provider", () => ({

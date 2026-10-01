@@ -161,6 +161,7 @@ import {
 import { generateSchoolGuests } from "@/lib/school-booking-request";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { isPendingSchoolAdultsWriteEnabled } from "@/lib/pending-school-adults-gate";
+import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 /**
  * The states a request may be corrected in: every state where it is live, in
@@ -353,7 +354,7 @@ export async function correctBookingRequest(
     : await getDefaultLodgeCapacity();
   if (guests.length + pendingAdultCount > lodgeCapacity) {
     throw new BookingRequestError(
-      `That party is larger than the lodge capacity of ${lodgeCapacity} guests.`,
+      lodgeGuestLimitMessage(lodgeCapacity, (limit) => `That party is larger than the lodge capacity of ${limit} guests.`),
       422,
     );
   }
