@@ -164,13 +164,10 @@ describe("SecretInput", () => {
       typeAt(field, "4", 1);
 
       const toggle = screen.getByRole("button", { name: "Show PIN" });
-      expect(toggle).toHaveAttribute("aria-pressed", "false");
       fireEvent.click(toggle);
       expect(field.type).toBe("text");
       expect(field.value).toBe("14");
-      expect(
-        screen.getByRole("button", { name: "Hide PIN" }),
-      ).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("button", { name: "Hide PIN" })).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole("button", { name: "Hide PIN" }));
       expect(field.type).toBe("password");
@@ -192,6 +189,17 @@ describe("SecretInput", () => {
       expect(toggle).toHaveAttribute("type", "button");
       fireEvent.click(toggle);
       expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("keeps focus in the field when the toggle is clicked with a mouse", () => {
+      const { field } = renderRevealable();
+      field.focus();
+      const toggle = screen.getByRole("button", { name: "Show PIN" });
+      // A browser focuses a button on mousedown unless it is cancelled;
+      // fireEvent returns false when the event was default-prevented.
+      expect(fireEvent.mouseDown(toggle)).toBe(false);
+      fireEvent.click(toggle);
+      expect(field).toHaveFocus();
     });
 
     it("adds no toggle and keeps the caller's type when not revealable", () => {

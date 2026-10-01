@@ -214,21 +214,28 @@ test.describe("kiosk PIN entry under administrator Raw CSS", () => {
     await page.keyboard.type(PIN[3] as string);
     await expectNoSelectableSecret(page, PIN);
 
-    // The show/hide toggle (#3460): the type is `text` ONLY while shown, the
-    // toggle does not submit, and the secret stays unselectable in both states.
+    // The show/hide toggle (#3460). Asserted: it is a `type="button"` (so it
+    // cannot submit), the submit control still reads its idle label right after
+    // each toggle (a submit would flip it to "Checking..." synchronously), the
+    // field is `text` ONLY while shown, and nothing is selectable while shown,
+    // including across a Backspace and a retyped digit.
     const toggle = page.getByRole("button", { name: "Show PIN" });
+    await expect(toggle).toHaveAttribute("type", "button");
     await toggle.focus();
     await page.keyboard.press("Enter");
     await expect(field).toHaveAttribute("type", "text");
-    await expect(page.getByRole("button", { name: "Hide PIN" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    await expect(submit).toHaveText("View instructions");
+    await expectNoSelectableSecret(page, PIN);
+    await field.click();
+    await page.keyboard.press("End");
+    await page.keyboard.press("Backspace");
+    await expectNoSelectableSecret(page, PIN.slice(0, -1));
+    await page.keyboard.type(PIN.slice(-1));
     await expectNoSelectableSecret(page, PIN);
     await page.getByRole("button", { name: "Hide PIN" }).click();
     await expect(field).toHaveAttribute("type", "password");
+    await expect(submit).toHaveText("View instructions");
     await expectNoSelectableSecret(page, PIN);
-    await expect(page.getByText(/don't match|went wrong/)).toHaveCount(0);
 
     // Submit: the reference is not a real assignment, so the API refuses and the
     // component rerenders with an error. A rerender is the moment a controlled

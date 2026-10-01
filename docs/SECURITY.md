@@ -62,10 +62,11 @@ against the element's own property instead of being fed back as a prop.
 
 Owner decision, 14 Sep 2026. The hut-leader kiosk PIN field is
 `type="password"` by default, so the digits are dots on screen: that removes
-shoulder-surfing and leaves no rendered glyph for an administrator's `@font-face`
-ligature technique to measure. A **Show PIN** button (`aria-pressed`, keyboard
-operable, `type="button"` so it never submits) flips the same element to
-`type="text"`. Rendered glyphs therefore exist **only while the PIN is shown**,
+shoulder-surfing and leaves no glyph of the PIN's digits for an administrator's
+`@font-face` ligature technique to measure (the mask dots reveal only the fixed
+length). A **Show PIN** button (its label flips to **Hide PIN**, keyboard
+operable, keeps focus in the field on a click, and `type="button"` so it never
+submits) flips the same element to `type="text"`. Rendered glyphs therefore exist **only while the PIN is shown**,
 which is the cost the owner accepted for letting a hut leader check a mistyped
 digit. The #2981 rule holds in both states: the element still carries no `value`
 attribute. The behaviour belongs to `SecretInput` (`revealable`), so any future

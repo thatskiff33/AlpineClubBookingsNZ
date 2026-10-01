@@ -33,7 +33,8 @@ import { cn } from "@/lib/utils";
  * it the field renders exactly as before.
  *
  * Guards: `e2e/raw-css-secret-reflection.spec.ts` (runtime),
- * `src/components/ui/__tests__/secret-input.test.tsx` (filtering and caret),
+ * `src/components/ui/__tests__/secret-input.test.tsx` (filtering, caret repair and the
+ * show/hide toggle),
  * `src/lib/__tests__/raw-css-secret-input-census.test.ts` (adoption).
  */
 export type SecretInputProps = Omit<
@@ -100,7 +101,7 @@ export const SecretInput = React.forwardRef<HTMLInputElement, SecretInputProps>(
       <Input
         {...attributes}
         ref={ref}
-        className={cn(attributes.className, revealable && "pr-10")}
+        className={cn(attributes.className, revealable && "px-10")}
         onChange={(event) => {
           const node = event.currentTarget;
           const raw = node.value;
@@ -143,7 +144,7 @@ export const SecretInput = React.forwardRef<HTMLInputElement, SecretInputProps>(
         <button
           type="button"
           aria-label={label}
-          aria-pressed={shown}
+          onMouseDown={(event) => event.preventDefault()}
           onClick={() => setShown((current) => !current)}
           className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-md text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         >
