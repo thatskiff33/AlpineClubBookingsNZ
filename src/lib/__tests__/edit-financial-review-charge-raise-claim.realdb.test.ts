@@ -131,6 +131,9 @@ let syncEditFinancialReviewChargeRequest: (typeof import("@/lib/edit-financial-r
 let buildEditFinancialReviewChargeReason: (typeof import("@/lib/payment-recovery-keys"))["buildEditFinancialReviewChargeReason"];
 let stripeChargeCurrency: (typeof import("@/lib/stripe-charge-currency"))["stripeChargeCurrency"];
 let claimModule: typeof import("@/lib/edit-financial-review-charge-raise-claim");
+let recoveryModule: typeof import("@/lib/payment-recovery");
+let buildRecoveryKey: (typeof import("@/lib/payment-recovery-keys"))["buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey"];
+let buildRecoveryStripeKey: (typeof import("@/lib/payment-recovery-keys"))["buildEditFinancialReviewAdditionalIntentStripeKey"];
 
 /**
  * Two SEPARATE single-connection clients: one pins the claim ROW open inside a
@@ -228,9 +231,12 @@ let observerClient: PrismaClient;
       ({ syncEditFinancialReviewChargeRequest } = await import(
         "@/lib/edit-financial-review-charge"
       ));
-      ({ buildEditFinancialReviewChargeReason } = await import(
-        "@/lib/payment-recovery-keys"
-      ));
+      ({
+        buildEditFinancialReviewChargeReason,
+        buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey: buildRecoveryKey,
+        buildEditFinancialReviewAdditionalIntentStripeKey: buildRecoveryStripeKey,
+      } = await import("@/lib/payment-recovery-keys"));
+      recoveryModule = await import("@/lib/payment-recovery");
       ({ stripeChargeCurrency } = await import("@/lib/stripe-charge-currency"));
       claimModule = await import("@/lib/edit-financial-review-charge-raise-claim");
 
@@ -552,6 +558,139 @@ let observerClient: PrismaClient;
       expect(row.intendedAmountCents).toBeNull();
 
       expect(await claimModule.releaseEditReviewChargeRaise(successor!)).toBe(true);
+    });
+
+    /**
+     * Under the frozen clock every `new Date()` is the same instant, so a claim
+     * taken "now" can never look stale whatever the lease is - a lease of ZERO
+     * would pass every case above. These seed the claim time AT the edges of the
+     * lease instead, which pins its length and the strictness of its boundary.
+     */
+    it("the lease protects its holder for its WHOLE length, up to and including the boundary instant", async () => {
+      const { EDIT_REVIEW_CHARGE_RAISE_LEASE_MS } = claimModule;
+      const ageClaimTo = async (ageMs: number) =>
+        prisma.editReviewChargeRaiseClaim.update({
+          where: { bookingModificationId: MODIFICATION_ID },
+          data: { claimedAt: new Date(Date.now() - ageMs) },
+        });
+      const first = await claimModule.claimEditReviewChargeRaise(MODIFICATION_ID);
+      expect(first).not.toBeNull();
+
+      // One millisecond short of the lease: still the holder's.
+      await ageClaimTo(EDIT_REVIEW_CHARGE_RAISE_LEASE_MS - 1);
+      expect(await claimModule.claimEditReviewChargeRaise(MODIFICATION_ID)).toBeNull();
+
+      // Exactly the lease: still the holder's (`lt`, not `lte`).
+      await ageClaimTo(EDIT_REVIEW_CHARGE_RAISE_LEASE_MS);
+      expect(await claimModule.claimEditReviewChargeRaise(MODIFICATION_ID)).toBeNull();
+
+      // One millisecond past it: taken over.
+      await ageClaimTo(EDIT_REVIEW_CHARGE_RAISE_LEASE_MS + 1);
+      const successor = await claimModule.claimEditReviewChargeRaise(MODIFICATION_ID);
+      expect(successor).not.toBeNull();
+      expect(successor?.token).not.toBe(first?.token);
+      await claimModule.releaseEditReviewChargeRaise(successor!);
+    });
+
+    /**
+     * `INV-PAY-111`'s backstop. The edit has ONE recovery row; an earlier replay
+     * that closed it SUCCEEDED used to leave a later deferral writing nothing that
+     * would ever run - the share it deferred was never asked for.
+     */
+    it("a deferral REOPENS the edit's recovery row an earlier replay closed, and the replay then raises the deferred share", async () => {
+      await settleShare(5_000);
+      await seedRequestAt(5_000);
+      const closed = await prisma.paymentRecoveryOperation.create({
+        data: {
+          type: "CREATE_ADDITIONAL_PAYMENT_INTENT",
+          status: "SUCCEEDED",
+          bookingId: BOOKING_ID,
+          paymentId: PAYMENT_ID,
+          paymentIntentId: buildRecoveryStripeKey(MODIFICATION_ID),
+          amountCents: 5_000,
+          hadIssuedXeroInvoice: false,
+          idempotencyKey: buildRecoveryKey(MODIFICATION_ID),
+          attempts: 2,
+          nextRetryAt: null,
+          succeededAt: new Date(),
+        },
+      });
+      const landed: number[] = [];
+      stripeHooks.get = async (id) => ({
+        id,
+        status: "requires_payment_method",
+        currency: stripeChargeCurrency(CLUB_FORMAT_TEST),
+        amount: landed.at(-1) ?? 5_000,
+      });
+      stripeHooks.update = async (id, amountCents) => {
+        landed.push(amountCents);
+        return { id, amount: amountCents };
+      };
+
+      // A new share settles while another run holds the claim: it defers.
+      await settleShare(2_000);
+      const holder = await claimModule.claimEditReviewChargeRaise(MODIFICATION_ID);
+      await expect(sync()).resolves.toMatchObject({ outcome: "deferred", totalCents: 7_000 });
+      // The holder then dies without raising.
+      await claimModule.releaseEditReviewChargeRaise(holder!);
+      expect(landed).toEqual([]);
+
+      const reopened = await prisma.paymentRecoveryOperation.findUniqueOrThrow({
+        where: { id: closed.id },
+      });
+      expect(reopened).toMatchObject({ status: "PENDING", attempts: 0, succeededAt: null });
+      expect(reopened.nextRetryAt).not.toBeNull();
+
+      // The cron's replay claims the reopened row and raises the deferred share.
+      await expect(
+        recoveryModule.runPaymentRecoveryOperationNow(closed.id, CLUB_FORMAT_TEST),
+      ).resolves.toBe("succeeded");
+      expect(landed).toEqual([7_000]);
+      expect(
+        (
+          await prisma.paymentTransaction.findUniqueOrThrow({
+            where: { stripePaymentIntentId: REQUEST_INTENT_ID },
+          })
+        ).amountCents,
+      ).toBe(7_000);
+      expect(
+        (await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: closed.id } }))
+          .status,
+      ).toBe("SUCCEEDED");
+    });
+
+    it("a payment webhook that lands while the raise is in flight is NOT reverted to PENDING by the raise's row write", async () => {
+      await settleShare(5_000);
+      await seedRequestAt(5_000);
+      await settleShare(2_000);
+      stripeHooks.get = async (id) => ({
+        id,
+        status: "requires_payment_method",
+        currency: stripeChargeCurrency(CLUB_FORMAT_TEST),
+        amount: 5_000,
+      });
+      stripeHooks.update = async (id, amountCents) => {
+        // Stripe accepts the new amount; the member pays it at once, and the
+        // `payment_intent.succeeded` webhook records that before our row write.
+        await prisma.paymentTransaction.update({
+          where: { stripePaymentIntentId: REQUEST_INTENT_ID },
+          data: { status: "SUCCEEDED", amountCents },
+        });
+        return { id, amount: amountCents };
+      };
+
+      await expect(sync()).resolves.toMatchObject({
+        outcome: "already-paid",
+        paymentIntentId: REQUEST_INTENT_ID,
+        totalCents: 7_000,
+      });
+
+      expect(
+        await prisma.paymentTransaction.findUniqueOrThrow({
+          where: { stripePaymentIntentId: REQUEST_INTENT_ID },
+          select: { status: true, amountCents: true },
+        }),
+      ).toEqual({ status: "SUCCEEDED", amountCents: 7_000 });
     });
 
     it("the database refuses a token without its claim time, and a non-positive intent", async () => {

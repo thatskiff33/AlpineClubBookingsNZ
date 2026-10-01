@@ -11,6 +11,7 @@ import {
 import type Stripe from "stripe";
 import { bookingOwner } from "@/lib/booking-owner";
 import type { ClubFormat } from "@/lib/club-format";
+import type { EditReviewChargeSyncOutcome } from "@/lib/edit-financial-review-charge-sync";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { loadPersistedClubFormatSettings } from "@/lib/club-format-settings";
 import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
@@ -429,6 +430,80 @@ export async function enqueueAdditionalPaymentIntentRecovery({
 }
 
 /**
+ * #3402 (`INV-PAY-111`): make ONE booking edit's review-charge debt durable, and
+ * make sure its one recovery row will actually run again. The single home for
+ * that row's two keys and its frozen `hadIssuedXeroInvoice`: the sync's deferral
+ * and its unminted arm, and `executeEditReviewCharge`'s refusal catch, all call
+ * this rather than spelling the enqueue themselves.
+ *
+ * WHY IT RE-ARMS, WHEN THE SHARED ENQUEUE DELIBERATELY DOES NOT. The edit has ONE
+ * recovery row, and the shared upsert's update branch leaves `status` alone. Once
+ * an earlier replay for this edit had closed it SUCCEEDED - which the raise claim
+ * makes routine, since every deferral it resolves creates the row and the replay
+ * then finds the holder already raised - a later deferral or refused raise for a
+ * NEW share wrote nothing that would ever run, and that share was never asked for.
+ * The replay is a pure re-derivation from the settled shares (a covering ask
+ * writes nothing), so reopening a finished row costs one idempotent pass.
+ *
+ *   * SUCCEEDED -> PENDING, due now, attempts reset: a new debt on the edit.
+ *   * PROCESSING is NEVER reopened - a second worker could then claim a row the
+ *     first is still running. Instead its `nextRetryAt` is moved to now, which no
+ *     claim reads while the row is PROCESSING, and which the replay's completion
+ *     is fenced on: a share deferred onto a running replay hands the row straight
+ *     back to PENDING rather than being closed with it
+ *     (`completeEditFinancialReviewChargeRecovery`).
+ *   * A terminal FAILED row is NOT reopened. Its death already handed the edit to
+ *     the booking-vs-Xero repair pass, which raises the invoice unpaid, and
+ *     withdrew any live card request (`INV-PAY-057`); minting a card request
+ *     again on top would be the two-instrument state that rule removes.
+ *   * PENDING and retryable FAILED rows will run anyway; nothing changes.
+ *
+ * Only this edit's own key is ever touched, so no other recovery's semantics move.
+ */
+export async function enqueueEditFinancialReviewChargeRecovery({
+  bookingId,
+  paymentId,
+  bookingModificationId,
+  advisoryAmountCents,
+  hadIssuedXeroInvoice,
+}: {
+  bookingId: string;
+  paymentId: string;
+  bookingModificationId: string;
+  /** Diagnostic only: the replay re-derives the total from the settled shares. */
+  advisoryAmountCents: number;
+  /** #3181: NOT advisory - the replay's answer to "was there an invoice to supplement". */
+  hadIssuedXeroInvoice: boolean | null;
+}) {
+  const idempotencyKey =
+    buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(bookingModificationId);
+  await enqueueAdditionalPaymentIntentRecovery({
+    bookingId,
+    paymentId,
+    idempotencyKey,
+    amountCents: advisoryAmountCents,
+    stripeIdempotencyKey: buildEditFinancialReviewAdditionalIntentStripeKey(bookingModificationId),
+    hadIssuedXeroInvoice,
+  });
+  const now = new Date();
+  await prisma.paymentRecoveryOperation.updateMany({
+    where: { idempotencyKey, status: PaymentRecoveryOperationStatus.SUCCEEDED },
+    data: {
+      status: PaymentRecoveryOperationStatus.PENDING,
+      attempts: 0,
+      nextRetryAt: now,
+      lastError: null,
+      processingStartedAt: null,
+      succeededAt: null,
+    },
+  });
+  await prisma.paymentRecoveryOperation.updateMany({
+    where: { idempotencyKey, status: PaymentRecoveryOperationStatus.PROCESSING },
+    data: { nextRetryAt: now },
+  });
+}
+
+/**
  * Durable recovery for an approved refund appeal whose Stripe refund failed
  * (#1039 item 1, PR #846 residual). The approval claim stands and the refund
  * completes through the recovery cron. When the approve route passes the
@@ -477,6 +552,8 @@ import {
   buildDuplicateCaptureRefundRecoveryIdempotencyKey,
   buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking,
   buildDuplicateCaptureRefundStripeKeyPrefix,
+  buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
+  buildEditFinancialReviewAdditionalIntentStripeKey,
   buildEditFinancialReviewRefundRecoveryIdempotencyKey,
   buildEditFinancialReviewRefundStripeKeyPrefix,
   buildLateCaptureApprovalRefundRecoveryIdempotencyKey,
@@ -1138,6 +1215,66 @@ async function completePaymentRecoveryOperation(
     );
   }
   return closed.count === 1;
+}
+
+/**
+ * #3402 (`INV-PAY-111`): whether a review-charge replay that ended on this
+ * outcome may close its operation. A Record rather than a chain of string
+ * compares, so a NEW outcome is a type error here until somebody decides it -
+ * a forgotten one used to fall through to "close", which is how a debt the club
+ * never asked for gets marked done (#3170).
+ */
+const EDIT_REVIEW_CHARGE_OUTCOME_CLOSES_REPLAY: Record<EditReviewChargeSyncOutcome, boolean> = {
+  "nothing-owed": true,
+  raised: true,
+  "already-paid": true,
+  "not-raised": false,
+  deferred: false,
+};
+
+/**
+ * #3402: close a review-charge replay, FENCED on the `nextRetryAt` it was claimed
+ * with. `enqueueEditFinancialReviewChargeRecovery` moves that value on a
+ * PROCESSING row when a share is deferred or refused onto this edit while the
+ * replay runs - after the replay's own last re-derivation, so the replay cannot
+ * have raised for it. Closing over that would lose the share; instead the row
+ * goes straight back to PENDING, due at once, and the next pass raises for it.
+ * Otherwise identical to `completePaymentRecoveryOperation`, whose fence (not
+ * SUCCEEDED) it keeps.
+ */
+async function completeEditFinancialReviewChargeRecovery(
+  operation: PaymentRecoveryOperation,
+): Promise<void> {
+  const closed = await prisma.paymentRecoveryOperation.updateMany({
+    where: {
+      id: operation.id,
+      status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+      nextRetryAt: operation.nextRetryAt,
+    },
+    data: {
+      status: PaymentRecoveryOperationStatus.SUCCEEDED,
+      nextRetryAt: null,
+      lastError: null,
+      processingStartedAt: null,
+      succeededAt: new Date(),
+    },
+  });
+  if (closed.count === 1) return;
+  const handedBack = await prisma.paymentRecoveryOperation.updateMany({
+    where: { id: operation.id, status: PaymentRecoveryOperationStatus.PROCESSING },
+    data: {
+      status: PaymentRecoveryOperationStatus.PENDING,
+      attempts: 0,
+      processingStartedAt: null,
+      lastError: null,
+    },
+  });
+  logger.warn(
+    { operationId: operation.id },
+    handedBack.count === 1
+      ? "Edit financial review charge recovery was not closed: a share was deferred onto it while it ran, so it stays open to raise for that share"
+      : "Edit financial review charge recovery completion matched no live operation (already succeeded, or deleted by a manual mark-paid reversal); nothing was resurrected",
+  );
 }
 
 async function alertPaymentRecoveryFailure(
@@ -2647,12 +2784,12 @@ async function processCreateAdditionalPaymentIntentOperation(
      * being processed is already this debt's durable retry, and a second row for
      * one debt is a second debt.
      */
-    if (synced.outcome === "not-raised" || synced.outcome === "deferred") { // #3402: claim held elsewhere
+    if (!EDIT_REVIEW_CHARGE_OUTCOME_CLOSES_REPLAY[synced.outcome]) {
       throw new Error(
         `Edit financial review charge request for booking modification ${bookingModificationId} was not raised (${formatCents(synced.totalCents, format)} still owed); leaving the recovery operation open to retry`,
       );
     }
-    await completePaymentRecoveryOperation(operation.id);
+    await completeEditFinancialReviewChargeRecovery(operation);
     return;
   }
 

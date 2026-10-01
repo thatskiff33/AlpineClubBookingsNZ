@@ -20,8 +20,9 @@ const mocks = vi.hoisted(() => ({
   recordUncollected: vi.fn(),
   updatePaymentIntentAmount: vi.fn(),
   reissue: vi.fn(),
-  upsertPaymentIntentTransaction: vi.fn(),
+  writeRaisedAmount: vi.fn(),
   enqueueRecovery: vi.fn(),
+  logError: vi.fn(),
   mint: vi.fn(),
   paymentFindUnique: vi.fn(),
   recordCarried: vi.fn(),
@@ -48,10 +49,10 @@ vi.mock("@/lib/additional-intent-currency", () => ({
 }));
 vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/payment-transactions")),
-  upsertPaymentIntentTransaction: (...a: unknown[]) => mocks.upsertPaymentIntentTransaction(...a),
+  writeRaisedAdditionalRequestAmount: (...a: unknown[]) => mocks.writeRaisedAmount(...a),
 }));
 vi.mock("@/lib/payment-recovery", () => ({
-  enqueueAdditionalPaymentIntentRecovery: (...a: unknown[]) => mocks.enqueueRecovery(...a),
+  enqueueEditFinancialReviewChargeRecovery: (...a: unknown[]) => mocks.enqueueRecovery(...a),
 }));
 vi.mock("@/lib/booking-modification-settlement", () => ({
   createModificationAdditionalPaymentIntent: (...a: unknown[]) => mocks.mint(...a),
@@ -63,14 +64,10 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { payment: { findUnique: (...a: unknown[]) => mocks.paymentFindUnique(...a) } },
 }));
 vi.mock("@/lib/logger", () => ({
-  default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+  default: { error: (...a: unknown[]) => mocks.logError(...a), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
 import { syncEditFinancialReviewChargeRequest } from "@/lib/edit-financial-review-charge";
-import {
-  buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
-  buildEditFinancialReviewChargeReason,
-} from "@/lib/payment-recovery-keys";
 
 const CLAIM = { bookingModificationId: "mod-1", token: "token-1" };
 
@@ -125,9 +122,10 @@ beforeEach(() => {
     mocks.calls.push(`stripe:${amount}`);
     return { id, amount };
   });
-  mocks.upsertPaymentIntentTransaction.mockImplementation(
+  mocks.writeRaisedAmount.mockImplementation(
     async ({ amountCents }: { amountCents: number }) => {
       mocks.calls.push(`row:${amountCents}`);
+      return true;
     },
   );
   mocks.enqueueRecovery.mockResolvedValue({ id: "recovery-1" });
@@ -152,19 +150,18 @@ describe("the review-charge raise claim (#3402)", () => {
     expect(mocks.updatePaymentIntentAmount).not.toHaveBeenCalled();
     expect(mocks.reissue).not.toHaveBeenCalled();
     expect(mocks.mint).not.toHaveBeenCalled();
-    expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+    expect(mocks.writeRaisedAmount).not.toHaveBeenCalled();
     expect(mocks.release).not.toHaveBeenCalled();
-    expect(mocks.enqueueRecovery).toHaveBeenCalledWith(
-      expect.objectContaining({
-        bookingId: "booking-1",
-        paymentId: "payment-1",
-        idempotencyKey: buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod-1"),
-        hadIssuedXeroInvoice: false,
-      }),
-    );
+    expect(mocks.enqueueRecovery).toHaveBeenCalledWith({
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      bookingModificationId: "mod-1",
+      advisoryAmountCents: 10_000,
+      hadIssuedXeroInvoice: false,
+    });
   });
 
-  it("records the intent under the claim, THEN calls Stripe, THEN writes the row from Stripe's answer, THEN releases", async () => {
+  it("records the intent under the claim, THEN calls Stripe, THEN writes the row from Stripe's answer (the update arm), THEN releases", async () => {
     sharesRead(7_000);
 
     const result = await sync();
@@ -172,12 +169,12 @@ describe("the review-charge raise claim (#3402)", () => {
     expect(result).toMatchObject({ outcome: "raised", totalCents: 7_000 });
     expect(mocks.calls).toEqual(["claim", "intent:7000", "stripe:7000", "row:7000", "release"]);
     expect(mocks.recordIntent).toHaveBeenCalledWith(CLAIM, 7_000);
-    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        paymentIntentId: "pi_request",
-        reason: buildEditFinancialReviewChargeReason("mod-1"),
-      }),
-    );
+    expect(mocks.writeRaisedAmount).toHaveBeenCalledWith({
+      paymentId: "payment-1",
+      paymentIntentId: "pi_request",
+      amountCents: 7_000,
+      carriedAskCents: 0,
+    });
   });
 
   it("the holder looks again AFTER releasing, and raises for a share that committed while it held the claim", async () => {
@@ -213,7 +210,7 @@ describe("the review-charge raise claim (#3402)", () => {
 
     await expect(sync()).rejects.toThrow("amount could not be updated");
 
-    expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+    expect(mocks.writeRaisedAmount).not.toHaveBeenCalled();
     expect(mocks.release).toHaveBeenCalledWith(CLAIM);
   });
 
@@ -313,5 +310,75 @@ describe("the review-charge raise claim (#3402)", () => {
     mocks.release.mockRejectedValue(new Error("connection reset"));
 
     await expect(sync()).resolves.toMatchObject({ outcome: "raised", totalCents: 7_000 });
+  });
+
+  it("a LOST lease after a provider call is never reported `raised`: it is logged and deferred to the recovery row", async () => {
+    sharesRead(7_000);
+    // The claim was taken over while this run was inside Stripe.
+    mocks.release.mockResolvedValue(false);
+
+    const result = await sync();
+
+    expect(mocks.updatePaymentIntentAmount).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ outcome: "deferred", paymentIntentId: null, totalCents: 7_000 });
+    expect(mocks.enqueueRecovery).toHaveBeenCalledTimes(1);
+    expect(mocks.logError).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingModificationId: "mod-1", askedCents: 7_000, providerCents: 7_000 }),
+      expect.stringContaining("lost its claim during the provider call"),
+    );
+  });
+
+  it("a lost lease on a pass that called NO provider changes nothing it reported", async () => {
+    // An exact replay: the request already covers the total, so nothing landed.
+    sharesRead(5_000);
+    mocks.release.mockResolvedValue(false);
+
+    await expect(sync()).resolves.toMatchObject({ outcome: "raised", totalCents: 5_000 });
+    expect(mocks.enqueueRecovery).not.toHaveBeenCalled();
+  });
+
+  it("a request PAID as it was raised keeps the status the payment wrote, and reports `already-paid`", async () => {
+    sharesRead(7_000);
+    // The status-fenced write matched nothing: the row is captured.
+    mocks.writeRaisedAmount.mockResolvedValue(false);
+
+    const result = await sync();
+
+    expect(result).toEqual({
+      outcome: "already-paid",
+      paymentIntentId: "pi_request",
+      totalCents: 7_000,
+      carriedCents: 0,
+    });
+    // Paid at the new amount, which covered every share this pass derived: no
+    // shortfall to trace, and no recovery row to replay.
+    expect(mocks.recordUncollected).not.toHaveBeenCalled();
+    expect(mocks.enqueueRecovery).not.toHaveBeenCalled();
+  });
+
+  it("a holder that finds the request PAID still looks again after releasing, and traces a share that deferred to it", async () => {
+    // Pass 1 reads $60 and finds the request captured; B's $40 commits while it
+    // holds the claim (B defers). The read after release sees $100.
+    sharesRead(6_000, 6_000, 10_000);
+    mocks.findRequest.mockResolvedValue({ ...requestAt(5_000), status: PaymentStatus.SUCCEEDED });
+
+    const result = await sync();
+
+    expect(result.outcome).toBe("already-paid");
+    // Two traces, each of a different total: the second is the one that names
+    // B's share. Never the same total twice.
+    expect(mocks.recordUncollected.mock.calls.map(([args]) => args.derivedTotalCents)).toEqual([
+      6_000, 10_000,
+    ]);
+    expect(mocks.claim).toHaveBeenCalledTimes(2);
+  });
+
+  it("a PAID request with no share arriving meanwhile is traced exactly once", async () => {
+    sharesRead(6_000);
+    mocks.findRequest.mockResolvedValue({ ...requestAt(5_000), status: PaymentStatus.SUCCEEDED });
+
+    await expect(sync()).resolves.toMatchObject({ outcome: "already-paid" });
+    expect(mocks.recordUncollected).toHaveBeenCalledTimes(1);
+    expect(mocks.claim).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,13 +1,12 @@
 import "server-only";
 
-import { PaymentSource, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { PaymentSource } from "@prisma/client";
 
 import { raiseReviewChargeAsk, sizeReviewChargeAsk } from "@/lib/additional-payment-ask";
 import { reissueRaisedAskIfCurrencyChanged } from "@/lib/additional-intent-currency";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import type { ClubFormat } from "@/lib/club-format";
-import type { EditReviewChargeMember } from "@/lib/edit-financial-review-charge";
 import { recordCarriedEditReviewChargeBalance } from "@/lib/edit-financial-review-carried-balance";
 import {
   findEditReviewChargeRequest,
@@ -22,7 +21,7 @@ import {
 } from "@/lib/edit-financial-review-charge-raise-claim";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { enqueueAdditionalPaymentIntentRecovery } from "@/lib/payment-recovery";
+import { enqueueEditFinancialReviewChargeRecovery } from "@/lib/payment-recovery";
 import {
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
   buildEditFinancialReviewAdditionalIntentStripeKey,
@@ -31,7 +30,7 @@ import {
 } from "@/lib/payment-recovery-keys";
 import {
   isCapturedTransactionStatus,
-  upsertPaymentIntentTransaction,
+  writeRaisedAdditionalRequestAmount,
 } from "@/lib/payment-transactions";
 import { updatePaymentIntentAmount } from "@/lib/stripe";
 
@@ -42,6 +41,14 @@ import { updatePaymentIntentAmount } from "@/lib/stripe";
  * when #3402 put the raise claim around it; that module still chooses the route
  * and executes the charge, and re-exports this sync for its existing importers.
  */
+
+/** The booking member a charge may need in order to mint a Stripe customer. */
+export type EditReviewChargeMember = {
+  id: string;
+  email: string;
+  name: string;
+  stripeCustomerId: string | null;
+};
 
 /**
  * What actually happened to this edit's ONE request, as a value the caller has to
@@ -58,7 +65,9 @@ import { updatePaymentIntentAmount } from "@/lib/stripe";
  *   * `nothing-owed`   - no settled share against this edit. Nothing to ask for,
  *                        and nothing further will ever be owed by this row.
  *   * `raised`         - the request exists and asks for at least the derived
- *                        total. This is the only outcome that closes a replay.
+ *                        total. Which outcomes close a replay is decided, one
+ *                        entry per outcome, by `payment-recovery.ts`
+ *                        (`EDIT_REVIEW_CHARGE_OUTCOME_CLOSES_REPLAY`).
  *   * `already-paid`   - the member paid before the combined total could be
  *                        raised. Terminal: the remaining share is collected by
  *                        hand, and the audit row written alongside it is how an
@@ -66,10 +75,11 @@ import { updatePaymentIntentAmount } from "@/lib/stripe";
  *   * `not-raised`     - the ask does NOT exist and the money IS owed. The debt
  *                        is durable (a recovery row), and a replay that sees this
  *                        must leave its operation open.
- *   * `deferred`       - #3402: another run holds this edit's raise claim, so
- *                        this run called no provider. Its share is covered by
- *                        that holder's re-derivation after release or, should the
- *                        holder die, by the recovery row this run wrote. Not a
+ *   * `deferred`       - #3402: another run holds this edit's raise claim (or
+ *                        this run lost its lease), so this run's share is not yet
+ *                        known to be asked for. It is covered by that holder's
+ *                        re-derivation after release or, should the holder die,
+ *                        by the recovery row this run armed. Not a
  *                        receipt: like `not-raised`, a replay leaves its
  *                        operation open, and the intent id is null so the Xero
  *                        leg defers exactly as it does for a refused raise.
@@ -144,25 +154,46 @@ export async function syncEditFinancialReviewChargeRequest(
     }
     const claim = await claimEditReviewChargeRaise(bookingModificationId);
     if (!claim) return deferEditReviewChargeRaise(request, owed);
-    let result: EditReviewChargeSyncResult;
+    let raisePass: RaisePass;
+    let released: boolean | null = null;
     try {
-      result = await syncEditReviewChargeRequestUnderClaim(request, claim);
+      raisePass = await syncEditReviewChargeRequestUnderClaim(request, claim);
     } finally {
-      // A release that fails costs a wait, never money: the token ages out and
-      // the next run takes it over.
-      await releaseEditReviewChargeRaise(claim).catch((err) =>
+      // A release that FAILS costs a wait, never money: the token ages out and
+      // the next run takes it over. `null` is "unknown", not "lost".
+      released = await releaseEditReviewChargeRaise(claim).catch((err) => {
         logger.error(
           { err, bookingId, bookingModificationId },
           "Failed to release an edit financial review charge raise claim - it will expire with its lease",
-        ),
+        );
+        return null;
+      });
+    }
+    const { result } = raisePass;
+    if (released === false && raisePass.providerCall) {
+      // The lease expired while this run was inside Stripe and another run took
+      // it over, so this run's absolute amount may have landed AFTER the
+      // successor's - at Stripe, on the row, or both. Nothing here can tell
+      // which; what it must not do is report `raised`. The recovery row
+      // re-derives and re-raises against what is there now.
+      logger.error(
+        { bookingId, bookingModificationId, ...raisePass.providerCall, outcome: result.outcome },
+        "Edit financial review charge raise lost its claim during the provider call - deferring to the recovery row instead of reporting it raised",
+      );
+      return deferEditReviewChargeRaise(
+        request,
+        await sumEditReviewChargeSharesCents({ bookingId, bookingModificationId }),
       );
     }
-    if (result.outcome !== "raised") return result;
+    // `already-paid` looks again too: its audit row recorded the total THIS pass
+    // read, and a share that deferred to this run meanwhile is otherwise traced
+    // by nobody (the loser no longer writes its own `ask-closed` record).
+    if (result.outcome !== "raised" && result.outcome !== "already-paid") return result;
     // AFTER the release, never before: a run that lost to this one committed its
     // share before its claim attempt, so this read sees it, and a share settled
     // after the release meets an unclaimed request of its own.
     const owedNow = await sumEditReviewChargeSharesCents({ bookingId, bookingModificationId });
-    if (owedNow <= result.totalCents) return result;
+    if (owedNow <= raisePass.coveredOwedCents) return result;
   }
   // Shares kept arriving faster than this run could raise for them - three in
   // the space of one provider round trip each. The request covers less than is
@@ -172,6 +203,17 @@ export async function syncEditFinancialReviewChargeRequest(
     await sumEditReviewChargeSharesCents({ bookingId, bookingModificationId }),
   );
 }
+
+/**
+ * One pass under the claim: what it returns to the caller, the share total that
+ * answer accounts for (the re-check after release compares against THIS, never
+ * against a paid or carried figure), and the provider call it made, if any.
+ */
+type RaisePass = {
+  result: EditReviewChargeSyncResult;
+  coveredOwedCents: number;
+  providerCall: { askedCents: number; providerCents: number | null } | null;
+};
 
 /**
  * How many times one run raises before handing the rest to the recovery row.
@@ -200,25 +242,21 @@ type EditReviewChargeSyncRequest = {
 
 /**
  * #3402: this run did not raise - another holds the claim, or this one lost its
- * lease before the provider call - so the debt is made durable on the edit's ONE
- * recovery row, the same row and key a refused raise uses. It is the backstop
- * for a holder that dies mid-raise; when the holder lives, its post-release
- * re-derivation has normally raised for this share already and the replay finds
- * the ask covering it.
+ * lease - so the debt is made durable on the edit's ONE recovery row, which
+ * `enqueueEditFinancialReviewChargeRecovery` also re-arms if an earlier replay
+ * had closed it. It is the backstop for a holder that dies mid-raise; when the
+ * holder lives, its post-release re-derivation has normally raised for this
+ * share already and the replay finds the ask covering it.
  */
 async function deferEditReviewChargeRaise(
   { bookingId, bookingModificationId, paymentId, hasIssuedXeroInvoice }: EditReviewChargeSyncRequest,
   totalCents: number,
 ): Promise<EditReviewChargeSyncResult> {
-  await enqueueAdditionalPaymentIntentRecovery({
+  await enqueueEditFinancialReviewChargeRecovery({
     bookingId,
     paymentId,
-    idempotencyKey:
-      buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(bookingModificationId),
-    // Advisory only: the replay re-derives the total.
-    amountCents: totalCents,
-    stripeIdempotencyKey:
-      buildEditFinancialReviewAdditionalIntentStripeKey(bookingModificationId),
+    bookingModificationId,
+    advisoryAmountCents: totalCents,
     hadIssuedXeroInvoice: hasIssuedXeroInvoice,
   });
   return { outcome: "deferred", paymentIntentId: null, totalCents, carriedCents: 0 };
@@ -232,7 +270,7 @@ async function deferEditReviewChargeRaise(
 async function syncEditReviewChargeRequestUnderClaim(
   request: EditReviewChargeSyncRequest,
   claim: EditReviewChargeRaiseClaim,
-): Promise<EditReviewChargeSyncResult> {
+): Promise<RaisePass> {
   const { bookingId, bookingModificationId, paymentId, member, hasIssuedXeroInvoice, format } =
     request;
   const totalCents = await sumEditReviewChargeSharesCents({
@@ -245,10 +283,9 @@ async function syncEditReviewChargeRequestUnderClaim(
     // magic-value failure this epic exists to remove. Nothing is minted, so
     // nothing is superseded and nothing carried (#3371).
     return {
-      outcome: "nothing-owed",
-      paymentIntentId: null,
-      totalCents: 0,
-      carriedCents: 0,
+      result: { outcome: "nothing-owed", paymentIntentId: null, totalCents: 0, carriedCents: 0 },
+      coveredOwedCents: 0,
+      providerCall: null,
     };
   }
 
@@ -291,11 +328,17 @@ async function syncEditReviewChargeRequestUnderClaim(
         carriedAskCents: existing.carriedAskCents,
       });
       return {
-        outcome: "already-paid",
-        paymentIntentId: existing.stripePaymentIntentId,
-        // #3371: the SHARE part alone; unchanged where nothing was carried.
-        totalCents: existing.amountCents - existing.carriedAskCents,
-        carriedCents: existing.carriedAskCents,
+        result: {
+          outcome: "already-paid",
+          paymentIntentId: existing.stripePaymentIntentId,
+          // #3371: the SHARE part alone; unchanged where nothing was carried.
+          totalCents: existing.amountCents - existing.carriedAskCents,
+          carriedCents: existing.carriedAskCents,
+        },
+        // What the audit row just recorded - NOT the paid figure, which a grown
+        // total would never pass and the re-check would loop on.
+        coveredOwedCents: totalCents,
+        providerCall: null,
       };
     }
     // #3371: shares PLUS whatever the mint absorbed, read back off the ROW -
@@ -307,52 +350,90 @@ async function syncEditReviewChargeRequestUnderClaim(
       // stale, smaller total, which must never lower a live ask. Either way the
       // ask that already exists covers the total this run derived, so this is
       // `raised` rather than a second write.
-      return {
+      const covering: EditReviewChargeSyncResult = {
         outcome: "raised",
         paymentIntentId: existing.stripePaymentIntentId,
         totalCents: existing.amountCents - existing.carriedAskCents,
         carriedCents: existing.carriedAskCents,
       };
+      return { result: covering, coveredOwedCents: covering.totalCents, providerCall: null };
     }
     // #3402: the intended raise is recorded under the claim BEFORE Stripe hears
     // of it; a lease lost by now means another run owns this request.
     if (!(await recordEditReviewChargeRaiseIntent(claim, raised.amountCents))) {
-      return deferEditReviewChargeRaise(request, totalCents);
+      return {
+        result: await deferEditReviewChargeRaise(request, totalCents),
+        coveredOwedCents: 0,
+        providerCall: null,
+      };
     }
     const reissuedId = await reissueRaisedAskIfCurrencyChanged({ format, bookingId, paymentId, staleIntentId: existing.stripePaymentIntentId, ask: raised, reason });
-    if (reissuedId) return { outcome: "raised", paymentIntentId: reissuedId, totalCents, carriedCents: raised.carriedCents };
+    if (reissuedId) {
+      return {
+        result: { outcome: "raised", paymentIntentId: reissuedId, totalCents, carriedCents: raised.carriedCents },
+        coveredOwedCents: totalCents,
+        providerCall: { askedCents: raised.amountCents, providerCents: null },
+      };
+    }
     // Same currency (#3567): the SAME intent asks for more. Nothing is minted, so nothing
     // is superseded — `queueSupersededAdditionalIntentCancellations` never fires between shares.
     // A refusal THROWS from here with nothing written: the row still matches the
     // unchanged intent, the claim is released by the caller, and
     // `executeEditReviewCharge` (or the replay) makes the debt durable.
     const provider = await updatePaymentIntentAmount(existing.stripePaymentIntentId, raised.amountCents);
-    // RECONCILED FROM THE PROVIDER'S ANSWER, not from the figure asked for: the
-    // row is what the member's pay page shows, and it must agree with the intent.
+    // THIS arm reconciles from the provider's answer, not from the figure asked
+    // for: the row is what the member's pay page shows, and it must agree with
+    // the intent. (A currency re-issue and a first mint write the amount they
+    // REQUESTED; both keys carry that amount, so a replayed key returns it.)
+    const providerCall = { askedCents: raised.amountCents, providerCents: provider.amount };
     if (provider.amount !== raised.amountCents) {
       logger.error(
         { bookingId, bookingModificationId, askedCents: raised.amountCents, providerCents: provider.amount },
         "Stripe answered an edit financial review charge raise with a different amount - the request row records Stripe's",
       );
     }
-    await upsertPaymentIntentTransaction({
+    // Amounts only, and only onto a row that is not captured: a webhook that
+    // recorded the member paying in the instant after Stripe accepted the new
+    // amount must not be reverted to PENDING by this write.
+    const written = await writeRaisedAdditionalRequestAmount({
       paymentId,
-      kind: PaymentTransactionKind.ADDITIONAL,
       paymentIntentId: existing.stripePaymentIntentId,
       amountCents: provider.amount,
       // Re-stated from the ONE value that computed both (#3371).
       carriedAskCents: raised.carriedCents,
-      status: PaymentStatus.PENDING,
-      reason,
     });
+    // What the intent now covers of THIS edit's shares: short of the derived
+    // total only if Stripe answered short, and then the caller's post-release
+    // re-derivation raises again (or, if it was paid, records the rest).
+    const coveredOwedCents = provider.amount - raised.carriedCents;
+    if (!written) {
+      // Paid at the NEW amount (Stripe refuses to update a captured intent), so
+      // nothing this pass derived is uncollected; reported as `already-paid` so
+      // no caller queues an invoice to wait on a payment that already happened.
+      logger.warn(
+        { bookingId, bookingModificationId, ...providerCall },
+        "Edit financial review charge request was paid as it was raised - its row keeps the status the payment wrote",
+      );
+      return {
+        result: {
+          outcome: "already-paid",
+          paymentIntentId: existing.stripePaymentIntentId,
+          totalCents: coveredOwedCents,
+          carriedCents: raised.carriedCents,
+        },
+        coveredOwedCents,
+        providerCall,
+      };
+    }
     return {
-      outcome: "raised",
-      paymentIntentId: existing.stripePaymentIntentId,
-      // What the intent now covers of THIS edit's shares: short of the derived
-      // total only if Stripe answered short, and then the caller's post-release
-      // re-derivation raises again.
-      totalCents: provider.amount - raised.carriedCents,
-      carriedCents: raised.carriedCents,
+      result: {
+        outcome: "raised",
+        paymentIntentId: existing.stripePaymentIntentId,
+        totalCents: coveredOwedCents,
+        carriedCents: raised.carriedCents,
+      },
+      coveredOwedCents,
+      providerCall,
     };
   }
 
@@ -386,8 +467,13 @@ async function syncEditReviewChargeRequestUnderClaim(
   // otherwise mint two intents under two amount keys, each superseding the
   // other, and the survivor could be the smaller.
   if (!(await recordEditReviewChargeRaiseIntent(claim, ask.amountCents))) {
-    return deferEditReviewChargeRaise(request, totalCents);
+    return {
+      result: await deferEditReviewChargeRaise(request, totalCents),
+      coveredOwedCents: 0,
+      providerCall: null,
+    };
   }
+  const mintCall = { askedCents: ask.amountCents, providerCents: null };
   const minted = await createModificationAdditionalPaymentIntent({
     format, bookingId,
     result: {
@@ -448,23 +534,22 @@ async function syncEditReviewChargeRequestUnderClaim(
      *     That was the one path that settled a task, minted nothing, and left no
      *     trace of any kind.
      */
-    await enqueueAdditionalPaymentIntentRecovery({
+    await enqueueEditFinancialReviewChargeRecovery({
       bookingId,
       paymentId,
-      idempotencyKey:
-        buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
-          bookingModificationId,
-        ),
+      bookingModificationId,
       // Advisory only: the replay re-derives the total, and re-reads the
       // carried balance off a payment the failed mint never touched (#3371).
-      amountCents: ask.amountCents,
-      stripeIdempotencyKey:
-        buildEditFinancialReviewAdditionalIntentStripeKey(bookingModificationId),
+      advisoryAmountCents: ask.amountCents,
       // #3181: NOT advisory. The replay reads this back to decide whether the
       // edit had an invoice to supplement at all.
       hadIssuedXeroInvoice: hasIssuedXeroInvoice,
     });
-    return { outcome: "not-raised", paymentIntentId: null, totalCents, carriedCents: 0 };
+    return {
+      result: { outcome: "not-raised", paymentIntentId: null, totalCents, carriedCents: 0 },
+      coveredOwedCents: 0,
+      providerCall: mintCall,
+    };
   }
   if (ask.carriedCents > 0) {
     // Only after a SUCCESSFUL mint: a failed one retired nothing.
@@ -476,9 +561,13 @@ async function syncEditReviewChargeRequestUnderClaim(
     });
   }
   return {
-    outcome: "raised",
-    paymentIntentId: minted.additionalPaymentIntentId,
-    totalCents,
-    carriedCents: ask.carriedCents,
+    result: {
+      outcome: "raised",
+      paymentIntentId: minted.additionalPaymentIntentId,
+      totalCents,
+      carriedCents: ask.carriedCents,
+    },
+    coveredOwedCents: totalCents,
+    providerCall: mintCall,
   };
 }

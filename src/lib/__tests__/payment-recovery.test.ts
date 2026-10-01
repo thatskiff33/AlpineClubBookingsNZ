@@ -340,6 +340,7 @@ import {
   enqueueBookingCancellationRefundRecovery,
   enqueueBookingModificationRefundRecovery,
   enqueueCapacityClaimFailedRefundRecovery,
+  enqueueEditFinancialReviewChargeRecovery,
   enqueueGroupSettlementRefundRecovery,
   enqueuePaymentIntentCancellationRecovery,
   enqueueRefundRequestRefundRecovery,
@@ -3538,6 +3539,36 @@ describe("edit-financial-review charge recovery (#3170)", () => {
   });
 
   /**
+   * #3402: the replay's close is fenced on the `nextRetryAt` it was claimed with.
+   * A share deferred (or refused) onto this edit while the replay ran moves that
+   * value on the PROCESSING row; the replay must then hand the row back to
+   * PENDING instead of closing it over a share it never raised for.
+   */
+  it("hands the row back instead of closing it when a share was deferred onto it mid-replay", async () => {
+    const claimedRetryAt = chargeOperation().nextRetryAt;
+    mockPaymentRecoveryUpdateMany.mockImplementation(
+      ({ where, data }: { where?: { id?: string; nextRetryAt?: Date }; data?: { status?: string } }) =>
+        Promise.resolve({
+          // The fenced close matches nothing: the row's retry time has moved.
+          count: data?.status === "SUCCEEDED" && where?.nextRetryAt ? 0 : where?.id ? 1 : 0,
+        }),
+    );
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    const calls = mockPaymentRecoveryUpdateMany.mock.calls.map(
+      (call) => call[0] as { where?: Record<string, unknown>; data?: Record<string, unknown> },
+    );
+    const close = calls.find((call) => call.data?.status === "SUCCEEDED");
+    expect(close?.where).toMatchObject({ id: "recovery-review-charge", nextRetryAt: claimedRetryAt });
+    const handBack = calls.find((call) => call.data?.status === "PENDING");
+    expect(handBack).toEqual({
+      where: { id: "recovery-review-charge", status: "PROCESSING" },
+      data: { status: "PENDING", attempts: 0, processingStartedAt: null, lastError: null },
+    });
+  });
+
+  /**
    * The CONTROL for the guard above. A replay that DID raise the request must
    * still close - a check that refused everything would pass the test above and
    * would wedge every recovered charge in a retry loop.
@@ -3819,6 +3850,65 @@ describe("edit-financial-review charge recovery (#3170)", () => {
     expect(result.succeeded).toBe(1);
     expect(mockSyncEditFinancialReviewChargeRequest).not.toHaveBeenCalled();
     expect(mockAttachIntentToWaitingOps).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3402: the edit's ONE recovery row is armed through one helper, which reopens
+ * a row an earlier replay closed - and touches nothing else. The behaviour
+ * against real rows (a SUCCEEDED row reopened by a deferral, then replayed into
+ * a raise) is proved in `edit-financial-review-charge-raise-claim.realdb.test.ts`.
+ */
+describe("enqueueEditFinancialReviewChargeRecovery (#3402)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPaymentRecoveryUpsert.mockResolvedValue({});
+    mockPaymentRecoveryUpdateMany.mockResolvedValue({ count: 0 });
+  });
+
+  it("enqueues under the edit's two keys, then re-arms ONLY a SUCCEEDED row and only marks a PROCESSING one", async () => {
+    await enqueueEditFinancialReviewChargeRecovery({
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      bookingModificationId: "mod-1",
+      advisoryAmountCents: 7000,
+      hadIssuedXeroInvoice: true,
+    });
+
+    const key = buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod-1");
+    expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { idempotencyKey: key },
+        create: expect.objectContaining({
+          paymentIntentId: buildEditFinancialReviewAdditionalIntentStripeKey("mod-1"),
+          amountCents: 7000,
+          hadIssuedXeroInvoice: true,
+        }),
+      }),
+    );
+    const writes = mockPaymentRecoveryUpdateMany.mock.calls.map(
+      (call) => call[0] as { where: Record<string, unknown>; data: Record<string, unknown> },
+    );
+    expect(writes).toHaveLength(2);
+    expect(writes[0]).toEqual({
+      where: { idempotencyKey: key, status: "SUCCEEDED" },
+      data: {
+        status: "PENDING",
+        attempts: 0,
+        nextRetryAt: expect.any(Date),
+        lastError: null,
+        processingStartedAt: null,
+        succeededAt: null,
+      },
+    });
+    // A running replay keeps its status - a second worker must not be able to
+    // claim it - and only has its retry time moved, which its close is fenced on.
+    expect(writes[1]).toEqual({
+      where: { idempotencyKey: key, status: "PROCESSING" },
+      data: { nextRetryAt: expect.any(Date) },
+    });
+    // A terminal FAILED row is never reopened (`INV-PAY-057`).
+    expect(writes.some((write) => write.where.status === "FAILED")).toBe(false);
   });
 });
 

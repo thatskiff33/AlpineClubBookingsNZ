@@ -18,20 +18,22 @@ import {
   sumEditReviewChargeSharesCents,
   type EditReviewChargeStore,
 } from "@/lib/edit-financial-review-charge-request";
-import { syncEditFinancialReviewChargeRequest } from "@/lib/edit-financial-review-charge-sync";
+import {
+  syncEditFinancialReviewChargeRequest,
+  type EditReviewChargeMember,
+} from "@/lib/edit-financial-review-charge-sync";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
-import { enqueueAdditionalPaymentIntentRecovery } from "@/lib/payment-recovery";
-import {
-  buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
-  buildEditFinancialReviewAdditionalIntentStripeKey,
-} from "@/lib/payment-recovery-keys";
+import { enqueueEditFinancialReviewChargeRecovery } from "@/lib/payment-recovery";
 import { isCapturedTransactionStatus } from "@/lib/payment-transactions";
 import type { ClubFormat } from "@/lib/club-format";
 
 // #3402: the sync moved to its own module with the raise claim around it;
 // re-exported so the recovery replay and existing importers keep one path.
+// The member type lives with the sync, which takes it as a parameter, so the
+// dependency points one way.
 export { syncEditFinancialReviewChargeRequest };
+export type { EditReviewChargeMember };
 
 /**
  * #3170 (epic #2797): the one direction of a settled review that ASKS FOR MONEY,
@@ -108,14 +110,6 @@ export { syncEditFinancialReviewChargeRequest };
  * ordinary extension. That is why a provider failure is recoverable rather than a
  * lost charge, and why the admin copy is allowed to say so.
  */
-
-/** The booking member a charge may need in order to mint a Stripe customer. */
-export type EditReviewChargeMember = {
-  id: string;
-  email: string;
-  name: string;
-  stripeCustomerId: string | null;
-};
 
 
 /**
@@ -347,20 +341,12 @@ export async function executeEditReviewCharge({
       { err, bookingId, taskId, bookingModificationId: route.bookingModificationId },
       "Failed to raise the combined additional PaymentIntent for a completed edit financial review - the persisted recovery operation will replay it",
     );
-    await enqueueAdditionalPaymentIntentRecovery({
+    await enqueueEditFinancialReviewChargeRecovery({
       bookingId,
       paymentId: route.paymentId,
-      idempotencyKey:
-        buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
-          route.bookingModificationId,
-        ),
-      // Advisory only: the replay re-derives the total from the settled shares,
-      // so this figure is diagnostic rather than the debt.
-      amountCents: totalCents,
-      stripeIdempotencyKey:
-        buildEditFinancialReviewAdditionalIntentStripeKey(
-          route.bookingModificationId,
-        ),
+      bookingModificationId: route.bookingModificationId,
+      // Advisory only: the replay re-derives the total from the settled shares.
+      advisoryAmountCents: totalCents,
       // #3181: NOT advisory - the replay's answer to "was there an invoice to
       // supplement" is this value and nothing it can re-derive.
       hadIssuedXeroInvoice: route.hasIssuedXeroInvoice,

@@ -59,6 +59,10 @@ const mocks = vi.hoisted(() => ({
   enqueueEditFinancialReviewRefundRecovery: vi.fn(),
   markEditFinancialReviewRefundRecoverySucceeded: vi.fn(),
   enqueueAdditionalPaymentIntentRecovery: vi.fn(),
+  // #3402: the edit's own recovery row, armed through one helper.
+  enqueueEditFinancialReviewChargeRecovery: vi.fn(),
+  // #3402: the raise writes amounts only, status-fenced, onto the existing row.
+  writeRaisedAdditionalRequestAmount: vi.fn(),
   updatePaymentIntentAmount: vi.fn(),
   // #3341: the minter and the supersede run for REAL (`INV-OPS-015`); these are
   // their leaves - the provider, the ledger read of asks to retire, and the
@@ -131,6 +135,8 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => {
       mocks.refundPaymentTransactions(...a),
     upsertPaymentIntentTransaction: (...a: unknown[]) =>
       mocks.upsertPaymentIntentTransaction(...a),
+    writeRaisedAdditionalRequestAmount: (...a: unknown[]) =>
+      mocks.writeRaisedAdditionalRequestAmount(...a),
   };
 });
 vi.mock("@/lib/stripe", () => ({
@@ -155,6 +161,8 @@ vi.mock("@/lib/payment-recovery", () => ({
     mocks.markEditFinancialReviewRefundRecoverySucceeded(...a),
   enqueueAdditionalPaymentIntentRecovery: (...a: unknown[]) =>
     mocks.enqueueAdditionalPaymentIntentRecovery(...a),
+  enqueueEditFinancialReviewChargeRecovery: (...a: unknown[]) =>
+    mocks.enqueueEditFinancialReviewChargeRecovery(...a),
   enqueuePaymentIntentCancellationRecovery: (...a: unknown[]) =>
     mocks.enqueueCancel(...a),
   runPaymentRecoveryOperationNow: (...a: unknown[]) => mocks.cancelNow(...a),
@@ -521,6 +529,8 @@ beforeEach(() => {
     amount,
   }));
   mocks.upsertPaymentIntentTransaction.mockResolvedValue(undefined);
+  mocks.writeRaisedAdditionalRequestAmount.mockResolvedValue(true);
+  mocks.enqueueEditFinancialReviewChargeRecovery.mockResolvedValue(undefined);
   mocks.restatePendingSupplementaryInvoiceAmount.mockResolvedValue({
     restated: 0,
     alreadyCovering: 0,
@@ -673,7 +683,7 @@ describe("a completed review that asks the member for money (#3170)", () => {
     // The real guard fired: nothing was minted, and the debt went to the
     // durable recovery row instead of vanishing.
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
-    expect(mocks.enqueueAdditionalPaymentIntentRecovery).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueEditFinancialReviewChargeRecovery).toHaveBeenCalledTimes(1);
   });
 
   it("looks for THIS edit's request, not whatever additional the payment happens to carry", async () => {
@@ -1120,17 +1130,16 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
     // One ADDITIONAL row, at $230, keyed on the intent that already existed. That
     // is what `reconcilePaymentAggregates` reads into
     // `Payment.additionalAmountCents`, which is the figure the member's pay link
-    // and the payment summary both show.
-    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledTimes(1);
-    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        paymentId: "payment-1",
-        kind: PaymentTransactionKind.ADDITIONAL,
-        paymentIntentId: "pi_additional_1",
-        amountCents: 23000,
-        reason: buildEditFinancialReviewChargeReason("mod-1"),
-      }),
-    );
+    // and the payment summary both show. #3402: written as AMOUNTS ONLY onto the
+    // existing row, never through the upsert that would also restate its status.
+    expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+    expect(mocks.writeRaisedAdditionalRequestAmount).toHaveBeenCalledTimes(1);
+    expect(mocks.writeRaisedAdditionalRequestAmount).toHaveBeenCalledWith({
+      paymentId: "payment-1",
+      paymentIntentId: "pi_additional_1",
+      amountCents: 23000,
+      carriedAskCents: 0,
+    });
   });
 
   it("the supplementary Xero invoice is RESTATED to the total, not queued a second time", async () => {
@@ -1356,17 +1365,13 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
     });
 
     // The debt is durable under the EDIT-scoped recovery key, so the cron replays
-    // this same derivation rather than a frozen figure.
-    expect(mocks.enqueueAdditionalPaymentIntentRecovery).toHaveBeenCalledWith(
+    // this same derivation rather than a frozen figure. #3402: through the one
+    // helper that owns the edit's two keys and re-arms a closed row.
+    expect(mocks.enqueueEditFinancialReviewChargeRecovery).toHaveBeenCalledWith(
       expect.objectContaining({
         bookingId: "booking-1",
         paymentId: "payment-1",
-        idempotencyKey:
-          buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
-            "mod-1",
-          ),
-        stripeIdempotencyKey:
-          buildEditFinancialReviewAdditionalIntentStripeKey("mod-1"),
+        bookingModificationId: "mod-1",
       }),
     );
     // The minter's OWN catch wrote the row first, under the same EDIT-scoped
@@ -1405,9 +1410,7 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
 
     expect(result.outcome).toBe("not-raised");
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
-    expect(mocks.enqueueAdditionalPaymentIntentRecovery).toHaveBeenCalledTimes(
-      1,
-    );
+    expect(mocks.enqueueEditFinancialReviewChargeRecovery).toHaveBeenCalledTimes(1);
   });
 
   /**
@@ -1431,6 +1434,7 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
       carriedCents: 0,
     });
     expect(mocks.enqueueAdditionalPaymentIntentRecovery).not.toHaveBeenCalled();
+    expect(mocks.enqueueEditFinancialReviewChargeRecovery).not.toHaveBeenCalled();
   });
 
   /**
@@ -1514,6 +1518,7 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
     });
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.enqueueAdditionalPaymentIntentRecovery).not.toHaveBeenCalled();
+    expect(mocks.enqueueEditFinancialReviewChargeRecovery).not.toHaveBeenCalled();
   });
 });
 
@@ -2183,7 +2188,7 @@ describe("#3371: a later share joins a request that carried a balance", () => {
       "pi_additional_1",
       30000,
     );
-    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(
+    expect(mocks.writeRaisedAdditionalRequestAmount).toHaveBeenCalledWith(
       expect.objectContaining({
         paymentIntentId: "pi_additional_1",
         amountCents: 30000,

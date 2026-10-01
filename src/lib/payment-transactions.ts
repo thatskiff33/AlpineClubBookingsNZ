@@ -20,6 +20,7 @@ import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sy
 // Moved to a leaf so the booking ledger's settlement sync can share them
 // without an import cycle (#3581); re-exported so existing importers stand.
 import {
+  CAPTURED_TRANSACTION_STATUS_LIST,
   EXCLUDED_LEDGER_REFUND_STATUSES,
   expectedRefundedFloorCents,
   isCapturedTransactionStatus,
@@ -997,6 +998,47 @@ export async function upsertPaymentIntentTransaction({
   }
 
   return reconcilePaymentAggregates({ paymentId, store });
+}
+
+/**
+ * #3402: write a RAISED amount onto an existing ADDITIONAL request row, and
+ * nothing else. The review-charge raise used to go through
+ * `upsertPaymentIntentTransaction` with `status: PENDING`, whose update branch
+ * writes `status` unconditionally - so a `payment_intent.succeeded` webhook
+ * landing between Stripe accepting the new amount and this write was reverted
+ * to PENDING, and the row and aggregates said "unpaid" over captured money.
+ *
+ * So this never writes `status`, and it matches only a row that is not captured.
+ * Returns false when nothing matched: the member paid in that window (at the new
+ * amount - Stripe refuses to update a captured intent), and the caller treats
+ * the request as paid. The first mint still goes through the upsert, which is
+ * what creates the row PENDING.
+ */
+export async function writeRaisedAdditionalRequestAmount({
+  paymentId,
+  paymentIntentId,
+  amountCents,
+  carriedAskCents,
+  store = prisma,
+}: {
+  paymentId: string;
+  paymentIntentId: string;
+  amountCents: number;
+  /** #3371: re-stated from the ONE `AdditionalAsk` that computed `amountCents`. */
+  carriedAskCents: number;
+  store?: PaymentStore;
+}): Promise<boolean> {
+  const written = await store.paymentTransaction.updateMany({
+    where: {
+      paymentId,
+      stripePaymentIntentId: paymentIntentId,
+      status: { notIn: [...CAPTURED_TRANSACTION_STATUS_LIST] },
+    },
+    data: { amountCents, carriedAskCents },
+  });
+  if (written.count === 0) return false;
+  await reconcilePaymentAggregates({ paymentId, store });
+  return true;
 }
 
 export async function recordInternetBankingPaymentTransaction({
