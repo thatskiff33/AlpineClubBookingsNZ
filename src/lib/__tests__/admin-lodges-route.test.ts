@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   hutLeaderAssignmentCount: vi.fn(),
   memberLodgeAccessCount: vi.fn(),
   auditLogCreate: vi.fn(),
+  lodgeSettingsCreate: vi.fn(),
   transaction: vi.fn(),
   executeRaw: vi.fn(),
   revalidatePublicPageContent: vi.fn(),
@@ -145,6 +146,7 @@ function installTransactionMock() {
       auditLog: {
         create: mocks.auditLogCreate,
       },
+      lodgeSettings: { create: mocks.lodgeSettingsCreate },
     }),
   );
 }
@@ -195,8 +197,90 @@ describe("POST /api/admin/lodges", () => {
   });
 
   it("returns 400 for invalid input", async () => {
-    const response = await POST(jsonRequest("POST", { name: "" }));
+    const response = await POST(jsonRequest("POST", { name: "", capacity: 12 }));
     expect(response.status).toBe(400);
+  });
+
+  /*
+    #3407 (owner decision 14 Sep 2026): capacity is part of creating a lodge. A
+    lodge created without one resolved to 0 (`unconfigured_lodge`) with Bed
+    Allocation off and refused every booking, so the route refuses to create
+    it at all — and creates nothing when it refuses.
+  */
+  it.each([
+    ["missing", {}],
+    ["null", { capacity: null }],
+    ["zero", { capacity: 0 }],
+    ["fractional", { capacity: 2.5 }],
+    ["above the save bound", { capacity: 100_001 }],
+    ["a string", { capacity: "12" }],
+  ])("refuses a create whose capacity is %s, and writes nothing", async (_label, extra) => {
+    const response = await POST(
+      jsonRequest("POST", { name: "River Lodge", ...extra }),
+    );
+    expect(response.status).toBe(400);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.lodgeCreate).not.toHaveBeenCalled();
+    expect(mocks.lodgeSettingsCreate).not.toHaveBeenCalled();
+  });
+
+  it("writes the lodge's own settings row with its capacity inside the create transaction", async () => {
+    mocks.lodgeFindFirst.mockResolvedValue(null);
+    mocks.lodgeCreate.mockResolvedValue(
+      lodgeRecord({ id: "lodge-2", name: "River Lodge", slug: "river-lodge" }),
+    );
+    mocks.lodgeFindMany.mockResolvedValue([]);
+    // Record the order of the writes, so "in the same transaction" is a fact
+    // about the callback and not about two mocks both having been called.
+    const order: string[] = [];
+    mocks.lodgeCreate.mockImplementationOnce(async () => {
+      order.push("lodge");
+      return lodgeRecord({ id: "lodge-2", name: "River Lodge", slug: "river-lodge" });
+    });
+    mocks.lodgeSettingsCreate.mockImplementationOnce(async () => {
+      order.push("settings");
+      return { id: "lodge-2" };
+    });
+
+    const response = await POST(
+      jsonRequest("POST", { name: "River Lodge", capacity: 18 }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["lodge", "settings"]);
+    // The lodge's OWN row, keyed by its id — the row the resolver reads first
+    // (`loadLodgeCapacityOverride`) — never the legacy "default" row.
+    expect(mocks.lodgeSettingsCreate).toHaveBeenCalledWith({
+      data: {
+        id: "lodge-2",
+        lodgeId: "lodge-2",
+        capacity: 18,
+        updatedByMemberId: "admin-1",
+      },
+      select: { id: true },
+    });
+    expect(mocks.auditLogCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          metadata: expect.objectContaining({ capacity: 18 }),
+        }),
+      }),
+    );
+  });
+
+  it("creates no lodge when the settings write fails, because both share one transaction", async () => {
+    mocks.lodgeFindFirst.mockResolvedValue(null);
+    mocks.lodgeCreate.mockResolvedValue(lodgeRecord({ id: "lodge-2" }));
+    mocks.lodgeSettingsCreate.mockRejectedValueOnce(new Error("settings write failed"));
+
+    await expect(
+      POST(jsonRequest("POST", { name: "River Lodge", capacity: 18 })),
+    ).rejects.toThrow("settings write failed");
+    // The throw escapes the transaction callback, which is what rolls the lodge
+    // row back; no audit row and no public revalidation follow it.
+    expect(mocks.auditLogCreate).not.toHaveBeenCalled();
+    expect(mocks.revalidatePublicPageContent).not.toHaveBeenCalled();
   });
 
   it("creates a lodge with a unique slug and audit log", async () => {
@@ -214,7 +298,7 @@ describe("POST /api/admin/lodges", () => {
     ]);
 
     const response = await POST(
-      jsonRequest("POST", { name: "River Lodge", doorCode: " 1234 " }),
+      jsonRequest("POST", { name: "River Lodge", doorCode: " 1234 ", capacity: 16 }),
     );
     expect(response.status).toBe(201);
     expect(mocks.lodgeCreate).toHaveBeenCalledWith(
@@ -250,7 +334,9 @@ describe("POST /api/admin/lodges", () => {
     );
     mocks.lodgeFindMany.mockResolvedValue([]);
 
-    const response = await POST(jsonRequest("POST", { name: "Alpine Lodge" }));
+    const response = await POST(
+      jsonRequest("POST", { name: "Alpine Lodge", capacity: 16 }),
+    );
     expect(response.status).toBe(201);
     expect(mocks.lodgeCreate).toHaveBeenCalledWith(
       expect.objectContaining({

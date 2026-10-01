@@ -25,6 +25,7 @@ import { enqueueXeroKeptLateCaptureInvoiceOperation } from "@/lib/xero-kept-late
 import { recordAndNoteRepairedLateCaptureRefunds } from "@/lib/late-capture-repair-refund-record";
 import { readRefundCreditNoteGap } from "@/lib/xero-admin-health";
 import { upsertXeroObjectLink } from "@/lib/xero-sync";
+import { finishRefundCreditNoteSettlement } from "@/lib/xero-refund-note-settlement";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import {
   markPaymentIntentTransactionFailed,
@@ -62,6 +63,8 @@ export type RepairDependencies = {
   recordAndNoteRepairedLateCaptureRefunds: typeof recordAndNoteRepairedLateCaptureRefunds;
   // #3635: the one refund-note gap reader, for the missing-refund-note arm.
   readRefundCreditNoteGap: typeof readRefundCreditNoteGap;
+  // #3548: the one read-back-then-settle, for the operator-applied settle.
+  finishRefundCreditNoteSettlement: typeof finishRefundCreditNoteSettlement;
 };
 
 const defaultDependencies: RepairDependencies = {
@@ -86,6 +89,7 @@ const defaultDependencies: RepairDependencies = {
   refundPaymentTransactions,
   recordAndNoteRepairedLateCaptureRefunds,
   readRefundCreditNoteGap,
+  finishRefundCreditNoteSettlement,
 };
 
 export function getDependencies(overrides?: Partial<RepairDependencies>): RepairDependencies {
