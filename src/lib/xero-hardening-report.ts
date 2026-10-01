@@ -35,6 +35,7 @@ import {
   isStripePerDeltaRefundCreditNoteLink,
 } from "./xero-hardening-canonical-links";
 import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
+import { buildUnsettledRefundNoteSection } from "@/lib/xero-refund-note-unsettled";
 import {
   readResolvedRefundCreditNoteCoverage,
   sumRefundCreditNoteCoverageCents,
@@ -793,6 +794,9 @@ export async function buildXeroReconciliationReport(
     }
   }
   const overCoveredStripeRefundPayments = overCoveredStripeRefundItems.length;
+  // #3548: refund notes whose settlement is not on record, or part-settled.
+  const unsettledRefundNotes = await buildUnsettledRefundNoteSection(format, topLimit, overCoverageItem);
+  const unsettledRefundCreditNotes = unsettledRefundNotes.count;
 
   // #3635 (`INV-INT-025`): an operation an officer resolved in Xero is done, so
   // it is not a failure: not repeated, not recent, not an unsupported partial.
@@ -851,6 +855,7 @@ export async function buildXeroReconciliationReport(
     staleCanonicalLinks,
     duplicateActiveCanonicalLinks,
     overCoveredStripeRefundPayments,
+    unsettledRefundCreditNotes,
     stalePendingOperations,
     recentFailedOperations,
     recentPartialOperations,
@@ -1002,6 +1007,7 @@ export async function buildXeroReconciliationReport(
           },
         ]
       : []),
+    ...unsettledRefundNotes.sections,
     ...(stalePendingOperations > 0
       ? [
           {
@@ -1083,6 +1089,7 @@ export async function buildXeroReconciliationReport(
       staleCanonicalLinks,
       duplicateActiveCanonicalLinks,
       overCoveredStripeRefundPayments,
+      unsettledRefundCreditNotes,
       stalePendingOperations,
       recentFailedOperations,
       recentPartialOperations,

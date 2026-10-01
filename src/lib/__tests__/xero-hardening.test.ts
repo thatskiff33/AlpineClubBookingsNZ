@@ -441,6 +441,7 @@ describe("buildXeroReconciliationReport", () => {
       staleCanonicalLinks: 2,
       duplicateActiveCanonicalLinks: 1,
       overCoveredStripeRefundPayments: 0,
+      unsettledRefundCreditNotes: 0,
       stalePendingOperations: 2,
       recentFailedOperations: 2,
       recentPartialOperations: 2,
@@ -869,6 +870,53 @@ describe("buildXeroReconciliationReport", () => {
     // #3533: coverage details state amounts.
     expect(section?.items?.[0]?.detail).toContain("$1.90");
     expect(section?.items?.[0]?.detail).toContain("$1.00");
+  });
+
+  it("lists a refund note whose row completed with neither its payment nor a skip, and never an account-credit note (#3548)", async () => {
+    mocks.memberFindMany.mockResolvedValue([]);
+    mocks.operationFindFirst.mockResolvedValue(null);
+    mocks.paymentFindMany.mockResolvedValue([]);
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    mocks.linkFindMany.mockResolvedValue([]);
+    mocks.operationCount.mockResolvedValue(0);
+    const bareRow = {
+      id: "op_bare",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      status: "SUCCEEDED",
+      localModel: "Payment",
+      localId: "pay_1",
+      xeroObjectId: "cn_9",
+      xeroObjectNumber: "CN-9",
+      requestPayload: { allocation: { invoiceId: "inv_1", amount: 50 }, refundMethod: "card" },
+      responsePayload: { existingCreditNoteId: "cn_9" },
+      manuallyResolvedAt: null,
+      createdAt: new Date("2026-04-01T00:00:00Z"),
+    };
+    // A cancellation taken as account credit: the same entity, operation and
+    // model, no settling payment ever due, so never listed (round 3 R2-1).
+    const accountCreditRow = {
+      ...bareRow,
+      id: "op_account_credit",
+      xeroObjectId: "cn_acct",
+      xeroObjectNumber: "CN-ACCT",
+      requestPayload: { creditNotes: [{ lineItems: [{ unitAmount: 50 }] }] },
+      responsePayload: { creditNotes: [{ creditNoteID: "cn_acct" }] },
+    };
+    mocks.operationFindMany.mockImplementation(async (args?: { where?: { xeroObjectId?: unknown } }) =>
+      args?.where?.xeroObjectId ? [bareRow, accountCreditRow] : []
+    );
+
+    const report = await buildXeroReconciliationReport(CLUB_FORMAT_TEST, {
+      now: new Date("2026-04-13T12:00:00Z"),
+    });
+
+    expect(report.summary.unsettledRefundCreditNotes).toBe(1);
+    const section = report.issueSections.find((issueSection) => issueSection.id === "unsettled-refund-credit-notes");
+    expect(section?.severity).toBe("warning");
+    expect(section?.items?.[0]?.detail).toContain("CN-9");
+    expect(section?.items).toHaveLength(1);
+    expect(section?.howToFix).toContain("MAINTENANCE.md");
   });
 
   it("flags an account-credit-only cancellation's fictitious note as over-coverage against a ZERO cash target (#2902)", async () => {
