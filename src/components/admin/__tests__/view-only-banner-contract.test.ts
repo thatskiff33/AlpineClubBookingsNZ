@@ -337,8 +337,10 @@ const FIGURES = {
    * its Save gained an Edit beside it. Cancel is a plain Button. MEASURED.
     * 365 -> 366 (#3408): the Membership Types editor adds Restore expected
     * booking behavior for a drifted key-resolved built-in. MEASURED.
+    * 366 -> 367 (#3462): the Xero operations panel's per-row Mark failed on a
+    * stale running operation. MEASURED.
     */
-   callSites: 366,
+   callSites: 367,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -363,8 +365,10 @@ const FIGURES = {
    * 308 -> 310 (#3596): so do the club currency and locale page's two.
    *
    * 310 -> 311 (#2941): so does Member Fields' new Edit.
+   *
+   * 311 -> 312 (#3462): so does the Xero operations panel's Mark failed.
    */
-  optOuts: 311,
+  optOuts: 312,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -418,8 +422,11 @@ const FIGURES = {
    *
    * 276 -> 277 (#2941): Member Fields' Edit sits in the same file as the page's
    * own banner, beside the Save that was already static.
+   *
+   * 277 -> 278 (#3462): the Xero operations panel's Mark failed sits in the same
+   * file as that panel's own banner, beside its Retry and Resolve.
    */
-  staticOptOuts: 277,
+  staticOptOuts: 278,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
