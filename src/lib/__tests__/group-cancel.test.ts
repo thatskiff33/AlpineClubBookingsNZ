@@ -953,7 +953,7 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
     });
   });
 
-  it("#3611: each child posts what the frozen plan keeps, even when the inline refund fails; an unpaid child keeps nothing", async () => {
+  it("#3611: each organiser-settled child posts its reversals with nothing kept, paid or not", async () => {
     mocks.groupBookingFindUnique.mockResolvedValue({
       id: GROUP_ID,
       paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
@@ -969,21 +969,14 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
       paidChild("child-1", "pay-1"),
       child({ id: "late-child", status: BookingStatus.PAYMENT_PENDING, finalPriceCents: 4500, payment: null }),
     ]);
-    mocks.processRefund.mockRejectedValueOnce(new Error("stripe down"));
 
     await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
-    expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
-      expect.objectContaining({
-        store: txClient,
-        bookingId: "child-1",
-        keptCents: 4500 - 2000,
-        site: "group-cancel:organiser-settled-child",
-      }),
-    );
-    expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
-      expect.objectContaining({ bookingId: "late-child", keptCents: 0 }),
-    );
+    for (const bookingId of ["child-1", "late-child"]) {
+      expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+        expect.objectContaining({ store: txClient, bookingId, keptCents: 0, site: "group-cancel:organiser-settled-child" }),
+      );
+    }
   });
 
   it("keeps the frozen plan and arms the durable retry when the refund fails (#1351)", async () => {

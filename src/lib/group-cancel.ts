@@ -78,7 +78,6 @@ import {
 } from "./cancellation";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "./bed-allocation-lifecycle";
 import { bookingOwner } from "@/lib/booking-owner";
-import { cancellationKeptCents } from "@/lib/booking-ledger-cancellation-posting";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { formatCents } from "@/lib/utils";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
@@ -158,18 +157,6 @@ function deserializeRefundPlan(value: unknown): Map<string, number> {
     }
   }
   return plan;
-}
-
-/**
- * Whether the organiser's settlement paid for this child — the only children
- * the policy refunds (#1236), and so the only ones whose cancellation keeps
- * anything (#3611).
- */
-function organiserSettledChildWasPaid(child: {
-  status: BookingStatus;
-  payment: { status: PaymentStatus } | null;
-}): boolean {
-  return child.status === BookingStatus.PAID && child.payment?.status === PaymentStatus.SUCCEEDED;
 }
 
 async function markGroupCancelled(groupBookingId: string): Promise<void> {
@@ -376,7 +363,10 @@ export async function settleGroupBookingOnOrganiserCancel(
     // booking = one lodge, ADR-001), so the first child's lodge is the group's.
     const policy = await loadCancellationPolicy(checkIn, firstChild.lodgeId);
     for (const child of children) {
-      if (!organiserSettledChildWasPaid(child)) {
+      const isPaid =
+        child.status === BookingStatus.PAID &&
+        child.payment?.status === PaymentStatus.SUCCEEDED;
+      if (!isPaid) {
         continue;
       }
       const { refundAmountCents } = calculateRefundAmount(
@@ -404,11 +394,6 @@ export async function settleGroupBookingOnOrganiserCancel(
       });
     }
   }
-
-  // #3611: what the policy refunds each child, frozen before an inline refund
-  // failure clears this run's view below. The ledger records what the policy
-  // KEEPS, which does not depend on whether Stripe answered yet.
-  const plannedRefundByChildId = new Map(refundByChildId);
 
   // Refund + settlement flip, guarded on SUCCEEDED so it fires exactly once
   // across re-drives: the plan survives this flip, so a re-drive after the flip
@@ -629,23 +614,17 @@ export async function settleGroupBookingOnOrganiserCancel(
         // worth per child: `hostingSiblingWhere` is same-member only, so a joiner
         // never drags in the organiser or the other joiners.
         await reconcileHostingReviewForSystemCancellation(child.id, tx);
-        // #3611: the child's stay is taken back and, for a paid child, what the
-        // policy kept of its price posts as a CANCELLATION_FEE — under the
-        // lock(1) this transaction took first. Today no organiser-settled child
-        // is confirmed on the ledger (the group settle marks it PAID itself), so
-        // this posts only once a back-post (#3583) has confirmed it.
+        // #3611: the child's stay is taken back under the lock(1) this
+        // transaction took first, and NOTHING is kept on the child: it holds no
+        // settlement line (the organiser paid, through one group intent), so a
+        // fee here would leave owed(child) at the fee. Where the kept money
+        // belongs is #3583's to decide. Posts only for a child confirmed on the
+        // ledger, which today none is — the group settle marks it PAID itself.
         await postCancellationLedgerLines({
           store: tx,
           bookingId: child.id,
           lodgeId: child.lodgeId,
-          keptCents: organiserSettledChildWasPaid(child)
-            ? cancellationKeptCents({
-                refundableBaseCents: child.finalPriceCents,
-                refundAmountCents: plannedRefundByChildId.get(child.id) ?? 0,
-                creditAppliedCents: 0,
-                creditRestoredCents: 0,
-              })
-            : 0,
+          keptCents: 0,
           site: "group-cancel:organiser-settled-child",
         });
         return queuedOperationId;

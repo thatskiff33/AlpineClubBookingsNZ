@@ -11,7 +11,6 @@ reason: one posting call in each of the five claim transactions (paid, unpaid,
   the kept figure from the policy numbers frozen in that same claim.
 
 file: src/lib/group-cancel.ts
-lines: 964
-reason: one posting call in each child's claim transaction, the frozen plan
-  snapshot it reads (an inline refund failure clears the live one), and the
-  paid-child test extracted so the plan and the posting ask it the same way.
+lines: 943
+reason: one posting call in each child's claim transaction, with the reason a
+  child keeps nothing.
