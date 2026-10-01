@@ -924,16 +924,14 @@ export async function POST(
         where: { id: member.id },
         select: { twoFactorEnabled: true, twoFactorMethod: true, totpSecret: true },
       });
-      if (
-        twoFactorBefore &&
-        (twoFactorBefore.twoFactorEnabled || twoFactorBefore.totpSecret !== null)
-      ) {
+      const hadAuthenticatorApp = Boolean(twoFactorBefore?.totpSecret);
+      if (twoFactorBefore && (twoFactorBefore.twoFactorEnabled || hadAuthenticatorApp)) {
         await recordTwoFactorMutation(tx, {
           action: TWO_FACTOR_AUDIT_ACTIONS.cleared,
           actor: { kind: "admin", memberId: session.user.id },
           subjectMemberId: member.id,
           method: twoFactorBefore.twoFactorMethod,
-          authenticatorApp: twoFactorBefore.totpSecret !== null,
+          authenticatorApp: hadAuthenticatorApp,
           request: { ipAddress: ip, userAgent: request.headers.get("user-agent") },
         });
       }

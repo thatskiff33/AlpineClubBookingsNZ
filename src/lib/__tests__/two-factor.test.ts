@@ -185,6 +185,67 @@ describe("two-factor helpers", () => {
     });
   });
 
+  it("refuses an enrolment that names no actor, and writes nothing (#3454)", async () => {
+    await expect(
+      enrollTwoFactor({
+        memberId: "member-1",
+        method: "TOTP",
+        totpSecret: "BASE32SECRET",
+        actor: undefined as never,
+      }),
+    ).rejects.toThrow(/no usable actor/);
+    expect(mockPrisma.member.update).not.toHaveBeenCalled();
+    expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("records an EMAIL enrolment as holding no authenticator-app secret (#3454)", async () => {
+    await enrollTwoFactor({
+      memberId: "member-1",
+      method: "EMAIL",
+      actor: { kind: "member", memberId: "member-1" },
+      request: { id: "req-9", ipAddress: "10.0.0.9", userAgent: "ua" },
+    });
+    const audit = mockPrisma.auditLog.create.mock.calls[0]?.[0];
+    expect(audit.data).toMatchObject({
+      action: "security.two_factor.enrolled",
+      requestId: "req-9",
+      ipAddress: "10.0.0.9",
+      metadata: { actorKind: "member", method: "EMAIL", authenticatorApp: false },
+    });
+  });
+
+  it("lets no sentinel TOTP secret reach the audit row or the actor error (#3454)", async () => {
+    const SENTINEL = "SENTINELTOTPSECRET3454ABCDEFGH";
+    const errors: unknown[] = [];
+    await enrollTwoFactor({
+      memberId: "member-1",
+      method: "TOTP",
+      totpSecret: SENTINEL,
+      actor: { kind: "member", memberId: "member-1" },
+    });
+    try {
+      await enrollTwoFactor({
+        memberId: "member-1",
+        method: "TOTP",
+        totpSecret: SENTINEL,
+        actor: { kind: "nobody" } as never,
+      });
+    } catch (error) {
+      errors.push(
+        error instanceof Error
+          ? { ...error, name: error.name, message: error.message, stack: error.stack }
+          : error,
+      );
+    }
+    expect(errors).toHaveLength(1);
+    const emitted = JSON.stringify([mockPrisma.auditLog.create.mock.calls, errors]);
+    expect(emitted).not.toContain(SENTINEL);
+    // The instrument is live: the encrypted secret did reach the member row.
+    expect(
+      decryptTwoFactorSecret(mockPrisma.member.update.mock.calls[0]?.[0].data.totpSecret),
+    ).toBe(SENTINEL);
+  });
+
   it("stores session challenge tokens hashed with a short expiry", async () => {
     const token = await createTwoFactorSessionChallenge("member-1");
 
