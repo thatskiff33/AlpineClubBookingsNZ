@@ -45,6 +45,7 @@ vi.mock("@/lib/prisma", () => ({
       update: vi.fn(),
       updateMany: vi.fn(),
     },
+    bookingRequestSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     booking: {
       findUnique: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),

@@ -684,6 +684,10 @@ describe("GET /api/booking-requests/settings", () => {
     expect(res.status).toBe(200);
     expect(body).toEqual({
       showPricingToNonMembers: true,
+      quoteResponseTtlDays: 14,
+      quoteReminderLeadDays: 3,
+      attendeeConfirmationLeadDays: 14,
+      attendeeConfirmationReminderDays: 3,
       lodges: [],
       otherLodges: [],
       schoolGroupSoftCap: 25,
