@@ -47,8 +47,11 @@ import { EditDependantIdentityQuestion } from "@/components/edit-booking/edit-de
 import { useEditDependantIdentity } from "@/components/edit-booking/hooks/use-edit-dependant-identity";
 import {
   isDependantIdentityRefusalCode,
-  renamedGuestsForDependantCheck,
 } from "@/lib/booking-dependant-identity";
+import {
+  dependantIdentitySpeaksOnBehalf,
+  renamedGuestsForDependantCheck,
+} from "@/lib/booking-dependant-identity-doors";
 import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
 import { PromoCodeCard } from "@/components/edit-booking/promo-code-card";
 import { ReviewJustificationField } from "@/components/edit-booking/review-justification-field";
@@ -551,7 +554,11 @@ export function EditBookingPanel({
   const dependantIdentity = useEditDependantIdentity({
     addedGuests,
     setAddedGuests,
-    renamedGuests: renamedGuestsForDependantCheck(booking.guests, guestNameUpdates),
+    renamedGuests: renamedGuestsForDependantCheck(
+      booking.guests,
+      guestNameUpdates,
+      [...removedGuestIds],
+    ),
     replaceRenamedGuest: (guestId, familyMember) => {
       handleRemoveGuest(guestId);
       handleAddFamilyMember(familyMember);
@@ -1320,6 +1327,10 @@ export function EditBookingPanel({
           : "The request could not be sent. Try again.",
       ) as Error & { code?: string };
       if (typeof data?.code === "string") failure.code = data.code;
+      // #3451: put the own-dependant question back, as the quote and save do.
+      if (isDependantIdentityRefusalCode(data?.code)) {
+        dependantIdentity.handleRefusal(data.code);
+      }
       throw failure;
     }
     return {
@@ -1793,7 +1804,15 @@ export function EditBookingPanel({
         dependantIdentityQuestion={
           <EditDependantIdentityQuestion
             bookingId={booking.id}
-            actingAsAdmin={actingAsAdmin}
+            speaksOnBehalf={dependantIdentitySpeaksOnBehalf({
+              actorIsAdmin: actingAsAdmin,
+              // The owner's own panel, whatever their role (#3451 review):
+              // ownership, as the server decides it.
+              actorId: booking.viewerIsBookingOwner
+                ? bookingOwner(booking).memberId
+                : undefined,
+              ownerMemberId: bookingOwner(booking).memberId ?? null,
+            })}
             answers={dependantIdentity}
             familyMembers={familyMembers}
             party={[...remainingGuests, ...addedGuests]}

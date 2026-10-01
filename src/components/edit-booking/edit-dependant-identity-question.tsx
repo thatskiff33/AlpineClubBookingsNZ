@@ -18,22 +18,39 @@ import type { useEditDependantIdentity } from "@/components/edit-booking/hooks/u
  * stated at the CONDITIONAL strength on both: an edit re-applies the club's
  * non-member hold rule, and this panel has not read whether it bites here.
  */
-export function EditDependantIdentityQuestion({
-  bookingId,
-  actingAsAdmin,
-  answers,
-  familyMembers,
-  party,
-}: {
+type QuestionProps = {
   bookingId: string;
-  /** An officer's panel: the family list is the booking OWNER's, not theirs. */
-  actingAsAdmin: boolean;
+  /**
+   * An officer acting for the member — `dependantIdentitySpeaksOnBehalf`, the
+   * server's own ownership test, so an officer on their OWN booking is asked in
+   * the member's words.
+   */
+  speaksOnBehalf: boolean;
   /** The panel's answer state, from `useEditDependantIdentity`. */
   answers: ReturnType<typeof useEditDependantIdentity>;
   familyMembers: FamilyMember[];
   /** Everyone on the proposed party, so a dependant on it is not offered twice. */
   party: ReadonlyArray<{ memberId?: string | null }>;
-}) {
+};
+
+export function EditDependantIdentityQuestion(props: QuestionProps) {
+  // A live region that is ALWAYS mounted (#3451 review), so the question is
+  // announced when it appears beside the guest that caused it, not only found by
+  // somebody who happens to tab past it.
+  return (
+    <div role="status" aria-live="polite">
+      {props.answers.collisions.length > 0 ? <Question {...props} /> : null}
+    </div>
+  );
+}
+
+function Question({
+  bookingId,
+  speaksOnBehalf,
+  answers,
+  familyMembers,
+  party,
+}: QuestionProps) {
   const {
     collisions,
     declaredDependantMemberIds,
@@ -41,12 +58,11 @@ export function EditDependantIdentityQuestion({
     declareDifferentPerson: onDeclareDifferentPerson,
     withdrawDeclaration: onWithdrawDeclaration,
   } = answers;
-  if (collisions.length === 0) return null;
   const partyMemberIds = party.flatMap((guest) =>
     guest.memberId ? [guest.memberId] : [],
   );
 
-  if (actingAsAdmin) {
+  if (speaksOnBehalf) {
     // The owner is the "self" row of their own family list, which is the list an
     // officer's panel reads (`eligible-family` resolves the booking's owner).
     const ownerFirstName =

@@ -81,7 +81,12 @@ function guardedQuote(body: AddGuestBody) {
   return jsonResponse(OK_QUOTE);
 }
 
-function installFetch(familyResponses: Array<Record<string, unknown>>) {
+type Handler = (body: Record<string, unknown>) => Response;
+
+function installFetch(
+  familyResponses: Array<Record<string, unknown>>,
+  handlers: { modify?: Handler; exceptionRequest?: Handler } = {},
+) {
   fetchCalls = [];
   let familyCall = 0;
   global.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
@@ -108,6 +113,12 @@ function installFetch(familyResponses: Array<Record<string, unknown>>) {
     if (url.includes("/api/age-tier-settings")) return jsonResponse({ settings: [] });
     if (url.includes("/modify-quote")) {
       return guardedQuote(parsedBody as AddGuestBody);
+    }
+    if (url.includes("/exception-requests") && handlers.exceptionRequest) {
+      return handlers.exceptionRequest(parsedBody as Record<string, unknown>);
+    }
+    if (url.endsWith("/modify") && handlers.modify) {
+      return handlers.modify(parsedBody as Record<string, unknown>);
     }
     return jsonResponse({ ok: true });
   }) as unknown as typeof fetch;
@@ -409,5 +420,178 @@ describe("EditBookingPanel — an added guest named as the owner's dependant (#3
       });
       expect(screen.queryByText("Is this your own family member?")).toBeNull();
     });
+  });
+
+  describe("the answers on a Booking Officer request (#3451 review)", () => {
+    const MIN_STAY_VIOLATION = {
+      reasonCode: "MINIMUM_STAY",
+      policyId: "policy-weekend",
+      policyVersion: 3,
+      policyName: "Weekend minimum",
+      resolvedScope: { kind: "CLUB_WIDE", lodgeId: null, effectiveLodgeId: "lodge-1" },
+      affectedNights: ["2026-09-01"],
+      exceptionEligible: true,
+      capacityMode: "HOLD",
+      message: "Two nights are required.",
+      minimumNights: 2,
+      actualNights: 1,
+      requirements: { kind: "MINIMUM_STAY", minimumNights: 2, actualNights: 1, triggerDays: [1] },
+    };
+    const minStayRefusal = () =>
+      jsonResponse(
+        {
+          error: "These dates do not meet the minimum-stay rules.",
+          code: "MINIMUM_STAY_VIOLATION",
+          violations: [MIN_STAY_VIOLATION],
+          exceptionReview: { violations: [MIN_STAY_VIOLATION], capacityMode: "HOLD" },
+        },
+        400,
+      );
+    const created = () =>
+      jsonResponse(
+        {
+          id: "req-1",
+          status: "REQUESTED",
+          proposalHash: "abc",
+          reasonCodes: ["MINIMUM_STAY"],
+          aggregateCapacityMode: "NO_HOLD",
+          proposal: {
+            lodgeId: "lodge-1",
+            checkIn: "2026-09-01",
+            checkOut: "2026-09-03",
+            guests: [
+              { firstName: "Pat", lastName: "Smith", ageTier: "ADULT", isMember: true, nights: ["2026-09-01", "2026-09-02"] },
+            ],
+            guestNights: 2,
+            baseCheckIn: "2026-09-01",
+            baseCheckOut: "2026-09-03",
+            baseGuestNights: 2,
+          },
+          capacityHeld: false,
+        },
+        201,
+      );
+
+    async function saveThenRequest() {
+      const save = screen.getByRole("button", { name: "Save Changes" });
+      await waitFor(() => expect(save).not.toBeDisabled(), { timeout: 2500 });
+      fireEvent.click(save);
+      await screen.findByTestId("request-officer-approval");
+      fireEvent.change(screen.getByLabelText(/Why are you asking/i), {
+        target: { value: "Please." },
+      });
+      fireEvent.click(
+        screen.getByRole("button", { name: /Request Booking Officer approval/i }),
+      );
+    }
+
+    function requestBodies() {
+      return fetchCalls
+        .filter((call) => call.url.includes("/exception-requests"))
+        .map((call) => call.body as Record<string, unknown>);
+    }
+
+    it("does not carry an answer about a RENAMED row, which the request cannot carry", async () => {
+      installFetch([FAMILY], {
+        modify: minStayRefusal,
+        // The server's half: an answer naming nobody the request adds is refused.
+        exceptionRequest: (body) =>
+          body.dependantIdentityDeclarations
+            ? jsonResponse({ code: "DEPENDANT_IDENTITY_DECLARATION_INVALID", error: "x" }, 400)
+            : created(),
+      });
+      const booking = makeBooking();
+      render(
+        <EditBookingPanel
+          booking={{
+            ...booking,
+            guests: [
+              ...booking.guests,
+              { id: "g2", firstName: "Alex", lastName: "Brown", ageTier: "CHILD", isMember: false, memberId: null, stayStart: null, stayEnd: null, nights: null, priceCents: 3000 },
+            ],
+          }}
+          onDone={vi.fn()}
+        />,
+      );
+      await waitFor(() =>
+        expect(fetchCalls.some((call) => call.url.includes("/api/members/family"))).toBe(true),
+      );
+      fireEvent.change(document.getElementById("guest-g2-first") as HTMLElement, { target: { value: "Sam" } });
+      fireEvent.change(document.getElementById("guest-g2-last") as HTMLElement, { target: { value: "Smith" } });
+      fireEvent.click(
+        await screen.findByRole("button", { name: "This is a different person with the same name" }),
+      );
+      await vi.advanceTimersByTimeAsync(600);
+
+      await saveThenRequest();
+
+      await waitFor(() => expect(requestBodies()).toHaveLength(1));
+      expect(requestBodies()[0].dependantIdentityDeclarations).toBeUndefined();
+      // The request went through.
+      expect(await screen.findByTestId("exception-request-sent")).toBeInTheDocument();
+    });
+
+    it("puts the question back when the request is refused over an answer", async () => {
+      installFetch([FAMILY], {
+        modify: minStayRefusal,
+        exceptionRequest: () =>
+          jsonResponse({ code: "DEPENDANT_IDENTITY_DECLARATION_INVALID", error: "stale answer" }, 400),
+      });
+      render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+      await waitFor(() =>
+        expect(fetchCalls.some((call) => call.url.includes("/api/members/family"))).toBe(true),
+      );
+      await typeInGuest("Sam", "Smith");
+      fireEvent.click(
+        await screen.findByRole("button", { name: "This is a different person with the same name" }),
+      );
+      await vi.advanceTimersByTimeAsync(600);
+      const familyReadsBefore = fetchCalls.filter((call) =>
+        call.url.includes("/api/members/family"),
+      ).length;
+
+      await saveThenRequest();
+
+      await waitFor(() => expect(requestBodies()).toHaveLength(1));
+      expect(requestBodies()[0].dependantIdentityDeclarations).toHaveLength(1);
+      // The answer is cleared (the question is asked again) and the list re-read.
+      expect(
+        await screen.findByRole("button", { name: "This is a different person with the same name" }),
+      ).toBeInTheDocument();
+      expect(
+        fetchCalls.filter((call) => call.url.includes("/api/members/family")).length,
+      ).toBeGreaterThan(familyReadsBefore);
+    });
+  });
+
+  it("asks an officer on their OWN booking in the member's words (ownership, not role)", async () => {
+    installFetch([FAMILY]);
+    render(
+      <EditBookingPanel
+        booking={makeBooking({ viewerRole: "ADMIN", viewerIsBookingOwner: true })}
+        onDone={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(fetchCalls.some((call) => call.url.includes("/eligible-family"))).toBe(true),
+    );
+
+    await typeInGuest("Sam", "Smith");
+
+    expect(await screen.findByText("Is this your own family member?")).toBeInTheDocument();
+    expect(screen.queryByText("Is this Pat's own family member?")).toBeNull();
+  });
+
+  it("announces the question through a polite live region", async () => {
+    installFetch([FAMILY]);
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+    await waitFor(() =>
+      expect(fetchCalls.some((call) => call.url.includes("/api/members/family"))).toBe(true),
+    );
+    await typeInGuest("Sam", "Smith");
+    const question = await screen.findByText("Is this your own family member?");
+    const region = question.closest('[role="status"]');
+    expect(region).not.toBeNull();
+    expect(region).toHaveAttribute("aria-live", "polite");
   });
 });
