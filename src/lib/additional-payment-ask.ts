@@ -276,10 +276,10 @@ export function sizeReviewChargeAsk({
  * code does. Monotone means a run that has seen MORE settled shares never
  * derives a SMALLER figure, so a stale replay cannot lower a live ask. It does
  * not serialise two runs: the refusal it feeds reads the row and writes it in
- * separate statements with a provider round trip between them, which is a
- * refusal rather than an atomic compare-and-set. What that does and does not
- * guarantee is written out where it happens, in
- * `syncEditFinancialReviewChargeRequest`.
+ * separate statements with a provider round trip between them. Since #3402 two
+ * runs are serialised by the edit's raise claim instead (`INV-PAY-112`,
+ * `edit-financial-review-charge-raise-claim.ts`), and monotonicity is what makes taking
+ * over an abandoned claim safe.
  */
 export function raiseReviewChargeAsk({
   shareTotalCents,

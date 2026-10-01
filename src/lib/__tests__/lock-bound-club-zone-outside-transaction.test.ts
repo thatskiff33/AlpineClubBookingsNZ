@@ -476,6 +476,8 @@ const TRANSACTION_OPENERS = [
   "withOptionalTransaction(",
   "withBoundedReadOnlyTransaction(",
   "withStoreTransaction(",
+  // #3462: Mark failed runs its caller's audit callback inside its transaction.
+  "markStaleRunningXeroOperationFailed(",
 ] as const;
 
 /**
