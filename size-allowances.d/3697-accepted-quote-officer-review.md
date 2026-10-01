@@ -13,7 +13,7 @@ reason: #3415's accepted request action and #3416's truthful school approval
   extracting those states would duplicate its fetch and permission state.
 
 file: src/lib/booking-cancel.ts
-lines: 2534
+lines: 2556
 reason: the accepted-hold guard and #3413 anonymous-reservation release belong
   with the existing cancellation lock and hold-release branch they fence.
 
