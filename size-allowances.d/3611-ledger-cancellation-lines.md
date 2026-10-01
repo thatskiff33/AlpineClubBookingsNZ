@@ -5,12 +5,28 @@ the booking to CANCELLED, so the call has to sit in that transaction; there is
 no seam outside it that runs under the same lock and the same client.
 
 file: src/lib/booking-cancel.ts
-lines: 2573
+lines: 2578
 reason: one posting call in each of the five claim transactions (paid, unpaid,
-  PENDING, no-payment, linked child), plus two imports; the paid call carries
-  the kept figure from the policy numbers frozen in that same claim.
+  PENDING, no-payment, linked child), plus their imports; the paid claim reads
+  its applied rows and takes refund, restore and kept from one call, so the
+  kept figure is frozen in the same claim as the decision it records.
 
 file: src/lib/group-cancel.ts
 lines: 943
 reason: one posting call in each child's claim transaction, with the reason a
   child keeps nothing.
+
+file: src/lib/cron-confirm-pending.ts
+lines: 2046
+reason: one posting call, nothing kept, in each of the hold-window
+  resolution's three cancel arms, inside the lock(1) transaction that cancels.
+
+file: src/lib/payment-reconciliation.ts
+lines: 3067
+reason: one posting call, nothing kept, in the settle's capacity void, inside
+  the lock(1) transaction that cancels; it has to sit where the void is.
+
+file: src/lib/xero-inbound/invoice-paid-effects.ts
+lines: 1899
+reason: one posting call, nothing kept, in the late-capacity cancel arm, inside
+  the lock(1) transaction that cancels it and mints the credit.
