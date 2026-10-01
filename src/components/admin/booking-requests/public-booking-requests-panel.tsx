@@ -1360,8 +1360,8 @@ export function PublicBookingRequestsPanel({
             : `School booking confirmed. ${data.teacherHutLeaderAssignmentsCreated === true
               ? "Teacher hut-leader assignments were created."
               : "Teacher hut-leader assignments were not created."} ${data.invoiceMode === "xero"
-              ? "Check the booking's invoice and notification status."
-              : "The Xero module is off, so manual invoicing is required. Check the booking's notification status."}`
+              ? "Check invoice progress and email delivery."
+              : "The Xero module is off, so manual invoicing is required. Check email delivery."}`
         );
       } else {
         toast.success("Request approved. A payment link has been emailed to the requester.");

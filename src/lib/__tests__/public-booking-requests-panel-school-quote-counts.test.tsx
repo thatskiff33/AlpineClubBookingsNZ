@@ -566,8 +566,8 @@ describe("PublicBookingRequestsPanel school approval result (#3785)", () => {
       ? "Teacher hut-leader assignments were created."
       : "Teacher hut-leader assignments were not created.";
     const invoice = invoiceMode === "xero"
-      ? "Check the booking's invoice and notification status."
-      : "The Xero module is off, so manual invoicing is required. Check the booking's notification status.";
+      ? "Check invoice progress and email delivery."
+      : "The Xero module is off, so manual invoicing is required. Check email delivery.";
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith(
       `School booking confirmed. ${assignments} ${invoice}`,
     ));

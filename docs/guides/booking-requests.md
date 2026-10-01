@@ -180,8 +180,9 @@ are listed on the booking for you to relay.
 
    After school approval, the success message confirms the booking and whether
    teacher hut-leader assignments were created. It does not confirm email
-   delivery: check the booking's invoice and notification status. If the Xero
-   module is off, arrange manual invoicing.
+   delivery: check invoice progress separately, and ask a support officer to
+   review [Email Deliverability](email-deliverability.md). If the Xero module
+   is off, arrange manual invoicing.
 
 #### Correcting a request before you convert it
 
