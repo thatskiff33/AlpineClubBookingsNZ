@@ -45,7 +45,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 // #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
-const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.fn(async (_input: unknown) => {}) }));
+const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}) }));
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
 
 vi.mock("@/lib/prisma", () => ({

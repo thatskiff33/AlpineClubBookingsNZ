@@ -376,15 +376,8 @@ async function cancelLinkedProvisionalChildBookings(
       if (childOwnerMemberId) {
         await restoreCreditFromBooking(childOwnerMemberId, fresh.id, tx);
       }
-      // #3611: nothing was captured, so the club keeps nothing; the stay's
-      // lines are reversed if it was ever confirmed on the ledger.
-      await postCancellationLedgerLines({
-        store: tx,
-        bookingId: fresh.id,
-        lodgeId: fresh.lodgeId,
-        keptCents: 0,
-        site: "booking-cancel:linked-child",
-      });
+      // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
+      await postCancellationLedgerLines({ store: tx, bookingId: fresh.id, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:linked-child" });
       return fresh;
     });
 
@@ -713,15 +706,8 @@ async function performBookingCancellation(
       const creditRestoredCents = restoreMemberId
         ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
         : 0;
-      // #3611: nothing was captured, so the club keeps nothing; the stay's
-      // lines are reversed if it was ever confirmed on the ledger.
-      await postCancellationLedgerLines({
-        store: tx,
-        bookingId,
-        lodgeId: fresh.lodgeId,
-        keptCents: 0,
-        site: "booking-cancel:no-payment",
-      });
+      // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
+      await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:no-payment" });
 
       // #2576 §6. Cancellation is the first change class the owner names, and it
       // is the one that removes attendance outright: cancelling the booking a
@@ -910,15 +896,8 @@ async function performBookingCancellation(
       const creditRestoredCents = restoreMemberId
         ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
         : 0;
-      // #3611: nothing was captured, so the club keeps nothing; the stay's
-      // lines are reversed if it was ever confirmed on the ledger.
-      await postCancellationLedgerLines({
-        store: tx,
-        bookingId,
-        lodgeId: fresh.lodgeId,
-        keptCents: 0,
-        site: "booking-cancel:pending",
-      });
+      // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
+      await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:pending" });
       // #2576 §6. Cancellation is the first change class the owner names, and it
       // is the one that removes attendance outright: cancelling the booking a
       // qualifying adult member is staying on can leave ANOTHER booking on the same
@@ -1182,16 +1161,8 @@ async function performBookingCancellation(
       const creditRestoredCents = restoreMemberId
         ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
         : 0;
-      // #3611: nothing captured is kept here (never captured, or all of it
-      // already refunded, #1473), so the stay's lines are reversed and no fee
-      // posts — if the booking was ever confirmed on the ledger.
-      await postCancellationLedgerLines({
-        store: tx,
-        bookingId,
-        lodgeId: fresh.lodgeId,
-        keptCents: 0,
-        site: "booking-cancel:unpaid",
-      });
+      // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
+      await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:unpaid" });
 
       // Applied-credit rows the inbound reconcile linked to a real Xero
       // credit-note allocation against this booking's invoice: the invoice's
