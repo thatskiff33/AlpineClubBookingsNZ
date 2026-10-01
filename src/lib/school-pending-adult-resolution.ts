@@ -11,7 +11,7 @@ import { prisma } from "@/lib/prisma";
 import { resolveBookingGuestDietary, resolveBookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { areOldSchoolAdultsRuntimesStopped } from "@/lib/pending-school-adults-gate";
 import { storedSchoolTeacherListSchema } from "@/lib/school-teacher-schema";
-import { resolveGuestRateMembershipTypes } from "@/lib/membership-type-policy";
+import { resolveGuestRateMembershipTypes, resolveMembershipTypePoliciesForMembers } from "@/lib/membership-type-policy";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 /** Replace accepted anonymous slots with real names without changing the deal. */
@@ -92,18 +92,23 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
       existingNames.add(key);
       // A matching club member can change rate and consent. That needs an
       // explicit new terms review, never an automatic accepted-quote rewrite.
-      const member = await tx.member.findFirst({
+      const members = await tx.member.findMany({
         where: {
           active: true,
-          canLogin: true,
           OR: [
             { firstName: { equals: teacher.firstName, mode: "insensitive" }, lastName: { equals: teacher.lastName, mode: "insensitive" } },
             ...(teacher.email ? [{ email: { equals: teacher.email, mode: "insensitive" as const } }] : []),
           ],
         },
-        select: { id: true },
+        select: { id: true, canLogin: true },
       });
-      if (member) throw new BookingRequestError("A named adult may be a club member. Review their rate and consent, then issue new terms if needed.", 409);
+      const policies = await resolveMembershipTypePoliciesForMembers(tx, {
+        memberIds: members.map((member) => member.id),
+        seasonYear: seasonYearOfStoredDate(hold.checkIn),
+      });
+      if (members.some((member) => member.canLogin || policies.get(member.id)?.bookingBehavior === "MEMBER_RATE")) {
+        throw new BookingRequestError("A named adult may be a club member. Review their rate and consent, then issue new terms if needed.", 409);
+      }
     }
 
     const accepted = request.acceptedQuoteSnapshot

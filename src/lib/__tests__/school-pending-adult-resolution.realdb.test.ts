@@ -95,6 +95,7 @@ it("runs the pending-adult database proof in CI", () => {
   }, 120_000);
 
   beforeEach(async () => {
+    await prisma.member.deleteMany({ where: { id: "matching-adult" } });
     await prisma.bookingRequest.deleteMany({ where: { id: "pending-request" } });
     await prisma.booking.deleteMany({ where: { id: "pending-hold" } });
     await prisma.booking.create({ data: {
@@ -124,6 +125,24 @@ it("runs the pending-adult database proof in CI", () => {
   const nameAdult = (expectedVersion = 4, firstName = "Beth") => resolve({
     requestId: "pending-request", adminMemberId: "officer", expectedVersion,
     teachers: [{ firstName, lastName: "Teacher", email: null }],
+  });
+
+  it.each(["FULL", "NON_MEMBER", "SCHOOL"])("uses seasonal %s pricing policy for a login-disabled matching adult", async (key) => {
+    const type = await prisma.membershipType.findUniqueOrThrow({ where: { key } });
+    await prisma.member.create({ data: {
+      id: "matching-adult", firstName: "Beth", lastName: "Teacher",
+      email: "beth@example.invalid", passwordHash: "test", active: true, canLogin: false, role: key === "SCHOOL" ? "SCHOOL" : "USER",
+      seasonalMembershipAssignments: { create: { seasonYear: 2026, membershipTypeId: type.id } },
+    } });
+    if (key === "FULL") {
+      await expect(nameAdult()).rejects.toThrow(/rate and consent/);
+      expect(await prisma.bookingRequest.findUniqueOrThrow({ where: { id: "pending-request" } })).toMatchObject({ version: 4, pendingAdultCount: 2 });
+      expect(await prisma.bookingGuest.count({ where: { bookingId: "pending-hold" } })).toBe(1);
+      expect(await prisma.bookingRequestPendingAdultReservationNight.count({ where: { bookingId: "pending-hold" } })).toBe(2);
+    } else {
+      await expect(nameAdult()).resolves.toMatchObject({ pendingAdultCount: 1 });
+      expect(await prisma.bookingGuest.count({ where: { bookingId: "pending-hold" } })).toBe(2);
+    }
   });
 
   it.each([false, true])("names and approves a nonfirst accepted option with a reused hold: %s", async (requote) => {
@@ -159,7 +178,10 @@ it("runs the pending-adult database proof in CI", () => {
     const confirmed = await prisma.booking.findUniqueOrThrow({ where: { id: firstHold }, include: { guests: { include: { nights: true } } } });
     expect(confirmed).toMatchObject({ status: "CONFIRMED", totalPriceCents: acceptedTotal });
     expect(confirmed.guests.reduce((sum, guest) => sum + guest.priceCents, 0)).toBe(acceptedTotal);
-    expect(confirmed.guests.flatMap((guest) => guest.nights).reduce((sum, night) => sum + night.priceCents, 0)).toBe(acceptedTotal);
+    expect(confirmed.guests.flatMap((guest) => guest.nights).reduce((sum, night) => {
+      if (night.priceCents === null) throw new Error("Every confirmed guest night must retain its accepted cents.");
+      return sum + night.priceCents;
+    }, 0)).toBe(acceptedTotal);
     expect(await prisma.bookingRequestPendingAdultReservationNight.count({ where: { bookingId: firstHold } })).toBe(0);
     expect((await prisma.bookingRequest.findUniqueOrThrow({ where: { id: accepted.id } })).acceptedQuoteSnapshot).toEqual(accepted.acceptedQuoteSnapshot);
   });

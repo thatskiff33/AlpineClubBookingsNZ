@@ -9,7 +9,8 @@ const h = vi.hoisted(() => ({
   reservationFindMany: vi.fn(),
   reservationDeleteMany: vi.fn(),
   reservationCreateMany: vi.fn(),
-  memberFindFirst: vi.fn(),
+  memberFindMany: vi.fn(),
+  resolvePolicies: vi.fn(),
   parseQuoteOptions: vi.fn(),
   resolveRates: vi.fn(),
   lockOrder: [] as string[],
@@ -25,7 +26,7 @@ vi.mock("@/lib/prisma", () => ({
       deleteMany: h.reservationDeleteMany,
       createMany: h.reservationCreateMany,
     },
-    member: { findFirst: h.memberFindFirst },
+    member: { findMany: h.memberFindMany },
     $executeRaw: vi.fn(async () => { h.lockOrder.push("global"); }),
     $transaction: vi.fn(async (callback) => callback((await import("@/lib/prisma")).prisma)),
   },
@@ -44,7 +45,7 @@ vi.mock("@/lib/booking-request", () => ({
   linkedGuestMemberMap: () => new Map(),
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
-vi.mock("@/lib/membership-type-policy", () => ({ resolveGuestRateMembershipTypes: h.resolveRates }));
+vi.mock("@/lib/membership-type-policy", () => ({ resolveGuestRateMembershipTypes: h.resolveRates, resolveMembershipTypePoliciesForMembers: h.resolvePolicies }));
 vi.mock("@/lib/member-dietary-booking-writes", async (importOriginal) => {
   const actual = await importOriginal() as typeof import("@/lib/member-dietary-booking-writes");
   return {
@@ -90,7 +91,8 @@ beforeEach(() => {
   h.lockOrder.length = 0;
   h.bookingRequestFindUnique.mockResolvedValueOnce({ heldBookingId: "hold-1" }).mockResolvedValueOnce(acceptedRequest);
   h.bookingFindUnique.mockResolvedValueOnce({ lodgeId: "lodge-1" }).mockResolvedValueOnce(hold);
-  h.memberFindFirst.mockResolvedValue(null);
+  h.memberFindMany.mockResolvedValue([]);
+  h.resolvePolicies.mockResolvedValue(new Map());
   h.parseQuoteOptions.mockReturnValue([{
     totalCents: 300,
     guestBreakdown: [
@@ -197,7 +199,7 @@ describe("accepted school pending-adult identity resolution", () => {
   });
 
   it("stops when the real name may belong to a club member", async () => {
-    h.memberFindFirst.mockResolvedValue({ id: "member-1" });
+    h.memberFindMany.mockResolvedValue([{ id: "member-1", canLogin: true }]);
     await expect(command()).rejects.toThrow(/rate and consent/);
     expect(h.requestUpdateMany).not.toHaveBeenCalled();
     expect(h.guestCreate).not.toHaveBeenCalled();
