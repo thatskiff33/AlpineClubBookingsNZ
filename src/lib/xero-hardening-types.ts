@@ -100,6 +100,8 @@ export interface XeroReconciliationReport {
      * outbox caps an over-covered payment's next note at zero silently.
      */
     overCoveredStripeRefundPayments: number;
+    /** #3548: refund notes with no settlement on record, or part-settled in Xero. */
+    unsettledRefundCreditNotes: number;
     stalePendingOperations: number;
     recentFailedOperations: number;
     recentPartialOperations: number;

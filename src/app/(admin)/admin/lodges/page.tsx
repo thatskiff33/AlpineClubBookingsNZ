@@ -22,6 +22,11 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import {
+  NEW_LODGE_CAPACITY_REQUIRED_MESSAGE,
+  parseConfiguredLodgeCapacity,
+} from "@/lib/lodge-effective-capacity";
+import { AddLodgeCapacityField } from "./_components/add-lodge-capacity-field";
 import { OtherLodgesPanel } from "./_components/other-lodges-panel";
 
 /**
@@ -47,6 +52,8 @@ type LodgeFormState = {
   address: string;
   doorCode: string;
   travelNote: string;
+  /** Maximum guests, as typed. Sent on create only (#3407). */
+  capacity: string;
   /**
    * Which detail fields the record this form was seeded from actually carried
    * (#2925). A field missing here is OMITTED from the PATCH body rather than
@@ -70,6 +77,7 @@ const emptyForm: LodgeFormState = {
   address: "",
   doorCode: "",
   travelNote: "",
+  capacity: "",
   // A create starts from a blank form the admin filled in themselves, so all
   // three values are theirs to send.
   detailFields: LODGE_DETAIL_FIELDS,
@@ -81,6 +89,7 @@ function formFromLodge(lodge: LodgeRecord): LodgeFormState {
     address: lodge.address ?? "",
     doorCode: lodge.doorCode ?? "",
     travelNote: lodge.travelNote ?? "",
+    capacity: "",
     detailFields: LODGE_DETAIL_FIELDS.filter((field) => field in lodge),
   };
 }
@@ -110,6 +119,9 @@ export default function AdminLodgesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<LodgeFormState>(emptyForm);
+  // #3407 review: the capacity field is marked invalid, and pointed at the
+  // page's error, only after a refused save.
+  const [capacityInvalid, setCapacityInvalid] = useState(false);
 
   const loadLodges = useCallback(async () => {
     setLoading(true);
@@ -136,6 +148,7 @@ export default function AdminLodgesPage() {
     setCreating(true);
     setEditingId(null);
     setForm(emptyForm);
+    setCapacityInvalid(false);
   }
 
   function startEdit(lodge: LodgeRecord) {
@@ -155,6 +168,17 @@ export default function AdminLodgesPage() {
       setError("Lodge name is required.");
       return;
     }
+    // Required on create only (#3407): an existing lodge's capacity is edited
+    // on its configuration page, which explains it against the lodge's beds.
+    // The same parse that page uses, so the bounds cannot drift from the ones
+    // `POST /api/admin/lodges` enforces (INV-SSOT-001).
+    const typedCapacity = parseConfiguredLodgeCapacity(form.capacity);
+    if (creating && typedCapacity.kind !== "valid") {
+      setError(NEW_LODGE_CAPACITY_REQUIRED_MESSAGE);
+      setCapacityInvalid(true);
+      return;
+    }
+    setCapacityInvalid(false);
     setSaving(true);
     setError(null);
     try {
@@ -162,7 +186,11 @@ export default function AdminLodgesPage() {
         ? await fetch("/api/admin/lodges", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(formPayload(form)),
+            body: JSON.stringify({
+              ...formPayload(form),
+              capacity:
+                typedCapacity.kind === "valid" ? typedCapacity.capacity : null,
+            }),
           })
         : await fetch(`/api/admin/lodges/${editingId}`, {
             method: "PATCH",
@@ -290,7 +318,7 @@ export default function AdminLodgesPage() {
       </div>
 
       {error ? (
-        <p className="text-sm text-destructive" role="alert">
+        <p id="lodges-page-error" className="text-sm text-destructive" role="alert">
           {error}
         </p>
       ) : null}
@@ -317,6 +345,14 @@ export default function AdminLodgesPage() {
                 }
               />
             </div>
+            {creating ? (
+              <AddLodgeCapacityField
+                value={form.capacity}
+                onChange={(capacity) => setForm((prev) => ({ ...prev, capacity }))}
+                invalid={capacityInvalid && error !== null}
+                errorId="lodges-page-error"
+              />
+            ) : null}
             <div className="space-y-2">
               <Label htmlFor="lodge-address">Address</Label>
               <Textarea

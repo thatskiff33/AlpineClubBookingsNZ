@@ -71,6 +71,7 @@ vi.mock("@/lib/logger", () => ({
 
 import {
   buildXeroPayloadHash,
+  completeXeroSyncOperation,
   failXeroSyncOperation,
   findCanonicalPaymentRefundCreditNote,
   recordXeroInboundEvent,
@@ -932,5 +933,46 @@ describe("failXeroSyncOperation onlyIfRunningSince", () => {
     expect(recorded).toContain("Retry of Xero operation op_1 failed");
     expect(recorded).toContain("Bearer [REDACTED]");
     expect(recorded).not.toContain("live-token");
+  });
+});
+
+// #3548 round 3 (R2-6): the loser of two concurrent refund-note legs never
+// writes PARTIAL over the winner's SUCCEEDED.
+describe("completeXeroSyncOperation keepSucceeded", () => {
+  function store(count: number) {
+    return {
+      xeroSyncOperation: {
+        updateMany: vi.fn().mockResolvedValue({ count }),
+        update: vi.fn(),
+        findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "op_note", status: "PARTIAL" }),
+      },
+    };
+  }
+
+  it("leaves a SUCCEEDED row as it is, writes no link, and answers null", async () => {
+    const tx = store(0);
+    await expect(
+      completeXeroSyncOperation(
+        "op_note",
+        { status: "PARTIAL", extraLinks: [{ localModel: "Payment", localId: "p", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn", role: "REFUND_CREDIT_NOTE" }] },
+        { store: tx as never, keepSucceeded: true },
+      ),
+    ).resolves.toBeNull();
+    expect(tx.xeroSyncOperation.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "op_note", status: { not: "SUCCEEDED" } },
+        data: expect.objectContaining({ status: "PARTIAL" }),
+      }),
+    );
+    expect(tx.xeroSyncOperation.update).not.toHaveBeenCalled();
+    expect(mocks.txLinkUpsert).not.toHaveBeenCalled();
+  });
+
+  it("completes any other row as before", async () => {
+    const tx = store(1);
+    await expect(
+      completeXeroSyncOperation("op_note", { status: "PARTIAL" }, { store: tx as never, keepSucceeded: true }),
+    ).resolves.toMatchObject({ status: "PARTIAL" });
+    expect(tx.xeroSyncOperation.update).not.toHaveBeenCalled();
   });
 });

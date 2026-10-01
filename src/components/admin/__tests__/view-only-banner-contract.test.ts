@@ -339,8 +339,11 @@ const FIGURES = {
     * booking behavior for a drifted key-resolved built-in. MEASURED.
     * 366 -> 367 (#3462): the Xero operations panel's per-row Mark failed on a
     * stale running operation. MEASURED.
+   *
+   * 367 -> 368 (#3407): the lodge setup wizard's new Capacity step adds its
+   * Save and continue. Back and Skip are plain Buttons. MEASURED.
     */
-   callSites: 367,
+   callSites: 368,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -367,8 +370,9 @@ const FIGURES = {
    * 310 -> 311 (#2941): so does Member Fields' new Edit.
    *
    * 311 -> 312 (#3462): so does the Xero operations panel's Mark failed.
+   * 312 -> 313 (#3407): so does the setup wizard's Capacity Save and continue.
    */
-  optOuts: 312,
+  optOuts: 313,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -425,8 +429,11 @@ const FIGURES = {
    *
    * 277 -> 278 (#3462): the Xero operations panel's Mark failed sits in the same
    * file as that panel's own banner, beside its Retry and Resolve.
+   * 278 -> 279 (#3407): the setup wizard's Capacity Save and continue sits in
+   * the same file as the wizard's own banner, beside its sibling steps' static
+   * opt-outs.
    */
-  staticOptOuts: 278,
+  staticOptOuts: 279,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *

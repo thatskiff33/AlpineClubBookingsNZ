@@ -3,6 +3,7 @@
 // the booking-vs-Xero repair tool. Extracted verbatim from
 // xero-booking-repair.ts (#1208 item 2). Money stays in integer cents; provider
 // calls stay outside DB transactions (unchanged).
+import { applyRefundNoteSettlementRepair } from "@/lib/xero-refund-note-unsettled";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { keptLateCaptureDocumentDate } from "@/lib/xero-kept-late-capture-invoice";
 import { editReviewChargeRequestCriteria } from "@/lib/edit-financial-review-charge-shape";
@@ -592,6 +593,13 @@ async function applyQueuedAction(
     case "AUTO_REFUND_LATE_CAPTURED_PAYMENT":
       await applyLateCaptureRefundRepair(action, deps, format);
       return;
+    case "SETTLE_REFUND_CREDIT_NOTE": {
+      // #3548: operator-applied only, through the one read-back-then-settle.
+      const result = await applyRefundNoteSettlementRepair(action.payload, deps.finishRefundCreditNoteSettlement);
+      action.status = result.status;
+      action.resultMessage = result.message;
+      return;
+    }
     case "MARK_MANUAL_REVIEW":
       action.status = "manual_review";
       action.resultMessage = String(action.payload.reason);

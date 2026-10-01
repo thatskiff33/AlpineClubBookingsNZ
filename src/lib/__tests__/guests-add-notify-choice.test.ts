@@ -18,6 +18,10 @@ import { NextRequest } from "next/server";
 const mockTransaction = vi.fn();
 const mockMemberCount = vi.fn();
 const mockMemberFindUnique = vi.fn();
+// The GLOBAL client's settings read, which is what a default-lodge capacity
+// lookup outside the transaction reaches (#3407 review). The transaction's own
+// read is `makeTx`'s, so the two lodges can be told apart.
+const mockGlobalLodgeSettingsFindUnique = vi.fn(async () => ({ capacity: 100 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -47,7 +51,10 @@ vi.mock("@/lib/prisma", () => ({
     // #1982: the default lodge's capacity is a DB override (self-healed from the
     // config bed total), not a club.json runtime fallback. Model a configured
     // lodge so the route's guest-count-vs-capacity guard resolves normally.
-    lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
+    lodgeSettings: {
+      findUnique: (...args: unknown[]) =>
+        (mockGlobalLodgeSettingsFindUnique as (...a: unknown[]) => unknown)(...args),
+    },
   },
 }));
 
@@ -342,6 +349,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(FIXED_NOW);
   mockMemberCount.mockResolvedValue(1);
+  mockGlobalLodgeSettingsFindUnique.mockResolvedValue({ capacity: 100 });
   mockMemberFindUnique.mockResolvedValue({
     id: "m1",
     active: true,
@@ -705,5 +713,49 @@ describe("POST /api/bookings/[id]/guests clears a flagged review in place (#3500
       adminReviewedById: null,
       adminReviewedAt: null,
     });
+  });
+});
+
+describe("POST /api/bookings/[id]/guests measures the booking's own lodge only (#3407 review)", () => {
+  /*
+    The route used to check the payload against the DEFAULT lodge's capacity
+    before the booking - and so its lodge - was loaded. At a second lodge that
+    check could only refuse wrongly: an unconfigured default lodge refused every
+    add with "not set up for bookings yet", and a smaller one quoted its own
+    limit. Removing it changes no real limit; the per-lodge check under the
+    capacity lock is the rule, and the control below pins that it still refuses.
+  */
+  it.each([
+    ["unconfigured", null],
+    ["smaller than the add", 1],
+  ])("adds guests at a configured second lodge when the default lodge is %s", async (_label, defaultCapacity) => {
+    mockGlobalLodgeSettingsFindUnique.mockResolvedValue({ capacity: defaultCapacity } as never);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    tx.lodgeSettings = { findUnique: async () => ({ capacity: 30 }) };
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+    const res = await POST(
+      guestsRequest({ guests: [NON_MEMBER_GUEST, { ...NON_MEMBER_GUEST, firstName: "Cara" }] }),
+      params,
+    );
+
+    expect(res.status).toBe(200);
+    expect(tx.bookingGuest.create).toHaveBeenCalledTimes(2);
+  });
+
+  it("CONTROL: the booking's own lodge still refuses a party above its capacity", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    tx.lodgeSettings = { findUnique: async () => ({ capacity: 1 }) };
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+    const res = await POST(guestsRequest({ guests: [NON_MEMBER_GUEST] }), params);
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("A booking cannot exceed 1 guests");
+    expect(tx.bookingGuest.create).not.toHaveBeenCalled();
   });
 });
