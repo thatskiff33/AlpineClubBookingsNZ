@@ -350,8 +350,11 @@ by `planReviewClosureShareLines` after the closure's re-price rows (§5.1):
   booking is a stand-in that is now superseded, and each is reversed by its line
   id (`reversal:<lineId>`, anchored on this task) in the same batch. This share
   posts nothing.
-- **Otherwise, this closure's own re-price rows recorded a movement:** they
-  carry the share, and nothing more posts.
+- **Or this closure's own re-price rows recorded a movement**, even where an
+  unrelated drift (a promotion line the booking no longer carries) makes the
+  totals miss: the re-price re-prices every strand from the live ledger, so it
+  supersedes the stand-ins just the same — each is reversed, and nothing more
+  posts.
 - **Otherwise** (the re-base declined, or the charges do not carry the price):
   the share posts as the stand-in for money the headline has not moved yet.
 

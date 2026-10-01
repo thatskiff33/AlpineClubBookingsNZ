@@ -369,16 +369,15 @@ describe("planReviewClosureShareLines — booking grain (#3582, §5.3)", () => {
     ]);
   });
 
-  it("this closure's re-price recorded a movement the charges do not fully carry (drift elsewhere): no share on top of it", () => {
-    expect(
-      planReviewClosureShareLines({
-        ...base,
-        rebasedFinalPriceCents: 7_000,
-        chargeLinesAfter: charges(6_000),
-        repriceRecordsMovement: true,
-        postedAdjustmentLines: [standIn],
-      }),
-    ).toEqual([]);
+  it("this closure's re-price recorded a movement the charges do not fully carry (drift elsewhere): it still supersedes every stand-in, and no share posts", () => {
+    const lines = planReviewClosureShareLines({
+      ...base,
+      rebasedFinalPriceCents: 7_000,
+      chargeLinesAfter: charges(6_000),
+      repriceRecordsMovement: true,
+      postedAdjustmentLines: [standIn],
+    });
+    expect(lines.map((line) => [line.reversesLineId, ledgerLineAmountCents(line)])).toEqual([["adj-1", 3_000]]);
   });
 
   it("re-base declined: the share stands in, and nothing is reversed", () => {
