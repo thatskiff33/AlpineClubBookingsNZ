@@ -21,6 +21,10 @@ const mocks = vi.hoisted(() => ({
   getXeroOperationRetryMeta: vi.fn(),
   getXeroApiErrorInfo: vi.fn(),
   transaction: vi.fn(),
+  // Records every write made on the bare client rather than a transaction
+  // client (#3462), so a rollback test can prove its write was inside the
+  // transaction: one on the bare client would commit on its own in Postgres.
+  bareClientWrite: vi.fn(),
 }));
 
 // The client the routes' transactions hand their writes and audit rows
@@ -86,8 +90,14 @@ vi.mock("@/lib/prisma", () => ({
       findMany: mocks.xeroOperationFindMany,
       findFirst: mocks.xeroOperationFindFirst,
       count: mocks.xeroOperationCount,
-      update: mocks.xeroOperationUpdate,
-      updateMany: mocks.xeroOperationUpdateMany,
+      update: (...args: unknown[]) => {
+        mocks.bareClientWrite("update", ...args);
+        return mocks.xeroOperationUpdate(...args);
+      },
+      updateMany: (...args: unknown[]) => {
+        mocks.bareClientWrite("updateMany", ...args);
+        return mocks.xeroOperationUpdateMany(...args);
+      },
     },
   },
 }));
@@ -449,6 +459,7 @@ describe("Xero operation admin retry routes", () => {
     expect(response.status).toBe(500);
     expect(mocks.xeroOperationUpdate).toHaveBeenCalled();
     expect(row.replayable).toBe(true);
+    expect(mocks.bareClientWrite).not.toHaveBeenCalled();
   });
 
   it("marks a failed operation resolved in Xero and audits it", async () => {
@@ -810,6 +821,8 @@ describe("Xero operation admin retry routes", () => {
 
     expect(response.status).toBe(500);
     expect(row.status).toBe("RUNNING");
+    expect(mocks.xeroOperationUpdateMany).toHaveBeenCalled();
+    expect(mocks.bareClientWrite).not.toHaveBeenCalled();
   });
 
   it("writes no audit row when no operation was stale", async () => {
@@ -895,6 +908,7 @@ describe("Xero operation admin retry routes", () => {
 
       expect(response.status).toBe(500);
       expect(mocks.xeroOperationUpdateMany).toHaveBeenCalled();
+      expect(mocks.bareClientWrite).not.toHaveBeenCalled();
       expect(row.status).toBe("RUNNING");
     });
 
