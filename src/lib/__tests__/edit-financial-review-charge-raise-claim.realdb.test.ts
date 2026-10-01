@@ -576,6 +576,13 @@ let observerClient: PrismaClient;
       const first = await claimModule.claimEditReviewChargeRaise(MODIFICATION_ID);
       expect(first).not.toBeNull();
 
+      // A FIXED figure, not one read off the constant (which would agree with any
+      // value, zero included): twenty minutes covers the slowest live holder the
+      // lease's docblock argues for - a few Stripe calls at about four minutes
+      // each - so a claim that old must still be refused.
+      await ageClaimTo(20 * 60 * 1000);
+      expect(await claimModule.claimEditReviewChargeRaise(MODIFICATION_ID)).toBeNull();
+
       // One millisecond short of the lease: still the holder's.
       await ageClaimTo(EDIT_REVIEW_CHARGE_RAISE_LEASE_MS - 1);
       expect(await claimModule.claimEditReviewChargeRaise(MODIFICATION_ID)).toBeNull();
