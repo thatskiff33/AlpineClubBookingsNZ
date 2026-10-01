@@ -896,6 +896,19 @@ describe("failXeroSyncOperation onlyIfRunningSince", () => {
     expect(mocks.operationUpdate).not.toHaveBeenCalled();
   });
 
+  it("cannot be handed both write guards at once", () => {
+    // Compile-time: the two guards are one discriminated option (#3462), so
+    // one can never be silently dropped in favour of the other. The call is
+    // never made; `pnpm run typecheck` is the assertion.
+    const typeOnly = () =>
+      failXeroSyncOperation("op_1", new Error("boom"), undefined, {
+        keepCancelled: true,
+        // @ts-expect-error keepCancelled and onlyIfRunningSince are exclusive
+        onlyIfRunningSince: claimedAt,
+      });
+    expect(typeof typeOnly).toBe("function");
+  });
+
   it("leaves a row the handler already completed as it is and answers null", async () => {
     mocks.operationUpdateMany.mockResolvedValue({ count: 0 });
     await expect(
