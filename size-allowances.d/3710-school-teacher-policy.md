@@ -7,6 +7,6 @@ reason: the new policy card shares the existing per-card staged edit state,
   only this card would duplicate those contracts.
 
 file: src/lib/config-transfer/categories/club-settings.ts
-lines: 1170
+lines: 1175
 reason: the portable teacher policy is one field in the existing booking
   settings export/import list and must share its validation and default map.

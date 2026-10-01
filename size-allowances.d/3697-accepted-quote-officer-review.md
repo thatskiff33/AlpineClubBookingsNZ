@@ -12,17 +12,6 @@ reason: #3415's accepted request action and #3416's truthful school approval
   toast sit in the existing request panel's status-specific controls;
   extracting those states would duplicate its fetch and permission state.
 
-file: src/lib/booking-cancel.ts
-lines: 2532
-reason: the accepted-hold cancellation guard belongs with the existing
-  cancellation lock and hold-release branch it fences.
-
-file: src/lib/booking-request-quotes.ts
-lines: 2191
-reason: the accepted-quote claim, hold retention and response state share the
-  existing quote transaction; extracting only this claim would split one
-  global-to-lodge lock protocol across modules.
-
 file: src/lib/booking-request.ts
 lines: 3053
 reason: #3415's accepted status and #3416's portable booking-policy setting
