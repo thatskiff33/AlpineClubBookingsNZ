@@ -7,9 +7,10 @@ module split belongs in a separate review because it would move established
 money and capacity paths while this issue changes their shared state.
 
 file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
-lines: 2722
+lines: 2727
 reason: #3415's accepted request action and #3416's truthful school approval
-  toast and #3413's accepted-adult naming control sit in this panel's status-specific controls;
+  toast and #3413's accepted-adult naming control and pending-adult rates sit
+  in this panel's status-specific controls;
   extracting those states would duplicate its fetch and permission state.
 
 file: src/lib/booking-cancel.ts

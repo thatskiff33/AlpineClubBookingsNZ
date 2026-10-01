@@ -240,6 +240,41 @@ describe("PublicBookingRequestsPanel school group numbers on Save quote (#3412)"
     expect(await screen.findByLabelText("ADULT non-member")).toBeTruthy();
   });
 
+  it.each([
+    { type: "SCHOOL", pendingAdultCount: 1, needsPendingRate: true },
+    { type: "SCHOOL", pendingAdultCount: 0, needsPendingRate: false },
+    { type: "PUBLIC", pendingAdultCount: 1, needsPendingRate: false },
+  ])("prices pending adults separately from a linked teacher: $type/$pendingAdultCount", async ({ type, pendingAdultCount, needsPendingRate }) => {
+    const fetchMock = mockFetch({
+      ...baseSchoolRequest,
+      type,
+      pendingAdultCount,
+      linkedGuestMembers: [{ guestIndex: 0, memberId: "member-1" }],
+    });
+    render(<PublicBookingRequestsPanel />);
+
+    const pricingMode = (await screen.findAllByTestId("select")).find((node) =>
+      node.textContent?.includes("Per guest-night"),
+    );
+    fireEvent.change(pricingMode!, { target: { value: "PER_GUEST_NIGHT" } });
+    fireEvent.change(await screen.findByLabelText("ADULT member"), { target: { value: "35.00" } });
+    fireEvent.change(await screen.findByLabelText("YOUTH non-member"), { target: { value: "10.00" } });
+    if (needsPendingRate) {
+      fireEvent.change(await screen.findByLabelText("ADULT non-member"), { target: { value: "47.00" } });
+    } else {
+      expect(screen.queryByLabelText("ADULT non-member")).toBeNull();
+    }
+    fireEvent.click(await screen.findByRole("button", { name: "Save quote" }));
+    await waitFor(() => expect(quoteBody(fetchMock)).not.toBeNull());
+    const rates = quoteBody(fetchMock).options[0].guestNightRates;
+    expect(rates).toContainEqual({ ageTier: "ADULT", isMember: true, rateCents: 3500 });
+    expect(rates).toContainEqual({ ageTier: "YOUTH", isMember: false, rateCents: 1000 });
+    expect(rates.some((rate: { ageTier: string; isMember: boolean }) => rate.ageTier === "ADULT" && !rate.isMember)).toBe(needsPendingRate);
+    if (needsPendingRate) {
+      expect(rates).toContainEqual({ ageTier: "ADULT", isMember: false, rateCents: 4700 });
+    }
+  });
+
   it("holds the beds only once the change is saved", async () => {
     mockFetch(baseSchoolRequest);
     render(<PublicBookingRequestsPanel />);

@@ -661,14 +661,19 @@ export function PublicBookingRequestsPanel({
   function pricingCombos(request: PublicBookingRequestData) {
     const seen = new Set<string>();
     const combos: Array<{ ageTier: string; isMember: boolean }> = [];
-    plannedGuests(request).forEach((guest, guestIndex) => {
-      const isMember = Boolean(linkedMemberIdFor(request, guestIndex));
-      const key = `${guest.ageTier}:${isMember}`;
+    function addCombo(ageTier: string, isMember: boolean) {
+      const key = `${ageTier}:${isMember}`;
       if (!seen.has(key)) {
         seen.add(key);
-        combos.push({ ageTier: guest.ageTier, isMember });
+        combos.push({ ageTier, isMember });
       }
+    }
+    plannedGuests(request).forEach((guest, guestIndex) => {
+      addCombo(guest.ageTier, Boolean(linkedMemberIdFor(request, guestIndex)));
     });
+    if (request.type === "SCHOOL" && request.pendingAdultCount > 0) {
+      addCombo("ADULT", false);
+    }
     return combos;
   }
 
