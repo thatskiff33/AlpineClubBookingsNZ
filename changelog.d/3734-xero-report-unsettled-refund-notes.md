@@ -1,0 +1,1 @@
+- **The emailed Xero reconciliation report now counts refund credit notes left unsettled (#3727).** The report's own summary already listed them after #3548; the email's summary table now shows the same count, so a treasurer reading the email sees there is something to settle.

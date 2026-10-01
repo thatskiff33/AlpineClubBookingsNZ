@@ -778,8 +778,8 @@ derivation).
   default lodge's `LodgeSettings.capacity` is backfilled from the config bed
   total by the boot-time self-heal, and any lodge (default or additional) with
   neither configured beds nor a capacity is unbookable rather than overbookable
-  until it is set up (the setup-readiness Club Config check warns on a
-  default lodge left at 0).
+  until it is set up (the setup-readiness Club Config check warns on
+  every active lodge left at 0, #3407).
 - The arithmetic itself has **one home**, `src/lib/lodge-effective-capacity.ts`
   (`INV-SSOT-001`): the resolver, the partner-headroom formula
   (`INV-CAP-031`) and the save bounds all live there, and the admin lodge
