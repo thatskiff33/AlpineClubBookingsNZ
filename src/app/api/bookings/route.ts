@@ -34,12 +34,13 @@ import {
   type NonMemberPricingRequirements,
 } from "@/lib/subscription-lockout-enforcement";
 import {
-  checkOwnDependantIdentity,
+  checkOwnDependantIdentityForParty,
   dependantIdentityDeclarationSchema,
-  loadBookerDependants,
-  DEPENDANT_IDENTITY_UNRESOLVED_CODE,
-  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,
 } from "@/lib/booking-dependant-identity";
+import {
+  dependantIdentityRefusalBody,
+  dependantIdentitySpeaksOnBehalf,
+} from "@/lib/booking-dependant-identity-doors";
 import {
   assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
@@ -527,46 +528,35 @@ export async function POST(request: NextRequest) {
    *
    * The dependant read is skipped entirely for a party that is all member-linked
    * and carries no declaration — the common family booking — so the ordinary
-   * path pays nothing for this.
+   * path pays nothing for this — the skip rule and the read are
+   * `checkOwnDependantIdentityForParty`'s, the one entry point every door shares.
    */
-  if (
-    guestInputs.some((guest) => !guest.memberId?.trim()) ||
-    (dependantIdentityDeclarations?.length ?? 0) > 0
-  ) {
-    const bookerDependants = await loadBookerDependants(
+  {
+    const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(
       prisma,
-      effectiveMemberId,
+      {
+        bookerMemberId: effectiveMemberId,
+        party: guestInputs,
+        memberPathMemberIds,
+        declarations: dependantIdentityDeclarations,
+      },
     );
-    const dependantIdentityRefusal = checkOwnDependantIdentity({
-      party: guestInputs,
-      memberPathMemberIds,
-      dependants: bookerDependants,
-      declarations: dependantIdentityDeclarations,
-    });
     if (dependantIdentityRefusal) {
+      // The CODE is the same on both paths — each client keys on it to send
+      // whoever is at the screen back to the guest step — but the SENTENCE is
+      // not: "your dependant" is wrong in both halves when the reader is an
+      // officer. Chosen here because this handler is the only place that knows
+      // which of the two people is reading the response; the body is the shared
+      // one, which deliberately does not echo the collisions (#2721 review).
       return NextResponse.json(
-        {
-          code: dependantIdentityRefusal.code,
-          // The CODE is the same on both paths — each client keys on it to send
-          // whoever is at the screen back to the guest step — but the SENTENCE
-          // is not: "your dependant" is wrong in both halves when the reader is
-          // an officer, so the on-behalf wording says whose dependant it is and
-          // where the answer lives. Substituted here rather than inside the
-          // guard because this handler is the only place that knows which of the
-          // two people is reading the response.
-          error:
-            isAuthorizedOnBehalf &&
-            dependantIdentityRefusal.code === DEPENDANT_IDENTITY_UNRESOLVED_CODE
-              ? DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE
-              : dependantIdentityRefusal.error,
-          // The collisions are deliberately NOT echoed (#2721 review). They were,
-          // and nothing read them: the wizard re-derives the question from
-          // `/api/members/family`, because a refusal this client did not expect
-          // is by definition one whose cached list is stale — and it has to
-          // re-read that list anyway to draw the answers, which the response
-          // body does not carry. Names and member ids travelling to no consumer
-          // are a payload waiting for someone to start trusting it.
-        },
+        dependantIdentityRefusalBody(dependantIdentityRefusal, {
+          onBehalf: dependantIdentitySpeaksOnBehalf({
+            actorIsAdmin: isAuthorizedOnBehalf,
+            actorId: session.user.id,
+            ownerMemberId: effectiveMemberId,
+          }),
+          surface: "create",
+        }),
         { status: dependantIdentityRefusal.status },
       );
     }
