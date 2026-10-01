@@ -178,6 +178,11 @@ are listed on the booking for you to relay.
    link, or hut-leader PIN. Use **Decline** with an optional reason to release
    the held beds and turn it down.
 
+   After school approval, the success message confirms the booking and whether
+   teacher hut-leader assignments were created. It does not confirm email
+   delivery: check the booking's invoice and notification status. If the Xero
+   module is off, arrange manual invoicing.
+
 #### Correcting a request before you convert it
 
 A group emails to say the dates were wrong, two more children are coming, a

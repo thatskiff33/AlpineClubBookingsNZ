@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PublicBookingRequestsPanel } from "@/components/admin/booking-requests/public-booking-requests-panel";
+import { toast } from "sonner";
 
 // next/navigation: the panel replaces the URL in an effect and reads search params.
 const replace = vi.fn();
@@ -537,5 +538,55 @@ describe("PublicBookingRequestsPanel school group numbers on Save quote (#3412)"
     expect(
       screen.queryByText(/Beds are held for this request/i),
     ).toBeNull();
+  });
+});
+
+describe("PublicBookingRequestsPanel school approval result (#3785)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each([
+    { invoiceMode: "xero", assignmentsCreated: true },
+    { invoiceMode: "xero", assignmentsCreated: false },
+    { invoiceMode: "manual", assignmentsCreated: true },
+    { invoiceMode: "manual", assignmentsCreated: false },
+  ])("reports confirmed results for $invoiceMode, assignments=$assignmentsCreated", async ({ invoiceMode, assignmentsCreated }) => {
+    global.fetch = vi.fn().mockImplementation(async (url: string) => ({
+      ok: true,
+      json: async () => String(url).endsWith("/approve")
+        ? { type: "SCHOOL", invoiceMode, teacherHutLeaderAssignmentsCreated: assignmentsCreated }
+        : { data: [baseSchoolRequest] },
+    })) as unknown as typeof fetch;
+    render(<PublicBookingRequestsPanel />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Approve & invoice school" }));
+
+    const assignments = assignmentsCreated
+      ? "Teacher hut-leader assignments were created."
+      : "Teacher hut-leader assignments were not created.";
+    const invoice = invoiceMode === "xero"
+      ? "Check the booking's invoice and notification status."
+      : "The Xero module is off, so manual invoicing is required. Check the booking's notification status.";
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(
+      `School booking confirmed. ${assignments} ${invoice}`,
+    ));
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("keeps the already-converted replay result without promising another send", async () => {
+    global.fetch = vi.fn().mockImplementation(async (url: string) => ({
+      ok: true,
+      json: async () => String(url).endsWith("/approve")
+        ? { type: "SCHOOL", invoiceMode: "xero", teacherHutLeaderAssignmentsCreated: true, alreadyConverted: true }
+        : { data: [baseSchoolRequest] },
+    })) as unknown as typeof fetch;
+    render(<PublicBookingRequestsPanel />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Approve & invoice school" }));
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(
+      "School booking was already confirmed. No new invoice or teacher PIN email was sent.",
+    ));
   });
 });
