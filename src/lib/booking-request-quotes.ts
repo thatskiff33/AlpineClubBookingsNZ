@@ -73,10 +73,13 @@ import {
   resolveSchoolGuestOverride,
   schoolChildCountsSchema,
   type SchoolChildCounts,
+  type SchoolPartyParticipant,
 } from "@/lib/school-booking-request";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { isPendingSchoolAdultsWriteEnabled } from "@/lib/pending-school-adults-gate";
+import { pendingAdultReservationNightsMatch, releasePendingAdultNights, reservePendingAdultNights } from "@/lib/booking-request-pending-adult-reservations";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -190,8 +193,9 @@ interface NormalizedQuoteOption {
   }>;
   guestBreakdown: Array<{
     guestIndex: number;
-    firstName: string;
-    lastName: string;
+    kind?: "NAMED" | "PENDING_ADULT";
+    firstName?: string;
+    lastName?: string;
     ageTier: AgeTier;
     isMember: boolean;
     memberId: string | null;
@@ -212,14 +216,23 @@ const quoteOptionsSchema = z.array(
     guestBreakdown: z.array(
       z.object({
         guestIndex: z.number().int().min(0),
-        firstName: z.string(),
-        lastName: z.string(),
+        kind: z.enum(["NAMED", "PENDING_ADULT"]).optional(),
+        firstName: z.string().optional(),
+        lastName: z.string().optional(),
         ageTier: z.enum(AgeTier),
         isMember: z.boolean(),
         memberId: z.string().nullable(),
         nightCount: z.number().int().min(0),
         rateCents: z.number().int().min(0).nullable(),
         totalCents: z.number().int().min(0),
+      }).superRefine((entry, ctx) => {
+        if (entry.kind === "PENDING_ADULT") {
+          if (entry.ageTier !== AgeTier.ADULT || entry.isMember || entry.memberId || entry.firstName || entry.lastName) {
+            ctx.addIssue({ code: "custom", message: "Pending adults cannot carry an identity or member price" });
+          }
+        } else if (entry.firstName === undefined || entry.lastName === undefined) {
+          ctx.addIssue({ code: "custom", message: "Named quote guests require names" });
+        }
       })
     ),
   })
@@ -445,12 +458,12 @@ function normalizeQuoteOptions(input: {
    * about to persist, and a second read of the stored column here would price
    * the group that is being replaced.
    */
-  guests: BookingRequestGuest[];
+  party: SchoolPartyParticipant[];
   pricingMode: BookingRequestPricingMode;
   options: BookingRequestQuoteInput["options"];
   linkedGuestMembers: BookingRequestLinkedGuestMember[];
 }): NormalizedQuoteOption[] {
-  const guests = input.guests;
+  const party = input.party;
   const nightCount = getNightCount(input.request.checkIn, input.request.checkOut);
   const linkedMembers = new Map(
     input.linkedGuestMembers.map((link) => [link.guestIndex, link.memberId])
@@ -496,20 +509,21 @@ function normalizeQuoteOptions(input: {
       if (option.totalCents == null) {
         throw new BookingRequestQuoteError("Overall quote options require a total", 422);
       }
-      const split = splitPriceAcrossGuests(option.totalCents, guests.length);
+      const split = splitPriceAcrossGuests(option.totalCents, party.length);
       return {
         id,
         label: optionLabel(cateringOption),
         cateringOption,
         totalCents: option.totalCents,
         pricingMode: input.pricingMode,
-        guestBreakdown: guests.map((guest, guestIndex) => {
-          const memberId = linkedMembers.get(guestIndex) ?? null;
+        guestBreakdown: party.map((participant, guestIndex) => {
+          const guest = participant.kind === "NAMED" ? participant.guest : null;
+          const memberId = guest ? linkedMembers.get(guestIndex) ?? null : null;
           return {
             guestIndex,
-            firstName: guest.firstName,
-            lastName: guest.lastName,
-            ageTier: guest.ageTier,
+            kind: participant.kind,
+            ...(guest ? { firstName: guest.firstName, lastName: guest.lastName } : {}),
+            ageTier: participant.ageTier,
             isMember: Boolean(memberId),
             memberId,
             nightCount,
@@ -530,21 +544,22 @@ function normalizeQuoteOptions(input: {
     const rateByKey = new Map(
       rates.map((rate) => [rateKey(rate.ageTier, rate.isMember), rate.rateCents])
     );
-    const guestBreakdown = guests.map((guest, guestIndex) => {
-      const memberId = linkedMembers.get(guestIndex) ?? null;
+    const guestBreakdown = party.map((participant, guestIndex) => {
+      const guest = participant.kind === "NAMED" ? participant.guest : null;
+      const memberId = guest ? linkedMembers.get(guestIndex) ?? null : null;
       const isMember = Boolean(memberId);
-      const rateCents = rateByKey.get(rateKey(guest.ageTier, isMember));
+      const rateCents = rateByKey.get(rateKey(participant.ageTier, isMember));
       if (rateCents == null) {
         throw new BookingRequestQuoteError(
-          `Missing ${guest.ageTier} ${isMember ? "member" : "non-member"} rate`,
+          `Missing ${participant.ageTier} ${isMember ? "member" : "non-member"} rate`,
           422
         );
       }
       return {
         guestIndex,
-        firstName: guest.firstName,
-        lastName: guest.lastName,
-        ageTier: guest.ageTier,
+        kind: participant.kind,
+        ...(guest ? { firstName: guest.firstName, lastName: guest.lastName } : {}),
+        ageTier: participant.ageTier,
         isMember,
         memberId,
         nightCount,
@@ -596,6 +611,7 @@ async function resolveSchoolCountAdjustment(input: {
     type: BookingRequestType;
     teachers: Prisma.JsonValue;
     guests: Prisma.JsonValue;
+    pendingAdultCount: number;
     lodgeId: string | null;
     heldBookingId: string | null;
   };
@@ -603,6 +619,7 @@ async function resolveSchoolCountAdjustment(input: {
   linkedGuestMembers: BookingRequestQuoteInput["linkedGuestMembers"];
 }): Promise<{
   guests: BookingRequestGuest[];
+  party: SchoolPartyParticipant[];
   /**
    * How many people the request held BEFORE this save. Carried so the audit row
    * records the party that was overwritten (#3412 review, F11): on the first
@@ -622,6 +639,7 @@ async function resolveSchoolCountAdjustment(input: {
 
   const resolution = await resolveSchoolGuestOverride({
     request: input.request,
+    pendingAdultCount: input.request.pendingAdultCount,
     childCounts: input.childCounts,
     // The request's own lodge selector: a count change is refused below while a
     // hold exists, so there is no held booking whose concrete lodge could
@@ -639,6 +657,7 @@ async function resolveSchoolCountAdjustment(input: {
     // nothing to refuse — a re-save under a live hold must keep working.
     return {
       guests: resolution.guests,
+      party: resolution.party ?? resolution.guests.map((guest: BookingRequestGuest) => ({ kind: "NAMED" as const, ageTier: guest.ageTier, guest })),
       storedGuestCount: resolution.storedGuests.length,
       persist: false,
     };
@@ -662,6 +681,7 @@ async function resolveSchoolCountAdjustment(input: {
 
   return {
     guests: resolution.guests,
+    party: resolution.party ?? resolution.guests.map((guest: BookingRequestGuest) => ({ kind: "NAMED" as const, ageTier: guest.ageTier, guest })),
     storedGuestCount: resolution.storedGuests.length,
     persist: true,
   };
@@ -712,6 +732,14 @@ export async function createBookingRequestQuote(input: {
   const guests = schoolCountAdjustment
     ? schoolCountAdjustment.guests
     : parseBookingRequestGuests(request.guests);
+  const party = schoolCountAdjustment
+    ? schoolCountAdjustment.party
+    : guests.map((guest): SchoolPartyParticipant => ({ kind: "NAMED", ageTier: guest.ageTier, guest }));
+  if (!schoolCountAdjustment && request.type === BookingRequestType.SCHOOL) {
+    for (let index = 0; index < request.pendingAdultCount; index += 1) {
+      party.push({ kind: "PENDING_ADULT", ageTier: "ADULT" });
+    }
+  }
   const persistGuests = schoolCountAdjustment?.persist ?? false;
   const linkedGuestMembers = normalizeLinkedGuestMembers(
     input.quote.linkedGuestMembers,
@@ -721,7 +749,7 @@ export async function createBookingRequestQuote(input: {
 
   const options = normalizeQuoteOptions({
     request,
-    guests,
+    party,
     pricingMode: input.quote.pricingMode,
     options: input.quote.options,
     linkedGuestMembers,
@@ -945,6 +973,7 @@ export async function sendBookingRequestQuote(input: {
     }
     const pending = await resolveSchoolGuestOverride({
       request: quote.bookingRequest,
+      pendingAdultCount: quote.bookingRequest.pendingAdultCount,
       childCounts: input.childCounts,
       lodgeId: quote.bookingRequest.lodgeId,
       // Nothing is written and nothing is renumbered here: this asks only
@@ -1094,12 +1123,12 @@ export async function sendBookingRequestQuote(input: {
     });
     const claimedRequest = await tx.bookingRequest.findUniqueOrThrow({
       where: { id: quote.bookingRequestId },
-      select: { guests: true },
+      select: { guests: true, pendingAdultCount: true },
     });
 
     return {
       updated: saved,
-      heldGuestCount: parseBookingRequestGuests(claimedRequest.guests).length,
+      heldGuestCount: parseBookingRequestGuests(claimedRequest.guests).length + (claimedRequest.pendingAdultCount ?? 0),
     };
   });
 
@@ -1238,7 +1267,7 @@ export async function getBookingRequestQuoteContext(token: string) {
     contactFirstName: request.contactFirstName,
     checkIn: request.checkIn.toISOString(),
     checkOut: request.checkOut.toISOString(),
-    guestCount: parseBookingRequestGuests(request.guests).length,
+    guestCount: parseBookingRequestGuests(request.guests).length + (request.pendingAdultCount ?? 0),
     message: quote.message,
     expiresAt: quote.responseTokenExpiresAt!.toISOString(),
     options,
@@ -1336,6 +1365,7 @@ export async function respondToBookingRequestQuote(input: {
         },
         data: {
           status: BookingRequestStatus.CANCELLED,
+          pendingAdultCount: 0,
           responseMessage: message,
           responseMessageAt: respondedAt,
           version: { increment: 1 },
@@ -1366,6 +1396,7 @@ export async function respondToBookingRequestQuote(input: {
           where: { id: heldBookingId },
           data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
         });
+        await releasePendingAdultNights({ db: tx, bookingId: heldBookingId });
         // Release the reserved beds and detach the pointer so the hold no longer
         // consumes capacity and a later re-hold can never reuse a cancelled row
         // (issue #1254). Locking the Booking row after the BookingRequest row
@@ -1666,7 +1697,7 @@ export async function respondToBookingRequestQuote(input: {
       firstName: quote.bookingRequest.contactFirstName,
       checkIn: quote.bookingRequest.checkIn,
       checkOut: quote.bookingRequest.checkOut,
-      guestCount: parseBookingRequestGuests(quote.bookingRequest.guests).length,
+      guestCount: parseBookingRequestGuests(quote.bookingRequest.guests).length + (quote.bookingRequest.pendingAdultCount ?? 0),
       priceCents: option.totalCents,
       lodgeId: quote.bookingRequest.lodgeId,
     }, format),
@@ -1674,7 +1705,7 @@ export async function respondToBookingRequestQuote(input: {
       requesterName: `${quote.bookingRequest.contactFirstName} ${quote.bookingRequest.contactLastName}`.trim(),
       checkIn: quote.bookingRequest.checkIn,
       checkOut: quote.bookingRequest.checkOut,
-      guestCount: parseBookingRequestGuests(quote.bookingRequest.guests).length,
+      guestCount: parseBookingRequestGuests(quote.bookingRequest.guests).length + (quote.bookingRequest.pendingAdultCount ?? 0),
     }),
   ]);
   return { outcome: "accepted" as const, priceCents: option.totalCents, type: quote.bookingRequest.type };
@@ -1727,6 +1758,9 @@ export async function holdBookingRequestSlots(input: {
   if (!holdableStatuses.includes(request.status as never)) {
     throw new BookingRequestError("This booking request cannot be held", 409);
   }
+  if (request.pendingAdultCount > 0 && !isPendingSchoolAdultsWriteEnabled()) {
+    throw new BookingRequestError("Pending adult reservations are disabled until the maintenance-window cutover is complete", 409);
+  }
   // MG4 (#2309): members a previous, now-dead hold over THIS request had
   // already told. Empty on every first hold, which is nearly all of them.
   let staleHoldNotifiedMemberIds: string[] = [];
@@ -1739,9 +1773,35 @@ export async function holdBookingRequestSlots(input: {
     // detach it and fall through to create a fresh hold.
     const existingHold = await prisma.booking.findUnique({
       where: { id: request.heldBookingId },
-      select: { status: true },
+      select: { status: true, lodgeId: true, checkIn: true, checkOut: true },
     });
     if (existingHold?.status === BookingStatus.AWAITING_REVIEW) {
+      if (request.pendingAdultCount > 0) {
+        await prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+          await acquireLodgeCapacityLock(tx, existingHold.lodgeId);
+          const liveRequest = await tx.bookingRequest.findUnique({ where: { id: request.id } });
+          const liveHold = await tx.booking.findUnique({ where: { id: request.heldBookingId! } });
+          if (!liveRequest || liveRequest.version !== request.version ||
+              liveRequest.heldBookingId !== request.heldBookingId ||
+              !holdableStatuses.includes(liveRequest.status as never) ||
+              !liveHold || liveHold.status !== BookingStatus.AWAITING_REVIEW ||
+              liveHold.lodgeId !== existingHold.lodgeId ||
+              liveHold.checkIn.getTime() !== request.checkIn.getTime() ||
+              liveHold.checkOut.getTime() !== request.checkOut.getTime() ||
+              !await pendingAdultReservationNightsMatch({
+                db: tx,
+                bookingRequestId: request.id,
+                bookingId: liveHold.id,
+                lodgeId: liveHold.lodgeId,
+                checkIn: liveHold.checkIn,
+                checkOut: liveHold.checkOut,
+                adultCount: liveRequest.pendingAdultCount,
+              })) {
+            throw new BookingRequestError("The held unnamed bed reservations changed. Reload and reconcile this request before sending a quote.", 409);
+          }
+        });
+      }
       return {
         type: "held" as const,
         bookingId: request.heldBookingId,
@@ -1786,6 +1846,9 @@ export async function holdBookingRequestSlots(input: {
   }
 
   const guests = parseBookingRequestGuests(request.guests);
+  const pendingAdultCount = request.type === BookingRequestType.SCHOOL
+    ? (request.pendingAdultCount ?? 0)
+    : 0;
   const latestQuote = request.quotes[0] ?? null;
   const quoteOptions = latestQuote
     ? parseBookingRequestQuoteOptions(latestQuote.options)
@@ -1817,7 +1880,16 @@ export async function holdBookingRequestSlots(input: {
     adminMemberId: input.adminMemberId,
   };
   const linkedMembers = linkedGuestMemberMap(request.linkedGuestMembers);
-  const guestPriceCents = splitPriceAcrossGuests(option.totalCents, guests.length);
+  if (pendingAdultCount > 0 && (
+    option.guestBreakdown.length !== guests.length + pendingAdultCount ||
+    option.guestBreakdown.slice(0, guests.length).some((entry) => entry.kind === "PENDING_ADULT") ||
+    option.guestBreakdown.slice(guests.length).some((entry) => entry.kind !== "PENDING_ADULT")
+  )) {
+    throw new BookingRequestQuoteError("This quote no longer matches the pending adults. Save a fresh quote before holding beds.", 409);
+  }
+  const guestPriceCents = pendingAdultCount > 0
+    ? option.guestBreakdown.slice(0, guests.length).map((entry) => entry.totalCents)
+    : splitPriceAcrossGuests(option.totalCents, guests.length);
   // Persist the rate-membership-type snapshot (#1930, E4, D3) on the held
   // booking's guest rows, resolved at the request's check-in season year: an
   // admin-linked member of a custom MEMBER_RATE type records that type,
@@ -1888,6 +1960,9 @@ export async function holdBookingRequestSlots(input: {
 
   try {
     const booking = await prisma.$transaction(async (tx) => {
+      if (pendingAdultCount > 0) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      }
       // A null lodgeId means the club's default lodge.
       const bookingLodgeId = request.lodgeId ?? (await getDefaultLodgeId(tx));
       await acquireLodgeCapacityLock(tx, bookingLodgeId);
@@ -1950,6 +2025,9 @@ export async function holdBookingRequestSlots(input: {
           select: { heldBookingId: true },
         });
         if (current?.heldBookingId) {
+          if (pendingAdultCount > 0) {
+            throw new BookingRequestError("Another hold changed the unnamed bed reservations. Reload and try again.", 409);
+          }
           // A concurrent hold already created the rows and already owes (or has
           // already sent) their notifications: this call created nothing, so it
           // notifies nobody. Sending here would double-mail the targets.
@@ -1962,7 +2040,7 @@ export async function holdBookingRequestSlots(input: {
         throw new BookingRequestError("This booking request cannot be held", 409);
       }
 
-      const capacityRanges = guests.map(() => ({
+      const capacityRanges = Array.from({ length: guests.length + pendingAdultCount }, () => ({
         stayStart: request.checkIn,
         stayEnd: request.checkOut,
       }));
@@ -2081,6 +2159,15 @@ export async function holdBookingRequestSlots(input: {
         // The created rows' ids are needed to match the notification plan, and
         // this is the only moment they exist in hand.
         select: { id: true, guests: { select: { id: true, memberId: true } } },
+      });
+      await reservePendingAdultNights({
+        db: tx,
+        bookingRequestId: request.id,
+        bookingId: held.id,
+        lodgeId: bookingLodgeId,
+        checkIn: request.checkIn,
+        checkOut: request.checkOut,
+        adultCount: pendingAdultCount,
       });
 
       // #2364. The hold is a capacity-holding booking carrying the requested

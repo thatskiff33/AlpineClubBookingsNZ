@@ -37,6 +37,7 @@ import { reconcileAdultMemberHostingReviewWithSiblings } from "@/lib/adult-membe
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { logAudit } from "@/lib/audit";
 import { cancelBooking } from "@/lib/booking-cancel";
+import { isPendingSchoolAdultsWriteEnabled } from "@/lib/pending-school-adults-gate";
 import { recordBookingEvent } from "@/lib/booking-events";
 import {
   loadMemberGuestAddPolicy,
@@ -1317,6 +1318,7 @@ export async function declineBookingRequest(input: {
       },
       data: {
         status: BookingRequestStatus.DECLINED,
+        pendingAdultCount: 0,
         reviewedByMemberId: input.adminMemberId,
         reviewedAt,
         declineReason,
@@ -2094,6 +2096,9 @@ export async function approveBookingRequest(input: {
     throw new BookingRequestError("Booking request not found", 404);
   }
   let request: BookingRequest = foundRequest;
+  if (request.type === BookingRequestType.SCHOOL && request.pendingAdultCount > 0) {
+    throw new BookingRequestError("Name every pending school adult before approving this request.", 409);
+  }
   if (request.status !== BookingRequestStatus.PRICED && request.status !== BookingRequestStatus.ACCEPTED) {
     throw new BookingRequestError(
       "Only priced booking requests can be approved",
@@ -2209,6 +2214,18 @@ export async function approveBookingRequest(input: {
       });
       if (!lockedRequest) {
         throw new BookingRequestError("Booking request not found", 404);
+      }
+      if (lockedRequest.type === BookingRequestType.SCHOOL) {
+        const residualPendingRows = typeof tx.bookingRequestPendingAdultReservationNight?.findMany === "function"
+          ? await tx.bookingRequestPendingAdultReservationNight.findMany({
+              where: { bookingRequestId: lockedRequest.id },
+              select: { id: true },
+              take: 1,
+            })
+          : [];
+        if (lockedRequest.pendingAdultCount > 0 || residualPendingRows.length > 0) {
+          throw new BookingRequestError("Name every pending school adult and reconcile the held beds before approving this request.", 409);
+        }
       }
 
       // Idempotency (#1232 double-charge guard): a prior approve for this
@@ -3007,6 +3024,9 @@ export function serializeBookingRequestForAdmin(
     requestedByMemberId: request.requestedByMemberId,
     schoolName: request.schoolName,
     teachers: teacherDisplay.teachers,
+    // #3413: a SCHOOL-only capacity/quote count. No name is implied by it.
+    pendingAdultCount: request.pendingAdultCount,
+    pendingAdultsWriteEnabled: isPendingSchoolAdultsWriteEnabled(),
     cateringPreference: request.cateringPreference,
     linkedGuestMembers: linkedDisplay.links,
     contactFirstName: request.contactFirstName,

@@ -1,7 +1,7 @@
 "use client";
 
 import type { AgeTier } from "@prisma/client";
-import type { RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -181,6 +181,7 @@ export function EditGuestsCard({
   dateModes,
   guestEdits,
   addForm,
+  dependantIdentityQuestion,
 }: {
   booking: BookingData;
   ageTierOptions: AgeTierOption[];
@@ -199,6 +200,12 @@ export function EditGuestsCard({
   dateModes: GuestsCardDateModes;
   guestEdits: GuestsCardGuestEdits;
   addForm: GuestsCardAddForm;
+  /**
+   * #3451 (`INV-GUEST-019`): "is this added guest your dependant?", drawn
+   * directly under the added rows it is about. Built by the panel, which owns the
+   * answer state; null when no added name collides.
+   */
+  dependantIdentityQuestion?: ReactNode;
 }) {
   const { remainingGuests, addedGuests } = party;
   const existingMemberIds = [
@@ -586,6 +593,8 @@ export function EditGuestsCard({
             onRemove={() => guestEdits.onRemoveAddedGuest(guest.key)}
           />
         ))}
+
+        {dependantIdentityQuestion}
 
         {/* Add guest inline form */}
         {addForm.open && (

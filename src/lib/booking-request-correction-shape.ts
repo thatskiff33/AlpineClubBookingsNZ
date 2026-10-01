@@ -42,6 +42,8 @@ export type CorrectedTeacher = {
 export type SchoolCorrection = {
   schoolName: string;
   teachers: CorrectedTeacher[];
+  /** Adults included in the agreed party whose real names are still pending. */
+  pendingAdultCount: number;
   childCounts: { INFANT?: number; CHILD?: number; YOUTH?: number };
   cateringPreference: SchoolCateringPreference;
   /** The officer's confirmation of which school record this name claims. */
