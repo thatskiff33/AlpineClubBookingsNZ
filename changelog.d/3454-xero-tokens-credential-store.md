@@ -14,6 +14,5 @@
   audit log (including a support-only operator) can see them. That audience is
   one entry type wider than before, and deliberately so: they hold no secret,
   only whether two-factor sign-in was turned on or cleared, and by which method.
-  Nothing changes
-  for the operator: the existing connection keeps working through the upgrade
-  without a reconnect.
+  Nothing changes for the operator: the existing connection keeps working
+  through the upgrade without a reconnect.
