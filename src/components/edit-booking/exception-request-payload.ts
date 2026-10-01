@@ -69,6 +69,10 @@ const EXCEPTION_OMITTED_CHANGE_LABELS: Record<string, string> = {
   confirmOverCapacity: "the over-capacity confirmation",
   settlementMethod: "how a refund is settled",
   memberReviewJustification: "the review reason",
+  // #3451: the answer that an added guest is NOT the owner's dependant of the
+  // same name. Moves no money, so it is labelled rather than price-affecting.
+  dependantIdentityDeclarations:
+    "your answer about a guest who shares a dependant's name",
 };
 
 export function exceptionRequestPayloadFromModification(

@@ -43,6 +43,9 @@ import { AdminOverrideCard } from "@/components/edit-booking/admin-override-card
 import { ChangeRequestCard } from "@/components/edit-booking/change-request-card";
 import { EditDatesCard } from "@/components/edit-booking/edit-dates-card";
 import { EditGuestsCard } from "@/components/edit-booking/edit-guests-card";
+import { EditDependantIdentityQuestion } from "@/components/edit-booking/edit-dependant-identity-question";
+import { useEditDependantIdentity } from "@/components/edit-booking/hooks/use-edit-dependant-identity";
+import { isDependantIdentityRefusalCode } from "@/lib/booking-dependant-identity";
 import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
 import { PromoCodeCard } from "@/components/edit-booking/promo-code-card";
 import { ReviewJustificationField } from "@/components/edit-booking/review-justification-field";
@@ -194,11 +197,18 @@ export function EditBookingPanel({
     null,
   );
 
-  const { familyMembers, familyMembersLoaded, partnerCandidates } =
-    useBookingFamilyOptions({
-      bookingId: booking.id,
-      viewerRole: booking.viewerRole,
-    });
+  const familyOptions = useBookingFamilyOptions({
+    bookingId: booking.id,
+    viewerRole: booking.viewerRole,
+  });
+  const { familyMembers, familyMembersLoaded, partnerCandidates } = familyOptions;
+  // #3451 (`INV-GUEST-019`): an ADDED guest named as one of the owner's
+  // recorded dependants is asked about here, as the create wizard asks.
+  const dependantIdentity = useEditDependantIdentity({
+    addedGuests,
+    setAddedGuests,
+    ...familyOptions,
+  });
   const availablePromoCodes = useAvailablePromoCodes(booking.viewerRole);
 
   // #2266: account credit. `useCredit` is seeded from the stored election
@@ -729,6 +739,11 @@ export function EditBookingPanel({
     if (effectiveCheckOut !== booking.checkOut) body.checkOut = effectiveCheckOut;
     if (addedGuests.length > 0) {
       body.addGuests = rangeAwareAddedGuests;
+      // #3451: only the answers that still describe a live collision travel.
+      if (dependantIdentity.declarationsPayload) {
+        body.dependantIdentityDeclarations =
+          dependantIdentity.declarationsPayload;
+      }
       // #1746: partner-sharer flags for admin-added partner guests still in
       // the proposal — capacity then runs through the reserved double slots.
       const partnerSharedGuests = addedGuests
@@ -797,6 +812,7 @@ export function EditBookingPanel({
     return body;
   }, [
     addedGuests,
+    dependantIdentity.declarationsPayload,
     booking.checkIn,
     booking.checkOut,
     checkIn,
@@ -869,6 +885,7 @@ export function EditBookingPanel({
     setExceptionOfferState,
     setSaveOverCapacityNights,
     setSettlementMethod,
+    onDependantIdentityRefusal: dependantIdentity.handleRefusal,
   });
 
   const {
@@ -1492,6 +1509,11 @@ export function EditBookingPanel({
           recordExceptionOffer(readExceptionOffer(data));
           return;
         }
+        // #3451: put the own-dependant question back (and re-read the list it
+        // is drawn from); the server's sentence is shown as the save error.
+        if (isDependantIdentityRefusalCode(data.code)) {
+          dependantIdentity.handleRefusal(data.code);
+        }
         setSaveError(data.error || "Failed to save changes");
         // Every other refusal goes through the same shared rule, which answers null
         // for all of them: the reviewable codes are an explicit allowlist and no
@@ -1761,6 +1783,15 @@ export function EditBookingPanel({
           onAdd: handleAddGuest,
           onCancel: () => setShowAddForm(false),
         }}
+        dependantIdentityQuestion={
+          <EditDependantIdentityQuestion
+            bookingId={booking.id}
+            actingAsAdmin={actingAsAdmin}
+            answers={dependantIdentity}
+            familyMembers={familyMembers}
+            party={[...remainingGuests, ...addedGuests]}
+          />
+        }
       />
 
       {/* Promo Code */}
