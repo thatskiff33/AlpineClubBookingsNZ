@@ -72,6 +72,16 @@ export function MoneyInput({
 }: MoneyInputProps) {
   const generatedId = React.useId();
   const inputId = id ?? `money-input-${generatedId}`;
+  const [fieldName, setFieldName] = React.useState(
+    typeof label === "string" ? label : inputProps["aria-label"] ?? "amount",
+  );
+  React.useEffect(() => {
+    // Most callers already provide a native <label htmlFor>. Reuse that name
+    // so each field's step controls remain distinct in a button list.
+    const labelledInput = document.getElementById(inputId) as HTMLInputElement | null;
+    const name = labelledInput?.labels?.[0]?.textContent?.trim();
+    setFieldName(name || inputProps["aria-label"] || "amount");
+  }, [inputId, label, inputProps]);
   const errorId = `${inputId}-error`;
   const describedBy = [ariaDescribedBy, error ? errorId : undefined]
     .filter(Boolean)
@@ -134,12 +144,12 @@ export function MoneyInput({
             }
           }}
         />
-        <div className="flex flex-col" aria-label="Adjust amount by one dollar">
+        <div className="flex flex-col gap-1">
           <button
             type="button"
-            aria-label="Increase amount by one dollar"
+            aria-label={`Increase ${fieldName} by one dollar`}
             className={cn(
-              "flex h-[18px] w-7 items-center justify-center rounded-t-md border border-input text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
+              "flex h-6 w-8 items-center justify-center rounded-md border border-input text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
             )}
             disabled={increaseDisabled}
             onClick={() => step(1)}
@@ -148,9 +158,9 @@ export function MoneyInput({
           </button>
           <button
             type="button"
-            aria-label="Decrease amount by one dollar"
+            aria-label={`Decrease ${fieldName} by one dollar`}
             className={cn(
-              "flex h-[18px] w-7 items-center justify-center rounded-b-md border-x border-b border-input text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
+              "flex h-6 w-8 items-center justify-center rounded-md border border-input text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
             )}
             disabled={decreaseDisabled}
             onClick={() => step(-1)}

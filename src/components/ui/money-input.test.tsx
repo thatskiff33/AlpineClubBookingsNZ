@@ -49,11 +49,11 @@ describe("MoneyInput", () => {
     render(<Harness value="12.34" />);
     const input = screen.getByRole("textbox");
 
-    fireEvent.click(screen.getByRole("button", { name: "Increase amount by one dollar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Increase Nightly rate by one dollar" }));
     expect(input).toHaveProperty("value", "13.34");
     fireEvent.keyDown(input, { key: "ArrowDown" });
     expect(input).toHaveProperty("value", "12.34");
-    fireEvent.click(screen.getByRole("button", { name: "Decrease amount by one dollar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Decrease Nightly rate by one dollar" }));
     expect(input).toHaveProperty("value", "11.34");
   });
 
