@@ -38,6 +38,12 @@ import {
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
 import { updatePaymentIntentAmount } from "@/lib/stripe";
+import {
+  claimEditReviewChargeRaise,
+  recordEditReviewChargeRaiseIntent,
+  releaseEditReviewChargeRaise,
+  type EditReviewChargeRaiseClaim,
+} from "@/lib/edit-review-charge-raise-claim";
 import { reissueRaisedAskIfCurrencyChanged } from "@/lib/additional-intent-currency";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -148,12 +154,20 @@ export type EditReviewChargeMember = {
  *   * `not-raised`     - the ask does NOT exist and the money IS owed. The debt
  *                        is durable (a recovery row), and a replay that sees this
  *                        must leave its operation open.
+ *   * `deferred`       - #3402: another run holds this edit's raise claim, so
+ *                        this run called no provider. Its share is covered by
+ *                        that holder's re-derivation after release or, should the
+ *                        holder die, by the recovery row this run wrote. Not a
+ *                        receipt: like `not-raised`, a replay leaves its
+ *                        operation open, and the intent id is null so the Xero
+ *                        leg defers exactly as it does for a refused raise.
  */
 export type EditReviewChargeSyncOutcome =
   | "nothing-owed"
   | "raised"
   | "already-paid"
-  | "not-raised";
+  | "not-raised"
+  | "deferred";
 
 /** What the sync did, and what the request now asks for. */
 export type EditReviewChargeSyncResult = {
@@ -371,20 +385,69 @@ export async function chooseEditReviewChargeRoute({
  *   * A STALE REPLAY CANNOT LOWER A LIVE ASK. A settled share is terminal, so
  *     the derived total only ever grows and a smaller figure is always the
  *     older answer; the read below REFUSES TO LOWER the recorded request, so a
- *     replay reading after the newer write leaves it alone. That is why no
- *     advisory lock is held here - `docs/CONCURRENCY_AND_LOCKING.md` forbids
- *     one across a provider round trip. It is NOT an atomic claim, and two
- *     CONCURRENT runs both proceed: that doc's edit-financial-review section
- *     has the limit, why a predicate here is no repair, and whose it is.
+ *     replay reading after the newer write leaves it alone.
+ *   * TWO CONCURRENT RUNS DO NOT BOTH RAISE (#3402, `INV-PAY-111`). Refusing to
+ *     lower orders nothing between two runs that each derive a figure above the
+ *     stored one - both used to call Stripe, and the LAST to land won even when
+ *     it was the smaller. So a run must win this edit's raise claim before any
+ *     provider call; the loser calls nothing and defers. The holder re-derives
+ *     AFTER releasing, and the loser committed its share before it tried to
+ *     claim, which was before that release - so the holder's second look sees
+ *     it and raises again. The claim is a lease, not a lock: nothing is held
+ *     across the Stripe call, which `docs/CONCURRENCY_AND_LOCKING.md` forbids.
  *
  * Returns the request's intent id and the total it now asks for.
  */
-export async function syncEditFinancialReviewChargeRequest({
-  bookingId,
-  bookingModificationId,
-  paymentId,
-  member, hasIssuedXeroInvoice, format,
-}: {
+export async function syncEditFinancialReviewChargeRequest(
+  request: EditReviewChargeSyncRequest,
+): Promise<EditReviewChargeSyncResult> {
+  const { bookingId, bookingModificationId } = request;
+  for (let pass = 1; pass <= MAX_RAISE_PASSES; pass += 1) {
+    const owed = await sumEditReviewChargeSharesCents({ bookingId, bookingModificationId });
+    if (owed <= 0) {
+      // Nothing settled, so nothing to claim. Shares are terminal, so a
+      // positive total can never fall back to here between passes.
+      return { outcome: "nothing-owed", paymentIntentId: null, totalCents: 0, carriedCents: 0 };
+    }
+    const claim = await claimEditReviewChargeRaise(bookingModificationId);
+    if (!claim) return deferEditReviewChargeRaise(request, owed);
+    let result: EditReviewChargeSyncResult;
+    try {
+      result = await syncEditReviewChargeRequestUnderClaim(request, claim);
+    } finally {
+      // A release that fails costs a wait, never money: the token ages out and
+      // the next run takes it over.
+      await releaseEditReviewChargeRaise(claim).catch((err) =>
+        logger.error(
+          { err, bookingId, bookingModificationId },
+          "Failed to release an edit financial review charge raise claim - it will expire with its lease",
+        ),
+      );
+    }
+    if (result.outcome !== "raised") return result;
+    // AFTER the release, never before: a run that lost to this one committed its
+    // share before its claim attempt, so this read sees it, and a share settled
+    // after the release meets an unclaimed request of its own.
+    const owedNow = await sumEditReviewChargeSharesCents({ bookingId, bookingModificationId });
+    if (owedNow <= result.totalCents) return result;
+  }
+  // Shares kept arriving faster than this run could raise for them - three in
+  // the space of one provider round trip each. The request covers less than is
+  // owed, so the debt goes to the recovery row rather than being reported raised.
+  return deferEditReviewChargeRaise(
+    request,
+    await sumEditReviewChargeSharesCents({ bookingId, bookingModificationId }),
+  );
+}
+
+/**
+ * How many times one run raises before handing the rest to the recovery row.
+ * Each extra pass needs ANOTHER share to settle while this run holds the claim,
+ * so a second pass is rare and a third is the ceiling of what is plausible.
+ */
+const MAX_RAISE_PASSES = 3;
+
+type EditReviewChargeSyncRequest = {
   bookingId: string;
   bookingModificationId: string;
   paymentId: string;
@@ -400,7 +463,45 @@ export async function syncEditFinancialReviewChargeRequest({
    */
   hasIssuedXeroInvoice: boolean | null;
   format: ClubFormat; // #3565: resolved before any transaction by the caller
-}): Promise<EditReviewChargeSyncResult> {
+};
+
+/**
+ * #3402: this run did not raise - another holds the claim, or this one lost its
+ * lease before the provider call - so the debt is made durable on the edit's ONE
+ * recovery row, the same row and key a refused raise uses. It is the backstop
+ * for a holder that dies mid-raise; when the holder lives, its post-release
+ * re-derivation has normally raised for this share already and the replay finds
+ * the ask covering it.
+ */
+async function deferEditReviewChargeRaise(
+  { bookingId, bookingModificationId, paymentId, hasIssuedXeroInvoice }: EditReviewChargeSyncRequest,
+  totalCents: number,
+): Promise<EditReviewChargeSyncResult> {
+  await enqueueAdditionalPaymentIntentRecovery({
+    bookingId,
+    paymentId,
+    idempotencyKey:
+      buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(bookingModificationId),
+    // Advisory only: the replay re-derives the total.
+    amountCents: totalCents,
+    stripeIdempotencyKey:
+      buildEditFinancialReviewAdditionalIntentStripeKey(bookingModificationId),
+    hadIssuedXeroInvoice: hasIssuedXeroInvoice,
+  });
+  return { outcome: "deferred", paymentIntentId: null, totalCents, carriedCents: 0 };
+}
+
+/**
+ * The raise itself, run only while holding the edit's claim. Every provider call
+ * below is preceded by recording its intent under the claim's exact token, which
+ * is also the last check that the lease is still this run's.
+ */
+async function syncEditReviewChargeRequestUnderClaim(
+  request: EditReviewChargeSyncRequest,
+  claim: EditReviewChargeRaiseClaim,
+): Promise<EditReviewChargeSyncResult> {
+  const { bookingId, bookingModificationId, paymentId, member, hasIssuedXeroInvoice, format } =
+    request;
   const totalCents = await sumEditReviewChargeSharesCents({
     bookingId,
     bookingModificationId,
@@ -466,7 +567,7 @@ export async function syncEditFinancialReviewChargeRequest({
     }
     // #3371: shares PLUS whatever the mint absorbed, read back off the ROW -
     // never from the payment, which by now mirrors this request. Monotone,
-    // which is what keeps the compare-and-set below lock-free.
+    // which is what keeps the refusal to lower below correct.
     const raised = raiseReviewChargeAsk({ shareTotalCents: totalCents, request: existing });
     if (raised.amountCents <= existing.amountCents) {
       // Either an exact replay (equal), which must change nothing at all, or a
@@ -480,16 +581,32 @@ export async function syncEditFinancialReviewChargeRequest({
         carriedCents: existing.carriedAskCents,
       };
     }
+    // #3402: the intended raise is recorded under the claim BEFORE Stripe hears
+    // of it; a lease lost by now means another run owns this request.
+    if (!(await recordEditReviewChargeRaiseIntent(claim, raised.amountCents))) {
+      return deferEditReviewChargeRaise(request, totalCents);
+    }
     const reissuedId = await reissueRaisedAskIfCurrencyChanged({ format, bookingId, paymentId, staleIntentId: existing.stripePaymentIntentId, ask: raised, reason });
     if (reissuedId) return { outcome: "raised", paymentIntentId: reissuedId, totalCents, carriedCents: raised.carriedCents };
     // Same currency (#3567): the SAME intent asks for more. Nothing is minted, so nothing
     // is superseded — `queueSupersededAdditionalIntentCancellations` never fires between shares.
-    await updatePaymentIntentAmount(existing.stripePaymentIntentId, raised.amountCents);
+    // A refusal THROWS from here with nothing written: the row still matches the
+    // unchanged intent, the claim is released by the caller, and
+    // `executeEditReviewCharge` (or the replay) makes the debt durable.
+    const provider = await updatePaymentIntentAmount(existing.stripePaymentIntentId, raised.amountCents);
+    // RECONCILED FROM THE PROVIDER'S ANSWER, not from the figure asked for: the
+    // row is what the member's pay page shows, and it must agree with the intent.
+    if (provider.amount !== raised.amountCents) {
+      logger.error(
+        { bookingId, bookingModificationId, askedCents: raised.amountCents, providerCents: provider.amount },
+        "Stripe answered an edit financial review charge raise with a different amount - the request row records Stripe's",
+      );
+    }
     await upsertPaymentIntentTransaction({
       paymentId,
       kind: PaymentTransactionKind.ADDITIONAL,
       paymentIntentId: existing.stripePaymentIntentId,
-      amountCents: raised.amountCents,
+      amountCents: provider.amount,
       // Re-stated from the ONE value that computed both (#3371).
       carriedAskCents: raised.carriedCents,
       status: PaymentStatus.PENDING,
@@ -498,7 +615,10 @@ export async function syncEditFinancialReviewChargeRequest({
     return {
       outcome: "raised",
       paymentIntentId: existing.stripePaymentIntentId,
-      totalCents,
+      // What the intent now covers of THIS edit's shares: short of the derived
+      // total only if Stripe answered short, and then the caller's post-release
+      // re-derivation raises again.
+      totalCents: provider.amount - raised.carriedCents,
       carriedCents: raised.carriedCents,
     };
   }
@@ -529,6 +649,12 @@ export async function syncEditFinancialReviewChargeRequest({
   // `sizeReviewChargeAsk` is the rule the ordinary path already uses
   // (`sizeAdditionalAsk`, #3340) over this path's own figure.
   const ask = sizeReviewChargeAsk({ shareTotalCents: totalCents, payment });
+  // #3402: the first mint is under the claim too. Two first shares would
+  // otherwise mint two intents under two amount keys, each superseding the
+  // other, and the survivor could be the smaller.
+  if (!(await recordEditReviewChargeRaiseIntent(claim, ask.amountCents))) {
+    return deferEditReviewChargeRaise(request, totalCents);
+  }
   const minted = await createModificationAdditionalPaymentIntent({
     format, bookingId,
     result: {
@@ -663,7 +789,8 @@ export async function executeEditReviewCharge({
       hasIssuedXeroInvoice: route.hasIssuedXeroInvoice,
     });
   } catch (err) {
-    // Only the UPDATE arm reaches here: the mint arm is
+    // Only the UPDATE arm's provider call (or a claim statement, #3402) reaches
+    // here: the mint arm is
     // `createModificationAdditionalPaymentIntent`, which swallows its own
     // provider failure and enqueues the identical recovery row itself. Either
     // way the debt becomes durable and the cron replays this same function,
