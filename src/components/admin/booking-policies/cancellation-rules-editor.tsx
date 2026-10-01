@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input"
+import { formatCentsPlain } from "@/lib/utils"
 import type { PolicyRule } from "./types"
 
 /** What a refused fixed-fee box says (#2685). */
@@ -98,7 +99,7 @@ export function CancellationRulesEditor({
   function feeValue(index: number, field: FeeField): string {
     const draft = feeDrafts[feeKey(index, field)]
     if (draft !== undefined) return draft
-    return ((rules[index]?.[field] ?? 0) / 100).toFixed(2)
+    return formatCentsPlain(rules[index]?.[field] ?? 0)
   }
 
   function handleFeeChange(index: number, field: FeeField, value: string) {

@@ -34,6 +34,7 @@ function unpaidInvoice(
     invoiceStatus: "AUTHORISED",
     direction: "receivable",
     amountDueCents: 12050,
+    amountDueTenThousandths: 1205000,
     currency: "NZD",
     dueDate: "2026-06-30",
     xeroUrl: "https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=inv-1",
