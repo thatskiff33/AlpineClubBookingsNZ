@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   nbUpdateMany: vi.fn(),
   nbFindMany: vi.fn(),
   nbFindUnique: vi.fn(),
+  nbFindFirst: vi.fn(),
+  bcrFindFirst: vi.fn(),
   bcrCreate: vi.fn(),
   bcrUpdateMany: vi.fn(),
   bcrFindMany: vi.fn(),
@@ -123,12 +125,14 @@ vi.mock("@/lib/prisma", () => {
         create: (...a: unknown[]) => mocks.nbCreate(...a),
         updateMany: (...a: unknown[]) => mocks.nbUpdateMany(...a),
         findMany: (...a: unknown[]) => mocks.nbFindMany(...a),
+        findFirst: (...a: unknown[]) => mocks.nbFindFirst(...a),
       },
       bookingChangeRequest: {
         create: (...a: unknown[]) => mocks.bcrCreate(...a),
         updateMany: (...a: unknown[]) => mocks.bcrUpdateMany(...a),
         findMany: (...a: unknown[]) => mocks.bcrFindMany(...a),
         findUnique: (...a: unknown[]) => mocks.bcrFindUnique(...a),
+        findFirst: (...a: unknown[]) => mocks.bcrFindFirst(...a),
       },
       member: {
         findMany: () => mocks.memberFindMany(),
@@ -256,6 +260,11 @@ beforeEach(() => {
   });
   mocks.assertMembersBookable.mockResolvedValue(undefined);
   mocks.nbFindUnique.mockResolvedValue({ attemptCount: 1 });
+  // #3770 pre-checks: the supersede target is open, and no other open slot.
+  mocks.nbFindFirst.mockResolvedValue({ id: "old-9" });
+  mocks.bcrFindFirst.mockImplementation(async (args: { where: { openStateKey?: string } }) =>
+    args.where.openStateKey ? null : { id: "old-9" },
+  );
   mocks.evaluateHosting.mockResolvedValue(null);
   mocks.nbCreate.mockResolvedValue({ id: "req-1", status: "REQUESTED" });
   mocks.nbUpdateMany.mockResolvedValue({ count: 1 });
@@ -437,7 +446,9 @@ describe("createNewBookingExceptionRequest", () => {
             ],
           }),
         ),
-      ).rejects.toBeInstanceOf(BookingGuestValidationError);
+      ).rejects.toEqual(
+        new BookingGuestValidationError("Linked member is inactive or not found", 400),
+      );
       expect(mocks.resolveLinkedMembers).toHaveBeenCalled();
       expect(mocks.nbCreate).not.toHaveBeenCalled();
     });
@@ -586,6 +597,20 @@ describe("createNewBookingExceptionRequest", () => {
       await expect(createNewBookingExceptionRequest(newBookingInput())).rejects.toBeInstanceOf(
         NoEligiblePolicyExceptionError,
       );
+    });
+
+    it("refuses a supersede target that is not this member's open request before the lookup", async () => {
+      mocks.nbFindFirst.mockResolvedValue(null);
+      const real = await responseFor(X_RESOLVES, { supersedeRequestId: "nope" });
+      const nobody = await responseFor(X_IS_NOBODY, { supersedeRequestId: "nope" });
+
+      expect(real).toEqual(nobody);
+      expect(real.status).toBe(409);
+      expect(JSON.parse(real.body).code).toBe("LOST_SUPERSEDE_CLAIM");
+      expect(mocks.resolveLinkedMembers).not.toHaveBeenCalled();
+      expect(mocks.nbFindFirst.mock.calls[0]?.[0]).toMatchObject({
+        where: { id: "nope", requestedByMemberId: "m1", status: "REQUESTED" },
+      });
     });
 
     it("lets a request that has something to review through with X in it", async () => {
@@ -1115,6 +1140,74 @@ describe("createModificationExceptionRequest", () => {
       expect(real).toEqual(nobody);
       expect(real.status).toBe(403);
       expect(mocks.bcrCreate).not.toHaveBeenCalled();
+    });
+
+    async function preCheckResponseFor(
+      arrange: () => void,
+      supersedeRequestId?: string,
+    ) {
+      arrange();
+      const res = await createModificationExceptionRequest({
+        bookingOwnerMemberId: null,
+        requestedByMemberId: "m1",
+        bookingId: "booking-1",
+        lodgeId: "lodge_1",
+        base,
+        proposed: base,
+        memberMessage: "please allow",
+        requestedSummary: "add 1 guest(s)",
+        delta,
+        baseHoldsCapacity: true,
+        supersedeRequestId,
+      }).then(
+        () => {
+          throw new Error("expected a refusal");
+        },
+        (error: unknown) => mapExceptionRequestError(error),
+      );
+      return { status: res.status, body: await res.text() };
+    }
+    const X_RESOLVES = () =>
+      mocks.resolveLinkedMembers.mockResolvedValue({
+        members: new Map([["member-x", { id: "member-x", ageTier: "ADULT" }]]),
+        boundary: { scopeByMemberId: new Map(), beyondFamilyMemberIds: ["member-x"] },
+      });
+    const X_IS_NOBODY = () =>
+      mocks.resolveLinkedMembers.mockRejectedValue(
+        memberGuestCrossFamilyRefusal(["member-x"]),
+      );
+
+    it("refuses a supersede target that is not open on this booking before the lookup", async () => {
+      mocks.bcrFindFirst.mockResolvedValue(null);
+      const real = await preCheckResponseFor(X_RESOLVES, "nope");
+      const nobody = await preCheckResponseFor(X_IS_NOBODY, "nope");
+
+      expect(real).toEqual(nobody);
+      expect(JSON.parse(real.body).code).toBe("LOST_SUPERSEDE_CLAIM");
+      expect(mocks.resolveLinkedMembers).not.toHaveBeenCalled();
+      expect(mocks.bcrFindFirst.mock.calls[0]?.[0]).toMatchObject({
+        where: {
+          id: "nope",
+          bookingId: "booking-1",
+          requestedByMemberId: "m1",
+          kind: "POLICY_EXCEPTION",
+          status: "REQUESTED",
+        },
+      });
+    });
+
+    it("refuses an occupied open-request slot before the lookup", async () => {
+      mocks.bcrFindFirst.mockResolvedValue({ id: "open-1" });
+      const real = await preCheckResponseFor(X_RESOLVES);
+      const nobody = await preCheckResponseFor(X_IS_NOBODY);
+
+      expect(real).toEqual(nobody);
+      expect(real.status).toBe(409);
+      expect(JSON.parse(real.body).code).toBe("OPEN_EXCEPTION_REQUEST");
+      expect(mocks.resolveLinkedMembers).not.toHaveBeenCalled();
+      expect(mocks.bcrFindFirst.mock.calls[0]?.[0]).toMatchObject({
+        where: { openStateKey: "pe:booking-1:m1" },
+      });
     });
 
     it("still says 'nothing to review' when the added member is family", async () => {

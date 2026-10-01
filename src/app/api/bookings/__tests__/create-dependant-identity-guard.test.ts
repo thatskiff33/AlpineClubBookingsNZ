@@ -45,6 +45,12 @@ const h = vi.hoisted(() => ({
   resolveLinkedBookingMembersWithBoundary: vi.fn(),
   normalizeGuestStayRanges: vi.fn((guests: unknown[]) => guests),
   getLodgeCapacity: vi.fn(),
+  validateMinimumStay: vi.fn(),
+  checkInternetBankingLeadTime: vi.fn(),
+  resolveSubscriptionLockoutMode: vi.fn(),
+  requiresPaidSubscription: vi.fn(),
+  promoCodeFindUnique: vi.fn(),
+  workPartyEventFindUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
@@ -77,6 +83,10 @@ vi.mock("@/lib/prisma", () => ({
     // authenticated member id rather than from anything in the request body.
     member: { findUnique: h.memberFindUnique, findMany: h.memberFindMany },
     groupDiscountSetting: { findUnique: vi.fn().mockResolvedValue(null) },
+    // #3770: the pre-lookup owner-subscription and promo/working-bee checks.
+    memberSubscription: { findFirst: vi.fn().mockResolvedValue(null) },
+    promoCode: { findUnique: h.promoCodeFindUnique },
+    workPartyEvent: { findUnique: h.workPartyEventFindUnique },
     minimumStayPolicy: { findMany: vi.fn().mockResolvedValue([]) },
     adultMemberHostingPolicy: { findMany: vi.fn().mockResolvedValue([]) },
     clubTimeSettings: {
@@ -89,10 +99,11 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/booking-guests", async () => {
-  // `normalizeBookingGuestInputs` is the REAL one. It is what strips a
-  // `memberId` that did not resolve and forces `isMember: false` — the step that
-  // makes a forged client assertion irrelevant — so mocking it out would make
-  // the tampering cases below prove nothing.
+  // Partial: the real error classes and `memberGuestCrossFamilyRefusal`, so the
+  // collapsed bodies compared below are the real ones. Since #3770 the guard runs
+  // before the lookup on the claimed ids, so a forged member link is refused by
+  // the lookup (mocked here to refuse as the real one does), not by
+  // `normalizeBookingGuestInputs`.
   const actual = (await vi.importActual(
     "@/lib/booking-guests",
   )) as typeof import("@/lib/booking-guests");
@@ -145,7 +156,15 @@ vi.mock("@/lib/membership-type-policy", () => ({
   MembershipTypeBookingPolicyError: class extends Error {
     status = 400;
   },
-  requiresPaidSubscriptionForMemberForBooking: vi.fn().mockResolvedValue(false),
+  requiresPaidSubscriptionForMemberForBooking: h.requiresPaidSubscription,
+}));
+vi.mock("@/lib/member-subscription-eligibility", async (importActual) => ({
+  ...((await importActual()) as object),
+  resolveSubscriptionLockoutMode: h.resolveSubscriptionLockoutMode,
+}));
+vi.mock("@/lib/booking-policies", async (importActual) => ({
+  ...((await importActual()) as object),
+  validateMinimumStay: h.validateMinimumStay,
 }));
 vi.mock("@/lib/booking-member-guest-subscriptions", () => ({
   findUnpaidMemberGuests: vi.fn().mockResolvedValue([]),
@@ -166,7 +185,7 @@ vi.mock("@/lib/member-credit", () => ({
   getMemberCreditBalance: vi.fn().mockResolvedValue(0),
 }));
 vi.mock("@/lib/internet-banking-settings", () => ({
-  checkInternetBankingLeadTime: () => ({ allowed: true }),
+  checkInternetBankingLeadTime: h.checkInternetBankingLeadTime,
   loadInternetBankingPaymentSettings: vi.fn().mockResolvedValue({}),
 }));
 vi.mock("@/lib/xero-token-store", () => ({
@@ -193,7 +212,9 @@ vi.mock("@/lib/booking-create", async () => {
     RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS:
       actual.RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS,
     BookingLodgeError: class extends Error {},
-    BookingPromoError: class extends Error {},
+    // The real class: the route's #3770 promo pre-check throws it from
+    // `booking-create-promo.ts`, which imports it from the types module.
+    BookingPromoError: actual.BookingPromoError,
     BookingReviewJustificationRequiredError: class extends Error {},
   };
 });
@@ -216,6 +237,16 @@ import {
   memberGuestCrossFamilyRefusal,
 } from "@/lib/booking-guests";
 import { BookingGuestStayRangeValidationError } from "@/lib/booking-guest-stay-range-input";
+
+/** The neutral answers for every #3770 pre-lookup check: nothing refuses. */
+function setPreLookupDefaults() {
+  h.validateMinimumStay.mockResolvedValue({ valid: true, violations: [] });
+  h.checkInternetBankingLeadTime.mockReturnValue({ allowed: true });
+  h.resolveSubscriptionLockoutMode.mockResolvedValue("NO_BLOCK");
+  h.requiresPaidSubscription.mockResolvedValue(false);
+  h.promoCodeFindUnique.mockResolvedValue(null);
+  h.workPartyEventFindUnique.mockResolvedValue(null);
+}
 
 // Fixed future nights relative to the repository's frozen clock
 // (2026-07-01), per `docs/TESTING.md`. Never derived from the real calendar.
@@ -285,6 +316,7 @@ beforeEach(() => {
   h.normalizeGuestStayRanges.mockImplementation((guests: unknown[]) => guests);
   h.getLodgeCapacity.mockResolvedValue(30);
   h.resolveOptionalActiveLodgeId.mockResolvedValue("lodge-1");
+  setPreLookupDefaults();
   h.createConfirmedBooking.mockResolvedValue({
     type: "created",
     booking: { id: "b-new", status: "PAID", guests: [] },
@@ -432,7 +464,7 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
       );
 
       expect(res.status).toBe(400);
-      expect((await res.json()).code).not.toBe("DEPENDANT_IDENTITY_UNRESOLVED");
+      expect(await res.json()).toEqual({ error: "Linked member is inactive or not found" });
       expect(h.resolveLinkedBookingMembersWithBoundary).toHaveBeenCalled();
       expectNoBookingWritten();
     });
@@ -787,6 +819,75 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
         h.getLodgeCapacity.mockResolvedValue(1);
         return { guests: [X, KIRI] };
       }, 400],
+      ["the booker's own unpaid subscription", () => {
+        h.resolveSubscriptionLockoutMode.mockResolvedValue("HARD_BLOCK");
+        h.requiresPaidSubscription.mockResolvedValue(true);
+        return { guests: [X, KIRI] };
+      }, 403],
+      ["a stay shorter than the minimum", () => {
+        h.validateMinimumStay.mockResolvedValue({
+          valid: false,
+          violations: [
+            {
+              reasonCode: "MINIMUM_STAY",
+              policyId: "pol_min",
+              policyVersion: 1,
+              policyName: "Weekend minimum",
+              resolvedScope: { kind: "CLUB_WIDE", lodgeId: null, effectiveLodgeId: "lodge-1" },
+              affectedNights: ["2026-08-01"],
+              exceptionEligible: true,
+              capacityMode: "HOLD",
+              message: "min stay",
+              triggerDay: "Saturday",
+              minimumNights: 3,
+              actualNights: 2,
+              requirements: { kind: "MINIMUM_STAY", minimumNights: 3, actualNights: 2, triggerDays: [6] },
+            },
+          ],
+        });
+        return { guests: [X, KIRI] };
+      }, 400],
+      ["Internet Banking at a club without it", () => ({
+        guests: [X, KIRI],
+        paymentMethod: "internet_banking",
+      }), 400],
+      ["Internet Banking inside its cutoff", () => {
+        h.loadEffectiveModuleFlags.mockResolvedValue({
+          xeroIntegration: true,
+          bedAllocation: false,
+          internetBankingPayments: true,
+          memberGuests: false,
+        });
+        h.checkInternetBankingLeadTime.mockReturnValue({
+          allowed: false,
+          unavailableReason: "Too close to check-in",
+          minimumDaysBeforeCheckIn: 7,
+          checkIn: CHECK_IN,
+        });
+        return { guests: [X, KIRI], paymentMethod: "internet_banking" };
+      }, 400],
+      ["an unknown promo code", () => {
+        h.loadEffectiveModuleFlags.mockResolvedValue({
+          xeroIntegration: false,
+          bedAllocation: false,
+          internetBankingPayments: false,
+          memberGuests: false,
+          promoCodes: true,
+          workParties: false,
+        });
+        return { guests: [X, KIRI], promoCode: "ZZZZ" };
+      }, 400],
+      ["a working-bee event that does not exist", () => {
+        h.loadEffectiveModuleFlags.mockResolvedValue({
+          xeroIntegration: false,
+          bedAllocation: false,
+          internetBankingPayments: false,
+          memberGuests: false,
+          promoCodes: false,
+          workParties: true,
+        });
+        return { guests: [X, KIRI], workPartyEventId: "nope" };
+      }, 400],
     ];
 
     it.each(refusals)("%s", async (_label, arrangeRequest, status) => {
@@ -797,6 +898,13 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
         h.normalizeGuestStayRanges.mockImplementation((guests: unknown[]) => guests);
         h.getLodgeCapacity.mockResolvedValue(30);
         h.resolveOptionalActiveLodgeId.mockResolvedValue("lodge-1");
+        h.loadEffectiveModuleFlags.mockResolvedValue({
+          xeroIntegration: false,
+          bedAllocation: false,
+          internetBankingPayments: false,
+          memberGuests: false,
+        });
+        setPreLookupDefaults();
         arrangeLookup();
         const res = await POST(makeRequest(arrangeRequest()));
         responses.push({ status: res.status, body: await res.text() });
