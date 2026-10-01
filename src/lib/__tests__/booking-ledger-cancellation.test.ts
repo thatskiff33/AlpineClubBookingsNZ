@@ -317,9 +317,11 @@ describe("postCancellationLedgerLines: owed(b) is zero once the settlement lines
 
 describe("postCancellationLedgerLines: what posts nothing", () => {
   it("a booking cancelled before it was confirmed on the ledger posts nothing", async () => {
+    // A kept figure the policy computed, so only the confirmation fence can
+    // stop a fee posting here.
     const book = ledger();
-    await cancel(book, 0);
-    expect((book.store as { bookingLedgerLine: { createMany: unknown } }).bookingLedgerLine.createMany).not.toHaveBeenCalled();
+    await cancel(book, 5_000);
+    expect(book.rows).toEqual([]);
   });
 
   it("UNPAID but confirmed (a mark-paid since reversed): the stay is reversed, no fee, owed is zero", async () => {
