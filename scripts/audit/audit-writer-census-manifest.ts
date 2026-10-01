@@ -586,7 +586,12 @@ export const AUDIT_CENSUS_TOTALS = {
   // `src/app/api/admin/xero/operations/[id]/mark-failed/route.ts`,
   // categorised `xero` at the site like its `mark-non-replayable` sibling.
   // RE-MEASURED with `pnpm run audit:census`, not incremented.
-  writeSites: 494,
+  // 494 -> 495 (#3454): `recordTwoFactorMutation` in `src/lib/two-factor-audit.ts`,
+  // one awaited `createAuditLog` on the caller's transaction for the two-factor
+  // enrolment and the erasure's clear, categorised `security` at the site. The
+  // Xero token writes add no site: they go through the credential store's
+  // existing `recordCredentialMutation`. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 495,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -759,7 +764,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 136 -> 137 (#3462 review): the bulk stale-RUNNING reset, moved here
     // from `logAudit`. Mark failed, mark non-replayable and the bulk reset now
     // each await their record inside the state change's transaction.
-    createAuditLog: { total: 137, uncategorised: 0 },
+    // 137 -> 138 (#3454): the two-factor enrolment / erasure-clear record,
+    // awaited on the transaction that changes the second factor.
+    createAuditLog: { total: 138, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1116,7 +1123,13 @@ export const AUDIT_CENSUS_TOTALS = {
     // `security` is readable with `support:view` alone, and a refused attempt to
     // change where a signed join token is sent is exactly what a support
     // operator correlating an incident needs to see.
-    security: 24,
+    // 24 -> 25 (#3454): `security.two_factor.enrolled` / `.cleared`, one site. A
+    // second factor is a credential, which is what this category holds, and it is
+    // readable with `support:view` alone, so the weakest-gate total moves
+    // 137 -> 138. That is a WIDENING of one, and deliberate: an operator
+    // investigating a member's sign-in needs to see when their second factor was
+    // turned on, and the row carries no secret (booleans and the method only).
+    security: 25,
     // 16 -> 18 (#2595): the two reviewed-move writes. `lodge` is the category
     // every other bed-allocation write already uses, and it is not one of the
     // three (`admin`, `security`, `system`) readable with support:view alone —
