@@ -1229,12 +1229,18 @@ answered) and built to it:
   request (the person-night guard, the unpaid-subscription check) still report
   whatever the pricing path cost, and this map does not claim otherwise.
 - **Refusals that read nothing about the named members come before the member
-  lookup** (#3770). On create and the new-booking exception request, a bad stay
-  range, the own-dependant question, a past date, a missing or unknown lodge and
-  the guest-count cap answer the same whether a member id in the party is real,
-  because the lookup has not run yet. "Nothing to review" on either exception
-  request reads the members, so with a beyond-family member named it is the
-  neutral refusal instead.
+  lookup** (#3770), so they answer the same whether a member id in the party is
+  real. On create: a bad stay range, the own-dependant question, a past date, a
+  missing or unknown lodge, the guest-count cap, the booker's own unpaid
+  subscription, the minimum stay, Internet Banking availability and its cutoff,
+  and a working-bee event or promo code that cannot apply. On the exception
+  requests: the stay range and the own-dependant question, a lodge id that names
+  no active lodge (new booking), a supersede target that is not the member's
+  open request, and an occupied slot (edit). "Nothing to review" reads the
+  members, so with a beyond-family member named it is the neutral refusal
+  instead, and both doors floor and audit their neutral refusals. Refusals about
+  the booker's own family that need the resolved party still come after the
+  lookup.
 - **Every collapsed refusal is audited** naming actor and target, and a run of
   them against the same target raises a flagged row an admin can find — ONCE per
   actor/target per 24 hours, on the crossing rather than on every refusal past
