@@ -3,7 +3,7 @@
 Two entries, both on Xero modules that were already far over budget.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1844
+lines: 1832
 reason: the new `runWithClaimedOriginal` is the ONE place a retry claims the
   original operation and abandons that claim, and it has to sit beside
   `retryXeroSyncOperation` and `throwLostRetryClaim`, which it calls: moving it
@@ -16,7 +16,7 @@ reason: the new `runWithClaimedOriginal` is the ONE place a retry claims the
   Splitting this 1,780-line retry module is its own job with its own review.
 
 file: src/lib/xero-sync.ts
-lines: 980
+lines: 988
 reason: `failXeroSyncOperation` gains the guarded abandon (`onlyIfRunningSince`)
   and an operator-message override, documented at the option; the two write
   guards are one discriminated option type so both can never be passed. They belong on
