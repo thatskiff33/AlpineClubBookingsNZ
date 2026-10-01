@@ -1357,11 +1357,11 @@ export function PublicBookingRequestsPanel({
         toast.success(
           data.alreadyConverted === true
             ? "School booking was already confirmed. No new invoice or teacher PIN email was sent."
-            : data.invoiceMode === "xero"
-            ? data.teacherHutLeaderAssignmentsCreated === true
-              ? "School booking confirmed. The Xero invoice has been emailed to the school and teacher PIN emails are being sent."
-              : "School booking confirmed. The Xero invoice has been emailed to the school. Teacher hut-leader assignments and PIN emails were not created."
-            : "School booking confirmed. The Xero module is off, so admins have been emailed to invoice the school manually."
+            : `School booking confirmed. ${data.teacherHutLeaderAssignmentsCreated === true
+              ? "Teacher hut-leader assignments were created."
+              : "Teacher hut-leader assignments were not created."} ${data.invoiceMode === "xero"
+              ? "Check invoice progress and email delivery."
+              : "The Xero module is off, so manual invoicing is required. Check email delivery."}`
         );
       } else {
         toast.success("Request approved. A payment link has been emailed to the requester.");
