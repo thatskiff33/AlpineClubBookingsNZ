@@ -176,6 +176,16 @@ describe("postBookingLedgerLines", () => {
     expect(createMany).not.toHaveBeenCalled();
   });
 
+  it("refuses a kind on the wrong side: the database holds no such CHECK, so the door does (#3611)", async () => {
+    const { store: s, createMany } = store();
+    await expect(
+      postBookingLedgerLines(s, [
+        guestNight({ side: "ADJUSTMENT", kind: "CANCELLATION_FEE", bookingGuestId: null, nightStart: null, nightEndExclusive: null, narration: "Cancellation fee retained" }),
+      ]),
+    ).rejects.toThrow(/a CANCELLATION_FEE line is a CHARGE line, not ADJUSTMENT/);
+    expect(createMany).not.toHaveBeenCalled();
+  });
+
   it("names the invariant when it refuses", async () => {
     const { store: s } = store();
     await expect(
