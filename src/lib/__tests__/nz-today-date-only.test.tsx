@@ -41,6 +41,7 @@ vi.mock("@/components/club-identity-provider", () => ({
 const financeMocks = vi.hoisted(() => ({
   prisma: {
     booking: { findMany: vi.fn() },
+    payment: { findMany: vi.fn() },
     lodgeSettings: { findUnique: vi.fn() },
   },
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -116,6 +117,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockPublicSettingsFetch();
   financeMocks.prisma.booking.findMany.mockResolvedValue([]);
+  financeMocks.prisma.payment.findMany.mockResolvedValue([]);
   financeMocks.prisma.lodgeSettings.findUnique.mockResolvedValue({ capacity: 20 });
 });
 
