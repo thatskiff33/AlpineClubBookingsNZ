@@ -372,8 +372,11 @@ by `planReviewClosureShareLines` after the closure's re-price rows (§5.1):
   booking is a stand-in that is now superseded, and each is reversed by its line
   id (`reversal:<lineId>`, anchored on this task) in the same batch. This share
   posts nothing.
-- **Otherwise, this closure's own re-price rows recorded a movement:** they
-  carry the share, and nothing more posts.
+- **Or this closure's own re-price rows recorded a movement**, even where an
+  unrelated drift (a promotion line the booking no longer carries) makes the
+  totals miss: the re-price re-prices every strand from the live ledger, so it
+  supersedes the stand-ins just the same — each is reversed, and nothing more
+  posts.
 - **Otherwise** (the re-base declined, or the charges do not carry the price):
   the share posts as the stand-in for money the headline has not moved yet.
 
@@ -389,9 +392,13 @@ refunds — or, while a re-base declines, that figure plus the stand-ins. What i
 does not settle: a share that differs from the re-price's movement (a fee kept
 back, a goodwill figure, a share on a closure that moved nothing) leaves
 `owed(b)` equal to the booking's figures and not to the share, exactly as an
-unparked removal with a policy-retained amount does today. #3611 named what the
-club keeps for a **cancellation** (`CANCELLATION_FEE`, §5.1); an edit's kept-back
-share is not a cancellation and is not covered by it.
+unparked removal with a policy-retained amount does today. A CHARGE share the
+price does not carry also leaves its pending ask above `max(0, owed(b))`, so
+§6's `additionalAmountCents` identity does not hold until it is captured or
+withdrawn; #3583's census classifies that booking as `retained`, not as a
+disagreement. #3611 named what the club keeps for a **cancellation**
+(`CANCELLATION_FEE`, §5.1); an edit's kept-back share is not a cancellation and
+is not covered by it.
 
 **The ask is the one place today's shape survives.** `additionalAmountCents`
 is retired (it is `max(0, owed(b))`), but the `ADDITIONAL` transaction row

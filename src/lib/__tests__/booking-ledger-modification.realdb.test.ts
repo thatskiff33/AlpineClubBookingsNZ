@@ -419,7 +419,9 @@ const G2_ONLY = { guests: [guestSide(G2, [[D1, 5_000], [D2, 5_000]])], promoAdju
       await postEdit(removal, { guests: [shifted(G1), shifted(G2)], promoAdjustmentCents: 0 }, { guests: [shifted(G2)], promoAdjustmentCents: 0 }, -10_000);
       expect((await lines()).filter((line) => line.anchorId === removal)).toHaveLength(2);
       expect(await liveChargeCents()).toBe(10_000);
-    });
+      // The real door's module graph is imported inside this case, and on a cold
+      // Windows run that alone took ~5s against the 5s default (measured).
+    }, 60_000);
 
     describe("two sibling reviews from one parked edit (#3740 review F1)", () => {
       const refund: Share = { direction: "REFUND_TO_MEMBER", amountCents: 10_000 };
@@ -462,6 +464,37 @@ const G2_ONLY = { guests: [guestSide(G2, [[D1, 5_000], [D2, 5_000]])], promoAdju
           [10_000, standIn!.id],
         ]);
         expect(await billedCents()).toBe(10_000);
+      });
+
+      it("REFUND, declined then re-priced on a drifted PROMOTION: the re-price still reverses the stand-in (#3740 delta L1)", async () => {
+        await parkedRemovalOfTwo();
+        // A $10 promotion line the booking's own figures no longer carry.
+        await prisma.$transaction((tx) =>
+          write.postBookingLedgerLines(tx, [
+            {
+              bookingId: BOOKING_ID,
+              lodgeId: LODGE_ID,
+              side: "CHARGE",
+              kind: "PROMOTION",
+              sign: -1,
+              quantity: 1,
+              unitCents: 1_000,
+              anchorKind: "CONFIRMATION",
+              anchorId: BOOKING_ID,
+              narration: "Promotion applied",
+              postingKey: `confirmation:${BOOKING_ID}:promotion`,
+            },
+          ]),
+        );
+        await closeReview("race-3582-tB", null, refund);
+        const [standIn] = await adjustments();
+        await closeReview("race-3582-tC", rebaseOf(30_000, 10_000), refund);
+        expect((await adjustments()).map((line) => [line.amountCents, line.reversesLineId])).toEqual([
+          [-10_000, null],
+          [10_000, standIn!.id],
+        ]);
+        // Off the booking's price by the drift alone, never by a second count.
+        expect(await billedCents()).toBe(10_000 - 1_000);
       });
 
       it("CHARGE: the first closure's re-price carries both additions, the second posts nothing", async () => {

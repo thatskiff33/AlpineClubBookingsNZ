@@ -305,7 +305,12 @@ export function planReviewClosureShareLines({
   postedAdjustmentLines: readonly PostedAdjustmentLine[];
 }): BookingLedgerPosting[] {
   const chargedCents = chargeLinesAfter.reduce((sum, line) => sum + ledgerLineAmountCents(line), 0);
-  if (rebasedFinalPriceCents !== null && chargedCents === rebasedFinalPriceCents) {
+  // A re-price that posted re-prices every strand from the live ledger, so it
+  // carries every sibling's money even where an unrelated drift makes the
+  // totals miss (#3740 delta L1): either way, no stand-in survives beside it.
+  const chargesCarryThePrice =
+    rebasedFinalPriceCents !== null && (chargedCents === rebasedFinalPriceCents || repriceRecordsMovement);
+  if (chargesCarryThePrice) {
     return liveLines(postedAdjustmentLines).map((line) => ({
       bookingId,
       lodgeId,
@@ -322,7 +327,7 @@ export function planReviewClosureShareLines({
       postingKey: reversalKey(line.id),
     }));
   }
-  if (repriceRecordsMovement || settlement === null) return [];
+  if (settlement === null) return [];
   return [
     planAgreedAdjustmentLine({
       bookingId,

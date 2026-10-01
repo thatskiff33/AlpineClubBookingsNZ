@@ -82,6 +82,7 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
       "REFUND: the first closure's re-price carries both removals, the second posts nothing, and the ledger bills the booking's price",
       "REFUND, dismiss then complete: the dismissal's re-price stands and the completion adds nothing",
       "REFUND, declined then re-priced: the stand-in is reversed by its line id when the re-price carries it",
+      "REFUND, declined then re-priced on a drifted PROMOTION: the re-price still reverses the stand-in (#3740 delta L1)",
       "CHARGE: the first closure's re-price carries both additions, the second posts nothing",
       "a same-price category change, then a second edit: the second reverses the FIRST EDIT'S re-post, never the stale confirmation line",
       "a direct write of a reversal of an already-reversed line inserts nothing, and the transaction stays usable",

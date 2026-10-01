@@ -507,6 +507,37 @@ describe("postReviewClosureLedgerLines — sibling reviews never count one parke
     expect(owed(lines)).toBe(10_000 - (40_000 - 30_000));
   });
 
+  it("REFUND, declined then re-priced on a ledger whose PROMOTION drifted: the re-price still reverses the stand-in (#3740 delta L1)", async () => {
+    // A $10 promotion line the booking's own figures no longer carry: the
+    // re-price plans from the re-base's promotion (none), passes its sum, and
+    // the charges miss the final price by exactly the drift.
+    const [drift] = buildBookingLedgerRows([
+      {
+        bookingId: "b1",
+        lodgeId: "l1",
+        side: "CHARGE",
+        kind: "PROMOTION",
+        sign: -1,
+        quantity: 1,
+        unitCents: 1_000,
+        anchorKind: "CONFIRMATION",
+        anchorId: "b1",
+        narration: "Promotion applied",
+        postingKey: "confirmation:b1:promotion",
+      },
+    ]);
+    const lines = await closeInTurn([...confirmedWith(["g1", "gB", "gC"]), { ...drift!, id: "line:drift" }], [
+      { task: "tB", rebase: null, rebaseHistoryId: null, guests: ["g1", "gC"], settlement: refund },
+      { task: "tC", rebase: rebase(30_000, 10_000), rebaseHistoryId: "rb2", guests: ["g1"], settlement: refund },
+    ]);
+    expect(adjustmentsOf(lines).map((row) => [row.amountCents, row.reversesLineId ?? null])).toEqual([
+      [-10_000, null],
+      [10_000, "line:agreed-adjustment:tB"],
+    ]);
+    // Off from the booking's figure by the drift alone, never by a second count.
+    expect(owed(lines)).toBe(10_000 - (30_000 - 20_000) - 1_000);
+  });
+
   for (const [first, second] of [
     ["tB", "tC"],
     ["tC", "tB"],
