@@ -16,11 +16,13 @@ import {
   chooseEditReviewSettlementRoute,
   executeEditReviewSettlement,
   type EditReviewSettlementRoute,
+  writeEditReviewAccountCredit,
 } from "@/lib/edit-financial-review-settlement";
 import { refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero-leg";
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
-import { createBookingModificationCredit, requireMemberCreditRecipient, SchoolHasNoCreditAccountError } from "@/lib/member-credit";
+import { requireMemberCreditRecipient, SchoolHasNoCreditAccountError } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import { enqueueEditFinancialReviewRefundRecovery } from "@/lib/payment-recovery";
 import {
   applyLocalRefundAllocation,
@@ -367,18 +369,16 @@ export async function resolveManualRefundTask(
             store: tx,
           });
         } else if (settlementRoute.kind === "account-credit") {
-          // #3032: the canonical account-credit writer, re-entered unchanged.
-          // Its exactly-once key is the `BookingModification` id (D-3032-1), and
-          // it writes the refund allocation itself when handed a payment id.
-          await createBookingModificationCredit(
-            requireMemberCreditRecipient(bookingOwner(task.booking).memberId),
-            settlement.amountCents,
-            task.bookingId,
-            settlementRoute.bookingModificationId,
-            undefined,
-            tx,
-            settlementRoute.allocateAgainstPaymentId ?? undefined,
-          );
+          // #3032/#3791: credited through the route's own writer - a give-back
+          // of applied credit where no payment was captured, else a credit
+          // allocated against the payment.
+          await writeEditReviewAccountCredit({
+            route: settlementRoute,
+            memberId: requireMemberCreditRecipient(bookingOwner(task.booking).memberId),
+            bookingId: task.bookingId,
+            amountCents: settlement.amountCents,
+            store: tx,
+          });
         }
         // `stripe-refund` writes no LEDGER allocation here on purpose: the
         // provider call has to happen outside this transaction, and
@@ -450,6 +450,11 @@ export async function resolveManualRefundTask(
         // had just offered the choice; its message has to arrive.
         if (error instanceof SchoolHasNoCreditAccountError) {
           throw new ManualBookingPaymentError(error.message, error.status);
+        }
+        // #3791: a give-back of applied credit waits for an in-flight Xero
+        // deallocation on the payment, as the clamp does; the task stays OPEN.
+        if (error instanceof XeroAppliedCreditOperationBusyError) {
+          throw new ManualBookingPaymentError("This booking's account credit is still being updated in Xero — try again in a few minutes.", 409);
         }
         throw error;
       }
