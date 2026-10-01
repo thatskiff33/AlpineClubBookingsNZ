@@ -3515,6 +3515,29 @@ describe("edit-financial-review charge recovery (#3170)", () => {
   });
 
   /**
+   * #3402: the same refusal to close, for the other way a replay can raise
+   * nothing - another run (an officer's inline settlement, say) holds the edit's
+   * raise claim, so this replay called no provider at all. Closing here would
+   * trust a holder that may yet die mid-raise.
+   */
+  it("leaves the operation open when another run holds the edit's raise claim", async () => {
+    mockSyncEditFinancialReviewChargeRequest.mockResolvedValue({
+      outcome: "deferred",
+      paymentIntentId: null,
+      totalCents: 23000,
+      carriedCents: 0,
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(0);
+    expect(wasClosedSuccessfully()).toBe(false);
+    expect(result.retried).toBe(1);
+    expect(wasLeftForRetry()).toBe(true);
+    expect(mockAttachIntentToWaitingOps).not.toHaveBeenCalled();
+  });
+
+  /**
    * The CONTROL for the guard above. A replay that DID raise the request must
    * still close - a check that refused everything would pass the test above and
    * would wedge every recovered charge in a retry loop.

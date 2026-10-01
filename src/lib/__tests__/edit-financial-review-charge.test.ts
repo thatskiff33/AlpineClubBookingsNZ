@@ -159,6 +159,18 @@ vi.mock("@/lib/payment-recovery", () => ({
     mocks.enqueueCancel(...a),
   runPaymentRecoveryOperationNow: (...a: unknown[]) => mocks.cancelNow(...a),
 }));
+// #3402: the raise claim is proved against PostgreSQL in
+// `edit-review-charge-raise-claim.realdb.test.ts` and its orchestration in
+// `edit-financial-review-charge-claim.test.ts`; here every run wins it, which is
+// the uncontended case these cases have always described.
+vi.mock("@/lib/edit-review-charge-raise-claim", () => ({
+  claimEditReviewChargeRaise: async (bookingModificationId: string) => ({
+    bookingModificationId,
+    token: "claim-token",
+  }),
+  recordEditReviewChargeRaiseIntent: async () => true,
+  releaseEditReviewChargeRaise: async () => true,
+}));
 /*
   THE ONE PLACE A CHARGE IS MINTED RUNS FOR REAL (#3341, `INV-OPS-015`), and so
   does `queueSupersededAdditionalIntentCancellations` behind it. Both used to be
@@ -503,7 +515,11 @@ beforeEach(() => {
   mocks.supersedeRead.mockResolvedValue([]);
   mocks.enqueueCancel.mockResolvedValue({ id: "op-cancel-1" });
   mocks.cancelNow.mockResolvedValue("succeeded");
-  mocks.updatePaymentIntentAmount.mockResolvedValue({ id: "pi_additional_1" });
+  // #3402: Stripe answers with the amount it now holds; the row is written from it.
+  mocks.updatePaymentIntentAmount.mockImplementation(async (id: string, amount: number) => ({
+    id,
+    amount,
+  }));
   mocks.upsertPaymentIntentTransaction.mockResolvedValue(undefined);
   mocks.restatePendingSupplementaryInvoiceAmount.mockResolvedValue({
     restated: 0,

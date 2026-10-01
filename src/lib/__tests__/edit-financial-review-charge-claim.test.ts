@@ -1,0 +1,317 @@
+import { PaymentStatus } from "@prisma/client";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+
+/**
+ * #3402 (`INV-PAY-111`): how `syncEditFinancialReviewChargeRequest` uses the
+ * edit's raise claim. That the claim itself excludes a concurrent claimant is a
+ * property of PostgreSQL, proved in `edit-review-charge-raise-claim.realdb.test.ts`;
+ * these cases pin the ORCHESTRATION around it - who may call Stripe, what a run
+ * that may not does instead, and that the holder looks again after releasing.
+ */
+
+const mocks = vi.hoisted(() => ({
+  claim: vi.fn(),
+  recordIntent: vi.fn(),
+  release: vi.fn(),
+  sumShares: vi.fn(),
+  findRequest: vi.fn(),
+  recordUncollected: vi.fn(),
+  updatePaymentIntentAmount: vi.fn(),
+  reissue: vi.fn(),
+  upsertPaymentIntentTransaction: vi.fn(),
+  enqueueRecovery: vi.fn(),
+  mint: vi.fn(),
+  paymentFindUnique: vi.fn(),
+  recordCarried: vi.fn(),
+  calls: [] as string[],
+}));
+
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/edit-review-charge-raise-claim", () => ({
+  claimEditReviewChargeRaise: (...a: unknown[]) => mocks.claim(...a),
+  recordEditReviewChargeRaiseIntent: (...a: unknown[]) => mocks.recordIntent(...a),
+  releaseEditReviewChargeRaise: (...a: unknown[]) => mocks.release(...a),
+}));
+vi.mock("@/lib/edit-financial-review-charge-request", () => ({
+  findEditReviewChargeRequest: (...a: unknown[]) => mocks.findRequest(...a),
+  hasIssuedSupplementaryInvoice: vi.fn(),
+  recordUncollectedEditReviewChargeShare: (...a: unknown[]) => mocks.recordUncollected(...a),
+  sumEditReviewChargeSharesCents: (...a: unknown[]) => mocks.sumShares(...a),
+}));
+vi.mock("@/lib/stripe", () => ({
+  updatePaymentIntentAmount: (...a: unknown[]) => mocks.updatePaymentIntentAmount(...a),
+}));
+vi.mock("@/lib/additional-intent-currency", () => ({
+  reissueRaisedAskIfCurrencyChanged: (...a: unknown[]) => mocks.reissue(...a),
+}));
+vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/payment-transactions")),
+  upsertPaymentIntentTransaction: (...a: unknown[]) => mocks.upsertPaymentIntentTransaction(...a),
+}));
+vi.mock("@/lib/payment-recovery", () => ({
+  enqueueAdditionalPaymentIntentRecovery: (...a: unknown[]) => mocks.enqueueRecovery(...a),
+}));
+vi.mock("@/lib/booking-modification-settlement", () => ({
+  createModificationAdditionalPaymentIntent: (...a: unknown[]) => mocks.mint(...a),
+}));
+vi.mock("@/lib/edit-financial-review-carried-balance", () => ({
+  recordCarriedEditReviewChargeBalance: (...a: unknown[]) => mocks.recordCarried(...a),
+}));
+vi.mock("@/lib/prisma", () => ({
+  prisma: { payment: { findUnique: (...a: unknown[]) => mocks.paymentFindUnique(...a) } },
+}));
+vi.mock("@/lib/logger", () => ({
+  default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+
+import { syncEditFinancialReviewChargeRequest } from "@/lib/edit-financial-review-charge";
+import {
+  buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
+  buildEditFinancialReviewChargeReason,
+} from "@/lib/payment-recovery-keys";
+
+const CLAIM = { bookingModificationId: "mod-1", token: "token-1" };
+
+const sync = () =>
+  syncEditFinancialReviewChargeRequest({
+    format: CLUB_FORMAT_TEST,
+    bookingId: "booking-1",
+    bookingModificationId: "mod-1",
+    paymentId: "payment-1",
+    member: { id: "member-1", email: "m@example.invalid", name: "M", stripeCustomerId: null },
+    hasIssuedXeroInvoice: false,
+  });
+
+/** The edit's request, as the first share left it at $50. */
+function requestAt(amountCents: number) {
+  return {
+    paymentTransactionId: "txn-1",
+    stripePaymentIntentId: "pi_request",
+    amountCents,
+    carriedAskCents: 0,
+    status: PaymentStatus.PENDING,
+  };
+}
+
+/** The share total each successive read returns; the last value then repeats. */
+function sharesRead(...totals: number[]) {
+  let index = 0;
+  mocks.sumShares.mockImplementation(async () => {
+    const total = totals[Math.min(index, totals.length - 1)];
+    index += 1;
+    return total;
+  });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.calls.length = 0;
+  mocks.claim.mockImplementation(async () => {
+    mocks.calls.push("claim");
+    return CLAIM;
+  });
+  mocks.recordIntent.mockImplementation(async (_claim: unknown, amount: number) => {
+    mocks.calls.push(`intent:${amount}`);
+    return true;
+  });
+  mocks.release.mockImplementation(async () => {
+    mocks.calls.push("release");
+    return true;
+  });
+  mocks.reissue.mockResolvedValue(null);
+  mocks.updatePaymentIntentAmount.mockImplementation(async (id: string, amount: number) => {
+    mocks.calls.push(`stripe:${amount}`);
+    return { id, amount };
+  });
+  mocks.upsertPaymentIntentTransaction.mockImplementation(
+    async ({ amountCents }: { amountCents: number }) => {
+      mocks.calls.push(`row:${amountCents}`);
+    },
+  );
+  mocks.enqueueRecovery.mockResolvedValue({ id: "recovery-1" });
+  mocks.findRequest.mockResolvedValue(requestAt(5_000));
+});
+
+describe("the review-charge raise claim (#3402)", () => {
+  it("a run that cannot claim calls NO provider, makes the debt durable, and says `deferred`", async () => {
+    sharesRead(10_000);
+    mocks.claim.mockResolvedValue(null);
+
+    const result = await sync();
+
+    // No carried figure is asserted here: a deferral mints and raises nothing,
+    // and what a mint carries is proved where the minter runs for real
+    // (`edit-financial-review-charge.test.ts`, `INV-OPS-015`).
+    expect(result).toMatchObject({
+      outcome: "deferred",
+      paymentIntentId: null,
+      totalCents: 10_000,
+    });
+    expect(mocks.updatePaymentIntentAmount).not.toHaveBeenCalled();
+    expect(mocks.reissue).not.toHaveBeenCalled();
+    expect(mocks.mint).not.toHaveBeenCalled();
+    expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+    expect(mocks.release).not.toHaveBeenCalled();
+    expect(mocks.enqueueRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking-1",
+        paymentId: "payment-1",
+        idempotencyKey: buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod-1"),
+        hadIssuedXeroInvoice: false,
+      }),
+    );
+  });
+
+  it("records the intent under the claim, THEN calls Stripe, THEN writes the row from Stripe's answer, THEN releases", async () => {
+    sharesRead(7_000);
+
+    const result = await sync();
+
+    expect(result).toMatchObject({ outcome: "raised", totalCents: 7_000 });
+    expect(mocks.calls).toEqual(["claim", "intent:7000", "stripe:7000", "row:7000", "release"]);
+    expect(mocks.recordIntent).toHaveBeenCalledWith(CLAIM, 7_000);
+    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentIntentId: "pi_request",
+        reason: buildEditFinancialReviewChargeReason("mod-1"),
+      }),
+    );
+  });
+
+  it("the holder looks again AFTER releasing, and raises for a share that committed while it held the claim", async () => {
+    // Pass 1 sees $60 (before the claim and under it); the read after release
+    // sees B's share at $100. Pass 2 raises for it.
+    const reads = [6_000, 6_000, 10_000];
+    mocks.sumShares.mockImplementation(async () => {
+      const total = reads.shift() ?? 10_000;
+      mocks.calls.push(`read:${total}`);
+      return total;
+    });
+    mocks.findRequest
+      .mockResolvedValueOnce(requestAt(5_000))
+      .mockResolvedValueOnce(requestAt(6_000));
+
+    const result = await sync();
+
+    expect(result).toMatchObject({ outcome: "raised", totalCents: 10_000 });
+    // The read that finds B's share comes AFTER the release - B committed
+    // before its own claim attempt, which was before that release.
+    expect(mocks.calls).toEqual([
+      "read:6000", "claim", "read:6000", "intent:6000", "stripe:6000", "row:6000", "release",
+      "read:10000",
+      "read:10000", "claim", "read:10000", "intent:10000", "stripe:10000", "row:10000", "release",
+      "read:10000",
+    ]);
+    expect(mocks.enqueueRecovery).not.toHaveBeenCalled();
+  });
+
+  it("a raise Stripe REFUSES writes nothing to the row, still releases, and throws for the caller to make durable", async () => {
+    sharesRead(7_000);
+    mocks.updatePaymentIntentAmount.mockRejectedValue(new Error("amount could not be updated"));
+
+    await expect(sync()).rejects.toThrow("amount could not be updated");
+
+    expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+    expect(mocks.release).toHaveBeenCalledWith(CLAIM);
+  });
+
+  it("a run whose lease was taken over before the call makes NO provider call and defers", async () => {
+    sharesRead(7_000);
+    mocks.recordIntent.mockResolvedValue(false);
+
+    const result = await sync();
+
+    expect(result.outcome).toBe("deferred");
+    expect(mocks.reissue).not.toHaveBeenCalled();
+    expect(mocks.updatePaymentIntentAmount).not.toHaveBeenCalled();
+    expect(mocks.enqueueRecovery).toHaveBeenCalledTimes(1);
+  });
+
+  it("the FIRST mint is under the claim too, and a lost lease mints nothing", async () => {
+    sharesRead(7_000);
+    mocks.findRequest.mockResolvedValue(null);
+    mocks.paymentFindUnique.mockResolvedValue({
+      id: "payment-1",
+      status: PaymentStatus.SUCCEEDED,
+      amountCents: 20_000,
+      refundedAmountCents: 0,
+      source: "STRIPE",
+      stripeCustomerId: null,
+      additionalAmountCents: 0,
+      additionalPaymentStatus: null,
+    });
+    mocks.recordIntent.mockResolvedValue(false);
+
+    await expect(sync()).resolves.toMatchObject({ outcome: "deferred" });
+    expect(mocks.mint).not.toHaveBeenCalled();
+
+    mocks.recordIntent.mockImplementation(async (_claim: unknown, amount: number) => {
+      mocks.calls.push(`intent:${amount}`);
+      return true;
+    });
+    mocks.mint.mockImplementation(async () => {
+      mocks.calls.push("mint");
+      return { additionalPaymentIntentId: "pi_minted" };
+    });
+    mocks.calls.length = 0;
+
+    await expect(sync()).resolves.toMatchObject({ outcome: "raised", paymentIntentId: "pi_minted" });
+    expect(mocks.calls).toEqual(["claim", "intent:7000", "mint", "release"]);
+  });
+
+  it("nothing owed claims nothing", async () => {
+    sharesRead(0);
+
+    await expect(sync()).resolves.toMatchObject({ outcome: "nothing-owed" });
+    expect(mocks.claim).not.toHaveBeenCalled();
+  });
+
+  it("an exact replay claims, changes nothing at Stripe, and releases", async () => {
+    sharesRead(5_000);
+
+    await expect(sync()).resolves.toMatchObject({ outcome: "raised", totalCents: 5_000 });
+    expect(mocks.calls).toEqual(["claim", "release"]);
+  });
+
+  it("shares that keep arriving faster than it can raise are handed to the recovery row after three passes", async () => {
+    let total = 6_000;
+    mocks.sumShares.mockImplementation(async () => {
+      total += 1_000;
+      return total;
+    });
+    mocks.findRequest.mockImplementation(async () => requestAt(5_000));
+
+    const result = await sync();
+
+    expect(mocks.claim).toHaveBeenCalledTimes(3);
+    expect(mocks.release).toHaveBeenCalledTimes(3);
+    expect(result.outcome).toBe("deferred");
+    expect(mocks.enqueueRecovery).toHaveBeenCalledTimes(1);
+  });
+
+  it("the row records the amount STRIPE answered, and a short answer is raised again", async () => {
+    sharesRead(7_000);
+    mocks.updatePaymentIntentAmount
+      .mockImplementationOnce(async (id: string) => {
+        mocks.calls.push("stripe:short");
+        return { id, amount: 6_500 };
+      });
+    mocks.findRequest
+      .mockResolvedValueOnce(requestAt(5_000))
+      .mockResolvedValueOnce(requestAt(6_500));
+
+    const result = await sync();
+
+    expect(mocks.calls.slice(0, 4)).toEqual(["claim", "intent:7000", "stripe:short", "row:6500"]);
+    expect(result).toMatchObject({ outcome: "raised", totalCents: 7_000 });
+  });
+
+  it("a release that fails is logged, never thrown over a raise that succeeded", async () => {
+    sharesRead(7_000);
+    mocks.release.mockRejectedValue(new Error("connection reset"));
+
+    await expect(sync()).resolves.toMatchObject({ outcome: "raised", totalCents: 7_000 });
+  });
+});
