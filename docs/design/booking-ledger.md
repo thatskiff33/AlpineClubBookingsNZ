@@ -370,8 +370,12 @@ refunds — or, while a re-base declines, that figure plus the stand-ins. What i
 does not settle: a share that differs from the re-price's movement (a fee kept
 back, a goodwill figure, a share on a closure that moved nothing) leaves
 `owed(b)` equal to the booking's figures and not to the share, exactly as an
-unparked removal with a policy-retained amount does today. Naming what the club
-keeps is #3611's owner decision, not this line's.
+unparked removal with a policy-retained amount does today. A CHARGE share the
+price does not carry also leaves its pending ask above `max(0, owed(b))`, so
+§6's `additionalAmountCents` identity does not hold until it is captured or
+withdrawn; #3583's census classifies that booking as `retained`, not as a
+disagreement. Naming what the club keeps is #3611's owner decision, not this
+line's.
 
 **The ask is the one place today's shape survives.** `additionalAmountCents`
 is retired (it is `max(0, owed(b))`), but the `ADDITIONAL` transaction row
