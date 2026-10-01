@@ -1,9 +1,11 @@
 /**
- * A cancellation's charge lines (#3611): the stay reversed, what the policy
- * keeps posted as one CANCELLATION_FEE, and — for every fixture — `owed(b)` is
+ * A cancellation's lines (#3611, design §5.1): the stay, the live stand-ins and
+ * — where the club kept less than them — the change fees reversed, and what the
+ * club keeps posted as one CANCELLATION_FEE. For every fixture, `owed(b)` is
  * zero once the refund, credit or hand-back that follows has posted its own
- * settlement line (design §5.2). The kept figure is computed here exactly as the
- * paid cancel path computes it, through the policy's own functions.
+ * settlement line (§5.2). The kept figure comes from `paidCancellationMoney`,
+ * the paid cancel path's own call, on the policy's real functions; the matrix
+ * covers each review-share direction against each route its money moved by.
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -12,21 +14,15 @@ const log = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }))
 vi.mock("@/lib/logger", () => ({ default: log }));
 
 import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
-import {
-  cancellationKeptCents,
-  planCancellationChargeLines,
-} from "@/lib/booking-ledger-cancellation-posting";
+import { planCancellationChargeLines } from "@/lib/booking-ledger-cancellation-posting";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
+import { planAgreedAdjustmentLine } from "@/lib/booking-ledger-modification-posting";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { buildBookingLedgerRows, type BookingLedgerPosting } from "@/lib/booking-ledger-write";
 import type { ModificationPricingSide } from "@/lib/booking-modification-lines";
-import { cancelRefundableBaseCents } from "@/lib/booking-payment-state";
-import {
-  calculateAppliedCreditRestore,
-  calculateRefundAmount,
-  type CancellationRule,
-} from "@/lib/policies/cancellation";
+import { paidCancellationMoney } from "@/lib/paid-cancellation-money";
+import type { CancellationRule } from "@/lib/policies/cancellation";
 
 const D1 = new Date("2026-08-01T00:00:00.000Z");
 const D2 = new Date("2026-08-02T00:00:00.000Z");
@@ -114,7 +110,7 @@ const FIFTY: CancellationRule[] = [
   { daysBeforeStay: 0, refundPercentage: 0 },
 ];
 
-/** The paid cancel path's own arithmetic (`booking-cancel.ts`), on one payment. */
+/** The paid cancel path's own call (`booking-cancel.ts`), on one payment. */
 function paidCancel(payment: {
   amountCents: number;
   refundedAmountCents?: number;
@@ -123,57 +119,54 @@ function paidCancel(payment: {
   finalPriceCents: number;
   days: number;
   refundMethod: "card" | "credit";
+  policy?: CancellationRule[];
 }) {
-  const refundableBaseCents = cancelRefundableBaseCents({
-    amountCents: payment.amountCents,
-    refundedAmountCents: payment.refundedAmountCents ?? 0,
+  const money = paidCancellationMoney({
+    payment: {
+      amountCents: payment.amountCents,
+      refundedAmountCents: payment.refundedAmountCents ?? 0,
+      changeFeeCents: payment.changeFeeCents,
+      creditAppliedCents: payment.creditAppliedCents,
+    },
     finalPriceCents: payment.finalPriceCents,
-    changeFeeCents: payment.changeFeeCents,
+    appliedCreditCents: payment.creditAppliedCents,
+    restoresToMemberLedger: true,
+    days: payment.days,
+    policy: payment.policy ?? FIFTY,
+    refundMethod: payment.refundMethod,
   });
-  const { creditRestoredCents } = calculateAppliedCreditRestore(
-    payment.creditAppliedCents,
-    refundableBaseCents,
-    payment.days,
-    FIFTY,
-  );
-  const { refundAmountCents } = calculateRefundAmount(refundableBaseCents, payment.days, FIFTY, payment.refundMethod);
-  const keptCents = cancellationKeptCents({
-    refundableBaseCents,
-    refundAmountCents,
-    creditAppliedCents: payment.creditAppliedCents,
-    creditRestoredCents,
-  });
-  return { refundAmountCents, creditRestoredCents, keptCents };
+  return {
+    refundAmountCents: money.refundAmountCents,
+    creditRestoredCents: money.creditRestoredCents,
+    keptCents: money.ledgerKeptCents,
+  };
 }
 
 async function cancel(book: ReturnType<typeof ledger>, keptCents: number): Promise<void> {
   await postCancellationLedgerLines({ store: book.store, bookingId: "b1", lodgeId: "l1", keptCents, site: "test" });
 }
 
-describe("cancellationKeptCents", () => {
-  it("is the unrefunded part of the tiered slice plus the unrestored part of the applied credit", () => {
-    expect(
-      cancellationKeptCents({ refundableBaseCents: 15_000, refundAmountCents: 5_500, creditAppliedCents: 5_000, creditRestoredCents: 2_500 }),
-    ).toBe(9_500 + 2_500);
-  });
-});
+function chargeLinesOf(book: ReturnType<typeof ledger>) {
+  return book.rows
+    .filter((r) => ["GUEST_NIGHT", "PROMOTION", "CHANGE_FEE"].includes(r.kind))
+    .map((r) => ({ ...r, reversesLineId: r.reversesLineId ?? null })) as never;
+}
+
+const changeFeeLine = (cents: number, modId: string) =>
+  buildBookingLedgerRows([
+    { bookingId: "b1", lodgeId: "l1", side: "CHARGE", kind: "CHANGE_FEE", sign: 1, quantity: 1, unitCents: cents, anchorKind: "MODIFICATION", anchorId: modId, narration: "Change fee", postingKey: `modification:${modId}:change-fee` },
+  ]);
 
 describe("planCancellationChargeLines", () => {
   it("reverses every live night and promotion line and posts one fee, all anchored on the cancellation", () => {
     const book = ledger();
     confirm(book, -2_000);
-    const plan = planCancellationChargeLines({
-      bookingId: "b1",
-      lodgeId: "l1",
-      keptCents: 9_000,
-      postedLines: book.rows.map((r) => ({ ...r, reversesLineId: r.reversesLineId ?? null })) as never,
-    });
+    const plan = planCancellationChargeLines({ bookingId: "b1", lodgeId: "l1", keptCents: 9_000, chargeLines: chargeLinesOf(book), adjustmentLines: [] });
     expect(plan.kind).toBe("lines");
     if (plan.kind !== "lines") return;
     expect(plan.postings.filter((p) => p.reversesLineId)).toHaveLength(5);
     expect(new Set(plan.postings.map((p) => p.anchorKind))).toEqual(new Set(["CANCELLATION"]));
-    const fee = plan.postings.find((p) => p.kind === "CANCELLATION_FEE");
-    expect(fee).toMatchObject({
+    expect(plan.postings.find((p) => p.kind === "CANCELLATION_FEE")).toMatchObject({
       side: "CHARGE",
       sign: 1,
       unitCents: 9_000,
@@ -184,13 +177,26 @@ describe("planCancellationChargeLines", () => {
     expect(plan.postings.filter((p) => p.reversesLineId).every((p) => p.postingKey === `reversal:${p.reversesLineId}`)).toBe(true);
   });
 
+  it("keeps a change fee the kept figure covers, and takes back one it does not", () => {
+    const book = ledger();
+    book.insert(changeFeeLine(1_500, "mod-1"));
+    const plan = (keptCents: number) =>
+      planCancellationChargeLines({ bookingId: "b1", lodgeId: "l1", keptCents, chargeLines: chargeLinesOf(book), adjustmentLines: [] });
+    expect(plan(1_500)).toMatchObject({ cancellationFeeCents: 0, changeFeesReversed: false, postings: [] });
+    expect(plan(1_499)).toMatchObject({ cancellationFeeCents: 1_499, changeFeesReversed: true });
+  });
+
   it("posts no fee when the club keeps nothing, and nothing at all for a negative kept figure", () => {
-    expect(
-      planCancellationChargeLines({ bookingId: "b1", lodgeId: "l1", keptCents: 0, postedLines: [] }),
-    ).toEqual({ kind: "lines", postings: [] });
-    expect(
-      planCancellationChargeLines({ bookingId: "b1", lodgeId: "l1", keptCents: -1, postedLines: [] }),
-    ).toEqual({ kind: "none", reason: "INVALID_KEPT_AMOUNT" });
+    expect(planCancellationChargeLines({ bookingId: "b1", lodgeId: "l1", keptCents: 0, chargeLines: [], adjustmentLines: [] })).toEqual({
+      kind: "lines",
+      postings: [],
+      cancellationFeeCents: 0,
+      changeFeesReversed: false,
+    });
+    expect(planCancellationChargeLines({ bookingId: "b1", lodgeId: "l1", keptCents: -1, chargeLines: [], adjustmentLines: [] })).toEqual({
+      kind: "none",
+      reason: "INVALID_KEPT_AMOUNT",
+    });
   });
 });
 
@@ -263,7 +269,7 @@ describe("postCancellationLedgerLines: owed(b) is zero once the settlement lines
     expect(owed(book.rows)).toBe(0);
   });
 
-  it("AFTER AN EDIT: the edit's re-post is reversed, never the line it already reversed; its change fee stays, as the policy keeps it", async () => {
+  it("AFTER AN EDIT: the edit's re-post is reversed, never the line it already reversed; its change fee stays, and the fee is what was kept beyond it", async () => {
     const book = ledger();
     confirm(book);
     // Edit: g1's second night repriced $50 -> $60, with a $15 change fee; the member pays both.
@@ -295,13 +301,27 @@ describe("postCancellationLedgerLines: owed(b) is zero once the settlement lines
     await cancel(book, r.keptCents);
     book.insert(cardRefund(r.refundAmountCents));
 
-    // Every line reversed at most once, and the edit's repost is among them.
     const targets = book.rows.flatMap((row) => (row.reversesLineId ? [row.reversesLineId] : []));
     expect(new Set(targets).size).toBe(targets.length);
     expect(targets).toContain("line:modification:mod-1:night:g1:2026-08-02");
-    // One original line, one edit reversal, one cancellation reversal of the repost.
     expect(book.rows.filter((row) => row.kind === "GUEST_NIGHT")).toHaveLength(4 + 2 + 4);
-    expect(book.rows.find((row) => row.kind === "CHANGE_FEE")).toBeDefined();
+    expect(book.rows.filter((row) => row.kind === "CHANGE_FEE")).toHaveLength(1);
+    expect(book.rows.find((row) => row.kind === "CANCELLATION_FEE")?.amountCents).toBe(r.keptCents - 1_500);
+    expect(owed(book.rows)).toBe(0);
+  });
+
+  it("F3 — KEPT BELOW THE CHANGE FEE: $200 stay, $150 credit + $50 card, a $100 change fee never paid, 100% tier: the change fee is reversed and the fee is the $50 kept", async () => {
+    const book = ledger();
+    confirm(book);
+    book.insert(capture(5_000));
+    book.insert(creditApplied(15_000));
+    book.insert(changeFeeLine(10_000, "mod-f3"));
+    const r = paidCancel({ amountCents: 5_000, creditAppliedCents: 15_000, changeFeeCents: 10_000, finalPriceCents: 20_000, days: 10, refundMethod: "card", policy: [{ daysBeforeStay: 0, refundPercentage: 100 }] });
+    expect(r).toEqual({ refundAmountCents: 0, creditRestoredCents: 15_000, keptCents: 5_000 });
+    await cancel(book, r.keptCents);
+    book.insert(creditIssued(r.creditRestoredCents, "credit:restore"));
+    expect(book.rows.some((row) => row.kind === "CHANGE_FEE" && row.reversesLineId === "line:modification:mod-f3:change-fee")).toBe(true);
+    expect(book.rows.find((row) => row.kind === "CANCELLATION_FEE")?.amountCents).toBe(5_000);
     expect(owed(book.rows)).toBe(0);
   });
 
@@ -315,10 +335,82 @@ describe("postCancellationLedgerLines: owed(b) is zero once the settlement lines
   });
 });
 
-describe("postCancellationLedgerLines: what posts nothing", () => {
+/**
+ * F1: a review share whose money the charge lines did not carry stands on the
+ * ledger as a live AGREED_ADJUSTMENT (§5.3). Every refund route with a captured
+ * payment raises the mirror's refunded total by the share exactly as it moves
+ * the ledger (the account-credit route through its own allocation), and a
+ * captured charge share lands in `amountCents`; so reversing the stand-in and
+ * keeping what `paidCancellationMoney` says zeroes every combination.
+ */
+describe("a live review-share stand-in at cancellation (review F1): owed(b) is zero for every direction and route", () => {
+  const SHARE = 3_000;
+  const standIn = (direction: "REFUND_TO_MEMBER" | "CHARGE_TO_MEMBER") =>
+    buildBookingLedgerRows([
+      planAgreedAdjustmentLine({ bookingId: "b1", lodgeId: "l1", manualRefundTaskId: "task-share", direction, amountCents: SHARE, note: "share", officerMemberId: "officer" }),
+    ]);
+  const shareRefund = {
+    card: () => settlement({ kind: "CARD_REFUND", sign: -1, unitCents: SHARE, anchorKind: "PAYMENT_REFUND", anchorId: "r-share", settlementMethod: "CARD", narration: "Share", postingKey: "refund:r-share" }),
+    "hand-back": () => settlement({ kind: "BANK_REFUND", sign: -1, unitCents: SHARE, anchorKind: "REVIEW_TASK", anchorId: "task-share", settlementMethod: "INTERNET_BANKING", narration: "Share", postingKey: "handback:task-share" }),
+    "account credit": () => settlement({ kind: "CREDIT_ISSUED", sign: -1, unitCents: SHARE, anchorKind: "MEMBER_CREDIT", anchorId: "c-share", settlementMethod: "ACCOUNT_CREDIT", narration: "Share", postingKey: "credit:c-share" }),
+  };
+
+  for (const [route, post] of Object.entries(shareRefund)) {
+    for (const refundMethod of ["card", "credit"] as const) {
+      it(`REFUND_TO_MEMBER, share returned by ${route}, cancellation refunded by ${refundMethod}`, async () => {
+        const book = ledger();
+        confirm(book);
+        book.insert(route === "hand-back" ? cash(20_000) : capture(20_000));
+        book.insert(standIn("REFUND_TO_MEMBER"));
+        book.insert(post());
+        const r = paidCancel({ amountCents: 20_000, refundedAmountCents: SHARE, creditAppliedCents: 0, changeFeeCents: 0, finalPriceCents: 20_000, days: 10, refundMethod });
+        await cancel(book, r.keptCents);
+        const cancelRefund =
+          refundMethod === "credit"
+            ? creditIssued(r.refundAmountCents, "credit:cancel")
+            : route === "hand-back"
+              ? handBack(r.refundAmountCents)
+              : cardRefund(r.refundAmountCents);
+        book.insert(cancelRefund);
+        expect(book.rows.some((row) => row.kind === "AGREED_ADJUSTMENT" && row.reversesLineId === "line:agreed-adjustment:task-share")).toBe(true);
+        expect(owed(book.rows)).toBe(0);
+      });
+    }
+  }
+
+  it("CHARGE_TO_MEMBER, ask unpaid at the cancel (the cancel fails it)", async () => {
+    const book = ledger();
+    confirm(book);
+    book.insert(capture(20_000));
+    book.insert(standIn("CHARGE_TO_MEMBER"));
+    const r = paidCancel({ amountCents: 20_000, creditAppliedCents: 0, changeFeeCents: 0, finalPriceCents: 20_000, days: 10, refundMethod: "card" });
+    await cancel(book, r.keptCents);
+    book.insert(cardRefund(r.refundAmountCents));
+    expect(owed(book.rows)).toBe(0);
+  });
+
+  const askPaid = {
+    card: () => settlement({ kind: "CARD_CAPTURE", sign: 1, unitCents: SHARE, anchorKind: "PAYMENT_TRANSACTION", anchorId: "t-ask", settlementMethod: "CARD", narration: "Ask", postingKey: "capture:t-ask" }),
+    "internet banking": () => settlement({ kind: "BANK_RECEIPT", sign: 1, unitCents: SHARE, anchorKind: "PAYMENT_TRANSACTION", anchorId: "t-ask", settlementMethod: "INTERNET_BANKING", narration: "Ask", postingKey: "capture:t-ask" }),
+  };
+  for (const [paidBy, line] of Object.entries(askPaid)) {
+    it(`CHARGE_TO_MEMBER, ask paid by ${paidBy}: the refundable base leaves the share out, so the club keeps it`, async () => {
+      const book = ledger();
+      confirm(book);
+      book.insert(capture(20_000));
+      book.insert(standIn("CHARGE_TO_MEMBER"));
+      book.insert(line());
+      const r = paidCancel({ amountCents: 20_000 + SHARE, creditAppliedCents: 0, changeFeeCents: 0, finalPriceCents: 20_000, days: 10, refundMethod: "card" });
+      await cancel(book, r.keptCents);
+      book.insert(cardRefund(r.refundAmountCents));
+      expect(owed(book.rows)).toBe(0);
+    });
+  }
+});
+
+describe("postCancellationLedgerLines: what keeps nothing", () => {
   it("a booking cancelled before it was confirmed on the ledger posts nothing", async () => {
-    // A kept figure the policy computed, so only the confirmation fence can
-    // stop a fee posting here.
+    // A kept figure offered, so only the confirmation fence can stop a fee.
     const book = ledger();
     await cancel(book, 5_000);
     expect(book.rows).toEqual([]);
@@ -336,7 +428,16 @@ describe("postCancellationLedgerLines: what posts nothing", () => {
     expect(owed(book.rows)).toBe(0);
   });
 
-  it("a negative kept figure posts nothing at all, not even the reversals, and says so", async () => {
+  it("F2 — UNPAID with a live change fee: nothing kept, so the change fee is reversed with the stay", async () => {
+    const book = ledger();
+    confirm(book);
+    book.insert(changeFeeLine(1_500, "mod-f2"));
+    await cancel(book, 0);
+    expect(book.rows.some((row) => row.reversesLineId === "line:modification:mod-f2:change-fee")).toBe(true);
+    expect(owed(book.rows)).toBe(0);
+  });
+
+  it("a negative kept figure posts nothing at all and says so", async () => {
     const book = ledger();
     confirm(book);
     const before = book.rows.length;

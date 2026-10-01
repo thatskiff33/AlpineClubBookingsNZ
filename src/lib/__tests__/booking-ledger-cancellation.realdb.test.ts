@@ -73,6 +73,7 @@ export function assertSafeCancellationLedgerRaceDbUrl(url: string): void {
 let prisma: PrismaClient;
 let cancellationSync: typeof import("@/lib/booking-ledger-cancellation-sync");
 let cancellationPosting: typeof import("@/lib/booking-ledger-cancellation-posting");
+let paidMoney: typeof import("@/lib/paid-cancellation-money");
 let modificationSync: typeof import("@/lib/booking-ledger-modification-sync");
 let confirmation: typeof import("@/lib/booking-ledger-confirmation-posting");
 let write: typeof import("@/lib/booking-ledger-write");
@@ -198,6 +199,7 @@ function reversedTwice(all: Awaited<ReturnType<typeof lines>>): boolean {
     ({ prisma } = await import("@/lib/prisma"));
     cancellationSync = await import("@/lib/booking-ledger-cancellation-sync");
     cancellationPosting = await import("@/lib/booking-ledger-cancellation-posting");
+    paidMoney = await import("@/lib/paid-cancellation-money");
     modificationSync = await import("@/lib/booking-ledger-modification-sync");
     confirmation = await import("@/lib/booking-ledger-confirmation-posting");
     write = await import("@/lib/booking-ledger-write");
@@ -258,7 +260,7 @@ function reversedTwice(all: Awaited<ReturnType<typeof lines>>): boolean {
     expect(repost).toMatchObject({ kind: "GUEST_NIGHT", amountCents: 6_000 });
 
     // $210 paid; 50% is $105, less the $20 fee: $85 back, $125 kept.
-    const keptCents = cancellationPosting.cancellationKeptCents({ refundableBaseCents: 21_000, refundAmountCents: 8_500, creditAppliedCents: 0, creditRestoredCents: 0 });
+    const keptCents = paidMoney.cancellationKeptCents({ retainedAmountCents: 21_000 - 8_500, appliedCreditCents: 0, creditRestoredCents: 0 });
     const cancel = () =>
       prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;

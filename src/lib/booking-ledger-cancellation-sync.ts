@@ -18,7 +18,11 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import { planCancellationChargeLines } from "@/lib/booking-ledger-cancellation-posting";
-import { bookingHasConfirmationLines, findPostedChargeLines } from "@/lib/booking-ledger-read";
+import {
+  bookingHasConfirmationLines,
+  findPostedAdjustmentLines,
+  findPostedCancellableChargeLines,
+} from "@/lib/booking-ledger-read";
 import { buildBookingLedgerRows, writeBookingLedgerRows } from "@/lib/booking-ledger-write";
 import logger from "@/lib/logger";
 
@@ -33,24 +37,35 @@ export async function postCancellationLedgerLines({
   bookingId: string;
   lodgeId: string;
   /**
-   * What the club keeps under the policy, from the cancel path's own figures
-   * (`cancellationKeptCents`); 0 for an unpaid cancellation or a hold release.
+   * What the club keeps of the booking's money, change fees included: the
+   * paid path's `ledgerKeptCents` (`paid-cancellation-money.ts`); 0 for every
+   * path that keeps nothing (design §5.1).
    */
   keptCents: number;
   /** Which cancel path posted, for the log line a gap leaves. */
   site: string;
 }): Promise<void> {
   if (!(await bookingHasConfirmationLines(store, bookingId))) return;
-  const postedLines = await findPostedChargeLines(store, bookingId);
+  const chargeLines = await findPostedCancellableChargeLines(store, bookingId);
+  const adjustmentLines = await findPostedAdjustmentLines(store, bookingId);
   let rows: ReturnType<typeof buildBookingLedgerRows> = [];
   try {
-    const plan = planCancellationChargeLines({ bookingId, lodgeId, keptCents, postedLines });
+    const plan = planCancellationChargeLines({ bookingId, lodgeId, keptCents, chargeLines, adjustmentLines });
     if (plan.kind === "none") {
       logger.warn(
         { bookingId, site, reason: plan.reason, keptCents },
         "Booking ledger: a cancellation's lines were not posted; the cancellation stands and the gap is the census's to report (#3611)",
       );
       return;
+    }
+    if (plan.changeFeesReversed && keptCents > 0) {
+      // Not a gap: the club kept less than the change fees it charged (a
+      // payment that never covered them), so §5.1 takes them back and the fee
+      // carries what was kept. Said out loud because it is rare.
+      logger.info(
+        { bookingId, site, keptCents, cancellationFeeCents: plan.cancellationFeeCents },
+        "Booking ledger: a cancellation kept less than its change fees; they were reversed and the fee carries what was kept (#3611)",
+      );
     }
     rows = buildBookingLedgerRows(plan.postings);
   } catch (error) {
