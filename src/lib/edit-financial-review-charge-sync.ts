@@ -19,6 +19,7 @@ import {
   releaseEditReviewChargeRaise,
   type EditReviewChargeRaiseClaim,
 } from "@/lib/edit-financial-review-charge-raise-claim";
+import { isEditFinancialReviewChargeRecoveryDead } from "@/lib/edit-financial-review-charge-recovery";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { enqueueEditFinancialReviewChargeRecovery } from "@/lib/payment-recovery";
@@ -175,7 +176,11 @@ export async function syncEditFinancialReviewChargeRequest(
       // it over, so this run's absolute amount may have landed AFTER the
       // successor's - at Stripe, on the row, or both. Nothing here can tell
       // which; what it must not do is report `raised`. The recovery row
-      // re-derives and re-raises against what is there now.
+      // re-derives and compares against the REQUEST ROW, not against Stripe: a
+      // row that already covers the total gets no provider call. So if this
+      // run's smaller Stripe update landed last while the successor's row write
+      // did, the row says covered and Stripe asks for less - the late-write limit
+      // `docs/CONCURRENCY_AND_LOCKING.md` states, which nothing here prevents.
       logger.error(
         { bookingId, bookingModificationId, ...raisePass.providerCall, outcome: result.outcome },
         "Edit financial review charge raise lost its claim during the provider call - deferring to the recovery row instead of reporting it raised",
@@ -185,10 +190,22 @@ export async function syncEditFinancialReviewChargeRequest(
         await sumEditReviewChargeSharesCents({ bookingId, bookingModificationId }),
       );
     }
-    // `already-paid` looks again too: its audit row recorded the total THIS pass
-    // read, and a share that deferred to this run meanwhile is otherwise traced
-    // by nobody (the loser no longer writes its own `ask-closed` record).
     if (result.outcome !== "raised" && result.outcome !== "already-paid") return result;
+    // `already-paid` looks again ONLY when the recovery row is dead. A share that
+    // deferred to this run armed that row (or will: a deferral that has not yet
+    // enqueued finds it absent or closed and reopens it), and the replay writes
+    // that share's `ask-closed` record - so looking here as well wrote it twice,
+    // and each record tells an officer to collect the difference by hand. A
+    // terminal FAILED row is never re-armed (`INV-PAY-057`), so then nobody but
+    // this run would trace the deferred share, and it looks again.
+    if (
+      result.outcome === "already-paid" &&
+      !(await isEditFinancialReviewChargeRecoveryDead(
+        buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(bookingModificationId),
+      ))
+    ) {
+      return result;
+    }
     // AFTER the release, never before: a run that lost to this one committed its
     // share before its claim attempt, so this read sees it, and a share settled
     // after the release meets an unclaimed request of its own.
@@ -262,6 +279,15 @@ async function deferEditReviewChargeRaise(
   return { outcome: "deferred", paymentIntentId: null, totalCents, carriedCents: 0 };
 }
 
+/** After a raised-amount write matched nothing: is the same request now paid? */
+async function isRequestNowCaptured(
+  { paymentId, bookingModificationId }: EditReviewChargeSyncRequest,
+  paymentIntentId: string,
+): Promise<boolean> {
+  const now = await findEditReviewChargeRequest({ paymentId, bookingModificationId });
+  return now?.stripePaymentIntentId === paymentIntentId && isCapturedTransactionStatus(now.status);
+}
+
 /**
  * The raise itself, run only while holding the edit's claim. Every provider call
  * below is preceded by recording its intent under the claim's exact token, which
@@ -299,6 +325,24 @@ async function syncEditReviewChargeRequestUnderClaim(
     if (isCapturedTransactionStatus(existing.status)) {
       // Paid while this was in flight. The pre-claim refusal is the ordinary
       // guard; this is the race behind it, and it must not restate a paid ask.
+      const paidShareCents = existing.amountCents - existing.carriedAskCents;
+      if (paidShareCents >= totalCents) {
+        // The paid request already covers every settled share: nothing is
+        // uncollected, so no audit row. Routine since the re-arm - a replay that
+        // a deferral reopened often finds the holder raised and the member paid -
+        // and an "ask-closed, $0.00 not added" record would send an officer
+        // looking for money nobody owes.
+        return {
+          result: {
+            outcome: "already-paid",
+            paymentIntentId: existing.stripePaymentIntentId,
+            totalCents: paidShareCents,
+            carriedCents: existing.carriedAskCents,
+          },
+          coveredOwedCents: totalCents,
+          providerCall: null,
+        };
+      }
       //
       // #3170 fix round: a log line is not a queue. An officer has to be able to
       // FIND a share that was settled into a request the member had already
@@ -406,6 +450,17 @@ async function syncEditReviewChargeRequestUnderClaim(
     // total only if Stripe answered short, and then the caller's post-release
     // re-derivation raises again (or, if it was paid, records the rest).
     const coveredOwedCents = provider.amount - raised.carriedCents;
+    if (!written && !(await isRequestNowCaptured(request, existing.stripePaymentIntentId))) {
+      // Not captured, so the row stopped being the live ask in that window - an
+      // officer withdrew it (#3528). The raise landed on a retired intent; the
+      // recovery row re-derives against what is live now, exactly as a share
+      // settling a moment after the withdrawal would.
+      logger.warn(
+        { bookingId, bookingModificationId, ...providerCall },
+        "Edit financial review charge request was withdrawn as it was raised - deferring to the recovery row",
+      );
+      return { result: await deferEditReviewChargeRaise(request, totalCents), coveredOwedCents: 0, providerCall };
+    }
     if (!written) {
       // Paid at the NEW amount (Stripe refuses to update a captured intent), so
       // nothing this pass derived is uncollected; reported as `already-paid` so

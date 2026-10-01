@@ -5,6 +5,7 @@ import {
 
 import type { EditReviewChargeSyncOutcome } from "@/lib/edit-financial-review-charge-sync";
 import logger from "@/lib/logger";
+import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -55,6 +56,18 @@ export const EDIT_REVIEW_CHARGE_OUTCOME_CLOSES_REPLAY: Record<EditReviewChargeSy
  */
 export async function rearmEditFinancialReviewChargeRecovery(idempotencyKey: string) {
   const now = new Date();
+  // ORDER MATTERS: the PROCESSING move FIRST, then the SUCCEEDED reopen. Against
+  // a running replay's fenced close C, every interleaving leaves the row armed:
+  //   * move, C, reopen - C's fence misses, so C hands the row back to PENDING;
+  //   * C, move, reopen - the move matches nothing, the reopen catches C's close;
+  //   * move, reopen, C - C's fence misses (the reopen matched nothing).
+  // The other order loses one: reopen (row still PROCESSING, no match), then C
+  // closes on an unmoved fence, then the move finds no PROCESSING row - left
+  // SUCCEEDED with this share never asked for.
+  await prisma.paymentRecoveryOperation.updateMany({
+    where: { idempotencyKey, status: PaymentRecoveryOperationStatus.PROCESSING },
+    data: { nextRetryAt: now },
+  });
   await prisma.paymentRecoveryOperation.updateMany({
     where: { idempotencyKey, status: PaymentRecoveryOperationStatus.SUCCEEDED },
     data: {
@@ -66,29 +79,56 @@ export async function rearmEditFinancialReviewChargeRecovery(idempotencyKey: str
       succeededAt: null,
     },
   });
-  await prisma.paymentRecoveryOperation.updateMany({
-    where: { idempotencyKey, status: PaymentRecoveryOperationStatus.PROCESSING },
-    data: { nextRetryAt: now },
-  });
 }
 
 /**
- * Close a review-charge replay, FENCED on the `nextRetryAt` it was claimed with.
+ * Whether the edit's recovery row is DEAD - terminal FAILED, so nothing will run
+ * it again and the re-arm above deliberately leaves it so. Absent, PENDING,
+ * PROCESSING, SUCCEEDED and retryable FAILED rows all answer false: each either
+ * runs again or is reopened by the deferral that needs it. The sync asks this
+ * before re-checking an `already-paid` answer, so a deferred share's "ask-closed"
+ * audit is written exactly once - by the replay, or here when no replay will come.
+ */
+export async function isEditFinancialReviewChargeRecoveryDead(
+  idempotencyKey: string,
+): Promise<boolean> {
+  const row = await prisma.paymentRecoveryOperation.findUnique({
+    where: { idempotencyKey },
+    select: { status: true, attempts: true, nextRetryAt: true },
+  });
+  return (
+    row?.status === PaymentRecoveryOperationStatus.FAILED &&
+    (row.nextRetryAt === null || row.attempts >= MAX_PAYMENT_RECOVERY_ATTEMPTS)
+  );
+}
+
+/**
+ * Close a review-charge replay, FENCED on the `nextRetryAt` it was claimed with
+ * AND on its `processingStartedAt` - the exact attempt.
  * The re-arm above moves that value on a PROCESSING row when a share is deferred
  * or refused onto this edit while the replay runs - after the replay's own last
  * re-derivation, so the replay cannot have raised for it. Closing over that
  * would lose the share; instead the row goes straight back to PENDING, due at
  * once, and the next pass raises for it. Otherwise identical to
  * `completePaymentRecoveryOperation`, whose fence (not SUCCEEDED) it keeps.
+ *
+ * THE ATTEMPT FENCE, on both writes (the stale-worker reaper's
+ * `fromProcessingStartedAt` pattern). A worker that stalls past the reaper's
+ * threshold has its row failed and re-claimed by worker B, which rewrites
+ * `processingStartedAt`. The stalled worker's late close must not mark B's row
+ * SUCCEEDED, and its hand-back must not reset B's live claim to PENDING with
+ * `attempts` zeroed - a third worker would then run the same debt alongside B,
+ * and the row would escape `MAX_PAYMENT_RECOVERY_ATTEMPTS`. Both are no-ops then.
  */
 export async function completeEditFinancialReviewChargeRecovery(
-  operation: Pick<PaymentRecoveryOperation, "id" | "nextRetryAt">,
+  operation: Pick<PaymentRecoveryOperation, "id" | "nextRetryAt" | "processingStartedAt">,
 ): Promise<void> {
   const closed = await prisma.paymentRecoveryOperation.updateMany({
     where: {
       id: operation.id,
       status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
       nextRetryAt: operation.nextRetryAt,
+      processingStartedAt: operation.processingStartedAt,
     },
     data: {
       status: PaymentRecoveryOperationStatus.SUCCEEDED,
@@ -100,7 +140,11 @@ export async function completeEditFinancialReviewChargeRecovery(
   });
   if (closed.count === 1) return;
   const handedBack = await prisma.paymentRecoveryOperation.updateMany({
-    where: { id: operation.id, status: PaymentRecoveryOperationStatus.PROCESSING },
+    where: {
+      id: operation.id,
+      status: PaymentRecoveryOperationStatus.PROCESSING,
+      processingStartedAt: operation.processingStartedAt,
+    },
     data: {
       status: PaymentRecoveryOperationStatus.PENDING,
       attempts: 0,
@@ -112,6 +156,6 @@ export async function completeEditFinancialReviewChargeRecovery(
     { operationId: operation.id },
     handedBack.count === 1
       ? "Edit financial review charge recovery was not closed: a share was deferred onto it while it ran, so it stays open to raise for that share"
-      : "Edit financial review charge recovery completion matched no live operation (already succeeded, or deleted by a manual mark-paid reversal); nothing was resurrected",
+      : "Edit financial review charge recovery completion matched no live attempt (already succeeded, re-claimed by another worker after this one stalled, or deleted by a manual mark-paid reversal); nothing was resurrected",
   );
 }

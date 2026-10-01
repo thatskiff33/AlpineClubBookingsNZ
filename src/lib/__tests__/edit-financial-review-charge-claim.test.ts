@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   mint: vi.fn(),
   paymentFindUnique: vi.fn(),
   recordCarried: vi.fn(),
+  recoveryDead: vi.fn(),
   calls: [] as string[],
 }));
 
@@ -53,6 +54,9 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
 }));
 vi.mock("@/lib/payment-recovery", () => ({
   enqueueEditFinancialReviewChargeRecovery: (...a: unknown[]) => mocks.enqueueRecovery(...a),
+}));
+vi.mock("@/lib/edit-financial-review-charge-recovery", () => ({
+  isEditFinancialReviewChargeRecoveryDead: (...a: unknown[]) => mocks.recoveryDead(...a),
 }));
 vi.mock("@/lib/booking-modification-settlement", () => ({
   createModificationAdditionalPaymentIntent: (...a: unknown[]) => mocks.mint(...a),
@@ -130,6 +134,7 @@ beforeEach(() => {
   );
   mocks.enqueueRecovery.mockResolvedValue({ id: "recovery-1" });
   mocks.findRequest.mockResolvedValue(requestAt(5_000));
+  mocks.recoveryDead.mockResolvedValue(false);
 });
 
 describe("the review-charge raise claim (#3402)", () => {
@@ -337,8 +342,11 @@ describe("the review-charge raise claim (#3402)", () => {
 
   it("a request PAID as it was raised keeps the status the payment wrote, and reports `already-paid`", async () => {
     sharesRead(7_000);
-    // The status-fenced write matched nothing: the row is captured.
+    // The status-fenced write matched nothing; the re-read finds the row captured.
     mocks.writeRaisedAmount.mockResolvedValue(false);
+    mocks.findRequest
+      .mockResolvedValueOnce(requestAt(5_000))
+      .mockResolvedValueOnce({ ...requestAt(7_000), status: PaymentStatus.SUCCEEDED });
 
     const result = await sync();
 
@@ -349,21 +357,53 @@ describe("the review-charge raise claim (#3402)", () => {
     expect(mocks.enqueueRecovery).not.toHaveBeenCalled();
   });
 
-  it("a holder that finds the request PAID still looks again after releasing, and traces a share that deferred to it", async () => {
+  it("a holder that finds the request PAID leaves a deferred share to the armed recovery row: one trace per total, never two", async () => {
     // Pass 1 reads $60 and finds the request captured; B's $40 commits while it
-    // holds the claim (B defers). The read after release sees $100.
+    // holds the claim, and B defers - arming the recovery row, whose replay
+    // traces the $100. Looking again here as well wrote the $100 twice.
     sharesRead(6_000, 6_000, 10_000);
     mocks.findRequest.mockResolvedValue({ ...requestAt(5_000), status: PaymentStatus.SUCCEEDED });
 
     const result = await sync();
 
     expect(result.outcome).toBe("already-paid");
-    // Two traces, each of a different total: the second is the one that names
-    // B's share. Never the same total twice.
+    expect(mocks.recordUncollected.mock.calls.map(([args]) => args.derivedTotalCents)).toEqual([6_000]);
+    expect(mocks.claim).toHaveBeenCalledTimes(1);
+  });
+
+  it("when the recovery row is DEAD (terminal FAILED, never re-armed) the holder looks again and traces the deferred share itself", async () => {
+    sharesRead(6_000, 6_000, 10_000);
+    mocks.findRequest.mockResolvedValue({ ...requestAt(5_000), status: PaymentStatus.SUCCEEDED });
+    mocks.recoveryDead.mockResolvedValue(true);
+
+    await expect(sync()).resolves.toMatchObject({ outcome: "already-paid" });
     expect(mocks.recordUncollected.mock.calls.map(([args]) => args.derivedTotalCents)).toEqual([
       6_000, 10_000,
     ]);
     expect(mocks.claim).toHaveBeenCalledTimes(2);
+  });
+
+  it("a PAID request that already covers every settled share is `already-paid` with NO audit row (nothing is uncollected)", async () => {
+    // A replay a deferral reopened, after the holder raised to $100 and the
+    // member paid it: an "ask-closed, $0.00 not added" record would be noise an
+    // officer acts on.
+    sharesRead(10_000);
+    mocks.findRequest.mockResolvedValue({ ...requestAt(10_000), status: PaymentStatus.SUCCEEDED });
+
+    await expect(sync()).resolves.toMatchObject({ outcome: "already-paid", totalCents: 10_000 });
+    expect(mocks.recordUncollected).not.toHaveBeenCalled();
+    expect(mocks.updatePaymentIntentAmount).not.toHaveBeenCalled();
+  });
+
+  it("a request WITHDRAWN as it was raised is not reported paid: the run defers to the recovery row", async () => {
+    sharesRead(7_000);
+    mocks.writeRaisedAmount.mockResolvedValue(false);
+    // The re-read no longer finds a live request: an officer withdrew it (#3528).
+    mocks.findRequest.mockResolvedValueOnce(requestAt(5_000)).mockResolvedValueOnce(null);
+
+    await expect(sync()).resolves.toMatchObject({ outcome: "deferred", paymentIntentId: null });
+    expect(mocks.enqueueRecovery).toHaveBeenCalledTimes(1);
+    expect(mocks.recordUncollected).not.toHaveBeenCalled();
   });
 
   it("a PAID request with no share arriving meanwhile is traced exactly once", async () => {

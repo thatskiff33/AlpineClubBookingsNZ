@@ -700,6 +700,183 @@ let observerClient: PrismaClient;
       ).toEqual({ status: "SUCCEEDED", amountCents: 7_000 });
     });
 
+    /** The `ask-closed` audit rows written for this edit, as the totals they name. */
+    async function uncollectedTotals(): Promise<number[]> {
+      const rows = await prisma.auditLog.findMany({
+        where: { action: "booking.editFinancialReview.chargeShareUncollected", targetId: BOOKING_ID },
+        orderBy: { createdAt: "asc" },
+        select: { metadata: true },
+      });
+      return rows.map((row) => (row.metadata as { derivedTotalCents: number }).derivedTotalCents);
+    }
+
+    async function markRequestPaid() {
+      await prisma.paymentTransaction.update({
+        where: { stripePaymentIntentId: REQUEST_INTENT_ID },
+        data: { status: "SUCCEEDED" },
+      });
+    }
+
+    /**
+     * #3402 delta F3(a): a share that defers while the holder finds the request
+     * PAID is traced ONCE - by the replay of the row its deferral armed. The
+     * holder used to look again after releasing and trace it too, and each
+     * record tells an officer to collect the difference by hand.
+     */
+    it("a share deferred while the holder finds the request PAID is traced exactly once, by the replay", async () => {
+      await settleShare(5_000);
+      await seedRequestAt(5_000);
+      await markRequestPaid();
+      // The edit's recovery row, closed by an earlier replay. (It also keeps D's
+      // deferral off an INSERT, whose foreign-key check would queue behind the
+      // table lock below.)
+      await prisma.paymentRecoveryOperation.create({
+        data: {
+          type: "CREATE_ADDITIONAL_PAYMENT_INTENT",
+          status: "SUCCEEDED",
+          bookingId: BOOKING_ID,
+          paymentId: PAYMENT_ID,
+          paymentIntentId: buildRecoveryStripeKey(MODIFICATION_ID),
+          amountCents: 5_000,
+          hadIssuedXeroInvoice: false,
+          idempotencyKey: buildRecoveryKey(MODIFICATION_ID),
+          attempts: 1,
+          nextRetryAt: null,
+          succeededAt: new Date(),
+        },
+      });
+      await settleShare(1_000); // Officer A's share: the shares total $60.
+
+      // Park run A INSIDE its claimed pass: its read of the request waits on a
+      // table lock a third connection holds.
+      const holderReady = deferred<number>();
+      const releaseHolder = deferred();
+      const holder = lockHolderClient.$transaction(
+        async (tx) => {
+          await tx.$executeRaw`LOCK TABLE "PaymentTransaction" IN ACCESS EXCLUSIVE MODE`;
+          const [{ pid }] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+          holderReady.resolve(pid);
+          await releaseHolder.promise;
+        },
+        { maxWait: 5_000, timeout: 15_000 },
+      );
+      const holderPid = await holderReady.promise;
+      const runA = sync();
+      const startedAt = process.hrtime.bigint();
+      let parked = 0;
+      while (realElapsedMs(startedAt) < LOCK_POLL_TIMEOUT_MS) {
+        parked = await blockedByHolder(holderPid);
+        if (parked >= 1) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      // Officer D's share commits while A holds the claim: D defers.
+      let resultD: Awaited<ReturnType<typeof sync>> | null = null;
+      try {
+        await settleShare(4_000);
+        resultD = await sync();
+      } finally {
+        releaseHolder.resolve();
+        await holder;
+      }
+      const resultA = await runA;
+      expect(parked, "run A must be parked inside its claimed pass").toBeGreaterThanOrEqual(1);
+      expect(resultD?.outcome).toBe("deferred");
+      expect(resultA.outcome).toBe("already-paid");
+      // A traced the $60 it read; it did NOT also trace D's $100.
+      expect(await uncollectedTotals()).toEqual([6_000]);
+
+      // D's armed row replays and traces the $100 - the one record of it.
+      const row = await prisma.paymentRecoveryOperation.findUniqueOrThrow({
+        where: { idempotencyKey: buildRecoveryKey(MODIFICATION_ID) },
+      });
+      await expect(
+        recoveryModule.runPaymentRecoveryOperationNow(row.id, CLUB_FORMAT_TEST),
+      ).resolves.toBe("succeeded");
+      expect(await uncollectedTotals()).toEqual([6_000, 10_000]);
+    });
+
+    it("a replay that finds the request PAID at a figure covering every share writes NO audit row", async () => {
+      await settleShare(5_000);
+      await settleShare(5_000);
+      await seedRequestAt(10_000);
+      await markRequestPaid();
+      // The row a deferral re-armed, due now.
+      const armed = await prisma.paymentRecoveryOperation.create({
+        data: {
+          type: "CREATE_ADDITIONAL_PAYMENT_INTENT",
+          status: "PENDING",
+          bookingId: BOOKING_ID,
+          paymentId: PAYMENT_ID,
+          paymentIntentId: buildRecoveryStripeKey(MODIFICATION_ID),
+          amountCents: 10_000,
+          hadIssuedXeroInvoice: false,
+          idempotencyKey: buildRecoveryKey(MODIFICATION_ID),
+          nextRetryAt: new Date(),
+        },
+      });
+
+      await expect(
+        recoveryModule.runPaymentRecoveryOperationNow(armed.id, CLUB_FORMAT_TEST),
+      ).resolves.toBe("succeeded");
+      expect(await uncollectedTotals()).toEqual([]);
+    });
+
+    /**
+     * #3402 delta F4: the raised-amount write touches only a live ADDITIONAL row.
+     * A declined card's FAILED row is raised and KEEPS FAILED (the ledger's
+     * still-owed shape); a row an officer withdrew in the window is not raised,
+     * and the run defers rather than reporting the request paid.
+     */
+    it("a FAILED (declined) request is raised and stays FAILED; a request WITHDRAWN mid-raise is not written and the run defers", async () => {
+      await settleShare(5_000);
+      await seedRequestAt(5_000);
+      await prisma.paymentTransaction.update({
+        where: { stripePaymentIntentId: REQUEST_INTENT_ID },
+        data: { status: "FAILED" },
+      });
+      await settleShare(2_000);
+      stripeHooks.get = async (id) => ({
+        id,
+        status: "requires_payment_method",
+        currency: stripeChargeCurrency(CLUB_FORMAT_TEST),
+        amount: 5_000,
+      });
+      stripeHooks.update = async (id, amountCents) => ({ id, amount: amountCents });
+
+      await expect(sync()).resolves.toMatchObject({ outcome: "raised", totalCents: 7_000 });
+      expect(
+        await prisma.paymentTransaction.findUniqueOrThrow({
+          where: { stripePaymentIntentId: REQUEST_INTENT_ID },
+          select: { status: true, amountCents: true },
+        }),
+      ).toEqual({ status: "FAILED", amountCents: 7_000 });
+
+      // Another share; an officer withdraws the request as Stripe accepts it.
+      await settleShare(3_000);
+      stripeHooks.update = async (id, amountCents) => {
+        await prisma.paymentTransaction.update({
+          where: { stripePaymentIntentId: REQUEST_INTENT_ID },
+          data: { withdrawnAt: new Date() },
+        });
+        return { id, amount: amountCents };
+      };
+      await expect(sync()).resolves.toMatchObject({ outcome: "deferred", paymentIntentId: null });
+      expect(
+        (
+          await prisma.paymentTransaction.findUniqueOrThrow({
+            where: { stripePaymentIntentId: REQUEST_INTENT_ID },
+            select: { amountCents: true },
+          })
+        ).amountCents,
+      ).toBe(7_000);
+      expect(
+        await prisma.paymentRecoveryOperation.count({
+          where: { idempotencyKey: buildRecoveryKey(MODIFICATION_ID), status: "PENDING" },
+        }),
+      ).toBe(1);
+    });
+
     it("the database refuses a token without its claim time, and a non-positive intent", async () => {
       await expect(
         prisma.editReviewChargeRaiseClaim.create({

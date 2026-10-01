@@ -3545,7 +3545,7 @@ describe("edit-financial-review charge recovery (#3170)", () => {
    * PENDING instead of closing it over a share it never raised for.
    */
   it("hands the row back instead of closing it when a share was deferred onto it mid-replay", async () => {
-    const claimedRetryAt = chargeOperation().nextRetryAt;
+    const { nextRetryAt: claimedRetryAt, processingStartedAt: claimedAttempt } = chargeOperation();
     mockPaymentRecoveryUpdateMany.mockImplementation(
       ({ where, data }: { where?: { id?: string; nextRetryAt?: Date }; data?: { status?: string } }) =>
         Promise.resolve({
@@ -3560,11 +3560,73 @@ describe("edit-financial-review charge recovery (#3170)", () => {
       (call) => call[0] as { where?: Record<string, unknown>; data?: Record<string, unknown> },
     );
     const close = calls.find((call) => call.data?.status === "SUCCEEDED");
-    expect(close?.where).toMatchObject({ id: "recovery-review-charge", nextRetryAt: claimedRetryAt });
+    expect(close?.where).toMatchObject({
+      id: "recovery-review-charge",
+      nextRetryAt: claimedRetryAt,
+      processingStartedAt: claimedAttempt,
+    });
     const handBack = calls.find((call) => call.data?.status === "PENDING");
+    // Fenced on the exact attempt too, so it can only hand back THIS worker's claim.
     expect(handBack).toEqual({
-      where: { id: "recovery-review-charge", status: "PROCESSING" },
+      where: { id: "recovery-review-charge", status: "PROCESSING", processingStartedAt: claimedAttempt },
       data: { status: "PENDING", attempts: 0, processingStartedAt: null, lastError: null },
+    });
+  });
+
+  /**
+   * #3402: a worker that stalls past the stale-worker threshold is reaped and its
+   * row re-claimed by worker B (a new `processingStartedAt`). The stalled
+   * worker's late close and hand-back must both be no-ops on B's live claim -
+   * otherwise a third worker could run the debt alongside B, and B's `attempts`
+   * would reset past `MAX_PAYMENT_RECOVERY_ATTEMPTS`.
+   */
+  it("a stalled worker's late close and hand-back cannot touch the attempt that re-claimed the row", async () => {
+    const { nextRetryAt: stalledRetryAt, processingStartedAt: stalledAttempt } = chargeOperation();
+    // The row as worker B left it: reaped (nextRetryAt moved), re-claimed.
+    const live = {
+      status: "PROCESSING",
+      nextRetryAt: new Date("2026-05-23T00:31:00.000Z"),
+      processingStartedAt: new Date("2026-05-23T00:31:00.000Z"),
+      attempts: 2,
+    };
+    mockPaymentRecoveryUpdateMany.mockImplementation(
+      ({ where, data }: { where?: Record<string, unknown>; data?: Record<string, unknown> }) => {
+        if (where?.id !== "recovery-review-charge") return Promise.resolve({ count: 0 });
+        // The stalled worker's own claim, back when it began (it then read the
+        // fixture row); everything after is the late close and hand-back.
+        if (data?.status === "PROCESSING") return Promise.resolve({ count: 1 });
+        // Evaluate the where against B's row, as PostgreSQL would.
+        const matches = Object.entries(where).every(([field, expected]) => {
+          if (field === "id") return true;
+          const actual = live[field as keyof typeof live];
+          if (expected && typeof expected === "object" && "not" in expected) {
+            return actual !== (expected as { not: unknown }).not;
+          }
+          return actual instanceof Date && expected instanceof Date
+            ? actual.getTime() === expected.getTime()
+            : actual === expected;
+        });
+        if (matches) Object.assign(live, data);
+        return Promise.resolve({ count: matches ? 1 : 0 });
+      },
+    );
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    const writes = mockPaymentRecoveryUpdateMany.mock.calls
+      .map((call) => call[0] as { where?: Record<string, unknown>; data?: Record<string, unknown> })
+      .filter((call) => call.where?.id === "recovery-review-charge" && call.data?.status !== "PROCESSING");
+    // Both writes were attempted with the stalled worker's own fence...
+    const at = (value: unknown) => (value instanceof Date ? value.getTime() : value);
+    expect(writes.length).toBeGreaterThanOrEqual(2);
+    expect(writes.some((w) => at(w.where?.nextRetryAt) === stalledRetryAt.getTime())).toBe(true);
+    expect(writes.every((w) => at(w.where?.processingStartedAt) === stalledAttempt.getTime())).toBe(true);
+    // ...and neither moved B's row.
+    expect(live).toEqual({
+      status: "PROCESSING",
+      nextRetryAt: new Date("2026-05-23T00:31:00.000Z"),
+      processingStartedAt: new Date("2026-05-23T00:31:00.000Z"),
+      attempts: 2,
     });
   });
 
@@ -3890,7 +3952,13 @@ describe("enqueueEditFinancialReviewChargeRecovery (#3402)", () => {
       (call) => call[0] as { where: Record<string, unknown>; data: Record<string, unknown> },
     );
     expect(writes).toHaveLength(2);
+    // The PROCESSING move runs FIRST: in the other order a replay's close can
+    // slip between the two and leave the row SUCCEEDED with nothing armed.
     expect(writes[0]).toEqual({
+      where: { idempotencyKey: key, status: "PROCESSING" },
+      data: { nextRetryAt: expect.any(Date) },
+    });
+    expect(writes[1]).toEqual({
       where: { idempotencyKey: key, status: "SUCCEEDED" },
       data: {
         status: "PENDING",
@@ -3901,12 +3969,9 @@ describe("enqueueEditFinancialReviewChargeRecovery (#3402)", () => {
         succeededAt: null,
       },
     });
-    // A running replay keeps its status - a second worker must not be able to
-    // claim it - and only has its retry time moved, which its close is fenced on.
-    expect(writes[1]).toEqual({
-      where: { idempotencyKey: key, status: "PROCESSING" },
-      data: { nextRetryAt: expect.any(Date) },
-    });
+    // A running replay (writes[0]) keeps its status - a second worker must not
+    // be able to claim it - and only has its retry time moved, which its close
+    // is fenced on.
     // A terminal FAILED row is never reopened (`INV-PAY-057`).
     expect(writes.some((write) => write.where.status === "FAILED")).toBe(false);
   });

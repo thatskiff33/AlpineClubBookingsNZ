@@ -1008,11 +1008,16 @@ export async function upsertPaymentIntentTransaction({
  * landing between Stripe accepting the new amount and this write was reverted
  * to PENDING, and the row and aggregates said "unpaid" over captured money.
  *
- * So this never writes `status`, and it matches only a row that is not captured.
- * Returns false when nothing matched: the member paid in that window (at the new
- * amount - Stripe refuses to update a captured intent), and the caller treats
- * the request as paid. The first mint still goes through the upsert, which is
- * what creates the row PENDING.
+ * So this never writes `status`, and it matches only a live (not withdrawn)
+ * ADDITIONAL row that is not captured. A FAILED row (a declined card) therefore
+ * KEEPS FAILED when raised, where the upsert reset it to PENDING: FAILED is the
+ * ledger's "still owed" shape - uncollected for chasing and the outstanding-ask
+ * readers alike - and the intent behind it stays payable, so the member is asked
+ * the raised figure exactly as before. Returns false when nothing matched: the
+ * member paid in that window (at the new amount - Stripe refuses to update a
+ * captured intent) or an officer withdrew the request; the caller re-reads to
+ * tell which. The first mint still goes through the upsert, which is what
+ * creates the row PENDING.
  */
 export async function writeRaisedAdditionalRequestAmount({
   paymentId,
@@ -1032,6 +1037,10 @@ export async function writeRaisedAdditionalRequestAmount({
     where: {
       paymentId,
       stripePaymentIntentId: paymentIntentId,
+      kind: PaymentTransactionKind.ADDITIONAL,
+      // #3528: a withdrawn request is retired for good; raising it would put a
+      // figure on an ask the projection no longer reads.
+      withdrawnAt: null,
       status: { notIn: [...CAPTURED_TRANSACTION_STATUS_LIST] },
     },
     data: { amountCents, carriedAskCents },
