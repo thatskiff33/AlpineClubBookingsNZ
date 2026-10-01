@@ -1,0 +1,14 @@
+- **The audit log now says who changed the club's Xero connection, and who
+  turned on a member's two-factor sign-in (#3454).** Connecting Xero,
+  disconnecting it, and every automatic token refresh are now recorded:
+  connecting and disconnecting name the administrator who did it, and a refresh
+  names the background job. Before, the trail recorded nothing at all about the
+  tokens. Saving a new Xero client id or secret still disconnects Xero, but the
+  save and the disconnect now happen together as one action. They can no longer
+  be split by a failure, and the log entry for the disconnect names the
+  credential that caused it. The Xero tokens are now held in the same encrypted
+  store as the club's other provider credentials. Turning on two-factor sign-in
+  is recorded too, and so is clearing it when an account is erased. The
+  member can see their own enrolment on their activity history. Nothing changes
+  for the operator: the existing connection keeps working through the upgrade
+  without a reconnect.
