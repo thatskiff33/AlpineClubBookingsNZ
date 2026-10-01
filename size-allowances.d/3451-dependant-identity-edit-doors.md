@@ -15,7 +15,7 @@ which is why each growth is a call site and its comment rather than logic:
   components, not a copy.
 
 file: src/app/api/bookings/[id]/modify-quote/route.ts
-lines: 2437
+lines: 2438
 reason: one local guard helper, called twice: before the name-fix-only and
   credit-only echoes (so preview and save cannot disagree about an answer) and
   before the member resolution, against the ids the party claims (so its answer
@@ -32,14 +32,14 @@ reason: the request schema gains the answers field, the date-only override list
   catch chain is ordered — the branch must precede the generic ApiError one.
 
 file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1704
+lines: 1692
 reason: the guard has to run inside this route's transaction, after its
   owner-or-admin 403 and before its member lookup, and both of those positions
   exist only here. The catch-chain branch that answers it sits with the route's
   other ordered refusal branches.
 
 file: src/lib/booking-modify-plan.ts
-lines: 3191
+lines: 3192
 reason: the save half of the guard sits directly before the planner's member
   resolution, because that is the only position on the save path that is after
   the service's ownership check and before the lookup (whose collapsed refusal
