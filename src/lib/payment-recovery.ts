@@ -469,6 +469,30 @@ export async function enqueueEditFinancialReviewChargeRecovery({
 }
 
 /**
+ * #3402: is the edit's ONE recovery row DEAD - in a claimable status that no
+ * claim will ever take again (no retry time, or its attempts spent)? The re-arm
+ * deliberately leaves such a row so (`INV-PAY-057`); every other row runs again
+ * or is reopened by the deferral that needs it. The sync asks this before it
+ * re-checks an `already-paid` answer, so a deferred share's `ask-closed` audit is
+ * written once - by the replay, or by the holder when no replay will come.
+ */
+export async function isEditFinancialReviewChargeRecoveryDead(
+  bookingModificationId: string,
+): Promise<boolean> {
+  const row = await prisma.paymentRecoveryOperation.findUnique({
+    where: {
+      idempotencyKey:
+        buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(bookingModificationId),
+    },
+    select: { status: true, attempts: true, nextRetryAt: true },
+  });
+  if (!row) return false;
+  const claimable = (CLAIMABLE_PAYMENT_RECOVERY_STATUSES as readonly PaymentRecoveryOperationStatus[])
+    .includes(row.status);
+  return claimable && (row.nextRetryAt === null || row.attempts >= MAX_PAYMENT_RECOVERY_ATTEMPTS);
+}
+
+/**
  * Durable recovery for an approved refund appeal whose Stripe refund failed
  * (#1039 item 1, PR #846 residual). The approval claim stands and the refund
  * completes through the recovery cron. When the approve route passes the

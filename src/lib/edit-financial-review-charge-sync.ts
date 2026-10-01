@@ -19,10 +19,12 @@ import {
   releaseEditReviewChargeRaise,
   type EditReviewChargeRaiseClaim,
 } from "@/lib/edit-financial-review-charge-raise-claim";
-import { isEditFinancialReviewChargeRecoveryDead } from "@/lib/edit-financial-review-charge-recovery";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { enqueueEditFinancialReviewChargeRecovery } from "@/lib/payment-recovery";
+import {
+  enqueueEditFinancialReviewChargeRecovery,
+  isEditFinancialReviewChargeRecoveryDead,
+} from "@/lib/payment-recovery";
 import {
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
   buildEditFinancialReviewAdditionalIntentStripeKey,
@@ -200,9 +202,7 @@ export async function syncEditFinancialReviewChargeRequest(
     // this run would trace the deferred share, and it looks again.
     if (
       result.outcome === "already-paid" &&
-      !(await isEditFinancialReviewChargeRecoveryDead(
-        buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(bookingModificationId),
-      ))
+      !(await isEditFinancialReviewChargeRecoveryDead(bookingModificationId))
     ) {
       return result;
     }

@@ -150,11 +150,6 @@ vi.mock("@/lib/stripe", () => ({
   cancelPaymentIntentIfCancellableWithResult: vi.fn(),
   listRefundsForCharge: vi.fn(),
 }));
-// #3402: the recovery row is live in these cases, so an `already-paid` answer
-// is not re-checked here (the replay traces a deferred share).
-vi.mock("@/lib/edit-financial-review-charge-recovery", () => ({
-  isEditFinancialReviewChargeRecoveryDead: async () => false,
-}));
 vi.mock("@/lib/payment-recovery", () => ({
   buildBookingModificationRefundMetadata: (
     bookingId: string,
@@ -168,6 +163,9 @@ vi.mock("@/lib/payment-recovery", () => ({
     mocks.enqueueAdditionalPaymentIntentRecovery(...a),
   enqueueEditFinancialReviewChargeRecovery: (...a: unknown[]) =>
     mocks.enqueueEditFinancialReviewChargeRecovery(...a),
+  // #3402: the recovery row is live in these cases, so an `already-paid` answer
+  // is not re-checked (the replay traces a deferred share).
+  isEditFinancialReviewChargeRecoveryDead: async () => false,
   enqueuePaymentIntentCancellationRecovery: (...a: unknown[]) =>
     mocks.enqueueCancel(...a),
   runPaymentRecoveryOperationNow: (...a: unknown[]) => mocks.cancelNow(...a),

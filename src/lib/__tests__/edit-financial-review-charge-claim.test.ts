@@ -54,8 +54,6 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
 }));
 vi.mock("@/lib/payment-recovery", () => ({
   enqueueEditFinancialReviewChargeRecovery: (...a: unknown[]) => mocks.enqueueRecovery(...a),
-}));
-vi.mock("@/lib/edit-financial-review-charge-recovery", () => ({
   isEditFinancialReviewChargeRecoveryDead: (...a: unknown[]) => mocks.recoveryDead(...a),
 }));
 vi.mock("@/lib/booking-modification-settlement", () => ({

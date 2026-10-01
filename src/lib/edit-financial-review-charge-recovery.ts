@@ -5,7 +5,6 @@ import {
 
 import type { EditReviewChargeSyncOutcome } from "@/lib/edit-financial-review-charge-sync";
 import logger from "@/lib/logger";
-import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -79,27 +78,6 @@ export async function rearmEditFinancialReviewChargeRecovery(idempotencyKey: str
       succeededAt: null,
     },
   });
-}
-
-/**
- * Whether the edit's recovery row is DEAD - terminal FAILED, so nothing will run
- * it again and the re-arm above deliberately leaves it so. Absent, PENDING,
- * PROCESSING, SUCCEEDED and retryable FAILED rows all answer false: each either
- * runs again or is reopened by the deferral that needs it. The sync asks this
- * before re-checking an `already-paid` answer, so a deferred share's "ask-closed"
- * audit is written exactly once - by the replay, or here when no replay will come.
- */
-export async function isEditFinancialReviewChargeRecoveryDead(
-  idempotencyKey: string,
-): Promise<boolean> {
-  const row = await prisma.paymentRecoveryOperation.findUnique({
-    where: { idempotencyKey },
-    select: { status: true, attempts: true, nextRetryAt: true },
-  });
-  return (
-    row?.status === PaymentRecoveryOperationStatus.FAILED &&
-    (row.nextRetryAt === null || row.attempts >= MAX_PAYMENT_RECOVERY_ATTEMPTS)
-  );
 }
 
 /**

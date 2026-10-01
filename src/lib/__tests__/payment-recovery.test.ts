@@ -344,6 +344,7 @@ import {
   enqueueGroupSettlementRefundRecovery,
   enqueuePaymentIntentCancellationRecovery,
   enqueueRefundRequestRefundRecovery,
+  isEditFinancialReviewChargeRecoveryDead,
   processPaymentRecoveryOperations,
   queueSupersededPaymentIntentRefundRecovery,
 } from "@/lib/payment-recovery";
@@ -3974,6 +3975,28 @@ describe("enqueueEditFinancialReviewChargeRecovery (#3402)", () => {
     // is fenced on.
     // A terminal FAILED row is never reopened (`INV-PAY-057`).
     expect(writes.some((write) => write.where.status === "FAILED")).toBe(false);
+  });
+});
+
+describe("isEditFinancialReviewChargeRecoveryDead (#3402)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it.each([
+    ["no row", null, false],
+    ["a PENDING row", { status: "PENDING", attempts: 0, nextRetryAt: new Date() }, false],
+    ["a running row", { status: "PROCESSING", attempts: 1, nextRetryAt: new Date() }, false],
+    ["a closed row (a deferral reopens it)", { status: "SUCCEEDED", attempts: 1, nextRetryAt: null }, false],
+    ["a retryable FAILED row", { status: "FAILED", attempts: 2, nextRetryAt: new Date() }, false],
+    ["a FAILED row with no retry time", { status: "FAILED", attempts: 2, nextRetryAt: null }, true],
+    ["a FAILED row with its attempts spent", { status: "FAILED", attempts: 5, nextRetryAt: new Date() }, true],
+  ])("%s -> dead is %s", async (_label, row, dead) => {
+    mockPaymentRecoveryFindUnique.mockResolvedValueOnce(row);
+    await expect(isEditFinancialReviewChargeRecoveryDead("mod-1")).resolves.toBe(dead);
+    expect(mockPaymentRecoveryFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { idempotencyKey: buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod-1") },
+      }),
+    );
   });
 });
 
