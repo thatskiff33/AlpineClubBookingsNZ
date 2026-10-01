@@ -9,6 +9,7 @@ import { applyXeroOrgShortCode, buildXeroObjectUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import { buildLocalAdminUrl } from "@/lib/xero-record-links";
+import { isStaleRunningXeroOperation } from "@/lib/xero-stale-operations";
 import {
   endOfClubDayInclusive,
   requireCalendarDate,
@@ -153,6 +154,7 @@ export async function GET(request: NextRequest) {
     // Null degrades every link to the generic go.xero.com form; it never hides
     // one.
     const shortCode = await getXeroOrgShortCode();
+    const now = new Date();
 
     return NextResponse.json({
       data: operations.map((operation) => ({
@@ -172,6 +174,9 @@ export async function GET(request: NextRequest) {
           { shortCode },
         ),
         localUrl: buildLocalAdminUrl(operation.localModel, operation.localId),
+        // #3462: the server's clock decides "stale", so the panel's Mark failed
+        // button agrees with the route that will accept it.
+        staleRunning: isStaleRunningXeroOperation(operation, now),
       })),
       total,
       page,

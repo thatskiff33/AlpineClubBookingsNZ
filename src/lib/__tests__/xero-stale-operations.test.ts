@@ -22,6 +22,7 @@ import {
   countStaleProcessingXeroInboundEvents,
   countStaleRunningXeroOperations,
   canReplayXeroInboundEvent,
+  isStaleRunningXeroOperation,
   isStaleProcessingXeroInboundEvent,
   staleProcessingXeroInboundEventFilter,
   staleRunningXeroOperationFilter,
@@ -42,6 +43,23 @@ describe("stale RUNNING Xero operation visibility (issue #819)", () => {
     );
     // 15 minutes before noon.
     expect(filter.startedAt.lt.toISOString()).toBe("2026-06-21T11:45:00.000Z");
+  });
+
+  it("reads a row as stale only when it is RUNNING and claimed past the threshold (#3462)", () => {
+    const now = new Date("2026-06-21T12:00:00.000Z");
+    const old = new Date("2026-06-21T11:44:59.999Z");
+    expect(isStaleRunningXeroOperation({ status: "RUNNING", startedAt: old }, now)).toBe(true);
+    expect(
+      isStaleRunningXeroOperation(
+        { status: "RUNNING", startedAt: new Date("2026-06-21T11:45:00.000Z") },
+        now,
+      ),
+    ).toBe(false);
+    expect(isStaleRunningXeroOperation({ status: "RUNNING", startedAt: null }, now)).toBe(false);
+    // A finished row keeps its startedAt; its status is what says it is not stuck.
+    for (const status of ["SUCCEEDED", "FAILED", "PARTIAL", "CANCELLED", "PENDING"]) {
+      expect(isStaleRunningXeroOperation({ status, startedAt: old }, now)).toBe(false);
+    }
   });
 
   it("counts stale RUNNING operations via prisma with the threshold filter", async () => {

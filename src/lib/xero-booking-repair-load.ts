@@ -347,7 +347,7 @@ export async function loadAuditData(
         })
       : Promise.resolve([] as EditReviewChargeShareRecord[]),
     // #3187 fix round: an edit whose additional PaymentIntent mint FAILED at the
-    // provider. `edit-financial-review-charge.ts` writes this row and returns
+    // provider. `edit-financial-review-charge-sync.ts` writes this row and returns
     // `not-raised`, and the live settlement then queues no supplementary invoice
     // at all - "deferred, not short". The repair tool has to be able to tell
     // that state from the internet-banking route, which looks identical from the

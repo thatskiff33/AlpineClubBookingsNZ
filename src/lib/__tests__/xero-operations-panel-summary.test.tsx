@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { OperationItem } from "@/app/(admin)/admin/xero/_components/operations-panel";
 import type { XeroOperation } from "@/app/(admin)/admin/xero/_components/types";
 
@@ -40,23 +40,29 @@ function makeOperation(overrides: Partial<XeroOperation> = {}): XeroOperation {
     failureState: null,
     failureStateReason: null,
     failureRootKey: null,
+    staleRunning: false,
     ...overrides,
   };
 }
 
 const noop = () => {};
 
-function renderItem(operation: XeroOperation) {
+function renderItem(
+  operation: XeroOperation,
+  { canEdit = true, onMarkFailed = noop }: { canEdit?: boolean; onMarkFailed?: () => void } = {},
+) {
   return render(
     <OperationItem
       operation={operation}
-      canEdit={true}
+      canEdit={canEdit}
       retrying={false}
       markingNonReplayable={false}
       resolving={false}
+      markingFailed={false}
       onRetry={noop}
       onMarkNonReplayable={noop}
       onResolve={noop}
+      onMarkFailed={onMarkFailed}
     />,
   );
 }
@@ -94,5 +100,32 @@ describe("OperationItem summary + raw toggle", () => {
     expect(screen.getByText("View request / response payloads")).toBeDefined();
     expect(screen.queryByText("Show raw JSON")).toBeNull();
     expect(screen.queryByText("Queued: create booking invoice")).toBeNull();
+  });
+});
+
+describe("OperationItem Mark failed (#3462)", () => {
+  it("offers Mark failed on a stale running operation and calls it", () => {
+    const onMarkFailed = vi.fn();
+    renderItem(
+      makeOperation({ status: "RUNNING", staleRunning: true }),
+      { onMarkFailed },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Mark failed" }));
+    expect(onMarkFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers nothing on a running operation that is not stale", () => {
+    renderItem(makeOperation({ status: "RUNNING", staleRunning: false }));
+    expect(screen.queryByRole("button", { name: "Mark failed" })).toBeNull();
+  });
+
+  it("keeps the button inert for a view-only finance admin", () => {
+    const onMarkFailed = vi.fn();
+    renderItem(
+      makeOperation({ status: "RUNNING", staleRunning: true }),
+      { canEdit: false, onMarkFailed },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Mark failed" }));
+    expect(onMarkFailed).not.toHaveBeenCalled();
   });
 });
