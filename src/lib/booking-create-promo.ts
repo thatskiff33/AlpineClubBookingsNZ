@@ -12,6 +12,7 @@ import type { PromoAdjustmentTarget } from "@/lib/night-adjustment-write";
 import {
   shouldPersistPromoRedemption,
   validateAndCalculatePromoDiscount,
+  validatePromoCodeRules,
   type PromoBeneficiaryAllocation,
 } from "@/lib/promo";
 import { resolveWorkPartyEventPromoForBooking } from "@/lib/work-party";
@@ -252,6 +253,42 @@ export async function resolvePromoInTransaction(
     promoShouldPersist: shouldPersistPromoRedemption(promoResult),
     promoCodeRecord: promoCode,
   };
+}
+
+/**
+ * The refusal a promo code earns from the REQUEST alone, or null (#3770).
+ *
+ * The create route asks this before its member lookup, so an unknown, internal,
+ * inactive, out-of-window or wrong-lodge code is refused the same way whether a
+ * member id in the party is real or not. It is a pre-check, not the decision:
+ * {@link resolvePromoInTransaction} re-reads the code under its row lock and
+ * refuses authoritatively. The usage caps and the guest-selection refusals read
+ * the priced party, so they are suppressed here and stay there. The rules are
+ * `validatePromoCodeRules`'s own, so the wording cannot drift from the service's.
+ */
+export async function promoCodeRequestRefusal(options: {
+  promoCodeStr: string;
+  allowInternal: boolean;
+  memberId: string;
+  checkIn: Date;
+  lodgeId: string;
+  todayAtClub: CalendarDate;
+}): Promise<string | null> {
+  const promoCode = await prisma.promoCode.findUnique({
+    where: { code: options.promoCodeStr.toUpperCase().trim() },
+    include: { lodges: { select: { lodgeId: true } } },
+  });
+  if (!promoCode || (promoCode.internal && !options.allowInternal)) {
+    return "Promo code not found";
+  }
+  return validatePromoCodeRules(
+    promoCode,
+    { memberId: options.memberId, bookingCheckIn: options.checkIn },
+    options.todayAtClub,
+    { capsResolvedByBeneficiaryTrim: true },
+    null,
+    options.lodgeId,
+  );
 }
 
 const PROMO_WORK_PARTY_EXCLUSION_MESSAGE =

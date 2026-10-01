@@ -13,6 +13,7 @@ import {
   MEMBER_GUEST_CROSS_FAMILY_REFUSAL_STATUS,
   MEMBER_GUEST_NOT_ADDABLE_CODE,
 } from "@/lib/member-guest-refusal";
+import { normalizeMemberIds } from "@/lib/member-id-normalization";
 
 export type BookingGuestPricingInput = {
   ageTier: AgeTier;
@@ -228,13 +229,6 @@ export function getBookingGuestValidationErrorResponse(
   return { error: error.message };
 }
 
-function normalizeMemberIds(memberIds: Array<string | null | undefined>): string[] {
-  return [...new Set(
-    memberIds
-      .map((memberId) => memberId?.trim())
-      .filter((memberId): memberId is string => Boolean(memberId))
-  )];
-}
 
 /**
  * Where each requested member sits relative to the booker's family boundary

@@ -84,6 +84,10 @@ import {
   type BookingGuestInput,
 } from "@/lib/booking-create";
 import { resolveBookingDateEnvelope } from "@/lib/booking-create-guests";
+import {
+  promoCodeRequestRefusal,
+  resolveEffectivePromoSource,
+} from "@/lib/booking-create-promo";
 import { resolveBookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
 import {
@@ -583,6 +587,138 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // #2543 — the club's three-way subscription-lockout policy, resolved ONCE for
+  // this request so the owner gate, the member-guest gate and the paid-up-adult
+  // requirement below cannot branch on different answers if an admin saves the
+  // setting mid-request.
+  const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
+
+  // Subscription gate for the booking owner. Bypassed when the Xero module
+  // is effectively off, because subscriptions are invoiced through Xero, and
+  // (#2543) when the club has chosen NON_MEMBER_PRICING — there the unpaid owner
+  // books and is repriced by `resolveGuestRateMembershipTypes` instead.
+  if (
+    subscriptionLockoutMode === "HARD_BLOCK" &&
+    !isAuthorizedOnBehalf &&
+    await requiresPaidSubscriptionForMemberForBooking(prisma, {
+      memberId: effectiveMemberId,
+      seasonYear: seasonYearOfStoredDate(checkIn),
+      ageTier: effectiveMemberAgeTier,
+    })
+  ) {
+    const seasonYear = seasonYearOfStoredDate(checkIn);
+    const paidSub = await prisma.memberSubscription.findFirst({
+      where: { memberId: effectiveMemberId, seasonYear, status: "PAID" },
+    });
+    if (!paidSub) {
+      const subscription = await prisma.memberSubscription.findFirst({
+        where: { memberId: effectiveMemberId, seasonYear },
+        orderBy: { updatedAt: "desc" },
+      });
+      const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
+      return NextResponse.json(
+        {
+          error: `Your membership subscription for the ${seasonDisplay} season is not paid. Please contact the club to arrange payment before booking.`,
+          code: "SUBSCRIPTION_REQUIRED",
+          invoiceUrl: subscription?.xeroOnlineInvoiceUrl ?? null,
+          invoiceNumber: subscription?.xeroInvoiceNumber ?? null,
+        },
+        { status: 403 }
+      );
+    }
+  }
+
+  // Minimum stay policy (skipped only for authorized on-behalf bookings —
+  // self-bookings always enforce it, #1442).
+  if (!isAuthorizedOnBehalf) {
+    const { validateMinimumStay, formatViolationsDetail } = await import("@/lib/booking-policies");
+    const stayResult = await validateMinimumStay(checkIn, checkOut, bookingLodgeId);
+    if (!stayResult.valid) {
+      const exceptionReview = aggregatePolicyExceptionViolations(
+        stayResult.violations,
+      );
+      return NextResponse.json(
+        {
+          error: "Booking does not meet minimum stay requirement",
+          details: formatViolationsDetail(stayResult.violations),
+          code: "MINIMUM_STAY_VIOLATION",
+          violations: exceptionReview.violations,
+          exceptionReview,
+        },
+        { status: 400 }
+      );
+    }
+  }
+
+  let internetBankingSettings: InternetBankingPaymentSettingsValues | undefined;
+  // Drafts never reach payment, so a draft skips this as it always has: the
+  // draft branch used to return before it.
+  if (!draft && paymentMethod === "internet_banking") {
+    const modules = await loadEffectiveModuleFlags();
+    if (!modules.xeroIntegration || !modules.internetBankingPayments) {
+      return NextResponse.json(
+        { error: "Internet Banking payments are not available." },
+        { status: 400 }
+      );
+    }
+
+    internetBankingSettings = await loadInternetBankingPaymentSettings();
+    // The lead-time cutoff exists to collect payment before the stay; for a
+    // retroactive booking the stay already happened, so skip the rejection
+    // (the module-enabled check above still applies). (#1695)
+    if (!retroactiveCreate) {
+      const leadTime = checkInternetBankingLeadTime({
+        checkIn,
+        settings: internetBankingSettings,
+        // #3123 — the SAME club day this route already resolved above for the
+        // retroactive-create gate, not a second answer from the environment.
+        today,
+      });
+      if (!leadTime.allowed) {
+        return NextResponse.json(
+          {
+            error: leadTime.unavailableReason ?? "Internet Banking is not available for this check-in date.",
+            code: "INTERNET_BANKING_CUTOFF",
+            minimumDaysBeforeCheckIn: leadTime.minimumDaysBeforeCheckIn,
+            checkIn: leadTime.checkIn,
+          },
+          { status: 400 }
+        );
+      }
+    }
+  }
+
+  // A working-bee id or promo code that cannot apply to this request (#3770).
+  // The create services re-run all of this authoritatively, under their lock;
+  // this only answers the refusals that read the request and the booker, so
+  // none of them waits for the member lookup. Usage caps and the guest-selection
+  // refusals read the priced party and stay in the services.
+  try {
+    const promoSource = await resolveEffectivePromoSource(prisma, {
+      promoCodeStr,
+      workPartyEventId,
+      checkIn,
+      checkOut,
+      lodgeId: bookingLodgeId,
+    });
+    if (promoSource) {
+      const promoRefusal = await promoCodeRequestRefusal({
+        promoCodeStr: promoSource.promoCodeStr,
+        allowInternal: promoSource.allowInternal,
+        memberId: effectiveMemberId,
+        checkIn,
+        lodgeId: bookingLodgeId,
+        todayAtClub,
+      });
+      if (promoRefusal) throw new BookingPromoError(promoRefusal);
+    }
+  } catch (error) {
+    if (error instanceof BookingPromoError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    throw error;
+  }
+
   // "+ Add Member Guest" (epic #2305, MG2 #2307). Read the module flag and the
   // policy singleton HERE — one read each, before any transaction is opened —
   // then pass the answers down. The create service opens the booking transaction
@@ -863,50 +999,10 @@ export async function POST(request: NextRequest) {
     throw err;
   }
 
-  // #2543 — the club's three-way subscription-lockout policy, resolved ONCE for
-  // this request so the owner gate, the member-guest gate and the paid-up-adult
-  // requirement below cannot branch on different answers if an admin saves the
-  // setting mid-request.
-  const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
   // #3029 (`INV-MOD-059`) — whether the new guest rows are seeded from the
   // members' dietary/allergy profiles: the toggle, read ONCE here, before any
   // create service opens its transaction (`INV-LOCK-004`).
   const guestDietarySeeding = await resolveBookingGuestDietarySeeding();
-
-  // Subscription gate for the booking owner. Bypassed when the Xero module
-  // is effectively off, because subscriptions are invoiced through Xero, and
-  // (#2543) when the club has chosen NON_MEMBER_PRICING — there the unpaid owner
-  // books and is repriced by `resolveGuestRateMembershipTypes` instead.
-  if (
-    subscriptionLockoutMode === "HARD_BLOCK" &&
-    !isAuthorizedOnBehalf &&
-    await requiresPaidSubscriptionForMemberForBooking(prisma, {
-      memberId: effectiveMemberId,
-      seasonYear: seasonYearOfStoredDate(checkIn),
-      ageTier: effectiveMemberAgeTier,
-    })
-  ) {
-    const seasonYear = seasonYearOfStoredDate(checkIn);
-    const paidSub = await prisma.memberSubscription.findFirst({
-      where: { memberId: effectiveMemberId, seasonYear, status: "PAID" },
-    });
-    if (!paidSub) {
-      const subscription = await prisma.memberSubscription.findFirst({
-        where: { memberId: effectiveMemberId, seasonYear },
-        orderBy: { updatedAt: "desc" },
-      });
-      const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
-      return NextResponse.json(
-        {
-          error: `Your membership subscription for the ${seasonDisplay} season is not paid. Please contact the club to arrange payment before booking.`,
-          code: "SUBSCRIPTION_REQUIRED",
-          invoiceUrl: subscription?.xeroOnlineInvoiceUrl ?? null,
-          invoiceNumber: subscription?.xeroInvoiceNumber ?? null,
-        },
-        { status: 403 }
-      );
-    }
-  }
 
   // Subscription gate for member guests (skipped only for authorized
   // on-behalf bookings — self-bookings always enforce it, #1442).
@@ -1002,28 +1098,6 @@ export async function POST(request: NextRequest) {
       participants: toSubscriptionLockoutParticipants(guestInputs),
     });
     paidUpAdultViolation = nonMemberPricing?.violation ?? null;
-  }
-
-  // Minimum stay policy (skipped only for authorized on-behalf bookings —
-  // self-bookings always enforce it, #1442).
-  if (!isAuthorizedOnBehalf) {
-    const { validateMinimumStay, formatViolationsDetail } = await import("@/lib/booking-policies");
-    const stayResult = await validateMinimumStay(checkIn, checkOut, bookingLodgeId);
-    if (!stayResult.valid) {
-      const exceptionReview = aggregatePolicyExceptionViolations(
-        stayResult.violations,
-      );
-      return NextResponse.json(
-        {
-          error: "Booking does not meet minimum stay requirement",
-          details: formatViolationsDetail(stayResult.violations),
-          code: "MINIMUM_STAY_VIOLATION",
-          violations: exceptionReview.violations,
-          exceptionReview,
-        },
-        { status: 400 }
-      );
-    }
   }
 
   // Adult-member hosting policy (#2364, epic decisions D-R3/D-R4).
@@ -1248,42 +1322,6 @@ export async function POST(request: NextRequest) {
         { error: "Failed to create draft booking" },
         { status: 400 }
       );
-    }
-  }
-
-  let internetBankingSettings: InternetBankingPaymentSettingsValues | undefined;
-  if (paymentMethod === "internet_banking") {
-    const modules = await loadEffectiveModuleFlags();
-    if (!modules.xeroIntegration || !modules.internetBankingPayments) {
-      return NextResponse.json(
-        { error: "Internet Banking payments are not available." },
-        { status: 400 }
-      );
-    }
-
-    internetBankingSettings = await loadInternetBankingPaymentSettings();
-    // The lead-time cutoff exists to collect payment before the stay; for a
-    // retroactive booking the stay already happened, so skip the rejection
-    // (the module-enabled check above still applies). (#1695)
-    if (!retroactiveCreate) {
-      const leadTime = checkInternetBankingLeadTime({
-        checkIn,
-        settings: internetBankingSettings,
-        // #3123 — the SAME club day this route already resolved above for the
-        // retroactive-create gate, not a second answer from the environment.
-        today,
-      });
-      if (!leadTime.allowed) {
-        return NextResponse.json(
-          {
-            error: leadTime.unavailableReason ?? "Internet Banking is not available for this check-in date.",
-            code: "INTERNET_BANKING_CUTOFF",
-            minimumDaysBeforeCheckIn: leadTime.minimumDaysBeforeCheckIn,
-            checkIn: leadTime.checkIn,
-          },
-          { status: 400 }
-        );
-      }
     }
   }
 

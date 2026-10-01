@@ -30,6 +30,11 @@ import {
   type LiveBookingGuestInput,
 } from "@/lib/booking-exception-request-service";
 import { mapExceptionRequestError } from "@/lib/booking-exception-request-http";
+import {
+  handleMemberGuestAddRefusal,
+  startMemberGuestRefusalClock,
+} from "@/lib/member-guest-probe-guard";
+import { BookingGuestValidationError } from "@/lib/booking-guests";
 
 /**
  * A guest's explicit night set (#713), mirroring `/modify`'s own field.
@@ -90,6 +95,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // #3770: taken at the top, as on the booking add paths (#2388), so the
+  // collapsed-refusal timing floor covers the whole request.
+  const startedAt = startMemberGuestRefusalClock();
   const session = await auth();
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
@@ -303,6 +311,21 @@ export async function POST(
 
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
+    // #3770: a collapsed member-guest refusal (the member lookup's, or "nothing
+    // to review" with a beyond-family member named) owes what it owes on every
+    // add path: the throttle unit, the audit row and the timing floor. This door
+    // resolves members without the boundary hook, so it charges on the way out.
+    // Every other error passes straight through the helper.
+    if (error instanceof BookingGuestValidationError) {
+      await handleMemberGuestAddRefusal({
+        request: req,
+        actorMemberId: session.user.id,
+        error,
+        route: "bookings/[id]/exception-requests",
+        startedAt,
+        throttle: "CHARGE_NOW",
+      });
+    }
     return mapExceptionRequestError(error, {
       onBehalf: dependantIdentitySpeaksOnBehalf({
         actorIsAdmin: isAdmin,

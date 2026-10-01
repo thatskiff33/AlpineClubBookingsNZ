@@ -1365,6 +1365,21 @@ export async function createNewBookingExceptionRequest(
     input.guests,
   );
 
+  // #3770: a supersede target that is not this member's open request is refused
+  // here, before the lookup, so LOST_SUPERSEDE_CLAIM never says whether a named
+  // member resolved. The guarded claim in the transaction stays the arbiter.
+  if (input.supersedeRequestId) {
+    const target = await prisma.newBookingPolicyExceptionRequest.findFirst({
+      where: {
+        id: input.supersedeRequestId,
+        requestedByMemberId: input.requestedByMemberId,
+        status: "REQUESTED",
+      },
+      select: { id: true },
+    });
+    if (!target) throw new LostSupersedeClaimError();
+  }
+
   const { beyondFamilyMemberIds } = await assertRequestedPartyMemberGuestsAllowed({
     requestedByMemberId: input.requestedByMemberId,
     memberIds: input.guests.map((guest) => guest.memberId),
@@ -1559,6 +1574,35 @@ export async function createModificationExceptionRequest(
     throw new PolicyExceptionDependantIdentityError(dependantIdentityRefusal);
   }
   const dependantIdentityDeclarations = input.dependantIdentityDeclarations ?? [];
+
+  // #3770: the two refusals that read only this member's own requests, before
+  // the lookup, so neither says whether an added member resolved. The guarded
+  // claim and the unique slot in the transaction stay the arbiters of a race.
+  // (A HOLD's capacity refusal cannot move: whether it holds reads the members.)
+  if (input.supersedeRequestId) {
+    const target = await prisma.bookingChangeRequest.findFirst({
+      where: {
+        id: input.supersedeRequestId,
+        bookingId: input.bookingId,
+        requestedByMemberId: input.requestedByMemberId,
+        kind: "POLICY_EXCEPTION",
+        status: "REQUESTED",
+      },
+      select: { id: true },
+    });
+    if (!target) throw new LostSupersedeClaimError();
+  } else {
+    const occupied = await prisma.bookingChangeRequest.findFirst({
+      where: {
+        openStateKey: modificationExceptionOpenStateKey(
+          input.bookingId,
+          input.requestedByMemberId,
+        ),
+      },
+      select: { id: true },
+    });
+    if (occupied) throw new OpenExceptionRequestConflictError();
+  }
 
   const { beyondFamilyMemberIds } = await assertRequestedPartyMemberGuestsAllowed({
     requestedByMemberId: input.requestedByMemberId,
