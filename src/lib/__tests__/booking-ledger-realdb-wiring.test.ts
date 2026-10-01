@@ -107,6 +107,9 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
       "posts nothing for a booking not yet confirmed on the ledger",
       "the REAL cancelBooking, cash-settled at a 50% tier: reversals and the kept fee post in the claim, and the hand-back brings owed to zero",
       "the REAL cancelBooking on an unpaid booking confirmed on the ledger (its mark-paid since reversed): the stay is reversed and no fee posts",
+      "A STALE REPLAY inserts nothing: the reversal key, and under another key the unique reversesLineId, each skip it, and the transaction stays usable",
+      "a live review-share stand-in is reversed by the cancellation, and owed reaches zero once its refund posts (review F1)",
+      "the REAL settle's capacity void on a booking a reversed mark-paid left confirmed: the stay is reversed, nothing kept, and owed reaches zero once the card refund posts (review F4)",
     ]) {
       expect(suite).toContain(caseName);
     }

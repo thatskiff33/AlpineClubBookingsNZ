@@ -5,7 +5,7 @@
  * mock cannot show is the posting against the table's real constraints — the
  * CHECKs, the unique `reversesLineId`, `ON CONFLICT DO NOTHING` on the key, and
  * the new `CANCELLATION_FEE` enum value — nor that a real cancel path posts in
- * its own transaction. Four claims:
+ * its own transaction. Seven claims:
  *
  *  1. After an edit, a cancellation reverses the edit's re-post and never the
  *     line the edit already reversed; once the card refund posts, `owed(b)` is
@@ -17,6 +17,15 @@
  *     zero.
  *  4. The REAL `cancelBooking` on an unpaid booking confirmed on the ledger
  *     (a mark-paid since reversed) reverses the stay and posts no fee.
+ *  5. A stale replay — a cancellation planned from the lines as they stood
+ *     before the first one posted — inserts nothing: the reversal key and,
+ *     under a different key, the unique `reversesLineId` each skip it, and the
+ *     transaction stays usable (review A3).
+ *  6. A live review-share stand-in is reversed by the cancellation, and owed
+ *     reaches zero once the cancellation's refund posts (review F1).
+ *  7. The REAL settle's capacity void (`markBookingPaymentSucceeded`) on a
+ *     booking a reversed mark-paid left confirmed reverses the stay, keeps
+ *     nothing, and owed reaches zero once its card refund posts (review F4).
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -74,6 +83,8 @@ let prisma: PrismaClient;
 let cancellationSync: typeof import("@/lib/booking-ledger-cancellation-sync");
 let cancellationPosting: typeof import("@/lib/booking-ledger-cancellation-posting");
 let paidMoney: typeof import("@/lib/paid-cancellation-money");
+let ledgerRead: typeof import("@/lib/booking-ledger-read");
+let modificationPosting: typeof import("@/lib/booking-ledger-modification-posting");
 let modificationSync: typeof import("@/lib/booking-ledger-modification-sync");
 let confirmation: typeof import("@/lib/booking-ledger-confirmation-posting");
 let write: typeof import("@/lib/booking-ledger-write");
@@ -200,6 +211,8 @@ function reversedTwice(all: Awaited<ReturnType<typeof lines>>): boolean {
     cancellationSync = await import("@/lib/booking-ledger-cancellation-sync");
     cancellationPosting = await import("@/lib/booking-ledger-cancellation-posting");
     paidMoney = await import("@/lib/paid-cancellation-money");
+    ledgerRead = await import("@/lib/booking-ledger-read");
+    modificationPosting = await import("@/lib/booking-ledger-modification-posting");
     modificationSync = await import("@/lib/booking-ledger-modification-sync");
     confirmation = await import("@/lib/booking-ledger-confirmation-posting");
     write = await import("@/lib/booking-ledger-write");
@@ -343,5 +356,91 @@ function reversedTwice(all: Awaited<ReturnType<typeof lines>>): boolean {
     expect(all.some((line) => line.kind === "CANCELLATION_FEE")).toBe(false);
     expect(all.filter((line) => line.anchorKind === "CANCELLATION")).toHaveLength(4);
     expect(bookingLedgerBalance(all).owedCents).toBe(0);
+  }, 60_000);
+
+  it("A STALE REPLAY inserts nothing: the reversal key, and under another key the unique reversesLineId, each skip it, and the transaction stays usable", async () => {
+    await confirmOnLedger("CARD_CAPTURE", 20_000);
+    const staleCharges = await ledgerRead.findPostedCancellableChargeLines(prisma, BOOKING_ID);
+    const staleAdjustments = await ledgerRead.findPostedAdjustmentLines(prisma, BOOKING_ID);
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await cancellationSync.postCancellationLedgerLines({ store: tx, bookingId: BOOKING_ID, lodgeId: LODGE_ID, keptCents: 8_000, site: "race-3611" });
+    });
+    const once = await lines();
+
+    const plan = cancellationPosting.planCancellationChargeLines({ bookingId: BOOKING_ID, lodgeId: LODGE_ID, keptCents: 8_000, chargeLines: staleCharges, adjustmentLines: staleAdjustments });
+    if (plan.kind !== "lines") throw new Error("expected a plan");
+    const reversals = plan.postings.filter((posting) => posting.reversesLineId);
+    expect(reversals).toHaveLength(4);
+    const sameKeys = write.buildBookingLedgerRows(plan.postings);
+    // The same reversals under keys nothing holds: only reversesLineId can stop them.
+    const freshKeys = write.buildBookingLedgerRows(reversals.map((posting) => ({ ...posting, postingKey: `${posting.postingKey}:stale` })));
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      expect(await write.writeBookingLedgerRows(tx, sameKeys)).toBe(0);
+      expect(await write.writeBookingLedgerRows(tx, freshKeys)).toBe(0);
+      await tx.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { id: true } });
+    });
+    expect(await lines()).toHaveLength(once.length);
+  });
+
+  it("a live review-share stand-in is reversed by the cancellation, and owed reaches zero once its refund posts (review F1)", async () => {
+    await confirmOnLedger("CARD_CAPTURE", 20_000);
+    // A $30 share refunded to the card while the charge lines stayed as they were.
+    await prisma.$transaction((tx) =>
+      write.postBookingLedgerLines(tx, [
+        modificationPosting.planAgreedAdjustmentLine({ bookingId: BOOKING_ID, lodgeId: LODGE_ID, manualRefundTaskId: "race-3611-task", direction: "REFUND_TO_MEMBER", amountCents: 3_000, note: "share", officerMemberId: MEMBER_ID }),
+      ]),
+    );
+    await settle("CARD_REFUND", 3_000, "race-3611-share", "refund:race-3611-share");
+    const money = paidMoney.paidCancellationMoney({
+      payment: { amountCents: 20_000, refundedAmountCents: 3_000, changeFeeCents: 0, creditAppliedCents: 0 },
+      finalPriceCents: 20_000,
+      appliedCreditCents: 0,
+      restoresToMemberLedger: true,
+      days: 30,
+      policy: [{ daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 2_000 }],
+      refundMethod: "card",
+    });
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await cancellationSync.postCancellationLedgerLines({ store: tx, bookingId: BOOKING_ID, lodgeId: LODGE_ID, keptCents: money.ledgerKeptCents, site: "race-3611" });
+    });
+    const all = await lines();
+    expect(all.some((line) => line.kind === "AGREED_ADJUSTMENT" && line.reversesLineId !== null && line.anchorKind === "CANCELLATION")).toBe(true);
+    await settle("CARD_REFUND", money.refundAmountCents, "race-3611-refund", "refund:race-3611-refund");
+    expect(bookingLedgerBalance(await lines()).owedCents).toBe(0);
+  });
+
+  it("the REAL settle's capacity void on a booking a reversed mark-paid left confirmed: the stay is reversed, nothing kept, and owed reaches zero once the card refund posts (review F4)", async () => {
+    // Confirmed on the ledger by a mark-paid, then the mark-paid reversed.
+    await confirmOnLedger("CASH_RECORDED", 20_000);
+    const [cashLine] = await lines().then((all) => all.filter((line) => line.kind === "CASH_RECORDED"));
+    await prisma.$transaction((tx) =>
+      write.postBookingLedgerLines(tx, [
+        { bookingId: BOOKING_ID, lodgeId: LODGE_ID, side: "SETTLEMENT", kind: "CASH_RECORDED", sign: -1, quantity: 1, unitCents: 20_000, anchorKind: "PAYMENT_TRANSACTION", anchorId: TXN_ID, settlementMethod: "CASH", narration: "Mark-paid reversed", reversesLineId: cashLine!.id, postingKey: `reversal:${cashLine!.id}` },
+      ]),
+    );
+    await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAYMENT_PENDING" } });
+    // This lodge has no configured capacity, so the card payment cannot claim beds.
+    const { markBookingPaymentSucceeded } = await import("@/lib/payment-reconciliation");
+
+    const result = await markBookingPaymentSucceeded({
+      bookingId: BOOKING_ID,
+      paymentIntentId: "pi_race_3611_void",
+      amountCents: 20_000,
+      paymentMethodId: null,
+      format: CLUB_FORMAT_TEST,
+    });
+
+    expect((await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { status: true } })).status).toBe("CANCELLED");
+    expect(result.outcome).not.toBe("paid");
+    const all = await lines();
+    expect(all.filter((line) => line.anchorKind === "CANCELLATION" && line.reversesLineId !== null)).toHaveLength(4);
+    expect(all.some((line) => line.kind === "CANCELLATION_FEE")).toBe(false);
+    // The capture the void must hand back; its refund is the provider's to make.
+    expect(all.some((line) => line.kind === "CARD_CAPTURE" && line.amountCents === 20_000)).toBe(true);
+    await settle("CARD_REFUND", 20_000, "race-3611-void-refund", "refund:race-3611-void-refund");
+    expect(bookingLedgerBalance(await lines()).owedCents).toBe(0);
   }, 60_000);
 });
