@@ -18,7 +18,7 @@ function unsharedMoneyInputs(file: string, source: string): string[] {
       const attributes = node.attributes.properties;
       const literal = (name: string) => attributes.find(
         (attribute): attribute is ts.JsxAttribute =>
-          ts.isJsxAttribute(attribute) && attribute.name.text === name,
+          ts.isJsxAttribute(attribute) && attribute.name.getText(parsed) === name,
       )?.initializer;
       const literalText = (name: string) => {
         const initializer = literal(name);
