@@ -26,6 +26,10 @@ const mocks = vi.hoisted(() => ({
   recordBookingEvent: vi.fn(),
 }));
 
+// #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
+const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.fn(async (_input: unknown) => {}) }));
+vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: {
@@ -227,6 +231,17 @@ describe("cancelBooking split cascade (#738)", () => {
     });
     expect(mocks.reconcileBedAllocationsForBooking).toHaveBeenCalledWith(
       expect.objectContaining({ bookingId: "child_1" })
+    );
+    // #3611: the child's own claim posts its reversals, nothing kept, after the
+    // child's global lock(1).
+    expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "child_1", keptCents: 0, site: "booking-cancel:linked-child" }),
+    );
+    const childPost = cancellationLedger.postCancellationLedgerLines.mock.calls.findIndex(
+      ([arg]) => (arg as { bookingId: string }).bookingId === "child_1",
+    );
+    expect(globalLockOrders[1]).toBeLessThan(
+      cancellationLedger.postCancellationLedgerLines.mock.invocationCallOrder[childPost]!,
     );
     // #1967: any outstanding guest-portion payment link is revoked inside the
     // same claim transaction, so a link minted between the parent's cancel

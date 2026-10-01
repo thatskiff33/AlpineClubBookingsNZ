@@ -55,6 +55,10 @@ const txClient = {
   },
 };
 
+// #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
+const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.fn(async (_input: unknown) => {}) }));
+vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     groupBooking: {
@@ -947,6 +951,39 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
       where: { id: "pay-1" },
       data: { refundedAmountCents: 4500, status: PaymentStatus.REFUNDED },
     });
+  });
+
+  it("#3611: each child posts what the frozen plan keeps, even when the inline refund fails; an unpaid child keeps nothing", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: {
+        id: "settle-1",
+        status: PaymentStatus.SUCCEEDED,
+        amountCents: 4500,
+        stripePaymentIntentId: "pi_settle_1",
+        refundPlan: { "child-1": 2000 },
+      },
+    });
+    mocks.bookingFindMany.mockResolvedValue([
+      paidChild("child-1", "pay-1"),
+      child({ id: "late-child", status: BookingStatus.PAYMENT_PENDING, finalPriceCents: 4500, payment: null }),
+    ]);
+    mocks.processRefund.mockRejectedValueOnce(new Error("stripe down"));
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
+
+    expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+      expect.objectContaining({
+        store: txClient,
+        bookingId: "child-1",
+        keptCents: 4500 - 2000,
+        site: "group-cancel:organiser-settled-child",
+      }),
+    );
+    expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "late-child", keptCents: 0 }),
+    );
   });
 
   it("keeps the frozen plan and arms the durable retry when the refund fails (#1351)", async () => {

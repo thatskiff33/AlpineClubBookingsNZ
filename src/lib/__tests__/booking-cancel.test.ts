@@ -99,6 +99,10 @@ const mocks = vi.hoisted(() => {
   };
 });
 
+// #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
+const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.fn(async (_input: unknown) => {}) }));
+vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: {
@@ -2113,6 +2117,55 @@ describe("cancelBooking credit refunds", () => {
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
   });
 
+  describe("the cancellation's ledger lines post inside the claim (#3611)", () => {
+    it("posts what the policy keeps: the unrefunded tier share of the paid slice", async () => {
+      const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+      expect(result.status).toBe(200);
+      expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledTimes(1);
+      expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith({
+        store: mocks.lastTx,
+        bookingId: "booking_1",
+        lodgeId: "lodge_1",
+        keptCents: 10000 - 5000,
+        site: "booking-cancel:paid",
+      });
+      // After the claim's flip, in the same transaction.
+      expect(mocks.bookingUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+        cancellationLedger.postCancellationLedgerLines.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("adds the part of the applied credit the tier did not restore", async () => {
+      const withCredit = {
+        ...(await mocks.txBookingFindUnique()),
+        payment: { ...(await mocks.txBookingFindUnique()).payment, creditAppliedCents: 2000 },
+      };
+      mocks.bookingFindUnique.mockResolvedValue(withCredit);
+      mocks.txBookingFindUnique.mockResolvedValue(withCredit);
+      mocks.calculateAppliedCreditRestore.mockReturnValue({ creditRestoredCents: 1000, creditRestorePercentage: 50 });
+      mocks.restoreCreditFromBooking.mockResolvedValue(1000);
+
+      await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+      expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+        expect.objectContaining({ keptCents: 10000 - 5000 + (2000 - 1000), site: "booking-cancel:paid" }),
+      );
+    });
+
+    it("posts nothing when the single-flight claim is lost", async () => {
+      mocks.txBookingFindUnique.mockResolvedValueOnce({
+        ...(await mocks.bookingFindUnique()),
+        status: "CANCELLED",
+      });
+
+      const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+      expect(result.status).toBe(409);
+      expect(cancellationLedger.postCancellationLedgerLines).not.toHaveBeenCalled();
+    });
+  });
+
   // -------------------------------------------------------------------------
   // #3639 (`INV-PAY-106`): the CANCELLED event's policy snapshot is the decision
   // record the Stripe webhook reads before it refunds a late notice, and on a
@@ -2956,6 +3009,36 @@ describe("cancelBooking credit refunds", () => {
       );
       // A 0 restore leaves the field undefined (|| undefined semantics).
       expect(data.creditRestoredCents).toBeUndefined();
+    });
+
+    it("#3611: every unpaid branch posts its reversals with nothing kept, inside its own claim", async () => {
+      const cases: Array<[string, Record<string, unknown>, string]> = [
+        ["bk_nc", neverCapturedBooking(), "booking-cancel:unpaid"],
+        ["bk_pending", pendingBooking(), "booking-cancel:pending"],
+        [
+          "bk_wl",
+          { ...neverCapturedBooking({ id: "bk_wl", status: "WAITLISTED" }), payment: null },
+          "booking-cancel:no-payment",
+        ],
+      ];
+      for (const [id, booking, site] of cases) {
+        cancellationLedger.postCancellationLedgerLines.mockClear();
+        mocks.bookingFindUnique.mockResolvedValueOnce(booking);
+        mocks.txBookingFindUnique.mockResolvedValueOnce(booking);
+        mocks.txPaymentTransactionFindFirst.mockResolvedValueOnce(null);
+
+        const result = await cancelBooking(id, "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+        expect(result.status).toBe(200);
+        expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledTimes(1);
+        expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith({
+          store: mocks.lastTx,
+          bookingId: id,
+          lodgeId: "lodge_1",
+          keptCents: 0,
+          site,
+        });
+      }
     });
 
     it("cleans up the promo redemption exactly once when a credit-carrying booking is cancelled (no cross-contamination)", async () => {
