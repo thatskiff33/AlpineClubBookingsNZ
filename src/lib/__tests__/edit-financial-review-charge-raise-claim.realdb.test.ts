@@ -707,7 +707,13 @@ let observerClient: PrismaClient;
         orderBy: { createdAt: "asc" },
         select: { metadata: true },
       });
-      return rows.map((row) => (row.metadata as { derivedTotalCents: number }).derivedTotalCents);
+      // Sorted, not left in `createdAt` order: under the frozen test clock two
+      // rows written in one test can share a timestamp, and Postgres then returns
+      // them in either order (CI saw [10000, 6000]). These assertions are about
+      // how many times each share is traced, not which was traced first.
+      return rows
+        .map((row) => (row.metadata as { derivedTotalCents: number }).derivedTotalCents)
+        .sort((a, b) => a - b);
     }
 
     async function markRequestPaid() {
