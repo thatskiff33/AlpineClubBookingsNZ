@@ -20,8 +20,8 @@
   matching ledger record, a warning beneath the cards now says how much Net
   Collected Cash may understate, the same warning Reports shows.
 
-  All three "Net Collected" figures (the dashboard card, the Payments card
-  and Reports' Net Collected Cash) now count the same bookings: every booking
+  All four "Net Collected" figures (the dashboard card, the Payments card,
+  Reports' Net Collected Cash and the Finance dashboard's card, #3637) now count the same bookings: every booking
   that has not been deleted, whatever its status. A cancelled booking counts
   at the cancellation fee the club kept, so **Reports and the Payments card now
   include kept cancellation fees** (before, both left cancelled bookings out,
