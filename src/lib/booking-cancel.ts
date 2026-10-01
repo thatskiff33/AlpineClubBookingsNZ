@@ -1626,6 +1626,21 @@ async function performBookingCancellation(
         creditRestoredCents,
       });
     }
+    // Review D1: money the policy never tiered (paid above price, applied rows the
+    // mirror does not count) lands in the ledger's figure too. Said out loud, and
+    // frozen below, so it is never mistaken for a cancellation fee.
+    if (ledgerKeptCents !== money.policyKeptCents) {
+      logger.warn(
+        {
+          bookingId,
+          ledgerKeptCents,
+          policyKeptCents: money.policyKeptCents,
+          paidAboveRefundableCents: money.paidAboveRefundableCents,
+          appliedCreditBeyondMirrorCents: money.appliedCreditBeyondMirrorCents,
+        },
+        "Booking ledger: a cancellation keeps money beyond what its policy keeps; the retained line says so (#3611)",
+      );
+    }
     const shouldFailAdditionalPayment =
       hasOutstandingAdditionalPaymentIntent(payment);
 
@@ -1803,6 +1818,7 @@ async function performBookingCancellation(
       bookingId,
       lodgeId: fresh.lodgeId,
       keptCents: ledgerKeptCents,
+      policyKeptCents: money.policyKeptCents,
       site: "booking-cancel:paid",
     });
 
@@ -1842,7 +1858,13 @@ async function performBookingCancellation(
       paidAmountCents,
       changeFeeCents: payment.changeFeeCents,
       retainedAmountCents: money.retainedAmountCents,
-      ledger: { keptCents: ledgerKeptCents, appliedCreditCents, creditRestoredCents },
+      ledger: {
+        keptCents: ledgerKeptCents,
+        policyKeptCents: money.policyKeptCents,
+        keptBeyondPolicyCents: ledgerKeptCents - money.policyKeptCents,
+        appliedCreditCents,
+        creditRestoredCents,
+      },
     });
 
     return {

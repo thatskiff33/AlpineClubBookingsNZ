@@ -31,6 +31,7 @@ export async function postCancellationLedgerLines({
   bookingId,
   lodgeId,
   keptCents,
+  policyKeptCents,
   site,
 }: {
   store: Pick<Prisma.TransactionClient, "bookingLedgerLine">;
@@ -42,6 +43,8 @@ export async function postCancellationLedgerLines({
    * path that keeps nothing (design §5.1).
    */
   keptCents: number;
+  /** What the policy alone keeps, where the paid path knows it; names the kept line (review D1). */
+  policyKeptCents?: number;
   /** Which cancel path posted, for the log line a gap leaves. */
   site: string;
 }): Promise<void> {
@@ -50,7 +53,14 @@ export async function postCancellationLedgerLines({
   const adjustmentLines = await findPostedAdjustmentLines(store, bookingId);
   let rows: ReturnType<typeof buildBookingLedgerRows> = [];
   try {
-    const plan = planCancellationChargeLines({ bookingId, lodgeId, keptCents, chargeLines, adjustmentLines });
+    const plan = planCancellationChargeLines({
+      bookingId,
+      lodgeId,
+      keptCents,
+      ...(policyKeptCents === undefined ? {} : { policyKeptCents }),
+      chargeLines,
+      adjustmentLines,
+    });
     if (plan.kind === "none") {
       logger.warn(
         { bookingId, site, reason: plan.reason, keptCents },

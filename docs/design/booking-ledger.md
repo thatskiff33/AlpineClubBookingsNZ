@@ -257,9 +257,12 @@ booking id) and posted in one batch:
   because the kept figure below already counts every cent the club holds;
 - the live `CHANGE_FEE` lines stay while the kept figure covers them (a change
   fee is not refundable, `INV-PAY-018`); below them they are reversed too;
-- one `CANCELLATION_FEE`, keyed `cancellation:<bookingId>:fee`, narrated
-  "Cancellation fee retained", for the kept figure less the change fees that
-  stayed — or the whole kept figure where they were reversed — when above zero.
+- one `CANCELLATION_FEE`, keyed `cancellation:<bookingId>:fee`, for the kept
+  figure less the change fees that stayed — or the whole kept figure where they
+  were reversed — when above zero. Narrated "Cancellation fee retained" (the
+  decision's wording) where the kept figure is the policy's own; otherwise
+  "Cancellation: amount retained (policy fee plus earlier charges)", or "(less
+  than the policy fee)", so the line never calls other money a fee.
 
 **The kept figure, and its one relationship to the CANCELLED event.** Both come
 from one call, `paidCancellationMoney` (`paid-cancellation-money.ts`), which
@@ -269,13 +272,25 @@ computed them:
 ```
 retainedAmountCents = max(paid − refund, 0)             (the CANCELLED event; the member's narrative)
 ledgerKeptCents     = retainedAmountCents + (applied − restored)
+policyKeptCents     = (refundableBase − refund) + changeFee + (mirrorApplied − restored)
+ledgerKeptCents − policyKeptCents = paidAboveRefundable + (applied − mirrorApplied)
 ```
+
+**The ledger's figure can hold more than the policy decided** (review D1), and
+says so. Paid money above price plus change fee — an edit's kept-back
+reduction, a captured `CHARGE_TO_MEMBER` share, a legacy double payment — and
+applied rows the mirror never counted are outside the refundable base, so no
+tier refunds them, even at 100%. The ledger keeps them so `owed(b)` reaches
+zero; the claim logs a warning naming both components, the line's narration
+stops calling them a fee, and the snapshot freezes the difference. Whether that
+money deserves a line of its own is the Xero rendering's question (C6, #3585).
 
 `paid` is the payment net of earlier refunds, change fees included; `applied` is
 the credit the booking's applied rows actually hold, which the mirror can
 disagree with. Only the paid `cancelBooking` branch keeps anything; every other
 cancel keeps nothing. The CANCELLED snapshot freezes `ledger: { keptCents,
-appliedCreditCents, creditRestoredCents }` in the same claim, so #3583's
+policyKeptCents, keptBeyondPolicyCents, appliedCreditCents, creditRestoredCents }`
+in the same claim, so #3583's
 back-post replays the figure instead of re-deriving it from a mirror that keeps
 moving. A booking cancelled with no such snapshot kept nothing. Once the
 refund, credit, restore or hand-back that follows has posted (§5.2), `owed(b)`
@@ -420,9 +435,11 @@ price does not carry also leaves its pending ask above `max(0, owed(b))`, so
 §6's `additionalAmountCents` identity does not hold until it is captured or
 withdrawn; #3583's census classifies that booking as `retained`, not as a
 disagreement. #3611 named what the club keeps for a **cancellation**
-(`CANCELLATION_FEE`, §5.1); an edit's kept-back share is not a cancellation and
-is not covered by it. A stand-in still live when the booking is cancelled is
-reversed by the cancellation (§5.1).
+(`CANCELLATION_FEE`, §5.1). An edit's kept-back share is not a cancellation fee,
+but a later cancellation does carry it: it sits in paid money above the price,
+outside every tier, so the cancellation's kept line holds it, names it as more
+than the policy fee, and freezes the excess (§5.1, review D1). A stand-in still
+live when the booking is cancelled is reversed by the cancellation.
 
 **The ask is the one place today's shape survives.** `additionalAmountCents`
 is retired (it is `max(0, owed(b))`), but the `ADDITIONAL` transaction row

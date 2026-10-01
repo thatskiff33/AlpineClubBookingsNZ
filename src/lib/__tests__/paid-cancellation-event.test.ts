@@ -49,7 +49,7 @@ describe("writePaidCancellationEvent", () => {
       paidAmountCents: 8000,
       changeFeeCents: 0,
       retainedAmountCents: 4000,
-      ledger: { keptCents: 4000, appliedCreditCents: 0, creditRestoredCents: 0 },
+      ledger: { keptCents: 4000, policyKeptCents: 4000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0 },
     });
 
     expect(create).toHaveBeenCalledWith({
@@ -68,7 +68,7 @@ describe("writePaidCancellationEvent", () => {
           settledAmountCents: 4000,
           retainedAmountCents: 4000,
           changeFeeCents: 0,
-          ledger: { keptCents: 4000, appliedCreditCents: 0, creditRestoredCents: 0 },
+          ledger: { keptCents: 4000, policyKeptCents: 4000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0 },
         },
       },
     });
@@ -90,7 +90,7 @@ describe("writePaidCancellationEvent", () => {
         paidAmountCents: 8000,
         changeFeeCents: 0,
         retainedAmountCents: 8000,
-        ledger: { keptCents: 8000, appliedCreditCents: 0, creditRestoredCents: 0 },
+        ledger: { keptCents: 8000, policyKeptCents: 8000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0 },
       })
     ).rejects.toThrow("insert failed");
   });

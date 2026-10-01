@@ -73,6 +73,34 @@ describe("paidCancellationMoney", () => {
     expect(result.ledgerKeptCents).toBe(result.retainedAmountCents + 3_000);
   });
 
+  it("D1: the policy's own kept figure equals the ledger's whenever nothing outside the policy is held", () => {
+    for (const over of [
+      { amountCents: 20_000, finalPriceCents: 20_000 },
+      { amountCents: 15_000, creditAppliedCents: 5_000, finalPriceCents: 20_000, policy: FIFTY_FEE },
+      { amountCents: 21_500, changeFeeCents: 1_500, finalPriceCents: 20_000, policy: FIFTY_FEE },
+    ]) {
+      const { result } = money(over);
+      expect(result.policyKeptCents).toBe(result.ledgerKeptCents);
+    }
+  });
+
+  it("D1: an edit's kept-back reduction is kept beyond the policy, even at a 100% tier, and named", () => {
+    // $200 paid, the price reduced to $150 with $5 refunded, then cancelled at 100%.
+    const { result } = money({ amountCents: 20_000, refundedAmountCents: 500, finalPriceCents: 15_000, policy: [{ daysBeforeStay: 0, refundPercentage: 100 }] });
+    expect(result).toMatchObject({ refundAmountCents: 15_000, policyKeptCents: 0, ledgerKeptCents: 4_500, paidAboveRefundableCents: 4_500 });
+  });
+
+  it("D1: the difference is exactly paid-above-refundable plus applied credit beyond the mirror", () => {
+    for (const over of [
+      { amountCents: 23_000, finalPriceCents: 20_000 },
+      { amountCents: 20_000, creditAppliedCents: 0, appliedCreditCents: 3_000, finalPriceCents: 20_000 },
+      { amountCents: 15_000, creditAppliedCents: 5_000, appliedCreditCents: 1_000, finalPriceCents: 20_000, policy: FIFTY_FEE },
+    ]) {
+      const { result } = money(over);
+      expect(result.ledgerKeptCents - result.policyKeptCents).toBe(result.paidAboveRefundableCents + result.appliedCreditBeyondMirrorCents);
+    }
+  });
+
   it("predicts the restore's own cap at the applied rows, and no restore without a member ledger", () => {
     expect(money({ amountCents: 15_000, creditAppliedCents: 5_000, appliedCreditCents: 1_000, finalPriceCents: 20_000 }).result.creditRestoredCents).toBe(1_000);
     expect(money({ amountCents: 15_000, creditAppliedCents: 5_000, finalPriceCents: 20_000, restoresToMemberLedger: false }).result.creditRestoredCents).toBe(0);

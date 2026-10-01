@@ -5,7 +5,7 @@ the booking to CANCELLED, so the call has to sit in that transaction; there is
 no seam outside it that runs under the same lock and the same client.
 
 file: src/lib/booking-cancel.ts
-lines: 2578
+lines: 2600
 reason: one posting call in each of the five claim transactions (paid, unpaid,
   PENDING, no-payment, linked child), plus their imports; the paid claim reads
   its applied rows and takes refund, restore and kept from one call, so the

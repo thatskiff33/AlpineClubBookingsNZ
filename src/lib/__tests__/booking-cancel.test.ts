@@ -2133,6 +2133,7 @@ describe("cancelBooking credit refunds", () => {
         bookingId: "booking_1",
         lodgeId: "lodge_1",
         keptCents: 10000 - 5000,
+        policyKeptCents: 10000 - 5000,
         site: "booking-cancel:paid",
       });
       // After the claim's flip, in the same transaction.
@@ -2176,6 +2177,25 @@ describe("cancelBooking credit refunds", () => {
       expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
         expect.objectContaining({ keptCents: 10000 - 5000 + 2000, site: "booking-cancel:paid" }),
       );
+    });
+
+    it("D1: applied rows the mirror does not count are kept beyond the policy — warned, passed to the post, and frozen", async () => {
+      const logger = (await import("@/lib/logger")).default;
+      appliedCredit.deriveBookingAppliedCreditCents.mockResolvedValueOnce(3000);
+
+      await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+      expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+        expect.objectContaining({ keptCents: 5000 + 3000, policyKeptCents: 5000 }),
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ ledgerKeptCents: 8000, policyKeptCents: 5000, paidAboveRefundableCents: 0, appliedCreditBeyondMirrorCents: 3000 }),
+        expect.stringContaining("beyond what its policy keeps"),
+      );
+      const snapshot = mocks.txBookingEventCreate.mock.calls.find((call) => call[0].data.type === "CANCELLED")?.[0].data.snapshot;
+      expect(snapshot.ledger).toEqual({ keptCents: 8000, policyKeptCents: 5000, keptBeyondPolicyCents: 3000, appliedCreditCents: 3000, creditRestoredCents: 0 });
+      // The member's narrative figure is untouched.
+      expect(snapshot.retainedAmountCents).toBe(5000);
     });
 
     it("posts nothing when the single-flight claim is lost", async () => {
@@ -2244,7 +2264,7 @@ describe("cancelBooking credit refunds", () => {
             retainedAmountCents: 10000,
             changeFeeCents: 0,
             // #3611: what the ledger was told the club keeps, frozen with the decision.
-            ledger: { keptCents: 10000, appliedCreditCents: 0, creditRestoredCents: 0 },
+            ledger: { keptCents: 10000, policyKeptCents: 10000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0 },
           },
         },
       });
@@ -2275,7 +2295,7 @@ describe("cancelBooking credit refunds", () => {
         settledAmountCents: 5000,
         retainedAmountCents: 5000,
         changeFeeCents: 0,
-        ledger: { keptCents: 5000, appliedCreditCents: 0, creditRestoredCents: 0 },
+        ledger: { keptCents: 5000, policyKeptCents: 5000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0 },
       });
       expect(
         mocks.txBookingEventCreate.mock.invocationCallOrder[0]

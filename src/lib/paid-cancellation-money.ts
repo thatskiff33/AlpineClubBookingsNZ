@@ -42,6 +42,17 @@ export type PaidCancellationMoney = {
   retainedAmountCents: number;
   /** The booking ledger's figure: retained, plus applied credit not restored (§5.1). */
   ledgerKeptCents: number;
+  /**
+   * What the policy ALONE keeps (review D1): the tiered slice less its refund,
+   * the change fee, and the mirror's applied credit less the restore. Equal to
+   * `ledgerKeptCents` unless the ledger figure also absorbs money the policy
+   * never tiered — the components below say which.
+   */
+  policyKeptCents: number;
+  /** Paid money above price plus change fee, which the refundable base leaves out. */
+  paidAboveRefundableCents: number;
+  /** Applied credit the booking's rows hold beyond (or, negative, short of) the mirror. */
+  appliedCreditBeyondMirrorCents: number;
 };
 
 /** The one formula for what the club keeps on a cancellation (design §5.1). */
@@ -99,6 +110,7 @@ export function paidCancellationMoney({
     refundMethod,
   );
   const retainedAmountCents = Math.max(paidAmountCents - refundAmountCents, 0);
+  const priceWithChangeFeeCents = finalPriceCents + payment.changeFeeCents;
   return {
     paidAmountCents,
     refundableBaseCents,
@@ -108,5 +120,9 @@ export function paidCancellationMoney({
     creditRestoredCents,
     retainedAmountCents,
     ledgerKeptCents: cancellationKeptCents({ retainedAmountCents, appliedCreditCents, creditRestoredCents }),
+    policyKeptCents:
+      refundableBaseCents - refundAmountCents + payment.changeFeeCents + payment.creditAppliedCents - creditRestoredCents,
+    paidAboveRefundableCents: Math.max(0, paidAmountCents - priceWithChangeFeeCents),
+    appliedCreditBeyondMirrorCents: appliedCreditCents - payment.creditAppliedCents,
   };
 }

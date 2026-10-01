@@ -186,6 +186,17 @@ describe("planCancellationChargeLines", () => {
     expect(plan(1_499)).toMatchObject({ cancellationFeeCents: 1_499, changeFeesReversed: true });
   });
 
+  it("D1: names the kept line by what it holds — the decision's narration only where it is the policy's own figure", () => {
+    const fee = (keptCents: number, policyKeptCents?: number) => {
+      const plan = planCancellationChargeLines({ bookingId: "b1", lodgeId: "l1", keptCents, ...(policyKeptCents === undefined ? {} : { policyKeptCents }), chargeLines: [], adjustmentLines: [] });
+      return plan.kind === "lines" ? plan.postings.find((p) => p.kind === "CANCELLATION_FEE") : undefined;
+    };
+    expect(fee(5_000)?.narration).toBe("Cancellation fee retained");
+    expect(fee(5_000, 5_000)?.narration).toBe("Cancellation fee retained");
+    expect(fee(8_000, 5_000)).toMatchObject({ unitCents: 8_000, narration: "Cancellation: amount retained (policy fee plus earlier charges)" });
+    expect(fee(4_000, 5_000)).toMatchObject({ unitCents: 4_000, narration: "Cancellation: amount retained (less than the policy fee)" });
+  });
+
   it("posts no fee when the club keeps nothing, and nothing at all for a negative kept figure", () => {
     expect(planCancellationChargeLines({ bookingId: "b1", lodgeId: "l1", keptCents: 0, chargeLines: [], adjustmentLines: [] })).toEqual({
       kind: "lines",
@@ -323,6 +334,16 @@ describe("postCancellationLedgerLines: owed(b) is zero once the settlement lines
     expect(book.rows.some((row) => row.kind === "CHANGE_FEE" && row.reversesLineId === "line:modification:mod-f3:change-fee")).toBe(true);
     expect(book.rows.find((row) => row.kind === "CANCELLATION_FEE")?.amountCents).toBe(5_000);
     expect(owed(book.rows)).toBe(0);
+  });
+
+  it("D1: the sync carries the policy figure through, so a kept line holding more than the fee is named for what it is", async () => {
+    const book = ledger();
+    confirm(book);
+    await postCancellationLedgerLines({ store: book.store, bookingId: "b1", lodgeId: "l1", keptCents: 8_000, policyKeptCents: 5_000, site: "test" });
+    expect(book.rows.find((row) => row.kind === "CANCELLATION_FEE")).toMatchObject({
+      amountCents: 8_000,
+      narration: "Cancellation: amount retained (policy fee plus earlier charges)",
+    });
   });
 
   it("a replayed cancellation posts nothing new", async () => {

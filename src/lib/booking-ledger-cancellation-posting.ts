@@ -32,10 +32,26 @@ export type CancellationPostingPlan =
     }
   | { kind: "none"; reason: "INVALID_KEPT_AMOUNT" };
 
+/** The decision's narration, for a kept figure that is the policy's own (owner decision B). */
+export const CANCELLATION_FEE_NARRATION = "Cancellation fee retained";
+
+/**
+ * What the kept line says (review D1): the decision's narration where the kept
+ * figure is the policy's own, and what it is where it also holds money no
+ * policy tier decided. Narration only, never read for money.
+ */
+export function cancellationFeeNarration(keptCents: number, policyKeptCents: number): string {
+  if (keptCents === policyKeptCents) return CANCELLATION_FEE_NARRATION;
+  return keptCents > policyKeptCents
+    ? "Cancellation: amount retained (policy fee plus earlier charges)"
+    : "Cancellation: amount retained (less than the policy fee)";
+}
+
 export function planCancellationChargeLines({
   bookingId,
   lodgeId,
   keptCents,
+  policyKeptCents = keptCents,
   chargeLines,
   adjustmentLines,
 }: {
@@ -46,6 +62,12 @@ export function planCancellationChargeLines({
    * path's `ledgerKeptCents` (`paid-cancellation-money.ts`), or 0.
    */
   keptCents: number;
+  /**
+   * What the policy alone keeps (`paidCancellationMoney`'s `policyKeptCents`);
+   * omitted where nothing is kept, so it equals `keptCents`. Changes only the
+   * kept line's narration.
+   */
+  policyKeptCents?: number;
   /** Every GUEST_NIGHT, PROMOTION and CHANGE_FEE line the booking holds, live or not. */
   chargeLines: readonly ReversibleChargeLine[];
   /** Every AGREED_ADJUSTMENT the booking holds, live or not. */
@@ -78,7 +100,7 @@ export function planCancellationChargeLines({
       sign: 1,
       quantity: 1,
       unitCents: cancellationFeeCents,
-      narration: "Cancellation fee retained",
+      narration: cancellationFeeNarration(keptCents, policyKeptCents),
       postingKey: cancellationFeeKey(bookingId),
     });
   }
