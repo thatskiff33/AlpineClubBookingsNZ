@@ -501,10 +501,10 @@ export {
  * booking-cancel's #1349 pattern, on the same infrastructure, for the same
  * reason.
  *
- * The completion holds no advisory lock (deliberately: the locking guide's
- * bounded-exception rule forbids holding `lock(1)` across a provider round trip),
- * so its only single-flight guarantee is the status-guarded claim, which has
- * already committed by the time the refund is sent. Without this row a crash
+ * The completion holds no advisory lock across the refund (the locking guide
+ * forbids `lock(1)` across a provider round trip; since #3582 it is released at
+ * commit), so its only single-flight guarantee then is the status-guarded
+ * claim, committed by the time the refund is sent. Without this row a crash
  * between the commit and the Stripe call would leave a COMPLETED task, an
  * untouched `refundedAmountCents` and no trace at all that money was owed - a
  * worse state than the booking-edit path's, because the Stripe route writes

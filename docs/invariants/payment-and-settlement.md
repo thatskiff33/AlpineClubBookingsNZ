@@ -1569,8 +1569,10 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   services use. The route is chosen and every refusal raised BEFORE the status
   claim, so a refused completion leaves the task OPEN; the Stripe route writes
   no allocation of its own, because `refundPaymentTransactions` writes it. The
-  completion holds no advisory lock (`docs/CONCURRENCY_AND_LOCKING.md`), so the
-  status claim is the whole single-flight guarantee.
+  completion holds no advisory lock across the Stripe call (since #3582 its
+  `lock(1)` is taken and released inside the transaction;
+  `docs/CONCURRENCY_AND_LOCKING.md`), so the status claim is the whole
+  single-flight guarantee across it.
 
 ## INV-PAY-069
 

@@ -27,6 +27,7 @@ const h = vi.hoisted(() => ({
   assertEnvelope: vi.fn(),
   assertNotQuotePriced: vi.fn(),
   reconcileHosting: vi.fn(),
+  postModificationLedgerLines: vi.fn(),
 }));
 
 const tx = {
@@ -151,6 +152,11 @@ vi.mock("@/lib/promo", () => ({
     async (_tx: unknown, promoCode: unknown) => promoCode
   ),
   validateAndCalculatePromoDiscount: vi.fn(),
+}));
+// #3741: the shift posts through the same ledger sync as every edit door.
+vi.mock("@/lib/booking-ledger-modification-sync", () => ({
+  postModificationLedgerLines: h.postModificationLedgerLines,
+  postReviewClosureLedgerLines: vi.fn(),
 }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
@@ -309,6 +315,29 @@ describe("adminShiftBookingDates (issue #1668 — pure translation)", () => {
     // No payment or Xero settlement writes at all.
     expect(h.txPaymentUpdate).not.toHaveBeenCalled();
     expect(h.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
+
+    // #3741: the shift posts its ledger lines from its own before and after,
+    // anchored on the row it wrote, after the `lock(1)` it took first.
+    expect(h.postModificationLedgerLines).toHaveBeenCalledTimes(1);
+    const posted = h.postModificationLedgerLines.mock.calls[0]![0];
+    expect(posted).toMatchObject({ store: tx, bookingId: "b1", lodgeId: "lodge-1", site: "admin-date-shift" });
+    expect(posted.bookingModification).toBe(await h.txModificationCreate.mock.results[0]!.value);
+    const nightsOf = (side: { guests: Array<{ guestKey: string; nights: unknown[] }> }) =>
+      side.guests.map((guest) => [guest.guestKey, guest.nights]);
+    expect(nightsOf(posted.sides.before)).toEqual([
+      ["g1", [10, 11, 12].map((d) => ({ stayDate: D(`2026-09-${d}`), priceCents: 10000 }))],
+    ]);
+    expect(nightsOf(posted.sides.after)).toEqual([
+      ["g1", [12, 13, 14].map((d) => ({ stayDate: D(`2026-09-${d}`), priceCents: 10000 }))],
+    ]);
+    expect(posted.sides.before.promoAdjustmentCents).toBe(0);
+    expect(posted.sides.after.promoAdjustmentCents).toBe(0);
+    expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      h.postModificationLedgerLines.mock.invocationCallOrder[0]!,
+    );
+    expect(String((tx.$executeRaw.mock.calls[0]![0] as TemplateStringsArray).join(""))).toContain(
+      "pg_advisory_xact_lock(1)",
+    );
 
     // Response is all-zero money.
     expect(result.priceDiffCents).toBe(0);

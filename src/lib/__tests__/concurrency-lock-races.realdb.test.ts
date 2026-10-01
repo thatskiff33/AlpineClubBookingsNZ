@@ -139,6 +139,13 @@ import "./booking-ledger-settlement-sync.realdb.test";
 // credit, and a hand-back completed through the real resolver. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3599-` fixtures.
 import "./booking-ledger-credit-sync.realdb.test";
+// #3582 reuses it to prove an edit's and a review closure's charge lines against
+// the table's real constraints: two edits in turn (the second reverses the first
+// edit's re-post, never a line already reversed), a replay that posts nothing
+// and still commits, an unconfirmed booking that posts nothing, and a closure's
+// re-price under its history row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-3582-` fixtures.
+import "./booking-ledger-modification.realdb.test";
 // #3640 reuses it to prove the one card-refund writer adds each refund exactly
 // once: two writers recording the SAME refund meet at `ON CONFLICT DO NOTHING`
 // and add it once, and two recording DIFFERENT refunds both survive the mirror's
