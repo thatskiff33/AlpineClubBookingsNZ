@@ -7,6 +7,7 @@ import {
 import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
+import { buildBookingDeletedWhere } from "@/lib/booking-delete-visibility";
 import { formatCentsPlain } from "@/lib/utils";
 import {
   reconcileBookingMoney,
@@ -275,6 +276,8 @@ export async function getLegacyDashboardBookingExport(input: {
       checkOut: {
         gt: historyStartDate,
       },
+      // #3745: a soft-deleted booking is in no Finance figure, so not here.
+      ...buildBookingDeletedWhere("hide"),
       status: {
         in: getLegacyDashboardExportStatuses(),
       },

@@ -12,6 +12,7 @@ import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
 import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import logger from "@/lib/logger";
+import { buildBookingDeletedWhere } from "@/lib/booking-delete-visibility";
 import { prisma } from "@/lib/prisma";
 import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
 import { type CalendarDate } from "@/lib/club-time";
@@ -238,8 +239,8 @@ interface FinanceBookingMetricsPaymentSummary {
    * Gross captured cash: `Payment.amountCents` summed over the payments whose
    * status says money was taken. It, `refundedCents`, `netCollectedCents` and
    * the two ledger-gap fields count the Net Collected scope (#3637): every
-   * booking staying in the window, ANY status, soft-deleted ones left out.
-   * Every OTHER field here counts the status-listed contributing bookings.
+   * booking staying in the window, ANY status. Every OTHER field here counts
+   * the status-listed contributing bookings. Neither counts a soft-deleted one.
    *
    * `reconcilePaymentAggregates` sets the column to the sum of EVERY captured
    * ledger row, PRIMARY and ADDITIONAL alike, so this figure ALREADY contains a
@@ -250,9 +251,8 @@ interface FinanceBookingMetricsPaymentSummary {
   /**
    * How much captured money came from a later price increase — a BREAKDOWN,
    * never an addend beside the gross (#2408). It counts the STATUS-LISTED
-   * bookings, not the Net Collected scope, so the two can differ: a cancelled
-   * booking's collected increase is in the gross but not here, and a
-   * soft-deleted listed booking's is here but not in the gross.
+   * bookings, not the Net Collected scope, so a cancelled booking's collected
+   * increase is in the gross but not here.
    */
   capturedAdditionalCents: number;
   /**
@@ -1250,7 +1250,7 @@ export async function getFinanceBookingMetrics(
   const [bookings, netCollectedCandidates] = stayOverlapWhere
       ? await Promise.all([
           prisma.booking.findMany({
-            where: { ...stayOverlapWhere, status: { in: getStatusFilter(query) } },
+            where: { ...stayOverlapWhere, ...buildBookingDeletedWhere("hide"), status: { in: getStatusFilter(query) } },
             orderBy: [{ checkIn: "asc" }, { id: "asc" }],
             select: bookingMetricsSelect,
           }),
