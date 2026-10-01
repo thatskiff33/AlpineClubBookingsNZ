@@ -7,6 +7,10 @@ import { formatCents } from "@/lib/utils";
 import StripeProvider from "@/components/stripe/StripeProvider";
 import PaymentForm from "@/components/stripe/PaymentForm";
 import { useClubFormat } from "@/components/club-format-provider";
+import {
+  isAdditionalPaymentAlreadyMade,
+  isPaymentProcessing,
+} from "@/lib/payment-recovery-contract";
 
 interface AdditionalPaymentCardProps {
   bookingId: string;
@@ -39,6 +43,13 @@ export function AdditionalPaymentCard({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [paymentComplete, setPaymentComplete] = useState(false);
+  // #3641 / #3635: two of the route's 409s are not failures to load, so they
+  // get neither the "still owing" fallback nor the red error — ONE plain
+  // statement. Told apart by the body's `code`, never by the status: the
+  // currency refusal is a 409 too, and it IS an error (the ask is still owing).
+  const [notice, setNotice] = useState<
+    { kind: "paid" | "processing"; message: string } | null
+  >(null);
 
   useEffect(() => {
     let active = true;
@@ -54,10 +65,22 @@ export function AdditionalPaymentCard({
           // cannot refresh its secret must not go on offering the old one.
           setClientSecret(null);
           setAskAmountCents(null);
+          if (isAdditionalPaymentAlreadyMade(data)) {
+            setError(null);
+            setNotice({ kind: "paid", message: data.error });
+            return;
+          }
+          if (isPaymentProcessing(data)) {
+            setError(null);
+            setNotice({ kind: "processing", message: data.error });
+            return;
+          }
+          setNotice(null);
           setError(data.error || "Failed to load payment details");
           return;
         }
         setError(null);
+        setNotice(null);
         // Both from the SAME response, always set together (#3340).
         setClientSecret(data.clientSecret);
         setAskAmountCents(
@@ -67,6 +90,7 @@ export function AdditionalPaymentCard({
         if (!active) return;
         setClientSecret(null);
         setAskAmountCents(null);
+        setNotice(null);
         setError("Failed to load payment details");
       } finally {
         if (active) setLoading(false);
@@ -123,6 +147,17 @@ export function AdditionalPaymentCard({
           <div className="rounded-md bg-success-3 p-4 text-sm text-success-11">
             <p className="font-medium">Payment successful!</p>
             <p className="mt-1">Your additional payment has been processed.</p>
+          </div>
+        ) : notice ? (
+          <div
+            role="status"
+            className={
+              notice.kind === "paid"
+                ? "rounded-md bg-success-3 p-4 text-sm text-success-11"
+                : "rounded-md bg-info-3 p-4 text-sm text-info-11"
+            }
+          >
+            <p>{notice.message}</p>
           </div>
         ) : (
           <>

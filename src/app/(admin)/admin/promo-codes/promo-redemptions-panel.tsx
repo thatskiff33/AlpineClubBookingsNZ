@@ -32,6 +32,7 @@ import {
 import { formatCents } from "@/lib/utils";
 import { useLodgeOptions } from "@/components/lodge-select";
 import { buildPromoRedemptionsCsvContent } from "@/lib/promo-redemptions-csv";
+import { buildBookingDetailPath } from "@/lib/booking-email-contract";
 
 /**
  * A redemption's "Redeemed" stamp — a real INSTANT, read in the club's
@@ -711,7 +712,7 @@ export function PromoRedemptionsPanel({
                       </TableCell>
                       <TableCell>
                         <Link
-                          href={`/admin/bookings/${row.booking.id}`}
+                          href={buildBookingDetailPath(row.booking.id)}
                           className="font-mono text-sm text-primary hover:underline"
                         >
                           {row.booking.reference}

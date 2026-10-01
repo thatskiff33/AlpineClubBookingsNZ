@@ -139,12 +139,26 @@ import "./booking-ledger-settlement-sync.realdb.test";
 // credit, and a hand-back completed through the real resolver. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3599-` fixtures.
 import "./booking-ledger-credit-sync.realdb.test";
+// #3640 reuses it to prove the one card-refund writer adds each refund exactly
+// once: two writers recording the SAME refund meet at `ON CONFLICT DO NOTHING`
+// and add it once, and two recording DIFFERENT refunds both survive the mirror's
+// compare-and-set - each forced behind a held row lock, not raced for. Skipped
+// unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3640-`
+// fixtures.
+import "./card-refund-mirror-races.realdb.test";
 // #2941 reuses it to prove the application client's dietary/allergy omission
 // against PostgreSQL itself: absent from a plain read, a nested relation, an
 // interactive-transaction read and create/update results, present only through
 // the one dietary module's select. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-2941-` fixtures.
 import "./member-dietary-omit.realdb.test";
+// #3642 reuses it to prove the bound group-settlement invoice against
+// PostgreSQL itself: a refused change really rolls back the bed it claimed, the
+// reaper's release and the create worker's fence decide one invoice exactly
+// once in either order, and two observers abandoning one invoice converge on
+// one VOID row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans
+// its own `race-3642-` fixtures.
+import "./group-settlement-invoice-binding-races.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

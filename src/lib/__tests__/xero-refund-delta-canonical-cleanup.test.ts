@@ -160,6 +160,9 @@ const fakePrisma = vi.hoisted(() => {
           _count: { _all: bucket.count },
         }));
       },
+      // #3635 round-3 R1: the note-eligible cash reads which refunds name a
+      // late capture; these fixtures carry no intent, so none do.
+      findMany: async () => [],
     },
     payment: {
       findMany: async (args: { where: Record<string, unknown> }) => {
@@ -295,6 +298,9 @@ const fakePrisma = vi.hoisted(() => {
         const row = rows[0];
         return row ? { requestPayload: row.requestPayload, xeroObjectId: row.xeroObjectId, xeroObjectNumber: null } : null;
       },
+      // #3635 round 4: the resolved-in-Xero coverage read. No operation in
+      // these fixtures is resolved by an officer.
+      findMany: async () => [],
     },
     $transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(client),
   };

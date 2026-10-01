@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
+  releaseLeftBehindJoiners: vi.fn(),
   settlementFindMany: vi.fn(),
   settlementFindUnique: vi.fn(),
   settlementUpdate: vi.fn(),
@@ -30,6 +31,19 @@ const mocks = vi.hoisted(() => ({
   // reaper drains it after commit.
   enqueueOwnHostingCoverage: vi.fn(),
   settleHostingCoverage: vi.fn(),
+  // #3642: the combined Internet Banking invoice a released settlement retires.
+  abandonInvoice: vi.fn(),
+  // #3642: the invoice read in Xero before an Internet Banking release, and the
+  // operator alert when it has started being paid.
+  readInvoiceState: vi.fn(),
+  alertInvoice: vi.fn(),
+  loadModuleFlags: vi.fn(),
+  // #3635 (C5): the started-stay alert runs for real over these.
+  settlementDetailFindUnique: vi.fn(),
+  sendAdminPaymentFailureAlert: vi.fn(),
+  claimAlertCooldown: vi.fn(),
+  deferAlertCooldown: vi.fn(),
+  releaseAlertCooldown: vi.fn(),
 }));
 
 const txClient = {
@@ -48,13 +62,42 @@ const txClient = {
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    groupBookingSettlement: { findMany: mocks.settlementFindMany },
+    groupBookingSettlement: {
+      findMany: mocks.settlementFindMany,
+      findUnique: mocks.settlementDetailFindUnique,
+    },
     groupBooking: { findMany: mocks.groupBookingFindMany },
     $transaction: mocks.transaction,
   },
 }));
 vi.mock("@/lib/stripe", () => ({
   cancelPaymentIntentIfCancellable: mocks.cancelPaymentIntent,
+}));
+vi.mock("@/lib/xero-group-settlement-void-outbox", () => ({
+  abandonGroupSettlementInvoiceInTx: mocks.abandonInvoice,
+}));
+vi.mock("@/lib/xero-group-settlement-invoice-voids", () => ({
+  readGroupSettlementInvoiceState: mocks.readInvoiceState,
+  describeGroupSettlementInvoiceMoney: () => "$500.00 paid",
+}));
+vi.mock("@/lib/module-settings", () => ({
+  loadEffectiveModuleFlags: mocks.loadModuleFlags,
+}));
+// The 24-hour invoice alert is mocked; #3635's once-ever started-stay alert is
+// the real one, over a mocked claim store, so its claim rule is exercised.
+vi.mock("@/lib/group-settlement-invoice-alerts", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/group-settlement-invoice-alerts")),
+  alertGroupSettlementInvoice: mocks.alertInvoice,
+}));
+vi.mock("@/lib/alert-cooldown", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/alert-cooldown")),
+  claimAlertCooldown: mocks.claimAlertCooldown,
+  deferAlertCooldown: mocks.deferAlertCooldown,
+  releaseAlertCooldown: mocks.releaseAlertCooldown,
+}));
+// #3635: the started-stay rule reads the club's day in the club's zone.
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland",
 }));
 vi.mock("@/lib/group-cancel", () => ({
   settleGroupBookingOnOrganiserCancel:
@@ -74,6 +117,7 @@ vi.mock("@/lib/email", () => ({
   sendGroupSettlementExpiredEmail: mocks.sendSettlementExpired,
   sendGroupJoinReleasedEmail: mocks.sendJoinReleased,
   sendGroupJoinCancelledEmail: mocks.sendJoinCancelled,
+  sendAdminPaymentFailureAlert: mocks.sendAdminPaymentFailureAlert,
 }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
@@ -93,6 +137,11 @@ vi.mock("@/lib/adult-member-hosting-review", () => ({
 }));
 vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
   settleHostingCoverageAfterCommit: mocks.settleHostingCoverage,
+}));
+// #3672: the paid-group self-heal is its own module's subject
+// (`group-late-joiner.test.ts`); here the reaper only has to run it and report.
+vi.mock("@/lib/group-late-joiner", () => ({
+  releaseJoinersLeftBehindPaidSettlements: mocks.releaseLeftBehindJoiners,
 }));
 
 import {
@@ -153,6 +202,7 @@ beforeEach(() => {
   mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
   mocks.settlementUpdateMany.mockResolvedValue({ count: 1 });
   mocks.reconcileBedAllocations.mockResolvedValue(undefined);
+  mocks.releaseLeftBehindJoiners.mockResolvedValue({ released: 0, startedStayAlerts: 0 });
   mocks.recordBookingEvent.mockResolvedValue(undefined);
   mocks.processWaitlistForDates.mockResolvedValue(undefined);
   mocks.sendSettlementExpired.mockResolvedValue(undefined);
@@ -162,6 +212,21 @@ beforeEach(() => {
   // Resume phase (#1236): default to no interrupted organiser-cancel cleanups.
   mocks.groupBookingFindMany.mockResolvedValue([]);
   mocks.settleGroupBookingOnOrganiserCancel.mockResolvedValue(undefined);
+  mocks.abandonInvoice.mockResolvedValue(undefined);
+  mocks.readInvoiceState.mockResolvedValue({ kind: "open", totalCents: 30000 });
+  mocks.alertInvoice.mockResolvedValue(undefined);
+  mocks.loadModuleFlags.mockResolvedValue({ xeroIntegration: true });
+  mocks.settlementDetailFindUnique.mockResolvedValue(null);
+  mocks.sendAdminPaymentFailureAlert.mockResolvedValue({
+    deliveryAllowed: true,
+    recipients: 1,
+    sent: 1,
+    queuedForRetry: 0,
+    notDelivered: 0,
+  });
+  mocks.claimAlertCooldown.mockResolvedValue(true);
+  mocks.deferAlertCooldown.mockResolvedValue(undefined);
+  mocks.releaseAlertCooldown.mockResolvedValue(undefined);
 });
 
 describe("groupSettlementReapDeadline", () => {
@@ -207,6 +272,11 @@ describe("reapStaleGroupSettlements", () => {
       cancelledChildBookings: 0,
       scannedInterruptedCancels: 0,
       resumedInterruptedCancels: 0,
+      heldForInvoicePayment: 0,
+      heldForUnreadableInvoice: 0,
+      heldForStartedStay: 0,
+      releasedToMemberPays: 0,
+      startedStayAlerts: 0,
     });
     // Children revert to their pre-commit, non-capacity-holding state.
     // #1881 — status-guarded updateMany (CONFIRMED -> PAYMENT_PENDING).
@@ -303,6 +373,345 @@ describe("reapStaleGroupSettlements", () => {
     expect(mocks.sendSettlementExpired).toHaveBeenCalledTimes(1);
   });
 
+  // #3642 (INV-PAY-105): before this the reaper cancelled only a Stripe intent,
+  // and the emailed invoice stayed AUTHORISED in receivables for a bill nobody
+  // owed. It is retired in the SAME transaction that releases the settlement.
+  it("retires the combined invoice of an Internet Banking settlement it releases (#3642)", async () => {
+    mocks.settlementFindMany.mockResolvedValue([
+      staleSettlement({ stripePaymentIntentId: null }),
+    ]);
+    const updatedAt = new Date(NOW.getTime() - 49 * HOUR);
+    mocks.settlementFindUnique.mockResolvedValue({
+      status: PaymentStatus.PENDING,
+      xeroInvoiceId: "xinv_1",
+      updatedAt,
+      groupBooking: { status: "OPEN" },
+    });
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+    let abandonedInsideTheRelease = false;
+    mocks.abandonInvoice.mockImplementation(async (tx: unknown) => {
+      abandonedInsideTheRelease =
+        tx === txClient && mocks.settlementUpdateMany.mock.calls.length === 1;
+    });
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.reaped).toBe(1);
+    expect(mocks.abandonInvoice).toHaveBeenCalledTimes(1);
+    expect(mocks.abandonInvoice).toHaveBeenCalledWith(txClient, {
+      settlementId: "settle-1",
+      xeroInvoiceId: "xinv_1",
+    });
+    expect(abandonedInsideTheRelease).toBe(true);
+  });
+
+  it("retires an invoice an older FAILED settlement still carries, without restarting its clock (#3642)", async () => {
+    // Released before #3642 shipped: FAILED, children already reverted, and the
+    // invoice still live. The pass retires it but must not bump `updatedAt`,
+    // which the expiry phase measures its second window from.
+    mocks.settlementFindMany.mockResolvedValue([
+      staleSettlement({ status: PaymentStatus.FAILED, stripePaymentIntentId: null }),
+    ]);
+    const updatedAt = new Date(NOW.getTime() - 49 * HOUR);
+    mocks.settlementFindUnique.mockResolvedValue({
+      status: PaymentStatus.FAILED,
+      xeroInvoiceId: "xinv_legacy",
+      updatedAt,
+      groupBooking: { status: "OPEN" },
+    });
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.reaped).toBe(0);
+    expect(mocks.abandonInvoice).toHaveBeenCalledWith(txClient, {
+      settlementId: "settle-1",
+      xeroInvoiceId: "xinv_legacy",
+      preserveUpdatedAt: updatedAt,
+    });
+    expect(mocks.settlementUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: PaymentStatus.FAILED } })
+    );
+  });
+
+  it("leaves a cancelled group's invoice to the cancellation VOID (#3642)", async () => {
+    // The organiser cancelled while the invoice was outstanding. The
+    // cancellation VOID reads the settlement's pointer; clearing it here would
+    // strand that VOID and make a later payment read as "lapsed".
+    mocks.settlementFindMany.mockResolvedValue([
+      staleSettlement({
+        stripePaymentIntentId: null,
+        source: "INTERNET_BANKING",
+        xeroInvoiceId: "xinv_cancelled",
+        groupBooking: { ...staleSettlement().groupBooking, status: "CANCELLED" },
+      }),
+    ]);
+    mocks.settlementFindUnique.mockResolvedValue({
+      status: PaymentStatus.PENDING,
+      xeroInvoiceId: "xinv_cancelled",
+      updatedAt: new Date(NOW.getTime() - 49 * HOUR),
+      groupBooking: { status: "CANCELLED" },
+    });
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    await reapStaleGroupSettlements(NOW);
+
+    expect(mocks.readInvoiceState).not.toHaveBeenCalled();
+    expect(mocks.abandonInvoice).not.toHaveBeenCalled();
+  });
+
+  it("keeps a group whose invoice has started being paid, and alerts the operators (#3642)", async () => {
+    mocks.settlementFindMany.mockResolvedValue([
+      staleSettlement({
+        stripePaymentIntentId: null,
+        source: "INTERNET_BANKING",
+        xeroInvoiceId: "xinv_part_paid",
+        groupBooking: { ...staleSettlement().groupBooking, status: "OPEN" },
+      }),
+    ]);
+    mocks.readInvoiceState.mockResolvedValue({
+      kind: "has_money",
+      status: "AUTHORISED",
+      amountPaidCents: 50000,
+      amountCreditedCents: 0,
+    });
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(mocks.readInvoiceState).toHaveBeenCalledWith("xinv_part_paid", expect.any(String));
+    expect(result.reaped).toBe(0);
+    expect(result.heldForInvoicePayment).toBe(1);
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.abandonInvoice).not.toHaveBeenCalled();
+    expect(mocks.alertInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        settlementId: "settle-1",
+        invoiceId: "xinv_part_paid",
+        errorMessage: expect.stringMatching(/held rather than released/),
+      }),
+      CLUB_FORMAT_TEST
+    );
+  });
+
+  function ibSettlement(invoiceId: string) {
+    return staleSettlement({
+      stripePaymentIntentId: null,
+      source: "INTERNET_BANKING",
+      xeroInvoiceId: invoiceId,
+      groupBooking: { ...staleSettlement().groupBooking, status: "OPEN" },
+    });
+  }
+
+  it("holds an Internet Banking group, and alerts, while Xero cannot show its invoice (#3642)", async () => {
+    mocks.settlementFindMany.mockResolvedValue([ibSettlement("xinv_unreadable")]);
+    mocks.readInvoiceState.mockRejectedValue(new Error("Xero unavailable"));
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.reaped).toBe(0);
+    expect(result.heldForUnreadableInvoice).toBe(1);
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.alertInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "reaper_held_unreadable",
+        invoiceId: "xinv_unreadable",
+        errorMessage: expect.stringMatching(/Xero could not be reached/),
+      }),
+      CLUB_FORMAT_TEST
+    );
+  });
+
+  it("says the integration is off, rather than reading Xero, when the Xero module is switched off (#3642)", async () => {
+    mocks.settlementFindMany.mockResolvedValue([ibSettlement("xinv_off")]);
+    mocks.loadModuleFlags.mockResolvedValue({ xeroIntegration: false });
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(mocks.readInvoiceState).not.toHaveBeenCalled();
+    expect(result.heldForUnreadableInvoice).toBe(1);
+    expect(mocks.alertInvoice.mock.calls[0][0].errorMessage).toMatch(/switched off/);
+  });
+
+  // #3635 (C5, the orchestrator's decision; `INV-PAY-016`): a group whose
+  // invoice Xero cannot show is treated like a single booking's hold on
+  // check-in day. Releasing it would abandon the invoice and cancel joiners
+  // whose organiser may already have paid by bank transfer.
+  it("keeps a group Xero cannot show once its stay has started, and alerts the treasurer once", async () => {
+    // NOW is 12:00 on 1 August in Auckland: a 1 August check-in has started.
+    const settlement = ibSettlement("xinv_unreadable");
+    settlement.groupBooking.organiserBooking.checkIn = new Date("2026-08-01");
+    mocks.settlementFindMany.mockResolvedValue([settlement]);
+    mocks.readInvoiceState.mockRejectedValue(new Error("Xero unavailable"));
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result).toMatchObject({ reaped: 0, heldForStartedStay: 1, heldForUnreadableInvoice: 0 });
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.abandonInvoice).not.toHaveBeenCalled();
+    expect(mocks.alertInvoice).not.toHaveBeenCalled();
+    expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "group-settlement-started-stay:settle-1" }),
+    );
+    expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendAdminPaymentFailureAlert.mock.calls[0][0].errorMessage).toMatch(
+      /kept, not released/,
+    );
+    // Delivered: the claim is kept for good, so the next run sends nothing.
+    expect(mocks.deferAlertCooldown).not.toHaveBeenCalled();
+    expect(mocks.releaseAlertCooldown).not.toHaveBeenCalled();
+
+    mocks.claimAlertCooldown.mockResolvedValue(false);
+    const again = await reapStaleGroupSettlements(NOW);
+    expect(again.heldForStartedStay).toBe(1);
+    expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+  });
+
+  // #3635 (the orchestrator decision read in full: "treated like a single
+  // hold on check-in day"): readable-and-unpaid, and missing in Xero, are kept
+  // too once the stay has started, the #3663 single-hold rule.
+  it.each([
+    ["shows the invoice unpaid", { kind: "open", totalCents: 30000 }, /shows no payment yet/],
+    ["does not have the invoice", { kind: "not_found" }, /is not in the connected Xero organisation/],
+  ])("keeps a started-stay group when Xero %s, and alerts the treasurer once", async (_label, state, wording) => {
+    const settlement = ibSettlement("xinv_started");
+    settlement.groupBooking.organiserBooking.checkIn = new Date("2026-08-01");
+    mocks.settlementFindMany.mockResolvedValue([settlement]);
+    mocks.readInvoiceState.mockResolvedValue(state);
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result).toMatchObject({ reaped: 0, heldForStartedStay: 1, releasedChildBookings: 0 });
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.abandonInvoice).not.toHaveBeenCalled();
+    expect(mocks.alertInvoice).not.toHaveBeenCalled();
+    expect(mocks.claimAlertCooldown).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "group-settlement-started-stay:settle-1" }),
+    );
+    expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendAdminPaymentFailureAlert.mock.calls[0][0].errorMessage).toMatch(wording);
+  });
+
+  it("still releases a readable, unpaid group the day before its check-in", async () => {
+    const settlement = ibSettlement("xinv_open");
+    settlement.groupBooking.organiserBooking.checkIn = new Date("2026-08-02");
+    mocks.settlementFindMany.mockResolvedValue([settlement]);
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+
+    const result = await reapStaleGroupSettlements(new Date("2026-08-01T11:00:00.000Z"));
+
+    expect(result).toMatchObject({ reaped: 1, heldForStartedStay: 0 });
+    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  it("holds the started-stay claim a day when no admin can receive it", async () => {
+    const settlement = ibSettlement("xinv_unreadable");
+    settlement.groupBooking.organiserBooking.checkIn = new Date("2026-07-31");
+    mocks.settlementFindMany.mockResolvedValue([settlement]);
+    mocks.readInvoiceState.mockRejectedValue(new Error("Xero unavailable"));
+    mocks.sendAdminPaymentFailureAlert.mockResolvedValue({
+      deliveryAllowed: true,
+      recipients: 0,
+      sent: 0,
+      queuedForRetry: 0,
+      notDelivered: 0,
+    });
+
+    await reapStaleGroupSettlements(NOW);
+
+    const claim = mocks.claimAlertCooldown.mock.calls[0][0];
+    expect(mocks.deferAlertCooldown).toHaveBeenCalledWith({
+      key: "group-settlement-started-stay:settle-1",
+      claimedAt: claim.now,
+      windowMs: 36_500 * 86_400_000,
+      retryAfterMs: 86_400_000,
+    });
+  });
+
+  it("still holds a group Xero cannot show the day before its check-in", async () => {
+    const settlement = ibSettlement("xinv_unreadable");
+    settlement.groupBooking.organiserBooking.checkIn = new Date("2026-08-02");
+    mocks.settlementFindMany.mockResolvedValue([settlement]);
+    mocks.readInvoiceState.mockRejectedValue(new Error("Xero unavailable"));
+
+    const result = await reapStaleGroupSettlements(new Date("2026-08-01T11:00:00.000Z"));
+
+    expect(result).toMatchObject({ reaped: 0, heldForUnreadableInvoice: 1, heldForStartedStay: 0 });
+    expect(mocks.sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  it("releases, with an alert, a group Xero still cannot show seven days past its deadline (#3642)", async () => {
+    // Check-in stays later (15 August), so only the seven-day bound can end it.
+    const settlement = ibSettlement("xinv_unreadable");
+    mocks.settlementFindMany.mockResolvedValue([settlement]);
+    mocks.readInvoiceState.mockRejectedValue(new Error("Xero unavailable"));
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+    const deadline = groupSettlementReapDeadline(
+      settlement.updatedAt as Date,
+      settlement.groupBooking.organiserBooking.checkIn,
+    );
+
+    const inside = await reapStaleGroupSettlements(
+      new Date(deadline.getTime() + 7 * 24 * HOUR - 60_000),
+    );
+    expect(inside).toMatchObject({ reaped: 0, heldForUnreadableInvoice: 1 });
+
+    const result = await reapStaleGroupSettlements(new Date(deadline.getTime() + 7 * 24 * HOUR));
+
+    expect(result.reaped).toBe(1);
+    expect(result.heldForUnreadableInvoice).toBe(0);
+    expect(mocks.alertInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "reaper_released_unchecked" }),
+      CLUB_FORMAT_TEST
+    );
+  });
+
+  it("releases a group whose invoice the connected Xero organisation does not have, with an alert (#3642)", async () => {
+    mocks.settlementFindMany.mockResolvedValue([ibSettlement("xinv_elsewhere")]);
+    mocks.readInvoiceState.mockResolvedValue({ kind: "not_found" });
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.reaped).toBe(1);
+    expect(mocks.alertInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "invoice_not_found", invoiceId: "xinv_elsewhere" }),
+      CLUB_FORMAT_TEST
+    );
+  });
+
+  it("releases an Internet Banking group whose invoice Xero shows unpaid (#3642)", async () => {
+    mocks.settlementFindMany.mockResolvedValue([
+      staleSettlement({
+        stripePaymentIntentId: null,
+        source: "INTERNET_BANKING",
+        xeroInvoiceId: "xinv_open",
+        groupBooking: { ...staleSettlement().groupBooking, status: "OPEN" },
+      }),
+    ]);
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(mocks.readInvoiceState).toHaveBeenCalledTimes(1);
+    expect(result.reaped).toBe(1);
+    expect(mocks.alertInvoice).not.toHaveBeenCalled();
+  });
+
+  // #3672 (`INV-PAY-109`): every run re-applies the paid-group release, so a
+  // joiner left behind before the rule existed is moved on the first run.
+  it("runs the paid-group self-heal every cycle and reports how many joiners it moved", async () => {
+    mocks.settlementFindMany.mockResolvedValue([]);
+    mocks.releaseLeftBehindJoiners.mockResolvedValue({ released: 3, startedStayAlerts: 1 });
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(mocks.releaseLeftBehindJoiners).toHaveBeenCalledWith(NOW);
+    expect(result.releasedToMemberPays).toBe(3);
+    expect(result.startedStayAlerts).toBe(1);
+  });
+
   it("does not reap a settlement still inside the window", async () => {
     mocks.settlementFindMany.mockResolvedValue([
       staleSettlement({ updatedAt: new Date(NOW.getTime() - 47 * HOUR) }),
@@ -318,6 +727,11 @@ describe("reapStaleGroupSettlements", () => {
       cancelledChildBookings: 0,
       scannedInterruptedCancels: 0,
       resumedInterruptedCancels: 0,
+      heldForInvoicePayment: 0,
+      heldForUnreadableInvoice: 0,
+      heldForStartedStay: 0,
+      releasedToMemberPays: 0,
+      startedStayAlerts: 0,
     });
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.sendSettlementExpired).not.toHaveBeenCalled();
@@ -366,6 +780,11 @@ describe("reapStaleGroupSettlements", () => {
       cancelledChildBookings: 0,
       scannedInterruptedCancels: 0,
       resumedInterruptedCancels: 0,
+      heldForInvoicePayment: 0,
+      heldForUnreadableInvoice: 0,
+      heldForStartedStay: 0,
+      releasedToMemberPays: 0,
+      startedStayAlerts: 0,
     });
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
     expect(mocks.settlementUpdate).not.toHaveBeenCalled();
@@ -396,6 +815,11 @@ describe("reapStaleGroupSettlements", () => {
       cancelledChildBookings: 0,
       scannedInterruptedCancels: 0,
       resumedInterruptedCancels: 0,
+      heldForInvoicePayment: 0,
+      heldForUnreadableInvoice: 0,
+      heldForStartedStay: 0,
+      releasedToMemberPays: 0,
+      startedStayAlerts: 0,
     });
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
     // No-op passes must not rewrite the settlement: that would bump

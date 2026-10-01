@@ -563,12 +563,30 @@ export const AUDIT_CENSUS_TOTALS = {
   // `admin` at the site like the rate writer it undoes, so it does not join
   // `UNCATEGORISED_AUDIT_WRITERS` below. RE-MEASURED with `npm run
   // audit:census` on the tree merged with #3029, not incremented.
-  // 489 -> 488 (#3415): acceptance retains the already-held beds for officer
-  // review, so the former accept-time capacity-block/revert audit writer is gone.
-  // The accepted-quote audit writer remains classified as `booking`.
-  // #3413 names accepted pending adults in one booking-category logAudit site.
-  // Re-measured on the composed branch with pnpm run audit:census.
-  writeSites: 489,
+  // 489 -> 490 (#3639): `booking.payment.late_notice_acknowledged`, the
+  // record that a Stripe success notice on a cancelled booking was answered
+  // WITHOUT a refund because the cancellation had already settled the money
+  // (or it was already refunded). One `logAudit` in
+  // `src/lib/cancelled-booking-late-capture.ts`, beside its #2774 sibling
+  // `late_capture_refund_withheld`, categorised `payment` at the site.
+  // RE-MEASURED with `npm run audit:census`, not incremented.
+  // 490 -> 492 (#3639, owner decision 26 Sep 2026): the club setting for a
+  // genuine late capture. `booking.payment.late_capture_refund_held` (a capture
+  // held for a treasurer) and the `booking.payment.refunded_after_cancellation`
+  // a treasurer's approval writes, both `logAudit` in
+  // `src/lib/late-capture-refund-approval.ts`, categorised `payment` at the site.
+  // RE-MEASURED with `npm run audit:census`, not incremented.
+  // 492 -> 493 (#3639 review): `booking-defaults.late_capture_refund_approval
+  // .changed`, the payment-category record of who switched the setting
+  // (`src/lib/late-capture-refund-setting-change.ts`). The approved refund's
+  // `refunded_after_cancellation` moved into one shared finisher, so it is still
+  // one site. RE-MEASURED with `npm run audit:census`, not incremented.
+  // 493 -> 492 (#3415): accepted quotes keep their held beds for officer
+  // review, removing the former accept-time capacity-block/revert writer.
+  // RE-MEASURED on the composed tree with #3639.
+  // 492 -> 493 (#3413): pending-adult identity resolution adds one classified
+  // booking-category logAudit site. RE-MEASURED on the composed tree.
+  writeSites: 493,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -649,8 +667,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // rather than an awaited `createAuditLog` because it sits on a GET that has
     // already decided to serve a report, and a rejected audit write must not
     // turn a successful, correctly-gated read into a 500.
-    // 267 -> 266 (#3415): no accept-time capacity-block/revert writer.
-    logAudit: { total: 267, uncategorised: 0 },
+    // 267 -> 268 (#3639): the late-notice acknowledgement, above.
+    // 268 -> 270 (#3639): the two late-capture approval writers, above.
+    // 270 -> 271 (#3639 review): the setting-change record, above.
+    // 271 -> 270 (#3415): no accept-time capacity-block/revert writer.
+    // 270 -> 271 (#3413): pending-adult identity resolution, above.
+    logAudit: { total: 271, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -904,7 +926,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // category those siblings already use.
     // 45 -> 46 (#3498): the reopen record, which is a money decision being
     // undone and belongs with the closure it reverses.
-    payment: 48,
+    // 48 -> 49 (#3639): the late-notice acknowledgement - a refund the
+    // late-capture handler declined, beside the rows that record the ones it
+    // made and withheld, read by the same people.
+    // 49 -> 51 (#3639): the held late capture and its approved refund.
+    // 51 -> 52 (#3639 review): the setting-change record.
+    payment: 52,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

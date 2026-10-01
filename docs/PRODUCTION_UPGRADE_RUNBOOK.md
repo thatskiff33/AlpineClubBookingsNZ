@@ -445,6 +445,27 @@ one action that closes this window completely, because both halves of the
 failure have to land inside it. Deferring is not an option here and is not
 needed: there is no migration to defer.
 
+### 2.2b #3643: the part-payment review migration needs the breaking override
+
+`20261014010000_add_unsized_part_payment_review_task` drops two check
+constraints and adds them back. It widens one and makes the other refuse a row
+with no kind. PostgreSQL cannot change a check in place, and the validator
+treats a `DROP CONSTRAINT` as possibly breaking. So the release that carries
+this migration stops at step 12 with a `found_breaking` line for it, even though
+its ledger row records `old_code_compatible=yes`. This is not a windowed
+migration: the old colour keeps serving throughout.
+
+**Operator action:** run the deploy with `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`
+and a `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` that names #3643. That override
+silences the possibly-breaking warning for **every** pending migration in the
+same run, not only this one. Before you set it, read each `found_breaking` line
+the validator printed. Check that each one names a migration whose row in
+`docs/BLUE_GREEN_MIGRATION_SAFETY.tsv` is a reviewed `yes`. If any line names
+something else, stop and find out why.
+
+Rolling back to the previous colour needs no schema change. The ledger row
+gives the schema reverse, in order, for the rare case where one is wanted.
+
 ### 2.3 Verify the migrate step
 
 Step 13 runs `verify_prisma_migration_status`; confirm the engine reports the

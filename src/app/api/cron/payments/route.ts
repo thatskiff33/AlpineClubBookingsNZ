@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { releaseExpiredInternetBankingHolds } from "@/lib/internet-banking-payment-cron";
-import { processPaymentRecoveryOperations } from "@/lib/payment-recovery";
-import { reapStaleWaitingPaymentXeroOutboxOperations } from "@/lib/xero-operation-outbox";
 import { requireCronSecret } from "@/lib/cron-auth";
-import { recordCronJobRunSafe } from "@/lib/cron-job-run";
+import {
+  PaymentsCronCycleError,
+  runPaymentsCronCycle,
+} from "@/lib/payments-cron-runner";
 import logger from "@/lib/logger";
 
 const cronTaskQuerySchema = z.object({
@@ -13,7 +13,10 @@ const cronTaskQuerySchema = z.object({
 
 /**
  * POST /api/cron/payments?task=recovery
- * Secured manual trigger for durable Stripe payment recovery work.
+ * Secured manual trigger for the 15-minute payments cycle: Stripe payment
+ * recovery, expired Internet Banking hold release and the waiting-invoice
+ * reaper. The cron leader runs the SAME cycle on its own schedule (#3663), so
+ * this route is a manual/external trigger, not what keeps the jobs running.
  */
 export async function POST(request: NextRequest) {
   const unauthorized = requireCronSecret(request);
@@ -45,56 +48,30 @@ export async function POST(request: NextRequest) {
   }
   const { task } = parsedQuery.data;
 
-  const startedAt = new Date();
   try {
-    const recovery = await processPaymentRecoveryOperations();
-    const internetBankingHoldRelease = await releaseExpiredInternetBankingHolds().catch(
-      (err) => {
-        logger.error(
-          { err, task },
-          "Failed to release expired Internet Banking payment holds",
-        );
-        return {
-          scanned: 0,
-          released: 0,
-          skipped: 0,
-          bookingIds: [] as string[],
-          paymentIds: [] as string[],
-        };
-      },
-    );
-    const xeroOutboxReap = await reapStaleWaitingPaymentXeroOutboxOperations().catch(
-      (err) => {
-        logger.error(
-          { err, task },
-          "Failed to reap stale WAITING_PAYMENT Xero outbox operations",
-        );
-        return { reaped: 0, queueOperationIds: [] as string[] };
-      },
-    );
-    await recordCronJobRunSafe({
-      jobName: "payment-recovery",
-      startedAt,
-      status: "SUCCESS",
-      resultSummary: { ...recovery, internetBankingHoldRelease, xeroOutboxReap },
-    });
-
+    const result = await runPaymentsCronCycle();
     return NextResponse.json({
       message: "Payment recovery completed",
       task,
-      recovery,
-      internetBankingHoldRelease,
-      xeroOutboxReap,
+      ...result,
     });
   } catch (error) {
+    if (error instanceof PaymentsCronCycleError) {
+      // Every task still ran and recorded its own CronJobRun row; the failed
+      // ones carry `null` in `result` rather than invented zero counts.
+      logger.error({ err: error, task, failedJobs: error.failures }, "Payment cron job error");
+      return NextResponse.json(
+        {
+          error: "One or more payment cron jobs failed",
+          task,
+          failedJobs: error.failures,
+          result: error.result,
+        },
+        { status: 500 }
+      );
+    }
     const message = error instanceof Error ? error.message : String(error);
     logger.error({ err: error, task }, "Payment cron job error");
-    await recordCronJobRunSafe({
-      jobName: "payment-recovery",
-      startedAt,
-      status: "FAILURE",
-      error: message,
-    });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

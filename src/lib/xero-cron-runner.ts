@@ -4,6 +4,7 @@ import {
   type CronJobRunStatus,
   type RecordCronJobRunInput,
 } from "@/lib/cron-job-run";
+import { runRecordedCronTask } from "@/lib/cron-recorded-task";
 import logger from "@/lib/logger";
 import { isXeroDailyMembershipRefreshEnabled } from "@/lib/xero-feature-flags";
 import {
@@ -168,25 +169,15 @@ async function runRecordedXeroTask<T>({
   work: () => Promise<T> | T;
   recordCronRun: (input: RecordCronJobRunInput) => Promise<void> | void;
 }): Promise<T> {
-  const startedAt = new Date();
-  try {
-    const result = await work();
-    await recordCronRun({
-      jobName: XERO_CRON_JOB_NAMES[task],
-      startedAt,
-      status: cronStatusForResult(result),
-      resultSummary: resultSummaryFor(result),
-    });
-    return result;
-  } catch (error) {
-    await recordCronRun({
-      jobName: XERO_CRON_JOB_NAMES[task],
-      startedAt,
-      status: "FAILURE",
-      error: toErrorMessage(error),
-    });
-    throw error;
-  }
+  const outcome = await runRecordedCronTask({
+    jobName: XERO_CRON_JOB_NAMES[task],
+    work,
+    recordCronRun,
+    statusFor: cronStatusForResult,
+    summaryFor: resultSummaryFor,
+  });
+  if (!outcome.ok) throw outcome.error;
+  return outcome.result;
 }
 
 function emptyPayload(task: string, connected = false): XeroCronRunnerPayload {
