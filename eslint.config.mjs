@@ -349,7 +349,7 @@ const MONEY_HELPER_MODULES = MONEY_GUARD_EXEMPTIONS.map((entry) => entry.file);
 // below is where that judgement is made, once, in writing, per file — exactly
 // the shape `MONEY_GUARD_EXEMPTIONS` above already uses for the same reason.
 const CENTS_DISPLAY_MESSAGE =
-  "INV-SSOT-001 / #3302: do not hand-roll `(cents / 100).toFixed(n)` to render an amount. Use the shared formatCents (a currency-formatted string) or formatCentsPlain (a bare two-decimal string with no symbol or grouping — for an editable dollars input, or a report line that already reads as a delta), both from @/lib/utils. Seeding an EDITABLE input's plain value, or a raw numeric export cell (CSV, a JSON report row) that must carry no currency symbol, is a different, legitimate concept — add the file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason; that list is read by money-cents-guard.test.ts, so adding to it passes CI. Never an eslint-disable comment.";
+  "INV-SSOT-001 / #3302: do not hand-roll `(cents / 100).toFixed(n)` to render an amount. Use the shared formatCents (a currency-formatted string) or formatCentsPlain (a bare two-decimal string with no symbol or grouping — including editable dollars inputs), both from @/lib/utils. A raw CSV or JSON export cell, and an amount prefixed with a provider's own currency code, are formatCentsPlain's output too. Only a genuinely different output, one neither helper returns, may need an exemption: add that file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason that names the difference in terms a reader can check against the code. The list is checked by cents-display-guard.test.ts. Never an eslint-disable comment.";
 
 // #3533 — the OTHER way a person is shown the storage form: not a bad
 // division, but no division at all. `${refundAmountCents} cents` in an audit
@@ -367,7 +367,7 @@ const CENTS_DISPLAY_MESSAGE =
 // (`" cents-per-night rows"` is a row count, not an amount). The negative
 // fixtures in `cents-in-prose-guard.test.ts` pin every one of those shapes.
 const CENTS_IN_PROSE_MESSAGE =
-  "INV-SSOT-001 / #3533/#3589: do not write `${someCents} cents` or `${someCents}c` into text a person reads. An audit `details` string, a thrown Error, an operator report line and a cron summary are all read by a booking officer or the treasurer reconstructing a booking's money, and every amount there must read as a formatted currency value — use formatCents (or formatSignedCents where the sign is the point) from @/lib/utils with the club's resolved format. The STORED value stays integer cents; this is about the sentence. Bare `${someCents}` without a unit is covered only in the six scoped operator-message sources by operator-cents-message-census.test.ts; classify new cent-valued aliases there. Rendering into a raw numeric export cell, or text no person reads? Add the file to CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs with a written reason — that list is read by money-cents-guard.test.ts, so adding to it passes CI. Never an eslint-disable comment.";
+  "INV-SSOT-001 / #3533/#3589: do not write `${someCents} cents` or `${someCents}c` into text a person reads. An audit `details` string, a thrown Error, an operator report line and a cron summary are all read by a booking officer or the treasurer reconstructing a booking's money, and every amount there must read as a formatted currency value — use formatCents (or formatSignedCents where the sign is the point) from @/lib/utils with the club's resolved format. The STORED value stays integer cents; this is about the sentence. Bare `${someCents}` without a unit is covered only in the six scoped operator-message sources by operator-cents-message-census.test.ts; classify new cent-valued aliases there. Writing a raw numeric export cell? Emit the number alone (formatCentsPlain from @/lib/utils) without the unit word; the rule only fires when `cents` or `c` follows the amount. No exemption list lifts this rule: CENTS_DISPLAY_EXEMPTIONS in eslint.config.mjs covers only the toFixed arithmetic, and cents-in-prose-guard.test.ts proves the prose rule still fires in every file on it. Never an eslint-disable comment.";
 
 const CENTS_DISPLAY_RESTRICTIONS = [
   {
@@ -381,9 +381,11 @@ const CENTS_DISPLAY_RESTRICTIONS = [
  * ITS OWN GROUP, and that is the whole point of the separation.
  *
  * The first cut appended this selector to `CENTS_DISPLAY_RESTRICTIONS`, which
- * made it inherit that group's exemptions - ten files excused for seeding an
- * editable input's plain value or writing a raw export cell, none of which is
- * a reason to write the storage form into a sentence. That is exactly the
+ * made it inherit that group's exemptions at the time - ten files excused for
+ * seeding an editable input's plain value, writing a raw export cell or
+ * prefixing a Xero invoice's currency, none of which is a reason to write the
+ * storage form into a sentence. (#3399 retired all ten; only the canonical
+ * definition in `src/lib/utils.ts` is still listed.) That is exactly the
  * hazard this file warns about two groups above for the raw-SQL set and again
  * for the money set: an exemption written for one rule silently lifting
  * another it was never weighed against. Review of #3533 caught it before it
@@ -422,7 +424,7 @@ export const CENTS_IN_PROSE_GUARD_ARM = CENTS_IN_PROSE_RESTRICTIONS.map(
 );
 
 /**
- * The one arm as a bare selector array, for `money-cents-guard.test.ts` —
+ * The one arm as a bare selector array, for `cents-display-guard.test.ts` —
  * same reason `MONEY_GUARD_ARMS` is exported above: the suite resolves the
  * REAL config and checks the resolved rule still carries every selector this
  * array declares, so a copy nobody kept in sync cannot pass while the config
@@ -437,11 +439,11 @@ export const CENTS_DISPLAY_GUARD_ARM = CENTS_DISPLAY_RESTRICTIONS.map(
 // was found in three files at the merge base (the fee sections, the joining
 // fee preview, the public content tokens) that #3302's toFixed arm above
 // structurally cannot see (there is no division to match), and two of them
-// sat on that arm's editable-input exemption. This is therefore its OWN
-// group, on the mandatory set, so
+// sat on that arm's editable-input exemption (retired in #3399). This is
+// therefore its OWN group, on the mandatory set, so
 // `srcRestrictedSyntaxWithout(CENTS_DISPLAY_RESTRICTIONS, ...)` does not lift
-// it: an exemption written for seeding an input's plain value never excused a
-// hard-coded locale. The two homes (`@/lib/utils`, `@/lib/finance-format`)
+// it: an exemption from the toFixed arithmetic never excuses a hard-coded
+// locale. The two homes (`@/lib/utils`, `@/lib/finance-format`)
 // pass identifiers off the club's resolved format — `APP_LOCALE` and
 // `APP_CURRENCY` until #3565, `format.locale` and `format.currencyCode`
 // through `@/lib/club-format-intl` since — so they pass without an exemption
@@ -616,7 +618,7 @@ export const CURRENCY_LOCALE_GUARD_ARM = CURRENCY_LOCALE_RESTRICTIONS.map(
  * THE ESCAPE HATCH for `CENTS_DISPLAY_RESTRICTIONS`, same rule as
  * `MONEY_GUARD_EXEMPTIONS`: every entry names the file(s) and states in
  * writing why hand-rolled `(cents / 100).toFixed(n)` is allowed there.
- * `money-cents-guard.test.ts` reads THIS array and fails an entry with no
+ * `cents-display-guard.test.ts` reads THIS array and fails an entry with no
  * reason, and separately fails if a listed file no longer contains the
  * pattern — an exemption is deleted when its cause is, never left "for now".
  */
@@ -626,49 +628,6 @@ export const CENTS_DISPLAY_EXEMPTIONS = [
     reason:
       "The canonical definition. `formatCentsPlain`'s own body IS this arithmetic — every other file is sent here to call it rather than write it again.",
   },
-  {
-    files: [
-      "src/app/(admin)/admin/fees/_components/finance-fees-sections.tsx",
-      "src/app/(admin)/admin/promo-codes/promo-codes-page-client.tsx",
-      "src/components/admin/booking-policies/cancellation-rules-editor.tsx",
-      "src/components/admin/booking-requests/public-booking-requests-panel.tsx",
-      "src/components/admin/joining-fee-preview.tsx",
-      "src/components/admin/manual-refund-task-queue.tsx",
-    ],
-    reason:
-      'Seeds an EDITABLE dollars input\'s plain string value — a form field default, a redraft-on-open value — never a currency symbol, because nobody types "$10.00" into an amount box. #3302 names this as a legitimately different concept from rendering an amount for reading, and excludes it on that basis rather than fixing or flagging it. The refund-requests page left this list in #2932: its `<input max>` went with the browser number control it belonged to, and its prefill now compares integer cents and renders once through `formatCentsPlain`. The hut-fees section left it in #2938: its flat whole-lodge box was the last hand-rolled copy in that file and now seeds through `amountFieldValue`, which renders the same cents through `formatCentsPlain`.',
-  },
-  {
-    files: [
-      "src/app/(admin)/admin/reports/page.tsx",
-      "src/lib/finance-legacy-dashboard-export.ts",
-      "src/lib/promo-redemptions-csv.ts",
-    ],
-    reason:
-      "A raw numeric export cell (a CSV row, a JSON report row) that must carry no currency symbol — the export-format counterpart of the editable-input exclusion above, same reasoning.",
-  },
-];
-
-/**
- * Which `CENTS_DISPLAY_EXEMPTIONS` files are ALSO `MONEY_DOMAIN_MODULES`
- * members (declared below) — `finance-legacy-dashboard-export.ts`
- * (`finance-*`) and `promo-redemptions-csv.ts` (`*promo*`);
- * `internet-banking-payment-cron.ts` left the list with #3325, and
- * `membership-cancellation-blocker-messages.ts` with #3722, when its Xero
- * amount moved onto `formatCentsPlain`. Those two already take the broader
- * `MONEY_MODULE_RESTRICTIONS` arm instead of the narrow one, so the block that
- * lifts `CENTS_DISPLAY_RESTRICTIONS` for them has to replicate that swap
- * rather than the ordinary exemption block's plain
- * `srcRestrictedSyntaxWithout(CENTS_DISPLAY_RESTRICTIONS, ...)`. Matching a
- * glob family against a literal path is a real pattern match, not a Set
- * lookup, so this list is hand-verified against `MONEY_DOMAIN_MODULES` rather
- * than computed; `cents-display-guard.test.ts` checks the resolved config at
- * each of these paths carries the money-MODULE arm, not the narrow one,
- * precisely so a hand-verified list cannot go stale silently.
- */
-const CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP = [
-  "src/lib/finance-legacy-dashboard-export.ts",
-  "src/lib/promo-redemptions-csv.ts",
 ];
 
 // Where a bare `x * 100` is money by construction.
@@ -3151,39 +3110,19 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    // #3302 — CENTS_DISPLAY_EXEMPTIONS, ordinary case: every exempted file
-    // EXCEPT the ones on `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP` below (the
-    // date-fns overlap went with #3566, when the reports page stopped importing
-    // date-fns). Drops only the new group by
-    // name, plus re-states `DATE_RENDERING_RESTRICTIONS` (the generic
-    // `src/**` block's own addition, not part of the mandatory set), so
-    // nothing else these files were guarded against is lifted with it.
-    files: CENTS_DISPLAY_EXEMPTIONS.flatMap((entry) => entry.files).filter(
-      (file) =>
-        !CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP.includes(file),
-    ),
+    // #3302 — CENTS_DISPLAY_EXEMPTIONS. Drops only the new group by name,
+    // plus re-states `DATE_RENDERING_RESTRICTIONS` (the generic `src/**`
+    // block's own addition, not part of the mandatory set), so nothing else
+    // these files were guarded against is lifted with it. #3399 retired the
+    // separate block for exempt files that were also `MONEY_DOMAIN_MODULES`
+    // members, because none remains; a new exemption in a money-domain family
+    // needs that block back (restating `MONEY_MODULE_RESTRICTIONS`), or this
+    // one would silently hand it the narrow money arm.
+    files: CENTS_DISPLAY_EXEMPTIONS.flatMap((entry) => entry.files),
     rules: {
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
         CENTS_DISPLAY_RESTRICTIONS,
         ...DATE_RENDERING_RESTRICTIONS,
-      ),
-    },
-  },
-  {
-    // #3302 — `CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP`: the two exempted files
-    // that are ALSO `MONEY_DOMAIN_MODULES` members (`finance-*` and `*promo*`
-    // respectively), so they already
-    // take the broader `MONEY_MODULE_RESTRICTIONS` arm instead of the narrow
-    // one. Replicated here rather than re-derived, because flat config
-    // replaces a matching block's rule wholesale and this block must win for
-    // these paths without silently reverting them to the narrow money
-    // arm the block above would otherwise leave them with.
-    files: CENTS_DISPLAY_MONEY_DOMAIN_OVERLAP,
-    rules: {
-      "no-restricted-syntax": srcRestrictedSyntaxWithout(
-        [...MONEY_CENTS_RESTRICTIONS, ...CENTS_DISPLAY_RESTRICTIONS],
-        ...DATE_RENDERING_RESTRICTIONS,
-        ...MONEY_MODULE_RESTRICTIONS,
       ),
     },
   },

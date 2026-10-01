@@ -1726,6 +1726,9 @@ export function ManualRefundTaskQueue() {
                           // a review raised unpriced opens blank rather than at
                           // a figure nobody decided.
                           setDirection(null);
+                          // #3399: the shared plain formatter seeds this editable
+                          // dollars box; the night-price census now scans this
+                          // whole file without a division exemption.
                           setAmountInput(
                             task.amountCents === null
                               ? ""
