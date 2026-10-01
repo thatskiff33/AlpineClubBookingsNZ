@@ -15,6 +15,10 @@ import {
 } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
+import {
+  checkOwnDependantIdentityForParty,
+  OwnDependantIdentityRefusedError,
+} from "@/lib/booking-dependant-identity";
 import { ApiError } from "@/lib/api-error";
 import type {
   CalendarDate,
@@ -878,6 +882,35 @@ export async function prepareGuestPlan(
     crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
     },
   );
+  /**
+   * OWN-DEPENDANT IDENTITY ON AN ADDED GUEST (#3451, `INV-GUEST-019`) — the save
+   * half of what `modify-quote` asked. An ADDED free-text row named as one of the
+   * booking OWNER's recorded dependants needs a live declaration; rows already on
+   * the booking are not re-asked. `linkedMembers` is what really resolved, so a
+   * forged member link reads as free text. Here because the save resolves its
+   * members here: the read runs on `tx` (`INV-LOCK-004`), takes no lock, and
+   * precedes the person-night guard and every write.
+   *
+   * NOT on an approved policy exception's replay: that proposal was frozen by
+   * `POST /api/bookings/[id]/exception-requests`, which carries no declarations,
+   * so the guard would refuse at approval a guest already answered for. That door
+   * is outside #3451's decision and the invariant records it as not covered.
+   */
+  if (input.reviewedMemberProposal !== true) {
+    const ownerMemberId = bookingOwner(booking).memberId;
+    const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(tx, {
+      bookerMemberId: ownerMemberId,
+      party: input.addGuests ?? [],
+      memberPathMemberIds: new Set(linkedMembers.keys()),
+      declarations: input.dependantIdentityDeclarations,
+    });
+    if (dependantIdentityRefusal) {
+      throw new OwnDependantIdentityRefusedError(
+        dependantIdentityRefusal,
+        ownerMemberId === actorId,
+      );
+    }
+  }
   const consentPlan = planMemberGuestConsentWrites({
     guests: input.addGuests
       ? normalizeBookingGuestInputs(input.addGuests, linkedMembers).map((guest, index) => ({

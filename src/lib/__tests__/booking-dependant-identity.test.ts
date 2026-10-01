@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   checkOwnDependantIdentity,
+  checkOwnDependantIdentityForParty,
+  dependantIdentityRefusalBody,
+  DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE,
+  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_EDIT_MESSAGE,
+  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,
+  isDependantIdentityRefusalCode,
+  standaloneAddGuestDependantRefusalMessage,
   DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
   DEPENDANT_IDENTITY_UNRESOLVED_CODE,
   dependantIdentityDeclarationSchema,
@@ -423,5 +430,110 @@ describe("checkOwnDependantIdentity", () => {
         }),
       ).toBeNull();
     });
+  });
+});
+
+describe("the server entry point every door calls (#3451)", () => {
+  function db(rows: BookerDependant[] = DEPENDANTS) {
+    const findMany = vi.fn().mockResolvedValue(rows);
+    return { db: { member: { findMany } } as never, findMany };
+  }
+
+  it("reads nothing for an all-member party with no declaration", async () => {
+    const { db: client, findMany } = db();
+    const refusal = await checkOwnDependantIdentityForParty(client, {
+      bookerMemberId: "parent-1",
+      party: [memberGuest("Sam", "Smith", "dep-sam")],
+      memberPathMemberIds: new Set(["dep-sam"]),
+    });
+    expect(refusal).toBeNull();
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("reads the booker's dependants when a row did not really resolve", async () => {
+    const { db: client, findMany } = db();
+    const refusal = await checkOwnDependantIdentityForParty(client, {
+      bookerMemberId: "parent-1",
+      party: [memberGuest("Sam", "Smith", "forged")],
+      memberPathMemberIds: new Set(),
+    });
+    expect(refusal?.code).toBe(DEPENDANT_IDENTITY_UNRESOLVED_CODE);
+    expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("still checks a declaration on a party with no free-text row", async () => {
+    const { db: client } = db();
+    const refusal = await checkOwnDependantIdentityForParty(client, {
+      bookerMemberId: "parent-1",
+      party: [],
+      memberPathMemberIds: new Set(),
+      declarations: [declaration("dep-sam", "Sam", "Smith")],
+    });
+    expect(refusal?.code).toBe(DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE);
+  });
+
+  it("has nobody's dependants to collide with on a booking with no member owner", async () => {
+    const { db: client, findMany } = db();
+    const refusal = await checkOwnDependantIdentityForParty(client, {
+      bookerMemberId: null,
+      party: [freeTextGuest("Sam", "Smith")],
+      memberPathMemberIds: new Set(),
+    });
+    expect(refusal).toBeNull();
+    expect(findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("what each door says (#3451)", () => {
+  const unresolved = checkOwnDependantIdentity({
+    party: [freeTextGuest("Sam", "Smith")],
+    memberPathMemberIds: new Set(),
+    dependants: DEPENDANTS,
+  });
+
+  it("keeps the code and picks the sentence for the reader", () => {
+    expect(unresolved).not.toBeNull();
+    if (!unresolved) return;
+    expect(
+      dependantIdentityRefusalBody(unresolved, { onBehalf: false, surface: "edit" }),
+    ).toEqual({
+      code: DEPENDANT_IDENTITY_UNRESOLVED_CODE,
+      error: DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE,
+    });
+    expect(
+      dependantIdentityRefusalBody(unresolved, { onBehalf: true, surface: "create" })
+        .error,
+    ).toBe(DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE);
+    expect(
+      dependantIdentityRefusalBody(unresolved, { onBehalf: true, surface: "edit" })
+        .error,
+    ).toBe(DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_EDIT_MESSAGE);
+    // The collisions never travel in the body.
+    expect(
+      Object.keys(
+        dependantIdentityRefusalBody(unresolved, { onBehalf: true, surface: "edit" }),
+      ),
+    ).toEqual(["code", "error"]);
+  });
+
+  it("names the dependant and points at Edit Booking on the standalone add door", () => {
+    if (!unresolved) throw new Error("expected a refusal");
+    expect(
+      standaloneAddGuestDependantRefusalMessage(unresolved, { onBehalf: false }),
+    ).toBe(
+      "Sam Smith is already known to the club as your dependant, so they cannot be added here as a non-member guest. Open the booking and choose Edit Booking: there they can be added as a member, or you can say the guest is a different person with the same name.",
+    );
+    expect(
+      standaloneAddGuestDependantRefusalMessage(unresolved, { onBehalf: true }),
+    ).toContain("Sam Smith is already known to the club as this member's dependant");
+  });
+
+  it("recognises exactly the guard's two codes", () => {
+    expect(isDependantIdentityRefusalCode(DEPENDANT_IDENTITY_UNRESOLVED_CODE)).toBe(true);
+    expect(
+      isDependantIdentityRefusalCode(DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE),
+    ).toBe(true);
+    expect(isDependantIdentityRefusalCode("MEMBER_GUEST_NOT_ADDABLE")).toBe(false);
+    expect(isDependantIdentityRefusalCode(undefined)).toBe(false);
   });
 });
