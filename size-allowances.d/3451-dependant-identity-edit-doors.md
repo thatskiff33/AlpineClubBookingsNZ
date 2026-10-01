@@ -48,7 +48,7 @@ reason: the save half of the guard sits directly before the planner's member
   otherwise "tidy" back below the lookup.
 
 file: src/components/edit-booking-panel.tsx
-lines: 2191
+lines: 2193
 reason: the panel owns the added-guest state, the payload builder, the debounced
   quote and the save handler, and the answers have to reach all four. The logic
   was moved out to the new hook and component; what is left is the wiring — the
