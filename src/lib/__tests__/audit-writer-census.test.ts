@@ -1348,7 +1348,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 344 -> 345 (#3371): the carried-unpaid-balance record, declared as
     // `recordCarriedEditReviewChargeBalance` in
     // `edit-financial-review-carried-balance.ts` and called post-commit from
-    // `edit-financial-review-charge.ts` - not from
+    // `edit-financial-review-charge-sync.ts` - not from
     // `edit-financial-review-charge-request.ts`, which imports only the pure
     // `measureCarriedAskShortfall`. Categorised `payment` at the site and
     // named in none of the four per-site maps, so it lands unpinned.
@@ -1404,7 +1404,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // `payment` rows. RE-MEASURED with `npm run audit:census`.
     // 364 -> 365 (#3639 review): the setting-change record, unpinned
     // `payment`. RE-MEASURED with `npm run audit:census`.
-    ).toEqual({ pinned: 128, unpinned: 365 });
+    // 365 -> 366 (#3462): the Xero operation Mark failed record, unpinned
+    // `xero`. RE-MEASURED with `pnpm run audit:census`.
+    ).toEqual({ pinned: 128, unpinned: 366 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

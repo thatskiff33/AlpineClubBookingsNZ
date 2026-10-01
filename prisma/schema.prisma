@@ -5964,9 +5964,38 @@ model BookingModification {
   booking                 Booking                @relation(fields: [bookingId], references: [id], onDelete: Restrict)
   linkedChangeRequests    BookingChangeRequest[] @relation("BookingChangeRequestLinkedModification")
   creditsFromModification MemberCredit[]         @relation("CreditSourceModification")
+  /// #3402: the single-flight lease on this edit's ONE review-charge request.
+  reviewChargeRaiseClaim  EditReviewChargeRaiseClaim?
 
   @@index([bookingId])
   @@index([memberId])
+}
+
+/// #3402 (`INV-PAY-112`): the lease that makes RAISING one booking edit's
+/// review-charge request single-flight. One row per `BookingModification`,
+/// created on first use. A run must win the claim (an opaque token written by a
+/// guarded `updateMany` while no live token is held) before it calls Stripe, so
+/// two settlements of one edit can no longer both raise the intent and leave the
+/// smaller figure standing. NOT a database lock: each statement autocommits and
+/// nothing is held across the provider call. A token older than the lease is
+/// taken over, which is safe because the derived share total only grows.
+/// Mutable bookkeeping kept OFF `BookingModification`, which is an immutable
+/// record of the edit.
+model EditReviewChargeRaiseClaim {
+  bookingModificationId String    @id
+  /// Opaque token of the run holding the claim; NULL when nobody does.
+  claimToken            String?
+  /// When the holder claimed, renewed when it records its intent. A claim
+  /// older than the lease may be taken over.
+  claimedAt             DateTime?
+  /// What the holder is about to ask Stripe for, recorded before the call and
+  /// cleared on release - the diagnostic trail of a raise the provider refused
+  /// or a holder that died mid-call. Never read as money.
+  intendedAmountCents   Int?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  bookingModification BookingModification @relation(fields: [bookingModificationId], references: [id], onDelete: Cascade)
 }
 
 // Booking Change Requests (locked same-day/past-night edits needing admin review)

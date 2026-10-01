@@ -398,6 +398,8 @@ export interface XeroOperation {
   failureState: "ACTIVE" | "REPAIRED" | "SUPERSEDED" | null
   failureStateReason: string | null
   failureRootKey: string | null
+  /** #3462: RUNNING past the staleness threshold - offers Mark failed. */
+  staleRunning: boolean
 }
 
 export interface XeroInboundEvent {
