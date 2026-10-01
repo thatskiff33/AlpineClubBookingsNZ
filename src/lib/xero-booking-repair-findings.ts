@@ -20,6 +20,7 @@ import {
   readStoredXeroAmountCents,
   toIsoDate,
 } from "./xero-booking-repair-utils";
+import { unsettledRefundNoteRows } from "@/lib/xero-refund-note-unsettled";
 
 export function addAction(
   actionMap: Map<string, BookingXeroRepairAction>,
@@ -95,6 +96,50 @@ export function addResolvedInXeroFinding(
     },
     actionKeys: [],
   });
+}
+
+/**
+ * #3548 (review F5/F6): a completed refund-note row whose note has neither its
+ * settling payment nor a skip on record (a pre-#3548 early return closed it
+ * with neither), or one Xero shows part-settled. Report-first: the settle is
+ * never auto-applied, because an officer may have left an old note open on
+ * purpose; an operator applies it by key (`--apply-action`), and it runs the
+ * one read-back-then-settle. A part-settled note's remainder is settled in
+ * Xero by hand; its action then only reads the note back and records it, never
+ * paying. `refundPaymentLinks` are the payment's `REFUND_PAYMENT` links active
+ * or not (`refundPaymentLinkWhere`), the evidence the report reads too.
+ */
+export function addUnsettledRefundCreditNoteFindings(
+  findings: MutableFinding[],
+  actionMap: Map<string, BookingXeroRepairAction>,
+  bookingId: string,
+  refundPaymentLinks: XeroObjectLinkRecord[],
+  paymentOperations: XeroOperationRecord[],
+) {
+  for (const row of unsettledRefundNoteRows(paymentOperations, refundPaymentLinks)) {
+    const partSettled = row.kind === "part-settled";
+    const note = row.creditNoteNumber ?? row.creditNoteId;
+    const action = addAction(actionMap, {
+      key: `settle-refund-note:${row.paymentId}:${row.creditNoteId}`,
+      bookingId,
+      type: "SETTLE_REFUND_CREDIT_NOTE",
+      description: partSettled
+        ? `Read part-settled refund credit note ${note} back from Xero and record the payments it now shows on operation ${row.operationId}; never pays.`
+        : `Read refund credit note ${note} back from Xero and record its settling payment, or why none is due, on operation ${row.operationId}.`,
+      safeToAutoApply: false,
+      payload: { operationId: row.operationId, paymentId: row.paymentId, creditNoteId: row.creditNoteId },
+    });
+    addFinding(findings, {
+      code: "REFUND_CREDIT_NOTE_UNSETTLED",
+      severity: "warning",
+      summary: partSettled
+        ? "A refund credit note is part-settled in Xero. Settle the remainder in Xero by hand, then apply the action by key to record it."
+        : "A refund credit note's operation completed with neither its settling payment nor a reason none is due. Review it, then apply the settle action by key if the note should be paid.",
+      safeToAutoApply: false,
+      details: { ...row },
+      actionKeys: [action.key],
+    });
+  }
 }
 
 export function buildManualReviewAction(bookingId: string, reason: string) {

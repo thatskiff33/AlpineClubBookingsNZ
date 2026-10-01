@@ -20,6 +20,7 @@ import relocaleProofExceptionRequestIdentities from "./20260930010000_relocale_p
 import addMemberSessionsRevokedAt from "./20261009010000_add_member_sessions_revoked_at";
 import backfillMemberSessionsRevokedAt from "./20261009020000_backfill_member_sessions_revoked_at";
 import dropPaymentRefundCurrencyDefault from "./20261012010000_drop_payment_refund_currency_default";
+import addSchoolTeacherHutLeaderPolicy from "./20261101010000_add_school_teacher_hut_leader_policy";
 import type { DataMigrationVerification } from "./types";
 
 /**
@@ -62,4 +63,5 @@ export const DATA_MIGRATION_VERIFICATIONS: DataMigrationVerification[] = [
   addMemberSessionsRevokedAt,
   backfillMemberSessionsRevokedAt,
   dropPaymentRefundCurrencyDefault,
+  addSchoolTeacherHutLeaderPolicy,
 ];

@@ -1356,8 +1356,12 @@ export function PublicBookingRequestsPanel({
         }
       } else if (data.type === "SCHOOL") {
         toast.success(
-          data.invoiceMode === "xero"
-            ? "School booking confirmed. The Xero invoice has been emailed to the school and the teacher PIN email sent."
+          data.alreadyConverted === true
+            ? "School booking was already confirmed. No new invoice or teacher PIN email was sent."
+            : data.invoiceMode === "xero"
+            ? data.teacherHutLeaderAssignmentsCreated === true
+              ? "School booking confirmed. The Xero invoice has been emailed to the school and teacher PIN emails are being sent."
+              : "School booking confirmed. The Xero invoice has been emailed to the school. Teacher hut-leader assignments and PIN emails were not created."
             : "School booking confirmed. The Xero module is off, so admins have been emailed to invoice the school manually."
         );
       } else {

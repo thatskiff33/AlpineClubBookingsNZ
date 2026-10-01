@@ -45,8 +45,10 @@ const mocks = vi.hoisted(() => ({
   readLateCaptureXeroReceipt: vi.fn(),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+vi.mock("@/lib/prisma", () => {
+  const prisma = {
+    // #3548: a new refund note is recorded (payment, link, row) in one transaction.
+    $transaction: (run: (tx: unknown) => unknown) => run(prisma),
     payment: { findUnique: mocks.paymentFindUnique, update: mocks.paymentUpdate },
     booking: { findUnique: mocks.bookingFindUnique, findUniqueOrThrow: mocks.bookingFindUniqueOrThrow },
     bookingModification: {
@@ -58,10 +60,11 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: mocks.xeroObjectLinkFindFirst,
       findMany: mocks.xeroObjectLinkFindMany,
     },
-    xeroSyncOperation: { update: mocks.xeroSyncOperationUpdate },
+    xeroSyncOperation: { update: mocks.xeroSyncOperationUpdate, findUnique: async () => null },
     memberCredit: { updateMany: mocks.memberCreditUpdateMany },
-  },
-}));
+  };
+  return { prisma };
+});
 
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -279,9 +282,9 @@ describe("the cash refund note (createXeroCreditNote)", () => {
 
     expect(builtCreditNote().lineItems?.[0]?.unitAmount).toBe(50);
     expect(settlingPayment()).toMatchObject({ account: { code: "606" } });
-    const recorded = mocks.xeroSyncOperationUpdate.mock.calls.length
-      ? mocks.xeroSyncOperationUpdate.mock.calls[0][0].data.requestPayload
-      : mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload;
+    const recorded =
+      mocks.xeroSyncOperationUpdate.mock.calls.find((call) => call[0].data.requestPayload)?.[0].data.requestPayload ??
+      mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload;
     expect(recorded.allocation).toMatchObject({ invoiceId: "inv_kept" });
   });
 
@@ -294,9 +297,9 @@ describe("the cash refund note (createXeroCreditNote)", () => {
 
     await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "card" });
 
-    const recorded = mocks.xeroSyncOperationUpdate.mock.calls.length
-      ? mocks.xeroSyncOperationUpdate.mock.calls[0][0].data.requestPayload
-      : mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload;
+    const recorded =
+      mocks.xeroSyncOperationUpdate.mock.calls.find((call) => call[0].data.requestPayload)?.[0].data.requestPayload ??
+      mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload;
     expect(recorded.allocation).toMatchObject({ invoiceId: "inv_kept" });
   });
 
