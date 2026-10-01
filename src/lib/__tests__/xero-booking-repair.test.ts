@@ -7,6 +7,7 @@ import { PartialRefundError } from "@/lib/payment-transactions";
 import { withTimeZoneAsync } from "@/lib/__tests__/helpers/timezone";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND } from "@/lib/manual-settlement-reversal-event";
+import { unsettledRefundNoteRows } from "@/lib/xero-refund-note-unsettled";
 
 function makeBooking(overrides: Record<string, unknown> = {}) {
   return {
@@ -647,6 +648,52 @@ function createDependencies(state: {
 describe("runBookingXeroRepair", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("reads a refund note's deactivated payment link, as the hardening report does, so it raises no unsettled finding (#3548 round 3 R2-3)", async () => {
+    // Note A's row completed with only its link recording the payment; a later
+    // delta's payment link deactivated it (single-active per payment).
+    const noteLink = (id: string, creditNoteId: string, active: boolean) => ({
+      id,
+      localModel: "Payment",
+      localId: "payment_1",
+      xeroObjectType: "PAYMENT",
+      xeroObjectId: id,
+      xeroObjectNumber: null,
+      xeroObjectUrl: null,
+      role: "REFUND_PAYMENT",
+      active,
+      metadata: { creditNoteId, amountCents: 3000 },
+      createdAt: new Date("2026-05-03T00:00:00Z"),
+      updatedAt: new Date("2026-05-03T00:00:00Z"),
+    });
+    const noteRow = (id: string, creditNoteId: string) =>
+      makeOperation({
+        id,
+        entityType: "CREDIT_NOTE",
+        localModel: "Payment",
+        localId: "payment_1",
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: creditNoteId,
+        requestPayload: { allocation: { invoiceId: "inv_primary", amount: 30 }, refundMethod: "card" },
+        responsePayload: { refundPayment: null },
+      });
+    const links = [noteLink("pay_a", "cn_a", false), noteLink("pay_b", "cn_b", true)];
+    const operations = [noteRow("op_a", "cn_a"), noteRow("op_b", "cn_b")];
+    const deps = createDependencies({ bookings: [makeBooking()], links, operations });
+    // The real table honours `active`, which is what separates the two reads.
+    vi.mocked(deps.prisma.xeroObjectLink.findMany).mockImplementation((async ({ where }: any) =>
+      links.filter((link) => where?.active === undefined || link.active === where.active)) as never);
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const codes = report.passes[0].bookings[0].findings.map((finding) => finding.code);
+    expect(codes).not.toContain("REFUND_CREDIT_NOTE_UNSETTLED");
+    // The report's pure half over the same fixture: the same verdict.
+    expect(unsettledRefundNoteRows(operations as never, links)).toEqual([]);
   });
 
   it("classifies cancelled unpaid bookings with an open invoice", async () => {
