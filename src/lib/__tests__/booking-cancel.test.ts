@@ -2159,6 +2159,25 @@ describe("cancelBooking credit refunds", () => {
       );
     });
 
+    it("follows the restore actually made where it differs from the prediction, and says so", async () => {
+      const withCredit = {
+        ...(await mocks.txBookingFindUnique()),
+        payment: { ...(await mocks.txBookingFindUnique()).payment, creditAppliedCents: 2000 },
+      };
+      mocks.bookingFindUnique.mockResolvedValue(withCredit);
+      mocks.txBookingFindUnique.mockResolvedValue(withCredit);
+      mocks.calculateAppliedCreditRestore.mockReturnValue({ creditRestoredCents: 1000, creditRestorePercentage: 50 });
+      // The restore wrote nothing (a replayed restore returns 0).
+      mocks.restoreCreditFromBooking.mockResolvedValue(0);
+      appliedCredit.deriveBookingAppliedCreditCents.mockResolvedValueOnce(2000);
+
+      await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+      expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+        expect.objectContaining({ keptCents: 10000 - 5000 + 2000, site: "booking-cancel:paid" }),
+      );
+    });
+
     it("posts nothing when the single-flight claim is lost", async () => {
       mocks.txBookingFindUnique.mockResolvedValueOnce({
         ...(await mocks.bookingFindUnique()),
