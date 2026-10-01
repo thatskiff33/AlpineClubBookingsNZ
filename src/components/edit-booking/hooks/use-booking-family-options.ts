@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import type { BookerDependant } from "@/lib/booking-dependant-identity";
 import type {
   FamilyMember,
   PartnerSharingCandidate,
@@ -33,6 +34,19 @@ export function useBookingFamilyOptions({
   familyMembers: FamilyMember[];
   familyMembersLoaded: boolean;
   partnerCandidates: PartnerSharingCandidate[];
+  /**
+   * The booking OWNER's recorded dependants (#3451, `INV-GUEST-019`), from the
+   * same response — both family routes serve them from `loadBookerDependants`.
+   * Empty until loaded, which is the safe direction: the panel simply does not
+   * draw the question, and the server, which never trusts this list, refuses.
+   */
+  ownDependants: BookerDependant[];
+  /**
+   * Read the list again. Used when the server refuses an own-dependant collision
+   * the panel could not see — its list is stale by definition, and it needs the
+   * fresh one to draw the question at all.
+   */
+  reloadFamilyOptions: () => void;
 } {
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   // MG4 (#2309): has the family list ANSWERED yet? See the note above.
@@ -42,6 +56,13 @@ export function useBookingFamilyOptions({
   const [partnerCandidates, setPartnerCandidates] = useState<
     PartnerSharingCandidate[]
   >([]);
+  const [ownDependants, setOwnDependants] = useState<BookerDependant[]>([]);
+  // #3451: bumped to re-run the load below on demand.
+  const [reloadCount, setReloadCount] = useState(0);
+  const reloadFamilyOptions = useCallback(
+    () => setReloadCount((count) => count + 1),
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -69,6 +90,9 @@ export function useBookingFamilyOptions({
         if (!cancelled && data) {
           setFamilyMembers(data.familyMembers || []);
           setPartnerCandidates(data.partnerSharingCandidates || []);
+          setOwnDependants(
+            Array.isArray(data.ownDependants) ? data.ownDependants : [],
+          );
           setFamilyMembersLoaded(true);
         }
       })
@@ -81,7 +105,14 @@ export function useBookingFamilyOptions({
     return () => {
       cancelled = true;
     };
-  }, [bookingId, viewerRole]);
+    // `reloadCount` is the #3451 on-demand re-read; it changes nothing else.
+  }, [bookingId, viewerRole, reloadCount]);
 
-  return { familyMembers, familyMembersLoaded, partnerCandidates };
+  return {
+    familyMembers,
+    familyMembersLoaded,
+    partnerCandidates,
+    ownDependants,
+    reloadFamilyOptions,
+  };
 }
