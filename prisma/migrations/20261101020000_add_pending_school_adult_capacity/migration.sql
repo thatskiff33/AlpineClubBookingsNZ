@@ -34,7 +34,8 @@ CREATE TABLE "BookingRequestPendingAdultReservationNight" (
 
   CONSTRAINT "BookingRequestPendingAdultReservationNight_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "BookingRequestPendingAdultReservationNight_adultCount_positive" CHECK ("adultCount" > 0),
-  CONSTRAINT "BookingRequestPendingAdultReservationNight_bookingRequestId_fkey"
+  -- Use Prisma's 63-byte identifier for the long request relation name.
+  CONSTRAINT "BookingRequestPendingAdultReservationNight_bookingRequestI_fkey"
     FOREIGN KEY ("bookingRequestId") REFERENCES "BookingRequest"("id") ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT "BookingRequestPendingAdultReservationNight_bookingId_fkey"
     FOREIGN KEY ("bookingId") REFERENCES "Booking"("id") ON DELETE CASCADE ON UPDATE CASCADE,
@@ -42,7 +43,7 @@ CREATE TABLE "BookingRequestPendingAdultReservationNight" (
     FOREIGN KEY ("lodgeId") REFERENCES "Lodge"("id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
-CREATE UNIQUE INDEX "BookingRequestPendingAdultReservationNight_bookingRequestId_night_key"
+CREATE UNIQUE INDEX "BookingRequestPendingAdultReservationNight_bookingRequestId_key"
   ON "BookingRequestPendingAdultReservationNight"("bookingRequestId", "night");
 CREATE INDEX "BookingRequestPendingAdultReservationNight_lodgeId_night_idx"
   ON "BookingRequestPendingAdultReservationNight"("lodgeId", "night");
