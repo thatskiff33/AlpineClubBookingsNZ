@@ -1065,5 +1065,86 @@ let observerClient: PrismaClient;
       expect(credits).toHaveLength(1);
       expect(credits[0].amountCents).toBe(4500);
     });
+
+    /**
+     * #3791: the issue's worked example, on real rows. A $200 booking paid
+     * entirely by account credit; a review refunds a $50 share as account
+     * credit; the booking is then cancelled. The share has to come back as the
+     * member's applied credit, so the cancellation tiers the $150 still applied
+     * rather than the whole $200 - minting it beside an unchanged applied figure
+     * paid the share twice ($250 back at 100%, $130 at 50% with a $20 fee).
+     *
+     * The cancellation's credit slice is the cancel path's own two calls
+     * (`booking-cancel.ts`): `calculateAppliedCreditRestore` off the payment's
+     * `creditAppliedCents` mirror, then `restoreCreditFromBooking`.
+     */
+    it.each([
+      { tier: "100%", rule: { daysBeforeStay: 0, refundPercentage: 100, fixedFeeCents: 0 }, finalCents: 20_000, restoredCents: 15_000 },
+      { tier: "50% with a $20 fee", rule: { daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 2_000 }, finalCents: 10_500, restoredCents: 5_500 },
+    ])("#3791: a credit-paid booking's fifty-dollar review share, then a cancel at $tier, pays the share once", async ({ rule, finalCents, restoredCents }) => {
+      const credit = await import("@/lib/member-credit");
+      const { calculateAppliedCreditRestore } = await import("@/lib/policies/cancellation");
+      const clearCreditRun = async () => {
+        await clearReviewRunState();
+        await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
+        await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
+      };
+      await clearCreditRun();
+      try {
+        // Paid entirely by credit: nothing captured, $200 applied.
+        await prisma.payment.update({
+          where: { id: PAYMENT_ID },
+          data: { amountCents: 0, status: "SUCCEEDED", source: "STRIPE", xeroInvoiceId: null, creditAppliedCents: 20_000 },
+        });
+        await prisma.memberCredit.create({
+          data: { memberId: MEMBER_ID, amountCents: 20_000, type: "ADMIN_ADJUSTMENT", description: "race 3791 opening balance" },
+        });
+        await prisma.$transaction((tx) => credit.applyCreditToBooking(MEMBER_ID, 20_000, BOOKING_ID, tx, CLUB_FORMAT_TEST));
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(0);
+
+        const raised = await raiseInOwnTransaction();
+        await resolveManualRefundTask({
+          taskId: raised.taskId,
+          resolution: "completed",
+          note: "Priced from the booking's own payment history.",
+          actingMemberId: MEMBER_ID,
+          confirmedAmountCents: 5_000,
+          direction: "REFUND_TO_MEMBER",
+          recordedNightPrices: null,
+        }, CLUB_FORMAT_TEST);
+
+        // The member holds the share now, as applied credit given back.
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(5_000);
+        expect(await credit.deriveBookingAppliedCreditCents(BOOKING_ID)).toBe(15_000);
+        const payment = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { creditAppliedCents: true } });
+        expect(payment.creditAppliedCents).toBe(15_000);
+        expect(await prisma.memberCredit.count({ where: { sourceBookingModificationId: MODIFICATION_ID } })).toBe(0);
+        // The ledger reads it as the clamp's give-back, and still agrees with the
+        // credit ledger (#3599's identity).
+        const creditLines = await prisma.bookingLedgerLine.findMany({
+          where: { bookingId: BOOKING_ID, kind: { in: ["CREDIT_APPLIED", "CREDIT_ISSUED"] } },
+          select: { kind: true, amountCents: true },
+          orderBy: { postedAt: "asc" },
+        });
+        expect(creditLines).toEqual([
+          { kind: "CREDIT_APPLIED", amountCents: 20_000 },
+          { kind: "CREDIT_APPLIED", amountCents: -5_000 },
+        ]);
+
+        // The cancellation's credit slice, as the cancel path computes it.
+        const { creditRestoredCents } = calculateAppliedCreditRestore(payment.creditAppliedCents, 0, 30, [rule]);
+        const restored = await prisma.$transaction((tx) =>
+          credit.restoreCreditFromBooking(MEMBER_ID, BOOKING_ID, tx, creditRestoredCents),
+        );
+        expect(restored).toBe(restoredCents);
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(finalCents);
+      } finally {
+        await clearCreditRun();
+        await prisma.payment.update({
+          where: { id: PAYMENT_ID },
+          data: { amountCents: 20000, status: "PENDING", source: "INTERNET_BANKING", xeroInvoiceId: XERO_INVOICE_ID, creditAppliedCents: 0 },
+        });
+      }
+    });
   },
 );

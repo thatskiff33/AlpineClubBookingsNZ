@@ -814,6 +814,112 @@ describe("member-credit helpers", () => {
     });
   });
 
+  describe("giveBackAppliedCreditForReviewShare (#3791)", () => {
+    function makeTx(appliedNetCents: number, payment: Record<string, unknown> | null) {
+      return {
+        $executeRaw: vi.fn().mockResolvedValue(undefined),
+        xeroSyncOperation: { findMany: vi.fn().mockResolvedValue([]) },
+        booking: { findUnique: vi.fn().mockResolvedValue(payment ? { payment } : null) },
+        payment: { update: vi.fn().mockResolvedValue({}) },
+        memberCredit: {
+          aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: appliedNetCents } }),
+          create: vi.fn().mockResolvedValue({} as any),
+        },
+      };
+    }
+    const ibPayment = {
+      id: "payment-1",
+      source: "INTERNET_BANKING",
+      xeroInvoiceId: "inv-1",
+      creditAppliedCents: 20000,
+    };
+
+    it("MUTATION: gives the share back as applied credit and lowers the mirror the cancellation tiers off", async () => {
+      const tx = makeTx(-20000, ibPayment);
+      const { giveBackAppliedCreditForReviewShare } = await import("@/lib/member-credit");
+
+      const givenBack = await giveBackAppliedCreditForReviewShare(
+        { memberId: "member-1", bookingId: "booking-1", shareCents: 5000 },
+        tx as any,
+      );
+
+      expect(givenBack).toBe(5000);
+      // The clamp's own row: a positive BOOKING_APPLIED offset, not new credit.
+      expect(tx.memberCredit.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          memberId: "member-1",
+          amountCents: 5000,
+          type: "BOOKING_APPLIED",
+          appliedToBookingId: "booking-1",
+        }),
+      });
+      expect(tx.payment.update).toHaveBeenCalledWith({
+        where: { id: "payment-1" },
+        data: { creditAppliedCents: 15000 },
+      });
+      // Under the member's credit-ledger lock, taken first.
+      expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.memberCredit.create.mock.invocationCallOrder[0],
+      );
+      // The review's Xero leg already credits the member in Xero; a
+      // deallocation here as well would credit them twice.
+      expect(mockStartXeroSyncOperation).not.toHaveBeenCalled();
+      expect(mockRepairLegacyAppliedCreditNoteAllocationsForBooking).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: never gives back more than is applied", async () => {
+      const tx = makeTx(-3000, { ...ibPayment, creditAppliedCents: 3000 });
+      const { giveBackAppliedCreditForReviewShare } = await import("@/lib/member-credit");
+
+      const givenBack = await giveBackAppliedCreditForReviewShare(
+        { memberId: "member-1", bookingId: "booking-1", shareCents: 5000 },
+        tx as any,
+      );
+
+      expect(givenBack).toBe(3000);
+      expect(tx.memberCredit.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ amountCents: 3000 }),
+      });
+      expect(tx.payment.update).toHaveBeenCalledWith({
+        where: { id: "payment-1" },
+        data: { creditAppliedCents: 0 },
+      });
+    });
+
+    it("writes nothing when no credit is applied", async () => {
+      const tx = makeTx(0, { ...ibPayment, creditAppliedCents: 0 });
+      const { giveBackAppliedCreditForReviewShare } = await import("@/lib/member-credit");
+
+      expect(
+        await giveBackAppliedCreditForReviewShare(
+          { memberId: "member-1", bookingId: "booking-1", shareCents: 5000 },
+          tx as any,
+        ),
+      ).toBe(0);
+      expect(tx.memberCredit.create).not.toHaveBeenCalled();
+      expect(tx.payment.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses while an applied-credit deallocation is in flight, before any write", async () => {
+      const tx = makeTx(-20000, ibPayment);
+      tx.xeroSyncOperation.findMany.mockResolvedValue([{
+        id: "dealloc-pending",
+        status: "PENDING",
+        requestPayload: { queueType: "APPLIED_CREDIT_DEALLOCATION" },
+      }]);
+      const { giveBackAppliedCreditForReviewShare } = await import("@/lib/member-credit");
+
+      await expect(
+        giveBackAppliedCreditForReviewShare(
+          { memberId: "member-1", bookingId: "booking-1", shareCents: 5000 },
+          tx as any,
+        ),
+      ).rejects.toThrow("dealloc-pending is PENDING");
+      expect(tx.memberCredit.create).not.toHaveBeenCalled();
+      expect(tx.payment.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe("createAdminAdjustment", () => {
     it("creates a pending admin adjustment request", async () => {
       const { prisma } = await import("@/lib/prisma");
