@@ -12,9 +12,17 @@ vi.mock("@/lib/club-identity-settings", () => ({
 }));
 
 const mockPrisma = vi.hoisted(() => ({
-  $transaction: vi.fn(async (operations: Array<Promise<unknown>>) =>
-    Promise.all(operations),
+  // Both shapes: an array of operations, and (#3454, enrolment) an interactive
+  // callback, which is handed this same double as its transaction client.
+  $transaction: vi.fn(
+    async (operations: Array<Promise<unknown>> | ((tx: unknown) => Promise<unknown>)) =>
+      typeof operations === "function"
+        ? operations(mockPrisma)
+        : Promise.all(operations),
   ),
+  auditLog: {
+    create: vi.fn().mockResolvedValue({ id: "audit-1" }),
+  },
   twoFactorEmailCode: {
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     create: vi.fn().mockResolvedValue({ id: "email-code-1" }),
@@ -145,9 +153,21 @@ describe("two-factor helpers", () => {
       memberId: "member-1",
       method: "TOTP",
       totpSecret: "BASE32SECRET",
+      actor: { kind: "member", memberId: "member-1" },
     });
 
     expect(recoveryCodes).toHaveLength(10);
+    // #3454: the enrolment records itself, on the same transaction client,
+    // and the row holds no trace of the secret.
+    expect(mockPrisma.auditLog.create).toHaveBeenCalledTimes(1);
+    const audit = mockPrisma.auditLog.create.mock.calls[0]?.[0];
+    expect(audit.data).toMatchObject({
+      action: "security.two_factor.enrolled",
+      category: "security",
+      actorMemberId: "member-1",
+      subjectMemberId: "member-1",
+    });
+    expect(JSON.stringify(audit)).not.toContain("BASE32SECRET");
     const updateCall = mockPrisma.member.update.mock.calls[0]?.[0];
     expect(updateCall.data.twoFactorEnabled).toBe(true);
     expect(updateCall.data.twoFactorMethod).toBe("TOTP");

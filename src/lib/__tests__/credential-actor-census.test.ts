@@ -138,7 +138,12 @@ const CREDENTIAL_WRITE_SITES: Record<string, string> = {
     "setIntegrationCredential (forwarded) actor / (forwarded) writeExpectation",
   "src/app/api/admin/backups/config/route.ts::POST#8":
     "setIntegrationCredential (forwarded) actor / (forwarded) writeExpectation",
+  // #3454: a Xero client id or secret is written INSIDE the verify-reset's
+  // transaction, so the token destruction it causes commits with it; every
+  // other credential takes the ordinary writer.
   "src/app/api/admin/integrations/credentials/route.ts::POST#0":
+    "setIntegrationCredentialInTransaction admin / any",
+  "src/app/api/admin/integrations/credentials/route.ts::POST#1":
     "setIntegrationCredential admin / any",
   "src/lib/club-post-mirror.ts::ensurePushRegistration#0":
     "setIntegrationCredential system / any",
@@ -175,6 +180,15 @@ const CREDENTIAL_WRITE_SITES: Record<string, string> = {
     "setIntegrationCredential system / any",
   "src/lib/xero-config.ts::getOperationalXeroEncryptionKey.value#0":
     "ensureGeneratedCredential system / (not-applicable)",
+  // #3454 — the Xero OAuth token set. The refresh declares the version it read
+  // with the lease; a connect replaces whatever was stored; destroying the
+  // tokens wants them gone whatever they were.
+  "src/lib/xero-token-store.ts::deleteXeroTokensInTransaction.storeRemoved#0":
+    "deleteIntegrationCredentialInTransaction (forwarded) params.actor / any",
+  "src/lib/xero-token-store.ts::saveXeroTokens#0":
+    "setIntegrationCredentialInTransaction (forwarded) options.actor / (forwarded) storeExpectation",
+  "src/lib/xero-token-store.ts::saveXeroTokens#1":
+    "setIntegrationCredentialInTransaction (forwarded) options.actor / any",
 };
 
 /**
@@ -212,6 +226,12 @@ const ACTOR_FORWARDED_SITES: Record<string, string> = {
     "the actor is this helper's own required parameter, supplied by its caller",
   "src/lib/stripe-config.ts::clearStripeWebhookVerified#0":
     "the actor is this helper's own required parameter, for the same reason as the Google verify-reset above",
+  "src/lib/xero-token-store.ts::deleteXeroTokensInTransaction.storeRemoved#0":
+    "the actor is this helper's own required parameter: the administrator disconnecting, or the one whose credential write caused the verify-reset",
+  "src/lib/xero-token-store.ts::saveXeroTokens#0":
+    "the actor is the token store's own required parameter, the named `xero-token-refresh` job supplied by the API client's refresh; the expectation is the version read with the lease",
+  "src/lib/xero-token-store.ts::saveXeroTokens#1":
+    "the actor is the token store's own required parameter, the connecting administrator supplied by the OAuth callback",
 };
 
 /**
@@ -247,7 +267,8 @@ describe("credential-actor census: the tree names an actor everywhere (#2723)", 
   it("resolved a real population, so a clean report means something", () => {
     expect(census().filesScanned).toBeGreaterThan(MINIMUM_FILES_SCANNED);
     expect(census().sites.length).toBeGreaterThanOrEqual(MINIMUM_WRITE_SITES);
-    expect(CREDENTIAL_MUTATORS.length).toBe(3);
+    // Three writers, plus the in-transaction forms of set and delete (#3454).
+    expect(CREDENTIAL_MUTATORS.length).toBe(5);
     // Three modules are exempt from the bypass check because they ARE the
     // implementation: the store, the compare-and-set claim, and the create-only
     // generator. Pinned, because every addition widens the one check that can

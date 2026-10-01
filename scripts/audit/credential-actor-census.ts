@@ -24,6 +24,9 @@
  *  2. `ensureGeneratedCredential(params)`    — the store's create-only generator
  *  3. `deleteIntegrationCredential(params)`  — the store's remover
  *
+ * and the in-transaction forms of 1 and 3 (`…InTransaction(params)`, #3454),
+ * which take the same params object plus the caller's `tx`;
+ *
  * and one way to go round them all:
  *
  *  4. `<client>.integrationCredential.<anything but a read>(…)` — a direct
@@ -100,6 +103,12 @@ export const CREDENTIAL_MUTATORS = [
   "setIntegrationCredential",
   "ensureGeneratedCredential",
   "deleteIntegrationCredential",
+  // The same two writes on a transaction the caller owns (#3454), for a
+  // credential change that must commit with something else. They take the same
+  // required actor and expectation, in the same single params object, so a
+  // caller of these is a site exactly like a caller of the two above.
+  "setIntegrationCredentialInTransaction",
+  "deleteIntegrationCredentialInTransaction",
 ] as const;
 
 export type CredentialMutator = (typeof CREDENTIAL_MUTATORS)[number];
@@ -114,6 +123,8 @@ export type CredentialMutator = (typeof CREDENTIAL_MUTATORS)[number];
 const MUTATORS_REQUIRING_EXPECTATION: ReadonlySet<string> = new Set([
   "setIntegrationCredential",
   "deleteIntegrationCredential",
+  "setIntegrationCredentialInTransaction",
+  "deleteIntegrationCredentialInTransaction",
 ]);
 
 /** The Prisma delegate a bypass reaches. */

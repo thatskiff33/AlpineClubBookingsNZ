@@ -122,8 +122,9 @@ describe("getAuthenticatedXeroClient token refresh lease", () => {
         tenantId: "tenant-1",
       },
       {
-        claimedTokenId: "xero-token-1",
-        refreshLeaseUntil: leaseUntil,
+        // #3454: a refresh is the named background job, never an absence.
+        actor: { kind: "system", actor: "xero-token-refresh" },
+        lease: { claimed: tokens, leaseUntil },
       }
     );
     expect(mocks.releaseXeroTokenRefreshLease).toHaveBeenCalledWith(

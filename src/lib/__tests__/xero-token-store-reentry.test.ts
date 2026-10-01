@@ -10,6 +10,11 @@ const h = vi.hoisted(() => ({
     xeroToken: {
       findFirst: vi.fn(),
     },
+    // #3454: no credential-store copy in these cases, so the readability probe
+    // falls through to the XeroToken row exactly as before.
+    integrationCredential: {
+      findUnique: vi.fn(async () => null),
+    },
   },
   getOperationalXeroEncryptionKey: vi.fn(),
   peekOperationalXeroEncryptionKey: vi.fn(),
@@ -76,7 +81,8 @@ describe("getXeroTokenReadability (side-effect-free) (FIX-1)", () => {
     const accessToken = await cipherUnderKeyA("access");
     h.getOperationalXeroEncryptionKey.mockClear(); // ignore fixture-build calls
     h.peekOperationalXeroEncryptionKey.mockResolvedValue(KEY_A);
-    expect(await getXeroTokenReadability({ accessToken })).toBe("readable");
+    h.prisma.xeroToken.findFirst.mockResolvedValue({ id: "tok", accessToken });
+    expect(await getXeroTokenReadability()).toBe("readable");
     // Side-effect-free: the generate-on-miss resolver is never touched.
     expect(h.getOperationalXeroEncryptionKey).not.toHaveBeenCalled();
     expect(h.peekOperationalXeroEncryptionKey).toHaveBeenCalled();
@@ -85,13 +91,15 @@ describe("getXeroTokenReadability (side-effect-free) (FIX-1)", () => {
   it("reports unreadable when the key is gone (auth secret changed)", async () => {
     const accessToken = await cipherUnderKeyA("access");
     h.peekOperationalXeroEncryptionKey.mockResolvedValue(undefined);
-    expect(await getXeroTokenReadability({ accessToken })).toBe("unreadable");
+    h.prisma.xeroToken.findFirst.mockResolvedValue({ id: "tok", accessToken });
+    expect(await getXeroTokenReadability()).toBe("unreadable");
   });
 
   it("reports unreadable when the row fails GCM under the peeked key", async () => {
     const accessToken = await cipherUnderKeyA("access");
     h.peekOperationalXeroEncryptionKey.mockResolvedValue(KEY_B);
-    expect(await getXeroTokenReadability({ accessToken })).toBe("unreadable");
+    h.prisma.xeroToken.findFirst.mockResolvedValue({ id: "tok", accessToken });
+    expect(await getXeroTokenReadability()).toBe("unreadable");
   });
 });
 

@@ -152,6 +152,9 @@ describe("two-factor auth routes", () => {
     expect(mocks.enrollTwoFactor).toHaveBeenCalledWith({
       memberId: "member-1",
       method: "EMAIL",
+      // #3454: the member is the actor of their own enrolment.
+      actor: { kind: "member", memberId: "member-1" },
+      request: expect.any(Object),
     });
     expect(mocks.markTwoFactorSessionVerified).toHaveBeenCalled();
   });

@@ -131,6 +131,8 @@ vi.mock("@/lib/two-factor", () => ({
 
 vi.mock("@/lib/audit", () => ({
   logAudit: vi.fn(),
+  // #3454: the erasure's two-factor clear records itself in the transaction.
+  createAuditLog: vi.fn(),
   buildStructuredAuditLogCreateArgs: vi.fn((event) => ({ data: event })),
   getAuditEmailDomain: vi.fn(
     (email?: string | null) => email?.split("@")[1]?.toLowerCase() ?? null,

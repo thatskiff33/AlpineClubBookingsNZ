@@ -100,7 +100,9 @@ describe("Xero OAuth admin routes", () => {
     expect(response.headers.get("location")).toBe("https://example.org/admin/xero?connected=true");
     expect(mockHandleXeroCallback).toHaveBeenCalledWith(
       `https://example.org/api/admin/xero/callback?code=test-code&state=${state}`,
-      state
+      state,
+      // #3454: the connect is recorded as this administrator's act.
+      expect.objectContaining({ actor: { kind: "admin", memberId: "admin-1" } }),
     );
     expect(mockLogger.info).toHaveBeenCalledWith(
       {
