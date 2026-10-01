@@ -55,6 +55,7 @@ vi.mock("next/navigation", () => ({
 
 // Imported after the mocks are registered.
 import LodgeConfigurationHubPage from "@/app/(admin)/admin/lodges/[id]/page";
+import { lodgeCapacitySettingsHref } from "@/components/admin/lodge-capacity-settings-link";
 
 const LODGE = {
   id: "lodge-1",
@@ -509,5 +510,19 @@ describe("a view-only officer reads the explanation too", () => {
     expect(notice).toContain("This is above the 24 active beds");
     expect(notice).toContain("only 24 places can be booked right now");
     expect(notice).toContain("allows up to 5 partner spots");
+  });
+});
+
+describe("the not-set-up notice's link lands on this field (#3407 round 3, F2)", () => {
+  it("resolves the link's fragment to the hub's capacity input", async () => {
+    const field = await openScreenWith({
+      activeBedCount: 0,
+      savedCapacity: null,
+      resolvedCapacity: 0,
+      source: "unconfigured_lodge",
+    });
+    const fragment = new URL(lodgeCapacitySettingsHref("lodge-1"), "http://club.test").hash.slice(1);
+    expect(fragment).not.toBe("");
+    expect(document.getElementById(fragment)).toBe(field);
   });
 });

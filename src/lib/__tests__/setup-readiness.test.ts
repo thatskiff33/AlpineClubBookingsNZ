@@ -798,6 +798,73 @@ describe("setup-readiness club-config DB-first gate (#1987, C8)", () => {
     );
   });
 
+  it("warns about an ADDITIONAL lodge that is not set up, with a configured default lodge (#3407)", () => {
+    const readiness = buildSetupReadiness({
+      configDir: emptyDir(),
+      database: {
+        ...completeDatabase,
+        clubIdentityName: "Rimutaka Alpine Club",
+        configuredCapacity: 24,
+        defaultLodgeCapacity: 24,
+        lodgesNotSetUpForBookings: ["River Lodge"],
+      },
+    });
+    const check = clubConfigCheck(readiness);
+    expect(check.status).toBe("warning");
+    expect(check.message).toBe(
+      "Rimutaka Alpine Club is configured, but one lodge is not set up for bookings yet.",
+    );
+    expect(check.details).toContain(
+      "Not set up for bookings yet (no capacity): River Lodge. Set a capacity on each lodge's configuration page (/admin/lodges).",
+    );
+  });
+
+  it("counts every such lodge, and keeps the default-lodge message when the default is one of them (#3407)", () => {
+    const several = clubConfigCheck(
+      buildSetupReadiness({
+        configDir: emptyDir(),
+        database: {
+          ...completeDatabase,
+          clubIdentityName: "Configured Club",
+          defaultLodgeCapacity: 24,
+          lodgesNotSetUpForBookings: ["River Lodge", "Summit Hut"],
+        },
+      }),
+    );
+    expect(several.message).toContain("2 lodges are not set up for bookings yet");
+
+    const withDefault = clubConfigCheck(
+      buildSetupReadiness({
+        configDir: emptyDir(),
+        database: {
+          ...completeDatabase,
+          clubIdentityName: "Configured Club",
+          defaultLodgeCapacity: 0,
+          lodgesNotSetUpForBookings: ["Main Lodge"],
+        },
+      }),
+    );
+    expect(withDefault.status).toBe("warning");
+    expect(withDefault.message).toContain("its default lodge has no bookable capacity yet");
+    expect(withDefault.details.join(" | ")).toContain("(no capacity): Main Lodge.");
+  });
+
+  it("stays complete when every active lodge is set up (#3407)", () => {
+    const check = clubConfigCheck(
+      buildSetupReadiness({
+        configDir: emptyDir(),
+        database: {
+          ...completeDatabase,
+          clubIdentityName: "Configured Club",
+          configuredCapacity: 24,
+          defaultLodgeCapacity: 24,
+          lodgesNotSetUpForBookings: [],
+        },
+      }),
+    );
+    expect(check.status).toBe("complete");
+  });
+
   it("still blocks loudly on a malformed primary club.json even when the DB is configured", () => {
     const dir = emptyDir();
     fs.writeFileSync(path.join(dir, "club.json"), "{ not json");
