@@ -13,7 +13,7 @@ reason: the accepted request action and confirmation sit in the existing
   duplicate its fetch, permission and toast state.
 
 file: src/lib/booking-cancel.ts
-lines: 2532
+lines: 2554
 reason: the accepted-hold cancellation guard belongs with the existing
   cancellation lock and hold-release branch it fences.
 
