@@ -35,8 +35,8 @@ import {
   resolveLinkedBookingMembersWithBoundary,
 } from "@/lib/booking-guests";
 import {
-  checkOwnDependantIdentity,
-  loadBookerDependants,
+  checkOwnDependantIdentityForParty,
+  claimedMemberPathIds,
   type DependantIdentityDeclaration,
   type DependantIdentityRefusal,
 } from "@/lib/booking-dependant-identity";
@@ -266,6 +266,18 @@ export interface CreateModificationExceptionRequestInput {
    * with proposal drift instead of executing something nobody reviewed.
    */
   delta: ModificationDeltaInput;
+  /**
+   * The member the booking is FOR (`bookingOwner(booking).memberId`), whose
+   * recorded dependants the own-dependant question is about (#3451) — never the
+   * requester, who may be an officer. `null` for a booking with no member owner.
+   */
+  bookingOwnerMemberId: string | null;
+  /**
+   * "Different person with the same name" answers about the guests this edit
+   * adds (#3451, `INV-GUEST-019`). Verified here and frozen beside the delta, so
+   * the approval's replay re-checks them against the records as they stand THEN.
+   */
+  dependantIdentityDeclarations?: DependantIdentityDeclaration[];
   supersedeRequestId?: string | null;
   /**
    * Whether the LIVE booking being modified currently holds lodge capacity
@@ -1282,8 +1294,8 @@ async function assertRequestedPartyMemberGuestsAllowed(args: {
  * parent is not at the screen. Approval re-runs the guard against the records as
  * they stand then, which is the stale window this cannot cover on its own.
  *
- * The dependant read is skipped for a party that is all member-linked and
- * carries no declaration, exactly as on the create route.
+ * The read and its skip rule are `checkOwnDependantIdentityForParty`'s, the one
+ * entry point every door shares.
  */
 async function resolveRequestedPartyDependantIdentity(args: {
   requestedByMemberId: string;
@@ -1291,22 +1303,14 @@ async function resolveRequestedPartyDependantIdentity(args: {
   memberPathMemberIds: ReadonlySet<string>;
   declarations: DependantIdentityDeclaration[] | undefined;
 }): Promise<DependantIdentityDeclaration[]> {
-  const declarations = args.declarations ?? [];
-  const anyFreeText = args.guests.some(
-    (guest) =>
-      !guest.memberId?.trim() ||
-      !args.memberPathMemberIds.has(guest.memberId.trim()),
-  );
-  if (!anyFreeText && declarations.length === 0) return [];
-
-  const refusal = checkOwnDependantIdentity({
+  const refusal = await checkOwnDependantIdentityForParty(prisma, {
+    bookerMemberId: args.requestedByMemberId,
     party: args.guests,
     memberPathMemberIds: args.memberPathMemberIds,
-    dependants: await loadBookerDependants(prisma, args.requestedByMemberId),
-    declarations,
+    declarations: args.declarations,
   });
   if (refusal) throw new PolicyExceptionDependantIdentityError(refusal);
-  return declarations;
+  return args.declarations ?? [];
 }
 
 /**
@@ -1511,6 +1515,27 @@ export async function createModificationExceptionRequest(
 ): Promise<CreatedExceptionRequest> {
   const memberMessage = normalizeMemberMessage(input.memberMessage);
 
+  // #3451: an edit's exception request is an add-guest door too, so it asks the
+  // own-dependant question about the guests it adds before anything is frozen —
+  // otherwise it would be the way round the edit panel's question. Against the
+  // booking OWNER's dependants, exactly as `modify-quote` and the save ask it,
+  // and BEFORE the member lookup, against the CLAIMED ids
+  // (`claimedMemberPathIds`), so its answer never depends on whether another
+  // claimed id is a real member. The lookup still refuses an unresolved id.
+  const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(
+    prisma,
+    {
+      bookerMemberId: input.bookingOwnerMemberId,
+      party: input.delta.addGuests ?? [],
+      memberPathMemberIds: claimedMemberPathIds(input.delta.addGuests ?? []),
+      declarations: input.dependantIdentityDeclarations,
+    },
+  );
+  if (dependantIdentityRefusal) {
+    throw new PolicyExceptionDependantIdentityError(dependantIdentityRefusal);
+  }
+  const dependantIdentityDeclarations = input.dependantIdentityDeclarations ?? [];
+
   await assertRequestedPartyMemberGuestsAllowed({
     requestedByMemberId: input.requestedByMemberId,
     memberIds: (input.delta.addGuests ?? []).map((guest) => guest.memberId),
@@ -1684,6 +1709,12 @@ export async function createModificationExceptionRequest(
             // #2526: the replayable member delta. See `delta` on the input type
             // — untrusted, and re-verified against the frozen hash at approval.
             delta: normalizeStoredExceptionDelta(input.delta),
+            // #3451: the own-dependant answers, beside the delta and outside the
+            // proposal hash; the approval replays them with it and the planner
+            // re-verifies each against the owner's records then.
+            ...(dependantIdentityDeclarations.length > 0
+              ? { dependantIdentityDeclarations }
+              : {}),
           } as unknown as Prisma.InputJsonValue,
           proposalSnapshot: frozen.snapshot as unknown as Prisma.InputJsonValue,
           proposalHash: frozen.proposalHash,
