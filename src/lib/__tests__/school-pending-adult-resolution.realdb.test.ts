@@ -4,6 +4,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { Client } from "pg";
 import type { PrismaClient } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { splitSqlStatements } from "../../../prisma/migration-verification/split-statements";
@@ -11,6 +12,16 @@ import { jobBlock } from "./helpers/ci-workflow";
 import { realElapsedMs } from "./helpers/clock";
 
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
+const email = vi.hoisted(() => ({ quote: vi.fn(async () => ({ status: "sent" })) }));
+vi.mock("@/lib/email", async (importOriginal) => ({
+  ...await importOriginal() as typeof import("@/lib/email"),
+  sendBookingRequestQuoteEmail: email.quote,
+  sendBookingRequestQuoteAcceptedEmail: vi.fn(),
+  sendAdminBookingRequestQuoteAcceptedEmail: vi.fn(),
+  sendAdminSchoolManualInvoiceEmail: vi.fn(),
+  sendBookingConfirmedEmail: vi.fn(),
+  sendHutLeaderAssignmentEmail: vi.fn(),
+}));
 vi.mock("@/lib/member-dietary-booking-writes", async (importOriginal) => {
   const actual = await importOriginal() as typeof import("@/lib/member-dietary-booking-writes");
   return { ...actual, resolveBookingGuestDietarySeeding: async () => actual.bookingGuestDietarySeeding(true) };
@@ -46,6 +57,8 @@ it("runs the pending-adult database proof in CI", () => {
   let resolve: typeof import("@/lib/school-pending-adult-resolution")["resolveAcceptedSchoolPendingAdults"];
   let reserve: typeof import("@/lib/booking-request-pending-adult-reservations")["reservePendingAdultNights"];
   let acquireLodgeLock: typeof import("@/lib/capacity")["acquireLodgeCapacityLock"];
+  let quotes: typeof import("@/lib/booking-request-quotes");
+  let approve: typeof import("@/lib/school-booking-request")["approveSchoolBookingRequest"];
 
   beforeAll(async () => {
     const url = new URL(databaseUrl!);
@@ -73,8 +86,12 @@ it("runs the pending-adult database proof in CI", () => {
     ({ resolveAcceptedSchoolPendingAdults: resolve } = await import("@/lib/school-pending-adult-resolution"));
     ({ reservePendingAdultNights: reserve } = await import("@/lib/booking-request-pending-adult-reservations"));
     ({ acquireLodgeCapacityLock: acquireLodgeLock } = await import("@/lib/capacity"));
+    quotes = await import("@/lib/booking-request-quotes");
+    ({ approveSchoolBookingRequest: approve } = await import("@/lib/school-booking-request"));
     await prisma.lodge.create({ data: { id: "pending-lodge", name: "Test lodge", slug: "pending-lodge" } });
+    await prisma.lodgeSettings.create({ data: { id: "pending-lodge", lodgeId: "pending-lodge", capacity: 20 } });
     await prisma.organisation.create({ data: { id: "pending-school", name: "Test school" } });
+    await prisma.member.create({ data: { id: "officer", firstName: "Test", lastName: "Officer", email: "officer@example.invalid", passwordHash: "test", role: "ADMIN" } });
   }, 120_000);
 
   beforeEach(async () => {
@@ -107,6 +124,44 @@ it("runs the pending-adult database proof in CI", () => {
   const nameAdult = (expectedVersion = 4, firstName = "Beth") => resolve({
     requestId: "pending-request", adminMemberId: "officer", expectedVersion,
     teachers: [{ firstName, lastName: "Teacher", email: null }],
+  });
+
+  it.each([false, true])("names and approves a nonfirst accepted option with a reused hold: %s", async (requote) => {
+    await prisma.bookingRequest.update({ where: { id: "pending-request" }, data: {
+      status: "VERIFIED", heldBookingId: null, acceptedPriceCents: null,
+      acceptedQuoteSnapshot: Prisma.JsonNull, schoolName: "Test school", cateringPreference: "QUOTE_BOTH",
+    } });
+    await prisma.booking.delete({ where: { id: "pending-hold" } });
+    const save = (totalCents: number) => quotes.createBookingRequestQuote({
+      requestId: "pending-request", adminMemberId: "officer", quote: {
+        pricingMode: "OVERALL_TOTAL", options: [
+          { id: "NON_CATERED", totalCents: 601, cateringOption: "NON_CATERED" },
+          { id: "CATERED", totalCents, cateringOption: "CATERED" },
+        ],
+      },
+    });
+    await save(901);
+    await quotes.sendBookingRequestQuote({ requestId: "pending-request", adminMemberId: "officer" });
+    const firstHold = (await prisma.bookingRequest.findUniqueOrThrow({ where: { id: "pending-request" } })).heldBookingId!;
+    if (requote) {
+      await save(1201);
+      await quotes.sendBookingRequestQuote({ requestId: "pending-request", adminMemberId: "officer" });
+      expect((await prisma.bookingRequest.findUniqueOrThrow({ where: { id: "pending-request" } })).heldBookingId).toBe(firstHold);
+    }
+    const sentCall = email.quote.mock.calls.at(-1)! as unknown as [{ token: string }];
+    await quotes.respondToBookingRequestQuote({ token: sentCall[0].token, action: "ACCEPT", optionId: "CATERED" });
+    const accepted = await prisma.bookingRequest.findUniqueOrThrow({ where: { id: "pending-request" } });
+    const acceptedTotal = requote ? 1201 : 901;
+    expect(accepted.acceptedPriceCents).toBe(acceptedTotal);
+    await expect(nameAdult(accepted.version)).resolves.toMatchObject({ pendingAdultCount: 1 });
+    await expect(nameAdult(accepted.version + 1, "Cara")).resolves.toMatchObject({ pendingAdultCount: 0 });
+    await expect(approve({ requestId: accepted.id, adminMemberId: "officer" })).resolves.toMatchObject({ bookingId: firstHold });
+    const confirmed = await prisma.booking.findUniqueOrThrow({ where: { id: firstHold }, include: { guests: { include: { nights: true } } } });
+    expect(confirmed).toMatchObject({ status: "CONFIRMED", totalPriceCents: acceptedTotal });
+    expect(confirmed.guests.reduce((sum, guest) => sum + guest.priceCents, 0)).toBe(acceptedTotal);
+    expect(confirmed.guests.flatMap((guest) => guest.nights).reduce((sum, night) => sum + night.priceCents, 0)).toBe(acceptedTotal);
+    expect(await prisma.bookingRequestPendingAdultReservationNight.count({ where: { bookingId: firstHold } })).toBe(0);
+    expect((await prisma.bookingRequest.findUniqueOrThrow({ where: { id: accepted.id } })).acceptedQuoteSnapshot).toEqual(accepted.acceptedQuoteSnapshot);
   });
 
   it("admits exactly one duplicate naming command, preserves cents and occupancy, then resolves the final slot", async () => {
