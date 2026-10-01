@@ -13,7 +13,7 @@ reason: #3415's accepted request action and #3416's truthful school approval
   extracting those states would duplicate its fetch and permission state.
 
 file: src/lib/booking-request.ts
-lines: 3053
+lines: 3054
 reason: #3415's accepted status and #3416's portable booking-policy setting
   join the established request queue and settings updater; moving those small
   branches would split their atomic persistence and audit rules.
@@ -29,7 +29,7 @@ reason: #3415's accepted-quote transition shares the existing quote claim and
   payment state checks; splitting it would separate one lifecycle rule.
 
 file: src/lib/school-booking-request.ts
-lines: 2968
+lines: 2969
 reason: #3415's accepted status and #3416's optional teacher assignment share
   the existing school conversion claim and contact reconciliation; moving
   either branch would split its organisation, booking and bed-allocation
