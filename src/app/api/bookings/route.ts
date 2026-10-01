@@ -117,6 +117,7 @@ import {
 } from "@/lib/access-roles";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -800,7 +801,7 @@ export async function POST(request: NextRequest) {
   const lodgeCapacity = await getLodgeCapacity(bookingLodgeId);
   if (guestInputs.length > lodgeCapacity) {
     return NextResponse.json(
-      { error: `A booking cannot exceed ${lodgeCapacity} guests` },
+      { error: lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A booking cannot exceed ${limit} guests`) },
       { status: 400 },
     );
   }
