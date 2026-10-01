@@ -113,6 +113,7 @@ enum LedgerSide        { CHARGE SETTLEMENT ADJUSTMENT }
 enum LedgerLineKind    {
   GUEST_NIGHT        // CHARGE: one guest, one night, one rate tier
   CHANGE_FEE         // CHARGE
+  CANCELLATION_FEE   // CHARGE: what a cancellation keeps under the policy (#3611)
   PROMOTION          // CHARGE: negative amount, the promo adjustment
   GROUP_DISCOUNT     // CHARGE: negative amount
   CARD_CAPTURE       // SETTLEMENT +
@@ -131,7 +132,7 @@ enum SettlementMethod  { CARD INTERNET_BANKING ACCOUNT_CREDIT CASH }
 Three database checks carry the rules that must never depend on a writer
 remembering them: `sign IN (1, -1)`; `amountCents = sign * unitCents * quantity`;
 `(side = 'CHARGE') = (bookingGuestId IS NOT NULL OR kind IN ('CHANGE_FEE',
-'PROMOTION', 'GROUP_DISCOUNT'))`. `reversesLineId` is unique, so a line is
+'CANCELLATION_FEE', 'PROMOTION', 'GROUP_DISCOUNT'))`. `reversesLineId` is unique, so a line is
 reversed at most once. There is **no `UPDATE` and no `DELETE`** on this table
 from application code; the census in §6 scans for either (the
 `stored-night-price-repair-census` pattern) and the Prisma extension the
@@ -242,6 +243,26 @@ booking already confirmed on the ledger posts (§4.1a), asked under `lock(1)`.
 The planner is `booking-ledger-modification-posting.ts`; the writer calls are in
 `booking-ledger-modification-sync.ts` (`INV-MONEY-036`).
 
+**How C3b (#3611) posts a cancellation** (owner decision B, 24 Sep 2026).
+Inside the transaction that flips the booking to `CANCELLED`, under the
+`lock(1)` every cancel path already takes first, and only for a booking
+confirmed on the ledger: one reversal of every **live** `GUEST_NIGHT` and
+`PROMOTION` line (the same chain walk an edit uses, so no line is reversed
+twice), keyed `reversal:<lineId>`, then one `CANCELLATION_FEE` for what the
+club keeps, keyed `cancellation:<bookingId>:fee`, narrated "Cancellation fee
+retained", when that is above zero. Every line is anchored on the
+`CANCELLATION` (the booking id). What the club keeps is the paid path's own
+figures, never re-derived: the refundable slice less what the tier returns,
+plus the applied credit less what the tier restored
+(`cancellationKeptCents`; the fixed fee is in there once, card-first). A
+`CHANGE_FEE` line stays, because a change fee is not refundable
+(`INV-PAY-018`) and the refundable slice already leaves it out. An unpaid
+cancellation keeps nothing and posts only the reversals. Batched, so the
+reversals and the fee post together or not at all; a kept figure below zero
+posts nothing and is logged for C4 (#3583). The planner is
+`booking-ledger-cancellation-posting.ts`, the writer calls
+`booking-ledger-cancellation-sync.ts`.
+
 **The review closure's re-price and the admin price rebase are one event.**
 `rebaseBookingPriceFromStrands` has exactly one caller, the closure of an
 `EDIT_FINANCIAL_REVIEW`, so the two rows below post once. Its before is the
@@ -259,6 +280,7 @@ proves the ledger was in step rather than assuming it. The completion takes
 | Booking edited and priced (four doors + batch, `INV-MOD-044`) | per guest-night, all or nothing (the rule above); a `PROMOTION` reversal + re-post when the promo delta is non-zero; a `CHANGE_FEE` (+) when the edit charged one | `MODIFICATION` / modification id | the four edit services and the batch path, in the transaction that already writes `priceLines` (`INV-MOD-058`) |
 | Admin date shift (`adminShiftBookingDates`, #3741) | the same per-night rule: each old-date night's live line reversed, each new-date night posted at the same figure, netting to the row's zero; both sides read as written rows, since a shift sells nothing | `MODIFICATION` / the `ADMIN_DATE_SHIFT` row | `adminShiftBookingDates`, under the `lock(1)` it takes first |
 | Booking edited and **parked** (`INV-MOD-040`) | **nothing** — a parked edit writes structure, never an amount; the lines post when the review closes | — | — |
+| Booking cancelled — member or admin cancel (all four `cancelBooking` branches), the linked provisional child, the internet banking hold-expiry release, a group organiser's settled children | reversal of every live `GUEST_NIGHT` and `PROMOTION`; one `CANCELLATION_FEE` (+) for what the policy keeps, when above zero (the rule above) | `CANCELLATION` / booking id | each cancel path, in the claim transaction that flips the booking `CANCELLED`, under its `lock(1)` |
 | Review closed by re-pricing (`INV-MOD-055`) — the admin price rebase (`booking-review-price-rebase.ts`), whose only caller is the closure | reversal of every live `GUEST_NIGHT` the re-price changed + re-post at the new figure, and the promotion likewise — all or nothing against the re-base's movement of the final price; **nothing** where the re-base declines or writes no history row | `MODIFICATION` / the `PRICE_REBASE` history row the re-base writes (both money components zero) | the closure (`recordReviewClosurePricing`), under the completion's `lock(1)` |
 
 ### 5.2 Moving money (SETTLEMENT)
@@ -324,7 +346,7 @@ the database makes — and its lines cascade with it.)
 | Reduction credited to account (`BOOKING_MODIFICATION_REFUND`) | `CREDIT_ISSUED` (−), `method = ACCOUNT_CREDIT` | `MEMBER_CREDIT` | `createBookingModificationCredit`, through `syncBookingLedgerCredits` |
 | Hand-back completed on the `local-allocation` route — an IB/cash cancellation (`CANCELLED_BOOKING_HAND_BACK`, #3529), or a review refund the club sends back itself — on a payment that is not a card payment | `BANK_REFUND` (−), `method = INTERNET_BANKING` by #3529's wording decision (`refundMethodForEditReviewRoute`, `INV-PAY-101`), `postedByMemberId` = the officer. A legacy task on a card capture posts none: that money goes back on the card and posts `CARD_REFUND` from its refund row | `REVIEW_TASK` | `manual-refund-task-resolution.ts` |
 | Applied credit restored on cancellation (`INV-PAY-019`) | `CREDIT_ISSUED` (−) for exactly what was restored — **not** a reversal of the `CREDIT_APPLIED` line, because the restore is tiered (see above) | `CANCELLATION` (the booking) | `restoreCreditFromBooking`, through `syncBookingLedgerCredits` |
-| Hold-expiry release / stale-invoice clearing note (`INV-PAY-017`) | nothing — no money moved; the Xero note is a rendering of `owed(b)` going to zero by reversal of the charge lines | — | — |
+| Hold-expiry release / stale-invoice clearing note (`INV-PAY-017`) | no settlement line — no money moved. The charge side is §5.1's cancellation row: the stay's reversals, and no fee, since nothing was kept; the Xero note is a rendering of `owed(b)` going to zero | — | — |
 
 ### 5.3 A person decides (ADJUSTMENT) and the ask
 
@@ -367,8 +389,9 @@ refunds — or, while a re-base declines, that figure plus the stand-ins. What i
 does not settle: a share that differs from the re-price's movement (a fee kept
 back, a goodwill figure, a share on a closure that moved nothing) leaves
 `owed(b)` equal to the booking's figures and not to the share, exactly as an
-unparked removal with a policy-retained amount does today. Naming what the club
-keeps is #3611's owner decision, not this line's.
+unparked removal with a policy-retained amount does today. #3611 named what the
+club keeps for a **cancellation** (`CANCELLATION_FEE`, §5.1); an edit's kept-back
+share is not a cancellation and is not covered by it.
 
 **The ask is the one place today's shape survives.** `additionalAmountCents`
 is retired (it is `max(0, owed(b))`), but the `ADDITIONAL` transaction row
@@ -418,6 +441,12 @@ the `reversal:<lineId>` targets (which depend on which line was live when the
 edit posted), and a back-post from them would mint different keys that
 `ON CONFLICT` cannot catch — a night charged twice. The back-post posts only
 through the key functions in `booking-ledger-posting-keys.ts`.
+
+**A cancelled booking leaves the price identity (#3611).** A cancellation does
+not touch `finalPriceCents`, while its charge side becomes its live change fees
+plus its `CANCELLATION_FEE`. So `finalPriceCents == charged(b) + adjusted(b)`
+holds only for a booking that is not cancelled; for a cancelled one, the
+census's question is whether `owed(b)` is zero once its refunds have posted.
 
 ## 7. Cut-over order
 
