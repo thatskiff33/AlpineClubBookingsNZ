@@ -146,6 +146,13 @@ import "./booking-ledger-credit-sync.realdb.test";
 // re-price under its history row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-3582-` fixtures.
 import "./booking-ledger-modification.realdb.test";
+// #3611 reuses it to prove a cancellation's charge lines: after an edit the
+// cancellation reverses the edit's re-post and never a line already reversed,
+// the CANCELLATION_FEE posts what the policy kept, and through the REAL
+// cancelBooking the lines commit with the claim and owed(b) reaches zero once
+// the hand-back posts. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
+// cleans its own `race-3611-` fixtures.
+import "./booking-ledger-cancellation.realdb.test";
 // #3640 reuses it to prove the one card-refund writer adds each refund exactly
 // once: two writers recording the SAME refund meet at `ON CONFLICT DO NOTHING`
 // and add it once, and two recording DIFFERENT refunds both survive the mirror's
