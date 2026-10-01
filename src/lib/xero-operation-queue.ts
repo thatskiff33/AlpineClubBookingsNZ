@@ -12,12 +12,14 @@ import {
 import {
   getXeroOperationRetryMeta,
   refuseRetryIfResolvedInXero,
+  retryAbandonedItsClaim,
   retryXeroSyncOperation,
   XeroOperationResolvedInXeroError,
   XeroOperationRetryError,
 } from "@/lib/xero-operation-retry";
 import type { ClubFormat } from "@/lib/club-format";
 import { STALE_RUNNING_XERO_OPERATION_MINUTES } from "@/lib/xero-stale-operations";
+import { xeroSyncErrorText } from "@/lib/xero-sync-error-text";
 
 // test seam
 export const XERO_OPERATION_REQUEUE_TYPE = "REQUEUE";
@@ -283,9 +285,7 @@ async function describeQueuedRetryFailure(
   originalOperationId: string,
   error: unknown,
 ): Promise<string> {
-  const cause = (
-    error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error"
-  ).replace(/\.\s*$/, "");
+  const cause = xeroSyncErrorText(error).replace(/\.\s*$/, "");
   const original = await prisma.xeroSyncOperation
     .findUnique({
       where: { id: originalOperationId },
@@ -299,7 +299,11 @@ async function describeQueuedRetryFailure(
     return `${head} The original operation could not be read; find it in the operations list before requeueing.`;
   }
   if (original.status === "FAILED") {
-    return `${head} The original operation is back to FAILED — fix the cause and requeue it again.`;
+    // "Back to FAILED" only when this retry claimed the original and its
+    // abandon really returned it; otherwise the original never moved.
+    return retryAbandonedItsClaim(error)
+      ? `${head} The original operation is back to FAILED — fix the cause and requeue it again.`
+      : `${head} The original operation is FAILED; fix the cause, then requeue it.`;
   }
   if (original.status === "PARTIAL") {
     return `${head} The original operation is still PARTIAL — fix the cause and requeue it again.`;

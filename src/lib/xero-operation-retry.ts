@@ -222,6 +222,19 @@ async function requeueOutboxRowForRetry(
  * this run's `startedAt`), so a row the handler already completed is never
  * overwritten. The error is then rethrown unchanged for the caller to report.
  */
+const abandonedClaimErrors = new WeakSet<object>();
+
+/**
+ * #3462: true when `error` is a retry's throw after which
+ * {@link runWithClaimedOriginal} really did return the original to FAILED -
+ * the claim was this retry's and the abandon wrote. The REQUEUE row's message
+ * says "back to FAILED" only then; a branch that never claimed the original,
+ * or an abandon that matched nothing, gets neutral wording.
+ */
+export function retryAbandonedItsClaim(error: unknown): boolean {
+  return typeof error === "object" && error !== null && abandonedClaimErrors.has(error);
+}
+
 async function runWithClaimedOriginal<T>(
   operationId: string,
   run: () => Promise<T>,
@@ -246,9 +259,12 @@ async function runWithClaimedOriginal<T>(
     return await run();
   } catch (error) {
     try {
-      await failXeroSyncOperation(operationId, error, undefined, {
+      const abandoned = await failXeroSyncOperation(operationId, error, undefined, {
         onlyIfRunningSince: claimedAt,
       });
+      if (abandoned && typeof error === "object" && error !== null) {
+        abandonedClaimErrors.add(error);
+      }
     } catch (abandonError) {
       // The run's own error is the one the operator needs; a failed abandon
       // leaves the row RUNNING, where the stale census offers Mark failed.

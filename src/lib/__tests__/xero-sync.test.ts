@@ -908,15 +908,16 @@ describe("failXeroSyncOperation onlyIfRunningSince", () => {
   });
 
   it("records the operator message in place of the error's own, still redacted", async () => {
+    // The operator message embeds the provider's raw error text, so the
+    // override must pass through the same redaction as the error's own.
     mocks.operationUpdate.mockResolvedValue({ id: "op_2", status: "FAILED" });
     await failXeroSyncOperation("op_2", new Error("raw"), undefined, {
-      lastErrorMessage: "Retry of Xero operation op_1 failed: raw.",
+      lastErrorMessage:
+        "Retry of Xero operation op_1 failed: Authorization: Bearer live-token.",
     });
-    expect(mocks.operationUpdate).toHaveBeenCalledWith({
-      where: { id: "op_2" },
-      data: expect.objectContaining({
-        lastErrorMessage: "Retry of Xero operation op_1 failed: raw.",
-      }),
-    });
+    const recorded = mocks.operationUpdate.mock.calls[0][0].data.lastErrorMessage;
+    expect(recorded).toContain("Retry of Xero operation op_1 failed");
+    expect(recorded).toContain("Bearer [REDACTED]");
+    expect(recorded).not.toContain("live-token");
   });
 });

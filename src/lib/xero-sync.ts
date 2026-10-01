@@ -13,6 +13,7 @@ import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import type { XeroInvoiceEmailInstruction } from "@/lib/xero-invoice-email-instruction";
+import { xeroSyncErrorText } from "@/lib/xero-sync-error-text";
 
 export interface XeroSyncOperationInput {
   direction: string;
@@ -834,25 +835,38 @@ export async function completeXeroSyncOperation(
   return operation;
 }
 
+/**
+ * The optional write guard of {@link failXeroSyncOperation}: at most one, so a
+ * caller can never pass two and have one silently dropped (#3462).
+ */
+type FailXeroSyncOperationGuard =
+  | {
+      /**
+       * #3635 round-3 N5: leave a row another writer has already WITHDRAWN
+       * (CANCELLED) as it is - the outbox's catch runs after its handler, and an
+       * approval can withdraw a kept row in between. Answers null then.
+       */
+      keepCancelled: true;
+      onlyIfRunningSince?: never;
+    }
+  | {
+      /**
+       * #3462: fail the row ONLY while it is still the RUNNING claim stamped at
+       * this instant - the abandon of a claim whose handler threw before it
+       * owned completion. A row the handler already completed, failed or
+       * cancelled, or one a later claim re-stamped, is left exactly as it is.
+       * Answers null then.
+       */
+      onlyIfRunningSince: Date;
+      keepCancelled?: never;
+    }
+  | { keepCancelled?: never; onlyIfRunningSince?: never };
+
 export async function failXeroSyncOperation(
   operationId: string,
   error: unknown,
   responsePayload?: unknown,
-  options?: {
-    /**
-     * #3635 round-3 N5: leave a row another writer has already WITHDRAWN
-     * (CANCELLED) as it is - the outbox's catch runs after its handler, and an
-     * approval can withdraw a kept row in between. Answers null then.
-     */
-    keepCancelled?: boolean;
-    /**
-     * #3462: fail the row ONLY while it is still the RUNNING claim stamped at
-     * this instant - the abandon of a claim whose handler threw before it
-     * owned completion. A row the handler already completed, failed or
-     * cancelled, or one a later claim re-stamped, is left exactly as it is.
-     * Answers null then.
-     */
-    onlyIfRunningSince?: Date;
+  options?: FailXeroSyncOperationGuard & {
     /**
      * #3462: the operator-facing message to record instead of the error's own
      * (still redacted). The status code is still read from `error`.
@@ -861,13 +875,7 @@ export async function failXeroSyncOperation(
   }
 ) {
   const statusCode = getXeroErrorStatusCode(error);
-  const rawMessage =
-    options?.lastErrorMessage ??
-    (error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : "Unknown Xero sync failure");
+  const rawMessage = options?.lastErrorMessage ?? xeroSyncErrorText(error);
   const message = redactSensitiveText(rawMessage);
   const data = {
     status: "FAILED" as const,
