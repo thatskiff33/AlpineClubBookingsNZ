@@ -880,7 +880,7 @@ describe("#3454 the erasure's two-factor clear is recorded in its own transactio
     const [params, client] = calls[0];
     expect(params).toMatchObject({
       category: "security",
-      actorMemberId: ADMIN_SESSION.user.id,
+      actorMemberId: "admin-1",
       subjectMemberId: "m1",
       metadata: { actorKind: "admin", method: "TOTP", authenticatorApp: true },
       memberDisclosure: { visibility: "internal" },
