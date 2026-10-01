@@ -12,16 +12,18 @@ rather than allowed. What stays below is the part that cannot move without an
 import cycle or a second home for one write.
 
 file: src/lib/payment-recovery.ts
-lines: 3281
+lines: 3305
 reason: `enqueueEditFinancialReviewChargeRecovery` wraps this module's own
   `enqueueAdditionalPaymentIntentRecovery` and is the one home for the edit's two
   recovery keys; moving it beside the re-arm would make that module import this
-  one while this one imports it. The remaining lines are the imports and the two
-  call sites in the replay.
+  one while this one imports it. `isEditFinancialReviewChargeRecoveryDead` reads
+  the row's status through this module's private claimable-status set, which the
+  `INV-PAY-056` census requires and which no other module can see. The remaining
+  lines are the imports and the two call sites in the replay.
 
 file: src/lib/payment-transactions.ts
-lines: 1548
+lines: 1557
 reason: `writeRaisedAdditionalRequestAmount` is a `PaymentTransaction` write that
   reconciles the payment's aggregates, and this module is the one home for both
   (`INV-SSOT`). A second module writing ADDITIONAL rows would be a second place to
-  forget the status fence.
+  forget the status, kind and withdrawal fences.

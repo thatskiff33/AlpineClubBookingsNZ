@@ -3989,7 +3989,7 @@ describe("isEditFinancialReviewChargeRecoveryDead (#3402)", () => {
     ["a retryable FAILED row", { status: "FAILED", attempts: 2, nextRetryAt: new Date() }, false],
     ["a FAILED row with no retry time", { status: "FAILED", attempts: 2, nextRetryAt: null }, true],
     ["a FAILED row with its attempts spent", { status: "FAILED", attempts: 5, nextRetryAt: new Date() }, true],
-  ])("%s -> dead is %s", async (_label, row, dead) => {
+  ])("%s", async (_label, row, dead) => {
     mockPaymentRecoveryFindUnique.mockResolvedValueOnce(row);
     await expect(isEditFinancialReviewChargeRecoveryDead("mod-1")).resolves.toBe(dead);
     expect(mockPaymentRecoveryFindUnique).toHaveBeenCalledWith(
