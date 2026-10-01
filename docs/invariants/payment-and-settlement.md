@@ -1555,7 +1555,15 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   canonical Stripe refund for a card capture, made AFTER the commit; the local
   ledger allocation for an internet-banking hand-back; or
   `createBookingModificationCredit` where nothing was captured, whose
-  exactly-once key is the `BookingModification` id. **Which one is a question
+  exactly-once key is the `BookingModification` id. Where nothing was captured
+  the member paid in account credit, so the share first goes back as a
+  give-back of that applied credit — the clamp's own mechanism,
+  `giveBackAppliedCreditForReviewShare`, which also lowers the
+  `Payment.creditAppliedCents` mirror a cancellation tiers — and only a share
+  beyond the applied credit is minted (#3791: minting it all paid the share
+  twice on a later cancel; pinned in `manual-refund-task.test.ts`,
+  `member-credit.test.ts` and `edit-financial-review-races.realdb.test.ts`).
+  **Which one is a question
   about the booking, asked at completion** (#3194): a task carrying no payment id
   re-reads the booking's own payment through `editReviewSettlementPayment`, the
   single derivation the raise sites use too (`editReviewSettlementPaymentId`). A
