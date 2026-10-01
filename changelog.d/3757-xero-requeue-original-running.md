@@ -15,3 +15,7 @@
   reason and is recorded in the audit log, and it keeps any earlier error on
   the operation so you can see what to fix. Admins whose finance access is
   view-only see the button greyed out.
+
+  **Mark failed**, **Mark non-replayable** and **Reset stale running** now
+  save the change and its audit entry together: if the audit entry cannot be
+  saved, the operation is left exactly as it was.

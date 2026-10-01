@@ -711,7 +711,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
   module is off. `credit-sync` (#2501) additionally self-throttles: a completed
   pass suppresses further Xero reads for ~20h, so bundling it into a frequent
   `all` cannot burn the daily Xero quota.
-- ~38 admin routes under `/api/admin/xero/**` and `/api/admin/members/[id]/xero-*`
+- The admin routes under `/api/admin/xero/**` and `/api/admin/members/[id]/xero-*`
   — OAuth connect/callback/disconnect, status/health/usage, operations list +
   retry/requeue/resolve/mark-non-replayable/mark-failed/reset-stale-running, inbound-events
   list + replay, contact tooling (search/import/sync/duplicates/mismatches),
@@ -813,12 +813,17 @@ membership subscription invoice, and kept late-capture invoice (#3635).
    (still RUNNING, still this run's `startedAt`), so a row the handler already
    completed is never overwritten. Before this, such a throw left the original
    RUNNING for ever, where neither Retry nor Requeue applies. The REQUEUE row's
-   own failure names the original and reads its status after the attempt
-   ("back to FAILED — fix the cause and requeue it again"); a REQUEUE row is
-   never replayable itself, because replaying a replay compounds the state.
+   own failure names the original and reads its status after the attempt. It
+   says "back to FAILED" only when this retry claimed the original and the
+   abandon really wrote (`retryAbandonedItsClaim`); a branch that never claimed
+   it gets "is FAILED; fix the cause, then requeue it". A REQUEUE row is never
+   replayable itself, because replaying a replay compounds the state.
 
    **Stuck RUNNING rows.** A row RUNNING longer than
    `STALE_RUNNING_XERO_OPERATION_MINUTES` (15) is stale (`xero-stale-operations.ts`).
+   `isStaleRunningXeroOperation` takes the row and checks RUNNING itself,
+   because completing a row never clears its `startedAt`; the list route, the
+   booking page, the resolve refusal and Mark failed all read it.
    The operations list flags it (`staleRunning`) and the panel offers a per-row
    **Mark failed** (`POST /api/admin/xero/operations/[id]/mark-failed`,
    finance:edit, reason required, audited `xero.operation.marked_failed` in
@@ -826,10 +831,17 @@ membership subscription invoice, and kept late-capture invoice (#3635).
    earlier error": a row whose worker died on its first attempt is stuck the
    same way and needs the same remedy. The write is
    `markStaleRunningXeroOperationFailed`, guarded on the claim it read, and it
-   keeps any earlier error in the new message. It and the bulk **Reset stale
-   running** share one write, `writeStaleRunningXeroOperationReset`, which stamps
+   keeps any earlier error in the new message. When that error is itself an
+   earlier stale reset, only the cause inside it is carried, so repeated cycles
+   never nest the prefix. It and the bulk **Reset stale running** share one
+   write, `writeStaleRunningXeroOperationReset`, which stamps
    `ORPHANED_STALE_RUNNING` and leaves the response payload and Xero object
-   identity alone. Once FAILED, the ordinary Retry / Requeue applies.
+   identity alone. Mark failed, the bulk reset and mark non-replayable each
+   write their audit row inside the state change's transaction, so a failed
+   audit rolls the change back instead of leaving an unattributed override.
+   (Resolve cannot: its fence needs the mark committed and visible to the drain
+   before it checks for an overlapping retry.) Once FAILED, the ordinary
+   Retry / Requeue applies.
 4. **Inbound event retry** — FAILED `XeroInboundEvent` rows are re-swept after
    `XERO_INBOUND_FAILED_RETRY_BACKOFF_MS`; stale PROCESSING rows are
    operator-replayable.
