@@ -4,6 +4,8 @@
   side, and whichever finished last won - so shares of $10 and $40 on a $50
   request could leave it at $60 instead of $100, with nothing recording the
   missing $40. Raising the request is now done by one settlement at a time: the
-  other waits its turn and the first raises again for it, or the payment
-  recovery job finishes the raise. A raise Stripe refuses changes nothing and is
-  retried by that same job.
+  second steps aside and the first raises again for it, or the payment recovery
+  job finishes the raise. A raise Stripe refuses changes nothing and is retried
+  by that same job, which now reopens itself if an earlier run had already
+  finished. A member paying at the very moment the request is raised is no
+  longer shown as unpaid.

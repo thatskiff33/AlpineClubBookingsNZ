@@ -1689,27 +1689,31 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
 - **ONE EDIT'S CHARGE REQUEST IS RAISED BY ONE RUN AT A TIME** (#3402). Refusing
   to lower ([INV-PAY-062]) orders nothing between two runs that each derive more
   than is stored: both raised the intent, and the LAST to land won even when it
-  was smaller, so a share was never asked for. A database-only predicate cannot
-  repair it - both runs pass, and Stripe has moved before the row is written.
+  was smaller. A database-only predicate cannot repair it - Stripe has moved
+  before the row is written.
   - **Claim before the provider call.** A run must win the edit's
-    `EditReviewChargeRaiseClaim` (a guarded `updateMany` writing an opaque token
-    where none is live) and record its intended amount under that exact token
-    before ANY Stripe call - raise, currency re-issue or first mint. A run that
-    cannot calls nothing, writes the edit's recovery row and reports
-    `deferred`; a replay that sees `deferred` leaves its operation open.
-  - **Reconcile, release, look again.** The row is written from Stripe's answer;
-    the claim is released by exact token; the holder re-derives AFTER releasing
-    and raises again if a share committed meanwhile.
-  - **A refused raise writes nothing**: the row still equals the unchanged
-    intent, the claim is released, and the debt goes to the recovery row.
-  - **A lease, never a lock.** Nothing is held across the provider call and no
-    advisory key is taken. A token older than 30 minutes is taken over, which is
-    safe because the derived total only grows and a raise is absolute.
-  - **Stated limits**: a holder alive past the lease, a crash between Stripe
-    accepting and the row write, and the previous colour's syncs during a
-    deploy's drain - each in
+    `EditReviewChargeRaiseClaim` lease and record its intended amount under that
+    exact token before ANY Stripe call - raise, currency re-issue or first mint.
+    A loser calls nothing, arms the edit's recovery row and reports `deferred`,
+    which never closes a replay.
+  - **Release, then look again.** The holder re-derives AFTER releasing - after
+    `raised` and after `already-paid` - and raises, or traces, a share that
+    committed meanwhile. A lease found lost after a provider call is logged and
+    reported `deferred`, never `raised`.
+  - **The backstop runs.** Arming reopens a SUCCEEDED recovery row, and the
+    replay's close is fenced so a share deferred mid-replay hands the row back.
+    A terminal FAILED row is not reopened (`INV-PAY-057`).
+  - **The raise writes amounts, never status**, and only onto an uncaptured
+    row, so a payment webhook landing mid-raise stands.
+  - **A lease, never a lock**: nothing is held across Stripe and no advisory key
+    is taken; a token older than `EDIT_REVIEW_CHARGE_RAISE_LEASE_MS` is taken
+    over, safe because the derived total only grows and a raise is absolute.
+  - **Stated limits** - a holder alive past the lease, a crash between Stripe
+    accepting and the row write, per-instance clocks, and the previous colour
+    during a deploy's drain - are in
     [`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md).
-  - Home: `edit-financial-review-charge-raise-claim.ts`; proven against PostgreSQL by
+  - Home: `edit-financial-review-charge-raise-claim.ts` and
+    `edit-financial-review-charge-sync.ts`; proven against PostgreSQL by
     `edit-financial-review-charge-raise-claim.realdb.test.ts`.
 
 ## INV-PAY-070

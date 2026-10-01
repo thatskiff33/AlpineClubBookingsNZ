@@ -3234,28 +3234,72 @@ So the claim is taken BEFORE the provider call, on `EditReviewChargeRaiseClaim`
 3. **call Stripe** — update, currency re-issue, or the first mint (which is under
    the claim too: two first shares would otherwise mint two intents under two
    amount keys, each superseding the other);
-4. **reconcile** — the request row is written from Stripe's answer (`amount` on
-   the returned intent), not from the figure asked for;
+4. **write the row** — on the raise (`paymentIntents.update`) from Stripe's
+   answer (`amount` on the returned intent), not from the figure asked for; a
+   currency re-issue and a first mint write the amount they REQUESTED, which their
+   amount-carrying keys make the amount a replayed key returns. The raise writes
+   AMOUNTS ONLY, through `writeRaisedAdditionalRequestAmount`, and only onto a row
+   that is not captured: a `payment_intent.succeeded` webhook landing between
+   Stripe accepting the new amount and this write is not reverted to PENDING, and
+   the run reports `already-paid` (the member paid the new amount);
 5. **release** by exact token, then **re-derive**: a run that lost the claim
    committed its share before trying to claim, which was before this release, so
-   this read sees it and the holder raises again (up to three passes).
+   this read sees it and the holder raises again (up to three passes). It does so
+   after `already-paid` too, comparing against the total its audit row recorded,
+   so a share that deferred to a holder that found the request paid is traced. A
+   release that finds the lease already taken over AFTER a provider call is logged
+   at error level and reported `deferred`, never `raised`: this run's absolute
+   amount may have landed after its successor's.
 
-A run that loses the claim calls no provider, writes the edit's ONE recovery row
+A run that loses the claim calls no provider, arms the edit's ONE recovery row
 (the backstop if the holder dies) and returns `deferred`, which the recovery replay
-treats like `not-raised`: the operation stays open. A raise Stripe REFUSES throws
-with nothing written, so the row still equals the unchanged intent; the claim is
-released and `executeEditReviewCharge` or the replay makes the debt durable.
+cannot close (`EDIT_REVIEW_CHARGE_OUTCOME_CLOSES_REPLAY`, one entry per outcome, so
+a new outcome is a type error). A raise Stripe REFUSES throws with nothing
+written, so the row still equals the unchanged intent; the claim is released and
+`executeEditReviewCharge` or the replay makes the debt durable.
+
+**Arming the recovery row is one helper, and it re-arms.** The deferral, the
+unminted arm and `executeEditReviewCharge`'s refusal catch all call
+`enqueueEditFinancialReviewChargeRecovery`. The shared enqueue's update branch
+leaves `status` alone, so before this an edit whose one row an earlier replay had
+closed SUCCEEDED - routine once the claim exists, because every resolved race
+creates the row and its replay finds the holder already raised - wrote nothing
+that would ever run, and a later deferred or refused share was lost. The helper
+reopens a SUCCEEDED row (PENDING, due now, attempts reset) and never a PROCESSING
+one, which a second worker could then claim; on a PROCESSING row it moves only
+`nextRetryAt`, and the replay's close is fenced on the `nextRetryAt` it claimed
+with, so a share deferred onto a running replay - after its last re-derivation -
+hands the row back to PENDING instead of being closed with it. A terminal FAILED
+row is not reopened: its death handed the edit to the booking-vs-Xero repair pass
+and withdrew the live ask (`INV-PAY-057`), and a fresh card request on top would be
+the two-instrument state that rule removes. A share that arrives after that is the
+repair pass's to find, as before #3402.
 
 **It is a lease, not a lock.** Every claim statement autocommits; no advisory key
 is taken and nothing is held across the provider call, so it cannot join a
 wait-for cycle and `INV-LOCK-001`/`002`/`003` are untouched. A dead holder's token
-ages out after 30 minutes and the next run takes it over — safe because the derived
-total only grows and a raise is an absolute amount. **Stated limits:** a holder
-still ALIVE past 30 minutes could land an older, smaller amount after its
-successor (the Stripe client's default timeouts bound a live holder at a few
-minutes); a crash after Stripe accepted but before the row was written leaves the
-row behind the intent until the next run for that edit, as before #3402; and while
-the previous colour drains after deploy, its syncs take no claim. Proven against
+ages out after `EDIT_REVIEW_CHARGE_RAISE_LEASE_MS` and the next run takes it over —
+safe because the derived total only grows and a raise is an absolute amount.
+**Stated limits:**
+
+- a holder still ALIVE past the lease could land an older, smaller amount after
+  its successor. The Stripe client's defaults bound a live holder at a few minutes
+  per call, but its timeout is a socket-inactivity timeout and a paused process is
+  bounded by nothing. The holder now NOTICES (its release fails, and it defers to
+  the recovery row instead of reporting `raised`), but nothing prevents the late
+  write itself;
+- a crash after Stripe accepted but before the row was written leaves the row
+  behind the intent until the next run for that edit, as before #3402;
+- the lease is measured on each instance's own clock: `claimedAt` is written by
+  the holder's `new Date()` and judged by the claimant's, so clock skew between
+  instances lengthens or shortens it. The lease dwarfs ordinary NTP skew; a much
+  shorter lease would want the database's `now()` instead;
+- the replay's close fence compares a millisecond timestamp, so a share armed in
+  the same millisecond as the claimed row's retry time would not be noticed —
+  unreachable in practice, since a claim and a Stripe round trip sit between them;
+- while the previous colour drains after deploy, its syncs take no claim and arm
+  the recovery row the old way, so the pre-existing race persists for the drain
+  only, never wider. Proven against
 real PostgreSQL by `edit-financial-review-charge-raise-claim.realdb.test.ts`, which forces
 the $60/$100 interleaving through the real sync.
 
