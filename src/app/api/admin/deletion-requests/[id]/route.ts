@@ -19,10 +19,7 @@ import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { createAuditLog, logAudit } from "@/lib/audit";
-import {
-  recordTwoFactorMutation,
-  TWO_FACTOR_AUDIT_ACTIONS,
-} from "@/lib/two-factor-audit";
+import { recordErasureTwoFactorClear } from "@/lib/two-factor-audit";
 import {
   EMPTY_ORPHANED_FAMILY_LINKS,
   readFamilyLinkOrphans,
@@ -915,26 +912,13 @@ export async function POST(
       // flight to Xero or whose provider-created contact still needs linking.
       const fencedMember = await lockMemberForAccountDeletionXeroFence(tx, member.id);
 
-      // #3454: the anonymisation below destroys the member's second factor,
-      // including an encrypted authenticator-app secret, and that clear records
-      // who did it in THIS transaction. Read after the fence above, so it sees
-      // the locked row; only booleans leave the read. A member with no second
-      // factor has nothing cleared and gets no row.
-      const twoFactorBefore = await tx.member.findUnique({
-        where: { id: member.id },
-        select: { twoFactorEnabled: true, twoFactorMethod: true, totpSecret: true },
+      // #3454: the clear of the member's second factor, below, is recorded in
+      // this transaction, read after the fence above.
+      await recordErasureTwoFactorClear(tx, {
+        memberId: member.id,
+        adminMemberId: session.user.id,
+        request: { ipAddress: ip, userAgent: request.headers.get("user-agent") },
       });
-      const hadAuthenticatorApp = Boolean(twoFactorBefore?.totpSecret);
-      if (twoFactorBefore && (twoFactorBefore.twoFactorEnabled || hadAuthenticatorApp)) {
-        await recordTwoFactorMutation(tx, {
-          action: TWO_FACTOR_AUDIT_ACTIONS.cleared,
-          actor: { kind: "admin", memberId: session.user.id },
-          subjectMemberId: member.id,
-          method: twoFactorBefore.twoFactorMethod,
-          authenticatorApp: hadAuthenticatorApp,
-          request: { ipAddress: ip, userAgent: request.headers.get("user-agent") },
-        });
-      }
 
       // 3. Anonymise the member record
       await tx.member.update({

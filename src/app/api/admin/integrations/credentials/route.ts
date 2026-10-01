@@ -17,7 +17,10 @@ import type {
   CredentialRequestContext,
 } from "@/lib/integration-credential-actor";
 import { WeakAuthSecretError } from "@/lib/integration-crypto";
-import { withXeroVerifyReset } from "@/lib/xero-token-store";
+import {
+  credentialWriteResetsXeroTokens,
+  withXeroVerifyReset,
+} from "@/lib/xero-token-store";
 import { XERO_CREDENTIAL_KEYS, XERO_PROVIDER } from "@/lib/xero-config";
 import {
   STRIPE_PROVIDER,
@@ -160,20 +163,6 @@ async function requireFullAdmin() {
     };
   }
   return { ok: true as const, memberId: guard.session.user.id };
-}
-
-/**
- * Does writing this credential orphan the stored Xero OAuth tokens? Changing
- * the client id or secret invalidates the OAuth app the tokens belong to, so
- * they are destroyed and the operator must reconnect. Changing only the
- * webhook key does NOT (that surfaces as a webhook amber badge).
- */
-function credentialWriteResetsXeroTokens(provider: string, key: string): boolean {
-  return (
-    provider === XERO_PROVIDER &&
-    (key === XERO_CREDENTIAL_KEYS.clientId ||
-      key === XERO_CREDENTIAL_KEYS.clientSecret)
-  );
 }
 
 /**

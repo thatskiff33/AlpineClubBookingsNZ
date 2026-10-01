@@ -51,7 +51,10 @@ vi.mock("@/lib/audit", () => ({
   createAuditLog: mocks.createAuditLog,
   getAuditRequestContext: () => ({ id: null, ipAddress: "1.2.3.4", userAgent: "test" }),
 }));
-vi.mock("@/lib/xero-token-store", () => ({
+// PARTIAL: which keys reset the tokens is the token store's rule, so the real
+// predicate decides; only the database-touching reset is replaced.
+vi.mock("@/lib/xero-token-store", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-token-store")),
   withXeroVerifyReset: mocks.withXeroVerifyReset,
 }));
 vi.mock("@/lib/logger", () => ({ default: { error: mocks.loggerError } }));

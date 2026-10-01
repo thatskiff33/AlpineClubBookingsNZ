@@ -26,6 +26,7 @@
  * notes), and nothing here needs a sentence beyond the summary.
  */
 
+import type { Prisma } from "@prisma/client";
 import { createAuditLog, type AuditLogClient } from "@/lib/audit";
 import type { CredentialRequestContext } from "@/lib/integration-credential-actor";
 
@@ -135,4 +136,35 @@ export async function recordTwoFactorMutation(
     },
     db,
   );
+}
+
+/**
+ * The account-erasure executor's half: read the member's second factor INSIDE
+ * the erasure transaction (after its row lock) and, when there is one to clear,
+ * record the clear on that same transaction. Only booleans leave the read — the
+ * encrypted secret is tested for presence and never handed on. A member with no
+ * second factor has nothing cleared and gets no row.
+ */
+export async function recordErasureTwoFactorClear(
+  tx: Pick<Prisma.TransactionClient, "member" | "auditLog">,
+  params: {
+    memberId: string;
+    adminMemberId: string;
+    request?: CredentialRequestContext;
+  },
+): Promise<void> {
+  const before = await tx.member.findUnique({
+    where: { id: params.memberId },
+    select: { twoFactorEnabled: true, twoFactorMethod: true, totpSecret: true },
+  });
+  const authenticatorApp = Boolean(before?.totpSecret);
+  if (!before || (!before.twoFactorEnabled && !authenticatorApp)) return;
+  await recordTwoFactorMutation(tx, {
+    action: TWO_FACTOR_AUDIT_ACTIONS.cleared,
+    actor: { kind: "admin", memberId: params.adminMemberId },
+    subjectMemberId: params.memberId,
+    method: before.twoFactorMethod,
+    authenticatorApp,
+    request: params.request,
+  });
 }
