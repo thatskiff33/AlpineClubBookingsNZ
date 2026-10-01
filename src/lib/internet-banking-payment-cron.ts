@@ -5,6 +5,7 @@ import {
   PaymentStatus,
 } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
@@ -202,6 +203,16 @@ function releaseOneHold(
       const creditRestoredCents = restoreMemberId
         ? await restoreCreditFromBooking(restoreMemberId, fresh.bookingId, tx)
         : 0;
+      // #3611: a hold that expired unpaid keeps nothing, so the stay's lines are
+      // reversed and no fee posts — if the booking was ever confirmed on the
+      // ledger — under the lock(1) this release took first.
+      await postCancellationLedgerLines({
+        store: tx,
+        bookingId: fresh.bookingId,
+        lodgeId: fresh.booking.lodgeId,
+        keptCents: 0,
+        site: "internet-banking-hold-release",
+      });
 
       // Size the invoice-clearing credit note like the never-captured cancel
       // path (#1547 / booking-cancel.ts), NOT the credit-reduced payment amount

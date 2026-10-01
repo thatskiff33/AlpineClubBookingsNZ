@@ -37,6 +37,8 @@ import {
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { cancelRefundableBaseCents } from "@/lib/booking-payment-state";
+import { cancellationKeptCents } from "@/lib/booking-ledger-cancellation-posting";
+import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import {
   applyLocalRefundAllocation,
   foldIntoTransactionRefundedAmount,
@@ -374,6 +376,15 @@ async function cancelLinkedProvisionalChildBookings(
       if (childOwnerMemberId) {
         await restoreCreditFromBooking(childOwnerMemberId, fresh.id, tx);
       }
+      // #3611: nothing was captured, so the club keeps nothing; the stay's
+      // lines are reversed if it was ever confirmed on the ledger.
+      await postCancellationLedgerLines({
+        store: tx,
+        bookingId: fresh.id,
+        lodgeId: fresh.lodgeId,
+        keptCents: 0,
+        site: "booking-cancel:linked-child",
+      });
       return fresh;
     });
 
@@ -702,6 +713,15 @@ async function performBookingCancellation(
       const creditRestoredCents = restoreMemberId
         ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
         : 0;
+      // #3611: nothing was captured, so the club keeps nothing; the stay's
+      // lines are reversed if it was ever confirmed on the ledger.
+      await postCancellationLedgerLines({
+        store: tx,
+        bookingId,
+        lodgeId: fresh.lodgeId,
+        keptCents: 0,
+        site: "booking-cancel:no-payment",
+      });
 
       // #2576 §6. Cancellation is the first change class the owner names, and it
       // is the one that removes attendance outright: cancelling the booking a
@@ -890,6 +910,15 @@ async function performBookingCancellation(
       const creditRestoredCents = restoreMemberId
         ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
         : 0;
+      // #3611: nothing was captured, so the club keeps nothing; the stay's
+      // lines are reversed if it was ever confirmed on the ledger.
+      await postCancellationLedgerLines({
+        store: tx,
+        bookingId,
+        lodgeId: fresh.lodgeId,
+        keptCents: 0,
+        site: "booking-cancel:pending",
+      });
       // #2576 §6. Cancellation is the first change class the owner names, and it
       // is the one that removes attendance outright: cancelling the booking a
       // qualifying adult member is staying on can leave ANOTHER booking on the same
@@ -1153,6 +1182,16 @@ async function performBookingCancellation(
       const creditRestoredCents = restoreMemberId
         ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
         : 0;
+      // #3611: nothing captured is kept here (never captured, or all of it
+      // already refunded, #1473), so the stay's lines are reversed and no fee
+      // posts — if the booking was ever confirmed on the ledger.
+      await postCancellationLedgerLines({
+        store: tx,
+        bookingId,
+        lodgeId: fresh.lodgeId,
+        keptCents: 0,
+        site: "booking-cancel:unpaid",
+      });
 
       // Applied-credit rows the inbound reconcile linked to a real Xero
       // credit-note allocation against this booking's invoice: the invoice's
@@ -1776,6 +1815,22 @@ async function performBookingCancellation(
         });
       }
     }
+
+    // #3611: the stay is taken back and what the policy keeps posts as one
+    // CANCELLATION_FEE, from the figures frozen above — under the lock(1) this
+    // claim took first, in this transaction (design §5.1).
+    await postCancellationLedgerLines({
+      store: tx,
+      bookingId,
+      lodgeId: fresh.lodgeId,
+      keptCents: cancellationKeptCents({
+        refundableBaseCents,
+        refundAmountCents,
+        creditAppliedCents: payment.creditAppliedCents,
+        creditRestoredCents,
+      }),
+      site: "booking-cancel:paid",
+    });
 
     // #2576 §6. Cancellation is the first change class the owner names, and it
     // is the one that removes attendance outright: cancelling the booking a
