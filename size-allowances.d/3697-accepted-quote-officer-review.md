@@ -7,13 +7,13 @@ module split belongs in a separate review because it would move established
 money and capacity paths while this issue changes their shared state.
 
 file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
-lines: 2704
+lines: 2703
 reason: the accepted request action and confirmation sit in the existing
   request panel's status-specific controls; extracting this one state would
   duplicate its fetch, permission and toast state.
 
 file: src/lib/booking-cancel.ts
-lines: 2532
+lines: 2554
 reason: the accepted-hold cancellation guard belongs with the existing
   cancellation lock and hold-release branch it fences.
 
