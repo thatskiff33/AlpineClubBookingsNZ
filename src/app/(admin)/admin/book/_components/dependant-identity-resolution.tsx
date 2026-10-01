@@ -64,6 +64,12 @@ export interface AdminDependantIdentityResolutionProps {
   }>;
   /** Member ids already on the party, so a dependant is not offered twice. */
   partyMemberIds: string[];
+  /**
+   * What the officer does after fixing the family group, which depends on the
+   * screen (#3451): the create screen starts the booking again, the edit panel
+   * comes back to the booking it is editing. Defaults to the create wording.
+   */
+  afterFamilyGroupFix?: string;
   onBookAsDependant: (
     normalizedName: string,
     familyMember: {
@@ -89,6 +95,7 @@ export function AdminDependantIdentityResolution({
   bookingForFirstName,
   familyMembers,
   partyMemberIds,
+  afterFamilyGroupFix = "start this booking again",
   onBookAsDependant,
   onDeclareDifferentPerson,
   onWithdrawDeclaration,
@@ -181,7 +188,7 @@ export function AdminDependantIdentityResolution({
                         <p>
                           {alreadyOnParty
                             ? `${dependant.firstName} is already on this booking as a member, so the guest typed must be somebody else.`
-                            : `${dependant.firstName} is recorded as ${bookingForFirstName}'s dependant but is not in their family group, so they cannot be added from this screen. Put them in the family group under Membership, then start this booking again.`}
+                            : `${dependant.firstName} is recorded as ${bookingForFirstName}'s dependant but is not in their family group, so they cannot be added from this screen. Put them in the family group under Membership, then ${afterFamilyGroupFix}.`}
                         </p>
                       </div>
                     )}
