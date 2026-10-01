@@ -136,6 +136,7 @@ import {
   schoolTeacherSchema,
   storedSchoolTeacherListSchema,
 } from "@/lib/school-teacher-schema";
+import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 // Keep the existing route import surface while the schema lives in one module.
 export { schoolTeacherSchema } from "@/lib/school-teacher-schema";
@@ -168,7 +169,7 @@ export async function assertSchoolGuestsWithinLodgeCapacity(input: {
     : await getDefaultLodgeCapacity();
   if (input.guestCount > lodgeCapacity) {
     throw new BookingRequestError(
-      `A school booking cannot exceed the lodge capacity of ${lodgeCapacity} guests`,
+      lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A school booking cannot exceed the lodge capacity of ${limit} guests`),
       input.status
     );
   }
@@ -2234,7 +2235,7 @@ export async function approveMemberWholeLodgeRequest(input: {
     : await getDefaultLodgeCapacity();
   if (headcount > lodgeCapacity) {
     throw new BookingRequestError(
-      `A whole-lodge booking cannot exceed the lodge capacity of ${lodgeCapacity} guests`,
+      lodgeGuestLimitMessage(lodgeCapacity, (limit) => `A whole-lodge booking cannot exceed the lodge capacity of ${limit} guests`),
       422
     );
   }
