@@ -60,6 +60,16 @@ export function modificationChangeFeeKey(bookingModificationId: string): string 
 }
 
 /**
+ * What the club keeps when a booking is cancelled (#3611). A booking is
+ * cancelled once — `CANCELLED` is terminal and every cancel path claims it with
+ * a status-guarded flip — so its id is the whole identity. The stay's
+ * reversals that post beside it are keyed by `reversalKey`, like every other.
+ */
+export function cancellationFeeKey(bookingId: string): string {
+  return `cancellation:${bookingId}:fee`;
+}
+
+/**
  * The adjustment an officer agreed with the member by completing one review
  * task (#3582). A task completes at most once — its claim is status-guarded —
  * so its id is the whole identity.

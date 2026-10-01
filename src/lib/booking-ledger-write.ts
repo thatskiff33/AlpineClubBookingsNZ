@@ -37,6 +37,7 @@ export type BookingLedgerPosting = {
   kind:
     | "GUEST_NIGHT"
     | "CHANGE_FEE"
+    | "CANCELLATION_FEE"
     | "PROMOTION"
     | "GROUP_DISCOUNT"
     | "CARD_CAPTURE"

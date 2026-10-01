@@ -17,6 +17,7 @@
 import type { AgeTier, ManualRefundTaskDirection } from "@prisma/client";
 
 import {
+  chargeLineReversal,
   guestNightPosting,
   isSingleNightLine,
   promotionPosting,
@@ -137,24 +138,7 @@ export function planModificationChargeLines(
   const reversedHere = new Set<string>();
   const reverse = (line: PostedChargeLine): void => {
     reversedHere.add(line.id);
-    postings.push({
-      ...base,
-      kind: line.kind,
-      sign: line.sign === 1 ? -1 : 1,
-      quantity: line.quantity,
-      unitCents: line.unitCents,
-      // Copied from the line, never re-derived: the guest row it names may be
-      // gone by now (a removal deletes it), and the line outlives it.
-      bookingGuestId: line.bookingGuestId,
-      nightStart: line.nightStart,
-      nightEndExclusive: line.nightEndExclusive,
-      rateMembershipTypeId: line.rateMembershipTypeId,
-      ageTier: line.ageTier,
-      guestNames: line.guestNames,
-      narration: `Reversed: ${line.narration}`,
-      reversesLineId: line.id,
-      postingKey: reversalKey(line.id),
-    });
+    postings.push(chargeLineReversal(anchor, line, reversalKey(line.id)));
   };
 
   for (const change of nights.guests) {
