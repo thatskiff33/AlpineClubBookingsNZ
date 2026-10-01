@@ -3253,7 +3253,8 @@ So the claim is taken BEFORE the provider call, on `EditReviewChargeRaiseClaim`
 
 A run that loses the claim calls no provider, arms the edit's ONE recovery row
 (the backstop if the holder dies) and returns `deferred`, which the recovery replay
-cannot close (`EDIT_REVIEW_CHARGE_OUTCOME_CLOSES_REPLAY`, one entry per outcome, so
+cannot close (`EDIT_REVIEW_CHARGE_OUTCOME_CLOSES_REPLAY` in
+`edit-financial-review-charge-recovery.ts`, one entry per outcome, so
 a new outcome is a type error). A raise Stripe REFUSES throws with nothing
 written, so the row still equals the unchanged intent; the claim is released and
 `executeEditReviewCharge` or the replay makes the debt durable.

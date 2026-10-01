@@ -1712,8 +1712,9 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     accepting and the row write, per-instance clocks, and the previous colour
     during a deploy's drain - are in
     [`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md).
-  - Home: `edit-financial-review-charge-raise-claim.ts` and
-    `edit-financial-review-charge-sync.ts`; proven against PostgreSQL by
+  - Home: `edit-financial-review-charge-raise-claim.ts`,
+    `edit-financial-review-charge-sync.ts` and
+    `edit-financial-review-charge-recovery.ts`; proven against PostgreSQL by
     `edit-financial-review-charge-raise-claim.realdb.test.ts`.
 
 ## INV-PAY-070

@@ -66,7 +66,7 @@ export type EditReviewChargeMember = {
  *                        and nothing further will ever be owed by this row.
  *   * `raised`         - the request exists and asks for at least the derived
  *                        total. Which outcomes close a replay is decided, one
- *                        entry per outcome, by `payment-recovery.ts`
+ *                        entry per outcome, by `edit-financial-review-charge-recovery.ts`
  *                        (`EDIT_REVIEW_CHARGE_OUTCOME_CLOSES_REPLAY`).
  *   * `already-paid`   - the member paid before the combined total could be
  *                        raised. Terminal: the remaining share is collected by

@@ -65,6 +65,7 @@ const MUST_BE_OWNED = [
   "src/lib/edit-financial-review-charge.ts",
   "src/lib/edit-financial-review-charge-sync.ts",
   "src/lib/edit-financial-review-charge-raise-claim.ts",
+  "src/lib/edit-financial-review-charge-recovery.ts",
   "src/lib/internet-banking-payment-cron.ts",
   "src/lib/cancelled-booking-late-capture.ts",
   "src/lib/xero-operation-outbox.ts",
