@@ -267,9 +267,11 @@ Prefix `INV-PAY`.
 | `INV-PAY-069` | Completions record their direction; charging re-enters the additional-payment path |
 | `INV-PAY-062` | One booking edit raises one charge request, derived from settled shares |
 | `INV-PAY-098` | A replacement ask carries the unpaid balance it retires, and records it |
+| `INV-PAY-112` | One edit's charge request is raised by one run at a time |
 | `INV-PAY-099` | A dismissed money task can be reopened; a completed one cannot |
 | `INV-PAY-100` | Work-item grain follows the moved strands; the lead absorbs the settlement |
 | `INV-PAY-101` | Refund documents name the method from the settlement decision, never the source |
+| `INV-PAY-111` | A refund note's own operation completes only with its payment or skip |
 | `INV-PAY-070` | Xero leg bills the total on one invoice per edit, anchor-locked |
 | `INV-PAY-063` | Recorded shortfalls are billed on a second invoice; sent invoices only |
 | `INV-PAY-071` | Both shortfall endings audited with opposite instructions; repair reads settled shares |
@@ -350,7 +352,7 @@ Prefix `INV-GUEST`.
 | `INV-GUEST-016` | MG4: edit path, admin parity, request pipeline; no address in URLs |
 | `INV-GUEST-017` | Exactly eight column shapes are legal, and the table lists them |
 | `INV-GUEST-018` | That table is generated from the code table by a test |
-| `INV-GUEST-019` | Own dependants leave the guest split at create doors; exact own-family matching |
+| `INV-GUEST-019` | Own dependants leave the guest split at create, edit and exception doors |
 
 ## Booking Modifications
 

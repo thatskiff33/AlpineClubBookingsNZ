@@ -173,6 +173,13 @@ import "./member-dietary-omit.realdb.test";
 // one VOID row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans
 // its own `race-3642-` fixtures.
 import "./group-settlement-invoice-binding-races.realdb.test";
+// #3402 reuses it to prove a review-charge raise is single-flight per edit: two
+// claims parked on the one claim row let exactly one through, an expired lease
+// is taken over by exact token, and the $60/$100-against-$50 interleaving -
+// forced through the real sync with only Stripe gated - ends with the true total
+// at the provider and on the row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-3402-` fixtures.
+import "./edit-financial-review-charge-raise-claim.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

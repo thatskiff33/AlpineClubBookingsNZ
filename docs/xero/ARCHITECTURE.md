@@ -636,7 +636,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | --- | --- |
 | `xero-booking-invoices` | Primary booking invoice create/update (`buildInvoiceLineItems`). |
 | `xero-invoice-payments` | Recording Stripe payments against invoices and Stripe refunds as credit-note payments. |
-| `xero-credit-notes` | Refund credit notes, unapplied (account-credit) credit notes, allocation to invoices. Stripe refunds settle **per delta** (#1162): a payment refunded in several steps gets one credit note per uncovered delta, keyed on a cumulative refunded-cents watermark; non-Stripe refunds keep one note per payment. A cash refund note's settling payment is recorded only where the money verifiably moved (`resolveRefundSettlement`, `INV-PAY-101`): Stripe for a card refund, the configured bank-transfer refund account for a recorded bank transfer, and otherwise the note is left unsettled with `refundPaymentSkipped` on the operation. |
+| `xero-credit-notes` | Refund credit notes, unapplied (account-credit) credit notes, allocation to invoices. Stripe refunds settle **per delta** (#1162): a payment refunded in several steps gets one credit note per uncovered delta, keyed on a cumulative refunded-cents watermark; non-Stripe refunds keep one note per payment. A cash refund note's settling payment is recorded only where the money verifiably moved (`resolveRefundSettlement`, `INV-PAY-101`): Stripe for a card refund, the configured bank-transfer refund account for a recorded bank transfer, and otherwise the note is left unsettled with `refundPaymentSkipped` on the operation. The note is recorded (payment field, covering link, the row's `xeroObjectId`) in one transaction the moment Xero returns it, so an attempt that dies before its payment leaves a FAILED row naming its note; the retry and repair legs and the repair tool finish it through one read-back-then-settle (`xero-refund-note-settlement.ts`, `INV-PAY-111`): the payment or the skip, PARTIAL if the payment fails, one note-keyed payment key, dated the note's own day, and never a second payment on a note Xero already shows paid, part-paid or allocated. Rows written before #3548 with neither are listed by the reconciliation report and the repair tool (`xero-refund-note-unsettled.ts`) and settled only by an operator. |
 | `xero-refund-method` | Leaf, pure: how the money went back — `card`, `internet-banking`, `account-credit` — as the ONE home for the wording every refund or credit document carries (#3529, `INV-PAY-101`), the default a method-less legacy row falls to (Stripe → card, anything else → bank transfer), and which mapping key settles a cash refund. The method is threaded from the settlement decision through the outbox payload; the builders never infer it from `Payment.source` when the caller said. |
 | `xero-supplementary-invoices` | Positive booking-modification delta invoices. Since #3530 (stage 2b) itemised from the edit's stored lines when they sum exactly to what the invoice bills; otherwise the single price-adjustment line, with the reason under `requestPayload.priceLines`. |
 | `xero-modification-credit-notes` | Negative booking-modification credit notes. Itemised the same way, every sign inverted, only when the note returns the whole reduction (#3530). |
@@ -711,9 +711,9 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
   module is off. `credit-sync` (#2501) additionally self-throttles: a completed
   pass suppresses further Xero reads for ~20h, so bundling it into a frequent
   `all` cannot burn the daily Xero quota.
-- ~38 admin routes under `/api/admin/xero/**` and `/api/admin/members/[id]/xero-*`
+- The admin routes under `/api/admin/xero/**` and `/api/admin/members/[id]/xero-*`
   — OAuth connect/callback/disconnect, status/health/usage, operations list +
-  retry/requeue/resolve/mark-non-replayable/reset-stale-running, inbound-events
+  retry/requeue/resolve/mark-non-replayable/mark-failed/reset-stale-running, inbound-events
   list + replay, contact tooling (search/import/sync/duplicates/mismatches),
   mappings, record activity.
 
@@ -801,6 +801,47 @@ membership subscription invoice, and kept late-capture invoice (#3635).
    work that never reached Xero. Otherwise the first failing operation of a
    batch armed the breaker and condemned operations 2..N of that same batch,
    un-attempted, to wait for an admin's Requeue.
+
+   **A retry that claims the original must give it back (#3462).** A retry
+   branch that has to stay visible to the settle-time fences while it runs
+   (the booking invoice, #2262 H3) claims the original row FAILED/PARTIAL →
+   RUNNING through `runWithClaimedOriginal`, the one place that claims and
+   abandons. From then on the handler owns completion. If it throws before it
+   records an outcome — a contact refusal, a missing account mapping — the
+   claim is abandoned: `failXeroSyncOperation(..., { onlyIfRunningSince })`
+   returns the row to FAILED with the run's error, guarded on the claim itself
+   (still RUNNING, still this run's `startedAt`), so a row the handler already
+   completed is never overwritten. Before this, such a throw left the original
+   RUNNING for ever, where neither Retry nor Requeue applies. The REQUEUE row's
+   own failure names the original and reads its status after the attempt. It
+   says "back to FAILED" only when this retry claimed the original and the
+   abandon really wrote (`retryAbandonedItsClaim`); a branch that never claimed
+   it gets "is FAILED; fix the cause, then requeue it". A REQUEUE row is never
+   replayable itself, because replaying a replay compounds the state.
+
+   **Stuck RUNNING rows.** A row RUNNING longer than
+   `STALE_RUNNING_XERO_OPERATION_MINUTES` (15) is stale (`xero-stale-operations.ts`).
+   `isStaleRunningXeroOperation` takes the row and checks RUNNING itself,
+   because completing a row never clears its `startedAt`; the list route, the
+   booking page, the resolve refusal and Mark failed all read it.
+   The operations list flags it (`staleRunning`) and the panel offers a per-row
+   **Mark failed** (`POST /api/admin/xero/operations/[id]/mark-failed`,
+   finance:edit, reason required, audited `xero.operation.marked_failed` in
+   category `xero`). The gate is plain staleness, not "stale and carrying an
+   earlier error": a row whose worker died on its first attempt is stuck the
+   same way and needs the same remedy. The write is
+   `markStaleRunningXeroOperationFailed`, guarded on the claim it read, and it
+   keeps any earlier error in the new message. When that error is itself an
+   earlier stale reset, only the cause inside it is carried, so repeated cycles
+   never nest the prefix. It and the bulk **Reset stale running** share one
+   write, `writeStaleRunningXeroOperationReset`, which stamps
+   `ORPHANED_STALE_RUNNING` and leaves the response payload and Xero object
+   identity alone. Mark failed, the bulk reset and mark non-replayable each
+   write their audit row inside the state change's transaction, so a failed
+   audit rolls the change back instead of leaving an unattributed override.
+   (Resolve cannot: its fence needs the mark committed and visible to the drain
+   before it checks for an overlapping retry.) Once FAILED, the ordinary
+   Retry / Requeue applies.
 4. **Inbound event retry** — FAILED `XeroInboundEvent` rows are re-swept after
    `XERO_INBOUND_FAILED_RETRY_BACKOFF_MS`; stale PROCESSING rows are
    operator-replayable.

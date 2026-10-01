@@ -2271,6 +2271,8 @@ describe("LodgeSetupWizardPage view-only gating (#1940, lodge)", () => {
     stubFetchRoutes({
       "/api/admin/lodges": { lodges: [LODGE] },
       "/api/admin/modules": { settings: {} },
+      // #3407: the wizard reads the lodge's capacity for its Capacity step.
+      "/api/admin/lodge-settings": { capacity: 12, setUpForBookings: true },
     });
   });
   afterEach(() => {

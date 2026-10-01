@@ -111,7 +111,10 @@ vi.mock("@/lib/module-settings", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    member: { findUnique: h.memberFindUnique },
+    // #3451: the own-dependant guard's parent-link read. This suite's party
+    // carries member ids its mocked resolution does not return, so the shared
+    // entry point reads them as free text and asks; nobody here has a dependant.
+    member: { findUnique: h.memberFindUnique, findMany: vi.fn().mockResolvedValue([]) },
     groupDiscountSetting: { findUnique: h.groupDiscountFindUnique },
     // Member self-books (no admin bypass) run the minimum-stay policy check.
     minimumStayPolicy: { findMany: vi.fn().mockResolvedValue([]) },
@@ -819,5 +822,69 @@ describe("POST /api/bookings — S2 family-add notification wiring (#2284)", () 
 
     expect(res.status).toBe(201);
     expect(h.sendFamilyAddNotifications).not.toHaveBeenCalled();
+  });
+});
+
+/*
+  #3407 (owner decision 14 Sep 2026): at a lodge nobody has given a capacity the
+  party-size refusal says the lodge is not set up for bookings yet, instead of
+  "A booking cannot exceed 0 guests". The rule itself is unchanged — the create
+  is still refused before any service runs — and an officer booking on behalf
+  through `/admin/book` (which posts here) gets exactly what a member gets.
+*/
+describe("POST /api/bookings — the party-size refusal at a lodge with no capacity (#3407)", () => {
+  async function capacityMock() {
+    const { getLodgeCapacity } = await import("@/lib/lodge-capacity");
+    return vi.mocked(getLodgeCapacity);
+  }
+  const twoGuests = [
+    ...guests,
+    { firstName: "Sam", lastName: "Doe", ageTier: "ADULT", isMember: true, memberId: "target-m2" },
+  ];
+
+  it("tells an officer booking on behalf that the lodge is not set up, and creates nothing", async () => {
+    (await capacityMock()).mockResolvedValueOnce(0);
+    const res = await POST(makeRequest(futurePayload()));
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe(
+      "This lodge is not set up for bookings yet: the club has not set how many guests it can take.",
+    );
+    expect(body.error).not.toContain("0 guests");
+    expect(h.createConfirmedBooking).not.toHaveBeenCalled();
+  });
+
+  it("tells a member booking for themselves the same thing", async () => {
+    h.managementRole.mockReturnValue("USER");
+    h.hasAdminAccess.mockReturnValue(false);
+    h.hasAccessRole.mockReturnValue(true);
+    h.memberFindUnique.mockResolvedValue({
+      active: true,
+      emailVerified: new Date(),
+      xeroContactId: "xc-1",
+      ageTier: "ADULT",
+    });
+    (await capacityMock()).mockResolvedValueOnce(0);
+    const res = await POST(
+      makeRequest({
+        checkIn: daysFromTodayStr(30),
+        checkOut: daysFromTodayStr(32),
+        guests,
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("not set up for bookings yet");
+    expect(h.createConfirmedBooking).not.toHaveBeenCalled();
+  });
+
+  it("keeps the configured lodge's refusal byte for byte", async () => {
+    (await capacityMock()).mockResolvedValueOnce(1);
+    const res = await POST(makeRequest(futurePayload({ guests: twoGuests })));
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("A booking cannot exceed 1 guests");
+    expect(h.createConfirmedBooking).not.toHaveBeenCalled();
   });
 });

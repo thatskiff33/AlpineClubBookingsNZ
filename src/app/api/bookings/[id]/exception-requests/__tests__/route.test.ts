@@ -57,7 +57,14 @@ vi.mock("@/lib/booking-exception-request-service", async (importOriginal) => {
 
 import { POST } from "@/app/api/bookings/[id]/exception-requests/route";
 import { PATCH } from "@/app/api/bookings/[id]/exception-requests/[requestId]/route";
-import { NoEligiblePolicyExceptionError } from "@/lib/booking-exception-request-service";
+import {
+  NoEligiblePolicyExceptionError,
+  PolicyExceptionDependantIdentityError,
+} from "@/lib/booking-exception-request-service";
+import {
+  DEPENDANT_IDENTITY_UNRESOLVED_EDIT_MESSAGE,
+  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_EDIT_MESSAGE,
+} from "@/lib/booking-dependant-identity-doors";
 
 const CREATED = {
   id: "bcr-1",
@@ -178,6 +185,75 @@ describe("POST /api/bookings/[id]/exception-requests", () => {
   it("rejects removing a guest not on the booking (400)", async () => {
     const res = await POST(
       postReq({ removeGuestIds: ["ghost"], memberMessage: "please" }),
+      params,
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.createMod).not.toHaveBeenCalled();
+  });
+
+  // #3451 (`INV-GUEST-019`): the edit's exception door asks the own-dependant
+  // question too — about the booking OWNER's dependants, never the requester's,
+  // with the panel's answers carried in for the service to verify and freeze.
+  it("threads the booking owner and the member's answers to the service", async () => {
+    const declaration = {
+      kind: "different_person_same_name",
+      dependantMemberId: "dep-sam",
+      normalizedName: "sam smith",
+    };
+    mocks.authzRole.mockReturnValue("ADMIN");
+    mocks.auth.mockResolvedValue({ user: { id: "officer-1", email: "o@x.nz", name: "Officer", role: "admin" } });
+    const res = await POST(
+      postReq({
+        addGuests: [{ firstName: "Sam", lastName: "Smith", ageTier: "CHILD", isMember: false }],
+        dependantIdentityDeclarations: [declaration],
+        memberMessage: "please",
+      }),
+      params,
+    );
+    expect(res.status).toBe(201);
+    expect(mocks.createMod).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingOwnerMemberId: "m1",
+        dependantIdentityDeclarations: [declaration],
+      }),
+    );
+  });
+
+  it.each([
+    ["the member", "m1", "USER", DEPENDANT_IDENTITY_UNRESOLVED_EDIT_MESSAGE],
+    ["an officer acting for them", "officer-1", "ADMIN", DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_EDIT_MESSAGE],
+  ])("answers the service's own-dependant refusal to %s in the edit wording", async (_who, userId, role, message) => {
+    mocks.auth.mockResolvedValue({ user: { id: userId, email: "x@x.nz", name: "X", role: "member" } });
+    mocks.authzRole.mockReturnValue(role);
+    mocks.createMod.mockRejectedValue(
+      new PolicyExceptionDependantIdentityError({
+        code: "DEPENDANT_IDENTITY_UNRESOLVED",
+        status: 409,
+        error: "say which person",
+        collisions: [],
+      }),
+    );
+    const res = await POST(
+      postReq({
+        addGuests: [{ firstName: "Sam", lastName: "Smith", ageTier: "CHILD", isMember: false }],
+        memberMessage: "please",
+      }),
+      params,
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      code: "DEPENDANT_IDENTITY_UNRESOLVED",
+      error: message,
+    });
+  });
+
+  it("refuses a malformed answer at the schema", async () => {
+    const res = await POST(
+      postReq({
+        addGuests: [{ firstName: "Sam", lastName: "Smith", ageTier: "CHILD", isMember: false }],
+        dependantIdentityDeclarations: [{ kind: "override" }],
+        memberMessage: "please",
+      }),
       params,
     );
     expect(res.status).toBe(400);

@@ -13,6 +13,7 @@ import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import type { XeroInvoiceEmailInstruction } from "@/lib/xero-invoice-email-instruction";
+import { xeroSyncErrorText } from "@/lib/xero-sync-error-text";
 
 export interface XeroSyncOperationInput {
   direction: string;
@@ -781,7 +782,8 @@ export async function deactivateXeroObjectLinks(params: {
 export async function completeXeroSyncOperation(
   operationId: string,
   completion: XeroSyncOperationCompletion,
-  options?: { store?: Prisma.TransactionClient },
+  // #3548: `keepSucceeded` leaves a row a concurrent leg completed SUCCEEDED as it is, links and all, and answers null.
+  options?: { store?: Prisma.TransactionClient; keepSucceeded?: boolean },
 ) {
   // #2314: organisation-agnostic in the column, organisation applied on read —
   // see the note on the object-link funnel above.
@@ -793,18 +795,25 @@ export async function completeXeroSyncOperation(
   );
 
   const completeWithClient = async (tx: Prisma.TransactionClient) => {
-    const operation = await tx.xeroSyncOperation.update({
-      where: { id: operationId },
-      data: {
-        status: completion.status ?? "SUCCEEDED",
-        responsePayload: sanitizeForJson(completion.responsePayload),
-        xeroObjectType: completion.xeroObjectType ?? null,
-        xeroObjectId: completion.xeroObjectId ?? null,
-        xeroObjectNumber: completion.xeroObjectNumber ?? null,
-        xeroObjectUrl,
-        completedAt: new Date(),
-      },
-    });
+    const data = {
+      status: completion.status ?? "SUCCEEDED",
+      responsePayload: sanitizeForJson(completion.responsePayload),
+      xeroObjectType: completion.xeroObjectType ?? null,
+      xeroObjectId: completion.xeroObjectId ?? null,
+      xeroObjectNumber: completion.xeroObjectNumber ?? null,
+      xeroObjectUrl,
+      completedAt: new Date(),
+    };
+    if (options?.keepSucceeded) {
+      const claimed = await tx.xeroSyncOperation.updateMany({
+        where: { id: operationId, status: { not: "SUCCEEDED" } },
+        data,
+      });
+      if (claimed.count === 0) return null;
+    }
+    const operation = options?.keepSucceeded
+      ? await tx.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })
+      : await tx.xeroSyncOperation.update({ where: { id: operationId }, data });
 
     for (const link of completion.extraLinks ?? []) {
       await upsertXeroObjectLinkWithClient(tx, link);
@@ -816,7 +825,7 @@ export async function completeXeroSyncOperation(
     ? await completeWithClient(options.store)
     : await prisma.$transaction(completeWithClient);
 
-  if (operation.status === "PARTIAL") {
+  if (operation?.status === "PARTIAL") {
     try {
       const { maybeNotifyXeroRepeatedFailure } = await import("./xero-hardening");
       await maybeNotifyXeroRepeatedFailure(operation);
@@ -834,26 +843,47 @@ export async function completeXeroSyncOperation(
   return operation;
 }
 
+/**
+ * The optional write guard of {@link failXeroSyncOperation}: at most one, so a
+ * caller can never pass two and have one silently dropped (#3462).
+ */
+type FailXeroSyncOperationGuard =
+  | {
+      /**
+       * #3635 round-3 N5: leave a row another writer has already WITHDRAWN
+       * (CANCELLED) as it is - the outbox's catch runs after its handler, and an
+       * approval can withdraw a kept row in between. Answers null then.
+       */
+      keepCancelled: true;
+      onlyIfRunningSince?: never;
+    }
+  | {
+      /**
+       * #3462: fail the row ONLY while it is still the RUNNING claim stamped at
+       * this instant - the abandon of a claim whose handler threw before it
+       * owned completion. A row the handler already completed, failed or
+       * cancelled, or one a later claim re-stamped, is left exactly as it is.
+       * Answers null then.
+       */
+      onlyIfRunningSince: Date;
+      keepCancelled?: never;
+    }
+  | { keepCancelled?: never; onlyIfRunningSince?: never };
+
 export async function failXeroSyncOperation(
   operationId: string,
   error: unknown,
   responsePayload?: unknown,
-  options?: {
+  options?: FailXeroSyncOperationGuard & {
     /**
-     * #3635 round-3 N5: leave a row another writer has already WITHDRAWN
-     * (CANCELLED) as it is - the outbox's catch runs after its handler, and an
-     * approval can withdraw a kept row in between. Answers null then.
+     * #3462: the operator-facing message to record instead of the error's own
+     * (still redacted). The status code is still read from `error`.
      */
-    keepCancelled?: boolean;
+    lastErrorMessage?: string;
   }
 ) {
   const statusCode = getXeroErrorStatusCode(error);
-  const rawMessage =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : "Unknown Xero sync failure";
+  const rawMessage = options?.lastErrorMessage ?? xeroSyncErrorText(error);
   const message = redactSensitiveText(rawMessage);
   const data = {
     status: "FAILED" as const,
@@ -863,14 +893,19 @@ export async function failXeroSyncOperation(
     completedAt: new Date(),
   };
 
-  if (options?.keepCancelled) {
+  const guard = options?.onlyIfRunningSince
+    ? { status: "RUNNING" as const, startedAt: options.onlyIfRunningSince }
+    : options?.keepCancelled
+      ? { status: { not: "CANCELLED" as const } }
+      : null;
+  if (guard) {
     const failed = await prisma.xeroSyncOperation.updateMany({
-      where: { id: operationId, status: { not: "CANCELLED" } },
+      where: { id: operationId, ...guard },
       data,
     });
     if (failed.count === 0) return null;
   }
-  const operation = options?.keepCancelled
+  const operation = guard
     ? await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })
     : await prisma.xeroSyncOperation.update({ where: { id: operationId }, data });
 

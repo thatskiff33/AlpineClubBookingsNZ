@@ -1619,8 +1619,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   - **The total is DERIVED from the settled shares, never incremented.** Each
     task contributes exactly once, from the row its own status-fenced claim
     wrote; whichever completion commits LAST derives the true total, and
-    **neither leg may LOWER what is recorded**. On the Stripe leg that is a
-    refusal, not an atomic claim, and it is why no advisory lock is held.
+    **neither leg may LOWER what is recorded**. On the Stripe leg two runs are
+    ordered by a claim, not a lock ([INV-PAY-112]).
     A balance CARRIED IN from another edit ([INV-PAY-098]) is stored apart, so
     the sum stays monotone and the refusal stays correct.
   - **A share may not be added to a request the member has already paid, or to
@@ -1670,9 +1670,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   - **It never joins the derived share total.** [INV-PAY-062]'s refuse-to-lower
     rule is safe only because that sum never decreases, and that monotonicity is
     why this path can refuse a stale lowering with no lock across a provider
-    call ([`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md)). That
-    refusal is not an atomic claim; `syncEditFinancialReviewChargeRequest` says
-    what it does not order.
+    call ([`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md)). Two
+    concurrent raises are ordered by [INV-PAY-112]'s claim, not by it.
   - **A later share reads it off the row, never off the payment**, which mirrors
     this request by then.
   - **The accounting leg never sees it.** [INV-PAY-070] bills one invoice per
@@ -1686,6 +1685,37 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     refuses a deliberate assertion, so the call-site census refuses it.
   - **A FAILED mint carries nothing**: it retired nothing, so the earlier ask is
     still live for the replay to read.
+
+## INV-PAY-112
+
+- **ONE EDIT'S CHARGE REQUEST IS RAISED BY ONE RUN AT A TIME** (#3402). Refusing
+  to lower ([INV-PAY-062]) orders nothing between two runs that each derive more
+  than is stored: both raised the intent, and the LAST to land won even when it
+  was smaller.
+  - **Claim before the provider call.** A run must win the edit's
+    `EditReviewChargeRaiseClaim` lease and record its intended amount under that
+    exact token before ANY Stripe call. A loser calls nothing, arms the edit's
+    recovery row and reports `deferred`, which never closes a replay.
+  - **Release, then look again**, raising for a share that committed meanwhile.
+    After `already-paid` the holder looks again only if the recovery row is
+    dead, so each uncollected total is audited ONCE, and a paid request covering
+    every share not at all. A lease lost after a provider call reports
+    `deferred`, never `raised`.
+  - **The backstop runs.** Arming reopens a SUCCEEDED recovery row; the replay's
+    close and hand-back are fenced on its retry time and exact attempt. A
+    terminal FAILED row is not reopened (`INV-PAY-057`).
+  - **The raise writes amounts, never status**, onto a live, uncaptured
+    ADDITIONAL row only: a webhook landing mid-raise stands, and a declined
+    request KEEPS FAILED (still owed, still payable).
+  - **A lease, never a lock**: nothing is held across Stripe and no advisory key
+    is taken; an expired token is taken over, safe because the derived total
+    only grows and a raise is absolute.
+  - **Stated limits**, ordering and interleavings:
+    [`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md).
+  - Home: `edit-financial-review-charge-raise-claim.ts`,
+    `edit-financial-review-charge-sync.ts` and
+    `edit-financial-review-charge-recovery.ts`; proven against PostgreSQL by
+    `edit-financial-review-charge-raise-claim.realdb.test.ts`.
 
 ## INV-PAY-070
 
@@ -2639,3 +2669,33 @@ _Split from `INV-PAY-057` (#3220)._
   declined the ask; the club ran out of attempts to raise it, and
   `requested_by_customer` in the club's own Stripe record would misstate a money
   decision.
+
+## INV-PAY-111
+
+**Related: `INV-PAY-101`** (the settlement decision) **and `INV-INT-025`**
+(resolved in Xero).
+
+- **The operation that raised a refund credit note never completes SUCCEEDED
+  without its settling payment or `refundPaymentSkipped`** (orchestrator
+  decision on [#3548](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3548)).
+  The moment Xero returns the note, one transaction records its id on the
+  payment, its covering link (amount, watermark, capture) and its id on the
+  row. A process that dies after that leaves a FAILED row naming its note:
+  coverage counts the note, so nothing re-mints it, and the retry finishes it.
+- **One read-back-then-settle** (`finishRefundCreditNoteSettlement`) serves the
+  builder's own row, the retry and repair leg, and the repair tool. It reads the
+  note back and records what Xero shows (paid, allocated, or part-paid with
+  `refundPaymentRemainingCents`) without a second payment. It skips a note
+  whose own operation was resolved by hand; an unreadable resolved row refuses.
+  Otherwise it pays under the one note-keyed key, dated the note's day. A failed
+  payment re-reads the note, else completes PARTIAL.
+- **What this does not cover, and why.** A replay that a recorded note already
+  covers raised nothing, so it closes SUCCEEDED marked `coveredByExistingNote`,
+  naming the note whose own row carries the outcome. Any failure between Xero
+  committing the note and that transaction (a crash, a lost or timed-out
+  response, a failed save) leaves nothing naming it, so only Xero's key replay
+  (24 hours, `INV-INT-014`) stops a second one. Rows written before #3548
+  are listed by the reconciliation report and the repair tool
+  (`REFUND_CREDIT_NOTE_UNSETTLED`) and settled only by an operator.
+- Home: `src/lib/xero-refund-note-settlement.ts`. Pinned by
+  `xero-refund-note-crash-window.test.ts` and `xero-operation-outbox.test.ts`.

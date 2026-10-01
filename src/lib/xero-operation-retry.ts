@@ -32,9 +32,14 @@ import { readXeroInvoiceOperationOutcome } from "@/lib/xero-booking-invoice-outc
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { shouldRepairXeroContactNameOrder } from "@/lib/xero-contact-sync";
 import { parseXeroContactDateOfBirth } from "@/lib/xero-contact-date-of-birth";
-import { buildXeroIdempotencyKey, completeXeroSyncOperation } from "@/lib/xero-sync";
+import {
+  buildXeroIdempotencyKey,
+  completeXeroSyncOperation,
+  failXeroSyncOperation,
+} from "@/lib/xero-sync";
+import logger from "@/lib/logger";
 import { CLUB_NAME } from "@/config/club-identity";
-import { defaultRefundMethodForPaymentSource } from "@/lib/xero-refund-method";
+import { resolveRefundNoteMethod } from "@/lib/xero-refund-method";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
 import {
   readBookingClearingNoteRetryInput,
@@ -43,7 +48,12 @@ import {
   unallocatedClearingTargets,
   type ClearingAllocationTarget,
 } from "@/lib/xero-clearing-allocations";
-import { resolveRefundSettlement } from "@/lib/xero-invoice-payments";
+import {
+  recordedRefundNoteOutcome,
+  refundCreditNoteCompletion,
+} from "@/lib/xero-refund-note-settlement";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import type { ClubFormat } from "@/lib/club-format";
 
 /**
@@ -201,6 +211,77 @@ async function requeueOutboxRowForRetry(
   }
 }
 
+/**
+ * #3462: the ONE place a retry claims the ORIGINAL row and runs a handler
+ * against it. Every retry branch that must be visible to the settle-time
+ * fences while it executes (#2262 H3) goes through here, so none of them can
+ * strand the row it claimed.
+ *
+ * The claim moves the row FAILED/PARTIAL -> RUNNING, stamped with this run's
+ * instant. From then on the handler owns completion: it closes the row
+ * SUCCEEDED, PARTIAL, CANCELLED or FAILED itself. A handler that THROWS before
+ * it got that far - a contact lookup refused, an account mapping missing -
+ * used to leave the row RUNNING for ever, where nothing offers a retry. Here
+ * that throw abandons the claim instead: the row goes back to FAILED with this
+ * run's error, through a write guarded on the claim itself (still RUNNING, still
+ * this run's `startedAt`), so a row the handler already completed is never
+ * overwritten. The error is then rethrown unchanged for the caller to report.
+ */
+const abandonedClaimErrors = new WeakSet<object>();
+
+/**
+ * #3462: true when `error` is a retry's throw after which
+ * {@link runWithClaimedOriginal} really did return the original to FAILED -
+ * the claim was this retry's and the abandon wrote. The REQUEUE row's message
+ * says "back to FAILED" only then; a branch that never claimed the original,
+ * or an abandon that matched nothing, gets neutral wording.
+ */
+export function retryAbandonedItsClaim(error: unknown): boolean {
+  return typeof error === "object" && error !== null && abandonedClaimErrors.has(error);
+}
+
+async function runWithClaimedOriginal<T>(
+  operationId: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const claimedAt = new Date();
+  const claimed = await prisma.xeroSyncOperation.updateMany({
+    // #3635: a resolve landing after the read makes this claim lose.
+    where: {
+      id: operationId,
+      status: { in: ["FAILED", "PARTIAL"] },
+      manuallyResolvedAt: null,
+    },
+    data: { status: "RUNNING", startedAt: claimedAt },
+  });
+  if (claimed.count !== 1) {
+    await throwLostRetryClaim(
+      operationId,
+      "This Xero operation was already claimed by another retry.",
+    );
+  }
+  try {
+    return await run();
+  } catch (error) {
+    try {
+      const abandoned = await failXeroSyncOperation(operationId, error, undefined, {
+        onlyIfRunningSince: claimedAt,
+      });
+      if (abandoned && typeof error === "object" && error !== null) {
+        abandonedClaimErrors.add(error);
+      }
+    } catch (abandonError) {
+      // The run's own error is the one the operator needs; a failed abandon
+      // leaves the row RUNNING, where the stale census offers Mark failed.
+      logger.error(
+        { err: abandonError, operationId },
+        "Failed to return a claimed Xero operation to FAILED after its retry threw",
+      );
+    }
+    throw error;
+  }
+}
+
 export interface XeroOperationRetryMeta {
   supported: boolean;
   reason: string | null;
@@ -334,8 +415,6 @@ function isLegacyContextlessAppliedCreditAllocationChild(
   );
 }
 
-const REFUND_CREDIT_NOTE_ALLOCATION_SKIP_REASON =
-  "Refund credit notes are settled via a credit-note payment instead of invoice allocation.";
 const REDACTED_SECRET = "[REDACTED]";
 
 const MEMBER_CONTACT_RETRY_SELECT = {
@@ -702,7 +781,8 @@ function parseRefundCreditNoteRepairInput(
 }
 
 async function repairRefundCreditNoteFollowUpActions(
-  operation: Pick<RetryableOperation, "id" | "localId" | "responsePayload" | "xeroObjectNumber">,
+  operation: Pick<RetryableOperation, "id" | "localId" | "responsePayload" | "xeroObjectNumber"> &
+    Partial<Pick<XeroSyncOperation, "correlationKey" | "idempotencyKey">>,
   xero: XeroModule,
   repair: {
     creditNoteId: string;
@@ -711,7 +791,6 @@ async function repairRefundCreditNoteFollowUpActions(
     needsRefundPaymentRepair: boolean;
     refundMethod?: CashRefundMethod;
   },
-  createdByMemberId?: string
 ) {
   await prisma.payment.update({
     where: { id: operation.localId! },
@@ -722,63 +801,50 @@ async function repairRefundCreditNoteFollowUpActions(
 
   // `INV-PAY-101`: the SAME decision the inline leg makes. A row that recorded
   // its method settles as it said; a row from before #3529 carries none, so
-  // the payment's source decides — Stripe money is a card refund, anything
-  // else is a bank transfer nobody vouched for, and that note stays unsettled.
-  let refundPaymentSkipReason: string | null = null;
+  // the payment's source decides (`resolveRefundNoteMethod`).
+  const { refundMethod, refundMethodRecorded } = resolveRefundNoteMethod(
+    repair.refundMethod,
+    (
+      await prisma.payment.findUnique({
+        where: { id: operation.localId! },
+        select: { source: true },
+      })
+    )?.source,
+  );
+  const priorResponse = asRecord(operation.responsePayload);
   if (repair.needsRefundPaymentRepair) {
-    const methodRecorded = repair.refundMethod !== undefined;
-    const method =
-      repair.refundMethod ??
-      defaultRefundMethodForPaymentSource(
-        (
-          await prisma.payment.findUnique({
-            where: { id: operation.localId! },
-            select: { source: true },
-          })
-        )?.source,
-      );
-    const settlement = await resolveRefundSettlement({ method, methodRecorded });
-    if (settlement.kind === "record") {
-      await xero.createXeroRefundPaymentForInvoice({
-        paymentId: operation.localId!,
-        invoiceId: repair.invoiceId,
-        creditNoteId: repair.creditNoteId,
-        refundAmountCents: repair.amountCents,
-        createdByMemberId,
-        refundMethod: method,
-      });
-    } else {
-      refundPaymentSkipReason = settlement.reason;
-    }
+    // #3548: the one read-back-then-settle every leg uses. It records what
+    // Xero already shows (a payment whose response was lost, a concurrent
+    // retry's, an officer's), pays only a note nothing settles, under the one
+    // note-keyed key, and completes this row PARTIAL if that payment fails.
+    const outcome = await xero.finishRefundCreditNoteSettlement({
+      operationId: operation.id,
+      paymentId: operation.localId!,
+      creditNoteId: repair.creditNoteId,
+      creationKeys: [operation.correlationKey, operation.idempotencyKey],
+      originalInvoiceId: repair.invoiceId,
+      refundMethod,
+      refundMethodRecorded,
+      fallbackPaymentDate: async () =>
+        xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
+      priorResponse,
+    });
+    if (outcome.refundPaymentErr) throw outcome.refundPaymentErr;
+    return;
   }
 
-  const existingResponsePayload = asRecord(operation.responsePayload);
-  await completeXeroSyncOperation(operation.id, {
-    status: "SUCCEEDED",
-    responsePayload: {
-      ...(existingResponsePayload ?? {}),
-      allocation: null,
-      allocationSkipped: true,
-      allocationSkipReason: REFUND_CREDIT_NOTE_ALLOCATION_SKIP_REASON,
-      refundPaymentError: null,
-      ...(refundPaymentSkipReason
-        ? { refundPaymentSkipped: true, refundPaymentSkipReason }
-        : {}),
-    },
-    xeroObjectType: "CREDIT_NOTE",
-    xeroObjectId: repair.creditNoteId,
-    xeroObjectNumber: operation.xeroObjectNumber ?? null,
-    extraLinks: [
-      {
-        localModel: "Payment",
-        localId: operation.localId!,
-        xeroObjectType: "CREDIT_NOTE",
-        xeroObjectId: repair.creditNoteId,
-        xeroObjectNumber: operation.xeroObjectNumber ?? null,
-        role: "REFUND_CREDIT_NOTE",
-      },
-    ],
-  });
+  await completeXeroSyncOperation(
+    operation.id,
+    refundCreditNoteCompletion({
+      paymentId: operation.localId!,
+      creditNoteId: repair.creditNoteId,
+      creditNoteNumber: operation.xeroObjectNumber ?? null,
+      originalInvoiceId: repair.invoiceId,
+      refundMethod,
+      outcome: recordedRefundNoteOutcome(priorResponse),
+      priorResponse,
+    })
+  );
 }
 
 function parseModificationCreditNoteRepairInput(
@@ -1279,7 +1345,6 @@ export async function retryXeroSyncOperation(
         operation,
         xero,
         refundCreditNoteRepair,
-        createdByMemberId
       );
 
       return { message: "Repaired Xero refund credit note follow-up actions." };
@@ -1403,27 +1468,15 @@ export async function retryXeroSyncOperation(
       // whole execution, serialises concurrent retries (count !== 1 -> 409),
       // and passing syncOperationId through makes completion/abandon reporting
       // land on THIS row (accurate outbox/ops-panel state instead of a
-      // permanently-FAILED row behind a false success message).
-      const claimed = await prisma.xeroSyncOperation.updateMany({
-        // #3635: a resolve landing after the read makes this claim lose.
-        where: {
-          id: operation.id,
-          status: { in: ["FAILED", "PARTIAL"] },
-          manuallyResolvedAt: null,
-        },
-        data: { status: "RUNNING", startedAt: new Date() },
-      });
-      if (claimed.count !== 1) {
-        await throwLostRetryClaim(
-          operation.id,
-          "This Xero operation was already claimed by another retry.",
-        );
-      }
-      const invoiceId = await xero.createXeroInvoiceForBooking(bookingId, {
-        createdByMemberId,
-        repairExistingLink: true,
-        syncOperationId: operation.id,
-      });
+      // permanently-FAILED row behind a false success message). #3462: the
+      // claim and its abandon live in `runWithClaimedOriginal`.
+      const invoiceId = await runWithClaimedOriginal(operation.id, () =>
+        xero.createXeroInvoiceForBooking(bookingId, {
+          createdByMemberId,
+          repairExistingLink: true,
+          syncOperationId: operation.id,
+        }),
+      );
       if (invoiceId === null) {
         // The handler abandoned the mint (manual mark-paid provenance re-check)
         // and already closed the operation CANCELLED with the reason. Report
@@ -1565,7 +1618,6 @@ export async function retryXeroSyncOperation(
           operation,
           xero,
           refundCreditNoteRepair,
-          createdByMemberId
         );
         return { message: "Repaired Xero refund credit note follow-up actions." };
       }

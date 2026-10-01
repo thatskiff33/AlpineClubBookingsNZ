@@ -10,7 +10,7 @@ Moving the call out of the door would separate a posting from the history row
 and the transaction it records.
 
 file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1668
+lines: 1704
 reason: one ledger posting call after the guest-add history row, plus its import.
 
 file: src/lib/booking-batch-modification-service.ts
