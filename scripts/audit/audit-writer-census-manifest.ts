@@ -733,7 +733,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // 122 -> 123 (#3371): the carried-unpaid-balance record, declared as
     // `recordCarriedEditReviewChargeBalance` in
     // `edit-financial-review-carried-balance.ts` and called post-commit from
-    // `edit-financial-review-charge.ts`, awaited the same best-effort way as
+    // `edit-financial-review-charge-sync.ts`, awaited the same best-effort way as
     // the two review-charge writers it belongs with.
     // NOT `edit-financial-review-charge-request.ts`, which imports only the
     // pure `measureCarriedAskShortfall` from that module and writes no row.

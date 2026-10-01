@@ -1741,6 +1741,7 @@ describe("view-only section banner coverage (#2160)", () => {
       "docs/ARCHITECTURE.md": [
         `${f.bannerComponents} components render a banner, and ${f.optOuts} of the ${f.callSites} ViewOnlyActionButton call sites opt out`,
         `${f.staticOptOuts} pass the literal describeReason={false}`,
+        `Those ${f.optOuts} split by WHICH rule`,
         `and ${f.vouchedOptOuts} pass describeReason={!${VOUCH_PROP}}`,
         `${f.renderSiteVouchedOptOuts} by a parent's own JSX render site (#2168), ${f.shellVouchedOptOuts} by the guided-setup shell (#2324)`,
         `${f.exceptions} controls across ${f.exceptionFiles} files deliberately keep the per-button default`,

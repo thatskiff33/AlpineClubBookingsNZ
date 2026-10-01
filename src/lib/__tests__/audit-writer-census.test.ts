@@ -1348,7 +1348,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 344 -> 345 (#3371): the carried-unpaid-balance record, declared as
     // `recordCarriedEditReviewChargeBalance` in
     // `edit-financial-review-carried-balance.ts` and called post-commit from
-    // `edit-financial-review-charge.ts` - not from
+    // `edit-financial-review-charge-sync.ts` - not from
     // `edit-financial-review-charge-request.ts`, which imports only the pure
     // `measureCarriedAskShortfall`. Categorised `payment` at the site and
     // named in none of the four per-site maps, so it lands unpinned.
