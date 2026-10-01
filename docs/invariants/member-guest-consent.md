@@ -288,26 +288,26 @@ leave a stale row here.
 
 - **The booking member's own recorded dependant belongs on the member path, and
   the app never guesses which person a typed name is** (#2721). A row with no
-  `memberId` is a non-member guest: provisional under the hold policy, bumpable
-  when the lodge fills, invoiced as the deferred guest portion. A dependant put
-  there stands behind their own club's members.
+  `memberId` is a non-member guest: provisional under the hold policy, bumpable,
+  invoiced as the deferred guest portion.
 - **The candidate set is the booking member's own parent links, nothing wider** —
   the privacy half of the rule: free-text guest entry must never become a way to
-  ask the club whether a name is a member. Not the family group, lodge or
-  membership database. Matching is **exact on the normalised name** (`person-name-normalization.ts`:
+  ask whether a name is a member. Not the family group, lodge or membership
+  database. Matching is **exact on the normalised name** (`person-name-normalization.ts`:
   trim, lowercase, collapse whitespace, NFC), nothing fuzzy, phonetic or partial.
 - **A collision is resolved explicitly, per dependant.** Either the row moves to
   the member path, or the guest path continues behind a declaration naming the
   exact dependant it is not; a generic override is not a shape the field can
   hold. Two dependants whose names normalise alike need two answers; one answer
-  covers **every row carrying that name**: the question is about the name, not
-  the row.
-- **Which doors this holds on.** The create route, **on-behalf creates
-  included** (owner decision 15 Sep 2026: it protects a third party's bed, not
-  the officer's authority, so `/admin/book` asks the officer about the booking
-  member's dependants); and the policy-exception request, at submit and again at
-  approval, where that door creates the booking. **Not** the edit doors (add-guest,
-  modify-quote): #3451.
+  covers **every row carrying that name**.
+- **Which doors.** Create, **on-behalf included** (owner decision 15 Sep 2026: it
+  protects a third party's bed, not the officer's authority); the
+  policy-exception request at submit and approval, where it creates the booking;
+  and on an existing booking (owner decision 1 Oct 2026, #3451) `modify-quote`
+  and `modify`, asking about guests an edit **adds**, while
+  `POST /api/bookings/[id]/guests` refuses with a pointer to Edit Booking.
+  Existing guests are not re-asked. **Not** the edit-exception request or its
+  approval replay.
 - **The server re-resolves both from authenticated data**, taking the member ids
   that really resolved rather than trusting a row, so a forged member link, a
   fabricated or unrelated dependant id and a stale declaration are refused.

@@ -54,6 +54,21 @@ asked, with their bed held until they answer, or simply told. See
 [When somebody adds you to a booking](being-added-to-a-booking.md) for what the
 other person sees.
 
+**If a guest you add has the same name as one of your own dependants, you are
+asked which person it is** — the same question you get when you first make a
+booking. A dependant belongs on the member side of the booking, at the member
+rate; typed in as a non-member guest they are charged at non-member rates and
+may be held provisionally, without a bed reserved. So, beside the new guest:
+
+- **This is my dependant — book them as a member** changes the row to your
+  dependant as a member. If they cannot be added from here yet, the panel says
+  what has to happen first.
+- **This is a different person with the same name** keeps them as a non-member
+  guest.
+
+Only your own recorded dependants are compared, on an exact name match, and the
+people already on the booking are not asked about again.
+
 **Two things worth knowing before you change a booking somebody has agreed to.**
 Once a member has said yes, they are not asked again: moving the dates, adding
 nights, changing lodge or changing who else is coming all carry their agreement
