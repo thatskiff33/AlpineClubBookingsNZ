@@ -80,6 +80,15 @@ import {
   type NormalizedAddGuest,
 } from "@/lib/booking-modify-quote-request";
 import {
+  checkOwnDependantIdentityForParty,
+  claimedMemberPathIds,
+} from "@/lib/booking-dependant-identity";
+import {
+  dependantIdentityRefusalBody,
+  dependantIdentitySpeaksOnBehalf,
+  renamedGuestsForDependantCheck,
+} from "@/lib/booking-dependant-identity-doors";
+import {
   assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
   getBookingGuestValidationErrorResponse,
@@ -766,11 +775,56 @@ export async function POST(
     throw error;
   }
 
+  /**
+   * OWN-DEPENDANT IDENTITY (#3451, `INV-GUEST-019`; option C, "ask in place").
+   * Refusing the preview with the create route's code is what makes the edit
+   * panel ask the wizard's question; the answer comes back as
+   * `dependantIdentityDeclarations` and is re-checked here and by the save. It
+   * covers the rows this edit ADDS and existing free-text rows it RENAMES onto a
+   * new name, against the booking OWNER's dependants, never the officer's. Run
+   * on every preview — the identity-only and credit-only echoes below included —
+   * so preview and save cannot disagree about a declaration. After the
+   * owner-or-admin 403 and BEFORE the member resolution, so its answer never
+   * depends on whether another claimed id is a real member.
+   */
+  const renamedForDependantCheck = renamedGuestsForDependantCheck(
+    booking.guests,
+    guestUpdates,
+    removeGuestIds,
+  );
+  const dependantIdentityResponse = async (
+    party: ReadonlyArray<{ firstName: string; lastName: string; memberId?: string | null }>,
+    memberPathMemberIds: ReadonlySet<string>,
+  ) => {
+    const ownerMemberId = bookingOwner(booking).memberId;
+    const refusal = await checkOwnDependantIdentityForParty(prisma, {
+      bookerMemberId: ownerMemberId,
+      party: [...party, ...renamedForDependantCheck],
+      memberPathMemberIds,
+      declarations: parsed.data.dependantIdentityDeclarations,
+    });
+    return refusal
+      ? NextResponse.json(
+          dependantIdentityRefusalBody(refusal, {
+            onBehalf: dependantIdentitySpeaksOnBehalf({
+              actorIsAdmin: isAdmin,
+              actorId: session.user.id,
+              ownerMemberId,
+            }),
+            surface: "edit",
+          }),
+          { status: refusal.status },
+        )
+      : null;
+  };
+
   // Identity-only preview (#1099): a name fix never reprices, so the quote is
   // the stored state with zero deltas — no pricing engine, no capacity check,
   // safe for quoted and legacy bookings alike. #2266 routes a credit-only
   // election through the same echo for the same reason.
   if (requestIsIdentityOnly || requestIsCreditElectionOnly) {
+    const refused = await dependantIdentityResponse([], new Set());
+    if (refused) return refused;
     return NextResponse.json({
       availableCreditCents,
       newTotalPriceCents: booking.totalPriceCents,
@@ -808,6 +862,18 @@ export async function POST(
   // it plans no consent and notifies nobody, but it must resolve a cross-family
   // member or the quote it shows disagrees with what the apply path will charge.
   const memberGuestPolicy = await loadMemberGuestAddPolicy();
+  {
+    // #3451: the own-dependant guard (see `dependantIdentityResponse` above),
+    // BEFORE the member resolution and against the ids the party CLAIMS
+    // (`claimedMemberPathIds`): after it, this 409 versus the resolution's
+    // collapsed refusal answered "is that other id a real member?". The
+    // resolution below still refuses any claimed id that does not resolve.
+    const refused = await dependantIdentityResponse(
+      addGuests ?? [],
+      claimedMemberPathIds(addGuests ?? []),
+    );
+    if (refused) return refused;
+  }
 
   try {
     const { members: linkedMembers, boundary } =

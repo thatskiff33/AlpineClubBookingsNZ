@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { bookingOwner } from "@/lib/booking-owner";
+import {
+  checkOwnDependantIdentityForParty,
+  claimedMemberPathIds,
+  OwnDependantIdentityRefusedError,
+} from "@/lib/booking-dependant-identity";
+import {
+  dependantIdentitySpeaksOnBehalf,
+  standaloneAddGuestDependantRefusalMessage,
+} from "@/lib/booking-dependant-identity-doors";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import {
   PaymentSource,
@@ -427,6 +436,29 @@ export async function POST(
       // The cross-family rows this add will create, keyed by target member id.
       // Populated inside the transaction and consumed AFTER it commits.
       let memberGuestEntries = new Map<string, MemberGuestConsentWritePlanEntry>();
+      /**
+       * OWN-DEPENDANT IDENTITY (#3451, `INV-GUEST-019`; option C, "refuse with
+       * a pointer" on this door). No screen and no field for an answer, so a
+       * typed guest named as one of the booking OWNER's recorded dependants is
+       * refused, pointing at Edit Booking. After the 403, and BEFORE the member
+       * lookup against the CLAIMED ids (`claimedMemberPathIds`): after it, this
+       * 409 versus the lookup's collapsed refusal told a prober whether another
+       * claimed id was a real member. The read runs on `tx` and takes no lock.
+       */
+      {
+        const ownerMemberId = bookingOwner(booking).memberId;
+        const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(tx, {
+          bookerMemberId: ownerMemberId,
+          party: newGuests,
+          memberPathMemberIds: claimedMemberPathIds(newGuests),
+        });
+        if (dependantIdentityRefusal) {
+          throw new OwnDependantIdentityRefusedError(
+            dependantIdentityRefusal,
+            ownerMemberId,
+          );
+        }
+      }
       try {
         const { members: linkedMembers, boundary } =
           await resolveLinkedBookingMembersWithBoundary(
@@ -1541,6 +1573,22 @@ export async function POST(
     }
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
+    // #3451: the create route's code, with a sentence pointing at Edit Booking.
+    if (err instanceof OwnDependantIdentityRefusedError) {
+      return NextResponse.json(
+        {
+          code: err.refusal.code,
+          error: standaloneAddGuestDependantRefusalMessage(err.refusal, {
+            onBehalf: dependantIdentitySpeaksOnBehalf({
+              actorIsAdmin: isAdmin,
+              actorId: session.user.id,
+              ownerMemberId: err.ownerMemberId,
+            }),
+          }),
+        },
+        { status: err.refusal.status },
+      );
+    }
     if (err instanceof MembershipTypeBookingPolicyError) {
       // Finding 2 (privacy re-review of MG3 #2308). The membership-type refusal
       // is D-8's FOURTH collapsing refusal, so when it collapsed it owes the

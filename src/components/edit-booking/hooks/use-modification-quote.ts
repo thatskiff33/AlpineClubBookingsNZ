@@ -8,6 +8,7 @@ import {
 import { exceptionProposalSignatureFromJson } from "@/components/edit-booking/exception-request-payload";
 import type { QuoteResult } from "@/components/edit-booking/types";
 import { readExceptionOffer, type ExceptionOffer } from "@/lib/booking-exception-offer";
+import { isDependantIdentityRefusalCode } from "@/lib/booking-dependant-identity";
 import {
   MEMBER_GUEST_CROSS_FAMILY_REFUSAL_MESSAGE,
   MEMBER_GUEST_NOT_ADDABLE_CODE,
@@ -68,6 +69,7 @@ export function useDebouncedModificationQuote({
   setExceptionOfferState,
   setSaveOverCapacityNights,
   setSettlementMethod,
+  onDependantIdentityRefusal,
 }: {
   bookingId: string;
   /** The serialised pending modification, or null when there is nothing to price. */
@@ -89,6 +91,13 @@ export function useDebouncedModificationQuote({
     value: { date: string; availableBeds: number }[] | null,
   ) => void;
   setSettlementMethod: (value: "card" | "credit" | null) => void;
+  /**
+   * #3451 (`INV-GUEST-019`): the quote was refused because an ADDED guest shares
+   * a name with one of the booking owner's recorded dependants. The panel decides
+   * what that means for its answers — the refusal itself is already shown as
+   * `quoteError`. Must be stable (a `useCallback`), like the setters above.
+   */
+  onDependantIdentityRefusal?: (code: string) => void;
 }): void {
   const quoteTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Monotonic id per quote request so a slow, superseded response can never
@@ -125,6 +134,12 @@ export function useDebouncedModificationQuote({
               : null,
           );
           setQuote(null);
+          if (
+            onDependantIdentityRefusal &&
+            isDependantIdentityRefusalCode(data?.code)
+          ) {
+            onDependantIdentityRefusal(data.code);
+          }
           // #2562: a refused QUOTE is a real blockage on this path — the member
           // cannot save what they cannot price — so the reviewable ones open the
           // request door here rather than making them press Save to find out.
@@ -179,6 +194,7 @@ export function useDebouncedModificationQuote({
       setExceptionOfferState,
       setSaveOverCapacityNights,
       setSettlementMethod,
+      onDependantIdentityRefusal,
     ],
   );
 

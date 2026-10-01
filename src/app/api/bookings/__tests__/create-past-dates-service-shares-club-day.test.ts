@@ -160,7 +160,10 @@ vi.mock("@/lib/prisma", () => ({
     $transaction: vi.fn(async () => {
       throw new Error(REACHED_THE_TRANSACTION);
     }),
-    member: { findUnique: h.memberFindUnique },
+    // #3451: the own-dependant guard's parent-link read. This suite's party
+    // carries member ids its mocked resolution does not return, so the shared
+    // entry point reads them as free text and asks; nobody here has a dependant.
+    member: { findUnique: h.memberFindUnique, findMany: vi.fn().mockResolvedValue([]) },
     groupDiscountSetting: { findUnique: h.groupDiscountFindUnique },
     // Member self-books (no admin bypass) run the minimum-stay policy check.
     minimumStayPolicy: { findMany: vi.fn().mockResolvedValue([]) },
