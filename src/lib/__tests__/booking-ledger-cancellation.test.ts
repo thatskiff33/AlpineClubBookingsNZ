@@ -17,7 +17,7 @@ import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
 import { planCancellationChargeLines } from "@/lib/booking-ledger-cancellation-posting";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
-import { planAgreedAdjustmentLine } from "@/lib/booking-ledger-modification-posting";
+import { planAgreedAdjustmentLine, planReviewClosureShareLines } from "@/lib/booking-ledger-modification-posting";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { buildBookingLedgerRows, type BookingLedgerPosting } from "@/lib/booking-ledger-write";
 import type { ModificationPricingSide } from "@/lib/booking-modification-lines";
@@ -447,5 +447,69 @@ describe("postCancellationLedgerLines: what keeps nothing", () => {
       expect.objectContaining({ reason: "INVALID_KEPT_AMOUNT", site: "test" }),
       expect.stringContaining("#3611"),
     );
+  });
+});
+
+/**
+ * ONE STAND-IN REVERSAL BUILDER (INV-SSOT): a review closure and a cancellation
+ * take a live AGREED_ADJUSTMENT back through `agreedAdjustmentReversal`. Each
+ * caller's exact output is pinned here, field for field, as #3582's closure
+ * wrote it before the builder existed, so a divergence in the builder or in
+ * either call fails.
+ */
+describe("the stand-in reversal both a review closure and a cancellation post", () => {
+  const standIn = { id: "line-1", sign: -1 as const, quantity: 1, unitCents: 3_000, narration: "Adjustment agreed with member: share", reversesLineId: null };
+
+  it("a closure's: anchored on its task, naming the officer", () => {
+    expect(
+      planReviewClosureShareLines({
+        bookingId: "b1",
+        lodgeId: "l1",
+        manualRefundTaskId: "task-2",
+        officerMemberId: "officer",
+        note: null,
+        settlement: null,
+        rebasedFinalPriceCents: 0,
+        chargeLinesAfter: [],
+        repriceRecordsMovement: false,
+        postedAdjustmentLines: [standIn],
+      }),
+    ).toStrictEqual([
+      {
+        bookingId: "b1",
+        lodgeId: "l1",
+        side: "ADJUSTMENT",
+        kind: "AGREED_ADJUSTMENT",
+        sign: 1,
+        quantity: 1,
+        unitCents: 3_000,
+        anchorKind: "REVIEW_TASK",
+        anchorId: "task-2",
+        narration: "Reversed: Adjustment agreed with member: share",
+        postedByMemberId: "officer",
+        reversesLineId: "line-1",
+        postingKey: "reversal:line-1",
+      },
+    ]);
+  });
+
+  it("a cancellation's: anchored on the cancellation, naming nobody", () => {
+    const plan = planCancellationChargeLines({ bookingId: "b1", lodgeId: "l1", keptCents: 0, chargeLines: [], adjustmentLines: [standIn] });
+    expect(plan.kind === "lines" && plan.postings).toStrictEqual([
+      {
+        bookingId: "b1",
+        lodgeId: "l1",
+        side: "ADJUSTMENT",
+        kind: "AGREED_ADJUSTMENT",
+        sign: 1,
+        quantity: 1,
+        unitCents: 3_000,
+        anchorKind: "CANCELLATION",
+        anchorId: "b1",
+        narration: "Reversed: Adjustment agreed with member: share",
+        reversesLineId: "line-1",
+        postingKey: "reversal:line-1",
+      },
+    ]);
   });
 });

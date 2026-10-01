@@ -13,7 +13,11 @@ import {
   type ChargeLineAnchor,
   type ReversibleChargeLine,
 } from "@/lib/booking-ledger-charge-line";
-import { liveLines, type PostedAdjustmentLine } from "@/lib/booking-ledger-modification-posting";
+import {
+  agreedAdjustmentReversal,
+  liveLines,
+  type PostedAdjustmentLine,
+} from "@/lib/booking-ledger-modification-posting";
 import { cancellationFeeKey, reversalKey } from "@/lib/booking-ledger-posting-keys";
 import { ledgerLineAmountCents, type BookingLedgerPosting } from "@/lib/booking-ledger-write";
 
@@ -64,19 +68,7 @@ export function planCancellationChargeLines({
   );
   // A live stand-in for money the charge lines did not carry (§5.3) goes with
   // the stay: the kept figure already counts every cent the club holds.
-  for (const line of liveLines(adjustmentLines)) {
-    postings.push({
-      ...anchor,
-      side: "ADJUSTMENT",
-      kind: "AGREED_ADJUSTMENT",
-      sign: line.sign === 1 ? -1 : 1,
-      quantity: line.quantity,
-      unitCents: line.unitCents,
-      narration: `Reversed: ${line.narration}`,
-      reversesLineId: line.id,
-      postingKey: reversalKey(line.id),
-    });
-  }
+  for (const line of liveLines(adjustmentLines)) postings.push(agreedAdjustmentReversal(anchor, line));
   const cancellationFeeCents = changeFeesReversed ? keptCents : keptCents - changeFeeCents;
   if (cancellationFeeCents > 0) {
     postings.push({
