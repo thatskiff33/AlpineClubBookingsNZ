@@ -47,7 +47,18 @@ export type MembershipCancellationUnpaidInvoiceBlocker = {
   invoiceStatus: string;
   /** "receivable" = the club is owed; "payable" = the club owes this contact. */
   direction: "receivable" | "payable";
+  /**
+   * Hundredths of the major unit, rounded — the figure an API caller has always
+   * read. Exact only for a currency that counts in hundredths.
+   */
   amountDueCents: number;
+  /**
+   * The same balance in ten-thousandths of the major unit (#3724), which holds
+   * every currency's own precision exactly: KWD 1.234 is 12340, where
+   * `amountDueCents` can only say 123. This is what decided the balance is
+   * owing, and what the wording prints when hundredths would lose a digit.
+   */
+  amountDueTenThousandths: number;
   /** Xero currency code, or "UNKNOWN" when Xero did not report one. */
   currency: string;
   /** Date-only "YYYY-MM-DD", or null when the invoice carries no due date. */
@@ -127,21 +138,46 @@ export function isInvoiceCheckUnavailableBlocker(
  * mislabelled amount is worse than a plain one. A currency Xero did not report
  * is left off entirely rather than guessed.
  *
- * The figure is always hundredths of the MAJOR unit, whatever the currency:
- * `providerAmountToCents` scales Xero's `AmountDue` by 100 for every invoice.
- * So only a currency that really counts in hundredths gets the fixed two places.
- * Any other one (#3722) prints the stored value unpadded — a yen invoice for
- * 1200 reads "JPY 1200", not "JPY 1200.00" — because two forced decimals
- * would claim a precision the currency does not have. The minor-unit rule is
- * the one home in `club-currency-minor-unit`, not a list kept here.
+ * A currency that counts in hundredths gets the fixed two places, from
+ * `amountDueCents`, whenever that figure is exact. Anything else prints Xero's
+ * own figure from `amountDueTenThousandths`, unpadded and with no trailing
+ * zeros: a yen invoice for 1200 reads "JPY 1200", not "JPY 1200.00" (#3722),
+ * and a dinar invoice for 1.234 reads "KWD 1.234", not "KWD 1.23" (#3724).
+ * Padding to two places would claim a precision the currency does not have, and
+ * rounding to two would drop one it does. The minor-unit rule is the one home in
+ * `club-currency-minor-unit`, not a list kept here.
  */
-export function formatBlockerAmount(cents: number, currency: string): string {
+export function formatBlockerAmount(
+  blocker: Pick<
+    MembershipCancellationUnpaidInvoiceBlocker,
+    "amountDueCents" | "amountDueTenThousandths" | "currency"
+  >,
+): string {
+  const { amountDueCents, amountDueTenThousandths, currency } = blocker;
   const known = Boolean(currency) && currency !== "UNKNOWN";
+  const hundredthsAreExact =
+    amountDueTenThousandths % 100 === 0 &&
+    amountDueTenThousandths / 100 === amountDueCents;
   const amount =
-    !known || currencyHasTwoDecimalPlaces(currency)
-      ? formatCentsPlain(cents)
-      : String(cents / 100);
+    hundredthsAreExact && (!known || currencyHasTwoDecimalPlaces(currency))
+      ? formatCentsPlain(amountDueCents)
+      : formatTenThousandthsPlain(amountDueTenThousandths);
   return known ? `${currency} ${amount}` : amount;
+}
+
+/**
+ * Integer ten-thousandths as a plain decimal with no trailing zeros: 12340 is
+ * "1.234", 12000000 is "1200", 40 is "0.004". Integer arithmetic throughout, so
+ * no float ever stands between Xero's figure and the text (INV-MONEY-003).
+ */
+function formatTenThousandthsPlain(tenThousandths: number): string {
+  const sign = tenThousandths < 0 ? "-" : "";
+  const magnitude = Math.abs(tenThousandths);
+  const whole = Math.floor(magnitude / 10_000);
+  const fraction = String(magnitude % 10_000)
+    .padStart(4, "0")
+    .replace(/0+$/, "");
+  return `${sign}${whole}${fraction ? `.${fraction}` : ""}`;
 }
 
 /**
@@ -220,10 +256,7 @@ export function describeUnpaidInvoiceBlockerParts(
 
   return {
     label: `${noun} ${invoiceBlockerLabel(blocker)}`,
-    detail: `${formatBlockerAmount(
-      blocker.amountDueCents,
-      blocker.currency,
-    )} still owing (${blocker.invoiceStatus}${due})`,
+    detail: `${formatBlockerAmount(blocker)} still owing (${blocker.invoiceStatus}${due})`,
     // A bill has no receivable-view URL, so it falls back to the contact page,
     // which lists it. Every row therefore leads somewhere in Xero.
     href: blocker.xeroUrl ?? blocker.xeroContactUrl,
@@ -270,10 +303,7 @@ function listInvoiceBlockers(
     .slice(0, INVOICE_NAMES_IN_MESSAGE)
     .map(
       (blocker) =>
-        `${invoiceBlockerLabel(blocker)} (${formatBlockerAmount(
-          blocker.amountDueCents,
-          blocker.currency,
-        )})`,
+        `${invoiceBlockerLabel(blocker)} (${formatBlockerAmount(blocker)})`,
     )
     .join("; ");
   const remaining = blockers.length - INVOICE_NAMES_IN_MESSAGE;

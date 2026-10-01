@@ -26,11 +26,19 @@ import {
 } from "../import-types";
 import { RowValidator, asStr, coerceBool, nz, readCsvRows } from "../values";
 import { formatDateOnly } from "@/lib/date-only";
+import {
+  applyBundleLodgeCapacity,
+  bundleLodgeCapacity,
+  lodgeCreatedWithoutCapacityWarning,
+  loadLodgeCapacities,
+  validateBundleLodgeCapacity,
+} from "./lodge-capacity";
 
 // lodge-config category (part 1): lodges + their rooms + beds + seasons + rates
 // — the structural "multi-lodge" core. Each lodge is a self-contained folder,
 //   lodge-config/lodges/<slug>/
-//     lodge.json          { slug, name, active, travelNote, isDefault, doorCode? }
+//     lodge.json          { slug, name, active, travelNote, isDefault, doorCode?,
+//                           capacity? }  (capacity: ./lodge-capacity.ts, #3407)
 //     rooms.csv           name, sortOrder, active, notes
 //     beds.csv            roomName, name, sortOrder, active
 //     seasons.csv         name, type, startDate, endDate, active,
@@ -50,8 +58,9 @@ import { formatDateOnly } from "@/lib/date-only";
 //
 // Row validation is strict and BLOCKS apply (plan errors): malformed dates,
 // enums, and money never reach a write; blank cells are only legal where merge
-// mode would keep the existing value. Per-lodge capacity stays out of scope;
-// allocation settings are handled by the ordered companion module. ADR-001/002.
+// mode would keep the existing value. Per-lodge capacity rides in lodge.json
+// (#3407); allocation settings are handled by the ordered companion module.
+// ADR-001/002.
 
 /** Every per-lodge folder lives under this prefix. */
 export const LODGES_PREFIX = "lodge-config/lodges/";
@@ -73,6 +82,8 @@ const LODGE_FIELDS = [
   // display (#137 / #37). Travels with the lodge descriptor like the other
   // per-lodge display settings.
   "showGuestPhonesOnScreens",
+  // Not a Lodge column: see ./lodge-capacity.ts (#3407).
+  "capacity",
 ] as const;
 
 const DISPLAY_GRANULARITIES = [
@@ -259,6 +270,7 @@ interface LodgeCurrent {
   displayNameGranularity: string | null;
   displayNotice: string | null;
   showGuestPhonesOnScreens: boolean;
+  capacity: number | null; // resolved LodgeSettings.capacity (#3407)
 }
 interface SeasonCurrent {
   id: string;
@@ -301,7 +313,10 @@ async function loadLodgeBatch(db: ReadDb, slugs: string[]): Promise<LodgeBatch> 
       showGuestPhonesOnScreens: true,
     },
   });
-  const lodges = new Map(lodgeRows.map((l) => [l.slug, l]));
+  const capacities = await loadLodgeCapacities(db, lodgeRows.map((l) => l.id));
+  const lodges = new Map(
+    lodgeRows.map((l, i) => [l.slug, { ...l, capacity: capacities[i] ?? null }]),
+  );
   const lodgeIds = lodgeRows.map((l) => l.id);
 
   const [roomRows, bedRows, seasonRows, rateRows, membershipTypeRows, currentDefault] = await Promise.all([
@@ -401,12 +416,13 @@ export const lodgeConfigExporter: CategoryExporter = {
     const lodges = await ctx.db.lodge.findMany({
       orderBy: { slug: "asc" },
       select: {
-        slug: true, name: true, active: true, travelNote: true,
+        id: true, slug: true, name: true, active: true, travelNote: true,
         doorCode: true, isDefault: true,
         displayConfig: true, displayNameGranularity: true, displayNotice: true,
       showGuestPhonesOnScreens: true,
       },
     });
+    const capacities = await loadLodgeCapacities(ctx.db, lodges.map((l) => l.id));
     const rooms = await ctx.db.lodgeRoom.findMany({
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
       select: { name: true, sortOrder: true, active: true, notes: true, lodge: { select: { slug: true } } },
@@ -445,7 +461,7 @@ export const lodgeConfigExporter: CategoryExporter = {
     for (const r of rates) push(ratesBy, r.season.lodge.slug, { seasonName: r.season.name, membershipTypeKey: r.membershipType.key, ageTier: r.ageTier ?? "", pricePerNightCents: r.pricePerNightCents });
 
     const entries: BundleEntry[] = [];
-    for (const lodge of lodges) {
+    for (const [index, lodge] of lodges.entries()) {
       const paths = lodgeFolderFiles(folderSegment(lodge.slug));
       const descriptor: Record<string, unknown> = {
         slug: lodge.slug,
@@ -459,6 +475,8 @@ export const lodgeConfigExporter: CategoryExporter = {
         showGuestPhonesOnScreens: lodge.showGuestPhonesOnScreens,
       };
       if (ctx.includeDoorCodes) descriptor.doorCode = lodge.doorCode;
+      const capacity = capacities[index];
+      if (typeof capacity === "number") descriptor.capacity = capacity;
       entries.push({
         path: paths.lodge,
         category: "lodge-config",
@@ -566,6 +584,7 @@ function parseLodgeFolder(
     errors.push(`${paths.lodge}: showGuestPhonesOnScreens must be true or false`);
     delete descriptor.showGuestPhonesOnScreens;
   }
+  validateBundleLodgeCapacity(descriptor, paths.lodge, errors);
 
   const out: ParsedLodgeRows = { slug, descriptor, rooms: [], beds: [], seasons: [], rates: [] };
 
@@ -733,7 +752,12 @@ async function planLodgeConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
       const guarded = stripCleanedLiterals("lodge", slug, descriptor, data);
       for (const hit of guarded.hits) warnings.push(cleanedLiteralWarning(hit));
       const write = updateDataForMode(ctx.mode, descriptor, guarded.write);
-      const changed = changedFields(write, currentLodge);
+      const capacity = bundleLodgeCapacity(descriptor);
+      if (!currentLodge && capacity === undefined) warnings.push(lodgeCreatedWithoutCapacityWarning(slug));
+      const changed = changedFields(
+        capacity === undefined ? write : { ...write, capacity },
+        currentLodge,
+      );
       items.push({ entity: "lodge", key: slug, action: planActionFor(currentLodge, changed), changedFields: changed.length ? changed : undefined });
       // Door-code disclosure: creating with a code, or changing one.
       const writesCode =
@@ -870,11 +894,13 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
       const changed = changedFields(write, currentLodge);
       if (changed.length > 0) {
         await ctx.tx.lodge.update({ where: { id: currentLodge.id }, data: write });
-        result.updated += 1;
         if (changed.includes("doorCode")) ctx.notes.doorCodesWritten.push(slug);
-      } else {
-        result.unchanged += 1;
       }
+      const capacityChanged = await applyBundleLodgeCapacity(ctx.tx, {
+        descriptor, lodgeId: currentLodge.id, current: currentLodge.capacity, actorMemberId: ctx.actorMemberId,
+      });
+      if (changed.length > 0 || capacityChanged) result.updated += 1;
+      else result.unchanged += 1;
       lodgeId = currentLodge.id;
     } else {
       const created = await ctx.tx.lodge.create({
@@ -884,6 +910,10 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
       result.created += 1;
       if (nz(descriptor.doorCode) !== null) ctx.notes.doorCodesWritten.push(slug);
       lodgeId = created.id;
+      // #3407: born with its settings row, as Add lodge does.
+      await applyBundleLodgeCapacity(ctx.tx, {
+        descriptor, lodgeId, current: undefined, actorMemberId: ctx.actorMemberId,
+      });
     }
 
     // 2) Rooms (by lodgeId + name); keep an id map for beds.

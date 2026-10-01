@@ -149,6 +149,22 @@ export function defaultRefundMethodForPaymentSource(
 }
 
 /**
+ * `INV-PAY-101`: a cash refund note's method, and whether a caller SAID it —
+ * the one derivation the builder and the repair leg both make. A note nobody
+ * vouched for (`methodRecorded: false`) is raised unsettled rather than marked
+ * paid from an account it never touched.
+ */
+export function resolveRefundNoteMethod(
+  recorded: CashRefundMethod | undefined,
+  source: PaymentSource | null | undefined,
+): { refundMethod: CashRefundMethod; refundMethodRecorded: boolean } {
+  return {
+    refundMethod: recorded ?? defaultRefundMethodForPaymentSource(source),
+    refundMethodRecorded: recorded !== undefined,
+  };
+}
+
+/**
  * The booking-edit services' two-way `settlementMethod` ("card" | "credit") is
  * the MEMBER's choice between money back and credit kept; this is what it
  * means on the document. "Money back" is a card refund only where the payment

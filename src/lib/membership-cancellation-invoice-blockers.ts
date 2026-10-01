@@ -145,7 +145,7 @@ import {
   getInvoiceCurrency,
 } from "@/lib/finance-sync-xero-datasets/invoice-helpers";
 import logger from "@/lib/logger";
-import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { providerAmountToCents, providerAmountToTenThousandths } from "@/lib/money-provider-amount";
 import type {
   MembershipCancellationInvoiceBlocker,
   MembershipCancellationInvoiceCheckUnavailableReason,
@@ -330,12 +330,15 @@ function toUnpaidInvoiceBlocker(
     return null;
   }
 
-  // getInvoiceAmountDue reports dollars, falling back to
-  // total - paid - credited when Xero omits AmountDue. A part-allocated credit
-  // note therefore leaves the residual here, and a fully settled invoice leaves
-  // zero, which is not a blocker.
-  const amountDueCents = providerAmountToCents(getInvoiceAmountDue(invoice));
-  if (amountDueCents === null || amountDueCents <= 0) {
+  // getInvoiceAmountDue reports major units, falling back to total - paid -
+  // credited when Xero omits AmountDue, so a part-credited invoice leaves its
+  // residual and a settled one zero. "Owing" is asked of Xero's own figure, not
+  // of rounded hundredths: KWD 0.004 is zero cents, and reading it as nothing
+  // owing would archive a contact with money still on it (#3724).
+  const amountDue = getInvoiceAmountDue(invoice);
+  const amountDueTenThousandths = providerAmountToTenThousandths(amountDue);
+  const amountDueCents = providerAmountToCents(amountDue);
+  if (amountDueTenThousandths === null || amountDueCents === null || amountDueTenThousandths <= 0) {
     return null;
   }
 
@@ -351,6 +354,7 @@ function toUnpaidInvoiceBlocker(
     invoiceStatus: status,
     direction,
     amountDueCents,
+    amountDueTenThousandths,
     currency: getInvoiceCurrency(invoice),
     dueDate: toOptionalDateOnlyText(invoice.dueDate),
     // The deep-link path is the receivables one; a bill has no equivalent

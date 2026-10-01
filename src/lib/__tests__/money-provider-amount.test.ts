@@ -3,6 +3,7 @@ import {
   exactProviderAmountToCents,
   parseProviderReportAmountToCents,
   providerAmountToCents,
+  providerAmountToTenThousandths,
 } from "@/lib/money-provider-amount";
 
 /**
@@ -78,6 +79,42 @@ describe("providerAmountToCents", () => {
       expect(providerAmountToCents(value)).toBe(Math.round(value * 100));
     }
   });
+});
+
+/**
+ * #3724 — the grain a currency's own precision survives, for asking "is
+ * anything owing" of a Xero balance and for showing it.
+ */
+describe("providerAmountToTenThousandths", () => {
+  it.each([
+    [0, 0],
+    [12.34, 123400],
+    [1.234, 12340],
+    [0.004, 40],
+    [0.0001, 1],
+    [1200, 12000000],
+    [-1.234, -12340],
+  ])("converts %s to %s ten-thousandths", (value, expected) => {
+    expect(providerAmountToTenThousandths(value)).toBe(expected);
+  });
+
+  it("keeps a figure that rounds to zero hundredths", () => {
+    expect(providerAmountToCents(0.004)).toBe(0);
+    expect(providerAmountToTenThousandths(0.004)).toBe(40);
+  });
+
+  it("reads a double's representation residue as zero", () => {
+    const residue = 0.4 - 0.1 - 0.3;
+    expect(residue).toBeGreaterThan(0);
+    expect(providerAmountToTenThousandths(residue)).toBe(0);
+  });
+
+  it.each([null, undefined, "1.23", Number.NaN, Number.POSITIVE_INFINITY])(
+    "refuses %s rather than substituting a zero",
+    (value) => {
+      expect(providerAmountToTenThousandths(value)).toBeNull();
+    },
+  );
 });
 
 describe("exactProviderAmountToCents", () => {
