@@ -87,15 +87,6 @@ export class BookingLedgerPostingError extends Error {
   }
 }
 
-/**
- * The shape rules, refused here as well as in the database.
- *
- * The database constraints are the ones that cannot be bypassed; these exist
- * so a caller gets a sentence naming what it did wrong rather than a Postgres
- * constraint name, and so a unit test can prove the refusal without a
- * database. They say the same thing, deliberately — if they ever disagree,
- * the database is right.
- */
 /** The side every kind belongs to (#3611; design §4). */
 const SIDE_OF_KIND: Record<BookingLedgerPosting["kind"], BookingLedgerPosting["side"]> = {
   GUEST_NIGHT: "CHARGE",
@@ -113,6 +104,15 @@ const SIDE_OF_KIND: Record<BookingLedgerPosting["kind"], BookingLedgerPosting["s
   AGREED_ADJUSTMENT: "ADJUSTMENT",
 };
 
+/**
+ * The shape rules, refused here as well as in the database.
+ *
+ * The database constraints are the ones that cannot be bypassed; these exist
+ * so a caller gets a sentence naming what it did wrong rather than a Postgres
+ * constraint name, and so a unit test can prove the refusal without a
+ * database. They say the same thing, deliberately — if they ever disagree,
+ * the database is right.
+ */
 function assertPostable(posting: BookingLedgerPosting): void {
   // Enforced here only: the database holds no side/kind CHECK (design §4).
   if (SIDE_OF_KIND[posting.kind] !== posting.side) {
