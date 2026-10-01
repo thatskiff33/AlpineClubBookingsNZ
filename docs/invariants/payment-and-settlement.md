@@ -1689,28 +1689,26 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
 - **ONE EDIT'S CHARGE REQUEST IS RAISED BY ONE RUN AT A TIME** (#3402). Refusing
   to lower ([INV-PAY-062]) orders nothing between two runs that each derive more
   than is stored: both raised the intent, and the LAST to land won even when it
-  was smaller. A database-only predicate cannot repair it - Stripe has moved
-  before the row is written.
+  was smaller.
   - **Claim before the provider call.** A run must win the edit's
     `EditReviewChargeRaiseClaim` lease and record its intended amount under that
-    exact token before ANY Stripe call - raise, currency re-issue or first mint.
-    A loser calls nothing, arms the edit's recovery row and reports `deferred`,
-    which never closes a replay.
-  - **Release, then look again.** The holder re-derives AFTER releasing - after
-    `raised` and after `already-paid` - and raises, or traces, a share that
-    committed meanwhile. A lease found lost after a provider call is logged and
-    reported `deferred`, never `raised`.
-  - **The backstop runs.** Arming reopens a SUCCEEDED recovery row, and the
-    replay's close is fenced so a share deferred mid-replay hands the row back.
-    A terminal FAILED row is not reopened (`INV-PAY-057`).
-  - **The raise writes amounts, never status**, and only onto an uncaptured
-    row, so a payment webhook landing mid-raise stands.
+    exact token before ANY Stripe call. A loser calls nothing, arms the edit's
+    recovery row and reports `deferred`, which never closes a replay.
+  - **Release, then look again**, raising for a share that committed meanwhile.
+    After `already-paid` the holder looks again only if the recovery row is
+    dead, so each uncollected total is audited ONCE, and a paid request covering
+    every share not at all. A lease lost after a provider call reports
+    `deferred`, never `raised`.
+  - **The backstop runs.** Arming reopens a SUCCEEDED recovery row; the replay's
+    close and hand-back are fenced on its retry time and exact attempt. A
+    terminal FAILED row is not reopened (`INV-PAY-057`).
+  - **The raise writes amounts, never status**, onto a live, uncaptured
+    ADDITIONAL row only: a webhook landing mid-raise stands, and a declined
+    request KEEPS FAILED (still owed, still payable).
   - **A lease, never a lock**: nothing is held across Stripe and no advisory key
-    is taken; a token older than `EDIT_REVIEW_CHARGE_RAISE_LEASE_MS` is taken
-    over, safe because the derived total only grows and a raise is absolute.
-  - **Stated limits** - a holder alive past the lease, a crash between Stripe
-    accepting and the row write, per-instance clocks, and the previous colour
-    during a deploy's drain - are in
+    is taken; an expired token is taken over, safe because the derived total
+    only grows and a raise is absolute.
+  - **Stated limits**, ordering and interleavings:
     [`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md).
   - Home: `edit-financial-review-charge-raise-claim.ts`,
     `edit-financial-review-charge-sync.ts` and

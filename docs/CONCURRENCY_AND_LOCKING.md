@@ -3238,15 +3238,23 @@ So the claim is taken BEFORE the provider call, on `EditReviewChargeRaiseClaim`
    answer (`amount` on the returned intent), not from the figure asked for; a
    currency re-issue and a first mint write the amount they REQUESTED, which their
    amount-carrying keys make the amount a replayed key returns. The raise writes
-   AMOUNTS ONLY, through `writeRaisedAdditionalRequestAmount`, and only onto a row
-   that is not captured: a `payment_intent.succeeded` webhook landing between
-   Stripe accepting the new amount and this write is not reverted to PENDING, and
-   the run reports `already-paid` (the member paid the new amount);
+   AMOUNTS ONLY, through `writeRaisedAdditionalRequestAmount`, and only onto a
+   live (not withdrawn) ADDITIONAL row that is not captured: a
+   `payment_intent.succeeded` webhook landing between Stripe accepting the new
+   amount and this write is not reverted to PENDING, and the run reports
+   `already-paid` (the member paid the new amount). A declined card's FAILED row
+   KEEPS FAILED when raised (the old upsert reset it to PENDING): FAILED is the
+   ledger's still-owed shape, which chasing and the outstanding-ask readers treat
+   like PENDING, and the intent behind it stays payable. A row an officer
+   withdrew in that window (#3528) is not written and the run defers;
 5. **release** by exact token, then **re-derive**: a run that lost the claim
    committed its share before trying to claim, which was before this release, so
-   this read sees it and the holder raises again (up to three passes). It does so
-   after `already-paid` too, comparing against the total its audit row recorded,
-   so a share that deferred to a holder that found the request paid is traced. A
+   this read sees it and the holder raises again (up to three passes). After
+   `already-paid` it looks again ONLY when the edit's recovery row is dead
+   (terminal FAILED): otherwise the deferring share armed that row, and its
+   replay writes the share's `ask-closed` audit — looking here too wrote it
+   twice. A paid request that already covers every settled share is reported
+   `already-paid` with no audit at all, since nothing is uncollected. A
    release that finds the lease already taken over AFTER a provider call is logged
    at error level and reported `deferred`, never `raised`: this run's absolute
    amount may have landed after its successor's.
@@ -3268,9 +3276,14 @@ creates the row and its replay finds the holder already raised - wrote nothing
 that would ever run, and a later deferred or refused share was lost. The helper
 reopens a SUCCEEDED row (PENDING, due now, attempts reset) and never a PROCESSING
 one, which a second worker could then claim; on a PROCESSING row it moves only
-`nextRetryAt`, and the replay's close is fenced on the `nextRetryAt` it claimed
-with, so a share deferred onto a running replay - after its last re-derivation -
-hands the row back to PENDING instead of being closed with it. A terminal FAILED
+`nextRetryAt` — BEFORE reopening, an order under which no interleaving with a
+replay's close leaves the row unarmed — and the replay's close is fenced on the
+`nextRetryAt` it claimed with, so a share deferred onto a running replay - after
+its last re-derivation - hands the row back to PENDING instead of being closed
+with it. The close and the hand-back are also fenced on the attempt's
+`processingStartedAt` (the stale-worker reaper's own fence), so a worker reaped
+and re-claimed while stalled can neither close nor reset its successor's live
+claim. A terminal FAILED
 row is not reopened: its death handed the edit to the booking-vs-Xero repair pass
 and withdrew the live ask (`INV-PAY-057`), and a fresh card request on top would be
 the two-instrument state that rule removes. A share that arrives after that is the

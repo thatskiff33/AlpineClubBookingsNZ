@@ -8,4 +8,5 @@
   job finishes the raise. A raise Stripe refuses changes nothing and is retried
   by that same job, which now reopens itself if an earlier run had already
   finished. A member paying at the very moment the request is raised is no
-  longer shown as unpaid.
+  longer shown as unpaid, and an officer is no longer told twice - or about
+  $0.00 - to collect a share the member's paid request could not include.
