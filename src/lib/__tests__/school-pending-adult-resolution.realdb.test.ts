@@ -121,6 +121,8 @@ it("runs the pending-adult database proof in CI", () => {
     expect(reservations.every((row) => row.adultCount + hold.guests.length === 3)).toBe(true);
     const named = hold.guests.find((guest) => guest.firstName === "Beth")!;
     expect(named.priceCents).toBe(201);
+    const nonMemberType = await prisma.membershipType.findUniqueOrThrow({ where: { key: "NON_MEMBER" } });
+    expect(named.rateMembershipTypeId).toBe(nonMemberType.id);
     expect(named.nights.map((night) => night.priceCents).sort()).toEqual([100, 101]);
     expect(named.nights.every((night) => night.priceSource === "EVEN_SPLIT")).toBe(true);
     expect(hold.guests.reduce((sum, guest) => sum + guest.priceCents, 0) + 200).toBe(601);

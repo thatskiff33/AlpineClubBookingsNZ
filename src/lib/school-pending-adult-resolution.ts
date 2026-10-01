@@ -11,6 +11,8 @@ import { prisma } from "@/lib/prisma";
 import { resolveBookingGuestDietary, resolveBookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { areOldSchoolAdultsRuntimesStopped } from "@/lib/pending-school-adults-gate";
 import { storedSchoolTeacherListSchema } from "@/lib/school-teacher-schema";
+import { resolveGuestRateMembershipTypes } from "@/lib/membership-type-policy";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 /** Replace accepted anonymous slots with real names without changing the deal. */
 export async function resolveAcceptedSchoolPendingAdults(input: {
@@ -169,6 +171,12 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
     if (claimed.count !== 1) {
       throw new BookingRequestError("This request changed while adults were being named. Reload and try again.", 409);
     }
+    // Match the held-booking and approval writers' immutable rate-type snapshot.
+    // The accepted cents stay fixed; these adults have no member identity.
+    const ratedTeachers = await resolveGuestRateMembershipTypes(tx, {
+      seasonYear: seasonYearOfStoredDate(hold.checkIn),
+      guests: proposed.map((teacher) => ({ ...teacher, isMember: false })),
+    });
     const dietaryWrites = await resolveBookingGuestDietary(
       tx, dietarySeeding, proposed.map(() => ({ memberId: null })),
     );
@@ -183,6 +191,7 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
             lastName: teacher.lastName,
             ageTier: AgeTier.ADULT,
             isMember: false,
+            rateMembershipTypeId: ratedTeachers[index]!.rateMembershipTypeId,
             stayStart: hold.checkIn,
             stayEnd: hold.checkOut,
             nights: buildApprovalGuestNights({ checkIn: hold.checkIn, checkOut: hold.checkOut, priceCents }),

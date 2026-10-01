@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   reservationCreateMany: vi.fn(),
   memberFindFirst: vi.fn(),
   parseQuoteOptions: vi.fn(),
+  resolveRates: vi.fn(),
   lockOrder: [] as string[],
 }));
 
@@ -43,6 +44,7 @@ vi.mock("@/lib/booking-request", () => ({
   linkedGuestMemberMap: () => new Map(),
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
+vi.mock("@/lib/membership-type-policy", () => ({ resolveGuestRateMembershipTypes: h.resolveRates }));
 vi.mock("@/lib/member-dietary-booking-writes", async (importOriginal) => {
   const actual = await importOriginal() as typeof import("@/lib/member-dietary-booking-writes");
   return {
@@ -101,6 +103,9 @@ beforeEach(() => {
   h.requestUpdateMany.mockResolvedValue({ count: 1 });
   h.guestCreate.mockResolvedValue({ id: "new-guest" });
   h.reservationDeleteMany.mockResolvedValue({ count: 1 });
+  h.resolveRates.mockImplementation(async (_db, { guests }) =>
+    guests.map((guest: object) => ({ ...guest, rateMembershipTypeId: "non-member-type", rateSource: "NON_MEMBER_DEFAULT" })),
+  );
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -120,7 +125,7 @@ describe("accepted school pending-adult identity resolution", () => {
       data: expect.objectContaining({ pendingAdultCount: 0, teachers: expect.arrayContaining([{ firstName: "Beth", lastName: "Teacher", email: null }]) }),
     }));
     expect(h.guestCreate).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ firstName: "Beth", lastName: "Teacher", priceCents: 100 }),
+      data: expect.objectContaining({ firstName: "Beth", lastName: "Teacher", priceCents: 100, rateMembershipTypeId: "non-member-type" }),
     }));
     expect(h.reservationDeleteMany).toHaveBeenCalledOnce();
     expect(h.reservationCreateMany).not.toHaveBeenCalled();
