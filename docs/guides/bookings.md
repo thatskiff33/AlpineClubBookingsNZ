@@ -85,15 +85,19 @@ date-only lodge night (no times), matching the rules in
 
 ### Adding a guest who shares a name with the member's dependant (#3451)
 
-When you add a typed (non-member) guest on **Edit Booking** and the name exactly
-matches one of the **booking owner's** recorded dependants, the Guests card asks
+When you add a typed (non-member) guest on **Edit Booking**, or retype an
+existing one's name, and the name exactly matches one of the **booking owner's**
+recorded dependants, the Guests card asks
 you which person it is — the same question the booking screen asks when you book
 on a member's behalf. **This is {name}'s dependant — book them as a member**
 moves the row onto the member side when that dependant is in the member's family
 group; otherwise it says to put them in the group under **Membership** first and
 come back to the booking. **This is a different person with the same name**
 keeps them as a non-member guest. Only the owner's own dependants are compared,
-never yours, and the guests already on the booking are not asked about again.
+never yours, and guests whose names you have not changed are not asked about
+again. If the change then needs **Request Booking Officer approval**, the answer
+travels with the request, and approving it checks the answer again against the
+member's records as they stand then.
 
 A guest added through the API rather than the edit panel
 (`POST /api/bookings/[id]/guests`) is refused instead, with a message naming the

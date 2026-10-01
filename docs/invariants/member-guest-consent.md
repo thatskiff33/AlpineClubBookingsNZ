@@ -301,13 +301,12 @@ leave a stale row here.
   hold. Two dependants whose names normalise alike need two answers; one answer
   covers **every row carrying that name**.
 - **Which doors.** Create, **on-behalf included** (owner decision 15 Sep 2026: it
-  protects a third party's bed, not the officer's authority); the
-  policy-exception request at submit and approval, where it creates the booking;
-  and on an existing booking (owner decision 1 Oct 2026, #3451) `modify-quote`
-  and `modify`, asking about guests an edit **adds**, while
-  `POST /api/bookings/[id]/guests` refuses with a pointer to Edit Booking.
-  Existing guests are not re-asked. **Not** the edit-exception request or its
-  approval replay.
+  protects a third party's bed, not the officer's authority); both
+  policy-exception requests, at submit and again at approval against the frozen
+  answers; and on an existing booking (owner decision 1 Oct 2026, #3451)
+  `modify-quote` and `modify`, asking about guests an edit **adds** or
+  **renames** onto a new name, while `POST /api/bookings/[id]/guests` refuses
+  with a pointer to Edit Booking. Untouched guests are not re-asked.
 - **The server re-resolves both from authenticated data**, taking the member ids
   that really resolved rather than trusting a row, so a forged member link, a
   fabricated or unrelated dependant id and a stale declaration are refused.

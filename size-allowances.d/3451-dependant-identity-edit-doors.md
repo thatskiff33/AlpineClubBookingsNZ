@@ -13,8 +13,11 @@ which is why each growth is a call site and its comment rather than logic:
   components, not a copy.
 
 file: src/app/api/bookings/[id]/modify-quote/route.ts
-lines: 2407
-reason: one guarded call and the hoisted set of member ids that really resolved.
+lines: 2430
+reason: one local guard helper, called twice — before the name-fix-only and
+  credit-only echoes (so preview and save cannot disagree about an answer) and
+  after the member resolution — plus the hoisted set of member ids that really
+  resolved.
   It cannot leave this handler, because everything it reads is decided here and
   nowhere else: the resolved ids come out of the member resolution twenty lines
   above, the owner-or-admin 403 must already have run (or the refusal would
@@ -39,7 +42,7 @@ reason: the guard has to run where this route resolves its members, inside the
   answers it sits with the route's other ordered refusal branches.
 
 file: src/lib/booking-modify-plan.ts
-lines: 3181
+lines: 3183
 reason: the save half of the guard sits directly after the planner's member
   resolution, because that is the only place the ids that really resolved exist
   on the save path and the only position that is after the D-8 refusals and
@@ -48,9 +51,32 @@ reason: the save half of the guard sits directly after the planner's member
   "fix" into a refusal at approval of a guest already answered for.
 
 file: src/components/edit-booking-panel.tsx
-lines: 2167
+lines: 2174
 reason: the panel owns the added-guest state, the payload builder, the debounced
   quote and the save handler, and the answers have to reach all four. The logic
   was moved out to the new hook and component; what is left is the wiring — the
   hook call, one payload field, one callback to the quote hook, one branch in the
   save refusal handler and the component in the guests card's new slot.
+
+file: src/app/api/bookings/[id]/exception-requests/route.ts
+lines: 303
+reason: the request schema gains the answers field and the call hands the
+  service the booking owner and the answers. The schema is the door's whole
+  input contract and the owner is read from the booking this handler already
+  loaded; there is nothing to move out.
+
+file: src/lib/booking-exception-request-service.ts
+lines: 2430
+reason: the edit's exception request asks the own-dependant question about the
+  guests it adds and freezes the answers beside the delta. Both belong inside
+  `createModificationExceptionRequest`, beside the create-door path that does
+  the same thing, because they must run before the proposal is frozen and write
+  into the same requestedChanges document the approval reads back.
+
+file: src/lib/booking-exception-approval.ts
+lines: 1239
+reason: the approval reads the frozen answers in the same row read that
+  verifies the delta, replays them with it, and translates the planner's
+  refusal into the officer's send-it-back refusal. Each is a few lines beside
+  the code it extends; splitting would separate the delta from the answers that
+  travel with it.
