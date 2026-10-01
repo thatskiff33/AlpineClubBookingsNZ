@@ -5,11 +5,16 @@
 --
 -- Purely additive EXPAND: one enum value, catalog-only, no table lock, no DML.
 -- The new colour starts writing it in the same release, and that is safe for
--- the draining colour because no read it makes can return such a row: its
--- ledger reads ask for anchorKind CONFIRMATION, anchorKind PAYMENT_TRANSACTION
--- or PAYMENT_REFUND, or kind CREDIT_APPLIED/CREDIT_ISSUED, and a
--- CANCELLATION_FEE line is none of those. Nothing else in that release reads
--- BookingLedgerLine.
+-- the draining colour because no read it makes can return such a row. Every
+-- BookingLedgerLine read in the release before this one (main, plus #3582 if it
+-- ships first) is filtered, all in src/lib/booking-ledger-read.ts:
+--   anchorKind CONFIRMATION                     (bookingHasConfirmationLines)
+--   anchorKind PAYMENT_TRANSACTION, PAYMENT_REFUND (findPostedSettlementLines)
+--   kind CREDIT_APPLIED, CREDIT_ISSUED          (findPostedCreditLines)
+--   kind GUEST_NIGHT, PROMOTION                 (findPostedChargeLines, #3582)
+--   kind AGREED_ADJUSTMENT                      (findPostedAdjustmentLines, #3582)
+-- A CANCELLATION_FEE line is anchored CANCELLATION and is its own kind, so none
+-- of them returns it, and no unfiltered read of the table exists.
 --
 -- Nothing in this migration uses the value, so PostgreSQL's refusal to use a
 -- label in the transaction that added it does not arise. PostgreSQL cannot
