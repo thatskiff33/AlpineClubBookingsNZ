@@ -781,18 +781,20 @@ does.
 
 Every mutation of the encrypted integration-credential store names its writer,
 and the writer is a person or a NAMED background actor, never an absence.
-Decided on [#2723](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2723),
-which carries the before-measurement.
+Decided on [#2723](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2723).
+Since [#3454](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3454)
+the store holds the Xero OAuth token set, and the two-factor secret's enrolment
+and erasure clear follow the same contract (`two-factor-audit.ts`).
 
 - **`actor` is a required argument on every mutator**, so a write with no
-  attribution does not compile. Omission used to be the default, and most call
-  sites took it, storing the `null` a background write stores.
+  attribution does not compile.
 - **A system write NAMES itself** from the closed `CREDENTIAL_SYSTEM_ACTORS`
-  list, so the row says WHICH background writer touched the secret, not merely
-  that no person did. `assertCredentialActor` is the runtime half, and an
-  `admin` actor carries a non-empty member id.
+  list, so the row says WHICH background writer touched the secret.
+  `assertCredentialActor` is the runtime half, and an `admin` actor carries a
+  non-empty member id.
 - **The secret and its audit row are ONE local transaction**, on the same
-  client, so a failed audit rolls the secret back.
+  client, so a failed audit rolls the secret back. A change caused by another —
+  the Xero verify-reset — joins that write's transaction and names it as `cause`.
 - **A stale write LOSES.** Every set and delete declares what it expected to
   find, and a compare-and-set claims the exact `(ciphertext, iv, authTag)` tuple
   it read. A loser changes nothing and records nothing.
@@ -800,10 +802,8 @@ which carries the before-measurement.
   freshness marker whose answer would not change.
 - **No plaintext reaches audit, log or error output.** The payload is built from
   a type with no field a value fits into, and the store calls no logger — a
-  property of its own doors, not of a redactor, since `INV-PRIV-011` is blind to
-  any door that never calls one.
-- **The proof is mechanical, over every DIRECT CALL of a mutator** rather than
-  every function that ends up changing a credential.
+  property of its own doors, not of a redactor (`INV-PRIV-011`).
+- **The proof is mechanical, over every DIRECT CALL of a mutator.**
   `credential-actor-census.test.ts` walks the tree; its scanner test proves a
   seeded actorless writer and a seeded bypass are reported. A wrapper hides its
   callers, soundly: it requires an actor, so the type covers them.
