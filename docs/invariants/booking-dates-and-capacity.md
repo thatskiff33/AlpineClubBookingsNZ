@@ -733,7 +733,9 @@ derivation).
   warning in the page, CSV, and PDF. All Reports money presentation preserves
   exact integer cents.
   Occupancy is the deliberate exception within the page: it stays limited to
-  PAID/COMPLETED and continues to exclude custodian occupancy (#2286).
+  PAID/COMPLETED and continues to exclude custodian occupancy (#2286). Net
+  Collected Cash is the second: it counts bookings of any status and never a
+  deleted one, through `isInNetCollectedBookingScope` (#3372 decision A).
 
 ## Capacity and allocation
 

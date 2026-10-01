@@ -5,8 +5,10 @@
   deleted. It now counts every booking staying in the selected range, whatever
   its status, and leaves deleted bookings out: the rule the admin dashboard,
   the Payments page and Reports already use (#3372). So the figure **goes up**
-  by any cancellation fee the club kept on a cancelled booking, and **goes
-  down** by any payment on a deleted booking. The figure is worked out by the
+  by any cancellation fee the club kept on a cancelled booking. (It would also
+  drop a deleted booking's payment, but the admin delete only acts on bookings
+  already cancelled, which this figure never counted before, so in practice
+  that changes nothing.) The figure is worked out by the
   same calculation as those three pages. Its "may understate" warning now
   checks the same bookings the figure counts, in the same words Reports and the
   Payments page use. The card is now titled "Net Collected Cash", as it is on

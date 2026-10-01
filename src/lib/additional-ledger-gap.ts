@@ -82,8 +82,11 @@ export function summarizeAdditionalLedgerGap(
 }
 
 /**
- * #3372 / #3637: the one Prisma read of a payment for a "Net Collected Cash"
- * figure and the ledger-gap warning beside it - the columns
+ * #3372 / #3637: the shared Prisma select for a payment read behind a "Net
+ * Collected Cash" figure and its ledger-gap warning, used by Reports and Finance.
+ * The payments board and the dashboard keep their own selects (the board loads
+ * transactions of every kind for its list), and the compiler holds all of them
+ * to the columns below - the columns
  * `summarizeCollectedCash` reads, `summarizeAdditionalLedgerGap`'s inputs, and
  * the booking's `deletedAt` for the Net Collected booking scope. A surface may
  * widen `booking.select` with what its own filters need.
