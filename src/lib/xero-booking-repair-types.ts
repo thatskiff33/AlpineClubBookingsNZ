@@ -36,6 +36,9 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   // officer resolved the operation in Xero and the club's records hold no
   // document for it: done, never re-run, but still seen.
   "RESOLVED_IN_XERO_BY_OFFICER",
+  // #3548: a completed refund-note row whose note has neither its settling
+  // payment nor a skip on record, or is part-settled. Never auto-applied.
+  "REFUND_CREDIT_NOTE_UNSETTLED",
 ] as const;
 
 export type XeroBookingRepairFindingCode =
@@ -58,6 +61,8 @@ export const XERO_BOOKING_REPAIR_ACTION_TYPES = [
   "AUTO_REFUND_LATE_CAPTURED_PAYMENT",
   // #3635: the invoice, paid from Stripe, recording a kept late capture.
   "QUEUE_KEPT_LATE_CAPTURE_INVOICE",
+  // #3548: operator-applied only (`--apply-action`), through the one settle.
+  "SETTLE_REFUND_CREDIT_NOTE",
   "MARK_MANUAL_REVIEW",
 ] as const;
 
@@ -423,6 +428,13 @@ export interface BookingCancellationRefundRecoveryRecord {
 export interface BookingClassificationContext {
   booking: BookingRepairRecord;
   paymentLinks: XeroObjectLinkRecord[];
+  /**
+   * #3548 round 3: the payment's `REFUND_PAYMENT` links ACTIVE OR NOT
+   * (`refundPaymentLinkWhere`) - `paymentLinks` holds active links only, and
+   * these are single-active per payment - so the unsettled-refund-note finding
+   * reads the same evidence as the hardening report.
+   */
+  paymentRefundPaymentLinks: XeroObjectLinkRecord[];
   bookingLinks: XeroObjectLinkRecord[];
   modificationLinksById: Map<string, XeroObjectLinkRecord[]>;
   paymentOperations: XeroOperationRecord[];

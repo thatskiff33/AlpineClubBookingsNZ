@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 import { DEFAULT_SCHOOL_GROUP_SOFT_CAP } from "@/lib/school-booking-constants";
@@ -175,6 +176,114 @@ export async function loadHutLeaderLookaheadDays(
   return settings.hutLeaderLookaheadDays;
 }
 
+/**
+ * The settings row a NEW lodge is born with (#3407): its own row, keyed by the
+ * lodge id, carrying the capacity the officer typed on Add lodge. Written
+ * inside the lodge-create transaction so a lodge never exists without one.
+ *
+ * Always the lodge's OWN row, never the legacy "default" one, whatever state
+ * that row is in. `loadLodgeCapacityOverride` reads an own row first, so this
+ * is the row that decides; and claiming an unlinked legacy row here would take
+ * the capacity it serves away from the lodge that was relying on it.
+ * `updateLodgeSettings` below targets an existing own row for the same reason,
+ * so a later edit on the lodge hub lands on the row the resolver reads.
+ * `hutLeaderLookaheadDays` is left at its column default: it is a club-wide
+ * knob read only from the legacy row.
+ */
+export async function createNewLodgeSettings(
+  tx: Pick<Prisma.TransactionClient, "lodgeSettings">,
+  input: {
+    lodgeId: string;
+    capacity: number;
+    updatedByMemberId: string;
+    // Only a config import passes it (see writeImportedLodgeCapacity).
+    schoolGroupSoftCap?: number | null;
+  },
+): Promise<void> {
+  await tx.lodgeSettings.create({
+    data: {
+      id: input.lodgeId,
+      lodgeId: input.lodgeId,
+      capacity: input.capacity,
+      updatedByMemberId: input.updatedByMemberId,
+      ...(input.schoolGroupSoftCap != null
+        ? { schoolGroupSoftCap: input.schoolGroupSoftCap }
+        : {}),
+    },
+    select: { id: true },
+  });
+}
+
+/**
+ * A config import's capacity write (#3407): the capacity a bundle carries for
+ * one lodge, written inside the import transaction. It follows the per-lodge
+ * rule in docs/multi-lodge/lodge-scoping-contract.md, as the sibling
+ * bed-allocation importer does:
+ *
+ * - a lodge the import has just created is born through
+ *   `createNewLodgeSettings`, exactly as Add lodge does;
+ * - an existing lodge with its own row is edited there;
+ * - the legacy "default" row is edited ONLY when it is already linked to this
+ *   lodge;
+ * - otherwise the lodge gets its own row, and the legacy row is left untouched.
+ *
+ * It never claims an unlinked legacy row. An unlinked row serves EVERY lodge
+ * without an own row (a guided-setup install writes one), so claiming it for
+ * one lodge would silently take the figure away from the others, the default
+ * lodge included, with nothing in the preview to say so (#3407 round-3
+ * review, F1). When that unlinked row is what was serving this lodge, its
+ * school-group soft cap is carried onto the new own row, because an own row
+ * is read first and would otherwise reset the lodge's soft cap to the code
+ * default. A legacy row linked to another lodge never served this one, so
+ * nothing is copied from it.
+ *
+ * Nothing else in a config import writes a `LodgeSettings` row: the model is a
+ * model-level exclusion (`MODEL_LEVEL_EXCLUSIONS`), so this is the only path.
+ */
+export async function writeImportedLodgeCapacity(
+  tx: Pick<Prisma.TransactionClient, "lodgeSettings">,
+  input: {
+    lodgeId: string;
+    capacity: number;
+    updatedByMemberId: string;
+    lodgeCreatedByThisImport: boolean;
+  },
+): Promise<void> {
+  const base = {
+    lodgeId: input.lodgeId,
+    capacity: input.capacity,
+    updatedByMemberId: input.updatedByMemberId,
+  };
+  if (input.lodgeCreatedByThisImport) return createNewLodgeSettings(tx, base);
+
+  const edit = (id: string) =>
+    tx.lodgeSettings.update({
+      where: { id },
+      data: { capacity: input.capacity, updatedByMemberId: input.updatedByMemberId },
+      select: { id: true },
+    });
+  const ownRow = await tx.lodgeSettings.findUnique({
+    where: { id: input.lodgeId },
+    select: { id: true },
+  });
+  if (ownRow) {
+    await edit(input.lodgeId);
+    return;
+  }
+  const legacy = await tx.lodgeSettings.findUnique({
+    where: { id: LODGE_SETTINGS_ID },
+    select: { lodgeId: true, schoolGroupSoftCap: true },
+  });
+  if (legacy && legacy.lodgeId === input.lodgeId) {
+    await edit(LODGE_SETTINGS_ID);
+    return;
+  }
+  return createNewLodgeSettings(tx, {
+    ...base,
+    schoolGroupSoftCap: legacy && legacy.lodgeId === null ? legacy.schoolGroupSoftCap : null,
+  });
+}
+
 export async function updateLodgeSettings(input: {
   capacity: number | null;
   hutLeaderLookaheadDays: number;
@@ -191,18 +300,33 @@ export async function updateLodgeSettings(input: {
   );
   const softCap = input.schoolGroupSoftCap ?? null;
 
-  const legacy = await prisma.lodgeSettings.findUnique({
-    where: { id: LODGE_SETTINGS_ID },
-    select: { lodgeId: true },
-  });
+  const [legacy, ownRow] = await Promise.all([
+    prisma.lodgeSettings.findUnique({
+      where: { id: LODGE_SETTINGS_ID },
+      select: { lodgeId: true },
+    }),
+    input.lodgeId && input.lodgeId !== LODGE_SETTINGS_ID
+      ? prisma.lodgeSettings.findUnique({
+          where: { id: input.lodgeId },
+          select: { id: true },
+        })
+      : Promise.resolve(null),
+  ]);
   // The legacy row keeps serving the lodge it was soft-linked to in the
   // phase-2 backfill (and single-lodge clubs); other lodges get their own
   // row keyed by lodge id, so overrides can never collide.
+  //
+  // A lodge that already HAS its own row is edited there, whatever the legacy
+  // row says (#3407). The reader (`loadLodgeCapacityOverride`) prefers an own
+  // row unconditionally, so writing the legacy row instead would save a figure
+  // the resolver never reads. Every lodge created since #3407 has an own row
+  // from birth (`createNewLodgeSettings`), which is what makes this reachable.
   const targetsLegacyRow =
-    !input.lodgeId ||
-    !legacy ||
-    legacy.lodgeId === null ||
-    legacy.lodgeId === input.lodgeId;
+    !ownRow &&
+    (!input.lodgeId ||
+      !legacy ||
+      legacy.lodgeId === null ||
+      legacy.lodgeId === input.lodgeId);
 
   if (targetsLegacyRow) {
     const row = await prisma.lodgeSettings.upsert({
@@ -241,10 +365,19 @@ export async function updateLodgeSettings(input: {
     };
   }
 
-  const [, ownRow] = await prisma.$transaction([
-    prisma.lodgeSettings.update({
+  const [, savedOwnRow] = await prisma.$transaction([
+    // An upsert, not an update: since #3407 an own row can exist while the
+    // legacy row does not (a club whose legacy row was never created), and the
+    // club-wide lookahead still belongs on the legacy row. Created unlinked with
+    // no capacity, it serves no lodge a figure.
+    prisma.lodgeSettings.upsert({
       where: { id: LODGE_SETTINGS_ID },
-      data: {
+      create: {
+        id: LODGE_SETTINGS_ID,
+        hutLeaderLookaheadDays: lookahead,
+        updatedByMemberId: input.updatedByMemberId,
+      },
+      update: {
         hutLeaderLookaheadDays: lookahead,
         updatedByMemberId: input.updatedByMemberId,
       },
@@ -269,9 +402,10 @@ export async function updateLodgeSettings(input: {
   ]);
 
   return {
-    capacity: ownRow.capacity,
+    capacity: savedOwnRow.capacity,
     hutLeaderLookaheadDays: lookahead,
-    schoolGroupSoftCap: ownRow.schoolGroupSoftCap ?? DEFAULT_SCHOOL_GROUP_SOFT_CAP,
-    updatedAt: ownRow.updatedAt,
+    schoolGroupSoftCap:
+      savedOwnRow.schoolGroupSoftCap ?? DEFAULT_SCHOOL_GROUP_SOFT_CAP,
+    updatedAt: savedOwnRow.updatedAt,
   };
 }

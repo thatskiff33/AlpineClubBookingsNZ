@@ -433,8 +433,9 @@ describe.each(CLUB_DAY_CASES)(
       // CT-5 (#2869) made the builder a pure function of its inputs, so the
       // clock read moved to the caller. What is asserted here is therefore the
       // caller's DERIVATION — `xeroDocumentDateForClubToday(<the club zone>)`,
-      // character-for-character what `createXeroRefundPaymentForInvoice` and
-      // `createXeroRefundCreditNote` pass — plus the pass-through itself.
+      // character-for-character what `createXeroCreditNote` passes on a first
+      // attempt (a later leg dates it from the note itself, #3548) — plus the
+      // pass-through itself.
       const payment = buildRefundCreditNotePayment({
         paymentId: "pay_local",
         creditNoteId: "cn_1",

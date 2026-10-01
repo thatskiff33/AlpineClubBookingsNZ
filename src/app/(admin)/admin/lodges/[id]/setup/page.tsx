@@ -25,6 +25,12 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
+import {
+  WizardCapacityField,
+  wizardRoomsCapacityLine,
+  WizardFinishHeading,
+  useWizardCapacity,
+} from "./_components/wizard-capacity";
 
 // New-lodge setup wizard (ADR-003 follow-up, implementation-plan "Future
 // Enhancements"): a guided flow over the existing hub building blocks —
@@ -34,7 +40,7 @@ import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 // reuses already-validated APIs; the wizard adds no new server surface.
 // Steps are gated by the same module flags as the hub, and every step can
 // be skipped — an unconfigured lodge is safe because it resolves to
-// capacity 0 (phase 3).
+// capacity 0 (phase 3). Safe is not ready (#3407): see ./_components/wizard-capacity.
 
 interface LodgeRecord {
   id: string;
@@ -81,10 +87,18 @@ interface ChoreRecord {
   active: boolean;
 }
 
-type StepKey = "identity" | "rooms" | "lockers" | "seasons" | "chores" | "finish";
+type StepKey =
+  | "identity"
+  | "capacity"
+  | "rooms"
+  | "lockers"
+  | "seasons"
+  | "chores"
+  | "finish";
 
 const ALL_STEPS: Array<{ key: StepKey; label: string }> = [
   { key: "identity", label: "Identity" },
+  { key: "capacity", label: "Capacity" },
   { key: "rooms", label: "Rooms & Beds" },
   { key: "lockers", label: "Lockers" },
   { key: "seasons", label: "Seasons & Rates" },
@@ -200,6 +214,8 @@ export default function LodgeSetupWizardPage() {
     () =>
       ALL_STEPS.filter((candidate) => {
         if (candidate.key === "rooms") return modules.bedAllocation === true;
+        // Its mirror (#3407): with no beds, the typed capacity is the answer.
+        if (candidate.key === "capacity") return modules.bedAllocation !== true;
         if (candidate.key === "lockers") return modules.lockers !== false;
         if (candidate.key === "chores") return modules.chores === true;
         return true;
@@ -219,6 +235,14 @@ export default function LodgeSetupWizardPage() {
     const previous = steps[stepIndex - 1];
     if (previous) setStep(previous.key);
   }, [steps, stepIndex]);
+
+  const capacity = useWizardCapacity({
+    lodgeId,
+    onFinishStep: step === "finish",
+    setError,
+    setSaving,
+    goNext,
+  });
 
   async function saveIdentity() {
     if (!name.trim()) {
@@ -494,8 +518,8 @@ export default function LodgeSetupWizardPage() {
         <h1 className="text-3xl font-bold mt-2">Set up {lodge.name}</h1>
         <p className="text-muted-foreground mt-1">
           A guided setup for the new lodge. Every step can be skipped and
-          finished later from the lodge configuration page — an unconfigured
-          lodge simply has no bookable capacity yet.
+          finished later from the lodge configuration page — but a lodge with
+          no capacity cannot take a booking until it has one.
         </p>
       </div>
 
@@ -523,7 +547,7 @@ export default function LodgeSetupWizardPage() {
       </ol>
 
       {error && (
-        <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
+        <div role="alert" className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
           {error}
         </div>
       )}
@@ -574,6 +598,40 @@ export default function LodgeSetupWizardPage() {
               <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={saveIdentity} disabled={saving}>
                 {saving ? "Saving..." : "Save and continue"}
               </ViewOnlyActionButton>
+              {/* Navigation, not an edit (#3407): without it a view-only admin could never leave this step. */}
+              <Button variant="ghost" onClick={goNext} disabled={saving}>
+                Skip for now
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {step === "capacity" && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Capacity</CardTitle>
+            <CardDescription>
+              How many guests {lodge.name} can sleep. Bookings are refused above
+              it, and without it the lodge cannot take a booking at all.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <WizardCapacityField
+              value={capacity.capacityInput}
+              onChange={capacity.setCapacityInput}
+              disabled={!canEdit}
+            />
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={goBack} disabled={saving}>
+                Back
+              </Button>
+              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={capacity.saveCapacity} disabled={saving}>
+                {saving ? "Saving..." : "Save and continue"}
+              </ViewOnlyActionButton>
+              <Button variant="ghost" onClick={goNext} disabled={saving}>
+                Skip for now
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -585,8 +643,8 @@ export default function LodgeSetupWizardPage() {
             <CardTitle>Rooms &amp; beds</CardTitle>
             <CardDescription>
               Quick-seed the lodge&apos;s layout — &quot;we have 4 rooms of 4
-              beds&quot; — and fine-tune names later. Active beds set the
-              lodge&apos;s booking capacity.
+              beds&quot; — and fine-tune names later.{" "}
+              {wizardRoomsCapacityLine(capacity.savedCapacity)}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -852,12 +910,13 @@ export default function LodgeSetupWizardPage() {
       {step === "finish" && (
         <Card>
           <CardHeader>
-            <CardTitle>All set</CardTitle>
-            <CardDescription>
-              {lodge.name} is ready. The configuration page shows what exists
-              at this lodge and links into every editor — anything skipped
-              here can be finished there.
-            </CardDescription>
+            <WizardFinishHeading
+              lodgeName={lodge.name}
+              setUpForBookings={capacity.setUpForBookings}
+              resolvedCapacity={capacity.resolvedCapacity}
+              readinessCheckFailed={capacity.readinessCheckFailed}
+              bedAllocationOn={modules.bedAllocation === true}
+            />
           </CardHeader>
           <CardContent className="space-y-4">
             <ul className="text-sm space-y-1 text-muted-foreground list-disc pl-5">
