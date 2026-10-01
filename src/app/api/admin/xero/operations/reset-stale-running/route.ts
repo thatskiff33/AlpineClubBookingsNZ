@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit";
-import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   STALE_RUNNING_XERO_OPERATION_BULK_RESET_MESSAGE,
   staleRunningXeroOperationFilter,
-  staleRunningXeroOperationResetData,
+  writeStaleRunningXeroOperationReset,
 } from "@/lib/xero-stale-operations";
 import logger from "@/lib/logger";
 
@@ -18,29 +17,27 @@ export async function POST() {
 
   try {
     const now = new Date();
-    const result = await prisma.xeroSyncOperation.updateMany({
-      where: staleRunningXeroOperationFilter(now),
-      data: staleRunningXeroOperationResetData(
-        now,
-        STALE_RUNNING_XERO_OPERATION_BULK_RESET_MESSAGE,
-      ),
-    });
+    const count = await writeStaleRunningXeroOperationReset(
+      staleRunningXeroOperationFilter(now),
+      now,
+      STALE_RUNNING_XERO_OPERATION_BULK_RESET_MESSAGE,
+    );
 
-    if (result.count > 0) {
+    if (count > 0) {
       logAudit({
         action: "XERO_OPERATIONS_RESET_STALE_RUNNING",
         category: "xero",
         memberId: session.user.id,
-        details: `Reset ${result.count} stale RUNNING Xero operation${result.count === 1 ? "" : "s"} to FAILED`,
+        details: `Reset ${count} stale RUNNING Xero operation${count === 1 ? "" : "s"} to FAILED`,
       });
     }
 
     return NextResponse.json({
       ok: true,
-      count: result.count,
+      count,
       message:
-        result.count > 0
-          ? `Reset ${result.count} stale running operation${result.count === 1 ? "" : "s"} to failed. Retry or resolve them from the list.`
+        count > 0
+          ? `Reset ${count} stale running operation${count === 1 ? "" : "s"} to failed. Retry or resolve them from the list.`
           : "No stale running operations to reset.",
     });
   } catch (error) {

@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 // Issue #819: an outbox operation is claimed by flipping it to RUNNING and
@@ -56,22 +57,32 @@ export function staleRunningXeroOperationFilter(now: Date = new Date()) {
   } as const;
 }
 
-/**
- * What a stale-RUNNING reset writes (#3462: one home for the bulk reset and the
- * per-row Mark failed, so the two can never record different codes - the
- * contact-create recovery and the booking page read this code back).
- */
-export function staleRunningXeroOperationResetData(now: Date, lastErrorMessage: string) {
-  return {
-    status: "FAILED",
-    lastErrorCode: XERO_ORPHANED_STALE_RUNNING_ERROR_CODE,
-    lastErrorMessage,
-    completedAt: now,
-  } as const;
-}
-
 export const STALE_RUNNING_XERO_OPERATION_BULK_RESET_MESSAGE =
   "Operation was stuck RUNNING past the staleness threshold and was reset to FAILED by an operator.";
+
+/**
+ * THE stale-RUNNING reset write (#3462): one home for the bulk reset and the
+ * per-row Mark failed, so the two can never record different codes - the
+ * contact-create recovery and the booking page read this code back. Only the
+ * `where` differs between them; neither touches the response payload or the
+ * Xero object identity, which may be the only proof of what a dead run created.
+ */
+export async function writeStaleRunningXeroOperationReset(
+  where: Prisma.XeroSyncOperationWhereInput,
+  now: Date,
+  lastErrorMessage: string,
+): Promise<number> {
+  const result = await prisma.xeroSyncOperation.updateMany({
+    where,
+    data: {
+      status: "FAILED",
+      lastErrorCode: XERO_ORPHANED_STALE_RUNNING_ERROR_CODE,
+      lastErrorMessage,
+      completedAt: now,
+    },
+  });
+  return result.count;
+}
 
 export type MarkStaleRunningXeroOperationFailedResult =
   | { outcome: "not-found" }
@@ -138,15 +149,16 @@ export async function markStaleRunningXeroOperationFailed(
       ? ` The last error recorded before it stuck: ${row.lastErrorMessage}`
       : ""
   }`;
-  const marked = await prisma.xeroSyncOperation.updateMany({
-    where: {
+  const marked = await writeStaleRunningXeroOperationReset(
+    {
       id: row.id,
       status: stale.status,
       startedAt: { equals: row.startedAt, lt: stale.startedAt.lt },
     },
-    data: staleRunningXeroOperationResetData(now, message),
-  });
-  if (marked.count !== 1) {
+    now,
+    message,
+  );
+  if (marked !== 1) {
     const current = await prisma.xeroSyncOperation.findUnique({
       where: { id: operationId },
       select: { status: true },

@@ -581,7 +581,12 @@ export const AUDIT_CENSUS_TOTALS = {
   // (`src/lib/late-capture-refund-setting-change.ts`). The approved refund's
   // `refunded_after_cancellation` moved into one shared finisher, so it is still
   // one site. RE-MEASURED with `npm run audit:census`, not incremented.
-  writeSites: 493,
+  // 493 -> 494 (#3462): `xero.operation.marked_failed`, the per-row Mark
+  // failed on a stale RUNNING Xero operation. One awaited `createAuditLog` in
+  // `src/app/api/admin/xero/operations/[id]/mark-failed/route.ts`,
+  // categorised `xero` at the site like its `mark-non-replayable` sibling.
+  // RE-MEASURED with `pnpm run audit:census`, not incremented.
+  writeSites: 494,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -746,7 +751,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 131 -> 132 (#3498): the manual-refund-task reopen record.
     // 134 -> 135 (#3029): the booking dietary edit record, awaited inside the
     // edit's own transaction so the row and its audit commit together.
-    createAuditLog: { total: 135, uncategorised: 0 },
+    // 135 -> 136 (#3462): the Xero operation Mark failed record.
+    createAuditLog: { total: 136, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1144,7 +1150,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // category every other writer of a member's Xero contact link already uses
     // (`xero.contact.synced_to_member`), so this keeps the subsystem uniform —
     // the test `INV-PRIV-013` applies. Nobody's readership changes.
-    xero: 37,
+    //
+    // 37 -> 38 (#3462): `xero.operation.marked_failed`, beside the other
+    // operation-panel writers. Nobody's readership changes.
+    xero: 38,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership
