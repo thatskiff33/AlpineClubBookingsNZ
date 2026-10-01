@@ -114,4 +114,3 @@ export async function decryptToken(encrypted: string): Promise<string> {
     throw new XeroTokenDecryptError();
   }
 }
-
