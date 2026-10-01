@@ -1,6 +1,7 @@
 import type { AgeTier } from "@prisma/client";
 import { z } from "zod";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
+import { dependantIdentityDeclarationSchema } from "@/lib/booking-dependant-identity";
 import type { MemberGuestConsentGuestFields } from "@/lib/member-guest-add-policy";
 import { nameField } from "@/lib/zod-helpers";
 
@@ -34,6 +35,15 @@ export const modifyQuoteSchema = z.object({
         nights: z.array(z.string()).max(370).optional(),
       })
     )
+    .optional(),
+  // #3451 (`INV-GUEST-019`): the member's answer "this is a different person with
+  // the same name" about one of the booking owner's recorded dependants, for an
+  // ADDED guest whose name matches. The same shape the create route takes; the
+  // route re-derives every collision from authenticated data and refuses a
+  // declaration that does not describe one.
+  dependantIdentityDeclarations: z
+    .array(dependantIdentityDeclarationSchema)
+    .max(50)
     .optional(),
   removeGuestIds: z.array(z.string()).optional(),
   guestStayRanges: z
@@ -104,6 +114,8 @@ export const modifyQuoteSchema = z.object({
 
 export const OVERRIDE_DATE_ONLY_QUOTE_FIELDS = [
   "addGuests",
+  // #3451: an answer about an added guest is a guest change, never a date override.
+  "dependantIdentityDeclarations",
   "removeGuestIds",
   "guestStayRanges",
   "guestUpdates",

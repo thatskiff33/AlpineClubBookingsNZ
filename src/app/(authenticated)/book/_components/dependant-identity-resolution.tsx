@@ -75,6 +75,12 @@ export interface DependantIdentityResolutionProps {
    * does not apply.
    */
   holdPolicy: NonMemberHoldPolicyState;
+  /**
+   * Where "Open Family Group in your profile" returns to (#3451). The wizard's
+   * own page by default; the edit panel passes the booking it is editing, so a
+   * member who fixes their family group lands back on that booking.
+   */
+  familyGroupHref?: string;
   onBookAsDependant: (
     normalizedName: string,
     familyMember: FamilyMember,
@@ -95,6 +101,7 @@ export function DependantIdentityResolution({
   familyMembers,
   partyMemberIds,
   holdPolicy,
+  familyGroupHref = PROFILE_FAMILY_GROUP_RETURN_TO_BOOK,
   onBookAsDependant,
   onDeclareDifferentPerson,
   onWithdrawDeclaration,
@@ -198,7 +205,7 @@ export function DependantIdentityResolution({
                         </p>
                         {familyMember ? (
                           <Link
-                            href={PROFILE_FAMILY_GROUP_RETURN_TO_BOOK}
+                            href={familyGroupHref}
                             className="font-medium underline underline-offset-4"
                           >
                             Open Family Group in your profile
