@@ -2,13 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   checkOwnDependantIdentity,
   checkOwnDependantIdentityForParty,
-  dependantIdentityRefusalBody,
   DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE,
-  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_EDIT_MESSAGE,
+  claimedMemberPathIds,
   DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,
   isDependantIdentityRefusalCode,
-  renamedGuestsForDependantCheck,
-  standaloneAddGuestDependantRefusalMessage,
   DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
   DEPENDANT_IDENTITY_UNRESOLVED_CODE,
   dependantIdentityDeclarationSchema,
@@ -17,7 +14,18 @@ import {
   loadBookerDependants,
   type BookerDependant,
   type DependantIdentityDeclaration,
+  type DependantIdentityRefusal,
 } from "@/lib/booking-dependant-identity";
+import {
+  dependantIdentityRefusalBody,
+  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_EDIT_MESSAGE,
+  DEPENDANT_IDENTITY_UNRESOLVED_EDIT_MESSAGE,
+  DEPENDANT_IDENTITY_DECLARATION_INVALID_EDIT_MESSAGE,
+  declarationsForAddedGuests,
+  dependantIdentitySpeaksOnBehalf,
+  renamedGuestsForDependantCheck,
+  standaloneAddGuestDependantRefusalMessage,
+} from "@/lib/booking-dependant-identity-doors";
 import { normalizePersonFullName } from "@/lib/person-name-normalization";
 
 /*
@@ -496,11 +504,29 @@ describe("what each door says (#3451)", () => {
     expect(unresolved).not.toBeNull();
     if (!unresolved) return;
     expect(
-      dependantIdentityRefusalBody(unresolved, { onBehalf: false, surface: "edit" }),
+      dependantIdentityRefusalBody(unresolved, { onBehalf: false, surface: "create" }),
     ).toEqual({
       code: DEPENDANT_IDENTITY_UNRESOLVED_CODE,
       error: DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE,
     });
+    expect(
+      dependantIdentityRefusalBody(unresolved, { onBehalf: false, surface: "edit" }),
+    ).toEqual({
+      code: DEPENDANT_IDENTITY_UNRESOLVED_CODE,
+      error: DEPENDANT_IDENTITY_UNRESOLVED_EDIT_MESSAGE,
+    });
+    const invalid: DependantIdentityRefusal = {
+      code: DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE,
+      status: 400,
+      error: "create wording",
+      collisions: [],
+    };
+    expect(
+      dependantIdentityRefusalBody(invalid, { onBehalf: false, surface: "create" }).error,
+    ).toBe("create wording");
+    expect(
+      dependantIdentityRefusalBody(invalid, { onBehalf: true, surface: "edit" }).error,
+    ).toBe(DEPENDANT_IDENTITY_DECLARATION_INVALID_EDIT_MESSAGE);
     expect(
       dependantIdentityRefusalBody(unresolved, { onBehalf: true, surface: "create" })
         .error,
@@ -554,6 +580,16 @@ describe("renamedGuestsForDependantCheck: a rename is checked like an add (#3451
     ).toEqual([{ guestId: "g1", firstName: "Sam", lastName: "Smith", memberId: null }]);
   });
 
+  it("skips a row the same change removes", () => {
+    expect(
+      renamedGuestsForDependantCheck(
+        existing,
+        [{ guestId: "g1", firstName: "Sam", lastName: "Smith" }],
+        ["g1"],
+      ),
+    ).toEqual([]);
+  });
+
   it("skips a casing fix, a member row and an unknown id", () => {
     expect(
       renamedGuestsForDependantCheck(existing, [
@@ -563,5 +599,36 @@ describe("renamedGuestsForDependantCheck: a rename is checked like an add (#3451
       ]),
     ).toEqual([]);
     expect(renamedGuestsForDependantCheck(existing, undefined)).toEqual([]);
+  });
+});
+
+describe("the small shared decisions (#3451 review)", () => {
+  it("speaks on behalf only for an admin who is not the owner", () => {
+    expect(
+      dependantIdentitySpeaksOnBehalf({ actorIsAdmin: true, actorId: "a", ownerMemberId: "m" }),
+    ).toBe(true);
+    expect(
+      dependantIdentitySpeaksOnBehalf({ actorIsAdmin: true, actorId: "m", ownerMemberId: "m" }),
+    ).toBe(false);
+    expect(
+      dependantIdentitySpeaksOnBehalf({ actorIsAdmin: false, actorId: "a", ownerMemberId: "m" }),
+    ).toBe(false);
+  });
+
+  it("collects the trimmed ids a party claims", () => {
+    expect([
+      ...claimedMemberPathIds([{ memberId: " m1 " }, { memberId: null }, {}]),
+    ]).toEqual(["m1"]);
+  });
+
+  it("keeps only the answers about added free-text guests", () => {
+    const sam = declaration("dep-sam", "Sam", "Smith");
+    const ana = declaration("dep-ana", "Ana", "Smith");
+    expect(
+      declarationsForAddedGuests(
+        [sam, ana],
+        [freeTextGuest("sam", "SMITH"), memberGuest("Ana", "Smith", "dep-ana")],
+      ),
+    ).toEqual([sam]);
   });
 });
