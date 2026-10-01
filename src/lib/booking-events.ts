@@ -48,6 +48,12 @@ export interface CancellationEventSnapshot {
   retainedAmountCents: number;
   /** Non-refundable change fees folded into the retained amount, if any. */
   changeFeeCents?: number;
+  /**
+   * #3611: what the booking ledger was told the club keeps
+   * (`retainedAmountCents` plus applied credit not restored, design §5.1), and
+   * the credit figures it rests on. Absent on cancellations before #3611.
+   */
+  ledger?: { keptCents: number; appliedCreditCents: number; creditRestoredCents: number };
 }
 
 /** Frozen bump facts stored on a BUMPED event. */

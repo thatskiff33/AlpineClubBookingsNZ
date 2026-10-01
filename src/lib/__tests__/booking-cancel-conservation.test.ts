@@ -56,6 +56,9 @@ const mocks = vi.hoisted(() => ({
 const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}) }));
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
 
+const appliedCredit = vi.hoisted(() => ({
+  deriveBookingAppliedCreditCents: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: {
@@ -98,6 +101,8 @@ vi.mock("@/lib/audit", () => ({
 }));
 
 vi.mock("@/lib/member-credit", () => ({
+  // #3611: the applied rows the kept figure reads; 0 unless a case says otherwise.
+  deriveBookingAppliedCreditCents: appliedCredit.deriveBookingAppliedCreditCents,
   createCancellationCredit: mocks.createCancellationCredit,
   lockMemberCreditLedger: mocks.lockMemberCreditLedger,
   restoreCreditFromBooking: mocks.restoreCreditFromBooking,

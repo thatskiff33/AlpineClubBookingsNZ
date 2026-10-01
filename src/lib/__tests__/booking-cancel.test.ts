@@ -103,6 +103,9 @@ const mocks = vi.hoisted(() => {
 const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}) }));
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
 
+const appliedCredit = vi.hoisted(() => ({
+  deriveBookingAppliedCreditCents: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: {
@@ -151,6 +154,8 @@ vi.mock("@/lib/audit", () => ({
 }));
 
 vi.mock("@/lib/member-credit", () => ({
+  // #3611: the applied rows the kept figure reads; 0 unless a case says otherwise.
+  deriveBookingAppliedCreditCents: appliedCredit.deriveBookingAppliedCreditCents,
   createCancellationCredit: mocks.createCancellationCredit,
   lockMemberCreditLedger: mocks.lockMemberCreditLedger,
   restoreCreditFromBooking: mocks.restoreCreditFromBooking,
@@ -2145,6 +2150,7 @@ describe("cancelBooking credit refunds", () => {
       mocks.txBookingFindUnique.mockResolvedValue(withCredit);
       mocks.calculateAppliedCreditRestore.mockReturnValue({ creditRestoredCents: 1000, creditRestorePercentage: 50 });
       mocks.restoreCreditFromBooking.mockResolvedValue(1000);
+      appliedCredit.deriveBookingAppliedCreditCents.mockResolvedValueOnce(2000);
 
       await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
 
@@ -2218,6 +2224,8 @@ describe("cancelBooking credit refunds", () => {
             settledAmountCents: 0,
             retainedAmountCents: 10000,
             changeFeeCents: 0,
+            // #3611: what the ledger was told the club keeps, frozen with the decision.
+            ledger: { keptCents: 10000, appliedCreditCents: 0, creditRestoredCents: 0 },
           },
         },
       });
@@ -2248,6 +2256,7 @@ describe("cancelBooking credit refunds", () => {
         settledAmountCents: 5000,
         retainedAmountCents: 5000,
         changeFeeCents: 0,
+        ledger: { keptCents: 5000, appliedCreditCents: 0, creditRestoredCents: 0 },
       });
       expect(
         mocks.txBookingEventCreate.mock.invocationCallOrder[0]
