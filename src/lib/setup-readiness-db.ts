@@ -164,7 +164,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     }),
     prisma.xeroToken.findFirst({
       orderBy: { updatedAt: "desc" },
-      select: { expiresAt: true, accessToken: true },
+      select: { expiresAt: true },
     }),
     prisma.xeroAccountMapping.count({
       where: {
@@ -498,9 +498,9 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
   if (operationalXeroToken) {
     try {
       operationalXeroNeedsReentry =
-        (await getXeroTokenReadability({
-          accessToken: operationalXeroToken.accessToken,
-        })) === "unreadable";
+        // Over the CURRENT copy of the tokens, which since #3454 may be the
+        // credential-store one rather than this row's.
+        (await getXeroTokenReadability()) === "unreadable";
     } catch {
       operationalXeroNeedsReentry = false;
     }

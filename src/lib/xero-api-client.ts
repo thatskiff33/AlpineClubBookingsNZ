@@ -277,8 +277,9 @@ export async function getAuthenticatedXeroClient(): Promise<{
             expiresAt: new Date(Date.now() + (newTokenSet.expires_in ?? 1800) * 1000),
             tenantId: claimedTokens.tenantId,
           }, {
-            claimedTokenId: claimedTokens.id,
-            refreshLeaseUntil: leaseUntil,
+            // No person is behind a refresh; it is named, never blank (#3454).
+            actor: { kind: "system", actor: "xero-token-refresh" },
+            lease: { claimed: claimedTokens, leaseUntil },
           });
 
           xero.setTokenSet({
