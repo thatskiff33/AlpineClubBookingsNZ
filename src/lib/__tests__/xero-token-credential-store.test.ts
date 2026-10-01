@@ -20,7 +20,7 @@
  * That is `xero-token-credential-store.realdb.test.ts`.
  */
 import { createCipheriv, randomBytes } from "crypto";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type Row = Record<string, unknown>;
 
@@ -32,6 +32,10 @@ const h = vi.hoisted(() => {
     nextId: 1,
     /** When set, the Nth audit write (1-based, counted from now) throws. */
     failAuditAt: null as number | null,
+    /** Transactions currently open. */
+    txDepth: 0,
+    /** Writes made through the MODULE client while a transaction was open. */
+    outsideTxWrites: [] as string[],
   };
 
   const clone = <T>(value: T): T => structuredClone(value);
@@ -179,10 +183,36 @@ const h = vi.hoisted(() => {
     }),
   };
 
+  /**
+   * THE TRANSACTION CLIENT IS A DIFFERENT OBJECT FROM THE MODULE CLIENT, over
+   * the same tables. A write through the module client while a transaction is
+   * open would, in PostgreSQL, commit on its own whatever the transaction
+   * later did — so the double records it, and every test asserts there were
+   * none. Without this, passing `prisma` where `tx` belongs is invisible here.
+   */
+  const READS = new Set(["findFirst", "findUnique", "findMany"]);
+  function moduleClient<T extends Record<string, (...args: never[]) => unknown>>(
+    table: string,
+    delegate: T,
+  ): T {
+    const guarded: Record<string, unknown> = {};
+    for (const [method, fn] of Object.entries(delegate)) {
+      guarded[method] = (...args: never[]) => {
+        if (state.txDepth > 0 && !READS.has(method)) {
+          state.outsideTxWrites.push(`${table}.${method}`);
+        }
+        return fn(...args);
+      };
+    }
+    return guarded as T;
+  }
+
+  const tx = { xeroToken, integrationCredential, auditLog };
+
   const db = {
-    xeroToken,
-    integrationCredential,
-    auditLog,
+    xeroToken: moduleClient("xeroToken", xeroToken),
+    integrationCredential: moduleClient("integrationCredential", integrationCredential),
+    auditLog: moduleClient("auditLog", auditLog),
     // A rolled-back transaction leaves every table as it found it.
     $transaction: vi.fn(async (work: (tx: unknown) => Promise<unknown>) => {
       const snapshot = clone({
@@ -190,13 +220,16 @@ const h = vi.hoisted(() => {
         credential: state.credential,
         audit: state.audit,
       });
+      state.txDepth += 1;
       try {
-        return await work(db);
+        return await work(tx);
       } catch (error) {
         state.xeroToken = snapshot.xeroToken;
         state.credential = snapshot.credential;
         state.audit = snapshot.audit;
         throw error;
+      } finally {
+        state.txDepth -= 1;
       }
     }),
   };
@@ -361,10 +394,17 @@ beforeEach(() => {
   h.state.credential = [];
   h.state.audit = [];
   h.state.failAuditAt = null;
+  h.state.txDepth = 0;
+  h.state.outsideTxWrites = [];
   h.tokenKey.value = KEY_A;
   resetIntegrationCredentialCacheForTests();
   delete process.env.NEXTAUTH_SECRET;
   process.env.AUTH_SECRET = "s".repeat(48);
+});
+
+afterEach(() => {
+  // Every write a transaction composes went through that transaction's client.
+  expect(h.state.outsideTxWrites).toEqual([]);
 });
 
 describe("a connect writes both copies and one attributed audit row (#3454)", () => {
