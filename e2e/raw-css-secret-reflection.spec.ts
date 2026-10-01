@@ -162,6 +162,10 @@ test.describe("kiosk PIN entry under administrator Raw CSS", () => {
     const field = page.locator("input#hut-leader-pin");
     await expect(field).toBeVisible();
 
+    // Masked by default (#3460): rendered glyphs are a channel a font could
+    // measure, so the field is a password field until the visitor asks.
+    await expect(field).toHaveAttribute("type", "password");
+
     // Positive control FIRST. If Raw CSS were not reaching this page, every
     // assertion after it would be meaningless.
     expect((await observe(page)).outlineColor).toBe(CONTROL_OUTLINE);
@@ -209,6 +213,22 @@ test.describe("kiosk PIN entry under administrator Raw CSS", () => {
     await expectNoSelectableSecret(page, `${PIN.slice(0, 3)}${PIN.slice(4)}`);
     await page.keyboard.type(PIN[3] as string);
     await expectNoSelectableSecret(page, PIN);
+
+    // The show/hide toggle (#3460): the type is `text` ONLY while shown, the
+    // toggle does not submit, and the secret stays unselectable in both states.
+    const toggle = page.getByRole("button", { name: "Show PIN" });
+    await toggle.focus();
+    await page.keyboard.press("Enter");
+    await expect(field).toHaveAttribute("type", "text");
+    await expect(page.getByRole("button", { name: "Hide PIN" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expectNoSelectableSecret(page, PIN);
+    await page.getByRole("button", { name: "Hide PIN" }).click();
+    await expect(field).toHaveAttribute("type", "password");
+    await expectNoSelectableSecret(page, PIN);
+    await expect(page.getByText(/don't match|went wrong/)).toHaveCount(0);
 
     // Submit: the reference is not a real assignment, so the API refuses and the
     // component rerenders with an error. A rerender is the moment a controlled

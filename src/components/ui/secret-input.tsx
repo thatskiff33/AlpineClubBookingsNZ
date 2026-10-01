@@ -1,8 +1,10 @@
 "use client";
 
+import { Eye, EyeOff } from "lucide-react";
 import * as React from "react";
 
 import { Input, type InputProps } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 /**
  * A text input for a user-entered SECRET on a page that carries administrator
@@ -25,6 +27,11 @@ import { Input, type InputProps } from "@/components/ui/input";
  * element's own property rather than by feeding a value back down as a prop, so
  * input filtering keeps working without reintroducing the attribute.
  *
+ * `revealable` (#3460) masks the field (`type="password"`) and adds a show/hide
+ * button. The type flips on the same element, so no `value` ever reaches the DOM
+ * in either state; rendered glyphs exist only while the secret is shown. Without
+ * it the field renders exactly as before.
+ *
  * Guards: `e2e/raw-css-secret-reflection.spec.ts` (runtime),
  * `src/components/ui/__tests__/secret-input.test.tsx` (filtering and caret),
  * `src/lib/__tests__/raw-css-secret-input-census.test.ts` (adoption).
@@ -43,6 +50,13 @@ export type SecretInputProps = Omit<
    * filter here has them (digits only, a length cap).
    */
   sanitise?: (raw: string) => string;
+  /**
+   * Mask the field and add a show/hide toggle button (#3460). The caller's
+   * `type` is ignored while this is set: it is `password` until shown.
+   */
+  revealable?: boolean;
+  /** What the toggle calls the field, e.g. "PIN" gives "Show PIN". */
+  secretNoun?: string;
 };
 
 /**
@@ -61,7 +75,17 @@ const CARET_CAPABLE_TYPES = new Set([
 ]);
 
 export const SecretInput = React.forwardRef<HTMLInputElement, SecretInputProps>(
-  function SecretInput({ onValueChange, sanitise, ...rest }, ref) {
+  function SecretInput(
+    {
+      onValueChange,
+      sanitise,
+      revealable = false,
+      secretNoun = "secret",
+      ...rest
+    },
+    ref,
+  ) {
+    const [shown, setShown] = React.useState(false);
     // Defence in depth against an untyped spread: the `Omit` above already makes
     // these a compile error, and this makes the guarantee true even when the
     // types were bypassed. A reinstated `value` prop is the single way this
@@ -70,10 +94,13 @@ export const SecretInput = React.forwardRef<HTMLInputElement, SecretInputProps>(
     delete attributes.value;
     delete attributes.defaultValue;
 
-    return (
+    if (revealable) attributes.type = shown ? "text" : "password";
+
+    const field = (
       <Input
         {...attributes}
         ref={ref}
+        className={cn(attributes.className, revealable && "pr-10")}
         onChange={(event) => {
           const node = event.currentTarget;
           const raw = node.value;
@@ -105,6 +132,28 @@ export const SecretInput = React.forwardRef<HTMLInputElement, SecretInputProps>(
           onValueChange(next);
         }}
       />
+    );
+
+    if (!revealable) return field;
+
+    const label = `${shown ? "Hide" : "Show"} ${secretNoun}`;
+    return (
+      <div className="relative">
+        {field}
+        <button
+          type="button"
+          aria-label={label}
+          aria-pressed={shown}
+          onClick={() => setShown((current) => !current)}
+          className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-md text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          {shown ? (
+            <EyeOff className="h-4 w-4" aria-hidden="true" />
+          ) : (
+            <Eye className="h-4 w-4" aria-hidden="true" />
+          )}
+        </button>
+      </div>
     );
   },
 );

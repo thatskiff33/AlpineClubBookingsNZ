@@ -58,19 +58,33 @@ so passing one is a compile error rather than a lint rule, and stripped at
 runtime so an untyped spread cannot reinstate the leak. Input filtering runs
 against the element's own property instead of being fed back as a prop.
 
+### The kiosk PIN is masked, with a show toggle (#3460)
+
+Owner decision, 14 Sep 2026. The hut-leader kiosk PIN field is
+`type="password"` by default, so the digits are dots on screen: that removes
+shoulder-surfing and leaves no rendered glyph for an administrator's `@font-face`
+ligature technique to measure. A **Show PIN** button (`aria-pressed`, keyboard
+operable, `type="button"` so it never submits) flips the same element to
+`type="text"`. Rendered glyphs therefore exist **only while the PIN is shown**,
+which is the cost the owner accepted for letting a hut leader check a mistyped
+digit. The #2981 rule holds in both states: the element still carries no `value`
+attribute. The behaviour belongs to `SecretInput` (`revealable`), so any future
+secret field gets it from the one primitive.
+
 ### What keeps it true
 
 - `e2e/raw-css-secret-reflection.spec.ts` — the runtime pin. It saves real Raw
   CSS containing the oracle rules, types a known PIN into the real page, and
   fails if the attribute, a prefix selector or the computed style ever reveals a
-  character. This half cannot be replaced by a source scan.
+  character, and asserts the field is `password` by default and `text` only
+  while shown. This half cannot be replaced by a source scan.
 - `src/lib/__tests__/raw-css-secret-input-census.test.ts` — the static half:
   which files inject the theme CSS (so a fourth sink cannot appear
   unclassified), which credential fields exist on those surfaces, and that
   `SecretInput` still passes no value into the DOM. Its own docblock names the
   four evasion shapes it cannot see.
-- `src/components/ui/__tests__/secret-input.test.tsx` — filtering and caret
-  repair.
+- `src/components/ui/__tests__/secret-input.test.tsx` — filtering, caret
+  repair and the show/hide toggle.
 
 ### Scope, and what is accepted
 
