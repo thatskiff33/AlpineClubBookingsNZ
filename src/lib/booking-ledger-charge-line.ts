@@ -12,6 +12,8 @@
  *
  * Pure: no reads, no writes.
  */
+import type { AgeTier } from "@prisma/client";
+
 import { calendarDateOfDateOnlyInstant, addCalendarDays, dateOnlyInstantOf } from "@/lib/club-time";
 import type { BookingLedgerPosting } from "@/lib/booking-ledger-write";
 
@@ -86,10 +88,14 @@ export function promotionPosting(
   };
 }
 
-/** A posted night or promotion line, with everything its reversal copies. */
+/**
+ * A charge line already on the ledger, with everything its reversal copies —
+ * the one shape every poster reads one as (#3582, #3611). A change fee carries
+ * no strand, so its strand fields are null.
+ */
 export type ReversibleChargeLine = {
   id: string;
-  kind: "GUEST_NIGHT" | "PROMOTION";
+  kind: "GUEST_NIGHT" | "PROMOTION" | "CHANGE_FEE";
   sign: 1 | -1;
   quantity: number;
   unitCents: number;
@@ -97,10 +103,14 @@ export type ReversibleChargeLine = {
   nightStart: Date | null;
   nightEndExclusive: Date | null;
   rateMembershipTypeId: string | null;
-  ageTier: BookingLedgerPosting["ageTier"];
-  guestNames: readonly string[];
+  ageTier: AgeTier | null;
+  guestNames: string[];
   narration: string;
+  reversesLineId: string | null;
 };
+
+/** A night or promotion line: what an edit re-prices. */
+export type PostedChargeLine = ReversibleChargeLine & { kind: "GUEST_NIGHT" | "PROMOTION" };
 
 /**
  * The reversal of one posted night or promotion line, anchored on the event

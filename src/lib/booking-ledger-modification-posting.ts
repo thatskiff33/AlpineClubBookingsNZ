@@ -18,6 +18,7 @@ import type { AgeTier, ManualRefundTaskDirection } from "@prisma/client";
 
 import {
   chargeLineReversal,
+  type PostedChargeLine,
   guestNightPosting,
   isSingleNightLine,
   promotionPosting,
@@ -39,22 +40,7 @@ import {
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { editReviewSettlementSign } from "@/lib/edit-financial-review-charge-shape";
 
-/** A charge line already on the ledger, with what a reversal must copy. */
-export type PostedChargeLine = {
-  id: string;
-  kind: "GUEST_NIGHT" | "PROMOTION";
-  sign: 1 | -1;
-  quantity: number;
-  unitCents: number;
-  bookingGuestId: string | null;
-  nightStart: Date | null;
-  nightEndExclusive: Date | null;
-  rateMembershipTypeId: string | null;
-  ageTier: AgeTier | null;
-  guestNames: string[];
-  narration: string;
-  reversesLineId: string | null;
-};
+export type { PostedChargeLine } from "@/lib/booking-ledger-charge-line";
 
 /**
  * The lines that stand: neither a reversal nor reversed by one.
