@@ -3191,15 +3191,16 @@ a sum. So a later share RAISES the existing intent's amount instead of minting,
 and both the Stripe key and the recovery key name the edit.
 
 **Two officers settling two shares at once is made safe by DERIVATION plus a
-refusal to lower, not by a lock** — which matters here because this path still has
-none, for the reason above. The combined total is summed from the settled task
-rows (`sumEditReviewChargeSharesCents`) at execution time, after the caller's
-transaction has committed, so:
+single-flight CLAIM on the raise, not by a lock** — which matters here because this
+path still holds none, for the reason above. The combined total is summed from the
+settled task rows (`sumEditReviewChargeSharesCents`) at execution time, after the
+caller's transaction has committed, so:
 
 - **no double count** — each task contributes exactly once, from the row its own
   status-fenced claim wrote, and never as an increment of a running figure;
 - **no lost share** — whichever completion commits LAST necessarily reads after
-  both commits, so at least one run always derives the true total;
+  both commits, so at least one run always derives the true total, and the raise
+  claim below is what makes that total the one ASKED FOR;
 - **a stale replay cannot lower a live ask** — a settled share is terminal, so the
   derived total only ever grows and a smaller figure is always the older answer,
   and the write REFUSES TO LOWER the recorded request. Since #3371 a balance
@@ -3208,33 +3209,61 @@ transaction has committed, so:
   stays monotone; folding it in would make the figure fall when the member paid,
   and repairing that would need the lock this path may not hold.
 
-**THAT REFUSAL IS NOT AN ATOMIC CLAIM, and this section used to say it was**
-(corrected in the #3371 review round). `syncEditFinancialReviewChargeRequest`
-reads the existing `ADDITIONAL` row, compares in application code, calls Stripe,
-and then upserts on the intent id with **no amount predicate**. Two runs that
-each derive a figure ABOVE the stored one therefore both proceed, and both the
-provider amount and the stored row settle on whichever landed last rather than on
-the larger: shares of $60 and $100 against a stored $50 can end at $60, and the
-second officer's $40 is never asked for. What monotonicity buys is that neither
-run derives a figure that is wrong for the shares IT saw, and that a REPLAY —
-which reads after the newer write, and is the recovery cron's whole shape —
-leaves a larger recorded ask alone. It does not order two concurrent runs.
+**The refusal to lower orders nothing between two CONCURRENT runs, so since #3402
+the raise is single-flight per edit**
+([`INV-PAY-111`](invariants/payment-and-settlement.md)). Before it,
+`syncEditFinancialReviewChargeRequest` read the `ADDITIONAL` row, compared in
+application code, called Stripe and upserted: two runs each deriving a figure ABOVE
+the stored one both proceeded, and the provider amount and the row settled on
+whichever LANDED last — shares of $60 and $100 against a stored $50 could end at
+$60, the second officer's $40 never asked for and nothing recording it. A
+`where amountCents < raised` predicate is no repair: both runs pass it, and the
+money has moved at Stripe before the row is written, so the row and the intent
+would disagree instead.
 
-This is `main`'s own shape and #3371 neither introduced nor repaired it; #3371
-changed what the figure is made of, not how it is written. **The repair is not a
-predicate on that upsert.** A `where amountCents < raised` claim would stop the
-STORED row being lowered, but the money moves at Stripe, and the Stripe call
-already happened by then — so the row and the intent would disagree instead, on a
-path whose whole point is that the row is what the member's pay page shows. Doing
-it properly means claiming BEFORE the provider call and reconciling the provider
-afterwards, which buys a new failure mode (a claim recorded against an intent the
-provider then refused to raise) and is a design change to a gated money path.
-It is carried forward as #3402 rather than widened into #3371.
+So the claim is taken BEFORE the provider call, on `EditReviewChargeRaiseClaim`
+(one row per `BookingModification`, `edit-review-charge-raise-claim.ts`):
+
+1. **claim** — a guarded `updateMany` writes a fresh opaque token only where no
+   live token is held. Under READ COMMITTED a concurrent second claim re-checks
+   that predicate against the winner's committed row and matches nothing, so
+   exactly one run proceeds;
+2. **record the intent** — the amount about to be asked for is written under the
+   EXACT token, renewing the lease; no row means the lease was taken over, and the
+   run makes no provider call;
+3. **call Stripe** — update, currency re-issue, or the first mint (which is under
+   the claim too: two first shares would otherwise mint two intents under two
+   amount keys, each superseding the other);
+4. **reconcile** — the request row is written from Stripe's answer (`amount` on
+   the returned intent), not from the figure asked for;
+5. **release** by exact token, then **re-derive**: a run that lost the claim
+   committed its share before trying to claim, which was before this release, so
+   this read sees it and the holder raises again (up to three passes).
+
+A run that loses the claim calls no provider, writes the edit's ONE recovery row
+(the backstop if the holder dies) and returns `deferred`, which the recovery replay
+treats like `not-raised`: the operation stays open. A raise Stripe REFUSES throws
+with nothing written, so the row still equals the unchanged intent; the claim is
+released and `executeEditReviewCharge` or the replay makes the debt durable.
+
+**It is a lease, not a lock.** Every claim statement autocommits; no advisory key
+is taken and nothing is held across the provider call, so it cannot join a
+wait-for cycle and `INV-LOCK-001`/`002`/`003` are untouched. A dead holder's token
+ages out after 30 minutes and the next run takes it over — safe because the derived
+total only grows and a raise is an absolute amount. **Stated limits:** a holder
+still ALIVE past 30 minutes could land an older, smaller amount after its
+successor (the Stripe client's default timeouts bound a live holder at a few
+minutes); a crash after Stripe accepted but before the row was written leaves the
+row behind the intent until the next run for that edit, as before #3402; and while
+the previous colour drains after deploy, its syncs take no claim. Proven against
+real PostgreSQL by `edit-review-charge-raise-claim.realdb.test.ts`, which forces
+the $60/$100 interleaving through the real sync.
 
 The contrast is instructive and it is one paragraph down: the refund leg's
 `applyLocalRefundAllocation` on this same lockless path IS a real compare-and-set,
 because there the write is the whole movement and no provider round trip sits in
-front of it.
+front of it. The charge leg cannot be one, because Stripe moves first — which is
+why its claim is taken before the call rather than on the write.
 
 The recovery replay is the same function, so a crash between the commit and the
 Stripe call costs a delay rather than a share: the row's stored `amountCents` is

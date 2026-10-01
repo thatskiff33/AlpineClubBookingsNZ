@@ -1617,8 +1617,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   - **The total is DERIVED from the settled shares, never incremented.** Each
     task contributes exactly once, from the row its own status-fenced claim
     wrote; whichever completion commits LAST derives the true total, and
-    **neither leg may LOWER what is recorded**. On the Stripe leg that is a
-    refusal, not an atomic claim, and it is why no advisory lock is held.
+    **neither leg may LOWER what is recorded**. On the Stripe leg two runs are
+    ordered by a claim, not a lock ([INV-PAY-111]).
     A balance CARRIED IN from another edit ([INV-PAY-098]) is stored apart, so
     the sum stays monotone and the refusal stays correct.
   - **A share may not be added to a request the member has already paid, or to
@@ -1668,9 +1668,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   - **It never joins the derived share total.** [INV-PAY-062]'s refuse-to-lower
     rule is safe only because that sum never decreases, and that monotonicity is
     why this path can refuse a stale lowering with no lock across a provider
-    call ([`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md)). That
-    refusal is not an atomic claim; `syncEditFinancialReviewChargeRequest` says
-    what it does not order.
+    call ([`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md)). Two
+    concurrent raises are ordered by [INV-PAY-111]'s claim, not by it.
   - **A later share reads it off the row, never off the payment**, which mirrors
     this request by then.
   - **The accounting leg never sees it.** [INV-PAY-070] bills one invoice per
@@ -1684,6 +1683,34 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     refuses a deliberate assertion, so the call-site census refuses it.
   - **A FAILED mint carries nothing**: it retired nothing, so the earlier ask is
     still live for the replay to read.
+
+## INV-PAY-111
+
+- **ONE EDIT'S CHARGE REQUEST IS RAISED BY ONE RUN AT A TIME** (#3402). Refusing
+  to lower ([INV-PAY-062]) orders nothing between two runs that each derive more
+  than is stored: both raised the intent, and the LAST to land won even when it
+  was smaller, so a share was never asked for. A database-only predicate cannot
+  repair it - both runs pass, and Stripe has moved before the row is written.
+  - **Claim before the provider call.** A run must win the edit's
+    `EditReviewChargeRaiseClaim` (a guarded `updateMany` writing an opaque token
+    where none is live) and record its intended amount under that exact token
+    before ANY Stripe call - raise, currency re-issue or first mint. A run that
+    cannot calls nothing, writes the edit's recovery row and reports
+    `deferred`; a replay that sees `deferred` leaves its operation open.
+  - **Reconcile, release, look again.** The row is written from Stripe's answer;
+    the claim is released by exact token; the holder re-derives AFTER releasing
+    and raises again if a share committed meanwhile.
+  - **A refused raise writes nothing**: the row still equals the unchanged
+    intent, the claim is released, and the debt goes to the recovery row.
+  - **A lease, never a lock.** Nothing is held across the provider call and no
+    advisory key is taken. A token older than 30 minutes is taken over, which is
+    safe because the derived total only grows and a raise is absolute.
+  - **Stated limits**: a holder alive past the lease, a crash between Stripe
+    accepting and the row write, and the previous colour's syncs during a
+    deploy's drain - each in
+    [`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md).
+  - Home: `edit-review-charge-raise-claim.ts`; proven against PostgreSQL by
+    `edit-review-charge-raise-claim.realdb.test.ts`.
 
 ## INV-PAY-070
 
