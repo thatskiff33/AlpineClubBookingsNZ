@@ -335,13 +335,18 @@ const FIGURES = {
    *
    * 364 -> 365 (#2941): Admin -> Member Fields moved to the staged pattern, so
    * its Save gained an Edit beside it. Cancel is a plain Button. MEASURED.
-    * 365 -> 366 (#3408): the Membership Types editor adds Restore expected
-    * booking behavior for a drifted key-resolved built-in. MEASURED.
+   *
+   * 365 -> 366 (#3408): the Membership Types editor adds Restore expected
+   * booking behavior for a drifted key-resolved built-in. MEASURED.
    *
    * 366 -> 367 (#3407): the lodge setup wizard's new Capacity step adds its
    * Save and continue. Back and Skip are plain Buttons. MEASURED.
-    */
-   callSites: 367,
+   *
+   * 367 -> 369 (#3416): the School Teacher Hut-Leader Assignments card adds
+   * Edit and Save. Cancel remains a plain Button because it only discards the
+   * staged choice. MEASURED by re-running this census.
+   */
+  callSites: 369,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -368,8 +373,11 @@ const FIGURES = {
    * 310 -> 311 (#2941): so does Member Fields' new Edit.
    *
    * 311 -> 312 (#3407): so does the setup wizard's Capacity Save and continue.
+   *
+   * 312 -> 314 (#3416): the new school-teacher policy card heads itself under
+   * the existing section banner, so its Edit and Save opt out.
    */
-  optOuts: 312,
+  optOuts: 314,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -427,8 +435,11 @@ const FIGURES = {
    * 277 -> 278 (#3407): the setup wizard's Capacity Save and continue sits in
    * the same file as the wizard's own banner, beside its sibling steps' static
    * opt-outs.
+   *
+   * 278 -> 280 (#3416): the school-teacher card's Edit and Save sit in the
+   * same file as its section banner.
    */
-  staticOptOuts: 278,
+  staticOptOuts: 280,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
