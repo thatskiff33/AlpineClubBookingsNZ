@@ -434,7 +434,7 @@ export async function enqueueAdditionalPaymentIntentRecovery({
 }
 
 /**
- * #3402 (`INV-PAY-111`): make ONE booking edit's review-charge debt durable on
+ * #3402 (`INV-PAY-112`): make ONE booking edit's review-charge debt durable on
  * its one recovery row, and make sure that row will run again
  * (`rearmEditFinancialReviewChargeRecovery` says why and how). The single home
  * for the row's two keys and its frozen `hadIssuedXeroInvoice`: the sync's

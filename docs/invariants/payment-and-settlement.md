@@ -1618,7 +1618,7 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     task contributes exactly once, from the row its own status-fenced claim
     wrote; whichever completion commits LAST derives the true total, and
     **neither leg may LOWER what is recorded**. On the Stripe leg two runs are
-    ordered by a claim, not a lock ([INV-PAY-111]).
+    ordered by a claim, not a lock ([INV-PAY-112]).
     A balance CARRIED IN from another edit ([INV-PAY-098]) is stored apart, so
     the sum stays monotone and the refusal stays correct.
   - **A share may not be added to a request the member has already paid, or to
@@ -1669,7 +1669,7 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     rule is safe only because that sum never decreases, and that monotonicity is
     why this path can refuse a stale lowering with no lock across a provider
     call ([`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md)). Two
-    concurrent raises are ordered by [INV-PAY-111]'s claim, not by it.
+    concurrent raises are ordered by [INV-PAY-112]'s claim, not by it.
   - **A later share reads it off the row, never off the payment**, which mirrors
     this request by then.
   - **The accounting leg never sees it.** [INV-PAY-070] bills one invoice per
@@ -1684,7 +1684,7 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   - **A FAILED mint carries nothing**: it retired nothing, so the earlier ask is
     still live for the replay to read.
 
-## INV-PAY-111
+## INV-PAY-112
 
 - **ONE EDIT'S CHARGE REQUEST IS RAISED BY ONE RUN AT A TIME** (#3402). Refusing
   to lower ([INV-PAY-062]) orders nothing between two runs that each derive more

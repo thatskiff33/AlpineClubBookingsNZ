@@ -5971,7 +5971,7 @@ model BookingModification {
   @@index([memberId])
 }
 
-/// #3402 (`INV-PAY-111`): the lease that makes RAISING one booking edit's
+/// #3402 (`INV-PAY-112`): the lease that makes RAISING one booking edit's
 /// review-charge request single-flight. One row per `BookingModification`,
 /// created on first use. A run must win the claim (an opaque token written by a
 /// guarded `updateMany` while no live token is held) before it calls Stripe, so

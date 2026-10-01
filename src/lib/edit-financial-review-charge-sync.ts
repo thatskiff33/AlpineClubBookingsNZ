@@ -132,7 +132,7 @@ export type EditReviewChargeSyncResult = {
  *     the derived total only ever grows and a smaller figure is always the
  *     older answer; the read below REFUSES TO LOWER the recorded request, so a
  *     replay reading after the newer write leaves it alone.
- *   * TWO CONCURRENT RUNS DO NOT BOTH RAISE (#3402, `INV-PAY-111`). Refusing to
+ *   * TWO CONCURRENT RUNS DO NOT BOTH RAISE (#3402, `INV-PAY-112`). Refusing to
  *     lower orders nothing between two runs that each derive a figure above the
  *     stored one - both used to call Stripe, and the LAST to land won even when
  *     it was the smaller. So a run must win this edit's raise claim before any

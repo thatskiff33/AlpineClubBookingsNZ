@@ -3211,7 +3211,7 @@ caller's transaction has committed, so:
 
 **The refusal to lower orders nothing between two CONCURRENT runs, so since #3402
 the raise is single-flight per edit**
-([`INV-PAY-111`](invariants/payment-and-settlement.md)). Before it,
+([`INV-PAY-112`](invariants/payment-and-settlement.md)). Before it,
 `syncEditFinancialReviewChargeRequest` read the `ADDITIONAL` row, compared in
 application code, called Stripe and upserted: two runs each deriving a figure ABOVE
 the stored one both proceeded, and the provider amount and the row settled on

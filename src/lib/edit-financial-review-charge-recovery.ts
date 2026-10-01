@@ -8,7 +8,7 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
 /**
- * #3402 (`INV-PAY-111`): the review-charge recovery row's own lifecycle rules -
+ * #3402 (`INV-PAY-112`): the review-charge recovery row's own lifecycle rules -
  * when a replay may close it, how it closes, and how a later share reopens it.
  * Kept apart from `payment-recovery.ts`, which calls all three, because none of
  * them needs anything from it but the row; no other recovery's semantics move.

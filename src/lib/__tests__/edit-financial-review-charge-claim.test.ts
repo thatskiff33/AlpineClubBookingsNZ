@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /**
- * #3402 (`INV-PAY-111`): how `syncEditFinancialReviewChargeRequest` uses the
+ * #3402 (`INV-PAY-112`): how `syncEditFinancialReviewChargeRequest` uses the
  * edit's raise claim. That the claim itself excludes a concurrent claimant is a
  * property of PostgreSQL, proved in `edit-financial-review-charge-raise-claim.realdb.test.ts`;
  * these cases pin the ORCHESTRATION around it - who may call Stripe, what a run

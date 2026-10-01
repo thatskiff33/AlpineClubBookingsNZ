@@ -1,4 +1,4 @@
--- #3402 (INV-PAY-111): the lease that makes raising one booking edit's
+-- #3402 (INV-PAY-112): the lease that makes raising one booking edit's
 -- review-charge request single-flight.
 --
 -- Before this, two settlements of one edit could both read the request's stored

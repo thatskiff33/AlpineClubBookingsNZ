@@ -1,6 +1,6 @@
 /**
  * Real-PostgreSQL proof that a review-charge RAISE is single-flight per edit
- * (#3402, `INV-PAY-111`).
+ * (#3402, `INV-PAY-112`).
  *
  * `syncEditFinancialReviewChargeRequest` reads the edit's one request, derives
  * the new ask, calls Stripe, and writes the row. No lock may be held across that
@@ -600,7 +600,7 @@ let observerClient: PrismaClient;
     });
 
     /**
-     * `INV-PAY-111`'s backstop. The edit has ONE recovery row; an earlier replay
+     * `INV-PAY-112`'s backstop. The edit has ONE recovery row; an earlier replay
      * that closed it SUCCEEDED used to leave a later deferral writing nothing that
      * would ever run - the share it deferred was never asked for.
      */
