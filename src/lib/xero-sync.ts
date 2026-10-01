@@ -845,15 +845,29 @@ export async function failXeroSyncOperation(
      * approval can withdraw a kept row in between. Answers null then.
      */
     keepCancelled?: boolean;
+    /**
+     * #3462: fail the row ONLY while it is still the RUNNING claim stamped at
+     * this instant - the abandon of a claim whose handler threw before it
+     * owned completion. A row the handler already completed, failed or
+     * cancelled, or one a later claim re-stamped, is left exactly as it is.
+     * Answers null then.
+     */
+    onlyIfRunningSince?: Date;
+    /**
+     * #3462: the operator-facing message to record instead of the error's own
+     * (still redacted). The status code is still read from `error`.
+     */
+    lastErrorMessage?: string;
   }
 ) {
   const statusCode = getXeroErrorStatusCode(error);
   const rawMessage =
-    error instanceof Error
+    options?.lastErrorMessage ??
+    (error instanceof Error
       ? error.message
       : typeof error === "string"
         ? error
-        : "Unknown Xero sync failure";
+        : "Unknown Xero sync failure");
   const message = redactSensitiveText(rawMessage);
   const data = {
     status: "FAILED" as const,
@@ -863,14 +877,19 @@ export async function failXeroSyncOperation(
     completedAt: new Date(),
   };
 
-  if (options?.keepCancelled) {
+  const guard = options?.onlyIfRunningSince
+    ? { status: "RUNNING" as const, startedAt: options.onlyIfRunningSince }
+    : options?.keepCancelled
+      ? { status: { not: "CANCELLED" as const } }
+      : null;
+  if (guard) {
     const failed = await prisma.xeroSyncOperation.updateMany({
-      where: { id: operationId, status: { not: "CANCELLED" } },
+      where: { id: operationId, ...guard },
       data,
     });
     if (failed.count === 0) return null;
   }
-  const operation = options?.keepCancelled
+  const operation = guard
     ? await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: operationId } })
     : await prisma.xeroSyncOperation.update({ where: { id: operationId }, data });
 

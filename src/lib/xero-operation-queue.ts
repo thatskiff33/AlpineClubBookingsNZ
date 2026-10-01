@@ -17,6 +17,7 @@ import {
   XeroOperationRetryError,
 } from "@/lib/xero-operation-retry";
 import type { ClubFormat } from "@/lib/club-format";
+import { STALE_RUNNING_XERO_OPERATION_MINUTES } from "@/lib/xero-stale-operations";
 
 // test seam
 export const XERO_OPERATION_REQUEUE_TYPE = "REQUEUE";
@@ -261,10 +262,50 @@ export async function processQueuedXeroOperationRetries(
         },
         "Failed queued Xero operation retry"
       );
-      await failXeroSyncOperation(queuedOperation.id, error);
+      await failXeroSyncOperation(queuedOperation.id, error, undefined, {
+        lastErrorMessage: await describeQueuedRetryFailure(originalOperationId, error),
+      });
       result.failed += 1;
     }
   }
 
   return result;
+}
+
+/**
+ * #3462: what the REQUEUE row's failure says. The REQUEUE row is never
+ * replayable itself (replaying a replay compounds the state), so its message
+ * has to send the operator to the row that IS: it names the original
+ * operation and reads that row's status AFTER the attempt, so it says where
+ * the original actually stands rather than where it should.
+ */
+async function describeQueuedRetryFailure(
+  originalOperationId: string,
+  error: unknown,
+): Promise<string> {
+  const cause = (
+    error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error"
+  ).replace(/\.\s*$/, "");
+  const original = await prisma.xeroSyncOperation
+    .findUnique({
+      where: { id: originalOperationId },
+      select: { status: true, entityType: true, operationType: true },
+    })
+    .catch(() => null);
+  const head = `Retry of Xero operation ${originalOperationId}${
+    original ? ` (${original.entityType} ${original.operationType})` : ""
+  } failed: ${cause}.`;
+  if (!original) {
+    return `${head} The original operation could not be read; find it in the operations list before requeueing.`;
+  }
+  if (original.status === "FAILED") {
+    return `${head} The original operation is back to FAILED — fix the cause and requeue it again.`;
+  }
+  if (original.status === "PARTIAL") {
+    return `${head} The original operation is still PARTIAL — fix the cause and requeue it again.`;
+  }
+  if (original.status === "RUNNING") {
+    return `${head} The original operation is still RUNNING; if it stays RUNNING past ${STALE_RUNNING_XERO_OPERATION_MINUTES} minutes, use Mark failed on it, fix the cause and requeue it again.`;
+  }
+  return `${head} The original operation is now ${original.status}.`;
 }

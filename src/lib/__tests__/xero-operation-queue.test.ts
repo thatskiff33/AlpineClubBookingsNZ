@@ -288,6 +288,57 @@ describe("processQueuedXeroOperationRetries", () => {
     );
   });
 
+  it("fails the REQUEUE row naming the original and saying it is back to FAILED (#3462)", async () => {
+    mocks.findManyQueued.mockResolvedValue([makeQueuedOperation()]);
+    const refusal = new Error("Matched Xero contact is already linked to another member.");
+    mocks.retryXeroSyncOperation.mockRejectedValue(refusal);
+    // The original as the retry left it: its claim abandoned back to FAILED.
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({ status: "FAILED" })
+    );
+
+    await expect(processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).resolves.toMatchObject({
+      failed: 1,
+    });
+
+    expect(mocks.findUniqueOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "op_123" } })
+    );
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith("queue_1", refusal, undefined, {
+      lastErrorMessage:
+        "Retry of Xero operation op_123 (INVOICE CREATE) failed: Matched Xero contact is already linked to another member. The original operation is back to FAILED — fix the cause and requeue it again.",
+    });
+  });
+
+  it.each([
+    ["RUNNING", "is still RUNNING; if it stays RUNNING past 15 minutes, use Mark failed on it"],
+    ["SUCCEEDED", "is now SUCCEEDED."],
+    ["PARTIAL", "is still PARTIAL — fix the cause and requeue it again."],
+  ])("says where an original left %s actually stands (#3462)", async (status, expected) => {
+    mocks.findManyQueued.mockResolvedValue([makeQueuedOperation()]);
+    mocks.retryXeroSyncOperation.mockRejectedValue(new Error("boom"));
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation({ status }));
+
+    await processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST);
+
+    const options = mocks.failXeroSyncOperation.mock.calls[0][3];
+    expect(options.lastErrorMessage).toContain("Retry of Xero operation op_123");
+    expect(options.lastErrorMessage).toContain(expected);
+    expect(options.lastErrorMessage).not.toContain("back to FAILED");
+  });
+
+  it("still fails the REQUEUE row when the original cannot be read (#3462)", async () => {
+    mocks.findManyQueued.mockResolvedValue([makeQueuedOperation()]);
+    mocks.retryXeroSyncOperation.mockRejectedValue(new Error("boom"));
+    mocks.findUniqueOperation.mockRejectedValue(new Error("database unavailable"));
+
+    await processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST);
+
+    expect(mocks.failXeroSyncOperation.mock.calls[0][3].lastErrorMessage).toBe(
+      "Retry of Xero operation op_123 failed: boom. The original operation could not be read; find it in the operations list before requeueing.",
+    );
+  });
+
   it("skips a retry queued before an officer resolved the operation in Xero (#3635)", async () => {
     // Queued while FAILED; the officer then resolved it. The re-read inside
     // `retryXeroSyncOperation` refuses it, and the drain closes the queued row

@@ -119,6 +119,7 @@ import { POST as requeueOperation } from "@/app/api/admin/xero/operations/[id]/r
 import { POST as markNonReplayableOperation } from "@/app/api/admin/xero/operations/[id]/mark-non-replayable/route";
 import { POST as resolveOperation } from "@/app/api/admin/xero/operations/[id]/resolve/route";
 import { POST as resetStaleRunning } from "@/app/api/admin/xero/operations/reset-stale-running/route";
+import { POST as markFailedOperation } from "@/app/api/admin/xero/operations/[id]/mark-failed/route";
 import { GET as listOperations } from "@/app/api/admin/xero/operations/route";
 import { XeroOperationRetryError } from "@/lib/xero-operation-retry";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -226,6 +227,7 @@ describe("Xero operation admin retry routes", () => {
         {
           id: "op_1",
           localUrl: "/admin/xero/records/Payment/pay_1",
+          staleRunning: false,
         },
       ],
     });
@@ -726,5 +728,128 @@ describe("Xero operation admin retry routes", () => {
     await expect(response.json()).resolves.toEqual(
       expect.objectContaining({ ok: true, count: 3 })
     );
+  });
+  describe("Mark failed on one stale running operation (#3462)", () => {
+    // Past the real threshold (now is frozen at 2026-07-01, so 15 minutes
+    // before it).
+    const stuckSince = new Date("2025-12-31T00:00:00.000Z");
+    const stuckRow = {
+      id: "op_stuck",
+      status: "RUNNING",
+      startedAt: stuckSince,
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: "pay_1",
+      lastErrorCode: null,
+      lastErrorMessage: "Matched Xero contact is already linked to another member",
+    };
+    const markRequest = (body: unknown = { reason: "Stuck after a requeue" }) =>
+      new NextRequest("http://localhost/api/admin/xero/operations/op_stuck/mark-failed", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    const params = { params: Promise.resolve({ id: "op_stuck" }) };
+
+    it("marks the row FAILED through a write guarded on the claim it read, and audits it", async () => {
+      mocks.xeroOperationFindUnique.mockResolvedValue(stuckRow);
+      mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 1 });
+
+      const response = await markFailedOperation(markRequest(), params);
+
+      expect(response.status).toBe(200);
+      expect(mocks.xeroOperationUpdateMany).toHaveBeenCalledWith({
+        where: {
+          id: "op_stuck",
+          status: "RUNNING",
+          // The real threshold: the helper reads its own module's filter.
+          startedAt: { equals: stuckSince, lt: new Date("2026-06-30T23:45:00.000Z") },
+        },
+        data: {
+          status: "FAILED",
+          lastErrorCode: "ORPHANED_STALE_RUNNING",
+          lastErrorMessage:
+            "Operation was stuck RUNNING past the staleness threshold and was marked FAILED by an operator. The last error recorded before it stuck: Matched Xero contact is already linked to another member",
+          completedAt: new Date("2026-07-01T00:00:00.000Z"),
+        },
+      });
+      expect(mocks.createAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "xero.operation.marked_failed",
+          category: "xero",
+          memberId: "admin-1",
+          targetId: "op_stuck",
+          details: "Stuck after a requeue",
+          metadata: expect.objectContaining({
+            startedAt: stuckSince.toISOString(),
+            previousErrorMessage: stuckRow.lastErrorMessage,
+          }),
+        })
+      );
+    });
+
+    it("refuses a RUNNING row that is not stale yet, writing and auditing nothing", async () => {
+      mocks.xeroOperationFindUnique.mockResolvedValue({
+        ...stuckRow,
+        startedAt: new Date("2026-06-30T23:55:00.000Z"),
+      });
+
+      const response = await markFailedOperation(markRequest(), params);
+
+      expect(response.status).toBe(409);
+      expect(mocks.xeroOperationUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.createAuditLog).not.toHaveBeenCalled();
+    });
+
+    it("answers 409 and audits nothing when the run completed between the read and the write", async () => {
+      mocks.xeroOperationFindUnique
+        .mockResolvedValueOnce(stuckRow)
+        .mockResolvedValueOnce({ status: "SUCCEEDED" });
+      mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 0 });
+
+      const response = await markFailedOperation(markRequest(), params);
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({
+        error: expect.stringContaining("SUCCEEDED"),
+      });
+      expect(mocks.createAuditLog).not.toHaveBeenCalled();
+    });
+
+    it("refuses a row that is not RUNNING at all", async () => {
+      mocks.xeroOperationFindUnique.mockResolvedValue({ ...stuckRow, status: "FAILED" });
+
+      const response = await markFailedOperation(markRequest(), params);
+
+      expect(response.status).toBe(409);
+      expect(mocks.xeroOperationUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("answers 404 for an unknown operation and 400 without a reason", async () => {
+      mocks.xeroOperationFindUnique.mockResolvedValue(null);
+      expect((await markFailedOperation(markRequest(), params)).status).toBe(404);
+      expect((await markFailedOperation(markRequest({}), params)).status).toBe(400);
+      expect(mocks.xeroOperationUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("flags a stale RUNNING row in the operations list so the panel offers Mark failed", async () => {
+      const createdAt = new Date("2025-12-30T00:00:00.000Z");
+      mocks.xeroOperationFindMany.mockResolvedValue([
+        { ...stuckRow, direction: "OUTBOUND", replayable: true, requestPayload: {}, responsePayload: null, createdAt, updatedAt: createdAt },
+        { ...stuckRow, id: "op_fresh", startedAt: new Date("2026-06-30T23:55:00.000Z"), direction: "OUTBOUND", replayable: true, requestPayload: {}, responsePayload: null, createdAt, updatedAt: createdAt },
+      ]);
+      mocks.xeroOperationCount.mockResolvedValue(2);
+
+      const response = await listOperations(
+        new NextRequest("http://localhost/api/admin/xero/operations?status=RUNNING")
+      );
+
+      await expect(response.json()).resolves.toMatchObject({
+        data: [
+          { id: "op_stuck", staleRunning: true },
+          { id: "op_fresh", staleRunning: false },
+        ],
+      });
+    });
   });
 });
