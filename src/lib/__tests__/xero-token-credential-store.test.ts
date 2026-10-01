@@ -224,6 +224,7 @@ import {
 } from "@/lib/integration-credential-actor";
 import {
   resetIntegrationCredentialCacheForTests,
+  resolveIntegrationCredential,
   setIntegrationCredentialInTransaction,
 } from "@/lib/integration-credentials";
 import {
@@ -479,6 +480,32 @@ describe("the read reconciles the two copies by fingerprint, never by clock (#34
       refreshToken: "refresh-old-refresh",
       storeVersion: expect.any(String),
     });
+  });
+
+  it("never answers from the credential store's cache: another container's write is seen at once", async () => {
+    // What another container will have written: capture it, then rebuild this
+    // process's own (older) state and warm the provider cache with it.
+    await saveXeroTokens(tokenSet("other-container"), { actor: ADMIN });
+    const theirs = structuredClone({
+      xeroToken: h.state.xeroToken,
+      credential: h.state.credential,
+    });
+    const theirVersion = (await loadXeroTokens())?.storeVersion;
+    h.state.xeroToken = [];
+    h.state.credential = [];
+    resetIntegrationCredentialCacheForTests();
+    await saveXeroTokens(tokenSet("ours"), { actor: ADMIN });
+    await resolveIntegrationCredential(XERO_OAUTH_TOKEN_PROVIDER, XERO_OAUTH_TOKEN_KEY);
+
+    // The other container commits; nothing in THIS process invalidates.
+    h.state.xeroToken = theirs.xeroToken;
+    h.state.credential = theirs.credential;
+
+    const read = await loadXeroTokens();
+    expect(read?.refreshToken).toBe("refresh-other-container");
+    // The version a refresh would compare-and-set against is the stored one,
+    // not a cached one that would make the write lose for no reason.
+    expect(read?.storeVersion).toBe(theirVersion);
   });
 
   it("does NOT trust updatedAt: a store copy stamped later still loses to a rewritten row", async () => {
