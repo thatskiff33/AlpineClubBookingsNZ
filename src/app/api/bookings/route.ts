@@ -36,9 +36,8 @@ import {
 import {
   checkOwnDependantIdentity,
   dependantIdentityDeclarationSchema,
+  dependantIdentityRefusalBody,
   loadBookerDependants,
-  DEPENDANT_IDENTITY_UNRESOLVED_CODE,
-  DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,
 } from "@/lib/booking-dependant-identity";
 import {
   assertLinkedBookingMembersCanBeBooked,
@@ -543,29 +542,17 @@ export async function POST(request: NextRequest) {
       declarations: dependantIdentityDeclarations,
     });
     if (dependantIdentityRefusal) {
+      // The CODE is the same on both paths — each client keys on it to send
+      // whoever is at the screen back to the guest step — but the SENTENCE is
+      // not: "your dependant" is wrong in both halves when the reader is an
+      // officer. Chosen here because this handler is the only place that knows
+      // which of the two people is reading the response; the body is the shared
+      // one, which deliberately does not echo the collisions (#2721 review).
       return NextResponse.json(
-        {
-          code: dependantIdentityRefusal.code,
-          // The CODE is the same on both paths — each client keys on it to send
-          // whoever is at the screen back to the guest step — but the SENTENCE
-          // is not: "your dependant" is wrong in both halves when the reader is
-          // an officer, so the on-behalf wording says whose dependant it is and
-          // where the answer lives. Substituted here rather than inside the
-          // guard because this handler is the only place that knows which of the
-          // two people is reading the response.
-          error:
-            isAuthorizedOnBehalf &&
-            dependantIdentityRefusal.code === DEPENDANT_IDENTITY_UNRESOLVED_CODE
-              ? DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE
-              : dependantIdentityRefusal.error,
-          // The collisions are deliberately NOT echoed (#2721 review). They were,
-          // and nothing read them: the wizard re-derives the question from
-          // `/api/members/family`, because a refusal this client did not expect
-          // is by definition one whose cached list is stale — and it has to
-          // re-read that list anyway to draw the answers, which the response
-          // body does not carry. Names and member ids travelling to no consumer
-          // are a payload waiting for someone to start trusting it.
-        },
+        dependantIdentityRefusalBody(dependantIdentityRefusal, {
+          onBehalf: isAuthorizedOnBehalf,
+          surface: "create",
+        }),
         { status: dependantIdentityRefusal.status },
       );
     }

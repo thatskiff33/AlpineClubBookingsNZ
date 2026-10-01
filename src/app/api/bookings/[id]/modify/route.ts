@@ -14,6 +14,11 @@ import { ApiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import {
+  dependantIdentityDeclarationSchema,
+  dependantIdentityRefusalBody,
+  OwnDependantIdentityRefusedError,
+} from "@/lib/booking-dependant-identity";
+import {
   BookingGuestValidationError,
   getBookingGuestValidationErrorResponse,
 } from "@/lib/booking-guests";
@@ -71,6 +76,12 @@ const batchModifySchema = z.object({
         nights: z.array(z.string()).max(370).optional(),
       }),
     )
+    .optional(),
+  // #3451 (`INV-GUEST-019`): the answer about an added guest sharing a name with
+  // one of the owner's dependants, re-verified by the guest planner.
+  dependantIdentityDeclarations: z
+    .array(dependantIdentityDeclarationSchema)
+    .max(50)
     .optional(),
   removeGuestIds: z.array(z.string()).optional(),
   guestStayRanges: z
@@ -150,6 +161,8 @@ const batchModifySchema = z.object({
 
 const OVERRIDE_DATE_ONLY_FIELDS = [
   "addGuests",
+  // #3451: an answer about an added guest is a guest change, never a date override.
+  "dependantIdentityDeclarations",
   "removeGuestIds",
   "guestStayRanges",
   "guestUpdates",
@@ -335,6 +348,18 @@ export async function PUT(
   } catch (err) {
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
+    // #3451 (`INV-GUEST-019`): an added guest is named as one of the owner's
+    // recorded dependants with no live answer. The create route's body and code;
+    // `onBehalf` is ownership, not role — an officer's OWN booking reads as theirs.
+    if (err instanceof OwnDependantIdentityRefusedError) {
+      return NextResponse.json(
+        dependantIdentityRefusalBody(err.refusal, {
+          onBehalf: actorRole === "ADMIN" && !err.actorIsBookingOwner,
+          surface: "edit",
+        }),
+        { status: err.refusal.status },
+      );
+    }
     if (err instanceof OverCapacityConfirmationRequiredError) {
       return NextResponse.json(
         {

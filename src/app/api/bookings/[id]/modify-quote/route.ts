@@ -80,6 +80,10 @@ import {
   type NormalizedAddGuest,
 } from "@/lib/booking-modify-quote-request";
 import {
+  checkOwnDependantIdentityForParty,
+  dependantIdentityRefusalBody,
+} from "@/lib/booking-dependant-identity";
+import {
   assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
   getBookingGuestValidationErrorResponse,
@@ -808,6 +812,9 @@ export async function POST(
   // it plans no consent and notifies nobody, but it must resolve a cross-family
   // member or the quote it shows disagrees with what the apply path will charge.
   const memberGuestPolicy = await loadMemberGuestAddPolicy();
+  // The ids that really resolved — the own-dependant guard's forgery defence
+  // (#3451, `INV-GUEST-019`), hoisted exactly as the create route hoists it.
+  let memberPathMemberIds: ReadonlySet<string> = new Set<string>();
 
   try {
     const { members: linkedMembers, boundary } =
@@ -856,6 +863,7 @@ export async function POST(
         crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
       }
     );
+    memberPathMemberIds = new Set(linkedMembers.keys());
     normalizedAddGuests = addGuests
       ? markCrossFamilyMemberGuests(
           normalizeBookingGuestInputs(addGuests, linkedMembers).map((guest, index) => ({
@@ -888,6 +896,34 @@ export async function POST(
       );
     }
     throw error;
+  }
+
+  /**
+   * OWN-DEPENDANT IDENTITY ON AN ADDED GUEST (#3451, `INV-GUEST-019`; option C,
+   * "ask in place on add-guest"). Refusing the preview with the create route's
+   * code is what makes the edit panel ask the wizard's question; the answer comes
+   * back as `dependantIdentityDeclarations` and is re-checked here and by the
+   * save. Only the rows this edit ADDS, and the booking OWNER's dependants, never
+   * the officer's. After the owner-or-admin 403 and the member resolution's D-8
+   * refusals, so it only ever speaks about the owner's own parent links.
+   */
+  {
+    const ownerMemberId = bookingOwner(booking).memberId;
+    const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(prisma, {
+      bookerMemberId: ownerMemberId,
+      party: normalizedAddGuests ?? [],
+      memberPathMemberIds,
+      declarations: parsed.data.dependantIdentityDeclarations,
+    });
+    if (dependantIdentityRefusal) {
+      return NextResponse.json(
+        dependantIdentityRefusalBody(dependantIdentityRefusal, {
+          onBehalf: isAdmin && ownerMemberId !== session.user.id,
+          surface: "edit",
+        }),
+        { status: dependantIdentityRefusal.status },
+      );
+    }
   }
 
   // Determine new dates

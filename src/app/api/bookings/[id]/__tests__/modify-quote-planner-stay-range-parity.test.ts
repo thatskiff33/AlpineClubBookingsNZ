@@ -105,6 +105,9 @@ vi.mock("@/lib/prisma", () => ({
     season: { findMany: h.seasonFindMany },
     groupDiscountSetting: { findUnique: h.groupDiscountFindUnique },
     bookingRequest: { findFirst: h.bookingRequestFindFirst },
+    // #3451: the own-dependant guard reads the booking owner's parent links (a
+    // READ, so the zero-write suite is unaffected). Nobody here has a dependant.
+    member: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: h.transaction,
   },
 }));
@@ -505,7 +508,10 @@ async function runPlanner(
     // stays mid-stay, which is the branch it was added to exercise.
     today: CLUB_TODAY,
   });
-  const plan = await prepareGuestPlan({} as never, {
+  // #3451: the planner's own-dependant guard reads parent links on the
+  // transaction client; nobody in this matrix has a dependant.
+  const plannerTx = { member: { findMany: async () => [] } };
+  const plan = await prepareGuestPlan(plannerTx as never, {
     // #3123 - the SAME club day `resolveTargetDates` was handed above. The
     // planner's person-night guard reads it too, and two days in one plan would
     // be the straddle this issue exists to remove.
