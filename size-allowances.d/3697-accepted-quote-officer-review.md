@@ -18,6 +18,16 @@ reason: #3415's accepted status and #3416's portable booking-policy setting
   join the established request queue and settings updater; moving those small
   branches would split their atomic persistence and audit rules.
 
+file: src/lib/booking-cancel.ts
+lines: 2554
+reason: #3415's accepted-quote cancellation fence belongs beside the existing
+  booking status and refund counterparts in this transaction.
+
+file: src/lib/booking-request-quotes.ts
+lines: 2191
+reason: #3415's accepted-quote transition shares the existing quote claim and
+  payment state checks; splitting it would separate one lifecycle rule.
+
 file: src/lib/school-booking-request.ts
 lines: 2968
 reason: #3415's accepted status and #3416's optional teacher assignment share
