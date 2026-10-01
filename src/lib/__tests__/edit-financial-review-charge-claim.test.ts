@@ -133,6 +133,9 @@ beforeEach(() => {
     },
   );
   mocks.enqueueRecovery.mockResolvedValue({ id: "recovery-1" });
+  // mockReset, not just clear: a case's unconsumed `...Once` answers must not
+  // leak into the next case.
+  mocks.findRequest.mockReset();
   mocks.findRequest.mockResolvedValue(requestAt(5_000));
   mocks.recoveryDead.mockResolvedValue(false);
 });
