@@ -311,11 +311,8 @@ export async function POST(
 
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
-    // #3770: a collapsed member-guest refusal (the member lookup's, or "nothing
-    // to review" with a beyond-family member named) owes what it owes on every
-    // add path: the throttle unit, the audit row and the timing floor. This door
-    // resolves members without the boundary hook, so it charges on the way out.
-    // Every other error passes straight through the helper.
+    // #3770: a collapsed member-guest refusal owes the add paths' throttle unit,
+    // audit row and timing floor; no boundary hook here, so it charges on exit.
     if (error instanceof BookingGuestValidationError) {
       await handleMemberGuestAddRefusal({
         request: req,

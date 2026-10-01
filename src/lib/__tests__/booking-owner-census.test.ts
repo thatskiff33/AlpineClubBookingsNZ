@@ -473,7 +473,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/confirm-draft/route.ts:95",
   "src/app/api/bookings/[id]/confirm-modification-payment/route.ts:69",
   "src/app/api/bookings/[id]/confirm-payment/route.ts:84",
-  "src/app/api/bookings/[id]/exception-requests/route.ts:134",
+  "src/app/api/bookings/[id]/exception-requests/route.ts:142",
   "src/app/api/bookings/[id]/guests/route.ts:342",
   "src/app/api/bookings/[id]/modify-quote/route.ts:344",
   "src/app/api/bookings/[id]/notes/route.ts:48",
