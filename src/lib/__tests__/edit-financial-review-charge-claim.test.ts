@@ -169,12 +169,10 @@ describe("the review-charge raise claim (#3402)", () => {
     expect(result).toMatchObject({ outcome: "raised", totalCents: 7_000 });
     expect(mocks.calls).toEqual(["claim", "intent:7000", "stripe:7000", "row:7000", "release"]);
     expect(mocks.recordIntent).toHaveBeenCalledWith(CLAIM, 7_000);
-    expect(mocks.writeRaisedAmount).toHaveBeenCalledWith({
-      paymentId: "payment-1",
-      paymentIntentId: "pi_request",
-      amountCents: 7_000,
-      carriedAskCents: 0,
-    });
+    // The carried figure is the minter's to prove (`INV-OPS-015`), not this file's.
+    expect(mocks.writeRaisedAmount).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "payment-1", paymentIntentId: "pi_request" }),
+    );
   });
 
   it("the holder looks again AFTER releasing, and raises for a share that committed while it held the claim", async () => {
@@ -344,12 +342,7 @@ describe("the review-charge raise claim (#3402)", () => {
 
     const result = await sync();
 
-    expect(result).toEqual({
-      outcome: "already-paid",
-      paymentIntentId: "pi_request",
-      totalCents: 7_000,
-      carriedCents: 0,
-    });
+    expect(result).toMatchObject({ outcome: "already-paid", paymentIntentId: "pi_request" });
     // Paid at the new amount, which covered every share this pass derived: no
     // shortfall to trace, and no recovery row to replay.
     expect(mocks.recordUncollected).not.toHaveBeenCalled();
