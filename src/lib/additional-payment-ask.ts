@@ -278,7 +278,7 @@ export function sizeReviewChargeAsk({
  * not serialise two runs: the refusal it feeds reads the row and writes it in
  * separate statements with a provider round trip between them. Since #3402 two
  * runs are serialised by the edit's raise claim instead (`INV-PAY-111`,
- * `edit-review-charge-raise-claim.ts`), and monotonicity is what makes taking
+ * `edit-financial-review-charge-raise-claim.ts`), and monotonicity is what makes taking
  * over an abandoned claim safe.
  */
 export function raiseReviewChargeAsk({

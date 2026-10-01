@@ -6,7 +6,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 /**
  * #3402 (`INV-PAY-111`): how `syncEditFinancialReviewChargeRequest` uses the
  * edit's raise claim. That the claim itself excludes a concurrent claimant is a
- * property of PostgreSQL, proved in `edit-review-charge-raise-claim.realdb.test.ts`;
+ * property of PostgreSQL, proved in `edit-financial-review-charge-raise-claim.realdb.test.ts`;
  * these cases pin the ORCHESTRATION around it - who may call Stripe, what a run
  * that may not does instead, and that the holder looks again after releasing.
  */
@@ -29,7 +29,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/edit-review-charge-raise-claim", () => ({
+vi.mock("@/lib/edit-financial-review-charge-raise-claim", () => ({
   claimEditReviewChargeRaise: (...a: unknown[]) => mocks.claim(...a),
   recordEditReviewChargeRaiseIntent: (...a: unknown[]) => mocks.recordIntent(...a),
   releaseEditReviewChargeRaise: (...a: unknown[]) => mocks.release(...a),

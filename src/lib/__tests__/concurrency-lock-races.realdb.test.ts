@@ -165,7 +165,7 @@ import "./group-settlement-invoice-binding-races.realdb.test";
 // forced through the real sync with only Stripe gated - ends with the true total
 // at the provider and on the row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-3402-` fixtures.
-import "./edit-review-charge-raise-claim.realdb.test";
+import "./edit-financial-review-charge-raise-claim.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

@@ -3222,7 +3222,7 @@ money has moved at Stripe before the row is written, so the row and the intent
 would disagree instead.
 
 So the claim is taken BEFORE the provider call, on `EditReviewChargeRaiseClaim`
-(one row per `BookingModification`, `edit-review-charge-raise-claim.ts`):
+(one row per `BookingModification`, `edit-financial-review-charge-raise-claim.ts`):
 
 1. **claim** — a guarded `updateMany` writes a fresh opaque token only where no
    live token is held. Under READ COMMITTED a concurrent second claim re-checks
@@ -3256,7 +3256,7 @@ successor (the Stripe client's default timeouts bound a live holder at a few
 minutes); a crash after Stripe accepted but before the row was written leaves the
 row behind the intent until the next run for that edit, as before #3402; and while
 the previous colour drains after deploy, its syncs take no claim. Proven against
-real PostgreSQL by `edit-review-charge-raise-claim.realdb.test.ts`, which forces
+real PostgreSQL by `edit-financial-review-charge-raise-claim.realdb.test.ts`, which forces
 the $60/$100 interleaving through the real sync.
 
 The contrast is instructive and it is one paragraph down: the refund leg's

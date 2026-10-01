@@ -24,7 +24,7 @@
  * To run directly against a throwaway scratch database:
  *   RUN_CONCURRENCY_RACE_TESTS=1 \
  *   CONCURRENCY_RACE_DATABASE_URL=postgresql://user:pass@127.0.0.1:55442/concurrency_race_1881 \
- *   pnpm exec vitest run src/lib/__tests__/edit-review-charge-raise-claim.realdb.test.ts
+ *   pnpm exec vitest run src/lib/__tests__/edit-financial-review-charge-raise-claim.realdb.test.ts
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -130,7 +130,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let syncEditFinancialReviewChargeRequest: (typeof import("@/lib/edit-financial-review-charge"))["syncEditFinancialReviewChargeRequest"];
 let buildEditFinancialReviewChargeReason: (typeof import("@/lib/payment-recovery-keys"))["buildEditFinancialReviewChargeReason"];
 let stripeChargeCurrency: (typeof import("@/lib/stripe-charge-currency"))["stripeChargeCurrency"];
-let claimModule: typeof import("@/lib/edit-review-charge-raise-claim");
+let claimModule: typeof import("@/lib/edit-financial-review-charge-raise-claim");
 
 /**
  * Two SEPARATE single-connection clients: one pins the claim ROW open inside a
@@ -232,7 +232,7 @@ let observerClient: PrismaClient;
         "@/lib/payment-recovery-keys"
       ));
       ({ stripeChargeCurrency } = await import("@/lib/stripe-charge-currency"));
-      claimModule = await import("@/lib/edit-review-charge-raise-claim");
+      claimModule = await import("@/lib/edit-financial-review-charge-raise-claim");
 
       const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] =
         await Promise.all([import("@prisma/client"), import("@/lib/prisma-adapter")]);

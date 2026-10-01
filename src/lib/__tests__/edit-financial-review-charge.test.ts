@@ -160,10 +160,10 @@ vi.mock("@/lib/payment-recovery", () => ({
   runPaymentRecoveryOperationNow: (...a: unknown[]) => mocks.cancelNow(...a),
 }));
 // #3402: the raise claim is proved against PostgreSQL in
-// `edit-review-charge-raise-claim.realdb.test.ts` and its orchestration in
+// `edit-financial-review-charge-raise-claim.realdb.test.ts` and its orchestration in
 // `edit-financial-review-charge-claim.test.ts`; here every run wins it, which is
 // the uncontended case these cases have always described.
-vi.mock("@/lib/edit-review-charge-raise-claim", () => ({
+vi.mock("@/lib/edit-financial-review-charge-raise-claim", () => ({
   claimEditReviewChargeRaise: async (bookingModificationId: string) => ({
     bookingModificationId,
     token: "claim-token",

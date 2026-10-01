@@ -2647,9 +2647,7 @@ async function processCreateAdditionalPaymentIntentOperation(
      * being processed is already this debt's durable retry, and a second row for
      * one debt is a second debt.
      */
-    // #3402: `deferred` is the same fact from a different cause - another run
-    // holds this edit's raise claim, so this replay raised nothing.
-    if (synced.outcome === "not-raised" || synced.outcome === "deferred") {
+    if (synced.outcome === "not-raised" || synced.outcome === "deferred") { // #3402: claim held elsewhere
       throw new Error(
         `Edit financial review charge request for booking modification ${bookingModificationId} was not raised (${formatCents(synced.totalCents, format)} still owed); leaving the recovery operation open to retry`,
       );
