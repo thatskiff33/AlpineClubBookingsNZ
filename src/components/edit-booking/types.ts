@@ -76,6 +76,13 @@ export interface BookingData {
   checkOut: string;
   guests: Guest[];
   viewerRole: string;
+  /**
+   * #3451: whether the viewer IS the booking's owner, so the own-dependant
+   * question is worded by ownership rather than role (an officer on their own
+   * booking is the member). Optional so existing fixtures stay valid; absent
+   * reads as "not the owner".
+   */
+  viewerIsBookingOwner?: boolean;
   finalPriceCents: number;
   totalPriceCents: number;
   discountCents: number;

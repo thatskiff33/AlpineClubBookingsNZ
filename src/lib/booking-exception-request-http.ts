@@ -13,6 +13,9 @@ import {
   PolicyExceptionCapacityUnavailableError,
   PolicyExceptionDependantIdentityError,
 } from "@/lib/booking-exception-request-service";
+import {
+  dependantIdentityRefusalBody,
+} from "@/lib/booking-dependant-identity-doors";
 
 /**
  * Map a request-creation domain error to its HTTP response. Shared by every
@@ -20,7 +23,18 @@ import {
  * the same failure the same way. A non-domain error is rethrown for the route's
  * own catch/500 handling.
  */
-export function mapExceptionRequestError(error: unknown): NextResponse {
+export function mapExceptionRequestError(
+  error: unknown,
+  /**
+   * Who reads an own-dependant refusal, and on which screen (#3451): the edit
+   * door passes the edit surface and whether an officer is acting for the
+   * member. Absent is the new-booking door, which answers as it always has.
+   */
+  dependantIdentityVoice: { onBehalf: boolean; surface: "create" | "edit" } = {
+    onBehalf: false,
+    surface: "create",
+  },
+): NextResponse {
   if (error instanceof PolicyExceptionMemberMessageError) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
@@ -56,7 +70,7 @@ export function mapExceptionRequestError(error: unknown): NextResponse {
   // see `DependantIdentityRefusal.collisions`.
   if (error instanceof PolicyExceptionDependantIdentityError) {
     return NextResponse.json(
-      { error: error.refusal.error, code: error.refusal.code },
+      dependantIdentityRefusalBody(error.refusal, dependantIdentityVoice),
       { status: error.refusal.status },
     );
   }

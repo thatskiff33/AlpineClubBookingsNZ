@@ -1,3 +1,11 @@
+import {
+  type DependantIdentityDeclaration,
+  type DependantIdentityPartyMember,
+} from "@/lib/booking-dependant-identity";
+import {
+  declarationsForAddedGuests,
+} from "@/lib/booking-dependant-identity-doors";
+
 /**
  * What a policy-exception request carries out of a pending modification, and what
  * it has to leave behind (#2562).
@@ -24,6 +32,9 @@ const EXCEPTION_PROPOSAL_PAYLOAD_KEYS = [
   "addGuests",
   "removeGuestIds",
   "guestStayRanges",
+  // #3451: the answers about added guests travel WITH the proposal — the request
+  // door re-checks them and freezes them for the approval's replay.
+  "dependantIdentityDeclarations",
 ] as const;
 
 /**
@@ -86,6 +97,19 @@ export function exceptionRequestPayloadFromModification(
   const payload: Record<string, unknown> = {};
   for (const key of EXCEPTION_PROPOSAL_PAYLOAD_KEYS) {
     if (body[key] !== undefined) payload[key] = body[key];
+  }
+  // #3451: a request carries the added guests but not renames, so only the
+  // answers about ADDED guests may travel — one about a renamed row describes
+  // no collision on the request and would be refused there as tampering.
+  if (Array.isArray(payload.dependantIdentityDeclarations)) {
+    const kept = declarationsForAddedGuests(
+      payload.dependantIdentityDeclarations as DependantIdentityDeclaration[],
+      Array.isArray(body.addGuests)
+        ? (body.addGuests as DependantIdentityPartyMember[])
+        : [],
+    );
+    if (kept.length > 0) payload.dependantIdentityDeclarations = kept;
+    else delete payload.dependantIdentityDeclarations;
   }
   const omitted = new Set<string>();
   let omitsPricedChange = false;

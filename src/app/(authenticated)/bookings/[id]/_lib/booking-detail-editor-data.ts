@@ -224,6 +224,8 @@ export async function buildBookingDetailEditorData({
       })(),
     })),
     viewerRole: viewerAuthorizationRole,
+    // #3451: ownership, for the own-dependant question's voice.
+    viewerIsBookingOwner: bookingOwner(booking).memberId === session.user.id,
     totalPriceCents: booking.totalPriceCents,
     discountCents: booking.discountCents,
     promoAdjustmentCents: booking.promoAdjustmentCents,

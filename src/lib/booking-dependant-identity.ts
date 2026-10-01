@@ -439,3 +439,114 @@ export function checkOwnDependantIdentity(params: {
 
   return null;
 }
+
+/**
+ * The member ids a party CLAIMS, for a guard that runs BEFORE the member lookup
+ * (#3451 review, the membership-oracle finding).
+ *
+ * Sound only in that position, and only on a door whose lookup refuses every id
+ * that does not resolve to a bookable member (`resolveLinkedBookingMembersWithBoundary`
+ * does, for every caller): a row claiming an id that does not resolve is then
+ * refused by the lookup whatever the guard said, so treating it as member-linked
+ * here cannot let a free-text dependant through. Running the guard first is what
+ * makes its answer independent of whether some OTHER claimed id is a real member
+ * — after the lookup, its 409 versus the lookup's collapsed refusal told a
+ * prober exactly that.
+ */
+export function claimedMemberPathIds(
+  party: ReadonlyArray<{ memberId?: string | null }>,
+): Set<string> {
+  return new Set(
+    party.flatMap((guest) => {
+      const id = guest.memberId?.trim();
+      return id ? [id] : [];
+    }),
+  );
+}
+
+/**
+ * The guard's answer, carried out of a service that runs inside a transaction
+ * (#3451). The edit doors resolve their members under the capacity lock, so the
+ * guard runs there too and the route turns this back into the same body the
+ * create route answers with.
+ */
+export class OwnDependantIdentityRefusedError extends Error {
+  constructor(
+    readonly refusal: DependantIdentityRefusal,
+    /**
+     * The member whose dependants these are. Only the code that loaded the
+     * booking knows; the route hands it to {@link dependantIdentitySpeaksOnBehalf}.
+     */
+    readonly ownerMemberId: string | null,
+  ) {
+    super(refusal.error);
+    this.name = "OwnDependantIdentityRefusedError";
+  }
+}
+
+/**
+ * Read the booker's dependants and run {@link checkOwnDependantIdentity} — the
+ * ONE server entry point every door calls (#3451): the create route, both
+ * policy-exception doors and the approval, and the edit doors. So the skip rule
+ * and the read cannot drift between them.
+ *
+ * `memberPathMemberIds` is the set that RESOLVED when the call follows the
+ * member lookup (create, approval), or {@link claimedMemberPathIds} when it
+ * precedes one that refuses every unresolved id (the edit doors) — see there.
+ *
+ * The dependant read is skipped entirely for a party that is all member-linked
+ * and carries no declaration — the common family booking — so the ordinary path
+ * pays nothing. A party with a declaration is still checked when it has no
+ * free-text row, because a declaration that describes no collision is tampering
+ * and is refused rather than ignored.
+ *
+ * `bookerMemberId` is the member the booking is FOR (`bookingOwner(booking)` on
+ * an edit, the on-behalf target on a create) — never the acting officer. `null`
+ * is a booking with no member owner (#3369): nobody's dependants, so nothing to
+ * collide with, and a declaration there is refused as describing nothing.
+ *
+ * Takes `db` rather than importing the client, so a caller inside a transaction
+ * passes `tx` and the read stays on that connection (`INV-LOCK-004`), and so this
+ * module stays importable from the client components above.
+ */
+export async function checkOwnDependantIdentityForParty(
+  db: BookerDependantLookupDb,
+  params: {
+    bookerMemberId: string | null;
+    party: ReadonlyArray<DependantIdentityPartyMember>;
+    memberPathMemberIds: ReadonlySet<string>;
+    declarations?: ReadonlyArray<DependantIdentityDeclaration>;
+  },
+): Promise<DependantIdentityRefusal | null> {
+  const declarations = params.declarations ?? [];
+  const hasFreeTextRow = params.party.some(
+    (guest) =>
+      !guest.memberId?.trim() ||
+      !params.memberPathMemberIds.has(guest.memberId.trim()),
+  );
+  if (!hasFreeTextRow && declarations.length === 0) return null;
+  const dependants = params.bookerMemberId
+    ? await loadBookerDependants(db, params.bookerMemberId)
+    : [];
+  return checkOwnDependantIdentity({
+    party: params.party,
+    memberPathMemberIds: params.memberPathMemberIds,
+    dependants,
+    declarations,
+  });
+}
+
+/**
+ * Is this response code one of the guard's two refusals? The ONE spelling every
+ * client handler keys on (#3451), so the edit panel's quote and save paths cannot
+ * disagree about which refusals put the question back on screen.
+ */
+export function isDependantIdentityRefusalCode(
+  code: unknown,
+): code is DependantIdentityRefusal["code"] {
+  return (
+    code === DEPENDANT_IDENTITY_UNRESOLVED_CODE ||
+    code === DEPENDANT_IDENTITY_DECLARATION_INVALID_CODE
+  );
+}
+

@@ -2,6 +2,7 @@
 // validation and the shared loaded-booking types for the modification
 // boundary. Code moved verbatim; import via the "@/lib/booking-modify" barrel.
 
+import type { DependantIdentityDeclaration } from "@/lib/booking-dependant-identity";
 import {
   BookingStatus,
   type AgeTier,
@@ -53,6 +54,13 @@ export type BatchModifyInput = {
     // Explicit included nights for a non-contiguous stay (issue #713).
     nights?: ReadonlyArray<string> | null;
   }>;
+  /**
+   * #3451 (`INV-GUEST-019`): "this is a different person with the same name",
+   * about one of the booking owner's recorded dependants, for an ADDED guest
+   * whose name matches. `prepareGuestPlan` re-derives every collision from
+   * authenticated data and refuses one that does not describe a live collision.
+   */
+  dependantIdentityDeclarations?: DependantIdentityDeclaration[];
   removeGuestIds?: string[];
   guestStayRanges?: Array<{
     guestId: string;
