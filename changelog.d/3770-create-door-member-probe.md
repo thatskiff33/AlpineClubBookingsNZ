@@ -13,6 +13,7 @@
     unknown lodge, a lodge the booker may not book, a room from another lodge,
     or too many guests;
   - the booker's own unpaid subscription;
+  - a night the lodge is already full on, judged on the member guests;
   - Internet Banking when it is unavailable or too close to check-in;
   - a working bee that cannot apply;
   - a promo code that is unknown, inactive, out of date, for another lodge,
@@ -34,7 +35,9 @@
   - having an adult with any children.
 
   If a member names such a person, these rules are now checked once that person
-  is known. An outsider who is still waiting to agree does not count. If the
+  is known. An outsider who is still waiting to agree does not count towards a
+  paid-up adult member or, when the booking is made, an adult host. They do
+  still count as the adult with children, as before. If the
   rule is still not met, the member sees the usual "This member can't be added
   to this booking right now" message instead of the detailed one. A member can
   no longer avoid the hosting check by sending the reason an officer would give.
@@ -58,8 +61,6 @@
   member can try to add someone outside their family.
 
   Some refusals still come after the named members are looked up:
-  - a night the lodge is already full on, which is with the club's owner to
-    decide;
   - a promo code that has reached one of its usage limits, needs an assigned
     member to be staying, or that some of the chosen guests cannot use;
   - refusals caused by two requests landing at the same moment.

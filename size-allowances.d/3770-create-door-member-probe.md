@@ -6,7 +6,7 @@ pre-checks a refusal the transaction already makes. The growth is the code that
 splits one refusal in two, plus the comment saying why the order matters.
 
 file: src/app/api/bookings/route.ts
-lines: 1755
+lines: 1796
 reason: the route is a long, ordered sequence of guards, and the contract this
   issue fixes IS that order: refusals that read only the request and the booker
   must run before the member lookup, and the ones that read the resolved party
@@ -25,7 +25,9 @@ reason: the route is a long, ordered sequence of guards, and the contract this
   party, and the deferred paid-up-adult, hosting and adult-supervision collapse,
   with the services' own hosting and supervision refusals mapped the same way.
   Round 4 adds the lodge-access, room-lodge and stay-envelope past-date refusals
-  ahead of the lookup. The resolution itself moved out to
+  ahead of the lookup; the owner's R4 decision adds the full-lodge pre-flight,
+  which has to sit between the family pass and the outsider lookup and shares
+  the route's one CAPACITY_EXCEEDED body with the service's answer. The resolution itself moved out to
   `member-guest-family-first.ts`, shared with the exception doors; what stays is
   the ordered sequence of refusals, which is the contract, so it stays readable
   in the one handler that owns it.

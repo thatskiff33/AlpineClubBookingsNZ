@@ -1239,8 +1239,10 @@ answered) and built to it:
   a working-bee event that cannot apply, and a promo code that is unknown,
   inactive, out of its window, for another lodge, assigned to somebody else or
   missing its guest selection. The promo code's usage caps, and which guests may
-  use it, read the priced party and are still answered later, as is a full
-  night (that one is with the owner). On the exception
+  use it, read the priced party and are still answered later. A full lodge is
+  answered before the outsider is looked up too (owner decision), judged on the
+  party's member half, so it can arrive a little ahead of other refusals. On the
+  exception
   requests: the stay range and the own-dependant question, a lodge id that names
   no active lodge (new booking), a supersede target that is not the member's
   open request, and an occupied slot (edit). "Nothing to review" reads the
@@ -1256,7 +1258,9 @@ answered) and built to it:
   paid-up adult, an adult host or an adult for its minors and an outsider is
   named, the rule is judged once that outsider is known: an outsider the rule
   can count settles it, and if it still fails the member sees the neutral
-  refusal. An outsider waiting to consent does not count as present.
+  refusal. An outsider waiting to consent does not count towards the paid-up
+  adult or the final hosting check, but does still count as the adult with
+  children today (a question with the owner).
 - **Every collapsed refusal is audited** naming actor and target, and a run of
   them against the same target raises a flagged row an admin can find — ONCE per
   actor/target per 24 hours, on the crossing rather than on every refusal past

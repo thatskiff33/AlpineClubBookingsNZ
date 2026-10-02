@@ -320,12 +320,16 @@ leave a stale row here.
   resolved** (owner decision 2 Oct 2026, #3770), on `POST /api/bookings` and both
   policy-exception doors. A refusal reachable only once a named member resolved
   says that member is real, so the boundary is computed from the booker's family
-  groups, the #2388 throttle is spent, a beyond-family id is refused outright
-  where member guests are off, and the family is resolved and gated before any
-  outsider is looked up. On create, every per-member refusal about the family
-  (night clash, membership type, unpaid subscription) runs there too; the guards
-  then run again over the whole party, where only the outsider can refuse, with
-  D-8's neutral sentence. One home: `src/lib/member-guest-family-first.ts`.
+  groups, and on a member's own request a beyond-family id is refused outright
+  where member guests are off; then the family is resolved and gated before any
+  outsider is looked up. One home: `src/lib/member-guest-family-first.ts`. The
+  #2388 throttle is spent on the boundary on create, and on a collapsed refusal
+  on the exception doors.
+- **On create, every per-member refusal about the family** (night clash,
+  membership type, unpaid subscription) **runs before the outsider lookup too,
+  and so does a full lodge** (owner decision on R4), judged on the party's member
+  half; the services still decide. The guards then run again over the whole
+  party, where only the outsider can refuse, with D-8's neutral sentence.
 - **This reverses, on these doors, the "cross-family refusal wins" order** the
   profile gate, the person-night guard and the membership-type message keep
   elsewhere.
@@ -334,5 +338,5 @@ leave a stale row here.
   are judged on the whole party; a failure, or the create service's own hosting
   or supervision refusal, is the lookup's collapsed refusal. An officer acting on
   a member's behalf keeps the detailed answers.
-- **Not yet before the lookup on create:** a full night (pending the owner),
-  promo usage caps and guest eligibility, and race-only refusals.
+- **Not yet before the lookup on create:** promo usage caps and guest
+  eligibility, and race-only refusals.
