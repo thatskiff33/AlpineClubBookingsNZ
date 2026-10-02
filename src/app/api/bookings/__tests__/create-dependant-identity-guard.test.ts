@@ -62,6 +62,7 @@ const h = vi.hoisted(() => ({
   lodgeRoomFindUnique: vi.fn(),
   planConsent: vi.fn(),
   checkCapacity: vi.fn(),
+  holdDecision: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
@@ -212,11 +213,11 @@ vi.mock("@/lib/cancellation", () => ({
     .fn()
     .mockResolvedValue({ enabled: false, holdDays: 0, source: "default" }),
 }));
-vi.mock("@/lib/policies/booking-route-decisions", () => ({
-  calculateBookingHoldDecision: () => ({
-    shouldBePending: false,
-    status: "PAYMENT_PENDING",
-  }),
+// Partial: `decideBookingSplit` is the real one — it is what the #3770 full-lodge
+// pre-flight shares with the create service. The hold decision is driven.
+vi.mock("@/lib/policies/booking-route-decisions", async (importActual) => ({
+  ...((await importActual()) as object),
+  calculateBookingHoldDecision: h.holdDecision,
   toGroupDiscountConfig: () => ({}),
 }));
 vi.mock("@/lib/member-credit", () => ({
@@ -294,6 +295,8 @@ function setPreLookupDefaults() {
   h.lodgeAccessFindMany.mockResolvedValue([]);
   h.lodgeRoomFindUnique.mockResolvedValue(null);
   h.checkCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+  // Inside the non-member hold window (or no hold): no split, the whole party counts.
+  h.holdDecision.mockReturnValue({ shouldBePending: false, status: "PAYMENT_PENDING" });
   // Consent planning passes rows through: an outsider is as present as the
   // club's notify-only mode makes them. A case about approval-required consent
   // marks them PENDING itself.
@@ -1324,14 +1327,75 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
         responses.push({ status: res.status, body: await res.text() });
         expect(lookupNamedX()).toBe(false);
         expectNoBookingWritten();
-        // The member half only: the family member and X, never the non-member.
+        // Inside the hold window nothing splits: the whole party is counted (B1).
         const ranges = h.checkCapacity.mock.calls[0]?.[3] as unknown[];
-        expect(ranges).toHaveLength(2);
+        expect(ranges).toHaveLength(3);
       }
 
       expect(responses[0]).toEqual(responses[1]);
       expect(responses[0]?.status).toBe(409);
       expect(JSON.parse(responses[0]?.body ?? "{}").code).toBe("CAPACITY_EXCEEDED");
+    });
+
+    // #3770 B1: the pre-flight counts the rows the SERVICE will count. Inside the
+    // hold window nothing splits, so padding the party with non-members cannot
+    // slip a too-big booking past it while only the member half is measured.
+    const KIRI = { firstName: "Kiri", lastName: "Ngata", ageTier: "ADULT" as const, isMember: false };
+    const twoBedsLeft = async (
+      _lodge: unknown,
+      _in: unknown,
+      _out: unknown,
+      ranges: unknown[],
+    ) =>
+      ranges.length > 2
+        ? {
+            available: false,
+            minAvailable: 0,
+            nightDetails: [{ date: new Date("2026-08-01T00:00:00.000Z"), availableBeds: 2, requested: ranges.length, capacity: 30, wholeLodgeBlocked: false, custodianHeld: false }],
+          }
+        : { available: true, minAvailable: 2, nightDetails: [] };
+
+    it("answers a party padded with non-members the same whether X resolves", async () => {
+      const responses: Array<{ status: number; body: string }> = [];
+      for (const xIsReal of [true, false]) {
+        vi.clearAllMocks();
+        h.memberFindMany.mockResolvedValue([DEPENDANT]);
+        h.normalizeGuestStayRanges.mockImplementation((guests: unknown[]) => guests);
+        h.getLodgeCapacity.mockResolvedValue(30);
+        h.resolveOptionalActiveLodgeId.mockResolvedValue("lodge-1");
+        setPreLookupDefaults();
+        arrangeLookup(xIsReal);
+        h.checkCapacity.mockImplementation(twoBedsLeft);
+        const res = await POST(makeRequest({ guests: [X, KIRI, KID] }));
+        responses.push({ status: res.status, body: await res.text() });
+        expect(lookupNamedX()).toBe(false);
+        expectNoBookingWritten();
+      }
+      expect(responses[0]).toEqual(responses[1]);
+      expect(JSON.parse(responses[0]?.body ?? "{}").code).toBe("CAPACITY_EXCEEDED");
+    });
+
+    it("still admits a booking that will split when its member half fits", async () => {
+      arrangeLookup(true);
+      h.checkCapacity.mockImplementation(twoBedsLeft);
+      // Beyond the hold window: the non-members become the provisional child,
+      // which holds no beds, so only the member half (FAMILY + X) is counted.
+      h.holdDecision.mockReturnValue({ shouldBePending: true, status: "PENDING" });
+      const res = await POST(makeRequest({ guests: [FAMILY, X, KIRI, KID] }));
+      expect(res.status).toBe(201);
+      expect(h.createConfirmedBooking).toHaveBeenCalledTimes(1);
+      expect((h.checkCapacity.mock.calls[0]?.[3] as unknown[]).length).toBe(2);
+    });
+
+    it("counts the whole party of a split-eligible booking that supplies a justification (held for review)", async () => {
+      arrangeLookup(true);
+      h.checkCapacity.mockImplementation(twoBedsLeft);
+      h.holdDecision.mockReturnValue({ shouldBePending: true, status: "PENDING" });
+      const res = await POST(
+        makeRequest({ guests: [FAMILY, X, KIRI, KID], memberReviewJustification: "x" }),
+      );
+      expect(res.status).toBe(409);
+      expect((h.checkCapacity.mock.calls[0]?.[3] as unknown[]).length).toBe(4);
     });
 
     it("does not ask the pre-flight for a draft, a waitlist join or a family-only party", async () => {
