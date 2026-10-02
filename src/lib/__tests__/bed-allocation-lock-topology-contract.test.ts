@@ -312,8 +312,9 @@ describe("bed allocation lock topology", () => {
     expectInOrder(reconcile, [
       "pg_advisory_xact_lock(1)",
       "acquireLodgeCapacityLock(tx, fresh.booking.lodgeId)",
+      "lockMemberCreditLedger(creditLedgerMemberId, tx)",
+      "tx.payment.update(",
       "if (!capacity.available && !lockedHasOverride)",
-      "lockMemberCreditLedger(lateCapacityRestoreMemberId, tx)",
       "findUnconvergedAppliedCreditDeallocation(fresh.id, tx)",
       "clearStaleCreditElection(tx, locked.booking)",
       "restoreCreditFromBooking(lateCapacityRestoreMemberId, fresh.bookingId, tx)",
@@ -338,8 +339,40 @@ describe("bed allocation lock topology", () => {
     ]);
   });
 
+  // #3792: the four restore callers that also lock or write the booking's
+  // Payment row take the member key explicitly, in its INV-LOCK-002 place.
+  it.each([
+    ["the paid cancel", "src/lib/booking-cancel.ts", "lockMemberCreditLedger(paidCreditLedgerMemberId, tx)", "lockPaymentForRefundedTotal(tx, fresh.payment.id)"],
+    ["the pending cancel", "src/lib/booking-cancel.ts", "lockMemberCreditLedger(pendingCreditLedgerMemberId, tx)", "tx.payment.update("],
+    ["the settle capacity void", "src/lib/payment-reconciliation.ts", "lockMemberCreditLedger(settleCreditLedgerMemberId, tx)", "tx.payment.upsert("],
+    ["the late capacity cancel", "src/lib/xero-inbound/invoice-paid-effects.ts", "lockMemberCreditLedger(creditLedgerMemberId, tx)", "tx.payment.update("],
+  ])("%s takes lock(1), the lodge key, then the member key, before the Payment row", (_label, file, memberLock, paymentRow) => {
+    const text = stripComments(source(file));
+    const memberAt = text.indexOf(memberLock);
+    expect(memberAt, `${memberLock} is not in ${file}`).toBeGreaterThanOrEqual(0);
+    const txAt = text.lastIndexOf("pg_advisory_xact_lock(1)", memberAt);
+    expect(
+      text.slice(txAt, memberAt),
+      `${file}: the Payment row is locked or written before ${memberLock}`,
+    ).not.toContain(paymentRow);
+    expectInOrder(text.slice(txAt), [
+      "pg_advisory_xact_lock(1)",
+      "acquireLodgeCapacityLock(",
+      memberLock,
+      paymentRow,
+    ]);
+  });
+
   it("calls restoreCreditFromBooking only after the global (or member) key, and takes no wider key after it", () => {
     const CALL = "restoreCreditFromBooking(";
+    const PAYMENT_ROW_TOKENS = [
+      "lockPaymentForRefundedTotal(",
+      "tx.payment.update(",
+      "tx.payment.updateMany(",
+      "tx.payment.upsert(",
+      "FOR NO KEY UPDATE",
+      "FOR UPDATE",
+    ];
     const sites: string[] = [];
     for (const full of walkSources(path.resolve(process.cwd(), "src"))) {
       const rel = path.relative(process.cwd(), full);
@@ -366,6 +399,23 @@ describe("bed allocation lock topology", () => {
           before.includes("pg_advisory_xact_lock(1)") || before.includes("lockMemberCreditLedger("),
           `${rel}: a restore before the global (or member) key`,
         ).toBe(true);
+        // The member key before the transaction's first Payment row lock or
+        // write: the inbound credit-note sync takes the member key and then
+        // updates the Payment row, so the reverse order here could deadlock
+        // against it. The key is the caller's own, or the one the restore takes.
+        const paymentRowAt = Math.min(
+          ...PAYMENT_ROW_TOKENS.map((token) => region.indexOf(token)).filter((index) => index >= 0),
+        );
+        const memberKeyAt = Math.min(
+          ...["lockMemberCreditLedger(", CALL].map((token) => region.indexOf(token)).filter((index) => index >= 0),
+        );
+        if (Number.isFinite(paymentRowAt)) {
+          expect(memberKeyAt, `${rel}: a Payment row locked or written before the member key`).toBeLessThan(paymentRowAt);
+        }
+        const lodgeAt = region.indexOf("acquireLodgeCapacityLock(");
+        if (lodgeAt >= 0 && region.indexOf("lockMemberCreditLedger(") >= 0) {
+          expect(lodgeAt, `${rel}: the member key before the lodge key`).toBeLessThan(region.indexOf("lockMemberCreditLedger("));
+        }
         expect(after, `${rel}: lock(1) taken after a restore`).not.toContain("pg_advisory_xact_lock(1)");
         expect(after, `${rel}: a lodge key taken after a restore`).not.toContain("acquireLodgeCapacityLock(");
         at = text.indexOf(CALL, at + CALL.length);

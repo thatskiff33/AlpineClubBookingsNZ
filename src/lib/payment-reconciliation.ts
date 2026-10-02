@@ -850,7 +850,7 @@ async function settleBookingPaymentInTransaction(
     // field is taken from the post-lock re-read below.
     const lockTarget = await tx.booking.findUnique({
       where: { id: bookingId },
-      select: { lodgeId: true },
+      select: { lodgeId: true, memberId: true },
     });
 
     if (!lockTarget) {
@@ -859,6 +859,12 @@ async function settleBookingPaymentInTransaction(
 
     const bookingLodgeId = lockTarget.lodgeId ?? (await getDefaultLodgeId(tx));
     await acquireLodgeCapacityLock(tx, bookingLodgeId);
+    // #3792 (INV-LOCK-002): the member credit-ledger key third, before the Payment
+    // upsert, the order the inbound credit-note sync takes them in; the capacity
+    // void's restore and the manual settle's ledger read re-enter it. The owner is
+    // immutable. #3369: an organisation-owned booking has no member, so no key.
+    const settleCreditLedgerMemberId = bookingOwner(lockTarget).memberId;
+    if (settleCreditLedgerMemberId) await lockMemberCreditLedger(settleCreditLedgerMemberId, tx);
 
     // Re-read the full booking under the lock; the status/amount checks, the
     // capacity check and the PAID/CANCELLED claim below consume ONLY this

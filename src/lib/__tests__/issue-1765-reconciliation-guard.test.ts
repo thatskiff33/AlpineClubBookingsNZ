@@ -51,6 +51,8 @@ vi.mock("@/lib/payment-transactions", () => ({
 vi.mock("@/lib/member-credit", () => ({
   restoreCreditFromBooking: (...args: unknown[]) =>
     mocks.restoreCreditFromBooking(...args),
+  // #3792: the settle takes the member credit-ledger key after its lodge key.
+  lockMemberCreditLedger: vi.fn().mockResolvedValue(undefined),
   deriveBookingAppliedCreditCents: (...args: unknown[]) =>
     mocks.deriveBookingAppliedCreditCents(...args),
   // #3369: the one home for the account-credit refusal four settlement paths

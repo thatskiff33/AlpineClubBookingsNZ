@@ -14,6 +14,8 @@ const CLUB_ZONE = "Pacific/Auckland";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
+  // #3792: the settle's member credit-ledger key.
+  lockMemberCreditLedger: vi.fn(),
   // #3580: the ledger's one write delegate, so a settle's charge lines are
   // observable here.
   ledgerCreateMany: vi.fn(),
@@ -103,6 +105,8 @@ vi.mock("@/lib/payment-recovery", () => ({
 vi.mock("@/lib/member-credit", () => ({
   restoreCreditFromBooking: (...args: unknown[]) =>
     mocks.restoreCreditFromBooking(...args),
+  // #3792: the settle takes the member credit-ledger key after its lodge key.
+  lockMemberCreditLedger: (...args: unknown[]) => mocks.lockMemberCreditLedger(...args),
   deriveBookingAppliedCreditCents: (...args: unknown[]) =>
     mocks.deriveBookingAppliedCreditCents(...args),
   getMemberCreditBalance: (...args: unknown[]) =>
@@ -614,6 +618,14 @@ describe("markBookingPaymentSucceeded", () => {
       globalIdx,
       "global lock(1) acquired before the per-lodge lock"
     ).toBeLessThan(lodgeIdx);
+    // #3792: then the member credit-ledger key, before the Payment upsert.
+    expect(mocks.lockMemberCreditLedger).toHaveBeenCalledTimes(1);
+    expect(mocks.executeRaw.mock.invocationCallOrder[lodgeIdx]).toBeLessThan(
+      mocks.lockMemberCreditLedger.mock.invocationCallOrder[0],
+    );
+    expect(mocks.lockMemberCreditLedger.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.paymentUpsert.mock.invocationCallOrder[0],
+    );
   });
 
   // #1764 — pay-while-held. An admin capacity hold makes the booking part of
@@ -785,10 +797,11 @@ describe("markBookingPaymentSucceeded", () => {
     });
 
     expect(result.outcome).toBe("paid");
-    // Pre-lock read selects only the lock key.
+    // Pre-lock read selects only the lock keys: the lodge, and (#3792) the
+    // immutable owner the member credit-ledger key is taken on.
     expect(mocks.bookingFindUnique).toHaveBeenNthCalledWith(1, {
       where: { id: "booking-1" },
-      select: { lodgeId: true },
+      select: { lodgeId: true, memberId: true },
     });
     // The capacity occupancy query is bounded by the POST-lock (May) dates, not
     // the January dates that only the pre-lock read carried.

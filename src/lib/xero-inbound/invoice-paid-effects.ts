@@ -472,6 +472,13 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       if (!fresh || fresh.source !== PaymentSource.INTERNET_BANKING) {
         return { type: "missing" as const };
       }
+      // #3792 (INV-LOCK-002): lock(1), then the immutable lodge key, then the
+      // member credit-ledger key, all before the first Payment row write below:
+      // the order the inbound credit-note sync (member key, then Payment) and
+      // every cancel take them in, so no two can deadlock. #3369: no member, no key.
+      await acquireLodgeCapacityLock(tx, fresh.booking.lodgeId);
+      const creditLedgerMemberId = bookingOwner(fresh.booking).memberId;
+      if (creditLedgerMemberId) await lockMemberCreditLedger(creditLedgerMemberId, tx);
 
       // B5 (#2262) — the RECIPROCAL fence, and the counterpart to the outbound
       // refusal. An admin recorded this booking's payment as cash / an off-Xero
@@ -962,9 +969,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       }
 
       // Reconciliation writes bed allocations even for an already-held
-      // CONFIRMED booking. Acquire the immutable lodge key for every branch
-      // that can reach PAID, then consume only this post-lock snapshot.
-      await acquireLodgeCapacityLock(tx, fresh.booking.lodgeId);
+      // CONFIRMED booking. The immutable lodge key is held from the top of this
+      // transaction (#3792); consume only this post-lock snapshot.
       const locked = await tx.payment.findUnique({
         where: { id: fresh.id },
         include: {
@@ -1079,17 +1085,15 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           );
         }
         if (!capacity.available && !lockedHasOverride) {
-          // #3792: this cancel restores the booking's applied credit below, so
-          // it takes the per-member credit-ledger lock third (global -> lodge ->
-          // member, INV-LOCK-002) and, before its first write, refuses to run
-          // while an applied-credit deallocation has not converged, exactly as
-          // the hold release and the never-captured cancel do. Throwing rolls
-          // the whole claim back; the inbound event retries after its backoff.
+          // #3792: this cancel restores the booking's applied credit below,
+          // under the member credit-ledger key taken at the top of this
+          // transaction (global -> lodge -> member, INV-LOCK-002). Before its
+          // first write it refuses to run while an applied-credit deallocation
+          // has not converged, exactly as the hold release and the
+          // never-captured cancel do. Throwing rolls the whole claim back; the
+          // inbound event retries after its backoff.
           // #3369: an organisation-owned booking has no credit ledger.
           const lateCapacityRestoreMemberId = bookingOwner(locked.booking).memberId;
-          if (lateCapacityRestoreMemberId) {
-            await lockMemberCreditLedger(lateCapacityRestoreMemberId, tx);
-          }
           const unconvergedDeallocation = await findUnconvergedAppliedCreditDeallocation(fresh.id, tx);
           if (unconvergedDeallocation) {
             throw new XeroAppliedCreditOperationBusyError(

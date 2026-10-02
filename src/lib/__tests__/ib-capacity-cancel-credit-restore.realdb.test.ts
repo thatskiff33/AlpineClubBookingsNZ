@@ -223,7 +223,7 @@ async function reconcile(cashCents: number) {
       data: { id: MEMBER_ID, email: `${MEMBER_ID}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Restore", lastName: "Proof", ageTier: "ADULT" },
     });
     await prisma.lodge.create({ data: { id: LODGE_ID, name: "Race 3792 Lodge", slug: "race-3792" } });
-  });
+  }, 60_000); // cold imports of the reconcile's module graph, on a loaded machine
 
   beforeEach(async () => {
     await clean();
@@ -398,5 +398,47 @@ async function reconcile(cashCents: number) {
     await holder;
     expect(await restore).toBe(8_000);
     expect(await prisma.memberCredit.count({ where: { restoredFromBookingId: BOOKING_ID } })).toBe(1);
+  }, 30_000);
+
+  it("THE SYNC'S ORDER AGAINST A CANCEL: member key then a Payment write, while the late capacity cancel runs, serialises with no deadlock", async () => {
+    await seedBooking(8_000, 12_000);
+
+    // The credit-note sync's shape: the member key, then (once the cancel is
+    // waiting) an update of the booking's Payment row, then commit.
+    let releaseSync!: () => void;
+    const syncMayWrite = new Promise<void>((resolve) => { releaseSync = resolve; });
+    let syncHasKey!: () => void;
+    const syncKeyed = new Promise<void>((resolve) => { syncHasKey = resolve; });
+    const sync = prisma.$transaction(async (tx) => {
+      await memberCredit.lockMemberCreditLedger(MEMBER_ID, tx);
+      syncHasKey();
+      await syncMayWrite;
+      await tx.payment.update({ where: { id: PAYMENT_ID }, data: { creditAppliedCents: 8_000 } });
+    }, { timeout: 20_000 });
+    await syncKeyed;
+
+    // The cancel starts while the sync holds the key.
+    const cancel = reconcile(12_000);
+
+    // Wait until the cancel is queued on an advisory key: in the canonical
+    // order it waits there holding no Payment row lock.
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const [{ waiting }] = await prisma.$queryRaw<{ waiting: bigint }[]>`
+        SELECT count(*) AS waiting FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`;
+      if (Number(waiting) > 0) break;
+      if (Date.now() > deadline) throw new Error("the cancel never queued on the member key");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    // Then the sync writes the Payment row. Under the old order the cancel
+    // held that row here, waiting for the key: Postgres would abort one of the
+    // two with a deadlock.
+    releaseSync();
+
+    await expect(sync).resolves.toBeUndefined();
+    await expect(cancel).resolves.toBeDefined();
+    const booking = await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { status: true } });
+    expect(booking.status).toBe("CANCELLED");
+    expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(20_000);
   }, 30_000);
 });

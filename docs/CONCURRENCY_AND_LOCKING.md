@@ -1383,10 +1383,11 @@ booking lock(1) first and the per-member credit-ledger lock second. While
 holding both, they query for any non-complete applied-credit deallocation
 before their first write. If one exists they defer the whole transition; a
 later retry computes the clearing amount from provider-converged slices. The
-inbound reconcile's late capacity cancel (#3792) does the same after its lodge
-lock (global → lodge → member): it throws the busy error, so the inbound event
-retries after its backoff, and it restores the applied credit under the member
-lock. Hold
+inbound reconcile's late capacity cancel (#3792) does the same: the reconcile
+takes its lodge key and then the member key at the top of its transaction
+(global → lodge → member), before its first `Payment` write, and the cancel
+throws the busy error, so the inbound event retries after its backoff, and
+restores the applied credit under the member lock. Hold
 expiry also re-reads the booking's invoice-payment links recorded since its
 live Xero read, under both locks before its first write, and keeps the hold if
 one exists (`INV-PAY-107`, #3643). The inbound link write takes no booking
@@ -3400,7 +3401,8 @@ then the transaction row's compare-and-set, then the `Payment` aggregate and its
 booking-ledger lines. No provider call runs inside it.
 
 **One order for the refunded total: `Payment` row, then refund rows, then
-transaction rows.** Every writer that holds more than one of them takes the
+transaction rows** — and, in a transaction that also takes the per-member
+credit-ledger key, that key before the `Payment` row (#3792, below). Every writer that holds more than one of them takes the
 `Payment` row first through `lockPaymentForRefundedTotal`: the card-refund
 writer, `applyLocalRefundAllocation` (joining the caller's transaction), and the
 paid-path cancel claim, right after its lodge capacity lock and before #3643's
@@ -4235,8 +4237,17 @@ before it reads the applied rows (#3792), so the order is global → lodge →
 member at every caller, none takes `lock(1)` or a lodge lock after it, and a
 caller already holding the member key re-enters it. That is what lets the
 inbound repair below trust the restore row it reads: a restore in flight holds
-the member key until it commits. The caller set and that order are pinned by
-`bed-allocation-lock-topology-contract.test.ts`. The Xero inbound applied-credit repair
+the member key until it commits. **The member key comes before the `Payment`
+row**, too: the inbound repair takes the member key and then updates
+`creditAppliedCents`, so a caller that locked or wrote the `Payment` row first
+and then waited for the key would deadlock against it (reproduced as `40P01`,
+#3792). The four restore callers that touch the row (the paid cancel before
+`lockPaymentForRefundedTotal`, the pending cancel before its `Payment` write,
+the settle before its `Payment` upsert, and the inbound reconcile before its
+receipt write) therefore take the member key explicitly, right after their
+lodge key. The caller set and both orders are pinned by
+`bed-allocation-lock-topology-contract.test.ts`, and the interleaving is proved
+against PostgreSQL in `ib-capacity-cancel-credit-restore.realdb.test.ts`. The Xero inbound applied-credit repair
 (`xero-inbound/credit-note-repairs.ts`) takes the **per-member credit ledger
 lock** (not `lock(1)`) so its `BOOKING_APPLIED` writes mutually exclude the
 credit spend engine, which takes the same key. Under that lock it also reads the
