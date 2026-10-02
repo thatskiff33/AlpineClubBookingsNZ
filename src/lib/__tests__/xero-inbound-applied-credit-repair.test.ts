@@ -280,6 +280,7 @@ describe("provider-aware inbound applied-credit repair", () => {
     expect(h.createAuditLog.mock.calls[0][0]).not.toHaveProperty("subjectMemberId");
     // A full restore: nothing beyond it to flag.
     expect(h.notifyXeroSyncError.mock.calls[0][0].errorMessage).not.toContain("beyond what was restored");
+    expect(h.notifyXeroSyncError.mock.calls[0][0].errorMessage).toContain("its applied credit ($30.00) was already restored to the member");
   });
 
   it("names the part of a refused de-allocation beyond a TIERED restore: the cancellation fee, for an officer to grant if intended (#3792)", async () => {
@@ -302,6 +303,9 @@ describe("provider-aware inbound applied-credit repair", () => {
         "$15.00 of this is beyond what was restored (the cancellation fee); grant it by hand if the waiver was intended.",
       ),
     }));
+    const tieredMessage = h.notifyXeroSyncError.mock.calls[0][0].errorMessage as string;
+    expect(tieredMessage).toContain("is cancelled and the credit restored to the member was $15.00.");
+    expect(tieredMessage).not.toContain("its applied credit");
     // The alert goes out after the ledger transaction, not inside it.
     expect(h.prisma.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
       h.notifyXeroSyncError.mock.invocationCallOrder[0],
