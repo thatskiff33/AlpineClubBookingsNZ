@@ -1461,6 +1461,34 @@ total at apply).
   `xero-refund-method-documents.test.ts`, `manual-refund-task.test.ts`,
   `xero-operation-retry.test.ts`.
 
+
+## INV-PAY-113
+
+**Related: `INV-PAY-101`** (the settlement decision).
+
+- **Two booking-edit credit notes carry wordings of their own, as words only**
+  (#3536; owner decision, 2 October 2026). A booking change that lowers an
+  UNPAID pay-on-account invoice raises a note that refunds nothing, worded
+  *Invoice correction — nothing refunded*. An edit-review refund the club
+  handed back in cash, a `local-allocation` route on a payment an officer
+  marked paid by hand, is worded *Refunded in cash*. The applied-credit
+  remainder note and the membership cancellation credit note keep their own
+  wordings.
+- **Neither is a refund method, and neither moves a settlement.** A
+  modification credit note is allocated against the original invoice and never
+  settled by a payment. The cash hand-back keeps the internet-banking method for
+  the ledger line and everything else; only the words differ.
+- **The wording travels with the decision.** It rides as `noteWording` beside
+  the method in the outbox payload and on the recorded operation, and is read by
+  the one `readModificationNoteWording`, so a retry or repair says what the
+  first attempt did. A row without the field keeps its old wording. A caller's
+  own method, a Stripe refund, or a paid or unstated payment status is never an
+  invoice correction.
+- Home: `src/lib/xero-refund-method.ts`, censused over `src/lib` with the other
+  wordings. Pinned by `xero-booking-edit-settlement.test.ts`,
+  `xero-refund-method-documents.test.ts`, `manual-refund-task.test.ts` and
+  `xero-operation-retry.test.ts`.
+
 ## INV-PAY-060
 
 - **A SETTLED occurrence does not suppress the next one of the same identity**
