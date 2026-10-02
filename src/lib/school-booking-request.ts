@@ -1124,7 +1124,7 @@ export async function approveSchoolBookingRequest(input: {
           const heldGuests = await tx.bookingGuest.findMany({
             where: { bookingId: held!.id },
             select: { id: true, memberId: true, firstName: true, lastName: true, ageTier: true,
-              rateMembershipTypeId: true, stayStart: true, stayEnd: true, nights: { select: { id: true, stayDate: true } } },
+              rateMembershipTypeId: true, stayStart: true, stayEnd: true, nights: { select: { id: true, stayDate: true, priceCents: true } } },
             orderBy: HELD_BOOKING_GUEST_ORDER_BY,
           });
           if (heldGuests.some((guest) => guest.stayStart.getTime() !== request.checkIn.getTime() || guest.stayEnd.getTime() !== request.checkOut.getTime())) {

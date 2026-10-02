@@ -48,7 +48,7 @@ export function planAcceptedSchoolHeldPrices(input: {
   heldGuests: Array<{
     id: string; firstName: string; lastName: string; ageTier: AgeTier;
     memberId: string | null;
-    nights: Array<{ id: string; stayDate: Date }>;
+    nights: Array<{ id: string; stayDate: Date; priceCents: number | null }>;
   }>;
 }) {
   const refuse = () => {
@@ -76,6 +76,11 @@ export function planAcceptedSchoolHeldPrices(input: {
   const heldByName = new Map(input.heldGuests.map((guest) => [key(guest), guest]));
   if (heldByName.size !== input.heldGuests.length || input.heldGuests.length !== input.guests.length ||
       new Set(input.guests.map(key)).size !== input.guests.length) refuse();
+  // INV-MOD-028 / INV-MOD-036: accepted terms reconcile provisional prices,
+  // but cannot fill an unknown historical night price on an officer's behalf.
+  if (input.heldGuests.some((guest) => guest.nights.some((night) => night.priceCents === null))) {
+    throw new BookingRequestError("A held night has no stored price. An officer must review its price before adults can be named or approved.", 409);
+  }
 
   return input.guests.map((guest, index) => {
     const isResolvedAdult = index >= teacherCount && index < input.teacherCount;
