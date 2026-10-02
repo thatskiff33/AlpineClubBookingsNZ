@@ -36,6 +36,7 @@ import {
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
 import { dispatchEditReviewXeroSettlement } from "@/lib/edit-financial-review-xero-leg";
+import type { EditReviewAccountCreditOutcome } from "@/lib/edit-financial-review-account-credit";
 import {
   assertLateCaptureHandBackStillOwed,
   executeLateCaptureApprovalRefund,
@@ -518,6 +519,7 @@ export async function executeEditReviewSettlement({
   actingMemberId,
   route,
   amountCents,
+  accountCredit,
   hasIssuedXeroInvoice,
   bookingPaymentStatus,
   cancellationHandBackInvoiceId,
@@ -528,6 +530,8 @@ export async function executeEditReviewSettlement({
   actingMemberId: string;
   route: EditReviewSettlementRoute | null;
   amountCents: number | null;
+  /** #3791: what the account-credit route gave back and minted, else null. */
+  accountCredit: EditReviewAccountCreditOutcome | null;
   hasIssuedXeroInvoice: boolean;
   bookingPaymentStatus: string | null;
   /** `INV-PAY-101` (#3529): see `dispatchEditReviewXeroSettlement`. */
@@ -644,15 +648,20 @@ export async function executeEditReviewSettlement({
     chargeTotalCents = charged.totalCents;
   }
 
-  if (route?.kind === "account-credit") {
+  // #3791: what the member was credited (given back plus minted), and what the
+  // review's Xero note bills - the minted part only, since money given back is
+  // returned in Xero by the give-back's own deallocation (owner decision 1).
+  const creditedCents = accountCredit ? accountCredit.givenBackCents + accountCredit.mintedCents : (amountCents ?? 0);
+  if (route?.kind === "account-credit" && creditedCents > 0) {
     // `INV-PAY-051` asks for the booking event to be written where the money
     // moves, and this is that place: the credit row is committed, so the claim
-    // the member reads is one the ledger can be pointed at.
+    // the member reads is one the ledger can be pointed at. None where a share
+    // netted against a cancellation's restore left nothing to credit.
     await recordBookingEvent({
       bookingId,
       type: BookingEventType.CREDITED,
       actorMemberId: actingMemberId,
-      amountCents: amountCents ?? 0,
+      amountCents: creditedCents,
       reason: "edit_financial_review_credited",
     });
   }
@@ -668,13 +677,16 @@ export async function executeEditReviewSettlement({
    * Awaited, but nothing inside it holds the request open: the dispatch itself
    * is fire-and-forget, exactly as it was inline.
    */
+  if (route?.kind === "account-credit" && accountCredit?.mintedCents === 0) {
+    return { stripeRefundId, additionalPaymentIntentId };
+  }
   await dispatchEditReviewXeroSettlement({
     format,
     bookingId,
     taskId,
     actingMemberId,
     route,
-    amountCents,
+    amountCents: route?.kind === "account-credit" && accountCredit ? accountCredit.mintedCents : amountCents,
     chargeTotalCents,
     hasIssuedXeroInvoice,
     bookingPaymentStatus,

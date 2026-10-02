@@ -1067,44 +1067,68 @@ let observerClient: PrismaClient;
     });
 
     /**
-     * #3791: the issue's worked example, on real rows. A $200 booking paid
-     * entirely by account credit; a review refunds a $50 share as account
-     * credit; the booking is then cancelled. The share has to come back as the
-     * member's applied credit, so the cancellation tiers the $150 still applied
-     * rather than the whole $200 - minting it beside an unchanged applied figure
-     * paid the share twice ($250 back at 100%, $130 at 50% with a $20 fee).
-     *
-     * The cancellation's credit slice is the cancel path's own two calls
-     * (`booking-cancel.ts`): `calculateAppliedCreditRestore` off the payment's
-     * `creditAppliedCents` mirror, then `restoreCreditFromBooking`.
+     * #3791: a credit-paid booking's review share, on real rows and through the
+     * REAL `cancelBooking`. A $200 booking paid entirely by account credit; a
+     * review refunds a $50 share; the booking is cancelled - before the review
+     * completes, or after. Either way the member gets the share once: $200 in
+     * all at a 100% tier, $105 at 50% with a $20 fee. Minting the share beside an
+     * unchanged applied figure paid it twice ($250 and $130).
      */
-    it.each([
-      { tier: "100%", rule: { daysBeforeStay: 0, refundPercentage: 100, fixedFeeCents: 0 }, finalCents: 20_000, restoredCents: 15_000 },
-      { tier: "50% with a $20 fee", rule: { daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 2_000 }, finalCents: 10_500, restoredCents: 5_500 },
-    ])("#3791: a credit-paid booking's fifty-dollar review share, then a cancel at $tier, pays the share once", async ({ rule, finalCents, restoredCents }) => {
-      const credit = await import("@/lib/member-credit");
-      const { calculateAppliedCreditRestore } = await import("@/lib/policies/cancellation");
-      const clearCreditRun = async () => {
+    describe("#3791: a credit-paid booking's review share is paid once", () => {
+      const CREDIT_NOTE_ID = "race-3791-credit-note";
+      const TIERS = [
+        { tier: "100%", rule: { refundPercentage: 100, fixedFeeCents: 0 }, totalBackCents: 20_000, netCents: 0 },
+        { tier: "50% with a $20 fee", rule: { refundPercentage: 50, fixedFeeCents: 2_000 }, totalBackCents: 10_500, netCents: 2_500 },
+      ];
+      let credit: typeof import("@/lib/member-credit");
+
+      async function clearCreditRun() {
         await clearReviewRunState();
+        await prisma.xeroSyncOperation.deleteMany({ where: { localId: PAYMENT_ID } });
+        const slices = await prisma.memberCreditNoteAllocation.findMany({ where: { appliedToBookingId: BOOKING_ID }, select: { id: true } });
+        await prisma.xeroObjectLink.deleteMany({ where: { localModel: "MemberCreditNoteAllocation", localId: { in: slices.map((slice) => slice.id) } } });
+        await prisma.memberCreditNoteAllocation.deleteMany({ where: { appliedToBookingId: BOOKING_ID } });
         await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
+        await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
         await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
-      };
-      await clearCreditRun();
-      try {
-        // Paid entirely by credit: nothing captured, $200 applied.
+        await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE_ID } });
+        await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAID" } });
+      }
+
+      /** $200 applied, nothing captured; on internet banking, allocated against the Xero invoice. */
+      async function payEntirelyByCredit({ xeroAllocated }: { xeroAllocated: boolean }) {
         await prisma.payment.update({
           where: { id: PAYMENT_ID },
-          data: { amountCents: 0, status: "SUCCEEDED", source: "STRIPE", xeroInvoiceId: null, creditAppliedCents: 20_000 },
+          data: xeroAllocated
+            ? { amountCents: 0, status: "SUCCEEDED", source: "INTERNET_BANKING", xeroInvoiceId: XERO_INVOICE_ID, creditAppliedCents: 20_000 }
+            : { amountCents: 0, status: "SUCCEEDED", source: "STRIPE", xeroInvoiceId: null, creditAppliedCents: 20_000 },
         });
         await prisma.memberCredit.create({
-          data: { memberId: MEMBER_ID, amountCents: 20_000, type: "ADMIN_ADJUSTMENT", description: "race 3791 opening balance" },
+          data: {
+            memberId: MEMBER_ID,
+            amountCents: 20_000,
+            type: "ADMIN_ADJUSTMENT",
+            description: "race 3791 opening balance",
+            ...(xeroAllocated ? { xeroCreditNoteId: CREDIT_NOTE_ID } : {}),
+          },
         });
         await prisma.$transaction((tx) => credit.applyCreditToBooking(MEMBER_ID, 20_000, BOOKING_ID, tx, CLUB_FORMAT_TEST));
+        if (xeroAllocated) {
+          // What the outbound allocation engine leaves: the applied row stamped
+          // with the note, and the working slice and its provenance link.
+          await prisma.memberCredit.updateMany({
+            where: { appliedToBookingId: BOOKING_ID, type: "BOOKING_APPLIED" },
+            data: { xeroCreditNoteId: CREDIT_NOTE_ID },
+          });
+          const { repairLegacyAppliedCreditNoteAllocationsForBooking } = await import("@/lib/xero-applied-credit-allocation-repair");
+          await prisma.$transaction((tx) => repairLegacyAppliedCreditNoteAllocationsForBooking(BOOKING_ID, XERO_INVOICE_ID, tx, CLUB_FORMAT_TEST));
+        }
         expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(0);
+      }
 
-        const raised = await raiseInOwnTransaction();
-        await resolveManualRefundTask({
-          taskId: raised.taskId,
+      const completeShare = (taskId: string) =>
+        resolveManualRefundTask({
+          taskId,
           resolution: "completed",
           note: "Priced from the booking's own payment history.",
           actingMemberId: MEMBER_ID,
@@ -1113,14 +1137,39 @@ let observerClient: PrismaClient;
           recordedNightPrices: null,
         }, CLUB_FORMAT_TEST);
 
-        // The member holds the share now, as applied credit given back.
+      async function cancelAt(rule: (typeof TIERS)[number]["rule"]) {
+        await prisma.cancellationPolicy.create({ data: { lodgeId: LODGE_ID, daysBeforeStay: 0, ...rule } });
+        const { cancelBooking } = await import("@/lib/booking-cancel");
+        const result = await cancelBooking(BOOKING_ID, MEMBER_ID, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+        expect(result.status).toBe(200);
+      }
+
+      beforeAll(async () => {
+        credit = await import("@/lib/member-credit");
+      });
+
+      afterAll(async () => {
+        await clearCreditRun();
+        await prisma.payment.update({
+          where: { id: PAYMENT_ID },
+          data: { amountCents: 20000, status: "PENDING", source: "INTERNET_BANKING", xeroInvoiceId: XERO_INVOICE_ID, creditAppliedCents: 0 },
+        });
+      });
+
+      it.each(TIERS)("review first, then the REAL cancel at $tier: the cancel tiers the $150 still applied ($totalBackCents cents in all)", async ({ rule, totalBackCents }) => {
+        await clearCreditRun();
+        await payEntirelyByCredit({ xeroAllocated: false });
+        const raised = await raiseInOwnTransaction();
+
+        await completeShare(raised.taskId);
+
+        // The share came back as applied credit given back - nothing minted.
         expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(5_000);
         expect(await credit.deriveBookingAppliedCreditCents(BOOKING_ID)).toBe(15_000);
         const payment = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { creditAppliedCents: true } });
         expect(payment.creditAppliedCents).toBe(15_000);
         expect(await prisma.memberCredit.count({ where: { sourceBookingModificationId: MODIFICATION_ID } })).toBe(0);
-        // The ledger reads it as the clamp's give-back, and still agrees with the
-        // credit ledger (#3599's identity).
+        // The ledger reads it as the clamp's give-back (#3599's identity).
         const creditLines = await prisma.bookingLedgerLine.findMany({
           where: { bookingId: BOOKING_ID, kind: { in: ["CREDIT_APPLIED", "CREDIT_ISSUED"] } },
           select: { kind: true, amountCents: true },
@@ -1131,20 +1180,132 @@ let observerClient: PrismaClient;
           { kind: "CREDIT_APPLIED", amountCents: -5_000 },
         ]);
 
-        // The cancellation's credit slice, as the cancel path computes it.
-        const { creditRestoredCents } = calculateAppliedCreditRestore(payment.creditAppliedCents, 0, 30, [rule]);
-        const restored = await prisma.$transaction((tx) =>
-          credit.restoreCreditFromBooking(MEMBER_ID, BOOKING_ID, tx, creditRestoredCents),
-        );
-        expect(restored).toBe(restoredCents);
-        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(finalCents);
-      } finally {
+        await cancelAt(rule);
+
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(totalBackCents);
+      }, 60_000);
+
+      it.each(TIERS)("the REAL cancel first at $tier, then the review: the share is netted against the restore ($netCents cents given back, $totalBackCents in all)", async ({ rule, totalBackCents, netCents }) => {
         await clearCreditRun();
-        await prisma.payment.update({
-          where: { id: PAYMENT_ID },
-          data: { amountCents: 20000, status: "PENDING", source: "INTERNET_BANKING", xeroInvoiceId: XERO_INVOICE_ID, creditAppliedCents: 0 },
+        await payEntirelyByCredit({ xeroAllocated: false });
+        const raised = await raiseInOwnTransaction();
+        await cancelAt(rule);
+        const restoredCents = await credit.getMemberCreditBalance(MEMBER_ID);
+
+        await completeShare(raised.taskId);
+
+        expect(await credit.getMemberCreditBalance(MEMBER_ID) - restoredCents).toBe(netCents);
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(totalBackCents);
+        expect(await prisma.memberCredit.count({ where: { sourceBookingModificationId: MODIFICATION_ID } })).toBe(0);
+        const task = await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: raised.taskId }, select: { status: true } });
+        expect(task.status).toBe("COMPLETED");
+        // Nothing credited, nothing claimed: no CREDITED event at 100%.
+        const credited = await prisma.bookingEvent.count({ where: { bookingId: BOOKING_ID, type: "CREDITED" } });
+        expect(credited).toBe(netCents > 0 ? 1 : 0);
+      }, 60_000);
+
+      it("FORCES the ledger-lock interleaving: a deallocation queued by a writer holding the member's ledger lock is re-read by the completion queued behind it, which refuses with the task still OPEN", async () => {
+        await clearCreditRun();
+        await payEntirelyByCredit({ xeroAllocated: false });
+        const raised = await raiseInOwnTransaction();
+
+        const lockHeld = deferred();
+        const releaseLock = deferred();
+        let holderPid = 0;
+        let holderError: unknown;
+        // A third connection takes the member's credit-ledger key and, under it,
+        // queues an applied-credit deallocation for the payment - what a clamp on
+        // an internet-banking booking commits with its give-back.
+        const holder = lockHolderClient
+          .$transaction(
+            async (tx) => {
+              const rows = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+              holderPid = rows[0]?.pid ?? 0;
+              await credit.lockMemberCreditLedger(MEMBER_ID, tx);
+              await tx.xeroSyncOperation.create({
+                data: {
+                  direction: "OUTBOUND",
+                  entityType: "ALLOCATION",
+                  operationType: "UPDATE",
+                  localModel: "Payment",
+                  localId: PAYMENT_ID,
+                  status: "PENDING",
+                  queueType: "APPLIED_CREDIT_DEALLOCATION",
+                  requestPayload: { queueType: "APPLIED_CREDIT_DEALLOCATION", bookingId: BOOKING_ID },
+                },
+              });
+              lockHeld.resolve();
+              await releaseLock.promise;
+            },
+            { maxWait: 5_000, timeout: 10_000 },
+          )
+          .catch((error: unknown) => {
+            holderError = error;
+            lockHeld.resolve();
+          });
+        await lockHeld.promise;
+        if (holderError) throw new Error(`The lock-holder connection could not hold the ledger key: ${String(holderError)}`);
+
+        const completion = completeShare(raised.taskId).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        await waitForBlockedBy(
+          holderPid,
+          1,
+          "The completion did not queue on the member's credit-ledger key, so its give-back is not serialised with the clamp and the other credit writers (INV-LOCK-001).",
+        ).finally(() => releaseLock.resolve());
+        await holder;
+
+        // It read the fence AFTER the key, not before: a 409 the officer can
+        // retry, and the claim rolled back with everything else.
+        expect(await completion).toMatchObject({ status: 409 });
+        const task = await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: raised.taskId }, select: { status: true } });
+        expect(task.status).toBe("OPEN");
+        expect(await credit.deriveBookingAppliedCreditCents(BOOKING_ID)).toBe(20_000);
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(0);
+      }, RACE_TEST_TIMEOUT_MS);
+
+      it("on a bank-transfer booking whose credit is allocated in Xero: the give-back queues the clamp's deallocation, no review credit note, and the inbound sync no longer undoes it", async () => {
+        await clearCreditRun();
+        await payEntirelyByCredit({ xeroAllocated: true });
+        const raised = await raiseInOwnTransaction();
+
+        await completeShare(raised.taskId);
+
+        expect(await credit.deriveBookingAppliedCreditCents(BOOKING_ID)).toBe(15_000);
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(5_000);
+        // The clamp's own Xero step: one durable deallocation to the new figure.
+        const deallocations = await prisma.xeroSyncOperation.findMany({
+          where: { localModel: "Payment", localId: PAYMENT_ID, queueType: "APPLIED_CREDIT_DEALLOCATION" },
+          select: { id: true, status: true, correlationKey: true },
         });
-      }
+        expect(deallocations).toHaveLength(1);
+        expect(deallocations[0]).toMatchObject({ status: "PENDING" });
+        expect(deallocations[0].correlationKey).toContain("applied-credit-deallocation:15000");
+        // ...and no separate credit note for the money it gave back.
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(await prisma.xeroSyncOperation.count({ where: { localId: { in: [MODIFICATION_ID, BOOKING_ID] } } })).toBe(0);
+
+        const { repairAccountCreditAllocationBusinessState } = await import("@/lib/xero-inbound/credit-note-repairs");
+        // An inbound sync while Xero still shows the old $200 allocation: it
+        // waits for the deallocation instead of pulling applied credit back up.
+        await expect(
+          repairAccountCreditAllocationBusinessState(CREDIT_NOTE_ID, [{ invoiceId: XERO_INVOICE_ID, amountCents: 20_000 }]),
+        ).rejects.toThrow(/converge it before changing applied credit/);
+        expect(await credit.deriveBookingAppliedCreditCents(BOOKING_ID)).toBe(15_000);
+
+        // The worker deallocates in Xero; the next inbound sync reads $150 and
+        // leaves the give-back exactly where it is.
+        await prisma.xeroSyncOperation.update({ where: { id: deallocations[0].id }, data: { status: "COMPLETED" } });
+        await repairAccountCreditAllocationBusinessState(CREDIT_NOTE_ID, [{ invoiceId: XERO_INVOICE_ID, amountCents: 15_000 }]);
+
+        expect(await credit.deriveBookingAppliedCreditCents(BOOKING_ID)).toBe(15_000);
+        expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(5_000);
+        // The slice now matches Xero, so a later sync has nothing to pull back.
+        const slices = await prisma.memberCreditNoteAllocation.aggregate({ where: { appliedToBookingId: BOOKING_ID }, _sum: { amountCents: true } });
+        expect(slices._sum.amountCents).toBe(15_000);
+      }, 60_000);
     });
   },
 );

@@ -17,7 +17,10 @@ import {
   executeEditReviewSettlement,
   type EditReviewSettlementRoute,
 } from "@/lib/edit-financial-review-settlement";
-import { writeEditReviewAccountCredit } from "@/lib/edit-financial-review-account-credit";
+import {
+  writeEditReviewAccountCredit,
+  type EditReviewAccountCreditOutcome,
+} from "@/lib/edit-financial-review-account-credit";
 import { refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero-leg";
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { requireMemberCreditRecipient, SchoolHasNoCreditAccountError } from "@/lib/member-credit";
@@ -368,18 +371,10 @@ export async function resolveManualRefundTask(
             amountCents: settlement.amountCents,
             store: tx,
           });
-        } else if (settlementRoute.kind === "account-credit") {
-          // #3032/#3791: credited through the route's own writer - a give-back
-          // of applied credit where no payment was captured, else a credit
-          // allocated against the payment.
-          await writeEditReviewAccountCredit({
-            route: settlementRoute,
-            memberId: requireMemberCreditRecipient(bookingOwner(task.booking).memberId),
-            bookingId: task.bookingId,
-            amountCents: settlement.amountCents,
-            store: tx,
-          });
         }
+        // `account-credit` is written by the closure's re-price below, once the
+        // re-price has run: what of a share is applied credit coming back
+        // depends on what that re-price removed (#3791).
         // `stripe-refund` writes no LEDGER allocation here on purpose: the
         // provider call has to happen outside this transaction, and
         // `refundPaymentTransactions` writes the allocation as part of it.
@@ -419,44 +414,7 @@ export async function resolveManualRefundTask(
           });
         }
       } catch (error) {
-        // #3030: the settlement cap is now OPERATOR-REACHABLE. Before this the
-        // amount always came from cancellation or capture policy and could not
-        // exceed what was captured; now an admin types it. The cap itself is not
-        // weakened by a byte here - the allocation still refuses and the
-        // transaction still rolls back - but a correct refusal must not be
-        // reported as a server fault: an untyped Error falls past the route's
-        // `instanceof ManualBookingPaymentError` check, so the operator was told
-        // "Could not close the refund task" and monitoring recorded a 500 for
-        // working code. This says what is wrong and what to do about it.
-        if (
-          error instanceof Error &&
-          error.message === "Refund amount exceeds captured payments"
-        ) {
-          throw new ManualBookingPaymentError("That is more than was ever captured on this payment — check the amount against the booking's payment history.", 400);
-        }
-        // #3032: a lock-free writer on the same payment (the charge.refunded
-        // sync; a legacy kind's completion takes no key at all) can still move
-        // the ledger under this completion - an edit review's `lock(1)` (#3582)
-        // excludes only edits and settles. The compare-and-set
-        // inside `applyLocalRefundAllocation` retries against the fresh total
-        // (#3640) and refuses loudly only when that writer used the headroom
-        // this completion needed; the transaction rolls back, so the task is
-        // still OPEN and its money is still owed when the operator retries.
-        if (error instanceof RefundAllocationRacedError) {
-          throw new ManualBookingPaymentError("This booking's payment changed while you were closing the task — refresh and try again.", 409);
-        }
-        // #3369: the same masking again. A school's reduction settled as account
-        // credit is a CORRECT refusal that reported a 500, on the screen that
-        // had just offered the choice; its message has to arrive.
-        if (error instanceof SchoolHasNoCreditAccountError) {
-          throw new ManualBookingPaymentError(error.message, error.status);
-        }
-        // #3791: a give-back of applied credit waits for an in-flight Xero
-        // deallocation on the payment, as the clamp does; the task stays OPEN.
-        if (error instanceof XeroAppliedCreditOperationBusyError) {
-          throw new ManualBookingPaymentError("This booking's account credit is still being updated in Xero — try again in a few minutes.", 409);
-        }
-        throw error;
+        throw settlementWriteRefusal(error);
       }
       // #3599: the money the club handed back by hand, on the booking ledger.
       if (settlementRoute.kind === "local-allocation") {
@@ -495,11 +453,35 @@ export async function resolveManualRefundTask(
       });
     }
 
+    // #3791: the account-credit route's write, run by the re-price below once
+    // it has re-priced (an edit review is the only kind that reaches this route).
+    let accountCredit: EditReviewAccountCreditOutcome | null = null;
+    const creditRoute = settlement && settlementRoute?.kind === "account-credit" ? settlementRoute : null;
     // #3191/#3219/#3257: blanks become numbers inside the claim; the booking
     // re-prices on EVERY parked review closing. Why, and why the KIND is the
     // condition, is `recordReviewClosurePricing`'s docblock.
     if (task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
       await recordReviewClosurePricing({
+        settleAgainstRebase: creditRoute && settlement
+          ? async (rebase) => {
+              try {
+                accountCredit = await writeEditReviewAccountCredit({
+                  route: creditRoute,
+                  memberId: requireMemberCreditRecipient(bookingOwner(task.booking).memberId),
+                  bookingId: task.bookingId,
+                  amountCents: settlement.amountCents,
+                  rebase,
+                  clubZone,
+                  format,
+                  store: tx,
+                });
+              } catch (error) {
+                throw settlementWriteRefusal(error);
+              }
+              // Only the minted part takes the review's Xero credit note.
+              return { xeroAmountCents: accountCredit.mintedCents };
+            }
+          : null,
         format,
         plans: nightPriceRepairs,
         task,
@@ -582,6 +564,8 @@ export async function resolveManualRefundTask(
        */
       settlementRoute,
       settlementAmountCents: settlement?.amountCents ?? null,
+      /** #3791: what the account-credit route gave back and minted, else null. */
+      accountCredit: accountCredit as EditReviewAccountCreditOutcome | null,
       /** #3170: which way this completion sent the money, or null on a dismissal. */
       settlementDirection: settlement ? settlementDirection : null,
       memberId: bookingOwner(task.booking).memberId,
@@ -630,6 +614,7 @@ export async function resolveManualRefundTask(
       actingMemberId,
       route: result.settlementRoute,
       amountCents: result.settlementAmountCents,
+      accountCredit: result.accountCredit,
       hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
       bookingPaymentStatus: result.bookingPaymentStatus,
       cancellationHandBackInvoiceId: result.cancellationHandBackInvoiceId,
@@ -641,4 +626,48 @@ export async function resolveManualRefundTask(
   await finishKeptLateCaptureXeroRecord(keptLateCaptureXeroPlan);
 
   return { ...closed, stripeRefundId, additionalPaymentIntentId };
+}
+
+/**
+ * A settlement write's refusal, as the operator should read it - or the error
+ * itself where it is not one. Shared by the writes before the re-price and the
+ * account-credit write after it, so the two cannot answer the same refusal
+ * differently.
+ */
+function settlementWriteRefusal(error: unknown): unknown {
+  // #3030: the settlement cap is now OPERATOR-REACHABLE. Before this the amount
+  // always came from cancellation or capture policy and could not exceed what
+  // was captured; now an admin types it. The cap itself is not weakened by a
+  // byte here - the allocation still refuses and the transaction still rolls
+  // back - but a correct refusal must not be reported as a server fault: an
+  // untyped Error falls past the route's `instanceof ManualBookingPaymentError`
+  // check, so the operator was told "Could not close the refund task" and
+  // monitoring recorded a 500 for working code. This says what is wrong and
+  // what to do about it.
+  if (error instanceof Error && error.message === "Refund amount exceeds captured payments") {
+    return new ManualBookingPaymentError("That is more than was ever captured on this payment — check the amount against the booking's payment history.", 400);
+  }
+  // #3032: a lock-free writer on the same payment (the charge.refunded sync; a
+  // legacy kind's completion takes no key at all) can still move the ledger
+  // under this completion - an edit review's `lock(1)` (#3582) excludes only
+  // edits and settles. The compare-and-set inside `applyLocalRefundAllocation`
+  // retries against the fresh total (#3640) and refuses loudly only when that
+  // writer used the headroom this completion needed; the transaction rolls
+  // back, so the task is still OPEN and its money is still owed when the
+  // operator retries.
+  if (error instanceof RefundAllocationRacedError) {
+    return new ManualBookingPaymentError("This booking's payment changed while you were closing the task — refresh and try again.", 409);
+  }
+  // #3369: the same masking again. A school's reduction settled as account
+  // credit is a CORRECT refusal that reported a 500, on the screen that had just
+  // offered the choice; its message has to arrive.
+  if (error instanceof SchoolHasNoCreditAccountError) {
+    return new ManualBookingPaymentError(error.message, error.status);
+  }
+  // #3791: a give-back of applied credit waits for an in-flight Xero
+  // deallocation on the payment, as the clamp does; the task stays OPEN.
+  if (error instanceof XeroAppliedCreditOperationBusyError) {
+    return new ManualBookingPaymentError("This booking's account credit is still being updated in Xero — try again in a few minutes.", 409);
+  }
+  return error;
 }

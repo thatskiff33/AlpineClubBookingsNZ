@@ -40,9 +40,15 @@ const mocks = vi.hoisted(() => ({
   // so these tests assert WHICH path was taken and with what, which is the
   // decision this module owns.
   createBookingModificationCredit: vi.fn(),
-  // #3791: the give-back of applied credit a credit-paid booking's share takes.
-  // Answers 0 (nothing applied) unless a case says otherwise.
-  giveBackAppliedCreditForReviewShare: vi.fn(),
+  // #3791: the one give-back of applied credit (the clamp's), which a
+  // credit-paid booking's share takes. Its rows and its Xero step are
+  // `member-credit.test.ts`'s; here it asks the route's real `giveBackCentsOf`
+  // against the applied credit a case sets (none by default) and gives that back.
+  giveBackAppliedCredit: vi.fn(),
+  appliedCredit: { cents: 0, payment: null as null | { id: string; creditAppliedCents: number } },
+  // #3791: the booking as the give-back reads it, under the ledger lock.
+  bookingFindUniqueOrThrow: vi.fn(),
+  paymentUpdate: vi.fn(),
   // #3032: the card route is no longer one opaque helper. The completion freezes
   // the allocation and persists the refund DEBT inside its own transaction, then
   // executes exactly those slices after the commit - booking-cancel's #1349
@@ -199,8 +205,7 @@ vi.mock("@/lib/member-credit", () => {
   return {
     createBookingModificationCredit: (...a: unknown[]) =>
       mocks.createBookingModificationCredit(...a),
-    giveBackAppliedCreditForReviewShare: (...a: unknown[]) =>
-      mocks.giveBackAppliedCreditForReviewShare(...a),
+    giveBackAppliedCredit: (...a: unknown[]) => mocks.giveBackAppliedCredit(...a),
     SchoolHasNoCreditAccountError,
     requireMemberCreditRecipient: (memberId: string | null) => {
       if (!memberId) throw new SchoolHasNoCreditAccountError();
@@ -265,8 +270,11 @@ const tx = {
   // #3219: the booking whose four money columns move with the strands.
   booking: {
     findUnique: (...a: unknown[]) => mocks.bookingFindUnique(...a),
+    findUniqueOrThrow: (...a: unknown[]) => mocks.bookingFindUniqueOrThrow(...a),
     updateMany: (...a: unknown[]) => mocks.bookingUpdateMany(...a),
   },
+  // #3791: the mirror a give-back lowers.
+  payment: { update: (...a: unknown[]) => mocks.paymentUpdate(...a) },
   // #3219: the booking's OWN history, which is where a re-base has to be
   // readable from - D1 lets a later cancellation refund less than the member
   // paid, so "why did I only get $120 back?" is answered here.
@@ -384,7 +392,22 @@ function offerUnpricedNight() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.giveBackAppliedCreditForReviewShare.mockResolvedValue(0);
+  mocks.appliedCredit.cents = 0;
+  mocks.appliedCredit.payment = null;
+  mocks.giveBackAppliedCredit.mockImplementation(
+    async ({ giveBackCentsOf }: { giveBackCentsOf: (applied: number, payment: unknown) => Promise<number> }) => {
+      const { cents, payment } = mocks.appliedCredit;
+      const givenBackCents = Math.max(0, Math.min(cents, await giveBackCentsOf(cents, payment)));
+      return { appliedCreditCents: cents, givenBackCents, payment };
+    },
+  );
+  mocks.bookingFindUniqueOrThrow.mockResolvedValue({
+    status: "PAID",
+    finalPriceCents: 24_000,
+    checkIn: new Date("2026-08-01T00:00:00.000Z"),
+    lodgeId: "lodge-1",
+  });
+  mocks.paymentUpdate.mockResolvedValue({});
   mocks.planKeptLateCaptureXeroRecord.mockResolvedValue({ kind: "none" });
   mocks.finishKeptLateCaptureXeroRecord.mockResolvedValue(undefined);
   mocks.settleKeptLateCaptureRecordOnApproval.mockResolvedValue(undefined);
@@ -814,43 +837,125 @@ describe("#3030 - pricing an unknown amount at completion", () => {
   });
 
   describe("#3791: a credit-paid booking's share is its applied credit coming back", () => {
-    const complete = () =>
+    const complete = (confirmedAmountCents = 5000) =>
       resolveManualRefundTask({
         taskId: "task-1",
         resolution: "completed",
         note: "Credited to the member account.",
         actingMemberId: "admin-1",
-        confirmedAmountCents: 5000,
+        confirmedAmountCents,
         direction: "REFUND_TO_MEMBER",
         recordedNightPrices: null,
       }, CLUB_FORMAT_TEST);
-
-    it("MUTATION: gives the share back as applied credit and mints nothing beside it", async () => {
+    /** A booking paid entirely by account credit: $240 applied, nothing captured. */
+    const creditPaid = (cents = 24_000) => {
+      mocks.appliedCredit.cents = cents;
+      mocks.appliedCredit.payment = { id: "payment-credit", creditAppliedCents: cents };
       mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask({ paymentId: null }));
-      mocks.giveBackAppliedCreditForReviewShare.mockResolvedValue(5000);
+    };
+
+    it("MUTATION: gives the share back through the clamp's give-back, mints nothing beside it, and lowers the mirror", async () => {
+      creditPaid();
 
       await complete();
 
-      expect(mocks.giveBackAppliedCreditForReviewShare).toHaveBeenCalledWith(
-        { memberId: "member-1", bookingId: "booking-1", shareCents: 5000 },
+      expect(mocks.giveBackAppliedCredit).toHaveBeenCalledWith(
+        expect.objectContaining({ memberId: "member-1", bookingId: "booking-1", format: CLUB_FORMAT_TEST }),
         tx,
       );
       // Minting here as well is the double payment the issue is about.
       expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
+      expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+        where: { id: "payment-credit" },
+        data: { creditAppliedCents: 19_000 },
+      });
       expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
         expect.objectContaining({ type: BookingEventType.CREDITED, amountCents: 5000 }),
       );
     });
 
-    it("MUTATION: mints only the part of the share the applied credit could not cover", async () => {
-      mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask({ paymentId: null }));
-      mocks.giveBackAppliedCreditForReviewShare.mockResolvedValue(3000);
+    it("MUTATION: issues no separate Xero credit note for money that was given back", async () => {
+      creditPaid();
+
+      await complete();
+
+      // The give-back's own deallocation returns it in Xero (owner decision 1).
+      expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: mints only the part of the share the applied credit could not cover, and bills Xero for that part alone", async () => {
+      creditPaid(3000);
+      // Fully covered at its own price, so the unpaid limit does not apply.
+      mocks.bookingFindUniqueOrThrow.mockResolvedValue({
+        status: "PAID", finalPriceCents: 3000, checkIn: new Date("2026-08-01T00:00:00.000Z"), lodgeId: "lodge-1",
+      });
+      mocks.bookingFindUnique.mockImplementation(async () => frozenBooking({ totalPriceCents: 3000, finalPriceCents: 3000 }));
 
       await complete();
 
       expect(mocks.createBookingModificationCredit).toHaveBeenCalledWith(
         "member-1", 2000, "booking-1", "mod-1", undefined, tx, undefined,
       );
+      expect(mocks.queueXeroBookingEditSettlement).toHaveBeenCalledWith(
+        expect.objectContaining({ settlementMethod: "credit", settlementAmountCents: 2000, priceDiffCents: -2000 }),
+      );
+      expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ type: BookingEventType.CREDITED, amountCents: 5000 }),
+      );
+    });
+
+    it("MUTATION: runs after the re-price, and on an UNPAID booking gives back only what the re-price removed", async () => {
+      // $200 applied against the $240 the park froze: unpaid. The strands say
+      // $180, so the re-price removes $60; an $80 share gives back $60 of
+      // applied credit and mints the other $20.
+      creditPaid(20_000);
+
+      await complete(8000);
+
+      expect(mocks.bookingUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.giveBackAppliedCredit.mock.invocationCallOrder[0],
+      );
+      expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+        where: { id: "payment-credit" },
+        data: { creditAppliedCents: 14_000 },
+      });
+      expect(mocks.createBookingModificationCredit).toHaveBeenCalledWith(
+        "member-1", 2000, "booking-1", "mod-1", undefined, tx, undefined,
+      );
+    });
+
+    it("MUTATION: on an UNPAID booking whose re-price declined, gives nothing back and mints the share as before", async () => {
+      creditPaid(20_000);
+      // No strands to re-price from: the re-base declines.
+      mocks.bookingFindUnique.mockImplementation(async () => frozenBooking({ guests: [] }));
+
+      await complete();
+
+      expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+      expect(mocks.createBookingModificationCredit).toHaveBeenCalledWith(
+        "member-1", 5000, "booking-1", "mod-1", undefined, tx, undefined,
+      );
+    });
+
+    it("MUTATION: a booking cancelled at 100% before the review has had the share back already: nothing credited, no CREDITED event, no Xero note", async () => {
+      creditPaid(24_000);
+      mocks.bookingFindUniqueOrThrow.mockResolvedValue({
+        status: "CANCELLED", finalPriceCents: 24_000, checkIn: new Date("2026-08-01T00:00:00.000Z"), lodgeId: "lodge-1",
+      });
+      // The cancellation's restore row, in full.
+      mocks.memberCreditFindUnique.mockImplementation(async (args: { where: Record<string, unknown> }) =>
+        args.where.restoredFromBookingId ? { amountCents: 24_000, createdAt: new Date("2026-07-01T00:00:00.000Z") } : null,
+      );
+
+      const result = await complete();
+
+      expect(result.status).toBe(ManualRefundTaskStatus.COMPLETED);
+      expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+      expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
+      expect(mocks.recordBookingEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: BookingEventType.CREDITED }),
+      );
+      expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
     });
 
     it("MUTATION: leaves a booking with a captured payment exactly as it was - no give-back, the whole share allocated against the payment", async () => {
@@ -867,17 +972,27 @@ describe("#3030 - pricing an unknown amount at completion", () => {
 
       await complete();
 
-      expect(mocks.giveBackAppliedCreditForReviewShare).not.toHaveBeenCalled();
+      expect(mocks.giveBackAppliedCredit).not.toHaveBeenCalled();
       expect(mocks.createBookingModificationCredit).toHaveBeenCalledWith(
         "member-1", 5000, "booking-1", "mod-1", undefined, tx, "payment-9",
       );
     });
 
-    it("MUTATION: a Xero deallocation in flight refuses with a 409 the operator can act on, not a 500", async () => {
-      mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask({ paymentId: null }));
-      mocks.giveBackAppliedCreditForReviewShare.mockRejectedValue(
-        new XeroAppliedCreditOperationBusyError("busy"),
+    it("MUTATION: a school's share settled as account credit still reaches the officer as its refusal, not a 500", async () => {
+      mocks.manualRefundTaskFindUnique.mockResolvedValue(
+        editReviewTask({ paymentId: null, booking: { memberId: null, status: "PAID", payment: null } }),
       );
+
+      await expect(complete()).rejects.toMatchObject({
+        name: "ManualBookingPaymentError",
+        status: 400,
+        message: expect.stringContaining("no account to credit"),
+      });
+    });
+
+    it("MUTATION: a Xero deallocation in flight refuses with a 409 the operator can act on, not a 500", async () => {
+      creditPaid();
+      mocks.giveBackAppliedCredit.mockRejectedValue(new XeroAppliedCreditOperationBusyError("busy"));
 
       await expect(complete()).rejects.toMatchObject({ status: 409 });
     });

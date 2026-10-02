@@ -814,13 +814,15 @@ describe("member-credit helpers", () => {
     });
   });
 
-  describe("giveBackAppliedCreditForReviewShare (#3791)", () => {
-    function makeTx(appliedNetCents: number, payment: Record<string, unknown> | null) {
+  describe("giveBackAppliedCredit, the one give-back the clamp and a review share share (#3791)", () => {
+    function makeTx(appliedNetCents: number, payment: Record<string, unknown> | null, allocatedCents: number | null) {
       return {
         $executeRaw: vi.fn().mockResolvedValue(undefined),
         xeroSyncOperation: { findMany: vi.fn().mockResolvedValue([]) },
         booking: { findUnique: vi.fn().mockResolvedValue(payment ? { payment } : null) },
-        payment: { update: vi.fn().mockResolvedValue({}) },
+        memberCreditNoteAllocation: {
+          aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: allocatedCents } }),
+        },
         memberCredit: {
           aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: appliedNetCents } }),
           create: vi.fn().mockResolvedValue({} as any),
@@ -833,90 +835,83 @@ describe("member-credit helpers", () => {
       xeroInvoiceId: "inv-1",
       creditAppliedCents: 20000,
     };
-
-    it("MUTATION: gives the share back as applied credit and lowers the mirror the cancellation tiers off", async () => {
-      const tx = makeTx(-20000, ibPayment);
-      const { giveBackAppliedCreditForReviewShare } = await import("@/lib/member-credit");
-
-      const givenBack = await giveBackAppliedCreditForReviewShare(
-        { memberId: "member-1", bookingId: "booking-1", shareCents: 5000 },
+    const giveBack = async (tx: ReturnType<typeof makeTx>, giveBackCentsOf: (applied: number) => number) => {
+      const { giveBackAppliedCredit } = await import("@/lib/member-credit");
+      return giveBackAppliedCredit(
+        { memberId: "member-1", bookingId: "booking-1", giveBackCentsOf, description: "review share", format: CLUB_FORMAT_TEST },
         tx as any,
       );
+    };
 
-      expect(givenBack).toBe(5000);
-      // The clamp's own row: a positive BOOKING_APPLIED offset, not new credit.
+    it("MUTATION: a review share on a Xero-allocated bank-transfer booking queues the clamp's deallocation to the new applied figure", async () => {
+      const tx = makeTx(-20000, ibPayment, 20000);
+
+      const result = await giveBack(tx, () => 5000);
+
+      expect(result).toMatchObject({ appliedCreditCents: 20000, givenBackCents: 5000 });
       expect(tx.memberCredit.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          memberId: "member-1",
-          amountCents: 5000,
-          type: "BOOKING_APPLIED",
-          appliedToBookingId: "booking-1",
-        }),
+        data: expect.objectContaining({ amountCents: 5000, type: "BOOKING_APPLIED", appliedToBookingId: "booking-1" }),
       });
-      expect(tx.payment.update).toHaveBeenCalledWith({
-        where: { id: "payment-1" },
-        data: { creditAppliedCents: 15000 },
-      });
-      // Under the member's credit-ledger lock, taken first.
-      expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
-        tx.memberCredit.create.mock.invocationCallOrder[0],
-      );
-      // The review's Xero leg already credits the member in Xero; a
-      // deallocation here as well would credit them twice.
+      // Without this the next inbound sync pulls applied credit back up to
+      // Xero's $200 and undoes the give-back (the review's High finding).
+      expect(mockRepairLegacyAppliedCreditNoteAllocationsForBooking).toHaveBeenCalledWith("booking-1", "inv-1", tx, CLUB_FORMAT_TEST);
+      expect(mockStartXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({
+        correlationKey: "booking:booking-1:applied-credit-deallocation:15000:v1",
+        localId: "payment-1",
+        requestPayload: { queueType: "APPLIED_CREDIT_DEALLOCATION", bookingId: "booking-1" },
+        store: tx,
+      }));
+    });
+
+    it("MUTATION: queues no deallocation where Xero already holds no more than the new applied figure", async () => {
+      const tx = makeTx(-20000, ibPayment, 15000);
+
+      await giveBack(tx, () => 5000);
+
       expect(mockStartXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: takes no Xero step for a booking with no internet-banking invoice", async () => {
+      const tx = makeTx(-20000, { ...ibPayment, source: "STRIPE", xeroInvoiceId: null }, 20000);
+
+      await giveBack(tx, () => 5000);
+
       expect(mockRepairLegacyAppliedCreditNoteAllocationsForBooking).not.toHaveBeenCalled();
+      expect(mockStartXeroSyncOperation).not.toHaveBeenCalled();
     });
 
-    it("MUTATION: never gives back more than is applied", async () => {
-      const tx = makeTx(-3000, { ...ibPayment, creditAppliedCents: 3000 });
-      const { giveBackAppliedCreditForReviewShare } = await import("@/lib/member-credit");
+    it("MUTATION: asks for the amount under the lock, with the applied credit and payment, and never gives back more than is applied", async () => {
+      const tx = makeTx(-3000, ibPayment, null);
+      const giveBackCentsOf = vi.fn().mockReturnValue(5000);
 
-      const givenBack = await giveBackAppliedCreditForReviewShare(
-        { memberId: "member-1", bookingId: "booking-1", shareCents: 5000 },
-        tx as any,
-      );
+      const result = await giveBack(tx, giveBackCentsOf);
 
-      expect(givenBack).toBe(3000);
-      expect(tx.memberCredit.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ amountCents: 3000 }),
-      });
-      expect(tx.payment.update).toHaveBeenCalledWith({
-        where: { id: "payment-1" },
-        data: { creditAppliedCents: 0 },
-      });
+      expect(giveBackCentsOf).toHaveBeenCalledWith(3000, ibPayment);
+      expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(giveBackCentsOf.mock.invocationCallOrder[0]);
+      expect(result.givenBackCents).toBe(3000);
+      expect(tx.memberCredit.create).toHaveBeenCalledWith({ data: expect.objectContaining({ amountCents: 3000 }) });
     });
 
-    it("writes nothing when no credit is applied", async () => {
-      const tx = makeTx(0, { ...ibPayment, creditAppliedCents: 0 });
-      const { giveBackAppliedCreditForReviewShare } = await import("@/lib/member-credit");
+    it("writes nothing, and takes no Xero step, when there is nothing to give back", async () => {
+      const tx = makeTx(-20000, ibPayment, 20000);
 
-      expect(
-        await giveBackAppliedCreditForReviewShare(
-          { memberId: "member-1", bookingId: "booking-1", shareCents: 5000 },
-          tx as any,
-        ),
-      ).toBe(0);
+      expect((await giveBack(tx, () => 0)).givenBackCents).toBe(0);
       expect(tx.memberCredit.create).not.toHaveBeenCalled();
-      expect(tx.payment.update).not.toHaveBeenCalled();
+      expect(mockStartXeroSyncOperation).not.toHaveBeenCalled();
     });
 
-    it("refuses while an applied-credit deallocation is in flight, before any write", async () => {
-      const tx = makeTx(-20000, ibPayment);
+    it("refuses while an applied-credit deallocation is in flight, before it asks or writes", async () => {
+      const tx = makeTx(-20000, ibPayment, 20000);
       tx.xeroSyncOperation.findMany.mockResolvedValue([{
         id: "dealloc-pending",
         status: "PENDING",
         requestPayload: { queueType: "APPLIED_CREDIT_DEALLOCATION" },
       }]);
-      const { giveBackAppliedCreditForReviewShare } = await import("@/lib/member-credit");
+      const giveBackCentsOf = vi.fn().mockReturnValue(5000);
 
-      await expect(
-        giveBackAppliedCreditForReviewShare(
-          { memberId: "member-1", bookingId: "booking-1", shareCents: 5000 },
-          tx as any,
-        ),
-      ).rejects.toThrow("dealloc-pending is PENDING");
+      await expect(giveBack(tx, giveBackCentsOf)).rejects.toThrow("dealloc-pending is PENDING");
+      expect(giveBackCentsOf).not.toHaveBeenCalled();
       expect(tx.memberCredit.create).not.toHaveBeenCalled();
-      expect(tx.payment.update).not.toHaveBeenCalled();
     });
   });
 

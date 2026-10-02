@@ -27,6 +27,7 @@ import {
   rebaseDivergesFromIssuedInvoice,
   rebaseChangedTheBooking,
   recordBookingPriceRebaseHistory,
+  type BookingPriceRebase,
 } from "@/lib/booking-review-price-rebase";
 
 /**
@@ -124,6 +125,7 @@ export async function recordReviewClosurePricing({
   settlementRoute,
   settlementAmountCents,
   settlementDirection,
+  settleAgainstRebase,
   store,
   format,
 }: {
@@ -162,6 +164,14 @@ export async function recordReviewClosurePricing({
   settlementAmountCents: number | null;
   /** #3582: which way that share went, or null where nothing was settled. */
   settlementDirection: ManualRefundTaskDirection | null;
+  /**
+   * #3791: a settlement whose figure depends on this re-price - the
+   * account-credit route, which gives back applied credit only up to what the
+   * re-price removed on an unpaid booking. Run straight after the re-base and
+   * before anything reads what Xero will be sent, and it answers that: the
+   * amount its document bills. Null on every other closure.
+   */
+  settleAgainstRebase: ((rebase: BookingPriceRebase | null) => Promise<{ xeroAmountCents: number | null }>) | null;
   store: Prisma.TransactionClient;
   /** The club's format (#3565), resolved by the caller before any transaction. */
   format: ClubFormat;
@@ -198,6 +208,9 @@ export async function recordReviewClosurePricing({
     store,
   });
   const rebase = outcome.rebased ? outcome.rebase : null;
+  const xeroAmountCents = settleAgainstRebase
+    ? (await settleAgainstRebase(rebase)).xeroAmountCents
+    : settlementAmountCents;
   const xeroInvoiceDiverged =
     rebase !== null &&
     rebaseDivergesFromIssuedInvoice({
@@ -205,7 +218,7 @@ export async function recordReviewClosurePricing({
       hasIssuedXeroInvoice,
       settlementIssuesXeroDocument: editReviewSettlementIssuesXeroDocument({
         route: settlementRoute,
-        xeroAmountCents: settlementAmountCents,
+        xeroAmountCents,
       }),
     });
   let rebaseHistoryId: string | null = null;
