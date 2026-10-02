@@ -55,6 +55,7 @@ import {
   decryptTwoFactorSecret,
   encryptTwoFactorSecret,
   enrollTwoFactor,
+  replaceRecoveryCodes,
   generateTotpEnrollment,
   hashEmailOtpCode,
   hashRecoveryCode,
@@ -183,6 +184,53 @@ describe("two-factor helpers", () => {
         }),
       ]),
     });
+  });
+
+  it("refuses a MEMBER actor who is not the member being enrolled, and writes nothing (#3454 review)", async () => {
+    await expect(
+      enrollTwoFactor({
+        memberId: "member-1",
+        method: "EMAIL",
+        actor: { kind: "member", memberId: "member-2" },
+      }),
+    ).rejects.toThrow(/no usable actor/);
+    expect(mockPrisma.member.update).not.toHaveBeenCalled();
+    expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("replaces recovery codes and records it on the same transaction, with no code in the row (#3454)", async () => {
+    const codes = await replaceRecoveryCodes({
+      memberId: "member-1",
+      actor: { kind: "member", memberId: "member-1" },
+      request: { id: "req-r", ipAddress: "10.0.0.7", userAgent: "ua" },
+    });
+
+    expect(codes).toHaveLength(10);
+    expect(mockPrisma.twoFactorRecoveryCode.deleteMany).toHaveBeenCalledWith({
+      where: { memberId: "member-1" },
+    });
+    expect(mockPrisma.auditLog.create).toHaveBeenCalledTimes(1);
+    const audit = mockPrisma.auditLog.create.mock.calls[0]?.[0];
+    expect(audit.data).toMatchObject({
+      action: "security.two_factor.recovery_codes_replaced",
+      category: "security",
+      actorMemberId: "member-1",
+      subjectMemberId: "member-1",
+      requestId: "req-r",
+      metadata: { actorKind: "member", recoveryCodesIssued: 10 },
+    });
+    const emitted = JSON.stringify(audit);
+    for (const code of codes) expect(emitted).not.toContain(code);
+  });
+
+  it("refuses to replace another member's recovery codes as a member (#3454)", async () => {
+    await expect(
+      replaceRecoveryCodes({
+        memberId: "member-1",
+        actor: { kind: "member", memberId: "member-2" },
+      }),
+    ).rejects.toThrow(/no usable actor/);
+    expect(mockPrisma.twoFactorRecoveryCode.deleteMany).not.toHaveBeenCalled();
   });
 
   it("refuses an enrolment that names no actor, and writes nothing (#3454)", async () => {

@@ -884,6 +884,9 @@ describe("#3454 the erasure's two-factor clear is recorded in its own transactio
       subjectMemberId: "m1",
       metadata: { actorKind: "admin", method: "TOTP", authenticatorApp: true },
       memberDisclosure: { visibility: "internal" },
+      // The canonical request context (`getAuditRequestContext`, mocked above),
+      // not the route's own first-hop forwarded-for (#3454 review).
+      ipAddress: "127.0.0.1",
     });
     // The transaction client, not the module client: it commits with the clear.
     expect(client).not.toBe(prisma);

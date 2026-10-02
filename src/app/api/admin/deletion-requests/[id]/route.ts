@@ -18,7 +18,7 @@ import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/deleted-account-email";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
 import { cancelBooking } from "@/lib/booking-cancel";
-import { createAuditLog, logAudit } from "@/lib/audit";
+import { createAuditLog, getAuditRequestContext, logAudit } from "@/lib/audit";
 import { recordErasureTwoFactorClear } from "@/lib/two-factor-audit";
 import {
   EMPTY_ORPHANED_FAMILY_LINKS,
@@ -917,7 +917,7 @@ export async function POST(
       await recordErasureTwoFactorClear(tx, {
         memberId: member.id,
         adminMemberId: session.user.id,
-        request: { ipAddress: ip, userAgent: request.headers.get("user-agent") },
+        request: getAuditRequestContext(request),
       });
 
       // 3. Anonymise the member record

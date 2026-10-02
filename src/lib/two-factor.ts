@@ -11,12 +11,12 @@ import type { TwoFactorMethod } from "@prisma/client";
 import { getClubIdentitySync } from "@/lib/club-identity-settings";
 import { getAuthSecret } from "@/lib/runtime-config";
 import { prisma } from "@/lib/prisma";
-import type { CredentialRequestContext } from "@/lib/integration-credential-actor";
 import {
-  assertTwoFactorActor,
+  assertTwoFactorActorMayAct,
   recordTwoFactorMutation,
   TWO_FACTOR_AUDIT_ACTIONS,
   type TwoFactorActor,
+  type TwoFactorRequestContext,
 } from "@/lib/two-factor-audit";
 
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
@@ -331,18 +331,41 @@ export async function consumeRecoveryCode(memberId: string, code: string) {
   return updated.count === 1;
 }
 
-export async function replaceRecoveryCodes(memberId: string) {
+export async function replaceRecoveryCodes(params: {
+  memberId: string;
+  /** Who replaced them: the member themself on the regenerate route (#3454). */
+  actor: TwoFactorActor;
+  request?: TwoFactorRequestContext;
+}) {
+  const { memberId } = params;
+  assertTwoFactorActorMayAct(
+    TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesReplaced,
+    params.actor,
+    memberId,
+  );
   const recoveryCodes = generateRecoveryCodes();
 
-  await prisma.$transaction([
-    prisma.twoFactorRecoveryCode.deleteMany({ where: { memberId } }),
-    prisma.twoFactorRecoveryCode.createMany({
+  // ONE interactive transaction, so the audit row commits with the new codes
+  // or neither does (#3454): replacing them invalidates every unused code, the
+  // same class of credential change as an enrolment.
+  await prisma.$transaction(async (tx) => {
+    await tx.twoFactorRecoveryCode.deleteMany({ where: { memberId } });
+    await tx.twoFactorRecoveryCode.createMany({
       data: recoveryCodes.map((code) => ({
         memberId,
         codeHash: hashRecoveryCode(code),
       })),
-    }),
-  ]);
+    });
+    await recordTwoFactorMutation(tx, {
+      action: TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesReplaced,
+      actor: params.actor,
+      subjectMemberId: memberId,
+      method: null,
+      authenticatorApp: false,
+      recoveryCodesIssued: recoveryCodes.length,
+      request: params.request,
+    });
+  });
 
   return recoveryCodes;
 }
@@ -353,9 +376,10 @@ export async function enrollTwoFactor(params: {
   totpSecret?: string | null;
   /** Who enrolled — the member themself on the enrolment routes (#3454). */
   actor: TwoFactorActor;
-  request?: CredentialRequestContext;
+  request?: TwoFactorRequestContext;
 }) {
-  assertTwoFactorActor(TWO_FACTOR_AUDIT_ACTIONS.enrolled, params.actor);
+  // A member actor must be the member being enrolled (#3454 review).
+  assertTwoFactorActorMayAct(TWO_FACTOR_AUDIT_ACTIONS.enrolled, params.actor, params.memberId);
   const recoveryCodes = generateRecoveryCodes();
   const storesTotpSecret = params.method === "TOTP" && Boolean(params.totpSecret);
   const encryptedTotpSecret =

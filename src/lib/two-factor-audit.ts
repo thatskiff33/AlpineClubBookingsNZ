@@ -27,8 +27,17 @@
  */
 
 import type { Prisma } from "@prisma/client";
-import { createAuditLog, type AuditLogClient } from "@/lib/audit";
-import type { CredentialRequestContext } from "@/lib/integration-credential-actor";
+import {
+  createAuditLog,
+  type AuditLogClient,
+  type StructuredAuditEvent,
+} from "@/lib/audit";
+
+/**
+ * Request evidence for the row: the audit module's own shape, which
+ * `getAuditRequestContext` returns, rather than the credential store's.
+ */
+export type TwoFactorRequestContext = StructuredAuditEvent["request"];
 
 /** Who changed a member's second factor. */
 export type TwoFactorActor =
@@ -41,6 +50,8 @@ export type TwoFactorActor =
 export const TWO_FACTOR_AUDIT_ACTIONS = {
   enrolled: "security.two_factor.enrolled",
   cleared: "security.two_factor.cleared",
+  /** A member replaced their recovery codes, invalidating every unused one. */
+  recoveryCodesReplaced: "security.two_factor.recovery_codes_replaced",
 } as const;
 
 export type TwoFactorAuditAction =
@@ -81,6 +92,22 @@ export function assertTwoFactorActor(
 }
 
 /**
+ * A member may only change their OWN second factor; an administrator acts on
+ * someone else's. Refused before anything is written, because a row naming
+ * member A as "the member themself" for member B's enrolment is a false record.
+ */
+export function assertTwoFactorActorMayAct(
+  operation: string,
+  actor: unknown,
+  subjectMemberId: string,
+): asserts actor is TwoFactorActor {
+  assertTwoFactorActor(operation, actor);
+  if (actor.kind === "member" && actor.memberId !== subjectMemberId) {
+    throw new TwoFactorActorError(operation, actor);
+  }
+}
+
+/**
  * Write the audit row for a two-factor mutation, on the SAME client that made
  * the change. The parameter list names the subject, the method and booleans —
  * there is no parameter a secret fits into.
@@ -91,7 +118,7 @@ export async function recordTwoFactorMutation(
     action: TwoFactorAuditAction;
     actor: TwoFactorActor;
     subjectMemberId: string;
-    /** The method enrolled, or the method being cleared (null when none was set). */
+    /** The method enrolled or being cleared (null when none was set or it does not apply). */
     method: "TOTP" | "EMAIL" | null;
     /**
      * Whether an authenticator-app secret is being stored or destroyed. Not
@@ -99,11 +126,20 @@ export async function recordTwoFactorMutation(
      * "secret", and this is a boolean, never the value.
      */
     authenticatorApp: boolean;
-    request?: CredentialRequestContext;
+    /** How many recovery codes were issued, when the event issued any. Never the codes. */
+    recoveryCodesIssued?: number;
+    request?: TwoFactorRequestContext;
   },
 ): Promise<void> {
-  assertTwoFactorActor(params.action, params.actor);
-  const enrolled = params.action === TWO_FACTOR_AUDIT_ACTIONS.enrolled;
+  assertTwoFactorActorMayAct(params.action, params.actor, params.subjectMemberId);
+  const summary =
+    params.action === TWO_FACTOR_AUDIT_ACTIONS.enrolled
+      ? `Two-factor authentication turned on (${
+          params.method === "EMAIL" ? "email code" : "authenticator app"
+        })`
+      : params.action === TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesReplaced
+        ? "Two-factor recovery codes replaced"
+        : "Two-factor authentication cleared";
   await createAuditLog(
     {
       action: params.action,
@@ -118,15 +154,14 @@ export async function recordTwoFactorMutation(
       targetId: params.subjectMemberId,
       entityType: "Member",
       entityId: params.subjectMemberId,
-      summary: enrolled
-        ? `Two-factor authentication turned on (${
-            params.method === "EMAIL" ? "email code" : "authenticator app"
-          })`
-        : "Two-factor authentication cleared",
+      summary,
       metadata: {
         actorKind: params.actor.kind,
         method: params.method,
         authenticatorApp: params.authenticatorApp,
+        ...(params.recoveryCodesIssued === undefined
+          ? {}
+          : { recoveryCodesIssued: params.recoveryCodesIssued }),
       },
       // Declared, not defaulted: the member reads the generic event only.
       memberDisclosure: { visibility: "internal" },
@@ -150,7 +185,7 @@ export async function recordErasureTwoFactorClear(
   params: {
     memberId: string;
     adminMemberId: string;
-    request?: CredentialRequestContext;
+    request?: TwoFactorRequestContext;
   },
 ): Promise<void> {
   const before = await tx.member.findUnique({
