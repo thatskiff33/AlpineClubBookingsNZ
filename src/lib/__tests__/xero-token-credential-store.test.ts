@@ -718,8 +718,14 @@ describe("interleaving inside a read: a write that commits between the two copie
 
   it("a reconnect that commits while a refresh is being claimed survives the refresh", async () => {
     await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
-    // The review's exact interleaving: the reconnect commits after the
-    // `XeroToken` row was read and before the store row is.
+    // The review's interleaving, which ONLY this lock-free double can run. The
+    // reconnect lands inside the claim's reads, after its guarded UPDATE has
+    // matched. In PostgreSQL that UPDATE holds the row lock until the claim
+    // commits, so the reconnect would block, and this schedule cannot happen.
+    // What the test proves is that the claim's reads come AFTER the lease is
+    // taken, which makes them lock-scoped by construction: against the pre-fix
+    // code (read, then claim) this schedule overwrote the reconnect. The legal
+    // schedule, a reconnect committing before the UPDATE, is the next test.
     commitDuringStoreRead(
       () => saveXeroTokens(tokenSet("reconnect"), { actor: ADMIN }),
       "before",
@@ -737,8 +743,8 @@ describe("interleaving inside a read: a write that commits between the two copie
 
     // The reconnect's grant is what is stored; nothing refreshed from c1 won.
     const stored = await loadXeroTokens();
-    expect(stored?.refreshToken).toContain("reconnect");
-    expect(stored?.refreshToken).not.toContain("c1");
+    // The save loses its lease fence here, so the reconnect's own token stands.
+    expect(stored?.refreshToken).toBe("refresh-reconnect");
     await expect(oldColour.load()).resolves.toMatchObject({
       refreshToken: expect.stringContaining("reconnect"),
     });
