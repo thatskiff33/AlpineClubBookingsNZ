@@ -288,6 +288,26 @@ derivation).
     time-of-day instant in this area would silently shift that weekday for
     hosts behind UTC.
 
+### INV-DATE-030
+
+A hut-leader assignment's `startDate`..`endDate` are lodge nights, inclusive
+(`INV-DATE-002`), and every writer stores only nights its member stays (#3817,
+owner decisions on #3820):
+
+- The auto-assign cron writes the run of consecutive stayed nights containing
+  the night it is deciding: it ends on `checkOut - 1`, never the check-out day,
+  and a split stay gets one row per run.
+- The manual create and edit refuse a role-only assignment that claims a night
+  the member does not stay at that lodge (a PAID or COMPLETED booking, as a
+  consented guest or the owner), with no override. A bed-holding assignment is
+  exempt, because the held bed is the stay (`INV-LIFE-062`), and so is a school
+  teacher's row.
+- Sign-in, kiosk access and the instructions reader run from the day before the
+  first night to the day after the last, `[startDate - 1, endDate + 1]`, judged
+  on the club's calendar day (`INV-CONFIG-002`). The one definition is
+  `src/lib/hut-leader-access-window.ts`, and every access reader routes through
+  it.
+
 ### INV-DATE-010
 
 - **Storage encoding, not semantics.** A stored lodge night is a club calendar
@@ -366,7 +386,7 @@ derivation).
   Lodge access itself is decided by `getKioskAccessTier`
   (`src/lib/kiosk-access.ts`), which derives the day from
   `getTodayDateOnly()` and already implemented `[checkIn-1, checkOut]` for a stay
-  and `[startDate-1, endDate]` for a hut-leader assignment;
+  and the hut-leader access window (`INV-DATE-030`);
   every `/api/lodge/*` route enforces it, `src/lib/lodge-auth.ts` re-derives the
   same pair, and both dashboard buttons and the nav link point at
   `/lodge/kiosk`. #2838 fixed **three** such constructions feeding **five**
@@ -1578,10 +1598,9 @@ a **custodian occupancy** (#2286). The invariants:
   obtaining it by omission.
 - **Inclusive night semantics.** The hold covers the night of every date from
   `startDate` to `endDate` **inclusive**, never the half-open booking envelope.
-  The bed is bookable again for the night after `endDate`. (This is the
-  custodian exception the stay-boundary invariant in "Booking Dates And
-  Capacity" names deliberately: an assignment's `endDate` is a covered day,
-  not a departure morning.)
+  The bed is bookable again for the night after `endDate`. (The custodian
+  exception `INV-DATE-009` names. The held bed is the custodian's stay, so the
+  stayed-nights refusal in `INV-DATE-030` does not apply to it.)
 - **Counted as an occupant, never as a smaller lodge.** The capacity engines add
   the per-night custodian **count** to `occupiedBeds` rather than reducing
   `lodgeCapacity`, so `occupiedBeds + availableBeds === lodgeCapacity` still

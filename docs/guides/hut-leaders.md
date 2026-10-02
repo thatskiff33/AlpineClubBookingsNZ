@@ -51,6 +51,16 @@ no hut-leader request or assignment write until a real lodge returns.
    **Assign** on an upcoming-date card to pre-fill a single night.
 3. **Choose the hut leader** — the page lists members eligible for that range
    (adopting their conflict-free suggested range), or you can pick any member.
+
+   **A hut leader must be staying every night they cover.** The dates are
+   nights: the end date is the last night the leader sleeps at the lodge, never
+   the day they leave. If you pick a night the member is not staying at this
+   lodge — the morning they check out, a night between two of their stays, or a
+   stay that has been cancelled — the page refuses it, names the first night
+   they are not staying and offers **Change last night to …** with their last
+   night stayed. There is no override. Only paid (or completed) stays count. A
+   custodian holding a bed is the one exception: the bed they hold is their stay
+   (see below).
 4. Review the summary — nights covered, red nights it fills, and any conflicts —
    then click to confirm. An assignment overlapping an existing one by more than a
    day is blocked.
@@ -73,7 +83,9 @@ the lodge without ever making a booking. An assignment can **hold one bed** for
 its whole range to represent exactly that.
 
 1. Pick the nights and the member as above. For a season-long custodian with no
-   booking of their own, use the **Any member** tab.
+   booking of their own, use the **Any member** tab. Holding a bed is what lets
+   a member with no booking be assigned at all: a role-only assignment for
+   someone who is not staying is refused.
 2. In **Hold a bed (optional)**, choose the bed they sleep in. The default,
    **No bed — role only**, is the original behaviour and changes no capacity.
 3. Confirm. From that moment the bed is out of the bookable pool and off the
@@ -129,11 +141,10 @@ row, so you never have to delete an assignment to change its bed:
   created, which never come with a bed.
 
 > **The end date is a night, not a departure.** The hold covers the start date
-> to the end date **inclusive** — the night of the end date included. The
-> automatic assignment cron sets an assignment's end date to a guest's
-> *check-out* day, which is a morning rather than a slept night, so adding a bed
-> to one of those rows holds the bed for one night longer than anyone is there.
-> Trim the end date by a day first.
+> to the end date **inclusive** — the night of the end date included. Every
+> assignment's end date is the last night its leader sleeps there, and the
+> automatic assignment writes the night before check-out, so adding a bed to any
+> row holds it for exactly the nights covered.
 
 ### Manage assignments and kiosk PINs
 
@@ -143,6 +154,11 @@ row, so you never have to delete an assignment to change its bed:
    email is working, sent to the leader (their old PIN stops working). The PIN
    signs the leader in on the [Lodge Kiosk](lodge.md) device. Use the **trash**
    icon to delete an assignment.
+
+> **When a leader can sign in.** From the day before their first night until
+> midnight on the day they leave — the day after their last night. That covers
+> their own account, the kiosk PIN and the lodge instructions alike, judged on
+> the club's calendar.
 
 > The PIN unlocks the shared kiosk for **10 minutes of no use** at a time, and
 > there is a **Lock** button on the kiosk for walking away sooner. Continuous use
@@ -173,9 +189,9 @@ away.
 
 | Control | What it does | Notes / constraints |
 | --- | --- | --- |
-| Start Date / End Date | The nights the leader covers | NZ date-only; an >1-day overlap with an existing assignment is blocked, EXCEPT against a school group's teacher assignments, which never block you |
+| Start Date / End Date | The nights the leader covers | NZ date-only nights; the end date is the last night stayed. Every night must be one the member is staying at this lodge, unless the assignment holds a bed. An >1-day overlap with an existing assignment is blocked, EXCEPT against a school group's teacher assignments, which never block you |
 | Eligible members list | Members whose bookings make them a natural fit | Adopts each member's conflict-free suggested range |
-| Pick any member | Assign a member with no booking (e.g. a visiting custodian) | Keeps the range you picked |
+| Pick any member | Assign a member who is not in the suggestions (e.g. a visiting custodian) | Keeps the range you picked. A member with no stay on those nights can be assigned only with a held bed |
 | Hold a bed (optional) | Holds one bed for every covered night, with no booking | Default is **No bed — role only** (no capacity effect). Needs the `bedAllocation` module on to *set* a bed. Inclusive of the end date's night. Each choice names the bed type, so a double is obvious before you take it. If a booking already has the whole lodge on any covered night, you are asked to accept narrowing it by that one bed before anything is written |
 | Release bed (undo icon) | Hands the held bed back and keeps the assignment | Available whether or not the `bedAllocation` module is on — a hold made while it was on still occupies a real bed |
 | Change bed (bed icon) | Opens the bed picker for that row's own dates | Works on automatically created assignments too, which never come with a bed |
@@ -193,18 +209,19 @@ away.
 | The dashboard lists an uncovered night at a lodge you have archived, shown as "*Lodge name*, archived" | Archiving a lodge stops new bookings but does not cancel the ones it already had. Those guests still arrive and still need a leader, so the night is still counted and is labelled archived. It will not clear itself: the nightly automatic assignment only ever assigns at active lodges | Decide which of the two you meant. To cover it, make the lodge active again (**Admin → Lodges**), assign a leader here, and archive it again afterwards. To be rid of it, cancel or move the remaining bookings at that lodge — the row goes when the last one does |
 | Hut Leaders is missing from the sidebar / 404s | The `hutLeaders` module is off | Enable it under **Admin → Setup → Modules** — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
 | Everything is read-only ("… can view … but cannot change them") | Your admin role has lodge view but not edit | Ask a full admin for **lodge edit** access |
+| "The member is not staying at this lodge on the night of …" | One of the nights is not one they sleep at this lodge: usually the end date is their check-out day, or a stay has been cancelled | Press **Change last night to …** to end on their last night stayed, or pick a member who is staying. To assign someone with no booking, hold a bed for them |
 | "This member overlaps an existing assignment" | The range overlaps another leader's by more than a day. A school group's teacher assignments are excluded and never cause this | Shorten the range or delete the conflicting assignment |
 | The label says "Custodian"/"Warden", not "Hut Leader" | The club renamed the hut-leader label in its identity settings | Expected — this page, the allocation board's band and every refusal message on screen all follow the club's label |
 | The **lodge TV** says "Custodian" even though we renamed the role | Deliberate: the wall uses one fixed word for every club, so a visitor reads it without knowing the club's vocabulary | Expected. Only the public screen does this; every admin surface uses your label |
-| A hut leader signed in on their own account sees "You are not the hut leader at any lodge on this date" | None of their assignments covers the date they opened. On their own account a leader is shown the lodge whose assignment covers **that date** — never the club's default lodge, and never another lodge's guests | Open a date inside their assignment, or extend the assignment here |
-| A hut leader sees "You are hut leader at more than one lodge on this date" | Two of their assignments, at different lodges, cover the same day, so the kiosk cannot tell which lodge's guests to show. A changeover is fine: when one assignment ends on the 10th and the next starts on the 11th, the 10th shows the lodge whose assignment actually covers it | Trim one assignment so each day belongs to one lodge |
+| A hut leader signed in on their own account sees "You are not the hut leader at any lodge on this date" | None of their assignments covers the date they opened (from the day before the first night to the day after the last). On their own account a leader is shown the lodge whose assignment covers **that date** — never the club's default lodge, and never another lodge's guests | Open a date inside their assignment, or extend the assignment here |
+| A hut leader sees "You are hut leader at more than one lodge on this date" | Two of their assignments, at different lodges, cover the same day, so the kiosk cannot tell which lodge's guests to show. A changeover is fine: when one assignment ends on the 10th and the next starts on the 11th, the 10th shows the lodge whose assignment actually covers it, and a departure day shows the lodge they are leaving | Trim one assignment so each day belongs to one lodge |
 | The kiosk shows no dietary notes | The field is switched off under **Member Fields**, the kiosk is on the plain lodge screen (not a hut leader's unlock), or no guest has a value for this stay | Unlock with the hut leader's PIN; check the field is on; a booking officer can fill values in on the booking page |
 | A leader's PIN doesn't work on the kiosk | Their PIN was reset (old one revoked), or their kiosk account is ambiguous | Reset the PIN again; check the [Lodge Kiosk](lodge.md) account binding |
 | The **Hold a bed** step is missing | The `bedAllocation` module is off, so the lodge has no rooms or beds to hold | Enable it under **Admin → Setup → Modules**, or leave the assignment role-only |
 | "That bed already has guests allocated on …" | A guest is placed on that bed on one or more of the covered nights | Clear those nights on [Bed Allocation](bed-allocation.md) first, then set the bed here. Nothing is ever displaced automatically |
 | "That bed is already held by another hut-leader assignment on …" | Two assignments want the same bed on the same night | A one-day handover overlap is fine, but only on **different** beds — give the incoming custodian another bed, or trim a date |
 | "Holding that bed puts the lodge over capacity" | The lodge is already full on those nights | This is often correct — the custodian really is sleeping there. The card lists the nights and, separately, any live booking those figures could **not** count (an overridden booking still to settle), so read both before you confirm. Confirm to proceed, or free a night first |
-| The bed is held for one night longer than expected | The dates came from the auto-assign cron, whose end date is a guest's *departure* day | Trim the end date by one day; the hold is inclusive of the end date's night |
+| The bed is held for one night longer than expected | The end date is inclusive — it is the last night held, not the day the custodian leaves | Set the end date to the last night they sleep there |
 | "Cannot deactivate/delete this bed while it is held by a hut-leader assignment" | A live or historic assignment holds that bed | Press **Release bed** on that row (or delete the assignment) first |
 | The board shows a custodian-conflict warning | An allocation row is sitting on a held bed-night — usually written just before a deploy finished rolling out | Remove the allocation on [Bed Allocation](bed-allocation.md), or change the custodian's bed here |
 
