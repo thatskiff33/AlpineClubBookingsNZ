@@ -28,7 +28,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import type { BookingLedgerCensusReport } from "@/lib/booking-ledger-projection-census";
+import type { BookingLedgerCensusReport } from "@/lib/booking-ledger-projection-census-report";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -283,8 +283,11 @@ const NOTHING = { disagreements: [], coverage: [], integrity: [], classes: [] };
     );
     const rogue = await prisma.bookingLedgerLine.findUniqueOrThrow({ where: { postingKey: "capture:race-3583-rogue" }, select: { id: true } });
     const report = await census();
+    // The capture identity names it, and so does the balance owed, a cent less.
+    const owed = about(report, CARD).disagreements.find((row) => row.identity === "OWED");
     expect(about(report, CARD).disagreements).toEqual([
       { bookingId: CARD, identity: "CAPTURED", columnCents: before.amountCents, ledgerCents: before.amountCents + 1, deltaCents: -1 },
+      { bookingId: CARD, identity: "OWED", columnCents: owed!.columnCents, ledgerCents: owed!.columnCents - 1, deltaCents: 1 },
     ]);
     expect(report.integrity.findings.filter((finding) => finding.bookingId === CARD)).toEqual([
       expect.objectContaining({ lineId: rogue.id, kind: "SOURCE_DRIFT" }),

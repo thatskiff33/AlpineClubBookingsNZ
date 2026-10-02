@@ -19,6 +19,8 @@
  * `payments:audit-booking-ledger`), which checks `INV-PAY-047`'s mirror
  * columns against each other, not against ledger lines.
  */
+import type { LedgerAnchorKind } from "@prisma/client";
+
 import { isSingleNightLine } from "@/lib/booking-ledger-charge-line";
 import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
 import { liveLines } from "@/lib/booking-ledger-modification-posting";
@@ -36,7 +38,8 @@ import {
   refundKey,
   reversalKey,
 } from "@/lib/booking-ledger-posting-keys";
-import { outstandingAdditionalAskCents } from "@/lib/additional-payment-ask";
+import { bookingLedgerResidualCents, outstandingAdditionalAskCents } from "@/lib/additional-payment-ask";
+import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { editReviewSettlementSign } from "@/lib/edit-financial-review-charge-shape";
 import {
@@ -45,11 +48,8 @@ import {
   latestTransactionOfKind,
 } from "@/lib/payment-transaction-status";
 import {
-  BOOKING_LEDGER_CENSUS_CLASSES,
-  BOOKING_LEDGER_COVERAGE_KINDS,
   CAPTURE_KINDS,
   additionalComponents,
-  classHoldsGate,
   cancelledOwedComponents,
   capturedComponents,
   changeFeeComponents,
@@ -57,9 +57,12 @@ import {
   explainResidual,
   isCoverageName,
   isGroupSettlementOffLedger,
+  liveOwedComponents,
+  nonAllocatingIssuedCents,
   refundedComponents,
   retainedChargeShareCents,
   sumKinds,
+  unpostedCredits,
   type BookingLedgerCensusClass,
   type BookingLedgerCensusRow,
   type BookingLedgerCoverageKind,
@@ -67,7 +70,13 @@ import {
   type ResidualComponent,
 } from "@/lib/booking-ledger-projection-census-classes";
 
-/** The six identities of design §6, identity 1 in its corrected §5.3 form. */
+/**
+ * The six identities of design §6, identity 1 in its corrected §5.3 form, and
+ * a seventh that closes what the six leave between them: a live booking's
+ * `owed(b)` against what its columns say is owed (`INV-PAY-047`'s residual plus
+ * the ask). Without it a line no column projects — a `CREDIT_ISSUED` or
+ * `BANK_REFUND` — could be missing, or wrong, with every column agreeing.
+ */
 export const BOOKING_LEDGER_IDENTITIES = [
   "PRICE",
   "CAPTURED",
@@ -75,6 +84,7 @@ export const BOOKING_LEDGER_IDENTITIES = [
   "REFUNDED",
   "CHANGE_FEE",
   "ADDITIONAL",
+  "OWED",
 ] as const;
 export type BookingLedgerIdentity = (typeof BOOKING_LEDGER_IDENTITIES)[number];
 
@@ -97,6 +107,7 @@ export const BOOKING_LEDGER_INTEGRITY_KINDS = [
   "REVERSAL_NOT_OPPOSITE",
   "DUPLICATE_LIVE_NIGHT",
   "UNKNOWN_KEY_NAMESPACE",
+  "KEY_ANCHOR_MISMATCH",
   "SOURCE_DRIFT",
 ] as const;
 export type BookingLedgerIntegrityKind = (typeof BOOKING_LEDGER_INTEGRITY_KINDS)[number];
@@ -127,31 +138,37 @@ export type BookingLedgerEvaluation = {
   };
 };
 
-const CONFIRMABLE_STATUSES = new Set<string>(["PAID", "COMPLETED"]);
-const REALIZED_PAYMENT_STATUSES = new Set<string>(["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"]);
 const CHARGE_PRICE_KINDS = ["GUEST_NIGHT", "PROMOTION", "GROUP_DISCOUNT"] as const;
 
 /**
- * Every namespace a posting key can carry, read off the key builders
- * themselves, so a new builder is known here without a second list
- * (`INV-MONEY-033`, `INV-SSOT`).
+ * Every namespace a posting key can carry — read off the key builders
+ * themselves, so a builder's spelling is never restated here (`INV-MONEY-033`,
+ * `INV-SSOT`) — paired with the anchor kinds the posters put a line under that
+ * key on (design §5). A reversal is anchored on the event that takes the line
+ * back; a credit line on its row, or on the cancellation for a restore.
  */
-const KNOWN_KEY_NAMESPACES: ReadonlySet<string> = new Set(
-  [
-    confirmationNightKey("b", "g", new Date(0)),
-    confirmationPromotionKey("b"),
-    modificationNightKey("m", "g", new Date(0)),
-    modificationPromotionKey("m"),
-    modificationChangeFeeKey("m"),
-    cancellationFeeKey("b"),
-    agreedAdjustmentKey("t"),
-    reversalKey("l"),
-    captureKey("t"),
-    refundKey("r"),
-    creditKey("c"),
-    handBackKey("t"),
-  ].map(keyNamespace),
-);
+const KEY_NAMESPACE_ANCHORS: ReadonlyMap<string, ReadonlySet<LedgerAnchorKind>> = (() => {
+  const pairs: Array<[string, LedgerAnchorKind[]]> = [
+    [confirmationNightKey("b", "g", new Date(0)), ["CONFIRMATION"]],
+    [confirmationPromotionKey("b"), ["CONFIRMATION"]],
+    [modificationNightKey("m", "g", new Date(0)), ["MODIFICATION"]],
+    [modificationPromotionKey("m"), ["MODIFICATION"]],
+    [modificationChangeFeeKey("m"), ["MODIFICATION"]],
+    [cancellationFeeKey("b"), ["CANCELLATION"]],
+    [agreedAdjustmentKey("t"), ["REVIEW_TASK"]],
+    [reversalKey("l"), ["MODIFICATION", "CANCELLATION", "REVIEW_TASK", "PAYMENT_TRANSACTION", "PAYMENT_REFUND"]],
+    [captureKey("t"), ["PAYMENT_TRANSACTION"]],
+    [refundKey("r"), ["PAYMENT_REFUND"]],
+    [creditKey("c"), ["MEMBER_CREDIT", "CANCELLATION"]],
+    [handBackKey("t"), ["REVIEW_TASK"]],
+  ];
+  const map = new Map<string, Set<LedgerAnchorKind>>();
+  for (const [key, anchors] of pairs) {
+    const namespace = keyNamespace(key);
+    map.set(namespace, new Set([...(map.get(namespace) ?? []), ...anchors]));
+  }
+  return map;
+})();
 
 function keyNamespace(postingKey: string): string {
   return postingKey.split(":")[0] ?? "";
@@ -183,7 +200,7 @@ function coverageOnly(identity: BookingLedgerIdentity, kind: BookingLedgerCovera
 function hasMoneyColumns(row: BookingLedgerCensusRow): boolean {
   const payment = row.payment;
   return (
-    (CONFIRMABLE_STATUSES.has(row.booking.status) && row.booking.finalPriceCents !== 0) ||
+    (isPaidLikeBookingStatus(row.booking.status) && row.booking.finalPriceCents !== 0) ||
     (payment !== null &&
       ((isCapturedTransactionStatus(payment.status) && payment.amountCents > 0) ||
         payment.creditAppliedCents !== 0 ||
@@ -261,7 +278,7 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
       identities.push(result("PRICE", 0, balance.owedCents, cancelledOwedComponents(row)));
     }
   } else if (!confirmed) {
-    if (CONFIRMABLE_STATUSES.has(booking.status)) {
+    if (isPaidLikeBookingStatus(booking.status)) {
       coverage.add("NOT_CONFIRMED_ON_LEDGER");
       identities.push(coverageOnly("PRICE", "NOT_CONFIRMED_ON_LEDGER"));
     } else {
@@ -283,10 +300,9 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
 
   // 2. CAPTURED: amountCents == Σ CARD_CAPTURE + BANK_RECEIPT + CASH_RECORDED.
   const captured = sumKinds(lines, CAPTURE_KINDS);
-  const latestPrimary = latestTransactionOfKind(row.transactions, "PRIMARY");
   identities.push(
     applies(captured)
-      ? result("CAPTURED", column("amountCents"), captured, capturedComponents(row, captured, latestPrimary?.amountCents ?? null))
+      ? result("CAPTURED", column("amountCents"), captured, capturedComponents(row))
       : notApplicable("CAPTURED"),
   );
 
@@ -294,7 +310,7 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
   const applied = sumKinds(lines, ["CREDIT_APPLIED"]);
   identities.push(
     applies(applied)
-      ? result("CREDIT_APPLIED", column("creditAppliedCents"), applied, creditAppliedComponents(row, applied))
+      ? result("CREDIT_APPLIED", column("creditAppliedCents"), applied, creditAppliedComponents(row))
       : notApplicable("CREDIT_APPLIED"),
   );
 
@@ -333,6 +349,30 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
       : notApplicable("ADDITIONAL"),
   );
 
+  // 7. OWED (live, confirmed on the ledger): owed(b) == what the columns say
+  // is owed — `INV-PAY-047`'s residual plus the uncollected ask — plus issued
+  // credit the refunded column never counted. Every line the ledger holds,
+  // CREDIT_ISSUED and BANK_REFUND included, moves owed(b), so no line can be
+  // missing or wrong here while the six above agree.
+  if (!cancelled && confirmed) {
+    const columnOwed =
+      bookingLedgerResidualCents({
+        finalPriceCents: booking.finalPriceCents,
+        changeFeeCents: column("changeFeeCents"),
+        amountCents: column("amountCents"),
+        refundedAmountCents: column("refundedAmountCents"),
+        creditAppliedCents: column("creditAppliedCents"),
+        additionalAmountCents: payment?.additionalAmountCents ?? 0,
+        additionalPaymentStatus: payment?.additionalPaymentStatus ?? null,
+      }) +
+      outstandingAdditionalAskCents(payment) +
+      nonAllocatingIssuedCents(row);
+    identities.push(result("OWED", columnOwed, balance.owedCents, liveOwedComponents(row, edits)));
+  } else {
+    identities.push(notApplicable("OWED"));
+  }
+
+  if (unpostedCredits(row).length > 0) coverage.add("UNPOSTED_CREDIT");
   for (const identity of identities) {
     for (const component of identity.explainedBy) if (isCoverageName(component.name)) coverage.add(component.name);
   }
@@ -358,7 +398,7 @@ function ibUnallocatedApplied(row: BookingLedgerCensusRow): BookingLedgerEvaluat
       .filter((credit) => credit.type === "BOOKING_APPLIED" && credit.appliedToBookingId === row.booking.id && credit.xeroCreditNoteId === null)
       .reduce((sum, credit) => sum + credit.amountCents, 0),
   );
-  return cents > 0 ? { realized: REALIZED_PAYMENT_STATUSES.has(row.payment.status), cents } : null;
+  return cents > 0 ? { realized: isCapturedTransactionStatus(row.payment.status), cents } : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -377,8 +417,10 @@ function integrityFindings(row: BookingLedgerCensusRow): BookingLedgerIntegrityF
     findings.push({ bookingId, lineId: line.id, kind, detail });
 
   for (const line of row.lines) {
-    if (line.postingKey !== null && !KNOWN_KEY_NAMESPACES.has(keyNamespace(line.postingKey))) {
-      add(line, "UNKNOWN_KEY_NAMESPACE", `key ${line.postingKey}`);
+    if (line.postingKey !== null) {
+      const anchors = KEY_NAMESPACE_ANCHORS.get(keyNamespace(line.postingKey));
+      if (!anchors) add(line, "UNKNOWN_KEY_NAMESPACE", `key ${line.postingKey}`);
+      else if (!anchors.has(line.anchorKind)) add(line, "KEY_ANCHOR_MISMATCH", `key ${line.postingKey} on a ${line.anchorKind} anchor`);
     }
     if (line.reversesLineId === null) continue;
     const target = byId.get(line.reversesLineId);
@@ -433,6 +475,14 @@ function sourceDrift(row: BookingLedgerCensusRow, line: CensusLedgerLine): strin
         : `no modification ${line.anchorId} on this booking`;
     case "CANCELLATION": {
       if (row.booking.status !== "CANCELLED") return "a cancellation line on a booking that is not cancelled";
+      if (line.kind === "CANCELLATION_FEE") {
+        // The fee is the kept figure the CANCELLED event froze, less the
+        // change fees that stayed charged (design §5.1).
+        const keptCents = row.cancellation?.keptCents ?? null;
+        if (keptCents === null) return null;
+        const stayingFees = liveLines(row.lines).filter((candidate) => candidate.kind === "CHANGE_FEE").reduce((sum, fee) => sum + fee.amountCents, 0);
+        return line.amountCents === keptCents - stayingFees ? null : `the CANCELLED event froze ${keptCents} kept, the fee line carries ${line.amountCents}`;
+      }
       if (line.kind !== "CREDIT_ISSUED") return null;
       const restore = row.credits.find((credit) => credit.restoredFromBookingId === bookingId);
       if (!restore) return "a restore line with no restore row";
@@ -468,149 +518,4 @@ function sourceDrift(row: BookingLedgerCensusRow, line: CensusLedgerLine): strin
       return null;
     }
   }
-}
-
-// ---------------------------------------------------------------------------
-// The report and the verdict
-// ---------------------------------------------------------------------------
-
-/** `pg_stat_user_tables` for the ledger table: information only, never the gate. */
-export type LedgerTableStatistics = { inserts: number; updates: number; deletes: number } | null;
-
-export type BookingLedgerCensusReport = {
-  population: { bookings: number; bookingsWithLines: number; lines: number };
-  identities: Record<BookingLedgerIdentity, { applicable: number; agree: number; disagree: number; classified: number; coverage: number }>;
-  coverage: Record<BookingLedgerCoverageKind, string[]>;
-  integrity: {
-    counts: Record<BookingLedgerIntegrityKind, number>;
-    findings: BookingLedgerIntegrityFinding[];
-    info: { unkeyedLines: number; tableStatistics: LedgerTableStatistics };
-  };
-  classes: Record<
-    BookingLedgerCensusClass,
-    {
-      holdsGate: boolean;
-      bookings: number;
-      instances: Array<{ bookingId: string; identity: BookingLedgerIdentity | null; cents: number; detail?: string }>;
-    }
-  >;
-  info: {
-    retainedCollected: { bookings: number; cents: number };
-    /** Shown under CREDIT_APPLIED; #1620's realized and pending strands. */
-    ibUnallocatedAppliedCredit: { realized: { bookings: number; cents: number }; pending: { bookings: number; cents: number } };
-  };
-  disagreements: Array<{ bookingId: string; identity: BookingLedgerIdentity; columnCents: number; ledgerCents: number; deltaCents: number }>;
-  verdict: "GATE_OPEN" | "GATE_CLOSED";
-  gateClosedBecause: string[];
-};
-
-function zeroed<K extends string, V>(keys: readonly K[], make: () => V): Record<K, V> {
-  return Object.fromEntries(keys.map((key) => [key, make()])) as Record<K, V>;
-}
-
-/**
- * THE GATE (owner decision D-3532-1, the plan comment on #3583): zero
- * unclassified disagreements, zero coverage gaps, zero integrity findings,
- * and no instance of a class the policy says holds it. Every other class is a
- * list the owner acknowledges, not a pass.
- */
-export function summarizeBookingLedgerCensus(
-  evaluations: readonly BookingLedgerEvaluation[],
-  tableStatistics: LedgerTableStatistics,
-): BookingLedgerCensusReport {
-  const identities = zeroed(BOOKING_LEDGER_IDENTITIES, () => ({ applicable: 0, agree: 0, disagree: 0, classified: 0, coverage: 0 }));
-  const coverage = zeroed(BOOKING_LEDGER_COVERAGE_KINDS, () => [] as string[]);
-  const counts = zeroed(BOOKING_LEDGER_INTEGRITY_KINDS, () => 0);
-  const classes = zeroed(BOOKING_LEDGER_CENSUS_CLASSES, () => ({
-    holdsGate: false,
-    bookings: 0,
-    instances: [] as BookingLedgerCensusReport["classes"][BookingLedgerCensusClass]["instances"],
-  }));
-  for (const name of BOOKING_LEDGER_CENSUS_CLASSES) classes[name].holdsGate = classHoldsGate(name);
-  const findings: BookingLedgerIntegrityFinding[] = [];
-  const disagreements: BookingLedgerCensusReport["disagreements"] = [];
-  const info: BookingLedgerCensusReport["info"] = {
-    retainedCollected: { bookings: 0, cents: 0 },
-    ibUnallocatedAppliedCredit: { realized: { bookings: 0, cents: 0 }, pending: { bookings: 0, cents: 0 } },
-  };
-  let lines = 0;
-  let bookingsWithLines = 0;
-  let unkeyedLines = 0;
-
-  for (const evaluation of evaluations) {
-    lines += evaluation.lineCount;
-    if (evaluation.lineCount > 0) bookingsWithLines += 1;
-    unkeyedLines += evaluation.info.unkeyedLines;
-    for (const kind of evaluation.coverage) coverage[kind].push(evaluation.bookingId);
-    const touched = new Set<BookingLedgerCensusClass>();
-    if (evaluation.bookingClass) {
-      classes[evaluation.bookingClass].instances.push({ bookingId: evaluation.bookingId, identity: null, cents: 0 });
-      touched.add(evaluation.bookingClass);
-    }
-    for (const identity of evaluation.identities) {
-      if (identity.status === "NOT_APPLICABLE") continue;
-      const tally = identities[identity.identity];
-      tally.applicable += 1;
-      if (identity.status === "AGREE") tally.agree += 1;
-      else if (identity.status === "DISAGREE") tally.disagree += 1;
-      else if (identity.status === "CLASSIFIED") tally.classified += 1;
-      else tally.coverage += 1;
-      if (identity.status === "DISAGREE") {
-        disagreements.push({
-          bookingId: evaluation.bookingId,
-          identity: identity.identity,
-          columnCents: identity.columnCents,
-          ledgerCents: identity.ledgerCents,
-          deltaCents: identity.deltaCents,
-        });
-      }
-      for (const component of identity.explainedBy) {
-        if (isCoverageName(component.name)) continue;
-        classes[component.name].instances.push({
-          bookingId: evaluation.bookingId,
-          identity: identity.identity,
-          cents: component.cents,
-          ...(component.detail ? { detail: component.detail } : {}),
-        });
-        touched.add(component.name);
-      }
-    }
-    for (const name of touched) classes[name].bookings += 1;
-    findings.push(...evaluation.integrity);
-    for (const finding of evaluation.integrity) counts[finding.kind] += 1;
-    if (evaluation.info.retainedCollectedCents > 0) {
-      info.retainedCollected.bookings += 1;
-      info.retainedCollected.cents += evaluation.info.retainedCollectedCents;
-    }
-    const strand = evaluation.info.ibUnallocatedAppliedCredit;
-    if (strand) {
-      const bucket = strand.realized ? info.ibUnallocatedAppliedCredit.realized : info.ibUnallocatedAppliedCredit.pending;
-      bucket.bookings += 1;
-      bucket.cents += strand.cents;
-    }
-  }
-
-  const gateClosedBecause: string[] = [];
-  if (disagreements.length > 0) gateClosedBecause.push(`${disagreements.length} unclassified disagreement(s)`);
-  for (const kind of BOOKING_LEDGER_COVERAGE_KINDS) {
-    if (coverage[kind].length > 0) gateClosedBecause.push(`${coverage[kind].length} booking(s) with coverage gap ${kind}`);
-  }
-  if (findings.length > 0) gateClosedBecause.push(`${findings.length} integrity finding(s)`);
-  for (const name of BOOKING_LEDGER_CENSUS_CLASSES) {
-    if (classes[name].holdsGate && classes[name].bookings > 0) {
-      gateClosedBecause.push(`${classes[name].bookings} booking(s) in ${name}, which holds the gate`);
-    }
-  }
-
-  return {
-    population: { bookings: evaluations.length, bookingsWithLines, lines },
-    identities,
-    coverage,
-    integrity: { counts, findings, info: { unkeyedLines, tableStatistics } },
-    classes,
-    info,
-    disagreements,
-    verdict: gateClosedBecause.length === 0 ? "GATE_OPEN" : "GATE_CLOSED",
-    gateClosedBecause,
-  };
 }

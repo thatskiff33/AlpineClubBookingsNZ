@@ -9,35 +9,68 @@
  *   pnpm run booking-ledger:census                 # the summary
  *   pnpm run booking-ledger:census --json          # the whole report as JSON
  *   pnpm run booking-ledger:census --fail-on-gap   # exit 2 unless GATE_OPEN
+ *   pnpm run booking-ledger:census --acknowledged <owner-file.json>
  */
+import { readFileSync } from "node:fs";
 import process from "node:process";
+
+import { Prisma } from "@prisma/client";
+import { z } from "zod";
 
 import type { ClubFormat } from "../src/lib/club-format";
 import { getClubFormat } from "../src/lib/club-format-settings";
-import type { BookingLedgerCensusReport } from "../src/lib/booking-ledger-projection-census";
+import { BOOKING_LEDGER_IDENTITIES } from "../src/lib/booking-ledger-projection-census";
+import { BOOKING_LEDGER_CENSUS_CLASSES } from "../src/lib/booking-ledger-projection-census-classes";
+import type { BookingLedgerAcknowledgement, BookingLedgerCensusReport } from "../src/lib/booking-ledger-projection-census-report";
 import { censusBookingLedgerProjection } from "../src/lib/booking-ledger-projection-census-store";
 import { prisma } from "../src/lib/prisma";
 import { formatCents, formatSignedCents } from "../src/lib/utils";
 
 const USAGE = `Usage:
-  pnpm run booking-ledger:census [--json] [--fail-on-gap]
+  pnpm run booking-ledger:census [--json] [--fail-on-gap] [--acknowledged <file.json>]
 
-  --json          Print the whole report (every disagreement, class instance,
-                  coverage gap and integrity finding) as JSON.
-  --fail-on-gap   Exit with status 2 unless the verdict is GATE_OPEN.
+  --json                 Print the whole report (every disagreement, class
+                         instance, coverage gap and integrity finding) as JSON.
+  --fail-on-gap          Exit with status 2 unless the verdict is GATE_OPEN.
+  --acknowledged <file>  The owner's acknowledgements: a JSON array of
+                         {bookingId, identity or class, cents, reference}. An
+                         entry matching a disagreement or class instance to the
+                         cent no longer holds the gate; a mismatched one is
+                         reported stale and still holds it.
   --help, -h      Show this help.
 
 Read-only: one snapshot, no writes, no provider calls.`;
 
-function parseArgs(argv: readonly string[]): { json: boolean; failOnGap: boolean } {
-  const options = { json: false, failOnGap: false };
-  for (const arg of argv) {
+const ACKNOWLEDGEMENT_FILE = z.array(
+  z
+    .object({
+      bookingId: z.string().min(1),
+      identity: z.enum(BOOKING_LEDGER_IDENTITIES).optional(),
+      class: z.enum(BOOKING_LEDGER_CENSUS_CLASSES).optional(),
+      cents: z.number().int(),
+      reference: z.string().min(1),
+    })
+    .strict()
+    .refine((entry) => (entry.identity === undefined) !== (entry.class === undefined), {
+      message: "each entry names exactly one of identity or class",
+    }),
+);
+
+function readAcknowledgements(path: string): BookingLedgerAcknowledgement[] {
+  return ACKNOWLEDGEMENT_FILE.parse(JSON.parse(readFileSync(path, "utf8")));
+}
+
+function parseArgs(argv: readonly string[]): { json: boolean; failOnGap: boolean; acknowledged: string | null } {
+  const options = { json: false, failOnGap: false, acknowledged: null as string | null };
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
     if (arg === "--help" || arg === "-h") {
       process.stdout.write(`${USAGE}\n`);
       process.exit(0);
     }
     if (arg === "--json") options.json = true;
     else if (arg === "--fail-on-gap") options.failOnGap = true;
+    else if (arg === "--acknowledged" && argv[index + 1]) options.acknowledged = argv[(index += 1)]!;
     else throw new Error(`Unknown argument: ${arg}\n\n${USAGE}`);
   }
   return options;
@@ -68,7 +101,7 @@ function summary(report: BookingLedgerCensusReport, format: ClubFormat): string 
   }
   const strands = report.info.ibUnallocatedAppliedCredit;
   out.push(
-    `  CREDIT_APPLIED, information (#1620): internet-banking applied credit no Xero note allocates — realized ${strands.realized.bookings} (${money(strands.realized.cents)}), pending ${strands.pending.bookings} (${money(strands.pending.cents)})`,
+    `  CREDIT_APPLIED, information (#1620): internet-banking applied credit no Xero note allocates — realized ${strands.realized.bookings} (${money(strands.realized.cents)})${examples(strands.realized.items.map((item) => item.bookingId))}, pending ${strands.pending.bookings} (${money(strands.pending.cents)})${examples(strands.pending.items.map((item) => item.bookingId))}`,
   );
   out.push("");
   out.push("Coverage (holds the gate):");
@@ -86,6 +119,14 @@ function summary(report: BookingLedgerCensusReport, format: ClubFormat): string 
   }
   out.push(`  information: RETAINED_COLLECTED ${report.info.retainedCollected.bookings} (${money(report.info.retainedCollected.cents)})`);
   out.push("");
+  const { acknowledged } = report;
+  out.push(`Acknowledged by the owner (no longer holds the gate): ${acknowledged.matched.length}`);
+  for (const entry of acknowledged.matched) out.push(`  ${entry.bookingId}  ${entry.identity ?? entry.class}  ${money(entry.cents)}  ${entry.reference}`);
+  for (const entry of acknowledged.stale) {
+    out.push(`  STALE: ${entry.bookingId}  ${entry.identity ?? entry.class}  signed off at ${money(entry.cents)}, now ${entry.foundCents.map(money).join(" / ")} — still holds the gate`);
+  }
+  for (const entry of acknowledged.unmatched) out.push(`  UNMATCHED: ${entry.bookingId}  ${entry.identity ?? entry.class}  ${money(entry.cents)} matches no finding`);
+  out.push("");
   out.push(`Unclassified disagreements: ${report.disagreements.length}`);
   for (const row of report.disagreements.slice(0, EXAMPLES * 2)) {
     out.push(`  ${row.bookingId}  ${row.identity}  column ${money(row.columnCents)}  ledger ${money(row.ledgerCents)}  delta ${formatSignedCents(row.deltaCents, format)}`);
@@ -101,13 +142,22 @@ async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   // The club's currency (#3565), read once, outside the snapshot. JSON keeps integer cents.
   const format = await getClubFormat();
-  const report = await censusBookingLedgerProjection(prisma);
+  const acknowledgements = options.acknowledged ? readAcknowledgements(options.acknowledged) : [];
+  const report = await censusBookingLedgerProjection(prisma, { acknowledgements });
   process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : `${summary(report, format)}\n`);
   if (options.failOnGap && report.verdict !== "GATE_OPEN") process.exitCode = 2;
 }
 
 main()
   .catch((error: unknown) => {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021") {
+      const table = typeof error.meta?.table === "string" ? ` (${error.meta.table})` : "";
+      process.stderr.write(
+        `A table the census reads does not exist in this database${table}: it predates the booking ledger's migrations (#3580). Run \`prisma migrate deploy\`, or point DATABASE_URL at a migrated copy, and run the census again.\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
     process.stderr.write(`${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
     process.exitCode = 1;
   })

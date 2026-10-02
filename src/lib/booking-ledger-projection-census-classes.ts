@@ -5,11 +5,13 @@
  * The census compares each money column with the ledger lines that project it.
  * Where the two differ by design — a column with another derivation, a refund
  * still in flight, a decision a person took — the difference is NAMED here,
- * and each name is a figure computed from the booking's own rows. A residual is
- * classified only when it equals, to the cent, the sum of the components this
- * module finds for it; anything else is a disagreement. That is the rule that
- * keeps a class from swallowing drift: a class explains an exact amount, never
- * a direction or a shape.
+ * and each name is a figure computed from EVIDENCE the delta does not contain:
+ * a row, a line matched to its row, a frozen snapshot. A residual is classified
+ * only when it equals, to the cent, the sum of the components found for it;
+ * anything else is a disagreement. That is the rule that keeps a class from
+ * swallowing drift: a class explains an exact amount, never a direction or a
+ * shape, and removing its evidence removes the class
+ * (`booking-ledger-projection-census.test.ts` proves both for every class).
  *
  * Pure: no reads, no writes, no Prisma client. The rows arrive from
  * `booking-ledger-projection-census-store.ts`; the identities that ask these
@@ -32,9 +34,16 @@ import type {
   SettlementMethod,
 } from "@prisma/client";
 
+import { creditKey } from "@/lib/booking-ledger-posting-keys";
+import { deriveCardAppliedCreditDoublePayFinding } from "@/lib/card-applied-credit-double-pay";
 import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
 import { buildBookingCancellationRefundIdempotencyKey } from "@/lib/payment-recovery-keys";
-import { isCapturedTransactionStatus, isRecordedRefundStatus } from "@/lib/payment-transaction-status";
+import {
+  LEGACY_BACKFILL_REASONS,
+  isCapturedTransactionStatus,
+  isRecordedRefundStatus,
+  latestTransactionOfKind,
+} from "@/lib/payment-transaction-status";
 
 // ---------------------------------------------------------------------------
 // The two pending owner decisions (#3583's plan comment). Each is ONE line.
@@ -42,10 +51,11 @@ import { isCapturedTransactionStatus, isRecordedRefundStatus } from "@/lib/payme
 
 export const BOOKING_LEDGER_CENSUS_GATE_POLICY = {
   /**
-   * Owner decision 1, recommended A: bookings already damaged by #3791 or
-   * #3792 are listed under `KNOWN_DEFECT_HISTORY` and HOLD the gate until each
-   * is corrected by an officer or written off with the owner's acknowledgement.
-   * `false` is option B: acknowledged as a class that does not hold the gate.
+   * Owner decision 1, recommended A: bookings already damaged by #3791, #3792
+   * or #1641 are listed under `KNOWN_DEFECT_HISTORY` and HOLD the gate until
+   * each is corrected by an officer or written off — the owner's written-off
+   * list is the census's `--acknowledged` file. `false` is option B: a class
+   * that does not hold the gate.
    */
   knownDefectHistoryHoldsGate: true,
   /**
@@ -136,6 +146,7 @@ export type BookingLedgerCensusRow = {
   }>;
   modifications: ReadonlyArray<{
     id: string;
+    modificationType: string;
     priceDiffCents: number;
     changeFeeCents: number;
     createdAt: Date;
@@ -146,8 +157,12 @@ export type BookingLedgerCensusRow = {
     amountCents: number;
     idempotencyKey: string;
   }>;
-  /** The paid path's CANCELLED event snapshot (`writePaidCancellationEvent`), or null. */
-  cancellation: { refundMethod: string | null; settledAmountCents: number | null } | null;
+  /**
+   * The paid path's CANCELLED event snapshot (`writePaidCancellationEvent`):
+   * the refund it decided and, since #3611, the kept figure it froze for the
+   * ledger. Null where there is none.
+   */
+  cancellation: { refundMethod: string | null; settledAmountCents: number | null; keptCents: number | null } | null;
   lines: readonly CensusLedgerLine[];
 };
 
@@ -157,7 +172,6 @@ export type BookingLedgerCensusRow = {
 
 export const BOOKING_LEDGER_CENSUS_CLASSES = [
   "NOTHING_CAPTURED",
-  "CREDIT_MIRROR_MANUAL_SETTLE",
   "CREDIT_MIRROR_XERO_CAP",
   "REFUND_MIRROR_HAND_BACK",
   "REFUND_MIRROR_CREDIT_ALLOCATION",
@@ -181,6 +195,7 @@ export const BOOKING_LEDGER_COVERAGE_KINDS = [
   "NOT_CONFIRMED_ON_LEDGER",
   "UNPOSTED_EDIT",
   "UNPOSTED_CHANGE_FEE",
+  "UNPOSTED_CREDIT",
 ] as const;
 export type BookingLedgerCoverageKind = (typeof BOOKING_LEDGER_COVERAGE_KINDS)[number];
 
@@ -220,7 +235,7 @@ export function explainResidual(
 }
 
 // ---------------------------------------------------------------------------
-// Ledger figures every predicate shares
+// Ledger figures and evidence every predicate shares
 // ---------------------------------------------------------------------------
 
 export const CAPTURE_KINDS = ["CARD_CAPTURE", "BANK_RECEIPT", "CASH_RECORDED"] as const satisfies readonly LedgerLineKind[];
@@ -231,6 +246,8 @@ export function sumKinds(lines: readonly CensusLedgerLine[], kinds: readonly Led
   return total;
 }
 
+type Credit = BookingLedgerCensusRow["credits"][number];
+
 /** Credit applied to the booking by its rows: `deriveBookingAppliedCreditCents`'s sum, unfloored. */
 export function appliedRowsCents(row: BookingLedgerCensusRow): number {
   return -row.credits
@@ -238,122 +255,229 @@ export function appliedRowsCents(row: BookingLedgerCensusRow): number {
     .reduce((sum, credit) => sum + credit.amountCents, 0);
 }
 
-function restoreRow(row: BookingLedgerCensusRow) {
-  return row.credits.find((credit) => credit.restoredFromBookingId === row.booking.id) ?? null;
+function isIssuedFromBooking(row: BookingLedgerCensusRow, credit: Credit): boolean {
+  return credit.type !== "BOOKING_APPLIED" && credit.sourceBookingId === row.booking.id;
+}
+
+/**
+ * An issued credit row whose writer ran `applyLocalRefundAllocation` beside it,
+ * so it raised `refundedAmountCents`: the cancel's credit branch
+ * (`createCancellationCredit`, its own description) and a reduction credited to
+ * account. A restore and the Xero inbound mints never moved the column.
+ */
+export function isAllocatingCredit(row: BookingLedgerCensusRow, credit: Credit): boolean {
+  return (
+    isIssuedFromBooking(row, credit) &&
+    credit.restoredFromBookingId === null &&
+    ((credit.type === "CANCELLATION_REFUND" && credit.description === cancellationCreditDescription(row.booking.id)) ||
+      credit.type === "BOOKING_MODIFICATION_REFUND")
+  );
+}
+
+/** The live credit line posted for one row, keyed `credit:<id>` (`INV-MONEY-035`), or null. */
+function creditLineFor(row: BookingLedgerCensusRow, credit: Credit): CensusLedgerLine | null {
+  const key = creditKey(credit.id);
+  return row.lines.find((line) => line.postingKey === key) ?? null;
+}
+
+/** Credit rows that move money and no line records: `UNPOSTED_CREDIT`. */
+export function unpostedCredits(row: BookingLedgerCensusRow): Credit[] {
+  return row.credits.filter((credit) => credit.amountCents !== 0 && creditLineFor(row, credit) === null);
+}
+
+/** Issued credit no `refundedAmountCents` allocation counted, with its line: what owed(b) holds beyond the column's refunds. */
+export function nonAllocatingIssuedCents(row: BookingLedgerCensusRow): number {
+  return row.credits
+    .filter((credit) => isIssuedFromBooking(row, credit) && !isAllocatingCredit(row, credit))
+    .reduce((sum, credit) => sum + credit.amountCents, 0);
 }
 
 function capturedTransactions(row: BookingLedgerCensusRow) {
   return row.transactions.filter((txn) => isCapturedTransactionStatus(txn.status) && txn.amountCents > 0);
 }
 
-/** A completed `EDIT_FINANCIAL_REVIEW` CHARGE share no `AGREED_ADJUSTMENT` records (design §5.3). */
-export function retainedChargeShareCents(row: BookingLedgerCensusRow): number {
-  return row.tasks
-    .filter(
-      (task) =>
-        task.kind === "EDIT_FINANCIAL_REVIEW" &&
-        task.status === "COMPLETED" &&
-        task.settlementDirection === "CHARGE_TO_MEMBER" &&
-        (task.amountCents ?? 0) > 0 &&
-        !row.lines.some(
-          (line) =>
-            line.kind === "AGREED_ADJUSTMENT" &&
-            line.anchorKind === "REVIEW_TASK" &&
-            line.anchorId === task.id &&
-            line.reversesLineId === null,
-        ),
-    )
-    .reduce((sum, task) => sum + (task.amountCents ?? 0), 0);
-}
-
-// ---------------------------------------------------------------------------
-// Components, one function per identity
-// ---------------------------------------------------------------------------
-
-/** `amountCents` with nothing captured is the latest primary's face amount (`reconcilePaymentAggregates`). */
-export function capturedComponents(
-  row: BookingLedgerCensusRow,
-  ledgerCents: number,
-  latestPrimaryAmountCents: number | null,
-): ResidualComponent[][] {
-  const nothingCaptured =
-    ledgerCents === 0 && capturedTransactions(row).length === 0 && latestPrimaryAmountCents !== null;
-  return [[{ name: "NOTHING_CAPTURED", cents: nothingCaptured ? latestPrimaryAmountCents : 0 }]];
+/**
+ * `amountCents` with nothing captured is the latest primary's face amount
+ * (`reconcilePaymentAggregates`). The evidence: no captured transaction, no
+ * capture line, and a primary to take the face amount from.
+ */
+function nothingCapturedFaceCents(row: BookingLedgerCensusRow): number {
+  if (sumKinds(row.lines, CAPTURE_KINDS) !== 0 || capturedTransactions(row).length > 0) return 0;
+  return latestTransactionOfKind(row.transactions, "PRIMARY")?.amountCents ?? 0;
 }
 
 /**
- * The two derivations of `creditAppliedCents` that are not the applied-row sum
- * (design §6). Each is named only where the LEDGER agrees with the credit rows,
- * so the class can only ever explain the column, never a missing line.
+ * The Xero allocation repair caps `creditAppliedCents` at the payment amount.
+ * Named only on independent evidence that the money adds up — the price plus
+ * fees equals what the ledger captured plus the applied rows, the ledger agrees
+ * with the rows — and that the repair ran (an applied row stamped with a Xero
+ * note). The column is then the only wrong figure.
  */
-export function creditAppliedComponents(row: BookingLedgerCensusRow, ledgerCents: number): ResidualComponent[][] {
+function xeroCapEvidence(row: BookingLedgerCensusRow): { appliedCents: number; cappedCents: number } | null {
   const payment = row.payment;
+  if (!payment) return null;
   const applied = appliedRowsCents(row);
-  if (!payment || ledgerCents !== applied) return [];
-  // The settle's own split of the captured amount into cash and credit.
-  const settleDerived = Math.max(0, row.booking.finalPriceCents - payment.amountCents);
-  // The Xero allocation repair's write, capped at the payment amount.
-  const appliedFloor = Math.max(0, applied);
-  const capped = appliedFloor > payment.amountCents ? payment.amountCents : null;
-  return [
-    [{ name: "CREDIT_MIRROR_MANUAL_SETTLE", cents: settleDerived - ledgerCents }],
-    [{ name: "CREDIT_MIRROR_XERO_CAP", cents: capped === null ? 0 : capped - ledgerCents }],
-  ];
+  const captured = sumKinds(row.lines, CAPTURE_KINDS);
+  const repaired = row.credits.some((credit) => credit.type === "BOOKING_APPLIED" && credit.xeroCreditNoteId !== null);
+  if (
+    !repaired ||
+    applied <= payment.amountCents ||
+    sumKinds(row.lines, ["CREDIT_APPLIED"]) !== applied ||
+    row.booking.finalPriceCents + payment.changeFeeCents !== captured + applied
+  ) {
+    return null;
+  }
+  return { appliedCents: applied, cappedCents: payment.amountCents };
 }
 
-const LEGACY_BACKFILL_REASONS = new Set(["legacy_primary_backfill", "legacy_additional_backfill"]);
+/**
+ * #1641: a full-price card capture beside applied credit nobody allocated —
+ * the member paid the applied slice twice. Its fingerprint is the retired card
+ * audit's own (`card-applied-credit-double-pay.ts`), on its own population: a
+ * captured card payment on a booking that is not cancelled.
+ */
+function cardDoublePayCents(row: BookingLedgerCensusRow): number {
+  const payment = row.payment;
+  if (!payment || payment.source === "INTERNET_BANKING" || payment.status !== "SUCCEEDED" || row.booking.status === "CANCELLED") {
+    return 0;
+  }
+  const unallocated = Math.max(
+    0,
+    -row.credits
+      .filter((credit) => credit.type === "BOOKING_APPLIED" && credit.appliedToBookingId === row.booking.id && credit.xeroCreditNoteId === null)
+      .reduce((sum, credit) => sum + credit.amountCents, 0),
+  );
+  const finding = deriveCardAppliedCreditDoublePayFinding({
+    paymentId: payment.id,
+    bookingId: row.booking.id,
+    bookingStatus: row.booking.status,
+    paymentStatus: payment.status,
+    paymentSource: payment.source,
+    amountCents: payment.amountCents,
+    creditAppliedCents: payment.creditAppliedCents,
+    finalPriceCents: row.booking.finalPriceCents,
+    ledgerAppliedCents: unallocated,
+  });
+  return finding?.strandExposureCents ?? 0;
+}
 
-/** What raised `refundedAmountCents` that is not a `CARD_REFUND` line (design §5.2, `INV-MONEY-034`). */
-export function refundedComponents(row: BookingLedgerCensusRow): ResidualComponent[][] {
-  const bookingId = row.booking.id;
-  const handBack = -sumKinds(row.lines, ["BANK_REFUND"]);
-  const v3 = row.tasks
+/** Hand-backs the ledger records against a completed task: −Σ matched BANK_REFUND lines. */
+function handBackCents(row: BookingLedgerCensusRow): number {
+  return -row.lines
+    .filter(
+      (line) =>
+        line.kind === "BANK_REFUND" &&
+        line.anchorKind === "REVIEW_TASK" &&
+        row.tasks.some((task) => task.id === line.anchorId && task.status === "COMPLETED" && task.amountCents === -line.amountCents),
+    )
+    .reduce((sum, line) => sum + line.amountCents, 0);
+}
+
+/** V3: a legacy late-capture hand-back on a card payment for a deleted booking, which posts no `BANK_REFUND`. */
+function v3Cents(row: BookingLedgerCensusRow): number {
+  const payment = row.payment;
+  if (!payment || payment.source !== "STRIPE" || row.booking.deletedAt === null) return 0;
+  return row.tasks
     .filter(
       (task) =>
         task.kind === "DELETED_BOOKING_LATE_CAPTURE" &&
         task.status === "COMPLETED" &&
         task.lateCaptureApprovalIntentId === null &&
-        row.payment !== null &&
-        task.paymentId === row.payment.id &&
-        row.payment.source === "STRIPE",
+        task.paymentId === payment.id,
     )
     .reduce((sum, task) => sum + (task.amountCents ?? 0), 0);
-  // Only the two writers that ran `applyLocalRefundAllocation` beside their row:
-  // the cancel's credit branch (`createCancellationCredit`, its own description)
-  // and a reduction credited to account. A restore and the Xero inbound mints
-  // never moved the column.
-  const creditAllocation = row.credits
-    .filter(
-      (credit) =>
-        credit.sourceBookingId === bookingId &&
-        credit.restoredFromBookingId === null &&
-        ((credit.type === "CANCELLATION_REFUND" && credit.description === cancellationCreditDescription(bookingId)) ||
-          credit.type === "BOOKING_MODIFICATION_REFUND"),
-    )
-    .reduce((sum, credit) => sum + credit.amountCents, 0);
-  const legacyIds = new Set(row.transactions.filter((txn) => LEGACY_BACKFILL_REASONS.has(txn.reason ?? "")).map((txn) => txn.id));
-  const legacySeed =
+}
+
+/** Allocations the ledger records: −Σ the live lines matched, by key, to allocating rows. */
+function creditAllocationCents(row: BookingLedgerCensusRow): number {
+  return row.credits
+    .filter((credit) => isAllocatingCredit(row, credit))
+    .reduce((sum, credit) => sum - (creditLineFor(row, credit)?.amountCents ?? 0), 0);
+}
+
+function legacySeedCents(row: BookingLedgerCensusRow): number {
+  const legacyIds = new Set(row.transactions.filter((txn) => LEGACY_BACKFILL_REASONS.includes(txn.reason ?? "")).map((txn) => txn.id));
+  return (
     row.transactions.filter((txn) => legacyIds.has(txn.id)).reduce((sum, txn) => sum + txn.refundedAmountCents, 0) -
     row.refunds
       .filter((refund) => refund.paymentTransactionId !== null && legacyIds.has(refund.paymentTransactionId) && isRecordedRefundStatus(refund.status))
-      .reduce((sum, refund) => sum + refund.amountCents, 0);
-  const failed = row.refunds.filter((refund) => !isRecordedRefundStatus(refund.status)).reduce((sum, refund) => sum + refund.amountCents, 0);
+      .reduce((sum, refund) => sum + refund.amountCents, 0)
+  );
+}
+
+function failedRefundCents(row: BookingLedgerCensusRow): number {
+  return row.refunds.filter((refund) => !isRecordedRefundStatus(refund.status)).reduce((sum, refund) => sum + refund.amountCents, 0);
+}
+
+/**
+ * A completed CHARGE share the booking's price does not carry: no stand-in
+ * `AGREED_ADJUSTMENT` records it, AND no closure re-price moved the price by
+ * it (a `PRICE_REBASE` history row whose lines net to the share; one re-price
+ * carries one share). Only those can explain an ask the ledger does not.
+ */
+export function retainedChargeShareCents(row: BookingLedgerCensusRow): number {
+  const rebaseMovements = row.modifications
+    .filter((modification) => modification.modificationType === "PRICE_REBASE")
+    .map((modification) =>
+      row.lines.filter((line) => line.anchorKind === "MODIFICATION" && line.anchorId === modification.id).reduce((sum, line) => sum + line.amountCents, 0),
+    );
+  let retained = 0;
+  for (const task of row.tasks) {
+    const share = task.amountCents ?? 0;
+    if (task.kind !== "EDIT_FINANCIAL_REVIEW" || task.status !== "COMPLETED" || task.settlementDirection !== "CHARGE_TO_MEMBER" || share <= 0) continue;
+    const standIn = row.lines.some(
+      (line) => line.kind === "AGREED_ADJUSTMENT" && line.anchorKind === "REVIEW_TASK" && line.anchorId === task.id && line.reversesLineId === null,
+    );
+    if (standIn) continue;
+    const carried = rebaseMovements.indexOf(share);
+    if (carried >= 0) {
+      rebaseMovements.splice(carried, 1);
+      continue;
+    }
+    retained += share;
+  }
+  return retained;
+}
+
+// ---------------------------------------------------------------------------
+// Components, one function per identity, in that identity's delta terms
+// ---------------------------------------------------------------------------
+
+export function capturedComponents(row: BookingLedgerCensusRow): ResidualComponent[][] {
+  return [[{ name: "NOTHING_CAPTURED", cents: nothingCapturedFaceCents(row) }]];
+}
+
+export function creditAppliedComponents(row: BookingLedgerCensusRow): ResidualComponent[][] {
+  const cap = xeroCapEvidence(row);
+  const unpostedApplied = unpostedCredits(row)
+    .filter((credit) => credit.type === "BOOKING_APPLIED")
+    .reduce((sum, credit) => sum - credit.amountCents, 0);
+  return [
+    [{ name: "CREDIT_MIRROR_XERO_CAP", cents: cap ? cap.cappedCents - cap.appliedCents : 0 }],
+    [{ name: "KNOWN_DEFECT_HISTORY", cents: -cardDoublePayCents(row), detail: "#1641" }],
+    [{ name: "UNPOSTED_CREDIT", cents: unpostedApplied }],
+  ];
+}
+
+/** What raised `refundedAmountCents` that is not a `CARD_REFUND` line (design §5.2, `INV-MONEY-034`). */
+export function refundedComponents(row: BookingLedgerCensusRow): ResidualComponent[][] {
+  const unpostedAllocations = unpostedCredits(row)
+    .filter((credit) => isAllocatingCredit(row, credit))
+    .reduce((sum, credit) => sum + credit.amountCents, 0);
   const base: ResidualComponent[] = [
-    { name: "REFUND_MIRROR_HAND_BACK", cents: handBack },
-    { name: "V3_LEGACY_HAND_BACK", cents: v3 },
-    { name: "REFUND_MIRROR_CREDIT_ALLOCATION", cents: creditAllocation },
-    { name: "REFUND_MIRROR_LEGACY_SEED", cents: legacySeed },
+    { name: "REFUND_MIRROR_HAND_BACK", cents: handBackCents(row) },
+    { name: "V3_LEGACY_HAND_BACK", cents: v3Cents(row) },
+    { name: "REFUND_MIRROR_CREDIT_ALLOCATION", cents: creditAllocationCents(row) },
+    { name: "REFUND_MIRROR_LEGACY_SEED", cents: legacySeedCents(row) },
+    { name: "UNPOSTED_CREDIT", cents: unpostedAllocations },
   ];
   // A refund that failed after it was counted: subtracted again since #3640
   // (so absent from the residual), still counted before it (so all of it).
-  return [base, [...base, { name: "REFUND_MIRROR_FAILED_REFUND", cents: failed }]];
+  return [base, [...base, { name: "REFUND_MIRROR_FAILED_REFUND", cents: failedRefundCents(row) }]];
 }
 
 /** Fees an edit charged that no `CHANGE_FEE` line records, and fees a cancellation took back. */
-export function changeFeeComponents(
-  row: BookingLedgerCensusRow,
-  unpostedChangeFeeCents: number,
-): ResidualComponent[][] {
+export function changeFeeComponents(row: BookingLedgerCensusRow, unpostedChangeFeeCents: number): ResidualComponent[][] {
   const reversedByCancellation =
     row.booking.status === "CANCELLED"
       ? -row.lines
@@ -372,6 +496,30 @@ export function changeFeeComponents(
 export function additionalComponents(row: BookingLedgerCensusRow, owedCents: number, liveAsk: boolean): ResidualComponent[][] {
   const retained = liveAsk && owedCents <= 0 ? retainedChargeShareCents(row) : 0;
   return [[{ name: "RETAINED_REVIEW_SHARE", cents: retained }]];
+}
+
+/**
+ * A live booking's owed(b) against what its columns say is owed
+ * (`INV-PAY-047`'s residual plus the ask). Each component is the SAME evidence
+ * a column identity uses, in owed terms: a column-only figure moves the
+ * column side, a missing line the ledger side.
+ */
+export function liveOwedComponents(
+  row: BookingLedgerCensusRow,
+  unposted: { priceCents: number; changeFeeCents: number },
+): ResidualComponent[][] {
+  const cap = xeroCapEvidence(row);
+  const base: ResidualComponent[] = [
+    { name: "NOTHING_CAPTURED", cents: -nothingCapturedFaceCents(row) },
+    { name: "CREDIT_MIRROR_XERO_CAP", cents: cap ? cap.appliedCents - cap.cappedCents : 0 },
+    { name: "KNOWN_DEFECT_HISTORY", cents: cardDoublePayCents(row), detail: "#1641" },
+    { name: "V3_LEGACY_HAND_BACK", cents: v3Cents(row) },
+    { name: "REFUND_MIRROR_LEGACY_SEED", cents: legacySeedCents(row) },
+    { name: "UNPOSTED_EDIT", cents: unposted.priceCents },
+    { name: "UNPOSTED_CHANGE_FEE", cents: unposted.changeFeeCents },
+    { name: "UNPOSTED_CREDIT", cents: unpostedCredits(row).reduce((sum, credit) => sum + credit.amountCents, 0) },
+  ];
+  return [base, [...base, { name: "REFUND_MIRROR_FAILED_REFUND", cents: failedRefundCents(row) }]];
 }
 
 /**
@@ -398,8 +546,7 @@ export function cancelledOwedComponents(row: BookingLedgerCensusRow): ResidualCo
   const plannedCents = row.recoveryOperations
     .filter((operation) => operation.idempotencyKey === cancelRefundKey)
     .reduce((sum, operation) => sum + operation.amountCents, 0);
-  const policyRefundCents =
-    row.cancellation?.refundMethod === "card" ? (row.cancellation.settledAmountCents ?? 0) : 0;
+  const policyRefundCents = row.cancellation?.refundMethod === "card" ? (row.cancellation.settledAmountCents ?? 0) : 0;
   const v5 = Math.max(0, policyRefundCents - plannedCents);
   return [
     [
@@ -407,6 +554,7 @@ export function cancelledOwedComponents(row: BookingLedgerCensusRow): ResidualCo
       { name: "D2_DISMISSED_HAND_BACK", cents: handBacks("DISMISSED") },
       { name: "IN_FLIGHT_REFUND", cents: inFlightRefund },
       { name: "V5_PLANNED_REFUND_SHORT", cents: v5 },
+      { name: "UNPOSTED_CREDIT", cents: unpostedCredits(row).reduce((sum, credit) => sum + credit.amountCents, 0) },
       ...knownDefectHistory(row),
     ],
   ];
@@ -419,28 +567,25 @@ export function cancelledOwedComponents(row: BookingLedgerCensusRow): ResidualCo
 function knownDefectHistory(row: BookingLedgerCensusRow): ResidualComponent[] {
   const bookingId = row.booking.id;
   const applied = sumKinds(row.lines, ["CREDIT_APPLIED"]);
-  const restore = restoreRow(row);
   const found: ResidualComponent[] = [];
 
-  // #3791: credit-only, a review share minted as credit with no captured
-  // payment, the applied credit restored in full. owed = +the share.
+  // #3791, pre-fix evidence: on a credit-only booking a review share refunded
+  // as credit was MINTED (a BOOKING_MODIFICATION_REFUND row, which the fix no
+  // longer writes for money given back), beside the full applied figure, so
+  // the cancellation's restore — at any tier — paid it again. owed = +the share.
   const mints = row.credits.filter((credit) => credit.type === "BOOKING_MODIFICATION_REFUND" && credit.sourceBookingId === bookingId);
   const refundShares = row.tasks
     .filter((task) => task.kind === "EDIT_FINANCIAL_REVIEW" && task.status === "COMPLETED" && task.settlementDirection === "REFUND_TO_MEMBER")
     .map((task) => task.amountCents ?? 0);
-  const everyMintIsAShare = mints.length > 0 && mints.every((mint) => {
-    const at = refundShares.indexOf(mint.amountCents);
-    if (at < 0) return false;
-    refundShares.splice(at, 1);
-    return true;
-  });
-  if (
-    sumKinds(row.lines, CAPTURE_KINDS) === 0 &&
-    applied > 0 &&
-    restore !== null &&
-    restore.amountCents === applied &&
-    everyMintIsAShare
-  ) {
+  const everyMintIsAShare =
+    mints.length > 0 &&
+    mints.every((mint) => {
+      const at = refundShares.indexOf(mint.amountCents);
+      if (at < 0) return false;
+      refundShares.splice(at, 1);
+      return true;
+    });
+  if (sumKinds(row.lines, CAPTURE_KINDS) === 0 && applied > 0 && everyMintIsAShare) {
     found.push({ name: "KNOWN_DEFECT_HISTORY", cents: -mints.reduce((sum, mint) => sum + mint.amountCents, 0), detail: "#3791" });
   }
 
@@ -451,7 +596,7 @@ function knownDefectHistory(row: BookingLedgerCensusRow): ResidualComponent[] {
     row.payment?.source === "INTERNET_BANKING" &&
     receipts > 0 &&
     applied > 0 &&
-    restore === null &&
+    !row.credits.some((credit) => credit.restoredFromBookingId === bookingId) &&
     row.credits.some(
       (credit) =>
         credit.type === "CANCELLATION_REFUND" &&

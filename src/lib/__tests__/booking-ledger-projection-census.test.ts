@@ -1,10 +1,12 @@
 /**
  * The booking-ledger projection census (#3583, `INV-MONEY-037`): the six
- * identities of design §6, each proved three ways — a booking whose lines the
- * REAL planners wrote agrees; a one-cent mutation of a line, and of a column,
- * is a disagreement naming the booking, both figures and the delta; and every
- * named class's fixture lands in its class, while the same fixture plus one
- * cent is a generic disagreement. Then coverage, integrity and the verdict.
+ * identities of design §6 and the live owed(b) identity, each proved three
+ * ways — a booking whose lines the REAL planners wrote agrees; a one-cent
+ * mutation either way of a line, and of a column, is a disagreement naming
+ * the booking, both figures and the delta; and every named class's fixture
+ * lands in its class, while the same fixture a cent either way, or with one
+ * piece of its evidence removed, is a generic disagreement. Then coverage,
+ * integrity, paging, acknowledgements and the verdict.
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -14,11 +16,9 @@ import { planCancellationChargeLines } from "@/lib/booking-ledger-cancellation-p
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
 import { planCreditLines, planHandBackLine } from "@/lib/booking-ledger-credit-posting";
 import { planAgreedAdjustmentLine, planModificationChargeLines } from "@/lib/booking-ledger-modification-posting";
-import {
-  evaluateBookingLedgerIdentities,
-  summarizeBookingLedgerCensus,
-  type BookingLedgerIdentity,
-} from "@/lib/booking-ledger-projection-census";
+import { evaluateBookingLedgerIdentities, type BookingLedgerIdentity } from "@/lib/booking-ledger-projection-census";
+import { summarizeBookingLedgerCensus } from "@/lib/booking-ledger-projection-census-report";
+import { evaluateBookingLedgerPages } from "@/lib/booking-ledger-projection-census-store";
 import {
   BOOKING_LEDGER_CENSUS_GATE_POLICY,
   type BookingLedgerCensusRow,
@@ -231,7 +231,7 @@ function reducedAndRefunded(): BookingLedgerCensusRow {
     booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: false, finalPriceCents: 14_000 },
     transactions: [txn("t1", 19_000, { status: "PARTIALLY_REFUNDED", refundedAmountCents: 4_500 })],
     refunds: [{ id: "r1", status: "succeeded", amountCents: 4_500, paymentTransactionId: "t1" }],
-    modifications: [{ id: "m1", priceDiffCents: -5_000, changeFeeCents: 500, createdAt: LATER }],
+    modifications: [{ id: "m1", modificationType: "BATCH_MODIFY", priceDiffCents: -5_000, changeFeeCents: 500, createdAt: LATER }],
     payment: payment({ refundedAmountCents: 4_500, changeFeeCents: 500, status: "PARTIALLY_REFUNDED" }),
   });
   settle(ledger, subject, false, LATER);
@@ -258,7 +258,7 @@ function raisedWithAsk(): BookingLedgerCensusRow {
     lines: ledger.lines,
     booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: false, finalPriceCents: 21_500 },
     transactions: [txn("t1", 19_000), txn("a1", 2_500, { kind: "ADDITIONAL", status: "PENDING", createdAt: LATER })],
-    modifications: [{ id: "m2", priceDiffCents: 2_500, changeFeeCents: 0, createdAt: LATER }],
+    modifications: [{ id: "m2", modificationType: "BATCH_MODIFY", priceDiffCents: 2_500, changeFeeCents: 0, createdAt: LATER }],
     payment: payment({ additionalAmountCents: 2_500, additionalPaymentStatus: "PENDING" }),
   });
 }
@@ -280,7 +280,7 @@ function cashCancelled(task: "OPEN" | "COMPLETED" | "DISMISSED"): BookingLedgerC
     booking: { ...base.booking, status: "CANCELLED" },
     payment: payment({ source: "INTERNET_BANKING", refundedAmountCents: task === "COMPLETED" ? 9_500 : 0 }),
     tasks: [{ id: "task-hb", kind: "CANCELLED_BOOKING_HAND_BACK", status: task, amountCents: 9_500, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null }],
-    cancellation: { refundMethod: "manual", settledAmountCents: 9_500 },
+    cancellation: { refundMethod: "manual", settledAmountCents: 9_500, keptCents: 9_500 },
   };
 }
 
@@ -302,7 +302,7 @@ function cardCancelled(plannedCents: number, refunded: boolean): BookingLedgerCe
     recoveryOperations: [
       { type: "REFUND_BOOKING_MODIFICATION", status: refunded ? "SUCCEEDED" : "PENDING", amountCents: plannedCents, idempotencyKey: buildBookingCancellationRefundIdempotencyKey(B) },
     ],
-    cancellation: { refundMethod: "card", settledAmountCents: 9_500 },
+    cancellation: { refundMethod: "card", settledAmountCents: 9_500, keptCents: 9_500 },
     lines: [],
   };
   settle(ledger, subject, false, LATER);
@@ -310,35 +310,84 @@ function cardCancelled(plannedCents: number, refunded: boolean): BookingLedgerCe
 }
 
 /** Plus one cent on the first line of one kind (its unit and amount together, as a line would carry them). */
-function bumpLine(subject: BookingLedgerCensusRow, kind: CensusLedgerLine["kind"]): BookingLedgerCensusRow {
+function bumpLine(subject: BookingLedgerCensusRow, kind: CensusLedgerLine["kind"], by: 1 | -1 = 1): BookingLedgerCensusRow {
   let done = false;
   return {
     ...subject,
     lines: subject.lines.map((line) => {
       if (done || line.kind !== kind || line.reversesLineId !== null) return line;
       done = true;
-      return { ...line, unitCents: line.unitCents + 1, amountCents: line.amountCents + line.sign };
+      return { ...line, unitCents: line.unitCents + by, amountCents: line.amountCents + by * line.sign };
     }),
   };
 }
 
-function bumpPayment(subject: BookingLedgerCensusRow, key: "amountCents" | "creditAppliedCents" | "refundedAmountCents" | "changeFeeCents" | "additionalAmountCents"): BookingLedgerCensusRow {
-  return { ...subject, payment: { ...subject.payment!, [key]: subject.payment![key] + 1 } };
+function bumpPayment(subject: BookingLedgerCensusRow, key: "amountCents" | "creditAppliedCents" | "refundedAmountCents" | "changeFeeCents" | "additionalAmountCents", by: 1 | -1 = 1): BookingLedgerCensusRow {
+  return { ...subject, payment: { ...subject.payment!, [key]: subject.payment![key] + by } };
 }
 
 // ---------------------------------------------------------------------------
 
-describe("the six identities agree on lines the real planners wrote (#3583)", () => {
+
+/** The review's probe S1: an edit's $50 reduction credited to account, the CREDIT_ISSUED line missing or present. */
+function reductionCredited(withLine: boolean): BookingLedgerCensusRow {
+  const ledger = confirmedLedger(0);
+  settle(ledger, row({ lines: [], transactions: [txn("t1", 20_000)] }));
+  const plan = planModificationChargeLines({
+    bookingId: B,
+    lodgeId: LODGE,
+    bookingModificationId: "m1",
+    before: { guests: [guestSide("g1", [[D1, 5_000], [D2, 5_000]]), guestSide("g2", [[D1, 5_000], [D2, 5_000]])], promoAdjustmentCents: 0 },
+    after: { guests: [guestSide("g1", [[D1, 5_000], [D2, 5_000]]), guestSide("g2", [[D1, 5_000]])], promoAdjustmentCents: 0 },
+    changeFeeCents: 0,
+    expectedCents: -5_000,
+    postedLines: ledger.reversible() as never,
+  });
+  if (plan.kind !== "lines") throw new Error(`edit plan refused: ${plan.reason}`);
+  ledger.post(plan.postings, LATER);
+  const rows = [credit("c-reduction", "BOOKING_MODIFICATION_REFUND", 5_000)];
+  if (withLine) credits(ledger, rows);
+  return row({
+    lines: ledger.lines,
+    booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: false, finalPriceCents: 15_000 },
+    transactions: [txn("t1", 20_000, { refundedAmountCents: 5_000 })],
+    credits: rows,
+    modifications: [{ id: "m1", modificationType: "BATCH_MODIFY", priceDiffCents: -5_000, changeFeeCents: 0, createdAt: LATER }],
+    payment: payment({ amountCents: 20_000, refundedAmountCents: 5_000 }),
+  });
+}
+
+/** The review's probe S2: $200 captured in full by card beside $40 of applied credit (#1641). */
+function probeDoublePay(): BookingLedgerCensusRow {
+  const ledger = confirmedLedger(0);
+  const rows = [credit("c1", "BOOKING_APPLIED", -4_000)];
+  credits(ledger, rows);
+  const subject = row({
+    lines: [],
+    booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: false, finalPriceCents: 20_000 },
+    transactions: [txn("t1", 20_000)],
+    credits: rows,
+    payment: payment({ amountCents: 20_000 }),
+  });
+  settle(ledger, subject);
+  return { ...subject, lines: ledger.lines };
+}
+
+const report = (rows: BookingLedgerCensusRow[], acknowledgements: Parameters<typeof summarizeBookingLedgerCensus>[2] = []) =>
+  summarizeBookingLedgerCensus(rows.map(evaluateBookingLedgerIdentities), null, acknowledgements);
+
+// ---------------------------------------------------------------------------
+
+describe("the identities agree on lines the real planners wrote (#3583)", () => {
   it.each([
     ["a card-paid booking", cardPaid],
     ["credit plus card", creditAndCard],
     ["an edit with a change fee, refunded to the card", reducedAndRefunded],
     ["an edit raising the price, the ask outstanding", raisedWithAsk],
-    ["cash, cancelled, handed back", () => cashCancelled("COMPLETED")],
-  ])("%s: every applicable identity agrees", (_label, build) => {
+  ])("%s: every applicable identity AGREES — not classified, not coverage", (_label, build) => {
     const evaluation = evaluateBookingLedgerIdentities(build());
-    const notAgreeing = evaluation.identities.filter((result) => result.status !== "AGREE" && result.status !== "NOT_APPLICABLE" && result.status !== "CLASSIFIED");
-    expect(notAgreeing).toEqual([]);
+    expect(evaluation.identities.filter((result) => result.status !== "AGREE" && result.status !== "NOT_APPLICABLE")).toEqual([]);
+    expect(evaluation.identities.find((result) => result.identity === "OWED")?.status).toBe("AGREE");
     expect(evaluation.integrity).toEqual([]);
     expect(evaluation.coverage).toEqual([]);
   });
@@ -350,6 +399,7 @@ describe("the six identities agree on lines the real planners wrote (#3583)", ()
     expect(identity(reducedAndRefunded(), "REFUNDED")).toMatchObject({ status: "AGREE", columnCents: 4_500 });
     expect(identity(reducedAndRefunded(), "CHANGE_FEE")).toMatchObject({ status: "AGREE", columnCents: 500 });
     expect(identity(raisedWithAsk(), "ADDITIONAL")).toMatchObject({ status: "AGREE", columnCents: 2_500, ledgerCents: 2_500 });
+    expect(identity(raisedWithAsk(), "OWED")).toMatchObject({ status: "AGREE", columnCents: 2_500, ledgerCents: 2_500 });
     expect(identity(cashCancelled("COMPLETED"), "PRICE")).toMatchObject({ status: "AGREE", columnCents: 0, ledgerCents: 0 });
   });
 });
@@ -377,10 +427,63 @@ describe("the parts of an identity a plain booking does not exercise", () => {
       payment: payment({ additionalAmountCents: 0, additionalPaymentStatus: null }),
     };
     expect(identity(withdrawn, "ADDITIONAL")).toMatchObject({ status: "AGREE", columnCents: 0, ledgerCents: 0 });
+    expect(identity(withdrawn, "OWED")).toMatchObject({ status: "AGREE", columnCents: 2_500, ledgerCents: 2_500 });
   });
 });
 
-describe("a one-cent mutation of a line or a column is a disagreement naming the booking, both figures and the delta", () => {
+describe("the OWED identity's column side, and the evidence a mirror class needs", () => {
+  it("counts issued credit the refunded column never counted (a Xero inbound mint), with its line", () => {
+    const subject = cardPaid();
+    const ledger = new Ledger();
+    ledger.lines = [...(subject.lines as Line[])];
+    const rows = [credit("c-xero", "CANCELLATION_REFUND", 1_000, { description: `Internet Banking payment credit for booking ${B}` })];
+    credits(ledger, rows);
+    const minted = { ...subject, lines: ledger.lines, credits: rows };
+    expect(identity(minted, "OWED")).toMatchObject({ status: "AGREE", columnCents: 1_000, ledgerCents: 1_000 });
+  });
+
+  it("CREDIT_MIRROR_XERO_CAP needs the money to add up: the same capped column on a price the ledger does not cover is a disagreement", () => {
+    const capped = xeroCappedCredit();
+    const short = { ...capped, booking: { ...capped.booking, finalPriceCents: 19_001 } };
+    expect(identity(short, "CREDIT_APPLIED").deltaCents).toBe(identity(capped, "CREDIT_APPLIED").deltaCents);
+    expect(identity(short, "CREDIT_APPLIED").status).toBe("DISAGREE");
+  });
+});
+
+describe("the review's two gate escapes are closed (fix round of #3583)", () => {
+  it("S1: a missing CREDIT_ISSUED line is coverage, holding the gate — and with the line every identity agrees", () => {
+    const missing = evaluateBookingLedgerIdentities(reductionCredited(false));
+    expect(missing.coverage).toContain("UNPOSTED_CREDIT");
+    expect(missing.identities.find((result) => result.identity === "OWED")).toMatchObject({ status: "COVERAGE", deltaCents: 5_000 });
+    expect(missing.identities.find((result) => result.identity === "REFUNDED")).toMatchObject({ status: "COVERAGE", deltaCents: 5_000 });
+    expect(report([reductionCredited(false)]).verdict).toBe("GATE_CLOSED");
+    const posted = evaluateBookingLedgerIdentities(reductionCredited(true));
+    expect(posted.identities.find((result) => result.identity === "OWED")?.status).toBe("AGREE");
+    expect(posted.identities.find((result) => result.identity === "REFUNDED")?.explainedBy).toEqual([{ name: "REFUND_MIRROR_CREDIT_ALLOCATION", cents: 5_000 }]);
+    expect(report([reductionCredited(true)]).verdict).toBe("GATE_OPEN");
+  });
+
+  it("S2: #1641's double pay is KNOWN_DEFECT_HISTORY and holds the gate, on CREDIT_APPLIED and on OWED", () => {
+    const evaluation = evaluateBookingLedgerIdentities(probeDoublePay());
+    expect(evaluation.identities.find((result) => result.identity === "CREDIT_APPLIED")?.explainedBy).toEqual([{ name: "KNOWN_DEFECT_HISTORY", cents: -4_000, detail: "#1641" }]);
+    expect(evaluation.identities.find((result) => result.identity === "OWED")).toMatchObject({ status: "CLASSIFIED", columnCents: 0, ledgerCents: -4_000, explainedBy: [{ name: "KNOWN_DEFECT_HISTORY", cents: 4_000, detail: "#1641" }] });
+    const summary = report([probeDoublePay()]);
+    expect(summary.verdict).toBe("GATE_CLOSED");
+    expect(summary.gateClosedBecause).toEqual(["1 booking(s) in KNOWN_DEFECT_HISTORY, which holds the gate"]);
+  });
+
+  it("a BANK_REFUND line the refunded column never counted disagrees on OWED, though every column identity agrees", () => {
+    const subject = cardPaid();
+    const ledger = new Ledger();
+    ledger.lines = [...(subject.lines as Line[])];
+    ledger.post([planHandBackLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: "task-x", amountCents: 1_000, settlementMethod: "INTERNET_BANKING", officerMemberId: "officer" })]);
+    const rogue = { ...subject, lines: ledger.lines, tasks: [{ id: "task-x", kind: "CANCELLED_BOOKING_HAND_BACK" as const, status: "COMPLETED" as const, amountCents: 1_000, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null }] };
+    expect(identity(rogue, "REFUNDED").status).toBe("AGREE");
+    expect(identity(rogue, "OWED")).toMatchObject({ status: "DISAGREE", deltaCents: -1_000 });
+  });
+});
+
+describe("a one-cent mutation either way, of a line or a column, is a disagreement naming the booking, both figures and the delta", () => {
   const cases: Array<[BookingLedgerIdentity, () => BookingLedgerCensusRow, CensusLedgerLine["kind"], Parameters<typeof bumpPayment>[1] | "finalPriceCents"]> = [
     ["PRICE", cardPaid, "GUEST_NIGHT", "finalPriceCents"],
     ["CAPTURED", cardPaid, "CARD_CAPTURE", "amountCents"],
@@ -388,35 +491,42 @@ describe("a one-cent mutation of a line or a column is a disagreement naming the
     ["REFUNDED", reducedAndRefunded, "CARD_REFUND", "refundedAmountCents"],
     ["CHANGE_FEE", reducedAndRefunded, "CHANGE_FEE", "changeFeeCents"],
     ["ADDITIONAL", raisedWithAsk, "GUEST_NIGHT", "additionalAmountCents"],
+    ["OWED", () => reductionCredited(true), "CREDIT_ISSUED", "amountCents"],
   ];
+  const directions: Array<1 | -1> = [1, -1];
 
-  it.each(cases)("%s: the line", (name, build, kind) => {
-    const before = identity(build(), name);
-    const after = identity(bumpLine(build(), kind), name);
-    expect(after.status).toBe("DISAGREE");
-    expect(after.columnCents).toBe(before.columnCents);
-    expect(Math.abs(after.ledgerCents - before.ledgerCents)).toBe(1);
-    expect(after.deltaCents).toBe(after.columnCents - after.ledgerCents);
-    const report = summarizeBookingLedgerCensus([evaluateBookingLedgerIdentities(bumpLine(build(), kind))], null);
-    expect(report.disagreements).toContainEqual({ bookingId: B, identity: name, columnCents: after.columnCents, ledgerCents: after.ledgerCents, deltaCents: after.deltaCents });
-  });
+  for (const by of directions) {
+    it.each(cases)(`%s: the line, ${by > 0 ? "+" : "−"}1 cent`, (name, build, kind) => {
+      const before = identity(build(), name);
+      const mutated = bumpLine(build(), kind, by);
+      const after = identity(mutated, name);
+      expect(after.status).toBe("DISAGREE");
+      expect(after.columnCents).toBe(before.columnCents);
+      expect(Math.abs(after.ledgerCents - before.ledgerCents)).toBe(1);
+      expect(after.deltaCents).toBe(after.columnCents - after.ledgerCents);
+      expect(report([mutated]).disagreements).toContainEqual({ bookingId: B, identity: name, columnCents: after.columnCents, ledgerCents: after.ledgerCents, deltaCents: after.deltaCents });
+    });
 
-  it.each(cases)("%s: the column", (name, build, _kind, column) => {
-    const subject = build();
-    const bumped =
-      column === "finalPriceCents"
-        ? { ...subject, booking: { ...subject.booking, finalPriceCents: subject.booking.finalPriceCents + 1 } }
-        : bumpPayment(subject, column);
-    expect(identity(bumped, name)).toMatchObject({ status: "DISAGREE", deltaCents: 1 });
-  });
+    it.each(cases)(`%s: the column, ${by > 0 ? "+" : "−"}1 cent`, (name, build, _kind, column) => {
+      const subject = build();
+      const bumped =
+        column === "finalPriceCents"
+          ? { ...subject, booking: { ...subject.booking, finalPriceCents: subject.booking.finalPriceCents + by } }
+          : bumpPayment(subject, column, by);
+      const result = identity(bumped, name);
+      expect(result.status).toBe("DISAGREE");
+      expect(Math.abs(result.deltaCents)).toBe(1);
+    });
+  }
 
-  it("the cancelled form (owed is zero) disagrees on a one-cent line", () => {
+  it("the cancelled form (owed is zero) disagrees on a one-cent line either way", () => {
     expect(identity(bumpLine(cashCancelled("COMPLETED"), "CANCELLATION_FEE"), "PRICE")).toMatchObject({ status: "DISAGREE", columnCents: 0, ledgerCents: 1, deltaCents: -1 });
+    expect(identity(bumpLine(cashCancelled("COMPLETED"), "CANCELLATION_FEE", -1), "PRICE")).toMatchObject({ status: "DISAGREE", columnCents: 0, ledgerCents: -1, deltaCents: 1 });
   });
 });
 
 // ---------------------------------------------------------------------------
-// Every named class: its fixture lands in it; plus one cent, it does not
+// The class fixtures
 // ---------------------------------------------------------------------------
 
 /** Confirmed by a mark-paid since reversed; the column keeps the primary's face amount. */
@@ -429,8 +539,8 @@ function nothingCaptured(): BookingLedgerCensusRow {
   return { ...reversed, booking: { ...paid.booking, status: "PAYMENT_PENDING" }, payment: payment({ source: "INTERNET_BANKING", status: "PENDING" }), lines: ledger.lines };
 }
 
-/** #1641's legacy shape: a full-price card capture beside $40 of applied credit; the settle split it 0 + full. */
-function settleDerivedCredit(): BookingLedgerCensusRow {
+/** #1641's shape: a full-price card capture beside $40 of applied credit nobody allocated — paid twice. */
+function cardDoublePay(): BookingLedgerCensusRow {
   const ledger = confirmedLedger();
   const rows = [credit("c1", "BOOKING_APPLIED", -4_000)];
   const subject = row({ lines: [], transactions: [txn("t1", 19_000)], credits: rows, payment: payment({ creditAppliedCents: 0 }) });
@@ -442,7 +552,8 @@ function settleDerivedCredit(): BookingLedgerCensusRow {
 /** $150 applied, $40 captured: the Xero allocation repair capped the column at the payment amount. */
 function xeroCappedCredit(): BookingLedgerCensusRow {
   const ledger = confirmedLedger();
-  const rows = [credit("c1", "BOOKING_APPLIED", -15_000)];
+  // Stamped with the Xero note the allocation repair recorded.
+  const rows = [credit("c1", "BOOKING_APPLIED", -15_000, { xeroCreditNoteId: "cn-repair" })];
   const subject = row({ lines: [], transactions: [txn("t1", 4_000)], credits: rows, payment: payment({ amountCents: 4_000, creditAppliedCents: 4_000 }) });
   credits(ledger, rows);
   settle(ledger, subject);
@@ -459,7 +570,7 @@ function cancelledToCredit(): BookingLedgerCensusRow {
   ledger.post(cancel.postings, LATER);
   const rows = [credit("c-cancel", "CANCELLATION_REFUND", 9_500, { description: cancellationCreditDescription(B) })];
   credits(ledger, rows);
-  return { ...base, booking: { ...base.booking, status: "CANCELLED" }, credits: rows, payment: payment({ refundedAmountCents: 9_500 }), cancellation: { refundMethod: "credit", settledAmountCents: 9_500 }, lines: ledger.lines };
+  return { ...base, booking: { ...base.booking, status: "CANCELLED" }, credits: rows, payment: payment({ refundedAmountCents: 9_500 }), cancellation: { refundMethod: "credit", settledAmountCents: 9_500, keptCents: 9_500 }, lines: ledger.lines };
 }
 
 /** A $45 card refund recorded, then failed: the ledger reversed it, the pre-#3640 column kept counting it. */
@@ -518,18 +629,19 @@ function retainedShare(collected: boolean): BookingLedgerCensusRow {
   };
 }
 
-/** #3791: credit-only $200, a $50 review share refunded as credit, cancelled at 100%. owed = +$50. */
-function defect3791(): BookingLedgerCensusRow {
+/** #3791: credit-only $200, a $50 review share refunded as credit (minted, pre-fix), cancelled at a tier. owed = +$50. */
+function defect3791(restoredCents = 20_000): BookingLedgerCensusRow {
   const ledger = confirmedLedger(0);
   const applied = [credit("c1", "BOOKING_APPLIED", -20_000)];
   credits(ledger, applied);
   ledger.post([planAgreedAdjustmentLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: "task-3791", direction: "REFUND_TO_MEMBER", amountCents: 5_000, note: "share", officerMemberId: "officer" })], LATER);
   const mint = [...applied, credit("c2", "BOOKING_MODIFICATION_REFUND", 5_000)];
   credits(ledger, mint);
-  const cancel = planCancellationChargeLines({ bookingId: B, lodgeId: LODGE, keptCents: 0, chargeLines: ledger.reversible(), adjustmentLines: ledger.adjustments() });
+  const keptCents = 20_000 - restoredCents;
+  const cancel = planCancellationChargeLines({ bookingId: B, lodgeId: LODGE, keptCents, chargeLines: ledger.reversible(), adjustmentLines: ledger.adjustments() });
   if (cancel.kind !== "lines") throw new Error("cancel plan refused");
   ledger.post(cancel.postings, LATER);
-  const all = [...mint, credit("c3", "CANCELLATION_REFUND", 20_000, { restoredFromBookingId: B })];
+  const all = [...mint, credit("c3", "CANCELLATION_REFUND", restoredCents, { restoredFromBookingId: B })];
   credits(ledger, all);
   return row({
     lines: ledger.lines,
@@ -537,7 +649,7 @@ function defect3791(): BookingLedgerCensusRow {
     payment: payment({ amountCents: 0, creditAppliedCents: 20_000 }),
     credits: all,
     tasks: [{ id: "task-3791", kind: "EDIT_FINANCIAL_REVIEW", status: "COMPLETED", amountCents: 5_000, settlementDirection: "REFUND_TO_MEMBER", paymentId: null, lateCaptureApprovalIntentId: null }],
-    cancellation: { refundMethod: "credit", settledAmountCents: 20_000 },
+    cancellation: { refundMethod: "credit", settledAmountCents: restoredCents, keptCents },
   });
 }
 
@@ -553,39 +665,84 @@ function defect3792(): BookingLedgerCensusRow {
   return { ...base, credits: all, lines: ledger.lines };
 }
 
-describe("every named class lands in its class, and one cent more is a generic disagreement", () => {
-  const cases: Array<[string, BookingLedgerIdentity, () => BookingLedgerCensusRow, (subject: BookingLedgerCensusRow) => BookingLedgerCensusRow]> = [
-    ["NOTHING_CAPTURED", "CAPTURED", nothingCaptured, (s) => bumpPayment(s, "amountCents")],
-    ["CREDIT_MIRROR_MANUAL_SETTLE", "CREDIT_APPLIED", settleDerivedCredit, (s) => bumpPayment(s, "creditAppliedCents")],
-    ["CREDIT_MIRROR_XERO_CAP", "CREDIT_APPLIED", xeroCappedCredit, (s) => bumpPayment(s, "creditAppliedCents")],
-    ["REFUND_MIRROR_HAND_BACK", "REFUNDED", () => cashCancelled("COMPLETED"), (s) => bumpPayment(s, "refundedAmountCents")],
-    ["REFUND_MIRROR_CREDIT_ALLOCATION", "REFUNDED", cancelledToCredit, (s) => bumpPayment(s, "refundedAmountCents")],
-    ["REFUND_MIRROR_FAILED_REFUND", "REFUNDED", failedRefund, (s) => bumpPayment(s, "refundedAmountCents")],
-    ["REFUND_MIRROR_LEGACY_SEED", "REFUNDED", legacySeed, (s) => bumpPayment(s, "refundedAmountCents")],
-    ["V3_LEGACY_HAND_BACK", "REFUNDED", v3, (s) => bumpPayment(s, "refundedAmountCents")],
-    ["CHANGE_FEE_REVERSED_BY_CANCELLATION", "CHANGE_FEE", changeFeeTakenBack, (s) => bumpPayment(s, "changeFeeCents")],
-    ["RETAINED_REVIEW_SHARE", "ADDITIONAL", () => retainedShare(false), (s) => bumpPayment(s, "additionalAmountCents")],
-    ["IN_FLIGHT_HAND_BACK", "PRICE", () => cashCancelled("OPEN"), (s) => bumpLine(s, "CANCELLATION_FEE")],
-    ["D2_DISMISSED_HAND_BACK", "PRICE", () => cashCancelled("DISMISSED"), (s) => bumpLine(s, "CANCELLATION_FEE")],
-    ["IN_FLIGHT_REFUND", "PRICE", () => cardCancelled(9_500, false), (s) => bumpLine(s, "CANCELLATION_FEE")],
-    ["V5_PLANNED_REFUND_SHORT", "PRICE", () => cardCancelled(9_000, true), (s) => bumpLine(s, "CANCELLATION_FEE")],
-    ["KNOWN_DEFECT_HISTORY", "PRICE", defect3791, (s) => bumpLine(s, "CREDIT_ISSUED")],
-    ["KNOWN_DEFECT_HISTORY", "PRICE", defect3792, (s) => bumpLine(s, "BANK_RECEIPT")],
+
+// ---------------------------------------------------------------------------
+// Every named class: its fixture lands in it; a cent either way, or its
+// evidence taken away, and it does not
+// ---------------------------------------------------------------------------
+
+type Mutate = (subject: BookingLedgerCensusRow, by: 1 | -1) => BookingLedgerCensusRow;
+const withTasks = (status: "OPEN" | "COMPLETED" | "DISMISSED") => (s: BookingLedgerCensusRow) => ({ ...s, tasks: s.tasks.map((task) => ({ ...task, status })) });
+const unstamped = (s: BookingLedgerCensusRow) => ({ ...s, credits: s.credits.map((c) => ({ ...c, xeroCreditNoteId: null })) });
+const stamped = (s: BookingLedgerCensusRow) => ({ ...s, credits: s.credits.map((c) => ({ ...c, xeroCreditNoteId: "cn-allocated" })) });
+const onCard = (s: BookingLedgerCensusRow) => ({ ...s, payment: { ...s.payment!, source: "STRIPE" as const } });
+
+describe("every named class lands in its class; a cent either way, or its evidence removed, is a generic disagreement", () => {
+  const cases: Array<[string, BookingLedgerIdentity, () => BookingLedgerCensusRow, Mutate, (s: BookingLedgerCensusRow) => BookingLedgerCensusRow, string?]> = [
+    ["NOTHING_CAPTURED", "CAPTURED", nothingCaptured, (s, by) => bumpPayment(s, "amountCents", by), (s) => ({ ...s, transactions: [] })],
+    ["NOTHING_CAPTURED", "OWED", nothingCaptured, (s, by) => bumpPayment(s, "amountCents", by), (s) => ({ ...s, transactions: [] })],
+    ["CREDIT_MIRROR_XERO_CAP", "CREDIT_APPLIED", xeroCappedCredit, (s, by) => bumpPayment(s, "creditAppliedCents", by), unstamped],
+    ["CREDIT_MIRROR_XERO_CAP", "OWED", xeroCappedCredit, (s, by) => bumpPayment(s, "creditAppliedCents", by), unstamped],
+    ["KNOWN_DEFECT_HISTORY", "CREDIT_APPLIED", cardDoublePay, (s, by) => bumpPayment(s, "creditAppliedCents", by), stamped, "#1641"],
+    ["KNOWN_DEFECT_HISTORY", "OWED", cardDoublePay, (s, by) => bumpPayment(s, "amountCents", by), stamped, "#1641"],
+    ["REFUND_MIRROR_HAND_BACK", "REFUNDED", () => cashCancelled("COMPLETED"), (s, by) => bumpPayment(s, "refundedAmountCents", by), withTasks("OPEN")],
+    [
+      "REFUND_MIRROR_CREDIT_ALLOCATION",
+      "REFUNDED",
+      cancelledToCredit,
+      (s, by) => bumpPayment(s, "refundedAmountCents", by),
+      (s) => ({ ...s, credits: s.credits.map((c) => ({ ...c, description: `Internet Banking payment credit for booking ${B}` })) }),
+    ],
+    ["REFUND_MIRROR_FAILED_REFUND", "REFUNDED", failedRefund, (s, by) => bumpPayment(s, "refundedAmountCents", by), (s) => ({ ...s, refunds: s.refunds.map((r) => ({ ...r, status: "succeeded" })) })],
+    ["REFUND_MIRROR_FAILED_REFUND", "OWED", failedRefund, (s, by) => bumpPayment(s, "refundedAmountCents", by), (s) => ({ ...s, refunds: s.refunds.map((r) => ({ ...r, status: "succeeded" })) })],
+    ["REFUND_MIRROR_LEGACY_SEED", "REFUNDED", legacySeed, (s, by) => bumpPayment(s, "refundedAmountCents", by), (s) => ({ ...s, transactions: s.transactions.map((t) => ({ ...t, reason: null })) })],
+    ["REFUND_MIRROR_LEGACY_SEED", "OWED", legacySeed, (s, by) => bumpPayment(s, "refundedAmountCents", by), (s) => ({ ...s, transactions: s.transactions.map((t) => ({ ...t, reason: null })) })],
+    ["V3_LEGACY_HAND_BACK", "REFUNDED", v3, (s, by) => bumpPayment(s, "refundedAmountCents", by), (s) => ({ ...s, booking: { ...s.booking, deletedAt: null } })],
+    [
+      "CHANGE_FEE_REVERSED_BY_CANCELLATION",
+      "CHANGE_FEE",
+      changeFeeTakenBack,
+      (s, by) => bumpPayment(s, "changeFeeCents", by),
+      (s) => ({ ...s, lines: s.lines.map((line) => (line.kind === "CHANGE_FEE" && line.anchorKind === "CANCELLATION" ? { ...line, anchorKind: "MODIFICATION" as const } : line)) }),
+    ],
+    ["RETAINED_REVIEW_SHARE", "ADDITIONAL", () => retainedShare(false), (s, by) => bumpPayment(s, "additionalAmountCents", by), withTasks("OPEN")],
+    ["IN_FLIGHT_HAND_BACK", "PRICE", () => cashCancelled("OPEN"), (s, by) => bumpLine(s, "CANCELLATION_FEE", by), onCard],
+    ["D2_DISMISSED_HAND_BACK", "PRICE", () => cashCancelled("DISMISSED"), (s, by) => bumpLine(s, "CANCELLATION_FEE", by), onCard],
+    [
+      "IN_FLIGHT_REFUND",
+      "PRICE",
+      () => cardCancelled(9_500, false),
+      (s, by) => bumpLine(s, "CANCELLATION_FEE", by),
+      (s) => ({ ...s, recoveryOperations: s.recoveryOperations.map((op) => ({ ...op, status: "FAILED" as const })) }),
+    ],
+    [
+      "V5_PLANNED_REFUND_SHORT",
+      "PRICE",
+      () => cardCancelled(9_000, true),
+      (s, by) => bumpLine(s, "CANCELLATION_FEE", by),
+      (s) => ({ ...s, cancellation: { ...s.cancellation!, refundMethod: "credit" } }),
+    ],
+    ["KNOWN_DEFECT_HISTORY", "PRICE", () => defect3791(), (s, by) => bumpLine(s, "CREDIT_ISSUED", by), (s) => ({ ...s, tasks: [] }), "#3791"],
+    ["KNOWN_DEFECT_HISTORY", "PRICE", () => defect3791(10_000), (s, by) => bumpLine(s, "CREDIT_ISSUED", by), (s) => ({ ...s, tasks: [] }), "#3791"],
+    ["KNOWN_DEFECT_HISTORY", "PRICE", defect3792, (s, by) => bumpLine(s, "BANK_RECEIPT", by), onCard, "#3792"],
   ];
 
-  it.each(cases)("%s on %s", (name, which, build, plusOneCent) => {
+  it.each(cases)("%s on %s", (name, which, build, plusCent, removeEvidence, detail) => {
     const classified = identity(build(), which);
     expect(classified.status).toBe("CLASSIFIED");
     expect(classified.explainedBy.map((component) => component.name)).toEqual([name]);
+    if (detail) expect(classified.explainedBy[0]?.detail).toBe(detail);
     expect(classified.explainedBy.reduce((sum, component) => sum + component.cents, 0)).toBe(classified.deltaCents);
-    const generic = identity(plusOneCent(build()), which);
-    expect(generic.status).toBe("DISAGREE");
-    expect(generic.explainedBy).toEqual([]);
-  });
-
-  it("names which defect a KNOWN_DEFECT_HISTORY booking carries", () => {
-    expect(identity(defect3791(), "PRICE").explainedBy[0]).toMatchObject({ detail: "#3791", cents: -5_000 });
-    expect(identity(defect3792(), "PRICE").explainedBy[0]).toMatchObject({ detail: "#3792", cents: 8_000 });
+    for (const by of [1, -1] as const) {
+      const generic = identity(plusCent(build(), by), which);
+      expect(generic.status, `${name} ${by > 0 ? "+" : "−"}1 cent`).toBe("DISAGREE");
+      expect(generic.explainedBy).toEqual([]);
+    }
+    // The evidence the component is computed from, taken away: the delta is
+    // unchanged, so a class that read the delta would still fire. It must not.
+    const bare = identity(removeEvidence(build()), which);
+    expect(bare.deltaCents, `${name}: removing evidence must not move the delta`).toBe(classified.deltaCents);
+    expect(bare.status, `${name} without its evidence`).toBe("DISAGREE");
   });
 
   it("an in-flight card refund planned short is both classes at once, summing exactly", () => {
@@ -598,6 +755,36 @@ describe("every named class lands in its class, and one cent more is a generic d
     const evaluation = evaluateBookingLedgerIdentities(retainedShare(true));
     expect(evaluation.identities.filter((result) => result.status !== "AGREE" && result.status !== "NOT_APPLICABLE")).toEqual([]);
     expect(evaluation.info.retainedCollectedCents).toBe(2_500);
+  });
+
+  it("RETAINED_REVIEW_SHARE does not swallow a stale ask for a share a closure re-price already carried", () => {
+    const shared = retainedShare(false);
+    const ledger = new Ledger();
+    ledger.lines = [...(shared.lines as Line[])];
+    const plan = planModificationChargeLines({
+      bookingId: B,
+      lodgeId: LODGE,
+      bookingModificationId: "m-rebase",
+      before: { guests: [guestSide("g1", [[D1, 5_000], [D2, 5_000]]), guestSide("g2", [[D1, 5_000], [D2, 5_000]])], promoAdjustmentCents: -1_000 },
+      after: { guests: [guestSide("g1", [[D1, 5_000], [D2, 7_500]]), guestSide("g2", [[D1, 5_000], [D2, 5_000]])], promoAdjustmentCents: -1_000 },
+      changeFeeCents: 0,
+      expectedCents: 2_500,
+      postedLines: ledger.reversible() as never,
+    });
+    if (plan.kind !== "lines") throw new Error(plan.reason);
+    ledger.post(plan.postings, LATER);
+    // The member has since paid the share another way; the ask is stale.
+    const transactions = [...shared.transactions, txn("t2", 2_500, { createdAt: LATER })];
+    settle(ledger, { ...shared, transactions }, false, LATER);
+    const stale = {
+      ...shared,
+      lines: ledger.lines,
+      transactions,
+      booking: { ...shared.booking, finalPriceCents: 21_500 },
+      modifications: [{ id: "m-rebase", modificationType: "PRICE_REBASE", priceDiffCents: 0, changeFeeCents: 0, createdAt: LATER }],
+      payment: payment({ amountCents: 21_500, additionalAmountCents: 2_500, additionalPaymentStatus: "PENDING" }),
+    };
+    expect(identity(stale, "ADDITIONAL")).toMatchObject({ status: "DISAGREE", columnCents: 2_500, ledgerCents: 0 });
   });
 
   it("GROUP_SETTLEMENT_OFF_LEDGER is a booking-level class, and a child with a transaction of its own is a coverage gap instead", () => {
@@ -622,17 +809,42 @@ describe("coverage: the gap before the back-post, named and holding the gate", (
     expect(evaluation.identities.find((result) => result.identity === "PRICE")?.status).toBe("COVERAGE");
   });
 
-  it("UNPOSTED_EDIT: an edit after confirmation that posted nothing, to the cent; one cent more is a disagreement", () => {
-    const subject = { ...cardPaid(), booking: { id: B, status: "PAID" as const, deletedAt: null, organiserSettled: false, finalPriceCents: 21_500 }, modifications: [{ id: "m9", priceDiffCents: 2_500, changeFeeCents: 0, createdAt: LATER }] };
+  it("UNPOSTED_EDIT: an edit after confirmation that posted nothing, to the cent; a cent either way, or the edit made before confirmation, is a disagreement", () => {
+    const subject = { ...cardPaid(), booking: { id: B, status: "PAID" as const, deletedAt: null, organiserSettled: false, finalPriceCents: 21_500 }, modifications: [{ id: "m9", modificationType: "BATCH_MODIFY", priceDiffCents: 2_500, changeFeeCents: 0, createdAt: LATER }] };
     expect(identity(subject, "PRICE")).toMatchObject({ status: "COVERAGE", deltaCents: 2_500 });
     expect(evaluateBookingLedgerIdentities(subject).coverage).toEqual(["UNPOSTED_EDIT"]);
-    expect(identity({ ...subject, booking: { ...subject.booking, finalPriceCents: 21_501 } }, "PRICE").status).toBe("DISAGREE");
+    for (const by of [1, -1]) expect(identity({ ...subject, booking: { ...subject.booking, finalPriceCents: 21_500 + by } }, "PRICE").status).toBe("DISAGREE");
+    expect(identity({ ...subject, modifications: [{ ...subject.modifications[0]!, createdAt: EARLIER }] }, "PRICE").status).toBe("DISAGREE");
   });
 
   it("UNPOSTED_CHANGE_FEE: a fee charged before confirmation has no line (#3611 V4)", () => {
-    const subject = { ...cardPaid(), payment: payment({ changeFeeCents: 500 }), modifications: [{ id: "m0", priceDiffCents: 0, changeFeeCents: 500, createdAt: EARLIER }] };
+    const subject = { ...cardPaid(), payment: payment({ changeFeeCents: 500 }), modifications: [{ id: "m0", modificationType: "BATCH_MODIFY", priceDiffCents: 0, changeFeeCents: 500, createdAt: EARLIER }] };
     expect(identity(subject, "CHANGE_FEE")).toMatchObject({ status: "COVERAGE", deltaCents: 500 });
-    expect(identity(bumpPayment(subject, "changeFeeCents"), "CHANGE_FEE").status).toBe("DISAGREE");
+    for (const by of [1, -1] as const) expect(identity(bumpPayment(subject, "changeFeeCents", by), "CHANGE_FEE").status).toBe("DISAGREE");
+    expect(identity({ ...subject, modifications: [] }, "CHANGE_FEE").status).toBe("DISAGREE");
+  });
+
+  it("UNPOSTED_CREDIT is a booking-level gap too: an unposted applied row on a booking no identity it changes applies to", () => {
+    const ledger = new Ledger();
+    const subject = row({
+      lines: [],
+      booking: { id: B, status: "PENDING", deletedAt: null, organiserSettled: false, finalPriceCents: 19_000 },
+      transactions: [txn("t1", 19_000)],
+      credits: [credit("c-applied", "BOOKING_APPLIED", -1_000)],
+      // The mirror never counted it either, so CREDIT_APPLIED reads 0 == 0.
+      payment: payment({ creditAppliedCents: 0 }),
+    });
+    settle(ledger, subject);
+    const evaluation = evaluateBookingLedgerIdentities({ ...subject, lines: ledger.lines });
+    expect(evaluation.identities.filter((result) => result.status !== "AGREE" && result.status !== "NOT_APPLICABLE")).toEqual([]);
+    expect(evaluation.coverage).toEqual(["UNPOSTED_CREDIT"]);
+  });
+
+  it("UNPOSTED_CREDIT: a credit row with no line, and without the row the same columns disagree", () => {
+    const missing = reductionCredited(false);
+    expect(evaluateBookingLedgerIdentities(missing).coverage).toEqual(["UNPOSTED_CREDIT"]);
+    expect(identity({ ...missing, credits: [] }, "REFUNDED").status).toBe("DISAGREE");
+    expect(identity({ ...missing, credits: [] }, "OWED").status).toBe("DISAGREE");
   });
 });
 
@@ -649,8 +861,7 @@ describe("integrity: what must hold of the lines whatever the columns say", () =
   });
 
   it("a reversal that is not the exact opposite of its target", () => {
-    const subject = cardPaid();
-    const capture = subject.lines.find((line) => line.kind === "CARD_CAPTURE")!;
+    const capture = cardPaid().lines.find((line) => line.kind === "CARD_CAPTURE")!;
     expect(kinds(withLine({ sign: -1, unitCents: 18_999, amountCents: -18_999, reversesLineId: capture.id, postingKey: `reversal:${capture.id}` }))).toEqual(["REVERSAL_NOT_OPPOSITE"]);
     expect(kinds(withLine({ sign: -1, amountCents: -19_000, reversesLineId: capture.id, postingKey: `reversal:${capture.id}` }))).toEqual([]);
   });
@@ -661,8 +872,11 @@ describe("integrity: what must hold of the lines whatever the columns say", () =
     expect(kinds({ ...subject, lines: [...subject.lines, { ...night, id: "twice", postingKey: "confirmation:again" }] })).toEqual(["DUPLICATE_LIVE_NIGHT"]);
   });
 
-  it("a key in no namespace the key builders make", () => {
+  it("a key in no namespace the key builders make, and a key on an anchor its namespace never posts under", () => {
     expect(kinds(withLine({ postingKey: "rogue:1", anchorId: "t1" }))).toContain("UNKNOWN_KEY_NAMESPACE");
+    const subject = cardPaid();
+    const capture = subject.lines.find((line) => line.kind === "CARD_CAPTURE")!;
+    expect(kinds({ ...subject, lines: subject.lines.map((line) => (line === capture ? { ...line, postingKey: "credit:t1" } : line)) })).toEqual(["KEY_ANCHOR_MISMATCH"]);
   });
 
   it("a live line whose source row is gone, or says another amount", () => {
@@ -671,21 +885,107 @@ describe("integrity: what must hold of the lines whatever the columns say", () =
     const drifted = creditAndCard();
     expect(kinds({ ...drifted, credits: [{ ...drifted.credits[0]!, amountCents: -3_999 }] })).toEqual(["SOURCE_DRIFT"]);
   });
+
+  it("a cancellation fee that is not the kept figure the CANCELLED event froze", () => {
+    const subject = cashCancelled("COMPLETED");
+    expect(kinds(subject)).toEqual([]);
+    expect(kinds({ ...subject, cancellation: { ...subject.cancellation!, keptCents: 9_499 } })).toEqual(["SOURCE_DRIFT"]);
+  });
+});
+
+describe("paging inside the snapshot", () => {
+  it("evaluates every booking exactly once across page boundaries, each credit row with the booking it belongs to", async () => {
+    const stored = ["a", "b", "c", "d", "e"].map((id) => ({
+      id,
+      status: "PENDING" as const,
+      deletedAt: null,
+      organiserSettled: false,
+      finalPriceCents: 0,
+      payment: null,
+      manualRefundTasks: [],
+      modifications: [],
+      paymentRecoveryOperations: [],
+      events: [],
+      ledgerLines: [],
+    }));
+    // Issued FROM b (page 1) though it names e (page 3); applied TO e though it names a.
+    const creditRows = [
+      { ...credit("x", "CANCELLATION_REFUND", 1_000), sourceBookingId: "b", appliedToBookingId: "e" },
+      { ...credit("y", "BOOKING_APPLIED", -500), appliedToBookingId: "e", sourceBookingId: "a" },
+    ];
+    const pages: string[][] = [];
+    const tx = {
+      booking: {
+        findMany: vi.fn(async ({ where, take }: { where: { id?: { gt: string } }; take: number }) => {
+          const page = stored.filter((booking) => !where.id || booking.id > where.id.gt).slice(0, take);
+          pages.push(page.map((booking) => booking.id));
+          return page;
+        }),
+      },
+      memberCredit: {
+        findMany: vi.fn(async ({ where }: { where: { OR: Array<{ type: unknown; appliedToBookingId?: { in: string[] }; sourceBookingId?: { in: string[] } }> } }) =>
+          creditRows.filter((credit) =>
+            where.OR.some((clause) =>
+              clause.appliedToBookingId
+                ? credit.type === "BOOKING_APPLIED" && clause.appliedToBookingId.in.includes(credit.appliedToBookingId ?? "")
+                : credit.type !== "BOOKING_APPLIED" && clause.sourceBookingId!.in.includes(credit.sourceBookingId ?? ""),
+            ),
+          ),
+        ),
+      },
+    };
+    const seen: Array<[string, string[]]> = [];
+    const evaluations = await evaluateBookingLedgerPages(tx as never, 2, (subject) => {
+      seen.push([subject.booking.id, subject.credits.map((credit) => credit.id)]);
+      return evaluateBookingLedgerIdentities(subject);
+    });
+    expect(pages).toEqual([["a", "b"], ["c", "d"], ["e"]]);
+    expect(evaluations.map((evaluation) => evaluation.bookingId)).toEqual(["a", "b", "c", "d", "e"]);
+    expect(seen).toEqual([["a", []], ["b", ["x"]], ["c", []], ["d", []], ["e", ["y"]]]);
+  });
+});
+
+describe("the owner's acknowledgements", () => {
+  it("an exact match moves a gate-holding class instance to acknowledged, and the gate opens", () => {
+    const summary = report([defect3791()], [{ bookingId: B, class: "KNOWN_DEFECT_HISTORY", cents: -5_000, reference: "written off, decision on #3583" }]);
+    expect(summary.acknowledged.matched).toHaveLength(1);
+    expect(summary.verdict).toBe("GATE_OPEN");
+  });
+
+  it("a mismatched amount is stale and still holds the gate; an entry matching nothing is reported", () => {
+    const stale = report([defect3791()], [{ bookingId: B, class: "KNOWN_DEFECT_HISTORY", cents: -4_999, reference: "x" }]);
+    expect(stale.acknowledged.stale).toEqual([expect.objectContaining({ cents: -4_999, foundCents: [-5_000] })]);
+    expect(stale.verdict).toBe("GATE_CLOSED");
+    expect(stale.gateClosedBecause).toContain("1 stale acknowledgement(s): the figure moved since it was signed off");
+    const nothing = report([cardPaid()], [{ bookingId: "no-such-booking", identity: "CAPTURED", cents: 1, reference: "x" }]);
+    expect(nothing.acknowledged.unmatched).toHaveLength(1);
+    expect(nothing.verdict).toBe("GATE_OPEN");
+  });
+
+  it("a disagreement acknowledged to the cent leaves the disagreements, one entry per identity", () => {
+    const drifted = bumpPayment(cardPaid(), "amountCents");
+    const once = report([drifted], [{ bookingId: B, identity: "CAPTURED", cents: 1, reference: "x" }]);
+    expect(once.disagreements.map((row) => row.identity)).toEqual(["OWED"]);
+    const both = report([drifted], [
+      { bookingId: B, identity: "CAPTURED", cents: 1, reference: "x" },
+      { bookingId: B, identity: "OWED", cents: -1, reference: "x" },
+    ]);
+    expect(both.disagreements).toEqual([]);
+    expect(both.verdict).toBe("GATE_OPEN");
+  });
 });
 
 describe("the verdict", () => {
-  const report = (...rows: BookingLedgerCensusRow[]) => summarizeBookingLedgerCensus(rows.map(evaluateBookingLedgerIdentities), null);
-
   it("GATE_OPEN on agreement and on classes that do not hold the gate", () => {
-    expect(report(cardPaid(), raisedWithAsk(), cashCancelled("OPEN"), retainedShare(false)).verdict).toBe("GATE_OPEN");
+    expect(report([cardPaid(), raisedWithAsk(), cashCancelled("OPEN"), retainedShare(false)]).verdict).toBe("GATE_OPEN");
   });
 
   it("closes on a disagreement, a coverage gap, an integrity finding, or a class the policy says holds it", () => {
-    expect(report(bumpPayment(cardPaid(), "amountCents")).verdict).toBe("GATE_CLOSED");
-    expect(report(row({ lines: [], transactions: [txn("t1", 19_000)] })).verdict).toBe("GATE_CLOSED");
+    expect(report([bumpPayment(cardPaid(), "amountCents")]).verdict).toBe("GATE_CLOSED");
+    expect(report([row({ lines: [], transactions: [txn("t1", 19_000)] })]).verdict).toBe("GATE_CLOSED");
     const capture = cardPaid().lines.find((line) => line.kind === "CARD_CAPTURE")!;
-    expect(report({ ...cardPaid(), lines: [...cardPaid().lines.filter((line) => line !== capture), { ...capture, postingKey: "rogue:1" }] }).verdict).toBe("GATE_CLOSED");
-    const defect = report(defect3791());
+    expect(report([{ ...cardPaid(), lines: [...cardPaid().lines.filter((line) => line !== capture), { ...capture, postingKey: "rogue:1" }] }]).verdict).toBe("GATE_CLOSED");
+    const defect = report([defect3791()]);
     expect(defect.verdict).toBe("GATE_CLOSED");
     expect(defect.gateClosedBecause).toEqual(["1 booking(s) in KNOWN_DEFECT_HISTORY, which holds the gate"]);
   });
@@ -693,15 +993,18 @@ describe("the verdict", () => {
   it("the two pending owner decisions are their recommended defaults", () => {
     expect(BOOKING_LEDGER_CENSUS_GATE_POLICY).toEqual({ knownDefectHistoryHoldsGate: true, groupSettlementOffLedgerHoldsGate: false });
     const child = row({ lines: [], booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: true, finalPriceCents: 19_000 } });
-    const summary = report(child);
+    const summary = report([child]);
     expect(summary.classes.GROUP_SETTLEMENT_OFF_LEDGER).toMatchObject({ holdsGate: false, bookings: 1 });
     expect(summary.verdict).toBe("GATE_OPEN");
   });
 
-  it("reports per identity applicable, agree, disagree, classified and coverage counts, and the #1620 line", () => {
+  it("reports per identity applicable, agree, disagree, classified and coverage counts, and the #1620 line with each booking", () => {
     const strand = { ...creditAndCard(), payment: payment({ source: "INTERNET_BANKING", amountCents: 15_000, creditAppliedCents: 4_000, status: "PENDING" }) };
-    const summary = report(cardPaid(), bumpPayment(cardPaid(), "amountCents"), nothingCaptured(), strand);
+    const summary = report([cardPaid(), bumpPayment(cardPaid(), "amountCents"), nothingCaptured(), strand]);
     expect(summary.identities.CAPTURED).toEqual({ applicable: 4, agree: 2, disagree: 1, classified: 1, coverage: 0 });
-    expect(summary.info.ibUnallocatedAppliedCredit).toEqual({ realized: { bookings: 0, cents: 0 }, pending: { bookings: 1, cents: 4_000 } });
+    expect(summary.info.ibUnallocatedAppliedCredit).toEqual({
+      realized: { bookings: 0, cents: 0, items: [] },
+      pending: { bookings: 1, cents: 4_000, items: [{ bookingId: B, cents: 4_000 }] },
+    });
   });
 });
