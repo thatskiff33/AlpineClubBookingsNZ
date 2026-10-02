@@ -792,12 +792,28 @@ the same transaction as the ledger row, and the PENDING row fences the inbound
 applied-credit repair until it converges, so an inbound sync cannot pull the
 given-back credit back up to Xero's figure. It never deallocates on a CANCELLED
 booking, whose invoice must not reopen. A review share then reaches Xero the way
-an ordinary price reduction does (`dispatchEditReviewAccountCreditXero`): an
-invoice-allocated modification credit note for what was given back, the
-unallocated account note only for what was minted, and on a cancelled booking
-one unallocated note for everything credited. Each note's correlation and Xero
-idempotency keys carry the review task (`reviewTaskKeyParts`), so sibling
-reviews of one edit raise a note each.
+an ordinary price reduction does (`dispatchEditReviewAccountCreditXero`), held
+to three invariants for an issued invoice: the invoice less its reduction notes
+is the booking's price, Xero's due is the app's owed, and the member's Xero
+credit (counting noteless rows minted when spent, #2717) is the app's. So an
+invoice-allocated modification credit note takes off the whole reduction
+(`reviewInvoiceReductionCents`: the re-price's drop on an unpaid booking, the
+agreed share on a covered one), the unallocated account note is raised only for
+minted credit, and on a cancelled booking nothing but that minted note is sent:
+given-back credit there is a noteless row, as the cancellation's own restore is.
+Each note's correlation and Xero idempotency keys carry the review task
+(`reviewTaskKeyParts`), so sibling reviews of one edit raise a note each, and a
+review's allocated note waits, returned to PENDING, while the payment's
+deallocation has not converged.
+
+**Deploy note (blue/green, #3791).** A review's note carries `reviewTaskId` in
+its outbox payload, which the previous release ignores: it would raise the note
+under the anchor's unscoped keys and without waiting for the deallocation.
+Before the old colour's workers stop, drain or pause the outbox's modification
+credit-note rows written by the new release (or stop the old workers before the
+new release completes its first financial review). The outbox claim filters on
+known queue types only, so the alternative is a queue type of its own for review
+notes; that was not added.
 
 **Retry taxonomy** (each layer is distinct — do not conflate when changing):
 

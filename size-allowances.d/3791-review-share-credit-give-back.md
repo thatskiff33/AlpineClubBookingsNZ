@@ -1,7 +1,7 @@
 # File-size allowances for #3791
 
 file: src/lib/member-credit.ts
-lines: 1075
+lines: 1088
 reason: the review share's give-back IS the clamp's give-back of applied credit,
   Xero deallocation step included (#3791 asks for one mechanism, not a second),
   so `giveBackAppliedCredit` has to sit beside the clamp, `lockMemberCreditLedger`
@@ -11,12 +11,13 @@ reason: the review share's give-back IS the clamp's give-back of applied credit,
   live in `edit-financial-review-account-credit.ts` instead.
 
 file: src/lib/xero-credit-notes.ts
-lines: 1164
+lines: 1186
 reason: the unallocated account-credit note's builder takes the review task
   (#3791 fix round) so a sibling review's note on the same edit is not mistaken
   for this one. The task scopes that builder's own link short-cut and Xero key,
   which live only here; the key parts themselves are shared from
-  `xero-review-task-key.ts`.
+  `xero-review-task-key.ts`. The second round keeps the amount and queue shape
+  in the executed payload so an operator retry can rebuild the note.
 
 file: src/lib/xero-operation-outbox.ts
 lines: 3268
