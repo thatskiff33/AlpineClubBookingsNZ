@@ -1575,7 +1575,9 @@ let observerClient: PrismaClient;
         } });
         await completeShare(second.taskId, 2_000);
 
-        expect((await queuedNotes()).map((note) => [note.queueType, note.cents, note.reviewTaskId])).toEqual([
+        // Ordered by review: under the frozen test clock both rows share one createdAt.
+        const byReview = (await queuedNotes()).sort((a, b) => Number(a.reviewTaskId === second.taskId) - Number(b.reviewTaskId === second.taskId));
+        expect(byReview.map((note) => [note.queueType, note.cents, note.reviewTaskId])).toEqual([
           ["MODIFICATION_CREDIT_NOTE", 2_000, first.taskId],
           ["MODIFICATION_CREDIT_NOTE", 2_000, second.taskId],
         ]);
