@@ -223,7 +223,8 @@ describe("every adult-supervision caller passes consent-carrying rows (#3770)", 
   const CALLERS: Record<string, string | null> = {
     // Persisted rows (stored consentStatus) or the planned party (memberGuestConsent).
     "src/app/api/admin/bookings/[id]/force-confirm/route.ts": "requiresAdultSupervisionReview(booking.guests)",
-    "src/app/api/bookings/[id]/guests/route.ts": "...normalizedNewGuests,",
+    // The rows (stored + planned), not the consent-free pricing view.
+    "src/app/api/bookings/[id]/guests/route.ts": "requiresAdultSupervisionReview([",
     "src/app/api/bookings/route.ts": "requiresAdultSupervisionReview(guestInputs)",
     "src/lib/booking-create-guests.ts": "requiresAdultSupervisionReview(args.guests)",
     "src/lib/booking-guest-removal-service.ts": "requiresAdultSupervisionReview(remainingGuests)",
