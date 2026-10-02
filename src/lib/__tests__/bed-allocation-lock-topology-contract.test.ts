@@ -300,6 +300,25 @@ describe("bed allocation lock topology", () => {
     ]);
   });
 
+  // #3792: the late capacity cancel restores applied credit, so it joins the
+  // member tier third and reads the deallocation fence before its first write.
+  it("locks global, lodge, then member credit before the late internet-banking capacity cancel restores credit", () => {
+    const reconcile = between(
+      source("src/lib/xero-inbound/invoice-paid-effects.ts"),
+      "export async function syncInternetBankingPaymentsForPaidInvoice(",
+      'type: "capacityFailed" as const',
+    );
+    expectInOrder(reconcile, [
+      "pg_advisory_xact_lock(1)",
+      "acquireLodgeCapacityLock(tx, fresh.booking.lodgeId)",
+      "if (!capacity.available && !lockedHasOverride)",
+      "lockMemberCreditLedger(lateCapacityRestoreMemberId, tx)",
+      "findUnconvergedAppliedCreditDeallocation(fresh.id, tx)",
+      "clearStaleCreditElection(tx, locked.booking)",
+      "restoreCreditFromBooking(lateCapacityRestoreMemberId, fresh.bookingId, tx)",
+    ]);
+  });
+
   it.each([
     ["src/lib/group-settlement.ts", "const candidateChildren"],
     [

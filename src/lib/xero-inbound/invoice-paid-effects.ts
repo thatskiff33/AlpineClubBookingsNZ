@@ -43,7 +43,8 @@ import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
-import { restoreCreditFromBooking } from "@/lib/member-credit";
+import { lockMemberCreditLedger, restoreCreditFromBooking } from "@/lib/member-credit";
+import { findUnconvergedAppliedCreditDeallocation, XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import {
   hasInvoiceClearingNote,
   retirePendingClearingNote,
@@ -1078,6 +1079,23 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           );
         }
         if (!capacity.available && !lockedHasOverride) {
+          // #3792: this cancel restores the booking's applied credit below, so
+          // it takes the per-member credit-ledger lock third (global -> lodge ->
+          // member, INV-LOCK-002) and, before its first write, refuses to run
+          // while an applied-credit deallocation has not converged, exactly as
+          // the hold release and the never-captured cancel do. Throwing rolls
+          // the whole claim back; the inbound event retries after its backoff.
+          // #3369: an organisation-owned booking has no credit ledger.
+          const lateCapacityRestoreMemberId = bookingOwner(locked.booking).memberId;
+          if (lateCapacityRestoreMemberId) {
+            await lockMemberCreditLedger(lateCapacityRestoreMemberId, tx);
+          }
+          const unconvergedDeallocation = await findUnconvergedAppliedCreditDeallocation(fresh.id, tx);
+          if (unconvergedDeallocation) {
+            throw new XeroAppliedCreditOperationBusyError(
+              `Applied-credit deallocation ${unconvergedDeallocation.id} is ${unconvergedDeallocation.status} for payment ${fresh.id}; the late capacity cancel waits for it to converge`,
+            );
+          }
           // #2265 (#2319 door 2). This booking is being cancelled and its cash
           // turned into account credit, so no consumer will ever read its
           // stored election again (both require PAYMENT_PENDING). Clear it here
@@ -1111,8 +1129,6 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           // capacity void (payment-reconciliation.ts), under the locks taken
           // above. The helper posts the restore's ledger line, and its unique
           // `restoredFromBookingId` makes a replay, or the orphan heal, a no-op.
-          // #3369: an organisation-owned booking has no credit ledger.
-          const lateCapacityRestoreMemberId = bookingOwner(locked.booking).memberId;
           const creditRestoredCents = lateCapacityRestoreMemberId
             ? await restoreCreditFromBooking(lateCapacityRestoreMemberId, fresh.bookingId, tx)
             : 0;
@@ -1523,7 +1539,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         checkIn: outcome.payment.booking.checkIn,
         checkOut: outcome.payment.booking.checkOut,
         amountCents: outcome.credited ? outcome.creditedCents : outcome.payment.amountCents,
-        errorMessage: `Internet Banking payment reconciled, but the lodge no longer had capacity. The booking was cancelled and member account credit was created.${outcome.creditedPartial && !outcome.aggregateCapped ? ` Only ${formatCents(outcome.creditedCents, format)} of the ${formatCents(outcome.payment.amountCents, format)} payment arrived as cash (mixed invoice) — the credit was sized at the cash portion; verify the allocation source on the invoice in Xero.` : ""}${outcome.aggregateCapped ? ` This invoice's cash was already partly credited to other Internet Banking payment(s) matched to the same invoice, so this booking's credit was capped at the invoice's remaining cash${outcome.credited ? ` (${formatCents(outcome.creditedCents, format)}, from a ${formatCents(outcome.payment.amountCents, format)} payment)` : " (nothing remained, so no credit was created)"}; the aggregate credit across all payments on one invoice can never exceed the invoice's cash. Verify the invoice's payments in Xero.` : ""}${outcome.cashUnverified ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero." : ""}`,
+        errorMessage: `Internet Banking payment reconciled, but the lodge no longer had capacity. The booking was cancelled and member account credit was created.${outcome.creditRestoredCents > 0 ? ` The ${formatCents(outcome.creditRestoredCents, format)} of account credit the booking had applied was restored to the member in full.` : ""}${outcome.creditedPartial && !outcome.aggregateCapped ? ` Only ${formatCents(outcome.creditedCents, format)} of the ${formatCents(outcome.payment.amountCents, format)} payment arrived as cash (mixed invoice) — the credit was sized at the cash portion; verify the allocation source on the invoice in Xero.` : ""}${outcome.aggregateCapped ? ` This invoice's cash was already partly credited to other Internet Banking payment(s) matched to the same invoice, so this booking's credit was capped at the invoice's remaining cash${outcome.credited ? ` (${formatCents(outcome.creditedCents, format)}, from a ${formatCents(outcome.payment.amountCents, format)} payment)` : " (nothing remained, so no credit was created)"}; the aggregate credit across all payments on one invoice can never exceed the invoice's cash. Verify the invoice's payments in Xero.` : ""}${outcome.cashUnverified ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero." : ""}`,
         paymentIntentId: invoiceId,
       }, format).catch((err) =>
         logger.error(
@@ -1543,7 +1559,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         outcome.credited ? outcome.creditedCents : outcome.payment.amountCents,
         format,
         "credit",
-        0,
+        // #3792: the applied credit the cancel restored, as the hold release passes it.
+        outcome.creditRestoredCents,
         outcome.payment.booking.lodgeId,
       ).catch((err) =>
         logger.error(

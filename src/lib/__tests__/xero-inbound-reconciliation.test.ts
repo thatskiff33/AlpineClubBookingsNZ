@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   memberCreditFindMany: vi.fn(),
   // #3792: the late capacity cancel's restore of the booking's applied credit.
   memberCreditCreateMany: vi.fn(),
+  // #3792: the inbound sync's restore-row read.
+  memberCreditFindUnique: vi.fn(),
   memberCreditUpdate: vi.fn(),
   memberCreditUpdateMany: vi.fn(),
   memberCreditNoteAllocationAggregate: vi.fn(),
@@ -466,6 +468,7 @@ describe("processStoredXeroInboundEvents", () => {
         memberCredit: {
           findFirst: mocks.memberCreditFindFirst,
           findMany: mocks.memberCreditFindMany,
+          findUnique: mocks.memberCreditFindUnique,
           create: mocks.memberCreditCreate,
           update: mocks.memberCreditUpdate,
           updateMany: mocks.memberCreditUpdateMany,
@@ -535,6 +538,7 @@ describe("processStoredXeroInboundEvents", () => {
     mocks.memberCreditCreate.mockResolvedValue({ id: "credit_1" });
     mocks.memberCreditFindMany.mockResolvedValue([]);
     mocks.memberCreditCreateMany.mockResolvedValue({ count: 1 });
+    mocks.memberCreditFindUnique.mockResolvedValue(null);
     mocks.linkFindMany.mockResolvedValue([]);
     mocks.linkFindFirst.mockResolvedValue(null);
     mocks.memberCreditUpdate.mockResolvedValue({ id: "credit_1" });
@@ -1921,7 +1925,8 @@ describe("processStoredXeroInboundEvents", () => {
     );
     // The enqueue's dedup lookups went through the transaction client.
     expect(mocks.txLinkFindFirst).toHaveBeenCalledTimes(1);
-    expect(mocks.txOperationFindFirst).toHaveBeenCalledTimes(1);
+    // #3792: plus the applied-credit deallocation fence the cancel reads first.
+    expect(mocks.txOperationFindFirst).toHaveBeenCalledTimes(2);
     // Not the paid path.
     expect(sendBookingConfirmedEmail).not.toHaveBeenCalled();
     // #3611: the cancel posts its ledger reversals in its own claim, keeping nothing.
@@ -1968,6 +1973,50 @@ describe("processStoredXeroInboundEvents", () => {
     expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
       expect.objectContaining({ bookingId: "booking_ib_cap", type: "CREDITED", amountCents: 8000 }),
     );
+    // The member is told about the restored credit, and so is the admin.
+    expect(sendBookingCancelledEmail).toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+      12345, expect.anything(), "credit", 8000, expect.anything(),
+    );
+    expect(sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ errorMessage: expect.stringContaining("credit the booking had applied was restored to the member in full") }),
+      expect.anything(),
+    );
+  });
+
+  // #3792: the restore runs under the per-member credit-ledger lock, taken
+  // third (global -> lodge -> member), and behind the deallocation fence.
+  it("takes the member credit-ledger lock before the restore on the late capacity cancel (#3792)", async () => {
+    mockCapacityFailInboundEvent();
+    mocks.memberCreditFindMany.mockResolvedValue([
+      { id: "credit_applied_cap", memberId: "mem_cap", type: "BOOKING_APPLIED", amountCents: -8000, appliedToBookingId: "booking_ib_cap" },
+    ]);
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    const memberLockCall = mocks.txExecuteRaw.mock.calls.findIndex((call: unknown[]) =>
+      call.includes("member-credit-ledger") && call.includes("mem_cap"),
+    );
+    expect(memberLockCall).toBeGreaterThanOrEqual(0);
+    expect(mocks.txExecuteRaw.mock.invocationCallOrder[memberLockCall]).toBeLessThan(
+      mocks.memberCreditCreateMany.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("refuses the late capacity cancel while an applied-credit deallocation has not converged, so the event retries (#3792)", async () => {
+    mockCapacityFailInboundEvent();
+    mocks.txOperationFindFirst.mockImplementation(async (args?: { where?: { queueType?: string } }) =>
+      args?.where?.queueType === "APPLIED_CREDIT_DEALLOCATION" ? { id: "dealloc-1", status: "FAILED" } : null,
+    );
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 0, failed: 1 });
+
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "CANCELLED" }) }),
+    );
+    expect(mocks.memberCreditCreateMany).not.toHaveBeenCalled();
+    expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+    expect(sendBookingCancelledEmail).not.toHaveBeenCalled();
   });
 
   it("restores nothing on an organisation-owned booking: there is no member credit ledger to restore into (#3792, #3369)", async () => {
