@@ -4226,10 +4226,15 @@ structural backstop underneath it. The Xero inbound applied-credit repair
 (`xero-inbound/credit-note-repairs.ts`) takes the **per-member credit ledger
 lock** (not `lock(1)`) so its `BOOKING_APPLIED` writes mutually exclude the
 credit spend engine, which takes the same key. Under that lock it also reads the
-booking's restore row: a provider de-allocation that would credit back a
-booking whose applied credit was already restored is refused and alerted
-(`notifyXeroSyncError`, `applied-credit-restored-booking-deallocation`), so no
-cancel path's restore can be paid twice (#3792, `INV-PAY-019`). The orphan-heal repair
+booking's restore row: for a booking whose applied credit was already restored,
+a provider allocation change in either direction (a de-allocation that would
+credit the member, or a raise that would debit them) writes no `BOOKING_APPLIED`
+row. After commit it is alerted (`notifyXeroSyncError`,
+`applied-credit-restored-booking-allocation-change`) and recorded as a critical
+`xero` audit row (`xero.allocation.restored-booking-change-refused`, one per
+booking, note, direction and amount), because the email alert is throttled to
+one an hour across every Xero error type. No cancel path's restore can be paid
+twice or charged back (#3792, `INV-PAY-019`). The orphan-heal repair
 (`orphaned-applied-credit-backfill.ts`) also takes the per-member credit ledger
 lock and re-derives an "already restored?" predicate.
 

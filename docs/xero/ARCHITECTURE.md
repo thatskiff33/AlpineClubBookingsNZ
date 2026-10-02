@@ -874,9 +874,11 @@ under retry, and a capped mint raises the same loud alert, never a silent
 overmint). The late-capacity-failure cancel also restores the booking's applied
 account credit in full, under the per-member credit-ledger lock and only once
 no applied-credit deallocation is unconverged (#3792). The inbound credit-note
-sync then never credits that booking again: a later de-allocation in Xero on a
-booking with a restore row raises `applied-credit-restored-booking-deallocation`
-through `notifyXeroSyncError` instead (`INV-PAY-019`).
+sync then leaves that booking's member ledger alone: a later de-allocation or
+raise in Xero on a booking with a restore row writes nothing, raises
+`applied-credit-restored-booking-allocation-change` through
+`notifyXeroSyncError`, and records a critical `xero` audit row, which survives
+that alert's one-an-hour throttle (`INV-PAY-019`).
 
 ```mermaid
 sequenceDiagram

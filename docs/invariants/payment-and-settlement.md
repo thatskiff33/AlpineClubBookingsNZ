@@ -854,8 +854,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   (`restoreCreditFromBooking`, `createCancellationCredit`'s held-as-credit
   refund, and the Xero inbound late-cash credit) all write that shape for one
   booking. Each branch's atomic status flip remains the primary single-flight (the never-captured and `PENDING` branches claim first under the booking advisory lock), but the unique key removes the cross-path lock-granularity dependence, so moving a credit-restoring path off the shared `lock(1)` can no longer double a restore. The inbound
-  credit-note sync never re-credits a restored booking's de-allocation; it
-  alerts instead (#3792).
+  credit-note sync leaves a restored booking's ledger alone, alerting instead
+  (#3792).
   A CANCELLED booking may legitimately hold consumed credit with NO restore row
   only when its payment captured money (0%-tier paid cancels write no restore
   row; held-as-credit refunds keep the applied rows) or settled without cash
