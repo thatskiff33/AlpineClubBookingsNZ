@@ -499,8 +499,8 @@ const ASK_MINTING_DOORS: readonly {
      * is the same rule, and it now folds in the unpaid balance of the ask its
      * mint is about to retire exactly as the other four do.
      */
-    door: "src/lib/edit-financial-review-charge.ts",
-    sizedIn: "src/lib/edit-financial-review-charge.ts",
+    door: "src/lib/edit-financial-review-charge-sync.ts",
+    sizedIn: "src/lib/edit-financial-review-charge-sync.ts",
     reachedBy: "sizeReviewChargeAsk",
     builtWith: "sizeReviewChargeAsk",
   },

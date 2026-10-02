@@ -341,9 +341,7 @@ export function classifyBookingInvoiceSyncFault(
     the one the stuck-state dashboard and the operator's reset already use, so a
     booking and the club-wide count cannot disagree about the same row.
   */
-  const stalled =
-    operation.status === "RUNNING" &&
-    isStaleRunningXeroOperation(operation.startedAt, context.now);
+  const stalled = isStaleRunningXeroOperation(operation, context.now);
 
   if (
     !stalled &&

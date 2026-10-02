@@ -65,6 +65,7 @@ export { MANUAL_PAYMENT_NOTE_MAX };
 
 export type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
 import type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
+import { MANUAL_REFUND_TASK_RESOLUTION_SELECT } from "@/lib/manual-refund-task-resolution-select";
 import type { ClubFormat } from "@/lib/club-format";
 import { persistLateCaptureApprovalRefundDebt } from "@/lib/late-capture-refund-approval";
 import { settleKeptLateCaptureRecordOnApproval } from "@/lib/xero-kept-late-capture-invoice";
@@ -104,12 +105,10 @@ import {
  * amount is written inside that same claim, so an amount can no more be applied
  * twice than a status can.
  *
- * Deliberately holds NO advisory lock, and that is `docs/CONCURRENCY_AND_LOCKING.md`
- * speaking rather than an omission: serialising this against the Stripe webhook
- * would require holding `pg_advisory_xact_lock(1)` across a provider round trip,
- * which the bounded-exception rule in that document forbids. The structural
- * `updateMany` claim is the whole single-flight guarantee, which is why #3030
- * added nothing to it.
+ * Holds NO advisory lock across a provider round trip (the Stripe refund and
+ * Xero leg run after the commit); the `updateMany` claim is the single-flight
+ * guarantee. Since #3582 an `EDIT_FINANCIAL_REVIEW` closure takes `lock(1)`
+ * first, inside the transaction only — `docs/CONCURRENCY_AND_LOCKING.md`.
  */
 export async function resolveManualRefundTask(
   input: ManualRefundTaskResolution,
@@ -146,74 +145,17 @@ export async function resolveManualRefundTask(
   const clubZone = await readClubTimeZoneOutsideRequest();
   const todayAtClub = clubToday(clubZone);
   const result = await prisma.$transaction(async (tx) => {
+    // #3740 (concurrency F1): only the immutable `kind` is read unlocked. An
+    // edit review takes lock(1) as this transaction's FIRST lock (INV-LOCK-002)
+    // and only then reads what picks its money route, so nothing that route
+    // depends on is stale. Why: docs/CONCURRENCY_AND_LOCKING.md.
+    const head = await tx.manualRefundTask.findUnique({ where: { id: taskId }, select: { kind: true } });
+    if (head?.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    }
     const task = await tx.manualRefundTask.findUnique({
       where: { id: taskId },
-      select: {
-        id: true,
-        bookingId: true,
-        paymentId: true,
-        amountCents: true,
-        // #3030: `raisedAmountCents` is read so the audit entry can say what the
-        // amount was when the task was raised, and `kind` because only an
-        // `EDIT_FINANCIAL_REVIEW` task may have its amount amended at completion
-        // (owner decision D2).
-        raisedAmountCents: true,
-        kind: true,
-        // #3639: which capture a late-capture approval refunds, and the
-        // sentence that names a #2700 task's capture.
-        lateCaptureApprovalIntentId: true,
-        partPaymentReviewPaymentId: true,
-        reason: true,
-        status: true,
-        // #3032: the settlement route needs three more facts, all read inside
-        // the same transaction as the claim. `reviewContext` carries the
-        // `BookingModification` anchor a confirmed amount settles against
-        // (D-3032-1); the task's own payment says whether the money went out on
-        // a card (Stripe) or by hand (internet banking); and the BOOKING's
-        // payment is what an account credit must be allocated against, which is
-        // a different question from whether the TASK sits on one.
-        reviewContext: true,
-        payment: { select: { source: true } },
-        booking: {
-          select: {
-            memberId: true,
-            lodgeId: true,
-            // #3170: the CHARGE direction mints an additional PaymentIntent
-            // through the same helper every ordinary price increase uses, and
-            // that helper needs a Stripe customer. Read here, under the same
-            // transaction as everything else, rather than re-queried after the
-            // commit.
-            member: {
-              select: {
-                id: true,
-                email: true,
-                firstName: true,
-                lastName: true,
-              },
-            },
-            organisation: { select: { name: true, email: true } },
-            // #3032: the booking's own status and its primary Xero invoice id,
-            // for `hasIssuedPrimaryXeroInvoice`. A completion that moves money on
-            // a booking whose invoice was issued has to correct that invoice, or
-            // the ledger and Xero disagree permanently.
-            status: true,
-            payment: {
-              select: {
-                id: true,
-                status: true,
-                amountCents: true,
-                refundedAmountCents: true,
-                xeroInvoiceId: true,
-                // #3170: a charge routes on the BOOKING's payment rather than the
-                // task's - the task's payment is the one money would come back
-                // OUT of, and a charge has none.
-                source: true,
-                stripeCustomerId: true,
-              },
-            },
-          },
-        },
-      },
+      select: MANUAL_REFUND_TASK_RESOLUTION_SELECT,
     });
     if (!task) {
       throw new ManualBookingPaymentError("Refund task not found.", 404);
@@ -446,9 +388,9 @@ export async function resolveManualRefundTask(
         //
         // What it DOES write here is the refund DEBT - booking-cancel's #1349
         // persist-the-plan-first pattern, on the same infrastructure. This
-        // completion holds no advisory lock (the locking guide forbids holding
-        // `lock(1)` across a provider round trip), so its single-flight guarantee
-        // is the claim above, which has committed by the time Stripe is called.
+        // completion's `lock(1)` (#3582) is released at commit - the locking
+        // guide forbids holding it across a provider round trip - so across the
+        // Stripe call its single-flight guarantee is the claim above.
         // Without a durable row a crash in that window would leave a COMPLETED
         // task, an untouched `refundedAmountCents` and NO trace that money was
         // owed - a worse state than the booking-edit path's, precisely because
@@ -492,8 +434,10 @@ export async function resolveManualRefundTask(
         ) {
           throw new ManualBookingPaymentError("That is more than was ever captured on this payment — check the amount against the booking's payment history.", 400);
         }
-        // #3032: this completion holds no advisory lock, so a concurrent writer
-        // on the same payment can move the ledger under it. The compare-and-set
+        // #3032: a lock-free writer on the same payment (the charge.refunded
+        // sync; a legacy kind's completion takes no key at all) can still move
+        // the ledger under this completion - an edit review's `lock(1)` (#3582)
+        // excludes only edits and settles. The compare-and-set
         // inside `applyLocalRefundAllocation` retries against the fresh total
         // (#3640) and refuses loudly only when that writer used the headroom
         // this completion needed; the transaction rolls back, so the task is
@@ -561,6 +505,7 @@ export async function resolveManualRefundTask(
         hasIssuedXeroInvoice,
         settlementRoute,
         settlementAmountCents: settlement?.amountCents ?? null,
+        settlementDirection: settlement ? settlementDirection : null,
         store: tx,
       });
     }

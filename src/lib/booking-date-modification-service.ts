@@ -150,12 +150,13 @@ import {
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
+import { computeModificationPricing } from "@/lib/booking-modification-pricing";
 import {
-  computeModificationPriceLines,
-  diffBookingPricing,
   loadModificationLinesAuditFields,
   pricingSideFromPriceBreakdown,
   pricingSideFromStoredGuests,
+  pricingSideFromWrittenGuests,
 } from "@/lib/booking-modification-lines";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -1281,17 +1282,16 @@ export async function modifyBookingDates({
      * were rewritten above) against the breakdown it priced, index-aligned
      * with `guestsForPricing`. A parked edit moved no money and stores none.
      */
-    const priceLines = parked
-      ? null
-      : await computeModificationPriceLines(
+    const { priceLines, sides: pricingSides } = parked
+      ? { priceLines: null, sides: null }
+      : await computeModificationPricing(
           { bookingId, site: "date-change" },
-          () =>
-            diffBookingPricing(
-              pricingSideFromStoredGuests(booking.guests, {
-                promoAdjustmentCents: booking.promoAdjustmentCents,
-                promoCode: booking.promoRedemption?.promoCode.code ?? null,
-              }),
-              pricingSideFromPriceBreakdown(
+          () => ({
+            before: pricingSideFromStoredGuests(booking.guests, {
+              promoAdjustmentCents: booking.promoAdjustmentCents,
+              promoCode: booking.promoRedemption?.promoCode.code ?? null,
+            }),
+            after: pricingSideFromPriceBreakdown(
                 booking.guests.map((g) => ({
                   guestKey: g.id,
                   name: `${g.firstName} ${g.lastName}`.trim(),
@@ -1304,8 +1304,8 @@ export async function modifyBookingDates({
                     : (booking.promoRedemption?.promoCode.code ?? null),
                 },
               ),
-              priceDiffCents,
-            ),
+          }),
+          priceDiffCents,
           logger,
         );
 
@@ -1343,6 +1343,18 @@ export async function modifyBookingDates({
         changeFeeCents,
         ...(priceLines ? { priceLines } : {}),
       },
+    });
+
+    // #3582: the same before and after, per night, on the booking ledger —
+    // under the `lock(1)` this transaction took first. A parked change posts
+    // nothing (`INV-MOD-040`); its review's closure does.
+    await postModificationLedgerLines({
+      store: tx,
+      bookingId,
+      lodgeId: booking.lodgeId,
+      bookingModification,
+      sides: pricingSides,
+      site: "date-change",
     });
 
     /**
@@ -2141,6 +2153,28 @@ export async function adminShiftBookingDates({
         priceDiffCents: 0,
         changeFeeCents: 0,
       },
+    });
+
+    // #3741: a shift moves every night, so it posts like any other edit door —
+    // each old-date night's live line reversed, each new-date night posted,
+    // netting to the row's zero — under the `lock(1)` taken first above. Both
+    // sides are read as written rows: a shift sells nothing, it re-dates each
+    // line at its own figure, and the planner still refuses a live line whose
+    // figure is not the stored price (`LIVE_LINE_DISAGREES`).
+    const promo = { promoAdjustmentCents: booking.promoAdjustmentCents };
+    await postModificationLedgerLines({
+      store: tx,
+      bookingId,
+      lodgeId: booking.lodgeId,
+      bookingModification,
+      sides: {
+        before: pricingSideFromWrittenGuests(booking.guests, promo),
+        after: pricingSideFromWrittenGuests(
+          translatedGuests.map((entry) => ({ ...entry.guest, nights: entry.nights })),
+          promo,
+        ),
+      },
+      site: "admin-date-shift",
     });
 
     await assertBookingEnvelopeInvariants(tx);
