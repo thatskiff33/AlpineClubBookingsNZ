@@ -960,6 +960,13 @@ describe("consent columns have exactly one writer", () => {
     // writes no consent column.
     "src/lib/subscription-lockout-enforcement.ts":
       "the shared participant mapper reads consent presence so a pending invite cannot stand in as the paid-up adult member",
+    // #3770, "only agreed adults count": READERS that state each planned row's
+    // consent (`consentStatus: guestConsentStatus(guest)`) for the
+    // adult-supervision rule. They compose no consent shape and write nothing.
+    "src/app/api/bookings/route.ts":
+      "the create route states each planned row's consent for the adult-supervision pre-flight",
+    "src/lib/booking-create-guests.ts":
+      "the create services' review gate states each planned row's consent for the adult-supervision rule",
     // The edit PREVIEW. A READER: it maps the rows already on the booking to
     // their stored `consentStatus` so the preview refuses exactly what the save
     // refuses. It persists nothing at all — it is a quote.
