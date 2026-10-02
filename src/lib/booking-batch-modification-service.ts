@@ -91,6 +91,10 @@ import {
   type PromoChangeNotAppliedNotice,
 } from "@/lib/promo-change-not-applied";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import {
+  enqueueGroupSettlementChildRefundRecovery,
+  runPaymentRecoveryOperationNow,
+} from "@/lib/payment-recovery";
 import { prisma } from "@/lib/prisma";
 import {
   withOptionalTransaction,
@@ -227,6 +231,8 @@ type BatchModificationTransactionResult =
     xeroRefundAmountCents: number;
     settlementMethod: BookingModificationSettlementMethod | null;
     policyRetainedAmountCents: number;
+    /** A combined-Stripe child refund debt persisted with this edit. */
+    organiserSettlementRefundRecoveryId: string | null;
     guestNameUpdates: ResolvedGuestNameUpdate[];
     guestIdentityChanged: boolean;
     identityOnlyModification: boolean;
@@ -988,6 +994,16 @@ export async function modifyBookingBatch({
       role: actor.role,
       actorId: actor.id,
     });
+    const organiserSettlement =
+      booking.organiserSettled && booking.parentBookingId
+        ? await tx.groupBookingSettlement.findFirst({
+            where: {
+              groupBooking: { organiserBookingId: booking.parentBookingId },
+              source: PaymentSource.STRIPE,
+              stripePaymentIntentId: { not: null },
+            },
+          })
+        : null;
     // #3232: the ordinary lock-date decision (#1729's narrow guard) for a CALLER
     // that owns the transaction, and only for one. Such a caller has no position
     // outside the transaction — it opened it before calling — so the decision has
@@ -1560,8 +1576,20 @@ export async function modifyBookingBatch({
       db: tx,
       todayAtClub,
     });
+    // An organiser-settled child is paid by the organiser's combined intent.
+    // Its owner has no independent cash or credit entitlement: reductions are
+    // always returned to the organiser's card, and no child account credit is
+    // ever minted.
+    if (organiserSettlement && input.settlementMethod === "credit") {
+      throw new ApiError(
+        "This group booking was paid by its organiser. Any reduction is returned to the organiser's card.",
+        400,
+      );
+    }
     if (settlementOptions?.requiresSettlementMethod && !input.settlementMethod) {
+      if (!organiserSettlement) {
       throw new BookingModificationSettlementMethodRequiredError();
+      }
     }
 
     // #3276: when the promotion engine did NOT run and the edit is still
@@ -1662,7 +1690,7 @@ export async function modifyBookingBatch({
       priceDiffCents,
       changeFeeCents,
       settlementOptions,
-      settlementMethod: input.settlementMethod,
+      settlementMethod: organiserSettlement ? "card" : input.settlementMethod,
     });
 
     const lifecycle = await applyLifecycleTransitions(tx, {
@@ -1989,6 +2017,57 @@ export async function modifyBookingBatch({
       );
     }
 
+    // Persist the combined-Stripe debt before this edit commits.  This is the
+    // reservation that prevents two child reductions from both promising the
+    // same remaining captured cents while their post-commit provider calls race.
+    let organiserSettlementRefundRecoveryId: string | null = null;
+    if (
+      organiserSettlement &&
+      payments.pendingRefundAmountCents > 0 &&
+      booking.payment &&
+      organiserSettlement.stripePaymentIntentId
+    ) {
+      const [providerEvidence, reservedDebt] = await Promise.all([
+        tx.paymentRefund.aggregate({
+          where: {
+            stripePaymentIntentId: organiserSettlement.stripePaymentIntentId,
+            status: { notIn: ["failed", "canceled"] },
+          },
+          _sum: { amountCents: true },
+        }),
+        tx.paymentRecoveryOperation.aggregate({
+          where: {
+            paymentIntentId: organiserSettlement.stripePaymentIntentId,
+            idempotencyKey: { startsWith: "group_settlement_child_refund_recovery_" },
+          },
+          _sum: { amountCents: true },
+        }),
+      ]);
+      const committedOrReserved = Math.max(
+        providerEvidence._sum.amountCents ?? 0,
+        reservedDebt._sum.amountCents ?? 0,
+      );
+      if (
+        committedOrReserved + payments.pendingRefundAmountCents >
+        organiserSettlement.amountCents
+      ) {
+        throw new ApiError(
+          "The organiser's combined payment no longer has enough captured value for this reduction.",
+          409,
+        );
+      }
+      const debt = await enqueueGroupSettlementChildRefundRecovery({
+        bookingId,
+        paymentId: booking.payment.id,
+        settlementId: organiserSettlement.id,
+        bookingModificationId: bookingModification.id,
+        paymentIntentId: organiserSettlement.stripePaymentIntentId,
+        amountCents: payments.pendingRefundAmountCents,
+        store: tx,
+      });
+      organiserSettlementRefundRecoveryId = debt.id;
+    }
+
     // Fire the deferred envelope constraint triggers here so a violation is
     // attributed to this service instead of the transaction's COMMIT.
     //
@@ -2112,6 +2191,7 @@ export async function modifyBookingBatch({
       xeroRefundAmountCents: payments.xeroRefundAmountCents,
       settlementMethod: payments.settlementMethod,
       policyRetainedAmountCents: payments.policyRetainedAmountCents,
+      organiserSettlementRefundRecoveryId,
       guestNameUpdates,
       // #2337: a link changes who a guest row is FOR (placeholder → member), so
       // it is an identity change for the Xero name-sync the same as a rename.
@@ -2268,7 +2348,12 @@ export async function modifyBookingBatch({
       supersededPrimaryPaymentIntents: result.supersededPrimaryPaymentIntents,
     });
 
-    const stripeRefundId = await executeBookingModificationRefund({
+    const stripeRefundId = result.organiserSettlementRefundRecoveryId
+      ? (await runPaymentRecoveryOperationNow(
+          result.organiserSettlementRefundRecoveryId,
+          format,
+        ), undefined)
+      : await executeBookingModificationRefund({
       format,
       bookingId,
       result,

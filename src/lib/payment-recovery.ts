@@ -30,6 +30,7 @@ import {
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
 import {
+  enqueueXeroRefundCreditNoteOperation,
   attachPaymentIntentToWaitingSupplementaryInvoiceOperations,
   findWaitingSupplementaryInvoiceOperationForPaymentIntent,
   // Type-only, so it adds nothing to this module's runtime import graph.
@@ -50,6 +51,60 @@ import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
 
 const STALE_PROCESSING_MINUTES = 30;
+
+// A combined organiser settlement has no child PaymentTransaction.  The child
+// still needs an independently replayable provider refund and ledger row, so
+// its durable debt is a normal recovery operation with this private namespace.
+// The operation is written by the edit transaction before any Stripe call.
+const GROUP_SETTLEMENT_CHILD_REFUND_RECOVERY_PREFIX =
+  "group_settlement_child_refund_recovery_";
+
+export function buildGroupSettlementChildRefundRecoveryIdempotencyKey({
+  settlementId,
+  bookingModificationId,
+}: {
+  settlementId: string;
+  bookingModificationId: string;
+}) {
+  return `${GROUP_SETTLEMENT_CHILD_REFUND_RECOVERY_PREFIX}${settlementId}_${bookingModificationId}`;
+}
+
+export async function enqueueGroupSettlementChildRefundRecovery({
+  bookingId,
+  paymentId,
+  settlementId,
+  bookingModificationId,
+  paymentIntentId,
+  amountCents,
+  store = prisma,
+}: {
+  bookingId: string;
+  paymentId: string;
+  settlementId: string;
+  bookingModificationId: string;
+  paymentIntentId: string;
+  amountCents: number;
+  store?: PaymentRecoveryStore;
+}) {
+  const idempotencyKey = buildGroupSettlementChildRefundRecoveryIdempotencyKey({
+    settlementId,
+    bookingModificationId,
+  });
+  return store.paymentRecoveryOperation.upsert({
+    where: { idempotencyKey },
+    create: {
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      bookingId,
+      paymentId,
+      paymentIntentId,
+      amountCents,
+      idempotencyKey,
+    },
+    // The modification id is immutable, therefore a repeat request must retain
+    // the debt originally frozen under the global lock rather than reprice it.
+    update: {},
+  });
+}
 /**
  * How many stale `PROCESSING` rows one sweep hands back (#3220 fix round). See
  * `resetStaleProcessingOperations`: each row now costs an alert and possibly a
@@ -1945,6 +2000,15 @@ async function processBookingModificationRefundOperation(
   operation: PaymentRecoveryOperation,
   format: ClubFormat,
 ) {
+  if (
+    operation.idempotencyKey.startsWith(
+      GROUP_SETTLEMENT_CHILD_REFUND_RECOVERY_PREFIX,
+    )
+  ) {
+    await processGroupSettlementChildRefundOperation(operation);
+    await completePaymentRecoveryOperation(operation.id);
+    return;
+  }
   // Group settlement refund replay (F3, #1351): dispatch on the key prefix
   // BEFORE any payment lookup — these operations anchor paymentId to the
   // organiser's own payment purely for the schema FK, and deriving a refund
@@ -2164,6 +2228,100 @@ async function processBookingModificationRefundOperation(
   }
 
   await completePaymentRecoveryOperation(operation.id);
+}
+
+/**
+ * Execute one organiser-settled child's frozen refund debt.  A combined
+ * PaymentIntent is shared by several child Payments, so this deliberately does
+ * not use PaymentTransaction allocation: there is no child transaction to
+ * attribute.  Stripe gets one idempotent call per child operation and the
+ * resulting provider refund is recorded against that child's Payment before its
+ * refund mirror or Xero work can advance.
+ */
+async function processGroupSettlementChildRefundOperation(
+  operation: PaymentRecoveryOperation,
+) {
+  const payment = await prisma.payment.findUnique({
+    where: { id: operation.paymentId },
+    include: { booking: true },
+  });
+  if (!payment || !payment.booking.organiserSettled || !payment.booking.parentBookingId) {
+    throw new Error("Organiser-child refund recovery has no organiser-settled child payment");
+  }
+
+  const settlement = await prisma.groupBookingSettlement.findFirst({
+    where: {
+      stripePaymentIntentId: operation.paymentIntentId,
+      groupBooking: { organiserBookingId: payment.booking.parentBookingId },
+    },
+  });
+  if (!settlement) {
+    throw new Error("Organiser-child refund recovery has no matching combined Stripe settlement");
+  }
+
+  const refund = await processRefund({
+    paymentIntentId: operation.paymentIntentId,
+    amountCents: operation.amountCents,
+    metadata: {
+      bookingId: operation.bookingId,
+      groupBookingSettlementId: settlement.id,
+      reason: "organiser_child_reduction",
+    },
+    idempotencyKey: `group_child_refund_${operation.id}`,
+  });
+
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    await recordStripeRefundLedgerEntry({
+      paymentId: payment.id,
+      refund,
+      fallbackPaymentIntentId: operation.paymentIntentId,
+      store: tx,
+    });
+    const recorded = await tx.paymentRefund.aggregate({
+      where: {
+        paymentId: payment.id,
+        stripePaymentIntentId: operation.paymentIntentId,
+        status: { notIn: ["failed", "canceled"] },
+      },
+      _sum: { amountCents: true },
+    });
+    const refundedAmountCents = Math.min(
+      payment.amountCents,
+      Math.max(payment.refundedAmountCents, recorded._sum.amountCents ?? 0),
+    );
+    await tx.payment.update({
+      where: { id: payment.id },
+      data: {
+        refundedAmountCents,
+        status: refundStatusFor(payment.amountCents, refundedAmountCents),
+      },
+    });
+    await enqueueXeroRefundCreditNoteOperation(payment.id, operation.amountCents, {
+      store: tx,
+      refundMethod: "card",
+    });
+
+    const combined = await tx.paymentRefund.aggregate({
+      where: {
+        stripePaymentIntentId: operation.paymentIntentId,
+        status: { notIn: ["failed", "canceled"] },
+      },
+      _sum: { amountCents: true },
+    });
+    const combinedRefundedCents = combined._sum.amountCents ?? 0;
+    if (combinedRefundedCents > settlement.amountCents) {
+      throw new Error("Combined organiser settlement refund evidence exceeds captured amount");
+    }
+    await tx.groupBookingSettlement.updateMany({
+      where: { id: settlement.id, status: { in: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED] } },
+      data: {
+        status: combinedRefundedCents >= settlement.amountCents
+          ? PaymentStatus.REFUNDED
+          : PaymentStatus.PARTIALLY_REFUNDED,
+      },
+    });
+  });
 }
 
 /**
