@@ -1202,9 +1202,8 @@ export async function POST(request: NextRequest) {
         ),
       );
       if (!preflight.available) {
-        return capacityExceededResponse(
-          getCapacityFullNights(preflight.nightDetails),
-        );
+        const fullNights = getCapacityFullNights(preflight.nightDetails);
+        return capacityExceededResponse(fullNights);
       }
     }
     try {
