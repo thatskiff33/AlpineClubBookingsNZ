@@ -3399,9 +3399,14 @@ booking-ledger lines. No provider call runs inside it.
 transaction rows.** Every writer that holds more than one of them takes the
 `Payment` row first through `lockPaymentForRefundedTotal`: the card-refund
 writer, `applyLocalRefundAllocation` (joining the caller's transaction), and the
-paid-path cancel claim, right after its post-lock re-read and before the #1491
-fold (earlier still when #3643's part-payment recognition writes the receipt:
-`recordPartPaymentInClaim` takes it before that transaction-row write). The first version of this writer took the transaction row and then the
+paid-path cancel claim, right after its lodge capacity lock and before #3643's
+part-payment recognition, its eligibility re-check and the #1491 fold. The claim
+then re-reads the `Payment` row under that lock (#3793): the card-refund writers
+take no advisory lock, so the payment read with the booking under `lock(1)` can
+already miss a dashboard refund, and only its id is used; every figure the
+refund is tiered off comes from the re-read. Proved by
+`paid-cancel-refunded-total-race.realdb.test.ts`. The first version of this
+writer took the transaction row and then the
 `Payment` row (its aggregate), while a cancel with an unpaid top-up takes the
 `Payment` row (failing the top-up) and then the transaction row (its credit
 allocation): a deadlock, proved and closed by
