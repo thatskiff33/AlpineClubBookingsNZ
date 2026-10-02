@@ -174,6 +174,14 @@ export type EditReviewSettlementRoute =
        * behind them and no invoice line to correct.
        */
       bookingModificationId: string | null;
+      /**
+       * #3536 (`INV-PAY-101`): the payment behind the hand-back was marked paid
+       * by hand (`Payment.manuallyMarkedPaidAt`), which is how the club records
+       * cash, so the money goes back in cash. Present only when true. It changes
+       * the words on the Xero note and nothing else: the ledger line and the
+       * settlement still treat the hand-back exactly as before.
+       */
+      handedBackInCash?: true;
     }
   | {
       kind: "account-credit";
@@ -247,6 +255,8 @@ export type EditReviewSettlementTask = {
        */
       source: PaymentSource;
       stripeCustomerId: string | null;
+      /** #3536: set when an officer recorded the payment by hand (cash). */
+      manuallyMarkedPaidAt?: Date | null;
     } | null;
     /**
      * #3170: for `findOrCreateCustomer` when a charge has to mint a Stripe
@@ -453,6 +463,12 @@ export async function chooseEditReviewSettlementRoute({
       kind: "local-allocation",
       paymentId: settlementPaymentId,
       bookingModificationId,
+      // #3536: words only. The booking has one payment, so the one the money
+      // comes back out of is the booking's own when the ids agree.
+      ...(task.booking.payment?.id === settlementPaymentId &&
+      task.booking.payment.manuallyMarkedPaidAt
+        ? { handedBackInCash: true as const }
+        : {}),
     };
   }
 

@@ -39,7 +39,7 @@ import {
 } from "@/lib/xero-sync";
 import logger from "@/lib/logger";
 import { CLUB_NAME } from "@/config/club-identity";
-import { resolveRefundNoteMethod } from "@/lib/xero-refund-method";
+import { readModificationNoteWording, resolveRefundNoteMethod } from "@/lib/xero-refund-method";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
 import {
   readBookingClearingNoteRetryInput,
@@ -1740,6 +1740,11 @@ export async function retryXeroSyncOperation(
       // `INV-PAY-101`: both payload shapes carry the method under one key; the
       // execution-time shape is not the typed queued payload, so it is read raw.
       const modificationRefundMethod = readCashRefundMethod(asRecord(operation.requestPayload));
+      // #3536: the two booking-edit wordings ride beside the method, so a retry
+      // says what the original attempt would have said.
+      const { noteWording: modificationNoteWording } = readModificationNoteWording(
+        asRecord(operation.requestPayload),
+      );
       await xero.createXeroCreditNoteForModification({
         bookingId: modification.bookingId,
         refundAmountCents,
@@ -1747,6 +1752,7 @@ export async function retryXeroSyncOperation(
         createdByMemberId,
         repairExistingLink: true,
         ...(modificationRefundMethod ? { refundMethod: modificationRefundMethod } : {}),
+        ...(modificationNoteWording ? { noteWording: modificationNoteWording } : {}),
         format,
       });
       return { message: "Retried Xero modification credit note creation." };

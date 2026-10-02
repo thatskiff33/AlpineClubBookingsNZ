@@ -14,12 +14,14 @@ import {
   buildRefundPaymentReference,
   defaultRefundMethodForPaymentSource,
   describeRefundMethod,
+  INVOICE_CORRECTION_WORDING,
   modificationNoteWording,
   parseRefundMethod,
   readModificationNoteWording,
   REFUND_METHOD_WORDING,
   REFUND_METHODS,
   refundMethodForSettlementMethod,
+  REFUNDED_IN_CASH_WORDING,
   refundSettlementMappingKey,
   settledModificationNoteWording,
   UNPAID_BALANCE_CLEARING_WORDING,
@@ -125,6 +127,54 @@ describe("the unpaid-invoice clearing wording (INV-PAY-017)", () => {
   });
 });
 
+/**
+ * #3536 (`INV-PAY-101`): the two wordings the owner added for booking-edit
+ * credit notes. Not refund methods; they ride beside one and change no account.
+ */
+describe("the booking-edit wordings (#3536)", () => {
+  it("are the owner's exact words, and neither is a refund method", () => {
+    expect(INVOICE_CORRECTION_WORDING).toBe("Invoice correction — nothing refunded");
+    expect(REFUNDED_IN_CASH_WORDING).toBe("Refunded in cash");
+    expect(REFUND_METHODS).not.toContain("cash");
+    expect(
+      buildRefundDocumentDescription({
+        method: "invoice-correction",
+        bookingId: "cmabcdefgh123",
+        modificationId: "cmmodific123",
+      }),
+    ).toBe("Invoice correction — nothing refunded - Booking cmabcdef - booking change cmmodifi");
+    expect(buildRefundDocumentReference({ method: "cash", bookingId: "cmabcdefgh123" })).toBe(
+      "Refunded in cash - Booking cmabcdef",
+    );
+  });
+
+  it("travel through the stored payload and a replay unchanged, beside the method where there is one", () => {
+    expect(modificationNoteWording({ noteWording: "invoice-correction" })).toBe("invoice-correction");
+    expect(modificationNoteWording({ refundMethod: "internet-banking", noteWording: "cash" })).toBe(
+      "cash",
+    );
+    // What a built note records carries no invented card refund beside a correction.
+    expect(settledModificationNoteWording({ noteWording: "invoice-correction" })).toEqual({
+      noteWording: "invoice-correction",
+    });
+    const cash = { refundMethod: "internet-banking", noteWording: "cash" } as const;
+    expect(readModificationNoteWording(settledModificationNoteWording(cash))).toEqual(cash);
+  });
+
+  it("are read by one rule: a row without the field keeps its words, and a stray value is ignored", () => {
+    expect(readModificationNoteWording({ refundMethod: "internet-banking" })).toEqual({
+      refundMethod: "internet-banking",
+    });
+    expect(modificationNoteWording({ refundMethod: "internet-banking" })).toBe("internet-banking");
+    expect(readModificationNoteWording({ noteWording: "refund" })).toEqual({});
+    expect(readModificationNoteWording({ noteWording: 3 })).toEqual({});
+    // A clearing note names no other wording beside it.
+    expect(
+      readModificationNoteWording({ clearsUnpaidInvoice: true, noteWording: "cash" }),
+    ).toEqual({ clearsUnpaidInvoice: true });
+  });
+});
+
 describe("where the method comes from when nobody said", () => {
   it("reads a Stripe payment as a card refund and anything else as a bank transfer", () => {
     expect(defaultRefundMethodForPaymentSource(PaymentSource.STRIPE)).toBe("card");
@@ -194,6 +244,9 @@ describe("nobody else spells the wording (INV-SSOT)", () => {
       UNPAID_INVOICE_CLEARING_WORDING,
       // #3643: the partly-paid booking's clearing note.
       UNPAID_BALANCE_CLEARING_WORDING,
+      // #3536: the two booking-edit wordings.
+      INVOICE_CORRECTION_WORDING,
+      REFUNDED_IN_CASH_WORDING,
     ]) {
       // Any quoting counts: no lint rule pins double quotes, so a copy in
       // single quotes or a template literal is still a copy.

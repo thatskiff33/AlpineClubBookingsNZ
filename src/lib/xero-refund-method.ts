@@ -20,7 +20,8 @@
  *
  * Pure: no database, no provider, no clock. The three strings below are the
  * owner's exact wording (20 September 2026); with the unpaid-invoice clearing
- * wording (#3535) nothing else may spell them — `xero-refund-method.test.ts`
+ * wording (#3535) and the two booking-edit wordings (#3536) nothing else may
+ * spell them — `xero-refund-method.test.ts`
  * holds a census over `src/lib`, where every Xero document is built.
  */
 
@@ -60,9 +61,30 @@ export const UNPAID_INVOICE_CLEARING_WORDING = "Invoice cleared - booking not pa
  */
 export const UNPAID_BALANCE_CLEARING_WORDING = "Unpaid balance cleared - booking cancelled";
 
+/**
+ * #3536 (`INV-PAY-101`): the two wordings the owner added on 2 Oct 2026 for
+ * booking-edit credit notes that were previously worded as bank transfers.
+ * Neither is a refund method and neither changes a note's settlement: a
+ * modification credit note is allocated against the original invoice, never
+ * settled by a payment, so these are words only.
+ *
+ * - `"invoice-correction"`: a booking change that lowers an UNPAID pay-on-account
+ *   invoice. The note corrects the invoice; nothing was paid, so nothing is
+ *   refunded.
+ * - `"cash"`: an edit-review refund the club handed back in cash.
+ */
+export const MODIFICATION_NOTE_SPECIAL_WORDINGS = ["invoice-correction", "cash"] as const;
+
+export type ModificationNoteSpecialWording = (typeof MODIFICATION_NOTE_SPECIAL_WORDINGS)[number];
+
+export const INVOICE_CORRECTION_WORDING = "Invoice correction — nothing refunded";
+
+export const REFUNDED_IN_CASH_WORDING = "Refunded in cash";
+
 /** What a credit document's wording is chosen from: how money went back, or that none was owed back. */
 export type CreditDocumentWording =
   | RefundMethod
+  | ModificationNoteSpecialWording
   | "unpaid-invoice-clearing"
   | "unpaid-balance-clearing";
 
@@ -73,8 +95,19 @@ export type CreditDocumentWording =
  * Never both — a clearing note has no refund method to name.
  */
 export type ModificationNoteWording =
-  | { refundMethod?: RefundMethod; clearsUnpaidInvoice?: undefined; clearsUnpaidBalance?: undefined }
-  | { clearsUnpaidInvoice: true; clearsUnpaidBalance?: true; refundMethod?: undefined };
+  | {
+      refundMethod?: RefundMethod;
+      /** #3536: one of the two owner-added wordings; it wins over `refundMethod` on the document. */
+      noteWording?: ModificationNoteSpecialWording;
+      clearsUnpaidInvoice?: undefined;
+      clearsUnpaidBalance?: undefined;
+    }
+  | {
+      clearsUnpaidInvoice: true;
+      clearsUnpaidBalance?: true;
+      refundMethod?: undefined;
+      noteWording?: undefined;
+    };
 
 /**
  * The ONE reading of the fields, from a typed caller, a stored payload or a
@@ -86,7 +119,12 @@ export type ModificationNoteWording =
  */
 export function readModificationNoteWording(
   raw:
-    | { clearsUnpaidInvoice?: unknown; clearsUnpaidBalance?: unknown; refundMethod?: unknown }
+    | {
+        clearsUnpaidInvoice?: unknown;
+        clearsUnpaidBalance?: unknown;
+        refundMethod?: unknown;
+        noteWording?: unknown;
+      }
     | null
     | undefined,
 ): ModificationNoteWording {
@@ -96,7 +134,19 @@ export function readModificationNoteWording(
       : { clearsUnpaidInvoice: true };
   }
   const refundMethod = parseRefundMethod(raw?.refundMethod);
-  return refundMethod ? { refundMethod } : {};
+  const noteWording = parseModificationNoteSpecialWording(raw?.noteWording);
+  return {
+    ...(refundMethod ? { refundMethod } : {}),
+    ...(noteWording ? { noteWording } : {}),
+  };
+}
+
+/** A stored payload field, or null when absent or not one of the two (#3536). */
+function parseModificationNoteSpecialWording(value: unknown): ModificationNoteSpecialWording | null {
+  return typeof value === "string" &&
+    (MODIFICATION_NOTE_SPECIAL_WORDINGS as readonly string[]).includes(value)
+    ? (value as ModificationNoteSpecialWording)
+    : null;
 }
 
 /**
@@ -105,14 +155,26 @@ export function readModificationNoteWording(
  */
 export function settledModificationNoteWording(
   choice: ModificationNoteWording,
-): { clearsUnpaidInvoice: true; clearsUnpaidBalance?: true } | { refundMethod: RefundMethod } {
+):
+  | { clearsUnpaidInvoice: true; clearsUnpaidBalance?: true }
+  | { noteWording: ModificationNoteSpecialWording; refundMethod?: RefundMethod }
+  | { refundMethod: RefundMethod } {
   const read = readModificationNoteWording(choice);
-  return read.clearsUnpaidInvoice ? read : { refundMethod: read.refundMethod ?? "card" };
+  if (read.clearsUnpaidInvoice) return read;
+  // #3536: no card default here - an invoice correction refunds nothing, so a
+  // recorded `"card"` beside it would be a false statement.
+  if (read.noteWording) {
+    return read.refundMethod
+      ? { noteWording: read.noteWording, refundMethod: read.refundMethod }
+      : { noteWording: read.noteWording };
+  }
+  return { refundMethod: read.refundMethod ?? "card" };
 }
 
 /** The wording a modification note carries. */
 export function modificationNoteWording(choice: ModificationNoteWording): CreditDocumentWording {
   const settled = settledModificationNoteWording(choice);
+  if ("noteWording" in settled) return settled.noteWording;
   if (!("clearsUnpaidInvoice" in settled)) return settled.refundMethod;
   return settled.clearsUnpaidBalance ? "unpaid-balance-clearing" : "unpaid-invoice-clearing";
 }
@@ -120,6 +182,8 @@ export function modificationNoteWording(choice: ModificationNoteWording): Credit
 function describeCreditDocumentWording(wording: CreditDocumentWording): string {
   if (wording === "unpaid-invoice-clearing") return UNPAID_INVOICE_CLEARING_WORDING;
   if (wording === "unpaid-balance-clearing") return UNPAID_BALANCE_CLEARING_WORDING;
+  if (wording === "invoice-correction") return INVOICE_CORRECTION_WORDING;
+  if (wording === "cash") return REFUNDED_IN_CASH_WORDING;
   return describeRefundMethod(wording);
 }
 
