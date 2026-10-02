@@ -1594,6 +1594,54 @@ the effect of the parking gate's grain (#3531 3a) and the rate-derived backfill
 DATABASE_URL=<non-prod copy or, read-only, production> pnpm run booking-money:census
 ```
 
+### Census the booking ledger against its money columns (#3583)
+
+`pnpm run booking-ledger:census` is the booking ledger's cut-over gate
+([`INV-MONEY-037`](invariants/money.md#inv-money-037), design
+[`booking-ledger.md`](design/booking-ledger.md) §6). It is READ-ONLY: one
+repeatable-read snapshot opened `READ ONLY`, so PostgreSQL itself refuses a
+write inside it; it repairs nothing and calls no provider. For every booking it
+checks the six identities — the price, the captured amount, applied credit, the
+refunded total, change fees and the uncollected ask — against the ledger lines
+that project them, and prints:
+
+- per identity, how many bookings it applies to, agree, disagree, are
+  classified, or are a coverage gap;
+- **coverage**: bookings with money and no lines (`NO_LINES`), paid bookings not
+  confirmed on the ledger, and edits or change fees no line records;
+- **integrity**: reversals that name no line or are not its exact opposite, a
+  second live line for one guest-night, an unknown posting-key namespace, and a
+  live line its source row no longer bears out. PostgreSQL's update and delete
+  counts for the table are printed as information only;
+- **named classes** — expected differences, each matched to the cent from the
+  booking's own rows (in-flight refunds and hand-backs, a review share kept by
+  the club, the refunded total's credit and hand-back allocations, and so on).
+  Each list is for the owner to acknowledge on #3583;
+- every unclassified disagreement: booking, identity, column figure, ledger
+  figure and delta;
+- the verdict, `GATE_OPEN` or `GATE_CLOSED`, with every reason it is closed.
+
+```bash
+DATABASE_URL=<non-prod copy, or production under a SELECT-only role> pnpm run booking-ledger:census
+DATABASE_URL=<...> pnpm run booking-ledger:census --json          # every list in full
+DATABASE_URL=<...> pnpm run booking-ledger:census --fail-on-gap   # exit 2 unless GATE_OPEN
+```
+
+**Before the back-post (#3583's second pull request) expect `GATE_CLOSED` on
+coverage alone**: bookings made before the ledger existed have no lines, and
+a booking confirmed before it can carry settlement lines with no confirmation.
+That is the gap the back-post fills; any other finding is a poster bug to
+report with the figures the census prints. The gate opens on zero
+unclassified disagreements, zero coverage gaps, zero integrity findings and no
+booking in a class that holds it. Two classes wait on owner decisions on #3583
+and are one-line switches in `BOOKING_LEDGER_CENSUS_GATE_POLICY`
+(`src/lib/booking-ledger-projection-census-classes.ts`):
+`KNOWN_DEFECT_HISTORY` (bookings #3791 or #3792 damaged) holds the gate until
+each is corrected or written off, and `GROUP_SETTLEMENT_OFF_LEDGER` (children
+settled through the organiser's group settlement) does not. The census does
+not take a lock, so run it off-peak against production; a whole history is
+read in one transaction.
+
 ### Census the booking ledger identity (#3340)
 
 `scripts/audit-booking-ledger-residual.ts` is a READ-ONLY census of
@@ -1851,13 +1899,15 @@ expected to report zero on most tenants. A non-empty result means a hold-slots
 booking reached release with both an issued invoice and a credit-reduced
 `amountCents` (e.g. an operator-created invoice on a credit-carrying hold).
 
-The same script also prints a second, separate **#1620 applied-credit strand
-enumeration** (also read-only): every non-cancelled Internet-Banking payment
-whose booking still carries UN-allocated applied credit (a `BOOKING_APPLIED`
-ledger row not yet stamped with an allocated Xero note), split into REALIZED
-(payment captured — the member already double-paid the full invoice) and PENDING
-(not yet paid). CANCELLED bookings are excluded (the #1547 restore domain).
-Repair guidance under the #1620 allocate-existing mechanism:
+The **#1620 applied-credit strand count** this script used to print moved to
+the booking-ledger census (#3583; see "Census the booking ledger against its
+money columns" above), where it is an information line under the credit
+identity: every non-cancelled Internet-Banking payment whose booking still
+carries UN-allocated applied credit (a `BOOKING_APPLIED` row not yet stamped
+with an allocated Xero note), split into REALIZED (payment captured — the
+member already double-paid the full invoice) and PENDING (not yet paid); its
+JSON lists each booking. Repair guidance under the #1620 allocate-existing
+mechanism, for what the census lists:
 
 - **PENDING** rows are fixed forward automatically: the applied-credit allocation
   op reduces their already-raised invoice to the effective amount. If a legacy
@@ -1869,7 +1919,7 @@ Repair guidance under the #1620 allocate-existing mechanism:
   the strand amount (a Xero credit note does not refund cash already sent);
   handle by hand per the reported per-row figures.
 
-The same script also prints a third, separate **#1641 card applied-credit
+The same script also prints a second, separate **#1641 card applied-credit
 double-pay enumeration** (read-only): every captured (SUCCEEDED) non-Internet-
 Banking card payment whose booking still carries UN-allocated applied credit AND
 whose mirror shows the pre-fix full-price shape — `creditAppliedCents = 0` and

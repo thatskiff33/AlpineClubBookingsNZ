@@ -508,9 +508,9 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   `Payment.amountCents` whenever anything is captured. Its refunds do NOT
   always equal `refundedAmountCents`: that column only rises, is seeded
   without rows on legacy payments, and is moved by credit and hand-back
-  refunds (#3599) — `INV-PAY-050` already says it is not cash evidence. C4
-  (#3583) classifies those as known divergences. A line whose source amount
-  later changes is reported, not corrected.
+  refunds (#3599) — `INV-PAY-050` already says it is not cash evidence. C4's
+  census names those as `REFUND_MIRROR_*` classes (`INV-MONEY-037`). A line
+  whose source amount later changes is reported, not corrected.
 
 ## INV-MONEY-035
 
@@ -553,6 +553,38 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   `booking-ledger-modification-posting.test.ts`,
   `booking-ledger-modification-sync.test.ts` (two-sibling fixtures per
   direction), `booking-ledger-modification.realdb.test.ts`.
+
+## INV-MONEY-037
+
+- **Until the reads move, every booking's ledger is proved against its money
+  columns, and the cut-over waits on that proof** (#3583, design
+  `booking-ledger.md` §6, §7). `pnpm run booking-ledger:census` reads one
+  `RepeatableRead`, `READ ONLY` snapshot, writes nothing, and checks six
+  identities per booking: `finalPriceCents` is Σ `GUEST_NIGHT`, `PROMOTION`
+  and `GROUP_DISCOUNT` plus `adjusted(b)` (a change fee is not in the price),
+  or, once cancelled, `owed(b)` is zero; `amountCents` is Σ captures;
+  `creditAppliedCents` is Σ `CREDIT_APPLIED`; `refundedAmountCents` is
+  −Σ `CARD_REFUND`; `changeFeeCents` is Σ `CHANGE_FEE`; the uncollected ask
+  is `max(0, owed(b))` while an ask is live, else zero. A disagreement names
+  the booking, both figures and the delta.
+
+  **A class explains an exact amount, never a shape.** A difference the
+  design expects is classified only where components computed from the
+  booking's own rows sum to the delta to the cent; one cent more is a
+  disagreement. The classes are `booking-ledger-projection-census-classes.ts`'s,
+  each pinned with its one-cent counterpart in
+  `booking-ledger-projection-census.test.ts`.
+
+  **The gate opens only on zero unclassified disagreements, zero coverage
+  gaps, zero integrity findings and no booking in a class that holds it.**
+  Coverage is money with no lines, a paid booking not confirmed on the
+  ledger, or an edit or fee no line records. Integrity is a reversal naming
+  no line or not its exact opposite, a second live night, an unknown key
+  namespace, or a live line its source row no longer bears out.
+  `KNOWN_DEFECT_HISTORY` holds the gate and `GROUP_SETTLEMENT_OFF_LEDGER`
+  does not — both pending owner decisions on #3583; every other class is a
+  list the owner acknowledges. `booking-ledger-projection-census.realdb.test.ts`
+  proves it on bookings the real writers built.
 
 ## INV-MONEY-006
 
