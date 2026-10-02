@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   claimXeroTokenRefreshLease: vi.fn(),
   releaseXeroTokenRefreshLease: vi.fn(),
   saveXeroTokens: vi.fn(),
+  assertXeroTokensCanBeStored: vi.fn(),
+  notifyXeroSyncError: vi.fn(),
   logger: {
     info: vi.fn(),
     error: vi.fn(),
@@ -20,6 +22,7 @@ vi.mock("@/lib/xero-oauth", () => ({
 
 vi.mock("@/lib/xero-token-store", () => ({
   XERO_TOKEN_REFRESH_LEASE_MS: 2 * 60 * 1000,
+  assertXeroTokensCanBeStored: mocks.assertXeroTokensCanBeStored,
   claimXeroTokenRefreshLease: mocks.claimXeroTokenRefreshLease,
   loadXeroTokens: mocks.loadXeroTokens,
   releaseXeroTokenRefreshLease: mocks.releaseXeroTokenRefreshLease,
@@ -43,9 +46,10 @@ vi.mock("@/lib/xero-api-usage", () => ({
 
 // The refresh-failure path fires a best-effort alert via a dynamic import.
 vi.mock("@/lib/xero-error-alert", () => ({
-  notifyXeroSyncError: vi.fn().mockResolvedValue(undefined),
+  notifyXeroSyncError: mocks.notifyXeroSyncError,
 }));
 
+import { StaleCredentialWriteError } from "@/lib/integration-credential-actor";
 import {
   getAuthenticatedXeroClient,
   resetXeroRateLimitStateForTests,
@@ -87,6 +91,8 @@ describe("getAuthenticatedXeroClient token refresh lease", () => {
     resetXeroRateLimitStateForTests();
     mocks.releaseXeroTokenRefreshLease.mockResolvedValue(undefined);
     mocks.saveXeroTokens.mockResolvedValue(undefined);
+    mocks.assertXeroTokensCanBeStored.mockResolvedValue(undefined);
+    mocks.notifyXeroSyncError.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -131,6 +137,67 @@ describe("getAuthenticatedXeroClient token refresh lease", () => {
       "xero-token-1",
       leaseUntil
     );
+  });
+
+  it("refuses BEFORE spending the refresh token when the rotated pair could not be stored (#3454)", async () => {
+    const tokens = makeTokens();
+    const leaseUntil = new Date("2026-06-21T12:02:00.000Z");
+    const xero = makeXeroClient();
+    mocks.createXeroClient.mockReturnValue(xero);
+    mocks.loadXeroTokens.mockResolvedValue(tokens);
+    mocks.claimXeroTokenRefreshLease.mockResolvedValue({ claimed: true, tokens, leaseUntil });
+    mocks.assertXeroTokensCanBeStored.mockRejectedValue(
+      new Error("the token key is not available; the refresh token was not spent"),
+    );
+
+    await expect(getAuthenticatedXeroClient()).rejects.toThrow("was not spent");
+    expect(xero.refreshWithRefreshToken).not.toHaveBeenCalled();
+    expect(mocks.saveXeroTokens).not.toHaveBeenCalled();
+    expect(mocks.releaseXeroTokenRefreshLease).toHaveBeenCalledWith("xero-token-1", leaseUntil);
+  });
+
+  it("logs and alerts no token when the refreshed pair loses its save (#3454 sentinel)", async () => {
+    const SENTINEL = "xero_SENTINEL_api_client_3454";
+    const tokens = makeTokens({
+      accessToken: `${SENTINEL}-old-access`,
+      refreshToken: `${SENTINEL}-old-refresh`,
+    });
+    const leaseUntil = new Date("2026-06-21T12:02:00.000Z");
+    const xero = makeXeroClient();
+    xero.refreshWithRefreshToken.mockResolvedValue({
+      access_token: `${SENTINEL}-new-access`,
+      refresh_token: `${SENTINEL}-new-refresh`,
+      expires_in: 1800,
+      token_type: "Bearer",
+    });
+    mocks.createXeroClient.mockReturnValue(xero);
+    mocks.loadXeroTokens.mockResolvedValue(tokens);
+    mocks.claimXeroTokenRefreshLease.mockResolvedValue({ claimed: true, tokens, leaseUntil });
+    const stale = new StaleCredentialWriteError({
+      provider: "xero-oauth",
+      key: "token-set",
+      expectation: { expect: "version", version: "v1" },
+      observedVersion: "v2",
+    });
+    mocks.saveXeroTokens.mockRejectedValue(stale);
+
+    const thrown = await getAuthenticatedXeroClient().catch((error: unknown) => error);
+    await vi.waitFor(() => expect(mocks.notifyXeroSyncError).toHaveBeenCalled());
+
+    // The instrument saw real traffic: the failure was logged and alerted.
+    expect(mocks.logger.error).toHaveBeenCalled();
+    const serialise = (value: unknown) =>
+      value instanceof Error
+        ? { ...value, name: value.name, message: value.message, stack: value.stack }
+        : value;
+    const emitted = JSON.stringify([
+      mocks.logger.error.mock.calls.map((call) => call.map(serialise)),
+      mocks.logger.warn.mock.calls.map((call) => call.map(serialise)),
+      mocks.logger.info.mock.calls.map((call) => call.map(serialise)),
+      mocks.notifyXeroSyncError.mock.calls,
+      serialise(thrown),
+    ]);
+    expect(emitted).not.toContain(SENTINEL);
   });
 
   it("releases the lease and does not cache the rejection when client construction fails during refresh", async () => {

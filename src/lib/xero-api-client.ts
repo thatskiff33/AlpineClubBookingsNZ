@@ -28,6 +28,7 @@ import { assertXeroProviderWriteAllowed } from "@/lib/xero-environment-write-gat
 import { createXeroClient } from "./xero-oauth";
 import {
   XERO_TOKEN_REFRESH_LEASE_MS,
+  assertXeroTokensCanBeStored,
   claimXeroTokenRefreshLease,
   loadXeroTokens,
   releaseXeroTokenRefreshLease,
@@ -264,6 +265,10 @@ export async function getAuthenticatedXeroClient(): Promise<{
           token_type: "Bearer",
         });
         const config = await getOperationalXeroConfig();
+        // #3454: refuse BEFORE spending the refresh token if its rotated pair
+        // could not then be stored. Outside the catch below on purpose: this
+        // is not a refresh failure, and nothing has been spent.
+        await assertXeroTokensCanBeStored();
         try {
           const newTokenSet = await xero.refreshWithRefreshToken(
             config.clientId,

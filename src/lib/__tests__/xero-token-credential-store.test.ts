@@ -239,6 +239,8 @@ const h = vi.hoisted(() => {
   return {
     state,
     db,
+    /** The transaction client's raw delegates, for interleaving hooks. */
+    raw: tx,
     logger,
     tokenKey: { value: "a".repeat(64) as string | undefined },
   };
@@ -264,6 +266,8 @@ import {
   XERO_OAUTH_TOKEN_KEY,
   XERO_OAUTH_TOKEN_PROVIDER,
   XeroTokenDecryptError,
+  XeroTokenSaveUnavailableError,
+  assertXeroTokensCanBeStored,
   claimXeroTokenRefreshLease,
   decryptToken,
   deleteXeroTokens,
@@ -678,6 +682,80 @@ describe("a refresh is fenced by the shared lease and by the store's compare-and
     // The lease-guarded mirror update ran first and was rolled back with it.
     expect(h.state.xeroToken).toEqual(mirrorBefore);
     expect(h.state.xeroToken[0].refreshInProgressUntil).toEqual(claim.leaseUntil);
+  });
+});
+
+describe("interleaving inside a read: a write that commits between the two copies' reads (#3454 review)", () => {
+  /** Run `during` once, at the store-row read, after that read has its answer. */
+  function commitDuringStoreRead(during: () => Promise<unknown>) {
+    const findUnique = h.raw.integrationCredential.findUnique;
+    const original = findUnique.getMockImplementation();
+    if (!original) throw new Error("expected the double's findUnique");
+    findUnique.mockImplementationOnce(async (args: { where: Row }) => {
+      const answer = await original(args);
+      await during();
+      return answer;
+    });
+  }
+
+  it("a reconnect that commits while a refresh is being claimed survives the refresh", async () => {
+    await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
+    commitDuringStoreRead(() => saveXeroTokens(tokenSet("reconnect"), { actor: ADMIN }));
+
+    const claim = await claimXeroTokenRefreshLease();
+    if (claim.claimed) {
+      // Xero, asked to refresh whatever the claim handed over.
+      const next = { ...tokenSet("x"), refreshToken: `from-${claim.tokens.refreshToken}` };
+      await saveXeroTokens(next, {
+        actor: REFRESH_JOB,
+        lease: { claimed: claim.tokens, leaseUntil: claim.leaseUntil },
+      }).catch(() => undefined);
+    }
+
+    // The reconnect's grant is what is stored; nothing refreshed from c1 won.
+    const stored = await loadXeroTokens();
+    expect(stored?.refreshToken).toContain("reconnect");
+    expect(stored?.refreshToken).not.toContain("c1");
+    await expect(oldColour.load()).resolves.toMatchObject({
+      refreshToken: expect.stringContaining("reconnect"),
+    });
+  });
+
+  it("a read that straddles a save returns the NEW copy, not the one just replaced", async () => {
+    await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
+    commitDuringStoreRead(() => saveXeroTokens(tokenSet("c2"), { actor: ADMIN }));
+
+    await expect(loadXeroTokens()).resolves.toMatchObject({ refreshToken: "refresh-c2" });
+  });
+
+  it("a read that straddles a disconnect reads as not connected, never the deleted tokens", async () => {
+    await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
+    commitDuringStoreRead(() =>
+      deleteXeroTokens({ actor: ADMIN, cause: { kind: "oauth-disconnect" } }),
+    );
+
+    await expect(loadXeroTokens()).resolves.toBeNull();
+  });
+});
+
+describe("a refresh refuses before spending the token when its save could not succeed (#3454 review)", () => {
+  it("refuses under an auth secret the capture gate would reject", async () => {
+    process.env.AUTH_SECRET = "too-short";
+    await expect(assertXeroTokensCanBeStored()).rejects.toBeInstanceOf(
+      XeroTokenSaveUnavailableError,
+    );
+    await expect(assertXeroTokensCanBeStored()).rejects.toThrow(/auth secret/);
+  });
+
+  it("refuses when the wrapped token key cannot be resolved", async () => {
+    h.tokenKey.value = undefined;
+    await expect(assertXeroTokensCanBeStored()).rejects.toThrow(/encryption key/);
+  });
+
+  it("passes when both would succeed, and writes nothing", async () => {
+    await expect(assertXeroTokensCanBeStored()).resolves.toBeUndefined();
+    expect(h.state.audit).toEqual([]);
+    expect(h.state.credential).toEqual([]);
   });
 });
 

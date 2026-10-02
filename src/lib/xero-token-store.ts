@@ -33,6 +33,7 @@ import {
   XERO_CREDENTIAL_KEYS,
   XERO_PROVIDER,
 } from "@/lib/xero-config";
+import { requireStrongAuthSecretForCapture } from "@/lib/integration-crypto";
 import { invalidateXeroOrganisationCaches } from "@/lib/xero-organisation-cache-bus";
 import {
   decryptToken,
@@ -238,13 +239,19 @@ function storeVersionOf(stored: CredentialResolution): CredentialVersion | null 
  * the wrapped token key, exactly as it always has.
  */
 async function readCurrentTokens(db: XeroTokenDb): Promise<XeroTokenRecord | null> {
-  const legacy = await db.xeroToken.findFirst();
-  if (!legacy) return null;
+  // THE STORE ROW FIRST (#3454 review). Every writer of either release rewrites
+  // or deletes the `XeroToken` row, so a write that commits between these two
+  // reads always leaves the SECOND read newer: an old store copy beside a new
+  // row is a fingerprint mismatch and the new row is read; a store copy beside
+  // a deleted row reads as not connected. Reading `XeroToken` first returned
+  // the copy that had just been replaced, or tokens that had just been deleted.
   const stored = await readIntegrationCredentialRow(
     db,
     XERO_OAUTH_TOKEN_PROVIDER,
     XERO_OAUTH_TOKEN_KEY,
   );
+  const legacy = await db.xeroToken.findFirst();
+  if (!legacy) return null;
   const storeVersion = storeVersionOf(stored);
   const current = currentStoreCopy(legacy, stored);
   if (current !== null) {
@@ -405,6 +412,47 @@ export async function saveXeroTokens(
   invalidateXeroOrganisationCaches();
 }
 
+/**
+ * Thrown BEFORE a refresh token is spent, when the rotated pair could not then
+ * be stored (#3454 review). Carries no value; the reason is a fixed sentence.
+ */
+export class XeroTokenSaveUnavailableError extends Error {
+  constructor(reason: "auth-secret" | "token-key") {
+    super(
+      reason === "auth-secret"
+        ? "The auth secret does not pass the strength check, so refreshed Xero tokens could not be stored; the refresh token was not spent."
+        : "The Xero token encryption key is not available, so refreshed Xero tokens could not be stored; the refresh token was not spent.",
+    );
+    this.name = "XeroTokenSaveUnavailableError";
+  }
+}
+
+/**
+ * Prove the save of a refresh can succeed, BEFORE the refresh token is spent.
+ *
+ * Xero refresh tokens rotate: once spent, the old one is gone. The store copy
+ * decrypts without the capture-time strength gate, but writing the rotated pair
+ * needs both that gate (`encryptCredential`) and the wrapped token key (the
+ * mirror). If either fails only AFTER Xero rotated the token, both copies keep a
+ * spent token and the club must reconnect. A later release tightening the gate
+ * would do exactly that to a grandfathered secret on its first refresh. So the
+ * refresh path calls this first and refuses without spending anything. An audit
+ * insert failing after the rotation remains possible; that is a stated limit.
+ */
+export async function assertXeroTokensCanBeStored(): Promise<void> {
+  try {
+    requireStrongAuthSecretForCapture();
+  } catch {
+    throw new XeroTokenSaveUnavailableError("auth-secret");
+  }
+  try {
+    // Resolves the wrapped token key exactly as the save's mirror write will.
+    await encryptToken("xero-token-save-preflight");
+  } catch {
+    throw new XeroTokenSaveUnavailableError("token-key");
+  }
+}
+
 export async function loadXeroTokens(): Promise<XeroTokenRecord | null> {
   return readCurrentTokens(prisma);
 }
@@ -429,13 +477,14 @@ export type XeroTokenReadability = "no_tokens" | "readable" | "unreadable";
  *   - "readable"    — decrypts cleanly.
  */
 export async function getXeroTokenReadability(): Promise<XeroTokenReadability> {
-  const legacy = await prisma.xeroToken.findFirst();
-  if (!legacy) return "no_tokens";
+  // Store row first, for the reason `readCurrentTokens` gives.
   const stored = await readIntegrationCredentialRow(
     prisma,
     XERO_OAUTH_TOKEN_PROVIDER,
     XERO_OAUTH_TOKEN_KEY,
   );
+  const legacy = await prisma.xeroToken.findFirst();
+  if (!legacy) return "no_tokens";
   if (currentStoreCopy(legacy, stored) !== null) return "readable";
 
   const key = await peekOperationalXeroEncryptionKey();
@@ -465,28 +514,25 @@ export async function claimXeroTokenRefreshLease(options?: {
   );
 
   return prisma.$transaction(async (tx) => {
-    // Both copies are read on THIS transaction's client, through the database,
-    // so the refresh token handed back is the one stored now — never a cached
-    // copy another container has already spent.
-    const record = await readCurrentTokens(tx);
-    if (!record) {
+    const row = await tx.xeroToken.findFirst({ select: { id: true } });
+    if (!row) {
       return { claimed: false, tokens: null, leaseUntil: null };
     }
 
-    const existingLeaseUntil = record.refreshInProgressUntil;
-    if (existingLeaseUntil && existingLeaseUntil > now) {
-      return {
-        claimed: false,
-        tokens: record,
-        leaseUntil: existingLeaseUntil,
-      };
-    }
-
-    // The lease lives on the `XeroToken` row, because that is the one a
-    // deployed older colour claims (see the header above).
+    // CLAIM FIRST, THEN READ (#3454 review). The lease lives on the `XeroToken`
+    // row, because that is the one a deployed older colour claims (see the
+    // header above). A claim that wins holds that row's lock until this
+    // transaction commits, and every writer of either copy — a connect, a
+    // refresh save, a disconnect, a verify-reset, of either release — takes
+    // that row first. So the two copies read below are a consistent pair, and
+    // the store version a refresh will compare-and-set against really is the
+    // one read under the lease. Reading first and claiming second let a
+    // reconnect commit in between: the claim then handed back the OLD grant's
+    // refresh token with the NEW store version, and the refresh overwrote the
+    // reconnect with both fences passing.
     const claimed = await tx.xeroToken.updateMany({
       where: {
-        id: record.id,
+        id: row.id,
         OR: [
           { refreshInProgressUntil: null },
           { refreshInProgressUntil: { lte: now } },
@@ -497,13 +543,21 @@ export async function claimXeroTokenRefreshLease(options?: {
       },
     });
 
+    // Both copies are read on THIS transaction's client, through the database,
+    // so the refresh token handed back is the one stored now — never a cached
+    // copy another container has already spent.
+    const record = await readCurrentTokens(tx);
     if (claimed.count !== 1) {
-      const latest = await readCurrentTokens(tx);
       return {
         claimed: false,
-        tokens: latest,
-        leaseUntil: latest?.refreshInProgressUntil ?? null,
+        tokens: record,
+        leaseUntil: record?.refreshInProgressUntil ?? null,
       };
+    }
+    if (!record || record.id !== row.id) {
+      // Unreachable while this transaction holds the row it just claimed; a
+      // refusal rather than a guess if that ever stops being true.
+      throw new Error("Xero token row changed under its own refresh lease");
     }
 
     return {
