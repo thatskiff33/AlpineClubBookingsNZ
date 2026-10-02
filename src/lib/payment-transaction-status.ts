@@ -16,7 +16,7 @@
  * A leaf with no imports of its own beyond the enum, so both can depend on it
  * without `payment-transactions.ts` and the ledger sync importing each other.
  */
-import { PaymentStatus } from "@prisma/client";
+import { PaymentStatus, type PaymentTransactionKind } from "@prisma/client";
 
 /**
  * Money was taken. A refunded transaction stays captured — its capture
@@ -49,6 +49,34 @@ export const CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST = [
  */
 export function isCapturedTransactionStatus(status: PaymentStatus): boolean {
   return CAPTURED_TRANSACTION_STATUSES.has(status);
+}
+
+/**
+ * The newest transaction of one kind on a payment, by `createdAt` (the first
+ * of a tie wins) — the row the `Payment` mirror's summary columns are derived
+ * from (`reconcilePaymentAggregates`). One home, so the booking-ledger census
+ * (#3583) reads "the latest PRIMARY" and "the live ask" exactly as the mirror
+ * it checks was written (`INV-SSOT`).
+ */
+export function latestTransactionOfKind<
+  T extends {
+    kind: PaymentTransactionKind;
+    createdAt: Date;
+  },
+>(transactions: readonly T[], kind: PaymentTransactionKind): T | null {
+  let latest: T | null = null;
+
+  for (const transaction of transactions) {
+    if (transaction.kind !== kind) {
+      continue;
+    }
+
+    if (!latest || transaction.createdAt.getTime() > latest.createdAt.getTime()) {
+      latest = transaction;
+    }
+  }
+
+  return latest;
 }
 
 /** Stripe refund states that returned no money and are not counted. */
