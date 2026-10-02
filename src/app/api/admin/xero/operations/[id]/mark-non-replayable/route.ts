@@ -47,36 +47,40 @@ export async function POST(
     }
 
     const retryMeta = getXeroOperationRetryMeta(operation);
-    await prisma.xeroSyncOperation.update({
-      where: { id },
-      data: {
-        replayable: false,
-      },
-    });
+    // #3462: the flag and its audit row commit together or not at all, so a
+    // failed audit never leaves an unattributed override behind a 500.
+    await prisma.$transaction(async (tx) => {
+      await tx.xeroSyncOperation.update({
+        where: { id },
+        data: {
+          replayable: false,
+        },
+      });
 
-    await createAuditLog({
-      action: "xero.operation.marked_non_replayable",
-      memberId: session.user.id,
-      actorMemberId: session.user.id,
-      targetId: operation.id,
-      entityType: "XeroSyncOperation",
-      entityId: operation.id,
-      category: "xero",
-      severity: "critical",
-      outcome: "success",
-      summary: "Xero operation marked non-replayable",
-      details: parsed.data.reason,
-      metadata: {
-        operationId: operation.id,
-        direction: operation.direction,
-        entityType: operation.entityType,
-        operationType: operation.operationType,
-        localModel: operation.localModel,
-        localId: operation.localId,
-        previousReplayable: operation.replayable,
-        retrySupportedBeforeReview: retryMeta.supported,
-        retryReasonBeforeReview: retryMeta.reason,
-      },
+      await createAuditLog({
+        action: "xero.operation.marked_non_replayable",
+        memberId: session.user.id,
+        actorMemberId: session.user.id,
+        targetId: operation.id,
+        entityType: "XeroSyncOperation",
+        entityId: operation.id,
+        category: "xero",
+        severity: "critical",
+        outcome: "success",
+        summary: "Xero operation marked non-replayable",
+        details: parsed.data.reason,
+        metadata: {
+          operationId: operation.id,
+          direction: operation.direction,
+          entityType: operation.entityType,
+          operationType: operation.operationType,
+          localModel: operation.localModel,
+          localId: operation.localId,
+          previousReplayable: operation.replayable,
+          retrySupportedBeforeReview: retryMeta.supported,
+          retryReasonBeforeReview: retryMeta.reason,
+        },
+      }, tx);
     });
 
     return NextResponse.json({

@@ -674,6 +674,8 @@ describe("D1's two consequences, surfaced rather than shipped blind (#3219)", ()
           moneyBuildUpDerivedCents: 24_000,
         }),
       }),
+      // #3582: the row's id anchors the re-price's booking-ledger lines.
+      select: { id: true },
     });
   });
 

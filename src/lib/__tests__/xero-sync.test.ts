@@ -60,6 +60,13 @@ vi.mock("@/lib/xero-links", async (importOriginal) => {
   };
 });
 
+// The repeated-failure notifier is imported lazily by the fail/complete writers;
+// a cold dynamic import of its real module chain could exceed the 5s test
+// timeout (#3752 composed review). Nothing here asserts on it.
+vi.mock("@/lib/xero-hardening", () => ({
+  maybeNotifyXeroRepeatedFailure: vi.fn(),
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: {
     error: vi.fn(),
@@ -863,6 +870,76 @@ describe("failXeroSyncOperation keepCancelled", () => {
     await expect(
       failXeroSyncOperation("op_kept", new Error("boom"), undefined, { keepCancelled: true })
     ).resolves.toMatchObject({ status: "FAILED" });
+  });
+});
+
+// #3462: a retry that claimed the original RUNNING abandons the claim when its
+// handler throws early - but only its own claim, never a row the handler
+// already completed or a later claim re-stamped.
+describe("failXeroSyncOperation onlyIfRunningSince", () => {
+  const claimedAt = new Date("2026-07-01T00:00:00.000Z");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.operationCount.mockResolvedValue(0);
+  });
+
+  it("fails the row only while it is still this claim, and answers the failed row", async () => {
+    mocks.operationUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.operationFindUniqueOrThrow.mockResolvedValue({ id: "op_1", status: "FAILED" });
+    await expect(
+      failXeroSyncOperation("op_1", new Error("contact refused"), undefined, {
+        onlyIfRunningSince: claimedAt,
+      })
+    ).resolves.toMatchObject({ status: "FAILED" });
+    expect(mocks.operationUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "op_1", status: "RUNNING", startedAt: claimedAt },
+        data: expect.objectContaining({
+          status: "FAILED",
+          lastErrorMessage: "contact refused",
+        }),
+      })
+    );
+    expect(mocks.operationUpdate).not.toHaveBeenCalled();
+  });
+
+  it("cannot be handed both write guards at once", () => {
+    // Compile-time: the two guards are one discriminated option (#3462), so
+    // one can never be silently dropped in favour of the other. The call is
+    // never made; `pnpm run typecheck` is the assertion.
+    const typeOnly = () =>
+      failXeroSyncOperation("op_1", new Error("boom"), undefined, {
+        keepCancelled: true,
+        // @ts-expect-error keepCancelled and onlyIfRunningSince are exclusive
+        onlyIfRunningSince: claimedAt,
+      });
+    expect(typeof typeOnly).toBe("function");
+  });
+
+  it("leaves a row the handler already completed as it is and answers null", async () => {
+    mocks.operationUpdateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      failXeroSyncOperation("op_1", new Error("late throw"), undefined, {
+        onlyIfRunningSince: claimedAt,
+      })
+    ).resolves.toBeNull();
+    expect(mocks.operationUpdate).not.toHaveBeenCalled();
+    expect(mocks.operationFindUniqueOrThrow).not.toHaveBeenCalled();
+  });
+
+  it("records the operator message in place of the error's own, still redacted", async () => {
+    // The operator message embeds the provider's raw error text, so the
+    // override must pass through the same redaction as the error's own.
+    mocks.operationUpdate.mockResolvedValue({ id: "op_2", status: "FAILED" });
+    await failXeroSyncOperation("op_2", new Error("raw"), undefined, {
+      lastErrorMessage:
+        "Retry of Xero operation op_1 failed: Authorization: Bearer live-token.",
+    });
+    const recorded = mocks.operationUpdate.mock.calls[0][0].data.lastErrorMessage;
+    expect(recorded).toContain("Retry of Xero operation op_1 failed");
+    expect(recorded).toContain("Bearer [REDACTED]");
+    expect(recorded).not.toContain("live-token");
   });
 });
 
