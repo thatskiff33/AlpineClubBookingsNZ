@@ -329,8 +329,8 @@ leave a stale row here.
   membership type, unpaid subscription) **runs before the outsider lookup too,
   and so does a full lodge** (owner decision on R4), counting the rows the
   service will count (`decideBookingSplit`: the whole party unless it splits,
-  and the whole party when a justification makes it a held booking); the
-  services still decide. The guards then run again over the whole
+  and the whole party when a justification is supplied and no adult other
+  than the outsider is known); the services still decide. The guards then run again over the whole
   party, where only the outsider can refuse, with D-8's neutral sentence.
 - **This reverses, on these doors, the "cross-family refusal wins" order** the
   profile gate, the person-night guard and the membership-type message keep
