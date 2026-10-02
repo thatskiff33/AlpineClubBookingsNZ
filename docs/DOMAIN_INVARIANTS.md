@@ -353,6 +353,7 @@ Prefix `INV-GUEST`.
 | `INV-GUEST-017` | Exactly eight column shapes are legal, and the table lists them |
 | `INV-GUEST-018` | That table is generated from the code table by a test |
 | `INV-GUEST-019` | Own dependants leave the guest split at create, edit and exception doors |
+| `INV-GUEST-020` | Create judges the family before resolving any beyond-family member |
 
 ## Booking Modifications
 

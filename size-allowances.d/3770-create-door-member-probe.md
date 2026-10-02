@@ -1,12 +1,12 @@
 # File-size allowances for #3770 (create-door member-id probe)
 
-Three already-over-budget files grow. None of the changes adds a rule of its
+Six already-over-budget files grow. None of the changes adds a rule of its
 own. Each one either moves existing refusals above the member lookup or
 pre-checks a refusal the transaction already makes. The growth is the code that
 splits one refusal in two, plus the comment saying why the order matters.
 
 file: src/app/api/bookings/route.ts
-lines: 1555
+lines: 1704
 reason: the route is a long, ordered sequence of guards, and the contract this
   issue fixes IS that order: refusals that read only the request and the booker
   must run before the member lookup, and the ones that read the resolved party
@@ -14,12 +14,16 @@ reason: the route is a long, ordered sequence of guards, and the contract this
   owner-subscription, minimum-stay, Internet Banking and promo checks out to a
   module would put half of that sequence in another file. That is exactly where
   a later edit would drop a new refusal on the wrong side of the lookup again.
-  The growth is the pre-lookup stay-range validation, the past-date split (the
-  retroactive lookback and Xero lock stay below the lookup, because they need
-  the resolved stay envelope), the promo pre-check call, the `!draft` guard on
+  The growth is the pre-lookup stay-range validation, the request's own stay envelope (which the
+  retroactive lookback, the Xero lock date and the promo pre-check now read
+  before the lookup), the promo pre-check call, the `!draft` guard on
   the Internet Banking block, and the comment naming the rule for the next
   refusal somebody adds. The promo rules themselves live in
-  `booking-create-promo.ts`.
+  `booking-create-promo.ts`. The owner's family-first decision (#3770, comment
+  5946598639, `INV-GUEST-020`) adds the rest: the lookup now runs in two phases
+  with the per-member guards run once over the family and once over the whole
+  party, and the deferred paid-up-adult and hosting collapse. That sequence is
+  the contract, so it stays readable in the one handler that owns it.
 
 file: src/lib/booking-exception-request-service.ts
 lines: 2493
@@ -40,3 +44,25 @@ reason: twenty lines. The refusal clock has to start at the top of the
   that `handleMemberGuestAddRefusal` needs. This is the same shape every booking
   add path already uses, and lifting it out would hide the one ordering (clock
   first, helper before mapping) that makes the timing floor real.
+
+file: src/lib/promo.ts
+lines: 2018
+reason: two small shared exports, the lodge-restriction predicate and the
+  guest-selection message, that the rules, the application and the create
+  route's pre-check now all read. Before this change the predicate was written
+  out twice in this file, and a third copy in the pre-check is exactly the drift
+  `INV-SSOT-001` forbids. The growth is the named function and its docblock.
+
+file: src/lib/membership-type-policy.ts
+lines: 1355
+reason: comment only. It records, beside the "the stranger's refusal wins"
+  rule it qualifies, that the create route no longer reaches that ordering
+  (owner decision, `INV-GUEST-020`). A reader who finds the rule without the
+  note would believe the create route still behaves that way.
+
+file: src/lib/booking-create.ts
+lines: 2122
+reason: three lines. The waitlist path's promo-code normalisation and its
+  internal-code refusal now call the one shared helper in
+  `booking-create-promo.ts` instead of spelling the rule out inline. The growth
+  is the two import names and the named result.

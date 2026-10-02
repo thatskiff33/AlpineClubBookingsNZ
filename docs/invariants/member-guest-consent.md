@@ -313,3 +313,25 @@ leave a stale row here.
   fabricated or unrelated dependant id and a stale declaration are refused.
   **Identity is keyed by the normalised name, never a party position.** Home:
   `src/lib/booking-dependant-identity.ts`.
+
+## INV-GUEST-020
+
+- **On the create route, the booker's family is judged before any member from
+  beyond it is resolved** (owner decision 2 Oct 2026, #3770). A refusal that can
+  only be reached once a named member resolved says that member is real, so
+  `POST /api/bookings` computes the boundary from the booker's family groups,
+  spends the #2388 throttle, resolves the family and runs every per-member
+  refusal about it (profile gate, night clash, membership type, unpaid
+  subscription) before looking up a beyond-family id. The guards then run again
+  over the whole party, where only that member can still refuse, with D-8's
+  neutral sentence.
+- **This reverses, on this door only, the "cross-family refusal wins" order**
+  the profile gate, the person-night guard and the membership-type message keep
+  everywhere else.
+- **A rule a beyond-family adult can satisfy waits for that member.** With one
+  named on a member's own booking, paid-up adult and hosting are judged on the
+  whole party; if they still fail, the answer is the lookup's collapsed refusal,
+  never their own message. An officer acting on a member's behalf keeps the
+  detailed answers.
+- Every refusal that reads only the request or the booker runs before the
+  lookup altogether. Home: `src/app/api/bookings/route.ts`.
