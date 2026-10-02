@@ -3403,8 +3403,9 @@ paid-path cancel claim, right after its lodge capacity lock and before #3643's
 part-payment recognition, its eligibility re-check and the #1491 fold. The claim
 then re-reads the `Payment` row under that lock (#3793): the card-refund writers
 take no advisory lock, so the payment read with the booking under `lock(1)` can
-already miss a dashboard refund, and only its id is used; every figure the
-refund is tiered off comes from the re-read. Proved by
+already miss a dashboard refund, so that read takes only the payment's id;
+every figure the refund is tiered off, and the refund method an internet
+banking payment forces, comes from the re-read. Proved by
 `paid-cancel-refunded-total-race.realdb.test.ts`. The first version of this
 writer took the transaction row and then the
 `Payment` row (its aggregate), while a cancel with an unpaid top-up takes the
