@@ -1259,8 +1259,9 @@ answered) and built to it:
   named, the rule is judged once that outsider is known: an outsider the rule
   can count settles it, and if it still fails the member sees the neutral
   refusal. An outsider waiting to consent does not count towards the paid-up
-  adult or the final hosting check, but does still count as the adult with
-  children today (a question with the owner).
+  adult, the final hosting check or the adult with children (owner decision),
+  so children plus a not-yet-agreed outsider need a justification, as children
+  alone do.
 - **Every collapsed refusal is audited** naming actor and target, and a run of
   them against the same target raises a flagged row an admin can find — ONCE per
   actor/target per 24 hours, on the crossing rather than on every refusal past

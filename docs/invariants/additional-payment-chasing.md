@@ -235,7 +235,10 @@ Three side doors into the finished-unpaid state are closed at the door
 ### INV-ADDPAY-003
 
 A booking left with only non-adults (YOUTH/CHILD/INFANT) requires admin
-approval regardless of how it got there or whether it was already paid: every
+approval regardless of how it got there or whether it was already paid. An
+adult counts only while operationally present: a member guest from beyond the
+family still waiting to agree does not (`isGuestOperationallyPresent`, the
+paid-up-adult rule's predicate; owner decision, #3770). Every
 edit path — including single-guest self-removal, which is never blocked for a
 written justification — flags the booking (`adminReviewStatus: PENDING`, with
 an automatic note on the removal path) so it lands in the admin review queue.

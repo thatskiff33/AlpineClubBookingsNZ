@@ -73,3 +73,19 @@ reason: three lines. The waitlist path's promo-code normalisation and its
   internal-code refusal now call the one shared helper in
   `booking-create-promo.ts` instead of spelling the rule out inline. The growth
   is the two import names and the named result.
+
+file: src/app/api/bookings/[id]/guests/route.ts
+lines: 1710
+reason: six lines. The adult-supervision rule is now asked of the guest rows
+  themselves, which carry each guest's stored or planned consent, instead of
+  the consent-free pricing view, because only an agreed adult counts (owner
+  decision on #3770). The call has to stay where the route already decides the
+  review; the growth is the call and the comment saying why it reads the rows.
+
+file: src/lib/booking-modify-plan.ts
+lines: 3203
+reason: eleven lines. The plan already read each proposed row's stored or
+  planned consent for the paid-up-adult rule; that read is now one named helper
+  that the adult-supervision rule uses too (owner decision on #3770), so the two
+  rules cannot judge the same party's presence differently. It has to sit beside
+  the review decision it feeds, in the function that builds the proposed party.
