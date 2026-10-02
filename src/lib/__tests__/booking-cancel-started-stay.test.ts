@@ -11,6 +11,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { bookingFindUnique } = vi.hoisted(() => ({ bookingFindUnique: vi.fn() }));
 
+const appliedCredit = vi.hoisted(() => ({
+  deriveBookingAppliedCreditCents: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: { booking: { findUnique: bookingFindUnique } },
 }));
@@ -32,6 +35,8 @@ vi.mock("@/lib/email", () => ({ sendBookingCancelledEmail: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/booking-events", () => ({ recordBookingEvent: vi.fn() }));
 vi.mock("@/lib/member-credit", () => ({
+  // #3611: the applied rows the kept figure reads; 0 unless a case says otherwise.
+  deriveBookingAppliedCreditCents: appliedCredit.deriveBookingAppliedCreditCents,
   createCancellationCredit: vi.fn(),
   lockMemberCreditLedger: vi.fn(),
   restoreCreditFromBooking: vi.fn(),
