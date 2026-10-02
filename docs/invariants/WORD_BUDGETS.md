@@ -148,7 +148,7 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-ADDPAY-035` | 340 |
 | `INV-LIFE-018` | 338 |
 | `INV-CAP-030` | 337 |
-| `INV-ADDPAY-009` | 334 |
+| `INV-ADDPAY-009` | 333 |
 | `INV-CAP-032` | 332 |
 | `INV-LIFE-065` | 325 |
 | `INV-MONEY-017` | 323 |

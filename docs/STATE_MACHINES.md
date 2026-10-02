@@ -1351,9 +1351,16 @@ one `BookingRequestPendingAdultReservationNight` count per lodge night in
 addition to its named `BookingGuestNight` rows. An ACCEPTED quote keeps both
 until an officer names the adults or declines the request. Naming one accepted
 adult keeps the request ACCEPTED and the accepted snapshot immutable; under
-global then lodge locks it creates the real guest nights and reduces the
-anonymous count in one transaction. Approval is refused while any pending count
-or reservation remains. Hold cancellation removes the reservation in the same
+global then lodge locks it proves the original-to-current party mapping,
+claims the request version, aligns provisional held prices with the selected
+accepted snapshot, and creates real guest nights while reducing the anonymous
+count in one transaction (#3794). Existing guest/night identities and accepted
+terms stay fixed; lost claims and failures leave no partial price/name write.
+Approval is refused while any pending count
+or reservation remains. Once names are complete, school approval proves the
+accepted-party mapping under its locks before claiming conversion; it retains
+each person's accepted cents and held guest id. Missing or inconsistent
+accepted snapshots refuse conversion. Hold cancellation removes the reservation in the same
 transaction as the booking status flip.
 
 The response window (default 14 days) and a pre-expiry reminder lead time are

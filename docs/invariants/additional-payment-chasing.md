@@ -361,14 +361,15 @@ breakdown, the hold and the approval read one list rather than two.
 
 ### INV-ADDPAY-009
 
-A booking converted from (or held for) a public/school booking request keeps
-the held booking's immutable concrete lodge even when the request stored a null
-default-lodge selector and the configured default later changes. Held generic
-and school conversions lock that concrete lodge, fully re-read the request and
-booking, and reject any explicit lodge mismatch before mutation. The booking
+A public/school request booking keeps the held booking's immutable concrete
+lodge despite a null request lodge selector and a later default change. Held
+generic and school conversions lock that lodge, re-read request and booking,
+and reject explicit lodge mismatches before mutation. The booking
 keeps its officer-negotiated price, flat-split across guest rows; the quote's
-per-tier rates are not persisted on the booking. Before a school group
-arrives, the school contact confirms who is attending (#1101): a tokenized
+per-tier rates are not persisted on the booking. For accepted SCHOOL quotes
+containing pending adults, naming and approval instead preserve proven accepted
+per-person totals (#3794). Before school arrival, the contact confirms who is
+attending (#1101): a tokenized
 public page (hash-stored, rotated per reminder email) applies identity-only
 name updates through the same price-preserving machinery as quoted-booking
 edits, and the explicit confirmation is stored on the booking request.
@@ -387,9 +388,9 @@ customer "booking cancelled" email (`cancelBooking`'s
 and it deliberately does **not** revoke the requester's quote response token:
 the link stays active, so the admin is warned to re-send a fresh quote after
 re-mapping. Releasing a hold (and declining a held request) refuses with HTTP
-409 rather than cancelling if the requester accepted the quote concurrently —
-i.e. the held booking has already left `AWAITING_REVIEW` (`cancelBooking`'s
-`requireRequestHold` guard, #1406) — so a just-accepted booking is never
+409 if acceptance won the race, including an `ACCEPTED` request whose held
+booking remains `AWAITING_REVIEW`, or if the hold already converted
+(`cancelBooking`'s `requireRequestHold` guard, #1406). A just-accepted booking is never
 cancelled and its payment links never revoked out from under the requester.
 
 ### INV-ADDPAY-010

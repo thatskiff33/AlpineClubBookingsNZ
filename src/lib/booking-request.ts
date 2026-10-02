@@ -1722,6 +1722,8 @@ export interface ReassignHeldBookingGuestsResult {
   displacedMemberIds: string[];
 }
 
+export const HELD_BOOKING_GUEST_ORDER_BY = [{ createdAt: "asc" }, { id: "asc" }] satisfies Prisma.BookingGuestOrderByWithRelationInput[];
+
 export async function reassignHeldBookingGuests(
   tx: Prisma.TransactionClient,
   bookingId: string,
@@ -1752,7 +1754,7 @@ export async function reassignHeldBookingGuests(
       lastName: true,
       ageTier: true,
     },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    orderBy: HELD_BOOKING_GUEST_ORDER_BY,
   });
 
   // The consent decision for the INCOMING list, taken once for both branches so

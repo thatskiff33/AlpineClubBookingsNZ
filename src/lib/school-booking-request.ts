@@ -62,6 +62,7 @@ import {
   BookingRequestError,
   buildMemberWholeLodgePlaceholderGuests,
   getBookingRequestSettings,
+  HELD_BOOKING_GUEST_ORDER_BY,
   isMemberWholeLodgeRequest,
   linkedGuestMemberMap,
   parseBookingRequestGuests,
@@ -122,6 +123,7 @@ import {
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
+import { planAcceptedSchoolHeldPrices, readAcceptedSchoolTerms } from "@/lib/school-pending-adult-price-plan";
 import {
   enqueueXeroAppliedCreditAllocationOperation,
   enqueueXeroBookingInvoiceOperation,
@@ -1085,11 +1087,15 @@ export async function approveSchoolBookingRequest(input: {
         /** Null since #3369 when the held booking is owned by an Organisation. */
         memberId: string | null;
         status: BookingStatus;
+        checkIn: Date;
+        checkOut: Date;
+        discountCents: number;
+        promoAdjustmentCents: number;
       } | null = null;
       if (request.heldBookingId) {
         held = await tx.booking.findUnique({
           where: { id: request.heldBookingId },
-          select: { id: true, lodgeId: true, memberId: true, status: true },
+          select: { id: true, lodgeId: true, memberId: true, status: true, checkIn: true, checkOut: true, discountCents: true, promoAdjustmentCents: true },
         });
         if (!held || held.status !== BookingStatus.AWAITING_REVIEW) {
           throw new BookingRequestError("Held booking is no longer available", 409);
@@ -1102,6 +1108,36 @@ export async function approveSchoolBookingRequest(input: {
             "Held booking lodge no longer matches this booking request",
             409
           );
+        }
+      }
+
+      // Previously anonymous adults were inserted before children on the
+      // request but appended to held rows. Prove their original accepted
+      // ordinals before any claim, then keep prices and row identities together.
+      let acceptedHeldPrices: ReturnType<typeof planAcceptedSchoolHeldPrices> | null = null;
+      let acceptedHeldOrder: Array<{ id: string; rateMembershipTypeId: string | null }> | null = null;
+      if (request.status === BookingRequestStatus.ACCEPTED &&
+          (request.acceptedQuoteId || request.acceptedQuoteSnapshot ||
+           request.acceptedPriceCents != null || request.acceptedQuoteOptionId != null || request.acceptedAt != null)) {
+        const accepted = await readAcceptedSchoolTerms(request, held, guests.length);
+        if (accepted.guestBreakdown.some((entry) => entry.kind === "PENDING_ADULT")) {
+          const heldGuests = await tx.bookingGuest.findMany({
+            where: { bookingId: held!.id },
+            select: { id: true, memberId: true, firstName: true, lastName: true, ageTier: true,
+              rateMembershipTypeId: true, stayStart: true, stayEnd: true, nights: { select: { id: true, stayDate: true } } },
+            orderBy: HELD_BOOKING_GUEST_ORDER_BY,
+          });
+          if (heldGuests.some((guest) => guest.stayStart.getTime() !== request.checkIn.getTime() || guest.stayEnd.getTime() !== request.checkOut.getTime())) {
+            throw new BookingRequestError("The held guest stays changed after acceptance. Review the terms before approving.", 409);
+          }
+          acceptedHeldPrices = planAcceptedSchoolHeldPrices({
+            accepted, guests, teacherCount: teachers.length, pendingAdultCount: 0,
+            links: linkedMembers, checkIn: request.checkIn, checkOut: request.checkOut, heldGuests,
+          });
+          acceptedHeldOrder = heldGuests;
+          totalPriceCents = accepted.totalCents;
+          guestPriceCents = acceptedHeldPrices.map((guest) => guest.priceCents);
+          guestPerNightCents = undefined;
         }
       }
 
@@ -1293,7 +1329,12 @@ export async function approveSchoolBookingRequest(input: {
         const reassigned = await reassignHeldBookingGuests(
           tx,
           held.id,
-          guestCreates,
+          acceptedHeldOrder ? acceptedHeldOrder.map((previous) => {
+            const index = acceptedHeldPrices!.findIndex((price) => price.guestId === previous.id);
+            const guest = guestCreates[index];
+            if (!guest) throw new BookingRequestError("The accepted guest mapping changed during approval.", 409);
+            return { ...guest, rateMembershipTypeId: previous.rateMembershipTypeId };
+          }) : guestCreates,
           {
             bookingOwnerMemberId: ownerId,
             actor: memberGuestActor,
