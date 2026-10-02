@@ -872,6 +872,10 @@ describe("every refusing surface answers with something the caller can act on", 
       "src/app/api/bookings/[id]/guests/route.ts",
       "src/app/api/bookings/[id]/modify-dates/route.ts",
       "src/app/api/bookings/[id]/modify/route.ts",
+      // #3770 (`INV-GUEST-020`): the create route maps the services' refusal to
+      // the neutral one when a beyond-family member is named on a member's own
+      // booking; otherwise it falls through to its ApiError branch as before.
+      "src/app/api/bookings/route.ts",
       "src/lib/group-booking.ts",
       "src/lib/waitlist-cross-lodge.ts",
       "src/lib/waitlist.ts",
@@ -890,6 +894,12 @@ describe("every refusing surface answers with something the caller can act on", 
     ];
     for (const file of CATCHERS) {
       const source = readRepoCode(file);
+      if (file === "src/app/api/bookings/route.ts") {
+        // Catches it only to collapse it (#3770): a body naming the club's
+        // policy would say whether the named outsider is real.
+        expect(source, file).toContain("deferredPolicyRefusal()");
+        continue;
+      }
       if (OFFICER_PATHS.includes(file)) {
         expect(source, file).toContain("code: err.code");
         expect(source, file).not.toContain("exceptionRequestPath");

@@ -103,6 +103,9 @@ const mockTx = {
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // #3770 R2: the create route reads the booker's lodge restrictions before
+    // its member lookup; nobody here has one.
+    memberLodgeAccess: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => mockPrismaTransaction(fn),
     lodge: { findFirst: mockTxLodgeFindFirst, findUnique: mockLodgeFindUnique },
     lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
