@@ -1089,6 +1089,7 @@ let observerClient: PrismaClient;
         const slices = await prisma.memberCreditNoteAllocation.findMany({ where: { appliedToBookingId: BOOKING_ID }, select: { id: true } });
         await prisma.xeroObjectLink.deleteMany({ where: { localModel: "MemberCreditNoteAllocation", localId: { in: slices.map((slice) => slice.id) } } });
         await prisma.memberCreditNoteAllocation.deleteMany({ where: { appliedToBookingId: BOOKING_ID } });
+        await prisma.xeroObjectLink.deleteMany({ where: { localModel: "BookingModification", localId: MODIFICATION_ID } });
         await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
         await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
         await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
@@ -1279,10 +1280,10 @@ let observerClient: PrismaClient;
         expect(await owed()).toBe(0);
       }, 60_000);
 
-      it("two reviews of one edit, after the REAL cancel at 50% less $20: each $20 share gives back $10 and the member ends at $100", async () => {
+      it("two reviews of one edit, after the REAL cancel at 50% less $20: each $20 share gives back $10, the member ends at $100, and each review has its own Xero note", async () => {
         await clearCreditRun();
         await confirmOnLedger();
-        await payEntirelyByCredit("card");
+        await payEntirelyByCredit("ib-allocated");
         const first = await raiseInOwnTransaction();
         const second = await raiseSibling();
         expect(second.taskId).not.toBe(first.taskId);
@@ -1291,12 +1292,24 @@ let observerClient: PrismaClient;
 
         await completeShare(first.taskId, 2_000);
         expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(9_000);
+        // The first's note has reached Xero and is linked on the anchor.
+        await prisma.xeroObjectLink.create({ data: {
+          localModel: "BookingModification", localId: MODIFICATION_ID, xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "race-3791-first-note", role: "MODIFICATION_ACCOUNT_CREDIT_NOTE", active: true,
+        } });
         // The second neither 409s on a mirror the first lowered nor forgets the
         // first's give-back.
         await completeShare(second.taskId, 2_000);
 
         expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(10_000);
         expect(await owed()).toBe(0);
+        // Two equal $10 notes, one per review: neither folded into the other by
+        // an amount-only key, nor refused by the first's link.
+        const notes = await reviewNotes();
+        expect(notes.map((note) => [note.queueType, note.cents, note.reviewTaskId])).toEqual([
+          ["MODIFICATION_ACCOUNT_CREDIT_NOTE", 1_000, first.taskId],
+          ["MODIFICATION_ACCOUNT_CREDIT_NOTE", 1_000, second.taskId],
+        ]);
       }, 60_000);
 
       it("FORCES the ledger-lock interleaving: a deallocation queued by a writer holding the member's ledger lock is re-read by the completion queued behind it, which refuses with the task still OPEN", async () => {

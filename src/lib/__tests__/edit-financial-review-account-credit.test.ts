@@ -286,7 +286,8 @@ describe("what of the share is applied credit coming back", () => {
     ];
     rows.reviewGiveBacksCents = 3_000;
 
-    expect(await write(3_000, null)).toEqual({ givenBackCents: 3_000, mintedCents: 0, cancelled: false });
+    // A $50 share here: $30 of headroom is left, so $30 back and $20 minted.
+    expect(await write(5_000, null)).toEqual({ givenBackCents: 3_000, mintedCents: 2_000, cancelled: false });
   });
 
   it("with a captured payment, mints the whole share against it and gives nothing back", async () => {
