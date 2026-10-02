@@ -217,7 +217,16 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
     }
     // Every lodge-scoped read in the job carries the scope; a club-wide one
     // suppressed valid auto-assignments at other lodges and raced the routes.
-    expect(cron.match(/lodgeNullTolerantScope\(lodge\.id\)/g) ?? []).toHaveLength(3);
+    // #3818: the booking read names the lodge here; the already-covered probe
+    // and its locked re-ask moved to the shared presence-aware helper, which
+    // takes the lodge as a required argument — the cheap ask on `prisma`, the
+    // authoritative one on `tx` under the key.
+    expect(cron.match(/lodgeNullTolerantScope\(lodge\.id\)/g) ?? []).toHaveLength(1);
+    expect(cron).toMatch(/isHutLeaderNightCovered\(prisma,\s*\{\s*lodgeId:\s*lodge\.id,/);
+    expect(cron).toMatch(/isHutLeaderNightCovered\(tx,\s*\{\s*lodgeId:\s*lodge\.id,/);
+    const lockAt = cron.indexOf("await acquireLodgeCapacityLock(tx, lodge.id);");
+    expect(lockAt).toBeGreaterThan(-1);
+    expect(cron.indexOf("isHutLeaderNightCovered(tx,")).toBeGreaterThan(lockAt);
     // And the per-lodge decision replaced the club-wide adult count.
     // #2915's loop decides per (lodge, night); the count is per lodge because
     // the booking read above it is scoped to `lodge.id`.

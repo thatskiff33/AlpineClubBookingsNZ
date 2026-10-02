@@ -528,15 +528,51 @@ describe("#25: Auto-Assign Hut Leaders", () => {
     expect(mockPrisma.hutLeaderAssignment.create).not.toHaveBeenCalled();
   });
 
-  it("skips days that already have an assignment", async () => {
-    mockPrisma.hutLeaderAssignment.findFirst.mockResolvedValue({ id: "exists" });
+  // #3818: "already covered" is the shared presence-aware answer — the row
+  // must claim the night AND its leader must be staying it.
+  const coveringLeaderRow = {
+    id: "exists",
+    memberId: "leader",
+    lodgeId: "lodge-1",
+    startDate: new Date("2026-04-01T00:00:00.000Z"),
+    endDate: new Date("2026-04-30T00:00:00.000Z"),
+    source: "MANUAL",
+    bedId: null,
+  };
+  const leaderStayingAllMonth = {
+    memberId: "leader",
+    stayStart: new Date("2026-04-01T00:00:00.000Z"),
+    stayEnd: new Date("2026-05-01T00:00:00.000Z"),
+    nights: [],
+    booking: {
+      lodgeId: "lodge-1",
+      checkIn: new Date("2026-04-01T00:00:00.000Z"),
+      checkOut: new Date("2026-05-01T00:00:00.000Z"),
+    },
+  };
+
+  it("skips days that already have a leader assigned and staying", async () => {
+    mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([coveringLeaderRow]);
+    mockPrisma.bookingGuest.findMany.mockResolvedValue([leaderStayingAllMonth]);
     mockPrisma.booking.findMany.mockResolvedValue([]);
-    mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
 
     const { autoAssignHutLeaders } = await import("@/lib/cron-hut-leader-auto-assign");
     const result = await autoAssignHutLeaders();
     expect(result.assignedCount).toBe(0);
     expect(mockPrisma.hutLeaderAssignment.create).not.toHaveBeenCalled();
+    // Skipped at the probe: no candidate search ran for a covered night.
+    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
+  });
+
+  it("does NOT skip a night whose assigned leader is not staying (#3818)", async () => {
+    mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([coveringLeaderRow]);
+    mockPrisma.bookingGuest.findMany.mockResolvedValue([]);
+    mockPrisma.booking.findMany.mockResolvedValue([]);
+
+    const { autoAssignHutLeaders } = await import("@/lib/cron-hut-leader-auto-assign");
+    await autoAssignHutLeaders();
+    // The probe found no valid cover, so the job looked for a sole adult.
+    expect(mockPrisma.booking.findMany).toHaveBeenCalled();
   });
 
   it("uses the configured hut-leader lookahead window", async () => {
@@ -544,14 +580,15 @@ describe("#25: Auto-Assign Hut Leaders", () => {
       capacity: null,
       hutLeaderLookaheadDays: 2,
     });
-    mockPrisma.hutLeaderAssignment.findFirst.mockResolvedValue({ id: "exists" });
     mockPrisma.booking.findMany.mockResolvedValue([]);
-    mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
+    mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([coveringLeaderRow]);
+    mockPrisma.bookingGuest.findMany.mockResolvedValue([leaderStayingAllMonth]);
 
     const { autoAssignHutLeaders } = await import("@/lib/cron-hut-leader-auto-assign");
     await autoAssignHutLeaders();
 
-    expect(mockPrisma.hutLeaderAssignment.findFirst).toHaveBeenCalledTimes(3);
+    // One already-covered probe per night: today plus the two-day lookahead.
+    expect(mockPrisma.hutLeaderAssignment.findMany).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -614,8 +651,30 @@ describe("#25: Unassigned Dates API", () => {
   it("returns empty when all dates are covered by assignments", async () => {
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     // Assignment covers the entire configured window
+    // #3818: covered means assigned AND staying, so the leader's stay is
+    // supplied too (UTC-midnight stored days, as the columns hold them).
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
-      { startDate: localMidnight("2026-04-01"), endDate: localMidnight("2026-04-30") },
+      {
+        id: "a1",
+        memberId: "leader",
+        source: "MANUAL",
+        bedId: null,
+        startDate: localMidnight("2026-04-01"),
+        endDate: localMidnight("2026-04-30"),
+      },
+    ]);
+    mockPrisma.bookingGuest.findMany.mockResolvedValue([
+      {
+        memberId: "leader",
+        stayStart: new Date("2026-04-01T00:00:00.000Z"),
+        stayEnd: new Date("2026-05-01T00:00:00.000Z"),
+        nights: [],
+        booking: {
+          lodgeId: undefined,
+          checkIn: new Date("2026-04-01T00:00:00.000Z"),
+          checkOut: new Date("2026-05-01T00:00:00.000Z"),
+        },
+      },
     ]);
     mockPrisma.booking.findMany.mockResolvedValue([
       { checkIn: localMidnight("2026-04-10"), checkOut: localMidnight("2026-04-12"), _count: { guests: 2 } },
@@ -703,7 +762,7 @@ describe("#25: Dashboard Hut Leader Warning", () => {
     // Should have the warning UI, using the configurable hut-leader label
     // (CLUB_HUT_LEADER_LABEL) rather than a hard-coded "Hut Leader" literal.
     expect(content).toContain("CLUB_HUT_LEADER_LABEL");
-    expect(content).toContain("Assignment Required");
+    expect(content).toContain("staying"); // #3818: "Nights without a … staying"
     // Should link to hut leaders page
     expect(content).toContain("/admin/hut-leaders");
     // Should show unassigned dates count

@@ -10,7 +10,11 @@ import {
   deriveHutLeaderDayHalves,
   type HutLeaderOnNight,
 } from "@/lib/hut-leader-handover";
-import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
+import {
+  addCalendarDays,
+  calendarDateOfDateOnlyInstant,
+  dateOnlyInstantOf,
+} from "@/lib/club-time";
 
 /**
  * IS LODGE NIGHT D COVERED BY A HUT LEADER? — the one answer (#3818, `INV-DATE-030`).
@@ -299,9 +303,14 @@ function coverLodges(
   return [...seen.values()];
 }
 
+/** A stored lodge night moved by whole calendar days (zone-free). */
+function shiftNight(night: Date, days: number): Date {
+  return dateOnlyInstantOf(addCalendarDays(calendarDateOfDateOnlyInstant(night), days));
+}
+
 function eachNight(from: Date, to: Date): Date[] {
   const nights: Date[] = [];
-  for (let night = from; night.getTime() <= to.getTime(); night = addDaysDateOnly(night, 1)) {
+  for (let night = from; night.getTime() <= to.getTime(); night = shiftNight(night, 1)) {
     nights.push(night);
   }
   return nights;
@@ -325,7 +334,7 @@ export function listHutLeaderNightLeaders(
     for (const lodge of lodges) {
       const leaders = hutLeadersOnNight(cover, lodge.lodgeId, night);
       if (leaders.length > 0) {
-        rows.push({ date: formatDateOnly(night), lodgeId: lodge.lodgeId, leaders });
+        rows.push({ date: calendarDateOfDateOnlyInstant(night), lodgeId: lodge.lodgeId, leaders });
       }
     }
   }
@@ -358,12 +367,12 @@ export function listHutLeaderHandovers(
   for (const day of eachNight(input.from, input.to)) {
     for (const lodge of lodges) {
       const halves = deriveHutLeaderDayHalves(
-        hutLeadersOnNight(cover, lodge.lodgeId, addDaysDateOnly(day, -1)),
+        hutLeadersOnNight(cover, lodge.lodgeId, shiftNight(day, -1)),
         hutLeadersOnNight(cover, lodge.lodgeId, day),
       );
       if (!halves.isHandover) continue;
       handovers.push({
-        date: formatDateOnly(day),
+        date: calendarDateOfDateOnlyInstant(day),
         ...lodge,
         from: [...halves.morning],
         to: [...halves.afternoon],

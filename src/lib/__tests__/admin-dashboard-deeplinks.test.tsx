@@ -35,6 +35,8 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@/lib/hut-leader-coverage", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/hut-leader-coverage")),
   getUnassignedHutLeaderDates: vi.fn(),
+  // #3818: "Handovers this week" reads the same cover; faked like its sibling.
+  getHutLeaderHandovers: vi.fn(),
 }));
 
 import AdminDashboardPage from "@/app/(admin)/admin/dashboard/page";
@@ -47,7 +49,10 @@ import {
 import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
-import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
+import {
+  getHutLeaderHandovers,
+  getUnassignedHutLeaderDates,
+} from "@/lib/hut-leader-coverage";
 import { prisma } from "@/lib/prisma";
 
 function mockDashboardCounts({
@@ -105,6 +110,7 @@ function mockDashboardCounts({
     pendingBookingChangeRequests,
   );
   vi.mocked(getUnassignedHutLeaderDates).mockResolvedValue([]);
+  vi.mocked(getHutLeaderHandovers).mockResolvedValue([]);
   // Single-lodge club: this suite asserts hrefs, not lodge copy (#2917).
   vi.mocked(prisma.lodge.count).mockResolvedValue(1);
 }

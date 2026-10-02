@@ -35,13 +35,18 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@/lib/hut-leader-coverage", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/hut-leader-coverage")),
   getUnassignedHutLeaderDates: vi.fn(),
+  // #3818: "Handovers this week" reads the same cover; faked like its sibling.
+  getHutLeaderHandovers: vi.fn(),
 }));
 
 import AdminDashboardPage from "@/app/(admin)/admin/dashboard/page";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import { auth } from "@/lib/auth";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
-import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
+import {
+  getHutLeaderHandovers,
+  getUnassignedHutLeaderDates,
+} from "@/lib/hut-leader-coverage";
 import { prisma } from "@/lib/prisma";
 
 /*
@@ -168,6 +173,7 @@ function mockStats() {
   // isolates the officer key cards, and /admin/hut-leaders would otherwise also
   // be linked from that attention card.
   vi.mocked(getUnassignedHutLeaderDates).mockResolvedValue([]);
+  vi.mocked(getHutLeaderHandovers).mockResolvedValue([]);
 }
 
 // Resolve the actor through the accessRoles-derivation path production actually
@@ -303,7 +309,9 @@ describe("admin dashboard hut-leader coverage card", () => {
     // One night, two lodges, two pieces of work — and the officer is told
     // where to send someone rather than just how many.
     expect(html).toContain("2 upcoming lodge-nights");
-    expect(html).toContain("2026-07-05 (Alpine Lodge), 2026-07-05 (Basin Lodge)");
+    expect(html).toContain(
+      "2026-07-05 · 2 guests (Alpine Lodge), 2026-07-05 · 2 guests (Basin Lodge)",
+    );
   });
 
   it("STILL NAMES THE LODGE ON A MULTI-LODGE CLUB WHOSE GAPS ALL SIT AT ONE LODGE", async () => {
@@ -320,7 +328,9 @@ describe("admin dashboard hut-leader coverage card", () => {
     const html = renderToStaticMarkup(await AdminDashboardPage());
 
     expect(html).toContain("2 upcoming lodge-nights");
-    expect(html).toContain("2026-07-05 (Alpine Lodge), 2026-07-06 (Alpine Lodge)");
+    expect(html).toContain(
+      "2026-07-05 · 2 guests (Alpine Lodge), 2026-07-06 · 2 guests (Alpine Lodge)",
+    );
   });
 
   it("marks a night at an ARCHIVED lodge, even on a club with one active lodge", async () => {
@@ -334,7 +344,7 @@ describe("admin dashboard hut-leader coverage card", () => {
 
     const html = renderToStaticMarkup(await AdminDashboardPage());
 
-    expect(html).toContain("2026-07-05 (Basin Lodge, archived)");
+    expect(html).toContain("2026-07-05 · 2 guests (Basin Lodge, archived)");
   });
 
   it("shows a single-lodge club the bare dates and the plain wording it saw before", async () => {
@@ -346,11 +356,65 @@ describe("admin dashboard hut-leader coverage card", () => {
 
     const html = renderToStaticMarkup(await AdminDashboardPage());
 
-    expect(html).toContain("2 upcoming dates");
-    expect(html).toContain("2026-07-05, 2026-07-06");
+    // #3818: the night and how many guests are on site with nobody in charge.
+    expect(html).toContain("Nights without a hut leader staying");
+    expect(html).toContain("2 upcoming nights with guests but no hut leader staying");
+    expect(html).toContain("2026-07-05 · 2 guests, 2026-07-06 · 2 guests");
     // ADR-002 Presentation Rule: a club with one lodge is never shown a lodge
     // name it cannot act on, and never the multi-lodge noun.
     expect(html).not.toContain("Alpine Lodge");
     expect(html).not.toContain("lodge-night");
+  });
+});
+
+/** #3818: the changeovers in the coming week, from the presence-aware cover. */
+describe("admin dashboard handovers this week", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue(null);
+    mockStats();
+  });
+
+  const handover = {
+    date: "2026-07-03",
+    lodgeId: "lodge-a",
+    lodgeName: "Alpine Lodge",
+    lodgeActive: true,
+    from: [{ memberId: "ann", name: "Ann Smith" }],
+    to: [{ memberId: "ben", name: "Ben Jones" }],
+  };
+
+  it("lists each handover for an officer who can open the hut-leaders page", async () => {
+    mockActorMatrix({ overview: "view", lodge: "edit" });
+    vi.mocked(getHutLeaderHandovers).mockResolvedValue([handover]);
+
+    const html = renderToStaticMarkup(await AdminDashboardPage());
+
+    expect(html).toContain("Handovers this week");
+    expect(html).toContain("Ann Smith → Ben Jones at midday");
+    // One lodge: never named (ADR-002 Presentation Rule).
+    expect(html).not.toContain("(Alpine Lodge)");
+    expect(vi.mocked(getHutLeaderHandovers)).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: { kind: "all" } }),
+    );
+  });
+
+  it("names the lodge on a multi-lodge club", async () => {
+    mockActorMatrix({ overview: "view", lodge: "edit" });
+    vi.mocked(prisma.lodge.count).mockResolvedValue(2);
+    vi.mocked(getHutLeaderHandovers).mockResolvedValue([handover]);
+
+    const html = renderToStaticMarkup(await AdminDashboardPage());
+
+    expect(html).toContain("Ann Smith → Ben Jones at midday (Alpine Lodge)");
+  });
+
+  it("is hidden from an actor who cannot open the hut-leaders page", async () => {
+    mockActorMatrix({ overview: "view" });
+    vi.mocked(getHutLeaderHandovers).mockResolvedValue([handover]);
+
+    const html = renderToStaticMarkup(await AdminDashboardPage());
+
+    expect(html).not.toContain("Handovers this week");
   });
 });

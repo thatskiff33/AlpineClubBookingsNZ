@@ -1,9 +1,9 @@
 import type { CalendarOverlayValue } from "@/components/admin/occupancy-calendar";
 import {
-  addDaysDateOnly,
-  formatDateOnly,
-  isDateOnlyString,
-} from "@/lib/date-only";
+  addCalendarDays,
+  calendarDateOfDateOnlyInstant,
+  isCalendarDate,
+} from "@/lib/club-time";
 import {
   deriveHutLeaderDayHalves,
   hutLeaderAfternoonLabel,
@@ -60,13 +60,13 @@ export function buildLeaderCalendarOverlay(input: {
   const names = (leaders: readonly HutLeaderOnNight[]) =>
     joinHutLeaderNames(leaders, shortLeaderLabel);
 
+  const last = calendarDateOfDateOnlyInstant(input.monthEnd);
   for (
-    let day = input.monthStart;
-    day.getTime() <= input.monthEnd.getTime();
-    day = addDaysDateOnly(day, 1)
+    let date = calendarDateOfDateOnlyInstant(input.monthStart);
+    date <= last;
+    date = addCalendarDays(date, 1)
   ) {
-    const date = formatDateOnly(day);
-    const previous = formatDateOnly(addDaysDateOnly(day, -1));
+    const previous = addCalendarDays(date, -1);
     const halves = deriveHutLeaderDayHalves(
       input.coveredNights.get(previous) ?? [],
       input.coveredNights.get(date) ?? [],
@@ -124,7 +124,7 @@ export function coveredNightsByDate(
     // non-essential and must never take the page down (#2286 review).
     if (
       typeof row?.date !== "string" ||
-      !isDateOnlyString(row.date) ||
+      !isCalendarDate(row.date) ||
       !Array.isArray(row.leaders)
     ) {
       continue;
