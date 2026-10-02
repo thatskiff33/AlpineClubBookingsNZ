@@ -652,16 +652,9 @@ export function rebaseDivergesFromIssuedInvoice({
   rebase: BookingPriceRebase | null;
   hasIssuedXeroInvoice: boolean;
   /**
-   * Whether the closure's own Xero document corrects the invoice - or, for an
-   * account-credit share (#3791), what its allocated note takes off the
-   * invoice. The invoice then agrees with the booking's stored price only where
-   * the re-price moved it by the same amount; a share agreed with no re-price
-   * at all leaves the stored price above the invoice, and says so.
-   */
-  /**
-   * `invoiceReductionCents` null - every closure but an uncaptured
-   * account-credit share, including a captured payment's (#3791 F1) - falls
-   * back to the document rule.
+   * Whether the closure's Xero document corrects the invoice - or, for an
+   * uncaptured account-credit share (#3791), what its allocated note takes off
+   * it, which must equal the re-price's drop; null falls back to the document.
    */
   settlement: { issuesXeroDocument: boolean; invoiceReductionCents?: number | null };
 }): boolean {

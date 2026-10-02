@@ -1591,8 +1591,12 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     app's. So an invoice-ALLOCATED note takes off the whole reduction
     (`reviewInvoiceReductionCents`); minted credit takes the unallocated note;
     a cancelled booking is left alone except for that minted note. Notes are
-    scoped to the review task and wait for the deallocation.
-  - **The ledger stand-in posts what was credited**, none at zero.
+    scoped to the review task and wait for the deallocation, failing for an
+    operator retry when it FAILED. A captured payment's share keeps the
+    document rule.
+  - **The ledger posts what was credited**, none at zero; on a covered booking
+    the give-back beyond the re-price is an agreed reduction no re-price
+    reverses (`agreedGiveBackKey`).
   - **Unpaid** - credit short of the price beyond earlier review give-backs:
     no more given back than the booking's review re-prices removed.
   - **Cancelled first**: netted cumulatively against the restore from figures

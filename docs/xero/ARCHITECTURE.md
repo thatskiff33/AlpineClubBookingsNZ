@@ -803,8 +803,10 @@ minted credit, and on a cancelled booking nothing but that minted note is sent:
 given-back credit there is a noteless row, as the cancellation's own restore is.
 Each note's correlation and Xero idempotency keys carry the review task
 (`reviewTaskKeyParts`), so sibling reviews of one edit raise a note each, and a
-review's allocated note waits, returned to PENDING, while the payment's
-deallocation has not converged.
+review's allocated note waits, returned to PENDING with the reason kept in
+`lastErrorMessage`, while the payment's deallocation is PENDING or RUNNING. A
+FAILED or PARTIAL deallocation only moves on an operator retry, so the note
+fails instead, naming it: retry the deallocation, then the note.
 
 **Deploy note (blue/green, #3791).** A review's note carries `reviewTaskId` in
 its outbox payload, which the previous release ignores: it would raise the note

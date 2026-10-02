@@ -20,7 +20,7 @@ reason: the unallocated account-credit note's builder takes the review task
   in the executed payload so an operator retry can rebuild the note.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 3268
+lines: 3270
 reason: the two modification credit-note enqueues are where a queued note is
   deduplicated, and a review task's note has to be deduplicated by its own
   task-scoped key rather than the anchor's link (#3791 fix round). Splitting the

@@ -417,6 +417,13 @@ by `planReviewClosureShareLines` after the closure's re-price rows (§5.1):
   posts.
 - **Otherwise** (the re-base declined, or the charges do not carry the price):
   the share posts as the stand-in for money the headline has not moved yet.
+- **An agreed give-back is not a stand-in** (#3791). A review that gives back
+  applied credit on a booking its credit covered has agreed a lower price than
+  the strands say, by the give-back beyond its re-price. That posts as its own
+  `AGREED_ADJUSTMENT`, keyed `agreed-give-back:<taskId>`, whatever the charges
+  carry and in place of the share's stand-in, and no later re-price reverses
+  it: the strands never come to carry it, and the invoice already took it off
+  (`INV-PAY-113`). A cancellation still reverses it with the stay.
 
 Why the re-price carries the share: where the officer typed night prices,
 `checkStoredNightPriceRepair` requires them to come to the strand's stored total
