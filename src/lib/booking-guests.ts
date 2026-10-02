@@ -723,7 +723,7 @@ export async function assertLinkedBookingMembersCanBeBooked(
     // wholesale costs the booker one extra round trip: they drop the member the
     // club will not discuss, retry, and get the full, helpful detail for their
     // own family exactly as before. The create route does not reach this
-    // ordering (owner decision, issue #3770 comment 5946598639): it gates the
+    // ordering (owner decision, issue #3770 comment 5946598639, `INV-GUEST-020`): it gates the
     // family before resolving any beyond-family member, so a blocked family
     // member is reported in full there, whether or not a named stranger is real.
     const crossFamilyIds = new Set(context?.crossFamilyMemberIds ?? []);

@@ -433,7 +433,7 @@ function buildMembershipTypeBookingPolicyMessage(
   // That is rare, recoverable (remove the guest and the detailed message
   // returns), and much cheaper than the alternative.
   //
-  // NOT ON THE CREATE ROUTE (owner decision, issue #3770 comment 5946598639):
+  // NOT ON THE CREATE ROUTE (owner decision, issue #3770 comment 5946598639, `INV-GUEST-020`):
   // `POST /api/bookings` asks the policy about the booker and their family
   // BEFORE it resolves any beyond-family member, so there a family block is
   // answered first and in full, and only a block on the stranger reaches this

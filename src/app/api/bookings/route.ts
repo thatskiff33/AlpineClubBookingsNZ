@@ -781,7 +781,8 @@ export async function POST(request: NextRequest) {
   let memberGuestEntries = new Map<string, MemberGuestConsentWritePlanEntry>();
 
   /*
-   * THE FAMILY IS RESOLVED AND JUDGED BEFORE ANY BEYOND-FAMILY MEMBER (#3770).
+   * THE FAMILY IS RESOLVED AND JUDGED BEFORE ANY BEYOND-FAMILY MEMBER (#3770,
+   * `INV-GUEST-020`).
    *
    * Owner decision, 2 Oct 2026 (#3770, comment 5946598639). A refusal that can
    * only be reached once a named member resolved tells the caller that member is
