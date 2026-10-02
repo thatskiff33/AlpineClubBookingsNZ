@@ -1,11 +1,15 @@
 import { prisma } from "./prisma";
-import { eachDayOfInterval, addDays } from "date-fns";
-import { formatDateOnly } from "@/lib/date-only";
+import {
+  addDaysDateOnly,
+  eachDateOnlyInRange,
+  formatDateOnly,
+} from "@/lib/date-only";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { lodgeNullTolerantScope } from "./lodges";
 import { acquireLodgeCapacityLock } from "./lodge-capacity-lock";
 import { findHutLeaderOverlapRefusal } from "./hut-leader-overlap-guard";
+import { isHutLeaderNightCovered } from "./hut-leader-night-cover";
 import { loadHutLeaderLookaheadDays } from "./lodge-settings";
 import { loadEffectiveModuleFlags } from "./module-settings";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
@@ -46,8 +50,16 @@ export async function autoAssignHutLeaders(): Promise<{
 
   const lookAheadDays = await loadHutLeaderLookaheadDays();
   const today = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
-  const endDate = addDays(today, lookAheadDays);
-  const days = eachDayOfInterval({ start: today, end: endDate });
+  const endDate = addDaysDateOnly(today, lookAheadDays);
+  // UTC date-only nights, stepped with the domain's own helper — the same fix
+  // `cron-capacity-warnings.ts` made (#2286 review L3). date-fns
+  // `eachDayOfInterval` returns LOCAL-midnight dates, so in a container running
+  // `TZ=Pacific/Auckland` every `day` here sat at 12:00Z of the PREVIOUS
+  // calendar day: Prisma truncated it to that day, so the job silently ran one
+  // night early, from yesterday. #3818 makes it unmissable: the shared coverage
+  // helper reads the night through `isGuestActiveOnNight`, which refuses a
+  // value that is not a stored calendar day rather than guess.
+  const days = eachDateOnlyInRange(today, addDaysDateOnly(endDate, 1));
 
   const assignedDates: string[] = [];
 
@@ -73,15 +85,18 @@ export async function autoAssignHutLeaders(): Promise<{
       // DELIBERATE assignment stand here?", and an officer choosing to add one
       // is not to be refused by teacher rows. Coverage is automatic and stays
       // out of the way; overlap is a refusal and stops refusing.
-      const existingAssignment = await prisma.hutLeaderAssignment.findFirst({
-        where: {
-          startDate: { lte: day },
-          endDate: { gte: day },
-          ...lodgeNullTolerantScope(lodge.id),
-        },
+      //
+      // #3818: "covered" is the shared presence-aware answer — an assignment
+      // claims the night AND its leader is staying that night — so the cron
+      // and the dashboard can never disagree about which nights need a leader.
+      // Still source-blind as above: a teacher row covers its school booking's
+      // nights (`hut-leader-night-cover.ts`).
+      const alreadyCovered = await isHutLeaderNightCovered(prisma, {
+        lodgeId: lodge.id,
+        night: day,
       });
 
-      if (existingAssignment) continue;
+      if (alreadyCovered) continue;
 
       // Find distinct adult members with PAID bookings for this date at this
       // lodge. Scoped, so the "exactly one adult member" test below counts the
@@ -208,13 +223,9 @@ export async function autoAssignHutLeaders(): Promise<{
           // match it exactly: a locked re-ask that answered a different question
           // from the one above would make the cheap skip and the authoritative
           // skip disagree (#2926).
-          const lockedAssigned = await tx.hutLeaderAssignment.findFirst({
-            where: {
-              startDate: { lte: day },
-              endDate: { gte: day },
-              ...lodgeNullTolerantScope(lodge.id),
-            },
-            select: { id: true },
+          const lockedAssigned = await isHutLeaderNightCovered(tx, {
+            lodgeId: lodge.id,
+            night: day,
           });
           if (lockedAssigned) return false;
 
