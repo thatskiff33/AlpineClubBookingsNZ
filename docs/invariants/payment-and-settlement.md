@@ -848,18 +848,19 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   restore at **100%**; the paid path restores the applied slice at the
   cancellation tier (#1164 / D7). Restore idempotency is STRUCTURAL, not
   lock-dependent (#1636): the restore row carries a nullable-unique
-  `restoredFromBookingId`, so at most one restore row per booking can exist
-  regardless of caller lock granularity — a duplicate insert is a
-  `skipDuplicates` no-op. This is a restore-specific key, NOT a unique over
+  `restoredFromBookingId`, so at most one restore row per booking can exist —
+  a duplicate insert is a `skipDuplicates` no-op. This is a restore-specific key, NOT a unique over
   `(sourceBookingId, type=CANCELLATION_REFUND)`, because three legitimate paths
   (`restoreCreditFromBooking`, `createCancellationCredit`'s held-as-credit
   refund, and the Xero inbound late-cash credit) all write that shape for one
-  booking. Each branch's atomic status flip remains the primary single-flight — the never-captured and `PENDING` branches are status-guarded claim-first under the booking advisory lock too — but the unique key removes the cross-path lock-granularity dependence, so moving a credit-restoring path off the shared `lock(1)` (e.g. a per-lodge release lock) can no longer double a restore.
+  booking. Each branch's atomic status flip remains the primary single-flight (the never-captured and `PENDING` branches claim first under the booking advisory lock), but the unique key removes the cross-path lock-granularity dependence, so moving a credit-restoring path off the shared `lock(1)` can no longer double a restore. The inbound
+  credit-note sync never re-credits a restored booking's de-allocation; it
+  alerts instead (#3792).
   A CANCELLED booking may legitimately hold consumed credit with NO restore row
   only when its payment captured money (0%-tier paid cancels write no restore
   row; held-as-credit refunds keep the applied rows) or settled without cash
   (the fully-credit-covered $0 SUCCEEDED payment takes the paid path). The daily
-  credit-reconciliation cron alerts (alert-only, no auto-heal) on any CANCELLED
+  credit-reconciliation cron alerts (no auto-heal) on any CANCELLED
   booking still holding orphaned applied credit, and
   `scripts/backfill-orphaned-applied-credits.ts` heals pre-fix orphans. The
   cancelled-booking delete guard mirrors this: fully-reversed applied credit

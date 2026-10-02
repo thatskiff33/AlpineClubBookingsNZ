@@ -1382,7 +1382,11 @@ Never-captured cancellation and Internet-Banking hold expiry acquire global
 booking lock(1) first and the per-member credit-ledger lock second. While
 holding both, they query for any non-complete applied-credit deallocation
 before their first write. If one exists they defer the whole transition; a
-later retry computes the clearing amount from provider-converged slices. Hold
+later retry computes the clearing amount from provider-converged slices. The
+inbound reconcile's late capacity cancel (#3792) does the same after its lodge
+lock (global → lodge → member): it throws the busy error, so the inbound event
+retries after its backoff, and it restores the applied credit under the member
+lock. Hold
 expiry also re-reads the booking's invoice-payment links recorded since its
 live Xero read, under both locks before its first write, and keeps the hold if
 one exists (`INV-PAY-107`, #3643). The inbound link write takes no booking
@@ -4221,7 +4225,11 @@ guarantees the surrounding side effects run once); the unique key is the
 structural backstop underneath it. The Xero inbound applied-credit repair
 (`xero-inbound/credit-note-repairs.ts`) takes the **per-member credit ledger
 lock** (not `lock(1)`) so its `BOOKING_APPLIED` writes mutually exclude the
-credit spend engine, which takes the same key. The orphan-heal repair
+credit spend engine, which takes the same key. Under that lock it also reads the
+booking's restore row: a provider de-allocation that would credit back a
+booking whose applied credit was already restored is refused and alerted
+(`notifyXeroSyncError`, `applied-credit-restored-booking-deallocation`), so no
+cancel path's restore can be paid twice (#3792, `INV-PAY-019`). The orphan-heal repair
 (`orphaned-applied-credit-backfill.ts`) also takes the per-member credit ledger
 lock and re-derives an "already restored?" predicate.
 

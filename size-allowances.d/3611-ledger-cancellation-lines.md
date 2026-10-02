@@ -27,8 +27,6 @@ reason: one posting call, nothing kept, in the settle's capacity void, inside
   the lock(1) transaction that cancels; it has to sit where the void is.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
-lines: 1922
+lines: 1899
 reason: one posting call, nothing kept, in the late-capacity cancel arm, inside
-  the lock(1) transaction that cancels it and mints the credit; and (#3792,
-  stacked on this branch) the full restore of the booking's applied credit in
-  that same claim, with its booking event, beside the capacity void's own.
+  the lock(1) transaction that cancels it and mints the credit.
