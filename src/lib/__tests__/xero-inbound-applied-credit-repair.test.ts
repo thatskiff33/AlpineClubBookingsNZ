@@ -7,6 +7,8 @@ const h = vi.hoisted(() => {
   const memberCreditUpdate = vi.fn();
   const memberCreditUpdateMany = vi.fn();
   const memberCreditAggregate = vi.fn();
+  // #3792: the restore-row read of the sync guard.
+  const memberCreditFindUnique = vi.fn();
   const allocationAggregate = vi.fn();
   const paymentFindUnique = vi.fn();
   const paymentUpdate = vi.fn();
@@ -24,6 +26,7 @@ const h = vi.hoisted(() => {
       update: memberCreditUpdate,
       updateMany: memberCreditUpdateMany,
       aggregate: memberCreditAggregate,
+      findUnique: memberCreditFindUnique,
     },
     memberCreditNoteAllocation: { aggregate: allocationAggregate },
     payment: { findUnique: paymentFindUnique, update: paymentUpdate },
@@ -43,6 +46,7 @@ const h = vi.hoisted(() => {
     memberCreditUpdate,
     memberCreditUpdateMany,
     memberCreditAggregate,
+    memberCreditFindUnique,
     allocationAggregate,
     paymentFindUnique,
     paymentUpdate,
@@ -102,6 +106,7 @@ describe("provider-aware inbound applied-credit repair", () => {
     h.paymentFindUnique.mockResolvedValue({ creditAppliedCents: 3000 });
     h.memberCreditCreate.mockResolvedValue({});
     h.repairPrecise.mockResolvedValue(0);
+    h.memberCreditFindUnique.mockResolvedValue(null);
   });
 
   it.each([
@@ -216,6 +221,61 @@ describe("provider-aware inbound applied-credit repair", () => {
     expect(h.paymentUpdate).toHaveBeenCalledWith({
       where: { id: "payment-1" },
       data: { creditAppliedCents: 0 },
+    });
+    // #3792: a live booking has no restore row, so the de-allocation still
+    // credits the member and nothing is alerted.
+    expect(h.memberCreditFindUnique).toHaveBeenCalledWith({
+      where: { restoredFromBookingId: "booking-1" },
+      select: { amountCents: true },
+    });
+    expect(h.notifyXeroSyncError).not.toHaveBeenCalled();
+  });
+
+  // #3792: the booking was cancelled and its applied $30 already given back by
+  // restoreCreditFromBooking (the late capacity cancel, the never-captured
+  // cancel, the hold release or the settle's capacity void). Xero later loses
+  // the allocation: crediting the $30 again would pay the member twice.
+  it("refuses to credit a de-allocation on a cancelled booking whose applied credit was already restored, and alerts an operator (#3792)", async () => {
+    h.linkFindMany.mockResolvedValue([{
+      metadata: { creditNoteId: "cn-1", invoiceId: "invoice-1", amountCents: 3000 },
+    }]);
+    h.allocationAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
+    h.memberCreditAggregate
+      .mockResolvedValueOnce({ _sum: { amountCents: 0 } })
+      .mockResolvedValueOnce({ _sum: { amountCents: -3000 } })
+      .mockResolvedValue({ _sum: { amountCents: -3000 } });
+    h.memberCreditFindUnique.mockResolvedValue({ amountCents: 3000 });
+
+    const result = await repairAccountCreditAllocationBusinessState("cn-1", []);
+
+    expect(h.memberCreditCreate).not.toHaveBeenCalled();
+    expect(syncCredits).not.toHaveBeenCalled();
+    expect(h.paymentUpdate).not.toHaveBeenCalled();
+    expect(result.skippedAllocations).toBe(1);
+    expect(h.notifyXeroSyncError).toHaveBeenCalledTimes(1);
+    expect(h.notifyXeroSyncError).toHaveBeenCalledWith(expect.objectContaining({
+      errorType: "applied-credit-restored-booking-deallocation",
+      operation: "inbound-applied-credit-repair:cn-1",
+      errorMessage: expect.stringContaining("booking booking-1 is cancelled"),
+    }));
+    // The alert goes out after the ledger transaction, not inside it.
+    expect(h.prisma.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
+      h.notifyXeroSyncError.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("still debits an allocation increase on a booking with no restore row, without reading for one", async () => {
+    h.allocationAggregate.mockResolvedValue({ _sum: { amountCents: 4000 } });
+    h.memberCreditAggregate
+      .mockResolvedValueOnce({ _sum: { amountCents: 0 } })
+      .mockResolvedValueOnce({ _sum: { amountCents: -3000 } })
+      .mockResolvedValue({ _sum: { amountCents: -4000 } });
+
+    await repairAccountCreditAllocationBusinessState("cn-1", [{ invoiceId: "invoice-1", amountCents: 4000 }]);
+
+    expect(h.memberCreditFindUnique).not.toHaveBeenCalled();
+    expect(h.memberCreditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ amountCents: -1000 }),
     });
   });
 

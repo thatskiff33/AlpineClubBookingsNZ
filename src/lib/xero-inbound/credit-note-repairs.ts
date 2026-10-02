@@ -700,6 +700,15 @@ export async function repairAccountCreditAllocationBusinessState(
   let updatedAppliedPayments = 0;
   let skippedAllocations = 0;
 
+  // #3792: provider de-allocations the guard below refused to credit, alerted
+  // after their transaction commits (the alert reads EmailLog and sends mail).
+  const restoredBookingDeallocations: {
+    bookingId: string;
+    invoiceId: string;
+    refusedCreditCents: number;
+    restoredCents: number;
+  }[] = [];
+
   for (const target of providerTargets) {
     const linkedPaymentIds = (
       await findActiveXeroObjectLinks("INVOICE", target.invoiceId)
@@ -943,7 +952,29 @@ export async function repairAccountCreditAllocationBusinessState(
       );
       const providerAwareAppliedCents = preciseCents + unallocatedCents;
       const ledgerDeltaCents = providerAwareAppliedCents - currentAppliedCents;
-      if (ledgerDeltaCents !== 0) {
+      // #3792 (INV-PAY-019): a negative delta credits the member back. A
+      // cancelled booking whose applied credit was already given back has a
+      // restore row (`restoredFromBookingId`, written only by
+      // restoreCreditFromBooking, for every cancel path), so crediting again
+      // would pay the member twice. Refuse the write and alert an operator.
+      // A live booking has no restore row, so a genuine Xero de-allocation
+      // still credits the member.
+      const restoredFromThisBooking =
+        ledgerDeltaCents < 0
+          ? await tx.memberCredit.findUnique({
+              where: { restoredFromBookingId: payment.bookingId },
+              select: { amountCents: true },
+            })
+          : null;
+      if (restoredFromThisBooking) {
+        skippedAllocations += 1;
+        restoredBookingDeallocations.push({
+          bookingId: payment.bookingId,
+          invoiceId: target.invoiceId,
+          refusedCreditCents: -ledgerDeltaCents,
+          restoredCents: restoredFromThisBooking.amountCents,
+        });
+      } else if (ledgerDeltaCents !== 0) {
         await tx.memberCredit.create({
           data: {
             memberId: creditLedgerMemberId,
@@ -1000,6 +1031,18 @@ export async function repairAccountCreditAllocationBusinessState(
         });
         updatedAppliedPayments += 1;
       }
+    });
+  }
+
+  for (const refused of restoredBookingDeallocations) {
+    logger.warn(
+      { creditNoteId, ...refused },
+      "Refused to credit a Xero applied-credit de-allocation: the cancelled booking's applied credit was already restored (#3792)",
+    );
+    await notifyXeroSyncError({
+      errorType: "applied-credit-restored-booking-deallocation",
+      operation: `inbound-applied-credit-repair:${creditNoteId}`,
+      errorMessage: `Credit note ${creditNoteId}'s allocation to invoice ${refused.invoiceId} was reduced in Xero by ${formatCents(refused.refusedCreditCents, format)}, but booking ${refused.bookingId} is cancelled and its applied credit (${formatCents(refused.restoredCents, format)}) was already restored to the member. No further credit was given, so the member is not paid twice. Check the credit note and the member's balance in Xero; adjust by hand only if they disagree.`,
     });
   }
 
