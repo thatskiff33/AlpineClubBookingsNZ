@@ -316,22 +316,23 @@ leave a stale row here.
 
 ## INV-GUEST-020
 
-- **On the create route, the booker's family is judged before any member from
-  beyond it is resolved** (owner decision 2 Oct 2026, #3770). A refusal that can
-  only be reached once a named member resolved says that member is real, so
-  `POST /api/bookings` computes the boundary from the booker's family groups,
-  spends the #2388 throttle, resolves the family and runs every per-member
-  refusal about it (profile gate, night clash, membership type, unpaid
-  subscription) before looking up a beyond-family id. The guards then run again
-  over the whole party, where only that member can still refuse, with D-8's
-  neutral sentence.
-- **This reverses, on this door only, the "cross-family refusal wins" order**
-  the profile gate, the person-night guard and the membership-type message keep
-  everywhere else.
+- **The booker's family is judged before any member from beyond it is
+  resolved** (owner decision 2 Oct 2026, #3770), on `POST /api/bookings` and both
+  policy-exception doors. A refusal reachable only once a named member resolved
+  says that member is real, so the boundary is computed from the booker's family
+  groups, the #2388 throttle is spent, a beyond-family id is refused outright
+  where member guests are off, and the family is resolved and gated before any
+  outsider is looked up. On create, every per-member refusal about the family
+  (night clash, membership type, unpaid subscription) runs there too; the guards
+  then run again over the whole party, where only the outsider can refuse, with
+  D-8's neutral sentence. One home: `src/lib/member-guest-family-first.ts`.
+- **This reverses, on these doors, the "cross-family refusal wins" order** the
+  profile gate, the person-night guard and the membership-type message keep
+  elsewhere.
 - **A rule a beyond-family adult can satisfy waits for that member.** With one
-  named on a member's own booking, paid-up adult and hosting are judged on the
-  whole party; if they still fail, the answer is the lookup's collapsed refusal,
-  never their own message. An officer acting on a member's behalf keeps the
-  detailed answers.
-- Every refusal that reads only the request or the booker runs before the
-  lookup altogether. Home: `src/app/api/bookings/route.ts`.
+  named on a member's own booking, paid-up adult, hosting and adult supervision
+  are judged on the whole party; a failure, or the create service's own hosting
+  or supervision refusal, is the lookup's collapsed refusal. An officer acting on
+  a member's behalf keeps the detailed answers.
+- **Not yet before the lookup on create:** a full night (pending the owner),
+  promo usage caps and guest eligibility, and race-only refusals.

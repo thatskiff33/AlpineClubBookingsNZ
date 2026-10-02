@@ -1231,26 +1231,32 @@ answered) and built to it:
 - **Refusals that read nothing about the named members come before the member
   lookup** (#3770), so they answer the same whether a member id in the party is
   real. On create: a bad stay range, the own-dependant question, a past date
-  (and, for an officer's retroactive booking, the lookback and the Xero lock
-  date), a missing or unknown lodge, the guest-count cap, the booker's own unpaid
+  (including a guest whose own stay starts in the past and, for an officer's
+  retroactive booking, the lookback and the Xero lock date), a missing or
+  unknown lodge, a lodge the booker may not book, a room from another lodge, the
+  guest-count cap, the booker's own unpaid
   subscription, the minimum stay, Internet Banking availability and its cutoff,
   a working-bee event that cannot apply, and a promo code that is unknown,
   inactive, out of its window, for another lodge, assigned to somebody else or
   missing its guest selection. The promo code's usage caps, and which guests may
-  use it, read the priced party and are still answered later. On the exception
+  use it, read the priced party and are still answered later, as is a full
+  night (that one is with the owner). On the exception
   requests: the stay range and the own-dependant question, a lodge id that names
   no active lodge (new booking), a supersede target that is not the member's
   open request, and an occupied slot (edit). "Nothing to review" reads the
   members, so with a beyond-family member named it is the neutral refusal
   instead, and both doors floor and audit their neutral refusals.
-- **On create, the booker's own family is judged before anyone from beyond it
-  is looked up** (#3770, `INV-GUEST-020`). A family member who is already booked
-  those nights, blocked by their membership type, unpaid, or missing profile
-  details is reported in full whether or not a named outsider is real, which
-  reverses on this screen the order where the outsider's neutral refusal used
-  to win. If the party needs a paid-up adult or adult host and an outsider is
-  named, the rule waits until that outsider is known: if they cure it the booking
-  goes ahead, and if it still fails the member sees the neutral refusal.
+- **The booker's own family is judged before anyone from beyond it is looked
+  up** (#3770, `INV-GUEST-020`), on create and on both exception requests. A
+  family member who is missing profile details is reported in full whether or
+  not a named outsider is real (and, on create, one already booked those nights,
+  blocked by their membership type, or unpaid), which reverses here the order
+  where the outsider's neutral refusal used to win. Where member guests are off,
+  an outsider is still refused first, as before. If a party on create needs a
+  paid-up adult, an adult host or an adult for its minors and an outsider is
+  named, the rule is judged once that outsider is known: an outsider the rule
+  can count settles it, and if it still fails the member sees the neutral
+  refusal. An outsider waiting to consent does not count as present.
 - **Every collapsed refusal is audited** naming actor and target, and a run of
   them against the same target raises a flagged row an admin can find — ONCE per
   actor/target per 24 hours, on the crossing rather than on every refusal past

@@ -6,7 +6,7 @@ pre-checks a refusal the transaction already makes. The growth is the code that
 splits one refusal in two, plus the comment saying why the order matters.
 
 file: src/app/api/bookings/route.ts
-lines: 1704
+lines: 1755
 reason: the route is a long, ordered sequence of guards, and the contract this
   issue fixes IS that order: refusals that read only the request and the booker
   must run before the member lookup, and the ones that read the resolved party
@@ -22,11 +22,16 @@ reason: the route is a long, ordered sequence of guards, and the contract this
   `booking-create-promo.ts`. The owner's family-first decision (#3770, comment
   5946598639, `INV-GUEST-020`) adds the rest: the lookup now runs in two phases
   with the per-member guards run once over the family and once over the whole
-  party, and the deferred paid-up-adult and hosting collapse. That sequence is
-  the contract, so it stays readable in the one handler that owns it.
+  party, and the deferred paid-up-adult, hosting and adult-supervision collapse,
+  with the services' own hosting and supervision refusals mapped the same way.
+  Round 4 adds the lodge-access, room-lodge and stay-envelope past-date refusals
+  ahead of the lookup. The resolution itself moved out to
+  `member-guest-family-first.ts`, shared with the exception doors; what stays is
+  the ordered sequence of refusals, which is the contract, so it stays readable
+  in the one handler that owns it.
 
 file: src/lib/booking-exception-request-service.ts
-lines: 2493
+lines: 2488
 reason: the "nothing to review" collapse has to live in `freezeProposal`, the one
   function both exception doors call. It takes the beyond-family ids as a
   required argument, so a new caller cannot forget it. The supersede-target and
