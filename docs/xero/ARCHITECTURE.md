@@ -783,6 +783,17 @@ deallocation, membership-cancellation credit note, membership-cancellation
 contact update, group-settlement invoice, group-settlement invoice void,
 membership subscription invoice, and kept late-capture invoice (#3635).
 
+**An applied-credit deallocation has one producer**: `giveBackAppliedCredit`
+(`member-credit.ts`), the give-back of applied credit that the pre-payment
+clamp and a credit-paid booking's financial-review share both go through
+(#3791, `INV-PAY-113`). Where an internet-banking booking's credit is allocated
+against its invoice beyond the new applied figure, it queues the deallocation in
+the same transaction as the ledger row, and the PENDING row fences the inbound
+applied-credit repair until it converges, so an inbound sync cannot pull the
+given-back credit back up to Xero's figure. Money given back this way takes no
+modification account credit note of its own: the deallocation is what returns
+it to the member in Xero.
+
 **Retry taxonomy** (each layer is distinct — do not conflate when changing):
 
 1. **Transport** — `withXeroRetry` retries 429/5xx/408 in-process with backoff;

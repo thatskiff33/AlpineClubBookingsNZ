@@ -1555,11 +1555,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   canonical Stripe refund for a card capture, made AFTER the commit; the local
   ledger allocation for an internet-banking hand-back; or
   `createBookingModificationCredit` where nothing was captured, whose
-  exactly-once key is the `BookingModification` id. There the share first returns
-  applied credit through the clamp's give-back, lowering the mirror a cancel
-  tiers, and only any excess is minted (#3791;
-  `edit-financial-review-races.realdb.test.ts`).
-  **Which one is a question
+  exactly-once key is the `BookingModification` id; there a share is first
+  applied credit given back (`INV-PAY-113`). **Which one is a question
   about the booking, asked at completion** (#3194): a task carrying no payment id
   re-reads the booking's own payment through `editReviewSettlementPayment`, the
   single derivation the raise sites use too (`editReviewSettlementPaymentId`). A
@@ -1577,6 +1574,35 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   `lock(1)` is taken and released inside the transaction;
   `docs/CONCURRENCY_AND_LOCKING.md`), so the status claim is the whole
   single-flight guarantee across it.
+
+## INV-PAY-113
+
+- **A review share on a booking with nothing captured is that booking's applied
+  credit coming back, and it comes back once** (#3791, owner decisions of 2
+  October 2026). Minted beside an unchanged applied figure, a later
+  cancellation restored it a second time.
+  - **One give-back.** `giveBackAppliedCredit` (`member-credit.ts`) is the
+    clamp's mechanism and the share's: under the member's credit-ledger lock and
+    the deallocation fence it writes a positive `BOOKING_APPLIED` row and, where
+    an internet-banking booking's credit is allocated against its Xero invoice
+    beyond the new figure, commits the durable deallocation with it, so an
+    inbound sync cannot pull the applied figure back up. The share also lowers
+    the `Payment.creditAppliedCents` mirror a cancellation tiers.
+  - **No second Xero credit.** The review's account-credit note bills only what
+    it minted: the share beyond the applied credit.
+  - **Unpaid bookings.** Where the credit falls short of the price, no more is
+    given back than the closure's re-price removed, so a review that does not
+    re-price cannot raise what the member owes. The write runs after the
+    re-price for that reason.
+  - **Cancelled first.** The slice is netted against the cancellation's restore:
+    `slice + restore(applied - slice) - restored`, the tier re-run by
+    `calculateAppliedCreditRestore` on the restore's day and the policy in force.
+    A tier that does not reproduce the restore actually made refuses, with the
+    task OPEN.
+  - A $200 credit-paid booking and a $50 share return $200 in all at a 100%
+    tier and $105 at 50% less $20, whichever comes first.
+  - Home: `edit-financial-review-account-credit.ts`; proven through the real
+    `cancelBooking` by `edit-financial-review-races.realdb.test.ts`.
 
 ## INV-PAY-069
 
