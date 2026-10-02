@@ -39,6 +39,7 @@ import {
 import {
   CREDENTIAL_BOUNDARY_MODULES,
   CREDENTIAL_MUTATORS,
+  TOKEN_MIRROR_BOUNDARY_MODULES,
   describeCredentialActor,
   describeCredentialExpectation,
   scanCredentialActorCensus,
@@ -245,6 +246,27 @@ const ACTOR_FORWARDED_SITES: Record<string, string> = {
 const APPROVED_STORE_BYPASSES: Record<string, string> = {};
 
 /**
+ * Every write to the `XeroToken` mirror (#3454), each reviewed. The token store
+ * is the only module allowed to make one — anywhere else it is a bypass, above —
+ * because the store READS that row as the newer copy when its ciphertext no
+ * longer matches. Two of these are not credential writes and are pinned as such.
+ */
+const TOKEN_MIRROR_WRITES: Record<string, string> = {
+  "src/lib/xero-token-store.ts::claimXeroTokenRefreshLease.claimed#0":
+    "the refresh LEASE claim: writes only `refreshInProgressUntil`, never a token, so it is not a credential write and records no audit row",
+  "src/lib/xero-token-store.ts::releaseXeroTokenRefreshLease#0":
+    "the refresh LEASE release: clears only `refreshInProgressUntil`, likewise not a credential write",
+  "src/lib/xero-token-store.ts::saveXeroTokens.updated#0":
+    "the refresh save's mirror half, in the same transaction as the store write and its audit row",
+  "src/lib/xero-token-store.ts::saveXeroTokens.row#0":
+    "the connect's mirror half (an existing row), in the same transaction as the store write and its audit row",
+  "src/lib/xero-token-store.ts::saveXeroTokens.row#1":
+    "the connect's mirror half (no row yet), likewise",
+  "src/lib/xero-token-store.ts::deleteXeroTokensInTransaction.legacy#0":
+    "the delete's mirror half, audited in the same transaction whichever copies existed",
+};
+
+/**
  * A guard against this whole file going vacuous. If the walk ever resolves
  * nothing — a rename of the mutators, a move of the store, a broken import —
  * every assertion below would pass over an empty set and report a clean bill of
@@ -274,6 +296,8 @@ describe("credential-actor census: the tree names an actor everywhere (#2723)", 
     // generator. Pinned, because every addition widens the one check that can
     // see a writer which skips the store.
     expect(CREDENTIAL_BOUNDARY_MODULES.length).toBe(3);
+    // One module may write the `XeroToken` mirror (#3454).
+    expect(TOKEN_MIRROR_BOUNDARY_MODULES).toEqual(["src/lib/xero-token-store.ts"]);
   });
 
   it("has NO writer that omits actor context", () => {
@@ -327,6 +351,17 @@ describe("credential-actor census: the tree names an actor everywhere (#2723)", 
 });
 
 describe("credential-actor census: the pinned populations (#2723)", { timeout: 180_000 }, () => {
+  it("pins every write to the XeroToken mirror, and finds none outside the token store (#3454)", () => {
+    expect(
+      ids(census().tokenMirrorWrites),
+      publishersNote(
+        "The token store's writes to the `XeroToken` mirror moved. Each one must " +
+          "keep the mirror and the store copy together; add its row to " +
+          "TOKEN_MIRROR_WRITES with what it writes and why.",
+      ),
+    ).toEqual(Object.keys(TOKEN_MIRROR_WRITES).sort());
+  });
+
   it("pins every mutator call site, with what it declares", () => {
     const measured: Record<string, string> = {};
     for (const site of census().sites) {
