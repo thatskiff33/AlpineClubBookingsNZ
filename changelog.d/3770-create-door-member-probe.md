@@ -39,7 +39,8 @@
   is known. An outsider who is still waiting to agree does not count towards a
   paid-up adult member, an adult host (when the booking is made) or the adult
   with children. Children plus such an outsider now need a justification, the
-  same as children alone, on every screen that checks it. If the
+  same as children alone, on every screen that checks it, and the booking
+  screens ask for that reason whenever it is needed. If the
   rule is still not met, the member sees the usual "This member can't be added
   to this booking right now" message instead of the detailed one. A member can
   no longer avoid the hosting check by sending the reason an officer would give.

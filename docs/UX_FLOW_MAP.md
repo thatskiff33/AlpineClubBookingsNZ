@@ -1262,7 +1262,11 @@ answered) and built to it:
   refusal. An outsider waiting to consent does not count towards the paid-up
   adult, the final hosting check or the adult with children (owner decision),
   so children plus a not-yet-agreed outsider need a justification, as children
-  alone do.
+  alone do. The wizard's review step, the admin booking page and the edit panel
+  ask for that reason with the server's own rule (`adult-supervision.ts`), so
+  the field appears exactly when the server will require it: for an outsider
+  the member just added, the wizard predicts the consent the add will be
+  written with.
 - **Every collapsed refusal is audited** naming actor and target, and a run of
   them against the same target raises a flagged row an admin can find — ONCE per
   actor/target per 24 hours, on the crossing rather than on every refusal past
