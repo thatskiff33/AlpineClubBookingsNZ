@@ -175,7 +175,11 @@ export async function recordReviewClosurePricing({
    * closure.
    */
   settleAgainstRebase:
-    | ((rebase: BookingPriceRebase | null) => Promise<{ creditedCents: number; invoiceReductionCents: number }>)
+    | ((rebase: BookingPriceRebase | null) => Promise<{
+        creditedCents: number;
+        invoiceReductionCents: number | null;
+        agreedGiveBackCents: number | null;
+      }>)
     | null;
   store: Prisma.TransactionClient;
   /** The club's format (#3565), resolved by the caller before any transaction. */
@@ -218,15 +222,15 @@ export async function recordReviewClosurePricing({
   const xeroInvoiceDiverged = rebaseDivergesFromIssuedInvoice({
     rebase,
     hasIssuedXeroInvoice,
-    settlement:
-      settled !== null
-        ? { invoiceReductionCents: settled.invoiceReductionCents }
-        : {
-            issuesXeroDocument: editReviewSettlementIssuesXeroDocument({
-              route: settlementRoute,
-              xeroAmountCents: settlementAmountCents,
-            }),
-          },
+    // A captured payment's account-credit share (null) is judged by the
+    // document rule every other route is (#3791 F1).
+    settlement: {
+      invoiceReductionCents: settled?.invoiceReductionCents ?? null,
+      issuesXeroDocument: editReviewSettlementIssuesXeroDocument({
+        route: settlementRoute,
+        xeroAmountCents: settlementAmountCents,
+      }),
+    },
   });
   // #3791: the share as it was actually settled - an account-credit share
   // netted against a cancellation's restore can credit less than was typed, or
@@ -271,6 +275,7 @@ export async function recordReviewClosurePricing({
         : null,
     note,
     officerMemberId: actingMemberId,
+    agreedGiveBackCents: settled?.agreedGiveBackCents ?? null,
   });
   await createAuditLog(
     {

@@ -1160,13 +1160,17 @@ let observerClient: PrismaClient;
         });
       }
 
-      /** The stay on the booking ledger, as a confirmation posts it (#3527). */
+      /** The stay on the booking ledger, one line a night, as a confirmation posts it (#3527). */
       async function confirmOnLedger() {
-        await prisma.bookingLedgerLine.create({ data: {
-          bookingId: BOOKING_ID, side: "CHARGE", kind: "GUEST_NIGHT", sign: 1, quantity: 1, unitCents: 20_000, amountCents: 20_000,
-          bookingGuestId: GUEST_ID, nightStart: CHECK_IN, nightEndExclusive: CHECK_OUT, ageTier: "ADULT", guestNames: ["Review Guest"],
-          anchorKind: "CONFIRMATION", anchorId: BOOKING_ID, narration: "race 3791 confirmation", lodgeId: LODGE_ID, postingKey: "race-3791-confirm",
-        } });
+        const nights = [new Date("2026-08-01T00:00:00.000Z"), new Date("2026-08-02T00:00:00.000Z")];
+        for (const [index, night] of nights.entries()) {
+          await prisma.bookingLedgerLine.create({ data: {
+            bookingId: BOOKING_ID, side: "CHARGE", kind: "GUEST_NIGHT", sign: 1, quantity: 1, unitCents: 10_000, amountCents: 10_000,
+            bookingGuestId: GUEST_ID, nightStart: night, nightEndExclusive: nights[index + 1] ?? CHECK_OUT, ageTier: "ADULT",
+            guestNames: ["Review Guest"], anchorKind: "CONFIRMATION", anchorId: BOOKING_ID, narration: "race 3791 confirmation",
+            lodgeId: LODGE_ID, postingKey: `race-3791-confirm-${index}`,
+          } });
+        }
       }
       const ledgerLines = () => prisma.bookingLedgerLine.findMany({ where: { bookingId: BOOKING_ID } });
       const owed = async () => ledger.bookingLedgerBalance(await ledgerLines()).owedCents;
@@ -1576,6 +1580,29 @@ let observerClient: PrismaClient;
           ["MODIFICATION_CREDIT_NOTE", 2_000, second.taskId],
         ]);
         await expectXeroToAgree();
+      }, 60_000);
+
+      it("F3: on a covered booking, a review that re-prices leaves an earlier review's agreed give-back standing - Xero and the ledger agree, and owed(b) is zero", async () => {
+        await clearCreditRun();
+        await confirmOnLedger();
+        await payByCredit("ib-allocated");
+        const first = await raiseInOwnTransaction();
+        const second = await raiseSibling();
+
+        // Review 1: nothing re-priced, $30 given back - an agreed reduction.
+        await completeShare(first.taskId, 3_000);
+        await deallocationConverges();
+        await expectXeroToAgree();
+
+        // Review 2: the strand now sells for $180, and the share is that $20.
+        await strandSellsFor(18_000);
+        await completeShare(second.taskId, 2_000);
+
+        expect((await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { finalPriceCents: true } })).finalPriceCents).toBe(18_000);
+        const live = ledger.bookingLedgerBalance(await ledgerLines());
+        expect(live.adjustedCents, "review 1's agreed give-back is still on the ledger").toBe(-3_000);
+        await expectXeroToAgree();
+        expect(await owed()).toBe(0);
       }, 60_000);
 
       it("a card-path booking with an issued invoice: one allocated note for the share, no deallocation, and Xero agrees on the price and on the member's credit", async () => {

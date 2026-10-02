@@ -525,23 +525,57 @@ describe("#3791: a review task's share is a document of its own", () => {
     deallocationFence.findFirst.mockResolvedValue(null);
   });
 
-  it("MUTATION: waits, as a transient busy error, while the payment's deallocation has not converged - and creates nothing", async () => {
-    deallocationFence.findFirst.mockResolvedValue({ id: "dealloc-1", status: "FAILED" });
+  const reviewNote = () =>
+    createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 1000,
+      bookingModificationId: "cmmodification01",
+      reviewTaskId: "task-7",
+      refundMethod: "account-credit",
+      syncOperationId: "op-note",
+    });
+
+  it.each(["PENDING", "RUNNING"])("MUTATION: waits, as a transient busy error, while the payment's deallocation is %s - and creates nothing", async (status) => {
+    deallocationFence.findFirst.mockResolvedValue({ id: "dealloc-1", status });
     const { XeroAppliedCreditOperationBusyError } = await import("@/lib/xero-applied-credit-operation-serialization");
 
-    await expect(
-      createXeroCreditNoteForModification({
-        format: CLUB_FORMAT_TEST,
-        bookingId: BOOKING_ID,
-        refundAmountCents: 1000,
-        bookingModificationId: "cmmodification01",
-        reviewTaskId: "task-7",
-        refundMethod: "account-credit",
-        syncOperationId: "op-note",
-      }),
-    ).rejects.toBeInstanceOf(XeroAppliedCreditOperationBusyError);
+    await expect(reviewNote()).rejects.toBeInstanceOf(XeroAppliedCreditOperationBusyError);
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
     expect(mocks.xeroSyncOperationUpdate).not.toHaveBeenCalled();
     expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+  });
+
+  it.each(["FAILED", "PARTIAL"])("MUTATION: FAILS, naming the deallocation, when it is %s - only an operator's retry moves that, so waiting would spin for ever", async (status) => {
+    deallocationFence.findFirst.mockResolvedValue({ id: "dealloc-1", status });
+    const { XeroAppliedCreditOperationBusyError } = await import("@/lib/xero-applied-credit-operation-serialization");
+
+    const error = await reviewNote().then(() => null, (e: unknown) => e);
+
+    expect(error).not.toBeInstanceOf(XeroAppliedCreditOperationBusyError);
+    expect((error as Error).message).toContain(`deallocation dealloc-1 is ${status}`);
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith("op-note", error);
+    expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: once the deallocation has been retried, an operator retry of the note raises it", async () => {
+    deallocationFence.findFirst.mockResolvedValueOnce({ id: "dealloc-1", status: "FAILED" });
+    await reviewNote().catch(() => undefined);
+
+    // The deallocation converged; the operator retries the note (a fresh row).
+    deallocationFence.findFirst.mockResolvedValue(null);
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 1000,
+      bookingModificationId: "cmmodification01",
+      reviewTaskId: "task-7",
+      refundMethod: "account-credit",
+      repairExistingLink: true,
+    });
+
+    expect(mocks.retryXeroWriteWithContactRepair).toHaveBeenCalledTimes(1);
+    expect(mocks.createCreditNoteAllocation).toHaveBeenCalledTimes(1);
   });
 
   it("an edit's own note does not wait on a deallocation", async () => {

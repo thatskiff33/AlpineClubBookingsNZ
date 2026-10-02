@@ -1151,6 +1151,8 @@ function deriveBookingOperationalState(
         stayEnd: formatDateOnly(guest.stayEnd),
       }))
     : [];
+  // Any credit row naming the booking as its source counts, a review's give-back
+  // of applied credit included (#3791): credit was given back to the member.
   const creditGenerated =
     booking.creditsFromCancellation.length > 0 ||
     booking.modifications.some((modification) => modification.creditsFromModification.length > 0);

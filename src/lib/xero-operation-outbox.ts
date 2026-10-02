@@ -3111,13 +3111,15 @@ export async function processQueuedXeroOutboxOperations(options?: {
         // for the same Payment before either handler observes the other. That
         // collision is transient: return this row to PENDING so the next scan
         // serializes them, rather than stranding both rows as FAILED.
+        // #3791: the reason stays on the row, so a note waiting on a
+        // deallocation says what it is waiting for.
         await prisma.xeroSyncOperation.updateMany({
           where: { id: queuedOperation.id, status: "RUNNING" },
           data: {
             status: "PENDING",
             startedAt: null,
             lastErrorCode: null,
-            lastErrorMessage: null,
+            lastErrorMessage: error.message,
           },
         });
         result.skipped += 1;

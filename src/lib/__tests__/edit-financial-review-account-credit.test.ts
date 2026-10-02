@@ -144,7 +144,7 @@ describe("the worked example: the share comes back first, then the booking is ca
   it.each(TIERS)("MUTATION: at $tier the member gets the share once ($totalBackCents cents in all)", async ({ rule, totalBackCents }) => {
     const outcome = await write();
 
-    expect(outcome).toEqual({ givenBackCents: 5_000, mintedCents: 0, cancelled: false, invoiceReductionCents: 5_000 });
+    expect(outcome).toEqual({ givenBackCents: 5_000, mintedCents: 0, cancelled: false, invoiceReductionCents: 5_000, agreedGiveBackCents: 5_000 });
     // The mirror the cancellation tiers comes down by the share.
     expect(store.payment.update).toHaveBeenCalledWith({ where: { id: "payment-1" }, data: { creditAppliedCents: 15_000 } });
     expect(h.createBookingModificationCredit).not.toHaveBeenCalled();
@@ -169,7 +169,7 @@ describe("owner decision 2: the booking was cancelled before the review complete
     const outcome = await write();
 
     // $0 at 100%, $25 at 50% with a $20 fee - the issue's figures.
-    expect(outcome).toEqual({ givenBackCents: totalBackCents - restoredCents, mintedCents: 0, cancelled: true, invoiceReductionCents: 0 });
+    expect(outcome).toEqual({ givenBackCents: totalBackCents - restoredCents, mintedCents: 0, cancelled: true, invoiceReductionCents: 0, agreedGiveBackCents: null });
     expect(h.createBookingModificationCredit).not.toHaveBeenCalled();
   });
 
@@ -191,7 +191,7 @@ describe("owner decision 2: the booking was cancelled before the review complete
     h.applied.mirrorCents = 19_000;
     const second = await write(2_000);
 
-    expect(second).toEqual({ givenBackCents: 1_000, mintedCents: 0, cancelled: true, invoiceReductionCents: 0 });
+    expect(second).toEqual({ givenBackCents: 1_000, mintedCents: 0, cancelled: true, invoiceReductionCents: 0, agreedGiveBackCents: null });
     expect(8_000 + first.givenBackCents + second.givenBackCents).toBe(10_000);
   });
 
@@ -217,7 +217,7 @@ describe("owner decision 2: the booking was cancelled before the review complete
     rows.frozenAppliedCents = 20_000;
     restored(20_000);
 
-    expect(await write()).toEqual({ givenBackCents: 0, mintedCents: 0, cancelled: true, invoiceReductionCents: 0 });
+    expect(await write()).toEqual({ givenBackCents: 0, mintedCents: 0, cancelled: true, invoiceReductionCents: 0, agreedGiveBackCents: null });
     expect(h.loadCancellationPolicy).not.toHaveBeenCalled();
   });
 
@@ -225,7 +225,7 @@ describe("owner decision 2: the booking was cancelled before the review complete
     bookingIs("CANCELLED");
     restored(null);
 
-    expect(await write()).toEqual({ givenBackCents: 5_000, mintedCents: 0, cancelled: true, invoiceReductionCents: 0 });
+    expect(await write()).toEqual({ givenBackCents: 5_000, mintedCents: 0, cancelled: true, invoiceReductionCents: 0, agreedGiveBackCents: null });
     expect(h.loadCancellationPolicy).not.toHaveBeenCalled();
   });
 
@@ -248,7 +248,7 @@ describe("what of the share is applied credit coming back", () => {
     h.applied.mirrorCents = 3_000;
     bookingIs("PAID", 3_000);
 
-    expect(await write()).toEqual({ givenBackCents: 3_000, mintedCents: 2_000, cancelled: false, invoiceReductionCents: 3_000 });
+    expect(await write()).toEqual({ givenBackCents: 3_000, mintedCents: 2_000, cancelled: false, invoiceReductionCents: 3_000, agreedGiveBackCents: 3_000 });
     expect(h.createBookingModificationCredit).toHaveBeenCalledWith("member-1", 2_000, "booking-1", "mod-1", undefined, store, undefined);
   });
 
@@ -267,6 +267,13 @@ describe("what of the share is applied credit coming back", () => {
       mintedCents: 2_000,
       cancelled: false,
     });
+  });
+
+  it("MUTATION: on a covered booking the give-back beyond the re-price is an agreed reduction; on an unpaid one there is none", async () => {
+    expect((await write(5_000, { previousFinalPriceCents: 20_000, newFinalPriceCents: 18_000 })).agreedGiveBackCents).toBe(3_000);
+    h.applied.cents = 5_000;
+    h.applied.mirrorCents = 5_000;
+    expect((await write(5_000, { previousFinalPriceCents: 20_000, newFinalPriceCents: 17_000 })).agreedGiveBackCents).toBeNull();
   });
 
   it("MUTATION: a fully credit-paid booking is not held to the re-price", async () => {
@@ -294,7 +301,8 @@ describe("what of the share is applied credit coming back", () => {
   it("with a captured payment, mints the whole share against it and gives nothing back", async () => {
     const outcome = await write(5_000, null, "payment-9");
 
-    expect(outcome).toEqual({ givenBackCents: 0, mintedCents: 5_000, cancelled: false, invoiceReductionCents: 0 });
+    // No reduction figure: the invoice is judged by the document rule (F1).
+    expect(outcome).toEqual({ givenBackCents: 0, mintedCents: 5_000, cancelled: false, invoiceReductionCents: null, agreedGiveBackCents: null });
     expect(h.giveBackAppliedCredit).not.toHaveBeenCalled();
     expect(h.createBookingModificationCredit).toHaveBeenCalledWith("member-1", 5_000, "booking-1", "mod-1", undefined, store, "payment-9");
   });

@@ -28,13 +28,21 @@ import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
  * minted beside it. Their sum is what the member was credited. `cancelled`
  * says the booking was already cancelled, which decides how Xero hears of it
  * (`dispatchEditReviewAccountCreditXero`). `invoiceReductionCents` is what the
- * booking's issued invoice must come down by (`reviewInvoiceReductionCents`).
+ * booking's issued invoice must come down by (`reviewInvoiceReductionCents`),
+ * or null on a captured payment's share: that is minted against the payment,
+ * as before #3791, and the invoice is judged by the document rule it always was.
  */
 export type EditReviewAccountCreditOutcome = {
   givenBackCents: number;
   mintedCents: number;
   cancelled: boolean;
-  invoiceReductionCents: number;
+  invoiceReductionCents: number | null;
+  /**
+   * On a booking its credit covered, the give-back beyond what the re-price
+   * removed: an agreed reduction of the price the ledger records as such
+   * (`agreedGiveBackKey`). Null where the share is not one.
+   */
+  agreedGiveBackCents: number | null;
 };
 
 /** The give-back row's human description; nothing reads it back (#3791). */
@@ -121,7 +129,7 @@ export async function writeEditReviewAccountCredit({
     createBookingModificationCredit(memberId, cents, bookingId, route.bookingModificationId, undefined, store, paymentId);
   if (route.allocateAgainstPaymentId !== null) {
     await mint(amountCents, route.allocateAgainstPaymentId);
-    return { givenBackCents: 0, mintedCents: amountCents, cancelled: false, invoiceReductionCents: 0 };
+    return { givenBackCents: 0, mintedCents: amountCents, cancelled: false, invoiceReductionCents: null, agreedGiveBackCents: null };
   }
 
   let creditSliceCents = 0;
@@ -185,12 +193,16 @@ export async function writeEditReviewAccountCredit({
   }
   const mintedCents = amountCents - creditSliceCents;
   if (mintedCents > 0) await mint(mintedCents);
+  // A cancelled booking's invoice stands as the cancellation left it.
+  const invoiceReductionCents = cancelled ? 0 : reviewInvoiceReductionCents({ ...invoice, givenBackCents });
+  const repricedAwayCents = rebase ? rebase.previousFinalPriceCents - rebase.newFinalPriceCents : 0;
   return {
     givenBackCents,
     mintedCents,
     cancelled,
-    // A cancelled booking's invoice stands as the cancellation left it.
-    invoiceReductionCents: cancelled ? 0 : reviewInvoiceReductionCents({ ...invoice, givenBackCents }),
+    invoiceReductionCents,
+    agreedGiveBackCents:
+      !cancelled && !invoice.unpaid && givenBackCents > 0 ? Math.max(0, invoiceReductionCents - repricedAwayCents) : null,
   };
 }
 

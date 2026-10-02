@@ -487,6 +487,7 @@ export async function resolveManualRefundTask(
               return {
                 creditedCents: accountCredit.givenBackCents + accountCredit.mintedCents,
                 invoiceReductionCents: accountCredit.invoiceReductionCents,
+                agreedGiveBackCents: accountCredit.agreedGiveBackCents,
               };
             }
           : null,

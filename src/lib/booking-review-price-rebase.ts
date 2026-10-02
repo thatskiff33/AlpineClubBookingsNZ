@@ -658,11 +658,16 @@ export function rebaseDivergesFromIssuedInvoice({
    * the re-price moved it by the same amount; a share agreed with no re-price
    * at all leaves the stored price above the invoice, and says so.
    */
-  settlement: { issuesXeroDocument: boolean } | { invoiceReductionCents: number };
+  /**
+   * `invoiceReductionCents` null - every closure but an uncaptured
+   * account-credit share, including a captured payment's (#3791 F1) - falls
+   * back to the document rule.
+   */
+  settlement: { issuesXeroDocument: boolean; invoiceReductionCents?: number | null };
 }): boolean {
   if (!hasIssuedXeroInvoice) return false;
   const priceDropCents = rebase ? rebase.previousFinalPriceCents - rebase.newFinalPriceCents : 0;
-  if ("invoiceReductionCents" in settlement) return settlement.invoiceReductionCents !== priceDropCents;
+  if (typeof settlement.invoiceReductionCents === "number") return settlement.invoiceReductionCents !== priceDropCents;
   if (rebase === null || settlement.issuesXeroDocument) return false;
   return rebase.newFinalPriceCents !== rebase.previousFinalPriceCents;
 }

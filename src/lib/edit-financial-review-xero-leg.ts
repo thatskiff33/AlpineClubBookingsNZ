@@ -362,7 +362,8 @@ export async function dispatchEditReviewAccountCreditXero({
   taskId: string;
   actingMemberId: string;
   bookingModificationId: string;
-  invoiceReductionCents: number;
+  /** Null on a captured payment's share, which takes no invoice-allocated note. */
+  invoiceReductionCents: number | null;
   mintedCents: number;
   cancelled: boolean;
   hasIssuedXeroInvoice: boolean;
@@ -373,7 +374,7 @@ export async function dispatchEditReviewAccountCreditXero({
   const notes: Array<{ cents: number; settlementMethod: "card" | "credit" }> = [
     // "card" is the classifier's two-way switch to the invoice-applied note;
     // the note's wording is the account credit the money went back as.
-    { cents: cancelled ? 0 : invoiceReductionCents, settlementMethod: "card" },
+    { cents: cancelled ? 0 : (invoiceReductionCents ?? 0), settlementMethod: "card" },
     { cents: mintedCents, settlementMethod: "credit" },
   ];
   // A cancelled booking's invoice no longer counts as issued for an edit, but

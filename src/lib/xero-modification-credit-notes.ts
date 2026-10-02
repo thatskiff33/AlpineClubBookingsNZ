@@ -43,6 +43,7 @@ import { XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-
 import { reviewTaskKeyParts } from "@/lib/xero-review-task-key";
 import {
   findUnconvergedAppliedCreditDeallocation,
+  needsOperatorXeroRetry,
   XeroAppliedCreditOperationBusyError,
 } from "@/lib/xero-applied-credit-operation-serialization";
 import {
@@ -130,15 +131,23 @@ export async function createXeroCreditNoteForModification(params: {
 
   // #3791: a review's note follows the give-back's deallocation of the same
   // payment. Run first, it would meet an invoice the applied credit still
-  // covers and end PARTIAL; so while that deallocation has not converged it
-  // waits, and the outbox returns it to PENDING (a busy error is transient).
+  // covers and end PARTIAL. While that deallocation is on its way it waits, and
+  // the outbox returns it to PENDING (a busy error is transient). One that
+  // FAILED only an operator's retry moves, so waiting would spin for ever: the
+  // note fails instead, naming the deallocation, and is retried after it.
   if (reviewTaskId) {
     const deallocation = await findUnconvergedAppliedCreditDeallocation(booking.payment.id, prisma);
     if (deallocation) {
-      throw new XeroAppliedCreditOperationBusyError(
+      const fence = new XeroAppliedCreditOperationBusyError(
         `Review credit note waits for applied-credit deallocation ${deallocation.id} (${deallocation.status}) on payment ${booking.payment.id}`,
         deallocation.status,
       );
+      if (!needsOperatorXeroRetry(fence)) throw fence;
+      const failed = new Error(
+        `Review credit note held: applied-credit deallocation ${deallocation.id} is ${deallocation.status}. Retry that Xero operation first, then retry this note.`,
+      );
+      if (syncOperationId) await failXeroSyncOperation(syncOperationId, failed);
+      throw failed;
     }
   }
 
