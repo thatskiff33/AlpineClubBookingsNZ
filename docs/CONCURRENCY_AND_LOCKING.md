@@ -4002,13 +4002,27 @@ request, held booking and exact reservation nights before returning it. The
 quote-expiry worker's two direct hold-release paths also delete it under their existing
 global lifecycle lock. `resolveAcceptedSchoolPendingAdults` takes global then
 lodge in the same order,
-checks the accepted snapshot, hold and reservation after locking, and claims the
-request version before replacing one anonymous slot with named guest nights.
+checks the accepted snapshot, hold and reservation after locking, and proves a
+unique mapping from original named/pending ordinals to the current party,
+including previously named adults. After claiming the request version, it
+reconciles provisional held guest/night and booking cents to the accepted
+snapshot before replacing anonymous slots (#3794). Existing guest/night ids,
+member links, consent, dietary and bed identities stay intact. A lost claim
+writes nothing; any failure rolls back prices, names and reservations together.
+Night updates group exact proven ids by cents and provenance and require every
+row to be affected; statement count depends on distinct prices, not stay length.
+Accepted terms and settlement remain unchanged; this writer adds no lock tier
+or provider call. Active matching identities use canonical seasonal membership
+policy, so login-disabled member-rate adults still require terms review.
 Terminal decline and requester-cancel claims clear the pending adult count;
 quote snapshots remain unchanged. A generic hold release retains the request's
 count so that an open request can be held again. School and general approval
 both refuse a nonzero pending count or residual
-reservation under their own global-then-lodge locks. Provider calls are outside
+reservation under their own global-then-lodge locks. School approval reuses the
+accepted-party proof before claiming conversion, retaining per-person cents
+and pairing rewrites with proven held guest ids after naming shifts request
+positions. Missing or inconsistent accepted snapshots refuse conversion before
+effects. Provider calls are outside
 these transactions.
 
 ### Provisional reservations for held policy-exception requests (#2365)
