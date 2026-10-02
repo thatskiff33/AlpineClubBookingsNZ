@@ -30,11 +30,12 @@ import {
 } from "@/lib/booking-exception-reservations";
 import type { GuestStayRange } from "@/lib/booking-guest-stay-ranges";
 import { resolveModificationStayRanges } from "@/lib/booking-modification-stay-ranges";
+import { memberGuestCrossFamilyRefusal } from "@/lib/booking-guests";
 import {
-  assertLinkedBookingMembersCanBeBooked,
-  memberGuestCrossFamilyRefusal,
-  resolveLinkedBookingMembersWithBoundary,
-} from "@/lib/booking-guests";
+  resolveBeyondFamilyPhase,
+  resolveFamilyPhase,
+  type FamilyFirstOptions,
+} from "@/lib/member-guest-family-first";
 import {
   checkOwnDependantIdentityForParty,
   claimedMemberPathIds,
@@ -1274,29 +1275,23 @@ async function assertRequestedPartyMemberGuestsAllowed(args: {
   if (!args.memberIds.some((memberId) => Boolean(memberId)))
     return { beyondFamilyMemberIds: [] };
   const policy = await loadMemberGuestAddPolicy();
-  const { members, boundary } = await resolveLinkedBookingMembersWithBoundary(
-    prisma,
-    args.requestedByMemberId,
-    args.memberIds,
-    {
-      skipAuthorization: false,
-      memberGuestWideningEnabled: policy.wideningEnabled,
-    },
-  );
-  await assertLinkedBookingMembersCanBeBooked(
-    prisma,
-    members,
-    args.requestedByMemberId,
-    {
-      actorRole: "MEMBER",
-      onBehalfOfMemberId: null,
-      crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
-    },
-  );
+  // FAMILY FIRST (#3770, `INV-GUEST-020`; the owner's create-door decision,
+  // extended to both exception doors): the requester's family is resolved and
+  // gated before any member from beyond it, so a family refusal reads the same
+  // whether a named outsider is real or nobody.
+  const options: FamilyFirstOptions = {
+    bookerMemberId: args.requestedByMemberId,
+    actorMemberId: args.requestedByMemberId,
+    skipAuthorization: false,
+    memberGuestWideningEnabled: policy.wideningEnabled,
+    profileGate: { actorRole: "MEMBER", onBehalfOfMemberId: null },
+  };
+  const family = await resolveFamilyPhase(prisma, args.memberIds, options);
+  await resolveBeyondFamilyPhase(prisma, family, options);
   // Every id resolved (an unresolved one threw above), so these beyond-family
   // ids are real members: `freezeProposal` collapses "nothing to review" for
   // them (#3770).
-  return { beyondFamilyMemberIds: boundary.beyondFamilyMemberIds };
+  return { beyondFamilyMemberIds: family.beyondFamilyMemberIds };
 }
 
 /**
