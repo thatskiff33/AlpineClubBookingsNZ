@@ -126,6 +126,14 @@ describe("owner decision 2: the booking was cancelled before the review complete
     expect(h.createBookingModificationCredit).not.toHaveBeenCalled();
   });
 
+  it("MUTATION: a restore in full (an unpaid cancel returns everything) already returned the share, with no tier to consult", async () => {
+    bookingIs("CANCELLED");
+    restored(20_000);
+
+    expect(await write()).toEqual({ givenBackCents: 0, mintedCents: 0 });
+    expect(h.loadCancellationPolicy).not.toHaveBeenCalled();
+  });
+
   it("MUTATION: a cancellation that restored nothing leaves the whole credit slice owed", async () => {
     bookingIs("CANCELLED");
     restored(null);
