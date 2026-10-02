@@ -2,12 +2,7 @@ import { prisma } from "./prisma";
 import { cancelPaymentIntentIfCancellableWithResult, cancelSetupIntentIfCancellable } from "./stripe";
 import { isPaymentIntentCancelConfirmed } from "@/lib/card-intent-retirement";
 import { isXeroConnected } from "./xero";
-import {
-  calculateAppliedCreditRestore,
-  calculateRefundAmount,
-  daysUntilDate,
-  loadCancellationPolicy,
-} from "./cancellation";
+import { daysUntilDate, loadCancellationPolicy } from "./cancellation";
 import { sendAdminManualRefundTaskAlert, sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";
 import { recordBookingEvent } from "./booking-events";
@@ -24,6 +19,7 @@ import {
 } from "@prisma/client";
 import {
   createCancellationCredit,
+  deriveBookingAppliedCreditCents,
   lockMemberCreditLedger,
   restoreCreditFromBooking,
 } from "./member-credit";
@@ -36,7 +32,8 @@ import {
 } from "./xero-operation-outbox";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
-import { cancelRefundableBaseCents } from "@/lib/booking-payment-state";
+import { cancellationKeptCents, paidCancellationMoney } from "@/lib/paid-cancellation-money";
+import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import {
   applyLocalRefundAllocation,
   foldIntoTransactionRefundedAmount,
@@ -374,6 +371,8 @@ async function cancelLinkedProvisionalChildBookings(
       if (childOwnerMemberId) {
         await restoreCreditFromBooking(childOwnerMemberId, fresh.id, tx);
       }
+      // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
+      await postCancellationLedgerLines({ store: tx, bookingId: fresh.id, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:linked-child" });
       return fresh;
     });
 
@@ -702,6 +701,8 @@ async function performBookingCancellation(
       const creditRestoredCents = restoreMemberId
         ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
         : 0;
+      // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
+      await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:no-payment" });
 
       // #2576 §6. Cancellation is the first change class the owner names, and it
       // is the one that removes attendance outright: cancelling the booking a
@@ -890,6 +891,8 @@ async function performBookingCancellation(
       const creditRestoredCents = restoreMemberId
         ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
         : 0;
+      // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
+      await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:pending" });
       // #2576 §6. Cancellation is the first change class the owner names, and it
       // is the one that removes attendance outright: cancelling the booking a
       // qualifying adult member is staying on can leave ANOTHER booking on the same
@@ -1153,6 +1156,8 @@ async function performBookingCancellation(
       const creditRestoredCents = restoreMemberId
         ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
         : 0;
+      // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
+      await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:unpaid" });
 
       // Applied-credit rows the inbound reconcile linked to a real Xero
       // credit-note allocation against this booking's invoice: the invoice's
@@ -1543,14 +1548,27 @@ async function performBookingCancellation(
     // is worth. Paid-path twin of the #1015/#1029 unpaid-invoice clearing rule.
     // Computed BEFORE the credit restore so the applied-credit slice can be
     // tiered off the same base/tier as the card slice (#1164 / D7).
-    const paidAmountCents = payment.amountCents - payment.refundedAmountCents;
-    const refundableBaseCents = cancelRefundableBaseCents({ ...payment, finalPriceCents: fresh.finalPriceCents });
     // #3123 — THE REFUND TIER. The club's day, resolved before this
     // transaction opened (`INV-LOCK-004`); it used to be the container's,
     // projected out of `APP_TIME_ZONE`, which tiered every club behind
     // Greenwich one day short of its own published cancellation policy.
     const days = daysUntilDate(fresh.checkIn, todayAtClub);
     const policy = await loadCancellationPolicy(fresh.checkIn, fresh.lodgeId, tx);
+    // #3611: refund, restore and what the club keeps, from one call
+    // (`paid-cancellation-money.ts`); the figures are the ones this path always
+    // computed. The applied rows are read here, under lock(1), for the kept figure.
+    const restoreMemberId = bookingOwner(fresh).memberId;
+    const appliedCreditCents = await deriveBookingAppliedCreditCents(bookingId, tx);
+    const money = paidCancellationMoney({
+      payment,
+      finalPriceCents: fresh.finalPriceCents,
+      appliedCreditCents,
+      restoresToMemberLedger: restoreMemberId !== null,
+      days,
+      policy,
+      refundMethod,
+    });
+    const { paidAmountCents, refundableBaseCents, refundAmountCents, refundPercentage } = money;
 
     // Idempotent-by-claim credit restore: only reached once per claim. The
     // applied-credit slice is now tiered by the SAME card tier as the card
@@ -1584,30 +1602,45 @@ async function performBookingCancellation(
     // cancellation fee than one who underpaid, which is worse.
     let creditRestoredCents = 0;
     if (payment.creditAppliedCents > 0) {
-      const { creditRestoredCents: creditToRestore } = calculateAppliedCreditRestore(
-        payment.creditAppliedCents,
-        refundableBaseCents,
-        days,
-        policy,
-      );
       // #3369: see above -- no member, no ledger, nothing to restore.
-      const restoreMemberId = bookingOwner(fresh).memberId;
       creditRestoredCents = restoreMemberId
         ? await restoreCreditFromBooking(
             restoreMemberId,
             bookingId,
             tx,
-            creditToRestore,
+            money.creditToRestoreCents,
           )
         : 0;
     }
-
-    const { refundAmountCents, refundPercentage } = calculateRefundAmount(
-      refundableBaseCents,
-      days,
-      policy,
-      refundMethod
-    );
+    // The restore caps itself at the applied rows, which the helper predicted;
+    // were they ever to differ, the ledger records what was actually restored.
+    let ledgerKeptCents = money.ledgerKeptCents;
+    if (creditRestoredCents !== money.creditRestoredCents) {
+      logger.warn(
+        { bookingId, predicted: money.creditRestoredCents, restored: creditRestoredCents },
+        "Booking ledger: a cancellation restored a different amount of credit than predicted; the kept figure follows the restore (#3611)",
+      );
+      ledgerKeptCents = cancellationKeptCents({
+        retainedAmountCents: money.retainedAmountCents,
+        appliedCreditCents,
+        creditRestoredCents,
+      });
+    }
+    // Review D1: money the policy never tiered (paid above price, applied rows the
+    // mirror does not count) lands in the ledger's figure too. Said out loud, and
+    // frozen below, so it is never mistaken for a cancellation fee.
+    if (ledgerKeptCents !== money.policyKeptCents) {
+      logger.warn(
+        {
+          bookingId,
+          ledgerKeptCents,
+          policyKeptCents: money.policyKeptCents,
+          paidAboveRefundableCents: money.paidAboveRefundableCents,
+          appliedCreditBeyondMirrorCents: money.appliedCreditBeyondMirrorCents,
+        },
+        "Booking ledger: a cancellation keeps money beyond what its policy keeps; the retained line says so (#3611)",
+      );
+    }
     const shouldFailAdditionalPayment =
       hasOutstandingAdditionalPaymentIntent(payment);
 
@@ -1777,6 +1810,18 @@ async function performBookingCancellation(
       }
     }
 
+    // #3611: the stay is taken back and what the policy keeps posts as one
+    // CANCELLATION_FEE, from the figures frozen above — under the lock(1) this
+    // claim took first, in this transaction (design §5.1).
+    await postCancellationLedgerLines({
+      store: tx,
+      bookingId,
+      lodgeId: fresh.lodgeId,
+      keptCents: ledgerKeptCents,
+      policyKeptCents: money.policyKeptCents,
+      site: "booking-cancel:paid",
+    });
+
     // #2576 §6. Cancellation is the first change class the owner names, and it
     // is the one that removes attendance outright: cancelling the booking a
     // qualifying adult member is staying on can leave ANOTHER booking on the same
@@ -1812,6 +1857,14 @@ async function performBookingCancellation(
       refundAmountCents,
       paidAmountCents,
       changeFeeCents: payment.changeFeeCents,
+      retainedAmountCents: money.retainedAmountCents,
+      ledger: {
+        keptCents: ledgerKeptCents,
+        policyKeptCents: money.policyKeptCents,
+        keptBeyondPolicyCents: ledgerKeptCents - money.policyKeptCents,
+        appliedCreditCents,
+        creditRestoredCents,
+      },
     });
 
     return {

@@ -13,7 +13,8 @@
 import type { Prisma } from "@prisma/client";
 
 import type { PostedCreditLine } from "@/lib/booking-ledger-credit-posting";
-import type { PostedAdjustmentLine, PostedChargeLine } from "@/lib/booking-ledger-modification-posting";
+import type { PostedChargeLine, ReversibleChargeLine } from "@/lib/booking-ledger-charge-line";
+import type { PostedAdjustmentLine } from "@/lib/booking-ledger-modification-posting";
 import type { PostedSettlementLine } from "@/lib/booking-ledger-settlement-posting";
 
 export type BookingLedgerReadStore = Pick<Prisma.TransactionClient, "bookingLedgerLine">;
@@ -102,8 +103,28 @@ export async function findPostedChargeLines(
   store: BookingLedgerReadStore,
   bookingId: string,
 ): Promise<PostedChargeLine[]> {
+  const rows = await readChargeLines(store, bookingId, ["GUEST_NIGHT", "PROMOTION"]);
+  return rows.map((row) => ({ ...row, kind: row.kind === "PROMOTION" ? "PROMOTION" : "GUEST_NIGHT" }));
+}
+
+/**
+ * Every charge line a cancellation may take back — the nights, the promotion
+ * and the change fees (#3611) — live or not, with what a reversal copies.
+ */
+export async function findPostedCancellableChargeLines(
+  store: BookingLedgerReadStore,
+  bookingId: string,
+): Promise<ReversibleChargeLine[]> {
+  return readChargeLines(store, bookingId, ["GUEST_NIGHT", "PROMOTION", "CHANGE_FEE"]);
+}
+
+async function readChargeLines(
+  store: BookingLedgerReadStore,
+  bookingId: string,
+  kinds: Array<ReversibleChargeLine["kind"]>,
+): Promise<ReversibleChargeLine[]> {
   const rows = await store.bookingLedgerLine.findMany({
-    where: { bookingId, kind: { in: ["GUEST_NIGHT", "PROMOTION"] } },
+    where: { bookingId, kind: { in: kinds } },
     select: {
       id: true,
       kind: true,
@@ -120,10 +141,11 @@ export async function findPostedChargeLines(
       reversesLineId: true,
     },
   });
-  // As above: the database's CHECK makes any sign but 1 or -1 unrepresentable.
+  // The where clause names the kinds, and the database's CHECK makes any sign
+  // but 1 or -1 unrepresentable; this narrows the types to what both guarantee.
   return rows.map((row) => ({
     ...row,
-    kind: row.kind === "PROMOTION" ? "PROMOTION" : "GUEST_NIGHT",
+    kind: row.kind === "PROMOTION" ? "PROMOTION" : row.kind === "CHANGE_FEE" ? "CHANGE_FEE" : "GUEST_NIGHT",
     sign: row.sign === -1 ? -1 : 1,
   }));
 }
