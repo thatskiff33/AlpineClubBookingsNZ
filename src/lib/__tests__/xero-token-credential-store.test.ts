@@ -900,7 +900,7 @@ describe("no plaintext token reaches an audit row, a log line or an error (#3454
       : value;
   }
 
-  it("drives every door with a sentinel token and finds it nowhere it must not be", async () => {
+  it("drives every token-store door with a sentinel token and finds it nowhere it must not be", async () => {
     const errors: unknown[] = [];
     const capture = async (work: () => Promise<unknown>) => {
       try {

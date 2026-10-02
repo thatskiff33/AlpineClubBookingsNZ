@@ -7,9 +7,14 @@
  * `XeroToken` MIRROR, in exactly the `iv:authTag:ciphertext` format a deployed
  * older release decrypts, under the DB-backed, auto-generated, HKDF-wrapped Xero
  * token key. It goes when the mirror does (the contract issue after #3454).
+ *
+ * It also holds the refresh's pre-flight (`assertXeroTokensCanBeStored`), which
+ * proves BOTH encryptions a save needs will succeed before a refresh token is
+ * spent.
  */
 
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
+import { requireStrongAuthSecretForCapture } from "@/lib/integration-crypto";
 import { getOperationalXeroEncryptionKey } from "@/lib/xero-config";
 
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
@@ -112,5 +117,46 @@ export async function decryptToken(encrypted: string): Promise<string> {
     // only a reconnect fixes it. Typed so the API/probe surfaces reconnect,
     // fail-closed (still throws — never returns a token).
     throw new XeroTokenDecryptError();
+  }
+}
+
+/**
+ * Thrown BEFORE a refresh token is spent, when the rotated pair could not then
+ * be stored (#3454 review). Carries no value; the reason is a fixed sentence.
+ */
+export class XeroTokenSaveUnavailableError extends Error {
+  constructor(reason: "auth-secret" | "token-key") {
+    super(
+      reason === "auth-secret"
+        ? "The auth secret does not pass the strength check, so refreshed Xero tokens could not be stored; the refresh token was not spent."
+        : "The Xero token encryption key is not available, so refreshed Xero tokens could not be stored; the refresh token was not spent.",
+    );
+    this.name = "XeroTokenSaveUnavailableError";
+  }
+}
+
+/**
+ * Prove the save of a refresh can succeed, BEFORE the refresh token is spent.
+ *
+ * Xero refresh tokens rotate: once spent, the old one is gone. The store copy
+ * decrypts without the capture-time strength gate, but writing the rotated pair
+ * needs both that gate (`encryptCredential`) and the wrapped token key (the
+ * mirror). If either fails only AFTER Xero rotated the token, both copies keep a
+ * spent token and the club must reconnect. A later release tightening the gate
+ * would do exactly that to a grandfathered secret on its first refresh. So the
+ * refresh path calls this first and refuses without spending anything. An audit
+ * insert failing after the rotation remains possible; that is a stated limit.
+ */
+export async function assertXeroTokensCanBeStored(): Promise<void> {
+  try {
+    requireStrongAuthSecretForCapture();
+  } catch {
+    throw new XeroTokenSaveUnavailableError("auth-secret");
+  }
+  try {
+    // Resolves the wrapped token key exactly as the save's mirror write will.
+    await encryptToken("xero-token-save-preflight");
+  } catch {
+    throw new XeroTokenSaveUnavailableError("token-key");
   }
 }
