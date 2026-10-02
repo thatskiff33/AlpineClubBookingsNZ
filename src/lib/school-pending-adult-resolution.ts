@@ -55,7 +55,7 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
     const request = await tx.bookingRequest.findUnique({ where: { id: input.requestId } });
     const hold = await tx.booking.findUnique({
       where: { id: locator.heldBookingId! },
-      include: { guests: { select: { id: true, memberId: true, firstName: true, lastName: true, ageTier: true, stayStart: true, stayEnd: true, priceCents: true, nights: { select: { id: true, stayDate: true } } } } },
+      include: { guests: { select: { id: true, memberId: true, firstName: true, lastName: true, ageTier: true, stayStart: true, stayEnd: true, priceCents: true, nights: { select: { id: true, stayDate: true, priceCents: true } } } } },
     });
     if (!request || request.type !== "SCHOOL" || request.status !== BookingRequestStatus.ACCEPTED ||
         request.version !== input.expectedVersion || request.heldBookingId !== locator.heldBookingId ||
@@ -181,7 +181,7 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
     // Every id was proved above; a lost row aborts the whole naming transaction.
     for (const group of nightUpdates.values()) {
       const updated = await tx.bookingGuestNight.updateMany({
-        where: { id: { in: group.ids } },
+        where: { id: { in: group.ids }, priceCents: { not: null } },
         data: { priceCents: group.priceCents, priceSource: group.priceSource },
       });
       if (updated.count !== group.ids.length) {

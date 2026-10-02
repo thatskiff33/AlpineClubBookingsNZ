@@ -4011,6 +4011,9 @@ member links, consent, dietary and bed identities stay intact. A lost claim
 writes nothing; any failure rolls back prices, names and reservations together.
 Night updates group exact proven ids by cents and provenance and require every
 row to be affected; statement count depends on distinct prices, not stay length.
+The shared naming/approval proof refuses any held night with a NULL price
+(`INV-MOD-028`, `INV-MOD-036`); the naming update also excludes NULL rows and
+rolls back if its affected count falls short. Accepted terms never fill a blank.
 Accepted terms and settlement remain unchanged; this writer adds no lock tier
 or provider call. Active matching identities use canonical seasonal membership
 policy, so login-disabled member-rate adults still require terms review.

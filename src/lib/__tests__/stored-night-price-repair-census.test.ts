@@ -99,8 +99,18 @@ import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments"
 
 const SRC = resolve(process.cwd(), "src");
 
-/** The one module allowed to update an existing night row's price in place. */
+/** The one module allowed to fill an existing night row's unknown price. */
 const REPAIR_WRITER = "lib/stored-night-price-repair-store.ts";
+
+/** #3794 reconciles only proven priced held rows; it cannot fill a NULL. */
+const PRICED_SCHOOL_WRITER = "lib/school-pending-adult-resolution.ts";
+
+function isPricedSchoolNightWriter(code: string): boolean {
+  const writes = code.match(/bookingGuestNight\s*\.\s*(update|updateMany|upsert|create)\b/g) ?? [];
+  return writes.length === 1 &&
+    /const\s+updated\s*=\s*await\s+tx\.bookingGuestNight\.updateMany\(\{\s*where:\s*\{\s*id:\s*\{\s*in:\s*group\.ids\s*\},\s*priceCents:\s*\{\s*not:\s*null\s*\}\s*\},\s*data:/.test(code) &&
+    /if\s*\(updated\.count\s*!==\s*group\.ids\.length\)\s*\{\s*throw\s+new\s+BookingRequestError\(/.test(code);
+}
 
 /**
  * The whole of this feature, as files.
@@ -177,7 +187,7 @@ function sourceFiles(): string[] {
 }
 
 describe("only one module may fill in a blank night price", () => {
-  it("is the repair writer, and nothing else updates a night row in place", () => {
+  it("permits only the repair writer or the proven priced-only school update", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles()) {
       const code = stripCommentsAndStrings(readFileSync(file, "utf8"));
@@ -207,12 +217,22 @@ describe("only one module may fill in a blank night price", () => {
       }
       const rel = relative(SRC, file).split("\\").join("/");
       if (rel === REPAIR_WRITER) continue;
+      if (rel === PRICED_SCHOOL_WRITER && isPricedSchoolNightWriter(code)) continue;
       offenders.push(rel);
     }
     expect(
       offenders,
       `INV-MOD-028: a NULL BookingGuestNight.priceCents may only be filled in by a person supplying the amount, and ${REPAIR_WRITER} is the only writer that does. These modules also put a price on a night row one at a time - rewriting an existing row, or creating one: ${offenders.join(", ")}`,
     ).toEqual([]);
+  });
+
+  it("mutation-proves the school exception requires exact ids, non-NULL prices and full-count rollback", () => {
+    const code = stripCommentsAndStrings(readFileSync(join(SRC, PRICED_SCHOOL_WRITER), "utf8"));
+    expect(isPricedSchoolNightWriter(code)).toBe(true);
+    expect(isPricedSchoolNightWriter(code.replace("priceCents: { not: null }", "priceCents: null"))).toBe(false);
+    expect(isPricedSchoolNightWriter(code.replace("id: { in: group.ids }", "id: { not: null }"))).toBe(false);
+    expect(isPricedSchoolNightWriter(code.replace("updated.count !== group.ids.length", "false"))).toBe(false);
+    expect(isPricedSchoolNightWriter(`${code}\nawait tx.bookingGuestNight.update({});`)).toBe(false);
   });
 
   it("the repair writer really is one of the files on disk", () => {
