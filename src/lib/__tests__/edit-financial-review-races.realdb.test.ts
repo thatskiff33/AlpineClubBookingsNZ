@@ -1156,7 +1156,7 @@ let observerClient: PrismaClient;
         });
       });
 
-      it.each(TIERS)("review first, then the REAL cancel at $tier: the cancel tiers the $150 still applied ($totalBackCents cents in all)", async ({ rule, totalBackCents }) => {
+      it.each(TIERS)("review first, then the REAL cancel at $tier: the cancel tiers the 15000 cents still applied ($totalBackCents cents in all)", async ({ rule, totalBackCents }) => {
         await clearCreditRun();
         await payEntirelyByCredit({ xeroAllocated: false });
         const raised = await raiseInOwnTransaction();
