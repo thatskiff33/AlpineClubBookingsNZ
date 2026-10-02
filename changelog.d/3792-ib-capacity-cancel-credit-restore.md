@@ -17,6 +17,10 @@
   no longer takes it off them. It leaves the balance as it is, alerts the
   treasurer to check the credit note in Xero, and records the refusal in the
   audit log (the Xero category, which nobody gains or loses access to), so it
-  is there even when the alert email is held back. This covers
+  is there even when the alert email is held back. A cancellation returning
+  credit and a Xero sync arriving at the same moment now take turns, so the sync
+  always sees the returned credit. When the cancellation fee kept part of the
+  credit, the alert says how much, so a treasurer can grant it if that was
+  intended. This covers
   every way a cancellation returns applied credit. A Xero change on a booking
   that is still live works as before.

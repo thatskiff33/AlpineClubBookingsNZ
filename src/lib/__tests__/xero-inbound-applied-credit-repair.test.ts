@@ -278,6 +278,30 @@ describe("provider-aware inbound applied-credit repair", () => {
       metadata: expect.objectContaining({ xeroCreditNoteId: "cn-1", direction: "reduced", refusedCents: 3000, restoredCents: 3000 }),
     }));
     expect(h.createAuditLog.mock.calls[0][0]).not.toHaveProperty("subjectMemberId");
+    // A full restore: nothing beyond it to flag.
+    expect(h.notifyXeroSyncError.mock.calls[0][0].errorMessage).not.toContain("beyond what was restored");
+  });
+
+  it("names the part of a refused de-allocation beyond a TIERED restore: the cancellation fee, for an officer to grant if intended (#3792)", async () => {
+    h.linkFindMany.mockResolvedValue([{
+      metadata: { creditNoteId: "cn-1", invoiceId: "invoice-1", amountCents: 3000 },
+    }]);
+    h.allocationAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
+    h.memberCreditAggregate
+      .mockResolvedValueOnce({ _sum: { amountCents: 0 } })
+      .mockResolvedValueOnce({ _sum: { amountCents: -3000 } })
+      .mockResolvedValue({ _sum: { amountCents: -3000 } });
+    // A 50% cancellation tier restored $15 of the $30 applied.
+    h.memberCreditFindUnique.mockResolvedValue({ amountCents: 1500 });
+
+    await repairAccountCreditAllocationBusinessState("cn-1", []);
+
+    expect(h.memberCreditCreate).not.toHaveBeenCalled();
+    expect(h.notifyXeroSyncError).toHaveBeenCalledWith(expect.objectContaining({
+      errorMessage: expect.stringContaining(
+        "$15.00 of this is beyond what was restored (the cancellation fee); grant it by hand if the waiver was intended.",
+      ),
+    }));
     // The alert goes out after the ledger transaction, not inside it.
     expect(h.prisma.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
       h.notifyXeroSyncError.mock.invocationCallOrder[0],
