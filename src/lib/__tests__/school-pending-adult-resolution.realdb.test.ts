@@ -398,6 +398,29 @@ it("runs the pending-adult database proof in CI", () => {
     expect(await prisma.payment.count({ where: { bookingId: "pending-hold" } })).toBe(0);
   });
 
+  it.each(["naming", "approval"])("refuses an unpriced held night before %s without filling it from the quote", async (action) => {
+    if (action === "approval") {
+      await nameAdult();
+      await nameAdult(5, "Cara");
+      await prisma.bookingRequest.update({ where: { id: "pending-request" }, data: { schoolName: "Test school", priceCents: option.totalCents } });
+    }
+    const night = await prisma.bookingGuestNight.findFirstOrThrow({ where: { bookingGuest: { bookingId: "pending-hold" } } });
+    await prisma.bookingGuestNight.update({ where: { id: night.id }, data: { priceCents: null, priceSource: "UNKNOWN" } });
+    const before = await prisma.booking.findUniqueOrThrow({ where: { id: "pending-hold" }, include: { guests: { include: { nights: true } } } });
+    const request = await prisma.bookingRequest.findUniqueOrThrow({ where: { id: "pending-request" } });
+    const reservations = await prisma.bookingRequestPendingAdultReservationNight.findMany({ orderBy: { night: "asc" } });
+    const memberCount = await prisma.member.count();
+    const contactCount = await prisma.organisationContact.count();
+    await expect(action === "naming" ? nameAdult() : approve({ requestId: "pending-request", adminMemberId: "officer" }))
+      .rejects.toMatchObject({ status: 409 });
+    expect(await prisma.booking.findUniqueOrThrow({ where: { id: "pending-hold" }, include: { guests: { include: { nights: true } } } })).toEqual(before);
+    expect(await prisma.bookingRequest.findUniqueOrThrow({ where: { id: "pending-request" } })).toEqual(request);
+    expect(await prisma.bookingRequestPendingAdultReservationNight.findMany({ orderBy: { night: "asc" } })).toEqual(reservations);
+    expect(await prisma.member.count()).toBe(memberCount);
+    expect(await prisma.organisationContact.count()).toBe(contactCount);
+    expect(await prisma.payment.count({ where: { bookingId: "pending-hold" } })).toBe(0);
+  });
+
   it("persists no held-price or guest side effect when the version claim loses", async () => {
     const before = await prisma.booking.findUniqueOrThrow({ where: { id: "pending-hold" }, include: { guests: { include: { nights: true } } } });
     await sql.query(`CREATE FUNCTION lose_pending_claim() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -411,6 +434,25 @@ it("runs the pending-adult database proof in CI", () => {
       expect(await prisma.bookingRequestPendingAdultReservationNight.count()).toBe(2);
     } finally {
       await sql.query('DROP TRIGGER lose_pending_claim ON "BookingRequest"; DROP FUNCTION lose_pending_claim()');
+    }
+  });
+
+  it("rolls every naming effect back if a held night loses its priced proof after the request claim", async () => {
+    const before = await prisma.booking.findUniqueOrThrow({ where: { id: "pending-hold" }, include: { guests: { include: { nights: true } } } });
+    await sql.query(`CREATE FUNCTION invalidate_pending_night_price() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN UPDATE "BookingGuestNight" SET "priceCents" = NULL, "priceSource" = 'UNKNOWN'
+      WHERE id = (SELECT id FROM "BookingGuestNight" WHERE "bookingGuestId" IN
+        (SELECT id FROM "BookingGuest" WHERE "bookingId" = 'pending-hold') ORDER BY id LIMIT 1);
+      RETURN NEW; END $$;
+      CREATE TRIGGER invalidate_pending_night_price AFTER UPDATE ON "BookingRequest"
+      FOR EACH ROW EXECUTE FUNCTION invalidate_pending_night_price()`);
+    try {
+      await expect(nameAdult()).rejects.toMatchObject({ status: 409 });
+      expect(await prisma.booking.findUniqueOrThrow({ where: { id: "pending-hold" }, include: { guests: { include: { nights: true } } } })).toEqual(before);
+      expect(await prisma.bookingRequest.findUniqueOrThrow({ where: { id: "pending-request" } })).toMatchObject({ version: 4, pendingAdultCount: 2, guests: [teacher] });
+      expect(await prisma.bookingRequestPendingAdultReservationNight.count()).toBe(2);
+    } finally {
+      await sql.query('DROP TRIGGER invalidate_pending_night_price ON "BookingRequest"; DROP FUNCTION invalidate_pending_night_price()');
     }
   });
 

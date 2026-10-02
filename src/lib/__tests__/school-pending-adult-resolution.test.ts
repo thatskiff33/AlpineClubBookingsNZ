@@ -92,7 +92,7 @@ const hold = {
   totalPriceCents: 300,
   discountCents: 0,
   promoAdjustmentCents: 0,
-  guests: originalGuests.map((guest, index) => ({ ...guest, id: `guest-${index}`, memberId: null, nights: [{ id: `night-${index}`, stayDate: inDay }], stayStart: inDay, stayEnd: outDay, priceCents: 100 })),
+  guests: originalGuests.map((guest, index) => ({ ...guest, id: `guest-${index}`, memberId: null, nights: [{ id: `night-${index}`, stayDate: inDay, priceCents: 100 }], stayStart: inDay, stayEnd: outDay, priceCents: 100 })),
 };
 
 function quoteBreakdown(pendingTotals: number[]) {

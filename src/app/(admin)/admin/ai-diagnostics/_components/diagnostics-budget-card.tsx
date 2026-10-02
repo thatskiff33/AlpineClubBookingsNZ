@@ -73,8 +73,12 @@ type BudgetState =
  * the canonical exact parser's job (#2685), which is also what refuses "12.005"
  * outright rather than quietly deciding which cent the person meant.
  */
+function normalizeBudgetDraft(value: string): string {
+  return value.trim().replace(/^\$/, "");
+}
+
 function dollarsToCents(value: string): number | null {
-  return parseDecimalDollarsToCents(value.trim().replace(/^\$/, ""));
+  return parseDecimalDollarsToCents(normalizeBudgetDraft(value));
 }
 
 export function DiagnosticsBudgetCard({
@@ -295,6 +299,7 @@ export function DiagnosticsBudgetCard({
           <MoneyInput
             id={inputId}
             value={draft}
+            normalizeDraft={normalizeBudgetDraft}
             aria-describedby={hintId}
             onValueChange={setDraft}
             readOnly={!canEdit}

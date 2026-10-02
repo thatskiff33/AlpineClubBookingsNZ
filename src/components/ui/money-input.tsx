@@ -31,6 +31,8 @@ export interface MoneyInputProps extends NativeMoneyInputProps {
   error?: React.ReactNode;
   /** Enables the leading sign accepted by parseSignedDecimalDollarsToCents. */
   allowNegative?: boolean;
+  /** Reuses a caller's existing accepted draft syntax before exact parsing. */
+  normalizeDraft?: (value: string) => string;
   /** Inclusive cents bounds used by the whole-dollar controls. */
   minCents?: number;
   maxCents?: number;
@@ -59,6 +61,7 @@ export function MoneyInput({
   label,
   error,
   allowNegative = false,
+  normalizeDraft,
   minCents,
   maxCents,
   id,
@@ -83,7 +86,7 @@ export function MoneyInput({
     setFieldName(name || inputProps["aria-label"] || "amount");
   }, [inputId, label, inputProps]);
   const errorId = `${inputId}-error`;
-  const describedBy = [ariaDescribedBy, error ? errorId : undefined]
+  const describedBy = [error ? errorId : undefined, ariaDescribedBy]
     .filter(Boolean)
     .join(" ") || undefined;
   const parser = allowNegative
@@ -91,33 +94,32 @@ export function MoneyInput({
     : parseDecimalDollarsToCents;
   const controlsDisabled = disabled || readOnly;
 
-  const canStep = (direction: 1 | -1) => {
-    if (controlsDisabled) return false;
-    const parsed = parser(value);
-    if (parsed === null) return false;
+  const nextStepValue = (direction: 1 | -1): string | null => {
+    if (controlsDisabled) return null;
+    const parsed = parser(normalizeDraft ? normalizeDraft(value) : value);
+    if (parsed === null) return null;
     const next = parsed + direction * 100;
-    if (!Number.isSafeInteger(next)) return false;
-    if (!allowNegative && next < 0) return false;
-    if (validBound(minCents) && next < minCents) return false;
-    if (validBound(maxCents) && next > maxCents) return false;
+    if (!Number.isSafeInteger(next)) return null;
+    if (!allowNegative && next < 0) return null;
+    if (validBound(minCents) && next < minCents) return null;
+    if (validBound(maxCents) && next > maxCents) return null;
     // The exact parser owns the int32-safe cents ceiling for this boundary.
-    return parser(formatCentsPlain(next)) !== null;
+    const formatted = formatCentsPlain(next);
+    return parser(formatted) === null ? null : formatted;
   };
 
   const changeValue = (next: string) => {
-    if (!hasThirdFractionalDigit(next)) onValueChange(next);
+    const normalized = normalizeDraft ? normalizeDraft(next) : next;
+    if (!hasThirdFractionalDigit(normalized)) onValueChange(next);
   };
 
   const step = (direction: 1 | -1) => {
-    if (!canStep(direction)) return;
-    const parsed = parser(value);
-    if (parsed === null) return; // narrowed by canStep; keeps the value explicit.
-    const next = parsed + direction * 100;
-    onValueChange(formatCentsPlain(next));
+    const next = nextStepValue(direction);
+    if (next !== null) onValueChange(next);
   };
 
-  const increaseDisabled = !canStep(1);
-  const decreaseDisabled = !canStep(-1);
+  const increaseDisabled = nextStepValue(1) === null;
+  const decreaseDisabled = nextStepValue(-1) === null;
 
   return (
     <div className="space-y-1">
