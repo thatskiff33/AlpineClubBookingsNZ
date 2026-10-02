@@ -486,8 +486,8 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/switch-to-internet-banking/route.ts:118",
   "src/lib/adult-member-hosting-review.ts:3256",
   "src/lib/booking-batch-modification-service.ts:1004",
-  "src/lib/booking-cancel.ts:514",
-  "src/lib/booking-date-modification-service.ts:392",
+  "src/lib/booking-cancel.ts:513",
+  "src/lib/booking-date-modification-service.ts:393",
   "src/lib/booking-delete.ts:124",
   "src/lib/booking-delete.ts:73",
   "src/lib/booking-email-authority.ts:115",
@@ -520,8 +520,8 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1226",
-  "src/lib/payment-recovery.ts:2558",
-  "src/lib/payment-recovery.ts:2610",
+  "src/lib/payment-recovery.ts:2624",
+  "src/lib/payment-recovery.ts:2676",
   "src/lib/xero-admin-health.ts:372",
 ];
 
@@ -780,8 +780,13 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   "src/app/api/admin/payments/manual-refund-tasks/route.ts:80",
   "src/lib/bed-allocation-removal.ts:144",
   "src/lib/cron-additional-payment-reminders.ts:437",
-  "src/lib/cron-confirm-pending.ts:189",
+  "src/lib/cron-confirm-pending.ts:190",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:885",
+  // #3740: `resolveManualRefundTask`'s select, moved out of that module to keep
+  // it in budget. Verified by hand: written through
+  // `Prisma.validator<Prisma.ManualRefundTaskSelect>()`, and `organisation` sits
+  // under its `booking` relation, which declares it.
+  "src/lib/manual-refund-task-resolution-select.ts:54",
   // Added when the member lodge roster (#2942, from `main`) was routed through
   // `bookingOwner()` on the eighth epic sync. Verified by hand, which is what
   // this list asks for: `MEMBER_ROSTER_BOOKING_SELECT` is written
@@ -791,7 +796,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // build. The walk cannot root it only because the literal names no delegate.
   "src/lib/member-lodge-roster.ts:111",
   "src/lib/payment-link.ts:81",
-  "src/lib/payment-reconciliation.ts:89",
+  "src/lib/payment-reconciliation.ts:90",
   "src/lib/stuck-state-dashboard.ts:616",
   "src/lib/xero-booking-repair-types.ts:190",
   "src/lib/xero-inbound/settlement-conflicts.ts:153",

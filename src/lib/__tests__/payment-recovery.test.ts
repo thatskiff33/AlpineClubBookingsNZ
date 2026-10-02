@@ -340,9 +340,11 @@ import {
   enqueueBookingCancellationRefundRecovery,
   enqueueBookingModificationRefundRecovery,
   enqueueCapacityClaimFailedRefundRecovery,
+  enqueueEditFinancialReviewChargeRecovery,
   enqueueGroupSettlementRefundRecovery,
   enqueuePaymentIntentCancellationRecovery,
   enqueueRefundRequestRefundRecovery,
+  isEditFinancialReviewChargeRecoveryDead,
   processPaymentRecoveryOperations,
   queueSupersededPaymentIntentRefundRecovery,
 } from "@/lib/payment-recovery";
@@ -3515,6 +3517,121 @@ describe("edit-financial-review charge recovery (#3170)", () => {
   });
 
   /**
+   * #3402: the same refusal to close, for the other way a replay can raise
+   * nothing - another run (an officer's inline settlement, say) holds the edit's
+   * raise claim, so this replay called no provider at all. Closing here would
+   * trust a holder that may yet die mid-raise.
+   */
+  it("leaves the operation open when another run holds the edit's raise claim", async () => {
+    mockSyncEditFinancialReviewChargeRequest.mockResolvedValue({
+      outcome: "deferred",
+      paymentIntentId: null,
+      totalCents: 23000,
+      carriedCents: 0,
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(0);
+    expect(wasClosedSuccessfully()).toBe(false);
+    expect(result.retried).toBe(1);
+    expect(wasLeftForRetry()).toBe(true);
+    expect(mockAttachIntentToWaitingOps).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #3402: the replay's close is fenced on the `nextRetryAt` it was claimed with.
+   * A share deferred (or refused) onto this edit while the replay ran moves that
+   * value on the PROCESSING row; the replay must then hand the row back to
+   * PENDING instead of closing it over a share it never raised for.
+   */
+  it("hands the row back instead of closing it when a share was deferred onto it mid-replay", async () => {
+    const { nextRetryAt: claimedRetryAt, processingStartedAt: claimedAttempt } = chargeOperation();
+    mockPaymentRecoveryUpdateMany.mockImplementation(
+      ({ where, data }: { where?: { id?: string; nextRetryAt?: Date }; data?: { status?: string } }) =>
+        Promise.resolve({
+          // The fenced close matches nothing: the row's retry time has moved.
+          count: data?.status === "SUCCEEDED" && where?.nextRetryAt ? 0 : where?.id ? 1 : 0,
+        }),
+    );
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    const calls = mockPaymentRecoveryUpdateMany.mock.calls.map(
+      (call) => call[0] as { where?: Record<string, unknown>; data?: Record<string, unknown> },
+    );
+    const close = calls.find((call) => call.data?.status === "SUCCEEDED");
+    expect(close?.where).toMatchObject({
+      id: "recovery-review-charge",
+      nextRetryAt: claimedRetryAt,
+      processingStartedAt: claimedAttempt,
+    });
+    const handBack = calls.find((call) => call.data?.status === "PENDING");
+    // Fenced on the exact attempt too, so it can only hand back THIS worker's claim.
+    expect(handBack).toEqual({
+      where: { id: "recovery-review-charge", status: "PROCESSING", processingStartedAt: claimedAttempt },
+      data: { status: "PENDING", attempts: 0, processingStartedAt: null, lastError: null },
+    });
+  });
+
+  /**
+   * #3402: a worker that stalls past the stale-worker threshold is reaped and its
+   * row re-claimed by worker B (a new `processingStartedAt`). The stalled
+   * worker's late close and hand-back must both be no-ops on B's live claim -
+   * otherwise a third worker could run the debt alongside B, and B's `attempts`
+   * would reset past `MAX_PAYMENT_RECOVERY_ATTEMPTS`.
+   */
+  it("a stalled worker's late close and hand-back cannot touch the attempt that re-claimed the row", async () => {
+    const { nextRetryAt: stalledRetryAt, processingStartedAt: stalledAttempt } = chargeOperation();
+    // The row as worker B left it: reaped (nextRetryAt moved), re-claimed.
+    const live = {
+      status: "PROCESSING",
+      nextRetryAt: new Date("2026-05-23T00:31:00.000Z"),
+      processingStartedAt: new Date("2026-05-23T00:31:00.000Z"),
+      attempts: 2,
+    };
+    mockPaymentRecoveryUpdateMany.mockImplementation(
+      ({ where, data }: { where?: Record<string, unknown>; data?: Record<string, unknown> }) => {
+        if (where?.id !== "recovery-review-charge") return Promise.resolve({ count: 0 });
+        // The stalled worker's own claim, back when it began (it then read the
+        // fixture row); everything after is the late close and hand-back.
+        if (data?.status === "PROCESSING") return Promise.resolve({ count: 1 });
+        // Evaluate the where against B's row, as PostgreSQL would.
+        const matches = Object.entries(where).every(([field, expected]) => {
+          if (field === "id") return true;
+          const actual = live[field as keyof typeof live];
+          if (expected && typeof expected === "object" && "not" in expected) {
+            return actual !== (expected as { not: unknown }).not;
+          }
+          return actual instanceof Date && expected instanceof Date
+            ? actual.getTime() === expected.getTime()
+            : actual === expected;
+        });
+        if (matches) Object.assign(live, data);
+        return Promise.resolve({ count: matches ? 1 : 0 });
+      },
+    );
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    const writes = mockPaymentRecoveryUpdateMany.mock.calls
+      .map((call) => call[0] as { where?: Record<string, unknown>; data?: Record<string, unknown> })
+      .filter((call) => call.where?.id === "recovery-review-charge" && call.data?.status !== "PROCESSING");
+    // Both writes were attempted with the stalled worker's own fence...
+    const at = (value: unknown) => (value instanceof Date ? value.getTime() : value);
+    expect(writes.length).toBeGreaterThanOrEqual(2);
+    expect(writes.some((w) => at(w.where?.nextRetryAt) === stalledRetryAt.getTime())).toBe(true);
+    expect(writes.every((w) => at(w.where?.processingStartedAt) === stalledAttempt.getTime())).toBe(true);
+    // ...and neither moved B's row.
+    expect(live).toEqual({
+      status: "PROCESSING",
+      nextRetryAt: new Date("2026-05-23T00:31:00.000Z"),
+      processingStartedAt: new Date("2026-05-23T00:31:00.000Z"),
+      attempts: 2,
+    });
+  });
+
+  /**
    * The CONTROL for the guard above. A replay that DID raise the request must
    * still close - a check that refused everything would pass the test above and
    * would wedge every recovered charge in a retry loop.
@@ -3796,6 +3913,90 @@ describe("edit-financial-review charge recovery (#3170)", () => {
     expect(result.succeeded).toBe(1);
     expect(mockSyncEditFinancialReviewChargeRequest).not.toHaveBeenCalled();
     expect(mockAttachIntentToWaitingOps).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3402: the edit's ONE recovery row is armed through one helper, which reopens
+ * a row an earlier replay closed - and touches nothing else. The behaviour
+ * against real rows (a SUCCEEDED row reopened by a deferral, then replayed into
+ * a raise) is proved in `edit-financial-review-charge-raise-claim.realdb.test.ts`.
+ */
+describe("enqueueEditFinancialReviewChargeRecovery (#3402)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPaymentRecoveryUpsert.mockResolvedValue({});
+    mockPaymentRecoveryUpdateMany.mockResolvedValue({ count: 0 });
+  });
+
+  it("enqueues under the edit's two keys, then re-arms ONLY a SUCCEEDED row and only marks a PROCESSING one", async () => {
+    await enqueueEditFinancialReviewChargeRecovery({
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      bookingModificationId: "mod-1",
+      advisoryAmountCents: 7000,
+      hadIssuedXeroInvoice: true,
+    });
+
+    const key = buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod-1");
+    expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { idempotencyKey: key },
+        create: expect.objectContaining({
+          paymentIntentId: buildEditFinancialReviewAdditionalIntentStripeKey("mod-1"),
+          amountCents: 7000,
+          hadIssuedXeroInvoice: true,
+        }),
+      }),
+    );
+    const writes = mockPaymentRecoveryUpdateMany.mock.calls.map(
+      (call) => call[0] as { where: Record<string, unknown>; data: Record<string, unknown> },
+    );
+    expect(writes).toHaveLength(2);
+    // The PROCESSING move runs FIRST: in the other order a replay's close can
+    // slip between the two and leave the row SUCCEEDED with nothing armed.
+    expect(writes[0]).toEqual({
+      where: { idempotencyKey: key, status: "PROCESSING" },
+      data: { nextRetryAt: expect.any(Date) },
+    });
+    expect(writes[1]).toEqual({
+      where: { idempotencyKey: key, status: "SUCCEEDED" },
+      data: {
+        status: "PENDING",
+        attempts: 0,
+        nextRetryAt: expect.any(Date),
+        lastError: null,
+        processingStartedAt: null,
+        succeededAt: null,
+      },
+    });
+    // A running replay (writes[0]) keeps its status - a second worker must not
+    // be able to claim it - and only has its retry time moved, which its close
+    // is fenced on.
+    // A terminal FAILED row is never reopened (`INV-PAY-057`).
+    expect(writes.some((write) => write.where.status === "FAILED")).toBe(false);
+  });
+});
+
+describe("isEditFinancialReviewChargeRecoveryDead (#3402)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it.each([
+    ["no row", null, false],
+    ["a PENDING row", { status: "PENDING", attempts: 0, nextRetryAt: new Date() }, false],
+    ["a running row", { status: "PROCESSING", attempts: 1, nextRetryAt: new Date() }, false],
+    ["a closed row (a deferral reopens it)", { status: "SUCCEEDED", attempts: 1, nextRetryAt: null }, false],
+    ["a retryable FAILED row", { status: "FAILED", attempts: 2, nextRetryAt: new Date() }, false],
+    ["a FAILED row with no retry time", { status: "FAILED", attempts: 2, nextRetryAt: null }, true],
+    ["a FAILED row with its attempts spent", { status: "FAILED", attempts: 5, nextRetryAt: new Date() }, true],
+  ])("%s", async (_label, row, dead) => {
+    mockPaymentRecoveryFindUnique.mockResolvedValueOnce(row);
+    await expect(isEditFinancialReviewChargeRecoveryDead("mod-1")).resolves.toBe(dead);
+    expect(mockPaymentRecoveryFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { idempotencyKey: buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey("mod-1") },
+      }),
+    );
   });
 });
 
