@@ -61,12 +61,17 @@ export type TwoFactorAuditAction =
 export class TwoFactorActorError extends Error {
   readonly operation: string;
 
-  constructor(operation: string, received: unknown) {
+  constructor(operation: string, received: unknown, subjectMemberId?: string) {
     super(
-      `Two-factor mutation "${operation}" supplied no usable actor (received ` +
-        `${JSON.stringify(received) ?? String(received)}). Name the member ` +
-        "({ kind: \"member\", memberId }) or the administrator " +
-        "({ kind: \"admin\", memberId }) from @/lib/two-factor-audit.",
+      subjectMemberId === undefined
+        ? `Two-factor mutation "${operation}" supplied no usable actor (received ` +
+            `${JSON.stringify(received) ?? String(received)}). Name the member ` +
+            "({ kind: \"member\", memberId }) or the administrator " +
+            "({ kind: \"admin\", memberId }) from @/lib/two-factor-audit."
+        : `Two-factor mutation "${operation}" was refused: a member actor ` +
+            `(${JSON.stringify(received)}) may change only their own second ` +
+            `factor, and this one belongs to member "${subjectMemberId}". ` +
+            "An administrator acting on another member names { kind: \"admin\" }.",
     );
     this.name = "TwoFactorActorError";
     this.operation = operation;
@@ -103,7 +108,7 @@ export function assertTwoFactorActorMayAct(
 ): asserts actor is TwoFactorActor {
   assertTwoFactorActor(operation, actor);
   if (actor.kind === "member" && actor.memberId !== subjectMemberId) {
-    throw new TwoFactorActorError(operation, actor);
+    throw new TwoFactorActorError(operation, actor, subjectMemberId);
   }
 }
 

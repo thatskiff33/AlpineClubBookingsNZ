@@ -193,7 +193,7 @@ describe("two-factor helpers", () => {
         method: "EMAIL",
         actor: { kind: "member", memberId: "member-2" },
       }),
-    ).rejects.toThrow(/no usable actor/);
+    ).rejects.toThrow(/may change only their own second factor/);
     expect(mockPrisma.member.update).not.toHaveBeenCalled();
     expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
   });
@@ -229,7 +229,7 @@ describe("two-factor helpers", () => {
         memberId: "member-1",
         actor: { kind: "member", memberId: "member-2" },
       }),
-    ).rejects.toThrow(/no usable actor/);
+    ).rejects.toThrow(/may change only their own second factor/);
     expect(mockPrisma.twoFactorRecoveryCode.deleteMany).not.toHaveBeenCalled();
   });
 

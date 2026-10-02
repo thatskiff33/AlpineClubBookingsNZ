@@ -1123,12 +1123,15 @@ export const AUDIT_CENSUS_TOTALS = {
     // `security` is readable with `support:view` alone, and a refused attempt to
     // change where a signed join token is sent is exactly what a support
     // operator correlating an incident needs to see.
-    // 24 -> 25 (#3454): `security.two_factor.enrolled` / `.cleared`, one site. A
-    // second factor is a credential, which is what this category holds, and it is
-    // readable with `support:view` alone, so the weakest-gate total moves
-    // 137 -> 138. That is a WIDENING of one, and deliberate: an operator
+    // 24 -> 25 (#3454): `security.two_factor.enrolled`, `.recovery_codes_replaced`
+    // and `.cleared`, three actions through ONE site. A second factor is a
+    // credential, which is what this category holds, and it is readable with
+    // `support:view` alone, so the weakest-gate total moves 137 -> 138. That is a
+    // WIDENING of one site and three event types, and deliberate: an operator
     // investigating a member's sign-in needs to see when their second factor was
-    // turned on, and the row carries no secret (booleans and the method only).
+    // turned on, its recovery codes replaced or it was cleared. The rows carry no
+    // secret: booleans, the method, and for a replacement the COUNT of codes
+    // issued, never the codes.
     security: 25,
     // 16 -> 18 (#2595): the two reviewed-move writes. `lodge` is the category
     // every other bed-allocation write already uses, and it is not one of the
