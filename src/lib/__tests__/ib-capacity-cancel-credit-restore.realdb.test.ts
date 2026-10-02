@@ -12,6 +12,13 @@
  * neither reports the booking nor can restore it a second time. A cash-only
  * booking is unchanged: the cash comes back and nothing else is written.
  *
+ * Where the applied credit was itself a Xero credit note allocated to the
+ * booking's invoice, the REAL inbound credit-note sync
+ * (`repairAccountCreditAllocationBusinessState`) runs after the cancel: an
+ * unchanged allocation changes nothing, and an allocation removed in Xero is
+ * not credited a second time on top of the restore — the operator is alerted
+ * instead (INV-PAY-019).
+ *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
  * (#1881), which imports this file so CI reaches it; it cleans its own
@@ -19,7 +26,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import type { Invoice } from "xero-node";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
@@ -35,6 +42,8 @@ const BOOKING_ID = "race-3792-booking";
 const PAYMENT_ID = "race-3792-payment";
 const INVOICE_ID = "race-3792-invoice";
 const GUEST_ID = "race-3792-guest";
+// The Xero credit note behind the applied credit, allocated to the invoice.
+const CREDIT_NOTE_ID = "race-3792-note";
 const CHECK_IN = new Date("2027-09-01T00:00:00.000Z");
 const CHECK_OUT = new Date("2027-09-02T00:00:00.000Z");
 
@@ -62,23 +71,34 @@ export function assertSafeIbCapacityRestoreRaceDbUrl(url: string): void {
   }
 }
 
+// The inbound sync's operator alert, observed rather than mailed.
+const xeroSyncAlert = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/xero-error-alert", () => ({ notifyXeroSyncError: xeroSyncAlert }));
+
 let prisma: PrismaClient;
 let memberCredit: typeof import("@/lib/member-credit");
 let paidEffects: typeof import("@/lib/xero-inbound/invoice-paid-effects");
 let orphanHeal: typeof import("@/lib/orphaned-applied-credit-backfill");
+let creditNoteRepairs: typeof import("@/lib/xero-inbound/credit-note-repairs");
 
 /** A PAID invoice carrying `cashCents` of bank cash, as a fresh getInvoice reads it. */
-function paidInvoice(cashCents: number): Invoice {
+function paidInvoice(cashCents: number, allocatedNoteCents = 0): Invoice {
   return {
     invoiceID: INVOICE_ID,
     invoiceNumber: "INV-3792",
     status: "PAID",
     amountPaid: cashCents / 100,
     payments: [{ paymentID: "race-3792-xpay", amount: cashCents / 100 }],
+    ...(allocatedNoteCents > 0
+      ? { creditNotes: [{ creditNoteID: CREDIT_NOTE_ID, appliedAmount: allocatedNoteCents / 100 }] }
+      : {}),
   } as unknown as Invoice;
 }
 
 async function clean(): Promise<void> {
+  const slices = await prisma.memberCreditNoteAllocation.findMany({ where: { appliedToBookingId: BOOKING_ID }, select: { id: true } });
+  await prisma.xeroObjectLink.deleteMany({ where: { localModel: "MemberCreditNoteAllocation", localId: { in: slices.map((slice) => slice.id) } } });
+  await prisma.memberCreditNoteAllocation.deleteMany({ where: { appliedToBookingId: BOOKING_ID } });
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [PAYMENT_ID, BOOKING_ID] } } });
@@ -142,6 +162,32 @@ async function seedBooking(appliedCents: number, cashCents: number): Promise<voi
   }
 }
 
+/**
+ * The applied credit as the #1620 allocation engine leaves it once Xero holds
+ * it: the funding lot carries its own credit note, that note is allocated to
+ * the booking's invoice (a precise slice plus an active allocation link), and
+ * the applied row is stamped with the note.
+ */
+async function allocateAppliedCreditInXero(appliedCents: number): Promise<void> {
+  const lot = await prisma.memberCredit.findFirstOrThrow({ where: { memberId: MEMBER_ID, type: "ADMIN_ADJUSTMENT" } });
+  await prisma.memberCredit.update({ where: { id: lot.id }, data: { xeroCreditNoteId: CREDIT_NOTE_ID } });
+  await prisma.memberCredit.updateMany({ where: { memberId: MEMBER_ID, type: "BOOKING_APPLIED" }, data: { xeroCreditNoteId: CREDIT_NOTE_ID } });
+  const slice = await prisma.memberCreditNoteAllocation.create({
+    data: { memberCreditId: lot.id, xeroCreditNoteId: CREDIT_NOTE_ID, appliedToBookingId: BOOKING_ID, amountCents: appliedCents },
+  });
+  await prisma.xeroObjectLink.create({
+    data: {
+      localModel: "MemberCreditNoteAllocation",
+      localId: slice.id,
+      xeroObjectType: "ALLOCATION",
+      xeroObjectId: `${CREDIT_NOTE_ID}:${INVOICE_ID}`,
+      role: "APPLIED_CREDIT_ALLOCATION",
+      active: true,
+      metadata: { creditNoteId: CREDIT_NOTE_ID, invoiceId: INVOICE_ID, amountCents: appliedCents },
+    },
+  });
+}
+
 async function ledgerLines() {
   return prisma.bookingLedgerLine.findMany({
     where: { bookingId: BOOKING_ID },
@@ -161,6 +207,7 @@ async function reconcile(cashCents: number) {
     memberCredit = await import("@/lib/member-credit");
     paidEffects = await import("@/lib/xero-inbound/invoice-paid-effects");
     orphanHeal = await import("@/lib/orphaned-applied-credit-backfill");
+    creditNoteRepairs = await import("@/lib/xero-inbound/credit-note-repairs");
 
     await clean();
     await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
@@ -173,6 +220,7 @@ async function reconcile(cashCents: number) {
 
   beforeEach(async () => {
     await clean();
+    xeroSyncAlert.mockClear();
   });
 
   afterAll(async () => {
@@ -220,5 +268,53 @@ async function reconcile(cashCents: number) {
     expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(12_000);
     expect(await prisma.memberCredit.count({ where: { restoredFromBookingId: BOOKING_ID } })).toBe(0);
     expect(bookingLedgerBalance(await ledgerLines()).owedCents).toBe(0);
+  });
+
+  it("AFTER THE CANCEL, an UNCHANGED Xero allocation run through the real credit-note sync leaves the member $200", async () => {
+    await seedBooking(8_000, 12_000);
+    await allocateAppliedCreditInXero(8_000);
+
+    await paidEffects.syncInternetBankingPaymentsForPaidInvoice(paidInvoice(12_000, 8_000), [PAYMENT_ID], CLUB_FORMAT_TEST);
+    expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(20_000);
+
+    await creditNoteRepairs.repairAccountCreditAllocationBusinessState(CREDIT_NOTE_ID, [{ invoiceId: INVOICE_ID, amountCents: 8_000 }]);
+
+    expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(20_000);
+    expect(xeroSyncAlert).not.toHaveBeenCalled();
+  });
+
+  it("AFTER THE CANCEL, an allocation REMOVED in Xero is not credited again on top of the restore: still $200, and the operator is alerted", async () => {
+    await seedBooking(8_000, 12_000);
+    await allocateAppliedCreditInXero(8_000);
+
+    await paidEffects.syncInternetBankingPaymentsForPaidInvoice(paidInvoice(12_000, 8_000), [PAYMENT_ID], CLUB_FORMAT_TEST);
+    expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(20_000);
+
+    // The next credit-note sync finds no allocation of the note left in Xero.
+    const repaired = await creditNoteRepairs.repairAccountCreditAllocationBusinessState(CREDIT_NOTE_ID, []);
+
+    expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(20_000);
+    expect(repaired.skippedAllocations).toBe(1);
+    expect(await prisma.memberCredit.count({ where: { memberId: MEMBER_ID, description: { startsWith: "Xero allocation reconciliation" } } })).toBe(0);
+    expect(xeroSyncAlert).toHaveBeenCalledTimes(1);
+    expect(xeroSyncAlert).toHaveBeenCalledWith(expect.objectContaining({
+      errorType: "applied-credit-restored-booking-deallocation",
+      errorMessage: expect.stringContaining(`booking ${BOOKING_ID} is cancelled`),
+    }));
+
+    // A replay of the sync is no different.
+    await creditNoteRepairs.repairAccountCreditAllocationBusinessState(CREDIT_NOTE_ID, []);
+    expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(20_000);
+  });
+
+  it("ON A LIVE BOOKING, the same Xero removal still credits the member: no restore row, so the guard stays out of the way", async () => {
+    await seedBooking(8_000, 12_000);
+    await allocateAppliedCreditInXero(8_000);
+    expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(0);
+
+    await creditNoteRepairs.repairAccountCreditAllocationBusinessState(CREDIT_NOTE_ID, []);
+
+    expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(8_000);
+    expect(xeroSyncAlert).not.toHaveBeenCalled();
   });
 });
