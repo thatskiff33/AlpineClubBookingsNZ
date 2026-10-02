@@ -1,4 +1,5 @@
 import { strToU8, strFromU8 } from "fflate";
+import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
 import { z } from "zod";
 
 import type { BundleEntry } from "../bundle";
@@ -97,7 +98,7 @@ export function readXeroSourceTenantId(
 export async function connectedXeroTenantId(db: ReadDb): Promise<string | null> {
   const token = await db.xeroToken.findFirst({
     select: { tenantId: true },
-    orderBy: { updatedAt: "desc" },
+    orderBy: XERO_TOKEN_ROW_ORDER,
   });
   return token?.tenantId ?? null;
 }

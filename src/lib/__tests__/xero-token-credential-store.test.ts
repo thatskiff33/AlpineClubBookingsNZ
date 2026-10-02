@@ -84,7 +84,18 @@ const h = vi.hoisted(() => {
   const now = () => new Date();
 
   const xeroToken = {
-    findFirst: vi.fn(async () => clone(state.xeroToken[0] ?? null)),
+    // Without an `orderBy` this answers with the FIRST row in storage order,
+    // the way an unordered `LIMIT 1` answers with whatever PostgreSQL scans
+    // first. With `{ updatedAt: "desc" }` it answers with the newest (stable).
+    findFirst: vi.fn(async (args?: { orderBy?: { updatedAt?: "desc" } }) => {
+      const rows = [...state.xeroToken];
+      if (args?.orderBy?.updatedAt === "desc") {
+        rows.sort(
+          (a, b) => (b.updatedAt as Date).getTime() - (a.updatedAt as Date).getTime(),
+        );
+      }
+      return clone(rows[0] ?? null);
+    }),
     findUnique: vi.fn(async (args: { where: Row }) =>
       clone(state.xeroToken.find((row) => matches(row, args.where)) ?? null),
     ),
@@ -777,6 +788,56 @@ describe("interleaving inside a read: a write that commits between the two copie
     );
 
     await expect(loadXeroTokens()).resolves.toBeNull();
+  });
+});
+
+describe("two XeroToken rows (#3454 review)", () => {
+  /**
+   * The table has no singleton constraint, so two first connects finishing at
+   * once leave two rows. Storage order puts the STALE one first here, which is
+   * what an unordered read would see after the claim's own UPDATE moves the
+   * live row's tuple.
+   */
+  async function twoRows() {
+    await saveXeroTokens(tokenSet("live"), { actor: ADMIN });
+    h.state.xeroToken.unshift({
+      id: "stray-row",
+      accessToken: oldColourEncrypt("access-stray"),
+      refreshToken: oldColourEncrypt("refresh-stray"),
+      expiresAt: new Date("2026-07-01T00:10:00.000Z"),
+      tenantId: "tenant-1",
+      refreshInProgressUntil: null,
+      createdAt: new Date("2026-06-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-06-01T00:00:00.000Z"),
+    });
+  }
+
+  it("every unlocked reader agrees on the most recently written row", async () => {
+    await twoRows();
+    await expect(loadXeroTokens()).resolves.toMatchObject({ refreshToken: "refresh-live" });
+    await expect(getXeroTokenReadability()).resolves.toBe("readable");
+  });
+
+  it("a refresh still claims the live row, saves, and re-converges with the store copy", async () => {
+    await twoRows();
+
+    const claim = await claimXeroTokenRefreshLease();
+    expect(claim.claimed).toBe(true);
+    if (!claim.claimed) return;
+    expect(claim.tokens.refreshToken).toBe("refresh-live");
+
+    await saveXeroTokens(
+      { ...tokenSet("r1"), refreshToken: "refresh-r1" },
+      { actor: REFRESH_JOB, lease: { claimed: claim.tokens, leaseUntil: claim.leaseUntil } },
+    );
+    await expect(loadXeroTokens()).resolves.toMatchObject({
+      refreshToken: "refresh-r1",
+      storeVersion: expect.any(String),
+    });
+    // And the next refresh works too, rather than refusing for ever.
+    const again = await claimXeroTokenRefreshLease();
+    expect(again.claimed).toBe(true);
+    expect(again.tokens?.refreshToken).toBe("refresh-r1");
   });
 });
 

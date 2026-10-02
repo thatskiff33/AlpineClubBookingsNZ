@@ -35,6 +35,7 @@ import {
   XERO_PROVIDER,
 } from "@/lib/xero-config";
 import { invalidateXeroOrganisationCaches } from "@/lib/xero-organisation-cache-bus";
+import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
 import {
   decryptToken,
   decryptWithKey,
@@ -240,7 +241,14 @@ function storeVersionOf(stored: CredentialResolution): CredentialVersion | null 
  * `XeroToken` row exists (not connected). Decrypting a legacy row can resolve
  * the wrapped token key, exactly as it always has.
  */
-async function readCurrentTokens(db: XeroTokenDb): Promise<XeroTokenRecord | null> {
+async function readCurrentTokens(
+  db: XeroTokenDb,
+  /**
+   * The row this caller holds the lock on, read BY ID (#3454 review). Omitted
+   * by an unlocked reader, which takes the most recently written row.
+   */
+  lockedRowId?: string,
+): Promise<XeroTokenRecord | null> {
   // THE STORE ROW FIRST (#3454 review). Every writer of either release rewrites
   // or deletes the `XeroToken` row, so a write that commits between these two
   // reads always leaves the SECOND read newer: an old store copy beside a new
@@ -252,7 +260,10 @@ async function readCurrentTokens(db: XeroTokenDb): Promise<XeroTokenRecord | nul
     XERO_OAUTH_TOKEN_PROVIDER,
     XERO_OAUTH_TOKEN_KEY,
   );
-  const legacy = await db.xeroToken.findFirst();
+  const legacy =
+    lockedRowId === undefined
+      ? await db.xeroToken.findFirst({ orderBy: XERO_TOKEN_ROW_ORDER })
+      : await db.xeroToken.findUnique({ where: { id: lockedRowId } });
   if (!legacy) return null;
   const storeVersion = storeVersionOf(stored);
   const current = currentStoreCopy(legacy, stored);
@@ -372,7 +383,7 @@ export async function saveXeroTokens(
   }
 
   await withCredentialTransaction([XERO_OAUTH_TOKEN_PROVIDER], async (tx) => {
-    const existing = await tx.xeroToken.findFirst();
+    const existing = await tx.xeroToken.findFirst({ orderBy: XERO_TOKEN_ROW_ORDER });
     const row = existing
       ? await tx.xeroToken.update({
           where: { id: existing.id },
@@ -444,7 +455,7 @@ export async function getXeroTokenReadability(): Promise<XeroTokenReadability> {
     XERO_OAUTH_TOKEN_PROVIDER,
     XERO_OAUTH_TOKEN_KEY,
   );
-  const legacy = await prisma.xeroToken.findFirst();
+  const legacy = await prisma.xeroToken.findFirst({ orderBy: XERO_TOKEN_ROW_ORDER });
   if (!legacy) return "no_tokens";
   if (currentStoreCopy(legacy, stored) !== null) return "readable";
 
@@ -475,7 +486,10 @@ export async function claimXeroTokenRefreshLease(options?: {
   );
 
   return prisma.$transaction(async (tx) => {
-    const row = await tx.xeroToken.findFirst({ select: { id: true } });
+    const row = await tx.xeroToken.findFirst({
+      select: { id: true },
+      orderBy: XERO_TOKEN_ROW_ORDER,
+    });
     if (!row) {
       return { claimed: false, tokens: null, leaseUntil: null };
     }
@@ -507,7 +521,14 @@ export async function claimXeroTokenRefreshLease(options?: {
     // Both copies are read on THIS transaction's client, through the database,
     // so the refresh token handed back is the one stored now — never a cached
     // copy another container has already spent.
-    const record = await readCurrentTokens(tx);
+    // A won claim reads the row it LOCKED, by id. With two `XeroToken` rows an
+    // unordered read could answer with the other one, and the check below
+    // would then refuse every refresh until somebody disconnected (#3454
+    // review). A lost claim holds no lock and reads the current row.
+    const record = await readCurrentTokens(
+      tx,
+      claimed.count === 1 ? row.id : undefined,
+    );
     if (claimed.count !== 1) {
       return {
         claimed: false,
@@ -516,8 +537,8 @@ export async function claimXeroTokenRefreshLease(options?: {
       };
     }
     if (!record || record.id !== row.id) {
-      // Unreachable while this transaction holds the row it just claimed; a
-      // refusal rather than a guess if that ever stops being true.
+      // Unreachable: the row was read by the id this transaction just locked.
+      // A refusal rather than a guess if that ever stops being true.
       throw new Error("Xero token row changed under its own refresh lease");
     }
 
@@ -551,7 +572,7 @@ export async function releaseXeroTokenRefreshLease(
  * Check if Xero is currently connected (tokens exist and tenant is set).
  */
 export async function isXeroConnected(): Promise<boolean> {
-  const record = await prisma.xeroToken.findFirst();
+  const record = await prisma.xeroToken.findFirst({ orderBy: XERO_TOKEN_ROW_ORDER });
   return record !== null && record.tenantId !== null;
 }
 
@@ -568,7 +589,7 @@ export async function getXeroConnectionStatus(): Promise<{
   tenantId: string | null;
   tokenExpiresAt: Date | null;
 }> {
-  const record = await prisma.xeroToken.findFirst();
+  const record = await prisma.xeroToken.findFirst({ orderBy: XERO_TOKEN_ROW_ORDER });
   if (!record) {
     return {
       connected: false,

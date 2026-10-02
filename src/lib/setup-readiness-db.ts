@@ -1,4 +1,5 @@
 import { readClubModuleSettingsRecord } from "@/config/modules";
+import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
 import { prisma } from "@/lib/prisma";
 import { CLUB_TIME_SETTINGS_ID } from "@/lib/club-time-zone";
 import { resolveEnvironmentRole } from "@/lib/environment-role";
@@ -163,7 +164,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
       },
     }),
     prisma.xeroToken.findFirst({
-      orderBy: { updatedAt: "desc" },
+      orderBy: XERO_TOKEN_ROW_ORDER,
       select: { expiresAt: true },
     }),
     prisma.xeroAccountMapping.count({
