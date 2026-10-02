@@ -976,6 +976,76 @@ describe("cancelBooking credit refunds", () => {
     );
   });
 
+  it("#3793: the claim's pre-lock booking read takes only the payment's id", async () => {
+    await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "credit");
+
+    // Nothing that decides money is in hand before the Payment row lock.
+    expect(mocks.txBookingFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ include: expect.objectContaining({ payment: { select: { id: true } } }) }),
+    );
+  });
+
+  it("#3793: forces the refund method off the payment re-read under the lock, not the earlier read", async () => {
+    // The member asked for a card refund. Both reads before the lock show a
+    // card payment; the row under the lock is an internet banking one, which
+    // has no card charge to reverse, so the refund must be held as credit.
+    const cardPayment = {
+      id: "payment_method",
+      bookingId: "booking_method",
+      amountCents: 20000,
+      refundedAmountCents: 0,
+      status: "SUCCEEDED",
+      source: "STRIPE",
+      changeFeeCents: 0,
+      creditAppliedCents: 0,
+      stripePaymentIntentId: "pi_method",
+      additionalPaymentIntentId: null,
+      additionalPaymentStatus: null,
+      xeroInvoiceId: "inv_method",
+    };
+    const bookingMethod = {
+      id: "booking_method",
+      memberId: "member_1",
+      lodgeId: "lodge_1",
+      status: "PAID",
+      finalPriceCents: 20000,
+      checkIn: new Date("2026-08-10"),
+      checkOut: new Date("2026-08-12"),
+      member: { id: "member_1", email: "member@example.com", firstName: "Alice" },
+      payment: cardPayment,
+    };
+    mocks.bookingFindUnique.mockResolvedValueOnce(bookingMethod);
+    mocks.txBookingFindUnique.mockResolvedValueOnce(bookingMethod);
+    let locked = false;
+    mocks.lockPaymentForRefundedTotal.mockImplementationOnce(async () => {
+      locked = true;
+    });
+    mocks.txPaymentFindUnique.mockImplementation(async () =>
+      locked ? { ...cardPayment, source: "INTERNET_BANKING" } : cardPayment,
+    );
+
+    const result = await cancelBooking(
+      "booking_method",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      CLUB_FORMAT_TEST,
+      "card",
+    );
+
+    expect(result).toEqual({
+      status: 200,
+      data: expect.objectContaining({ refundMethod: "credit" }),
+    });
+    expect(mocks.calculateRefundAmount).toHaveBeenCalledWith(20000, 30, expect.anything(), "credit");
+    expect(mocks.calculateRefundAmount).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      "card",
+    );
+  });
+
   it("routes a captured PARTIALLY_REFUNDED payment through the tiered paid path — card method with frozen recovery plan (#1491)", async () => {
     const bookingPr = {
       id: "booking_prc",

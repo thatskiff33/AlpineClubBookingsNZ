@@ -1409,9 +1409,8 @@ async function performBookingCancellation(
   // computed (credit and card tiers can differ) and everything downstream —
   // policy math, branches, events, emails, audit — sees one consistent
   // method. The cancel-preview surface returns both methods' figures, so
-  // preview parity holds.
-  // Decided in `cancel-refund-method.ts`, shared with the cancel preview.
-  refundMethod = forcedCancelRefundMethod(booking.payment?.source) ?? refundMethod;
+  // preview parity holds. Decided in `cancel-refund-method.ts`; applied in the
+  // claim, off the payment re-read under its row lock (#3793).
 
   // ── PAID PATH: single-flight claim-first (#1160) ──────────────────
   //
@@ -1446,8 +1445,8 @@ async function performBookingCancellation(
 
     const fresh = await tx.booking.findUnique({
       where: { id: bookingId },
-      include: {
-      payment: true, member: true,
+      // #3793: only the payment's id before its row lock; nothing that decides money.
+      include: { payment: { select: { id: true } }, member: true,
       // #3369: the owner may be an Organisation; bookingOwner() reads both.
       organisation: { select: { name: true, email: true } },
     },
@@ -1465,8 +1464,8 @@ async function performBookingCancellation(
     // #3793: #3640's Payment row lock, then the re-read the money comes from: a refund
     // writer takes no advisory lock, so only the id is taken from the read above.
     await lockPaymentForRefundedTotal(tx, fresh.payment.id);
-    fresh.payment = await tx.payment.findUnique({ where: { id: fresh.payment.id } });
-    if (!fresh.payment) return { claimed: false as const };
+    let lockedPayment = await tx.payment.findUnique({ where: { id: fresh.payment.id } });
+    if (!lockedPayment) return { claimed: false as const };
     // #3643: record the part payment Xero showed as captured money and queue
     // the unpaid rest's clearing note, exactly once, before eligibility is
     // re-derived. Anything that moved since the read throws, rolling back.
@@ -1475,11 +1474,11 @@ async function performBookingCancellation(
       const recognised = await recordPartPaymentInClaim(
         tx,
         bookingId,
-        fresh.payment.id,
+        lockedPayment.id,
         partPayment,
         sessionUserId,
       );
-      fresh.payment = recognised.payment;
+      lockedPayment = recognised.payment;
       clearingOperationId = recognised.clearingOperationId;
     }
     // #1491: the same paid-path eligibility as the outer gate, re-derived
@@ -1489,7 +1488,7 @@ async function performBookingCancellation(
     // if racing writes degrade the payment between the reads, refusing the
     // claim (409) is the safe outcome.
     const freshPaidPathEligible = await paymentEligibleForPaidCancelPath(
-      fresh.payment,
+      lockedPayment,
       tx
     );
     if (!freshPaidPathEligible) {
@@ -1497,7 +1496,8 @@ async function performBookingCancellation(
       if (partPayment) throw new PartPaymentChangedError();
       return { claimed: false as const };
     }
-    const payment = fresh.payment;
+    const payment = lockedPayment;
+    refundMethod = forcedCancelRefundMethod(payment.source) ?? refundMethod;
 
     // #1491 (review): materialize any folded (mirror-only) refund into the
     // capture ledger BEFORE executing new refunds. The inbound reconcile
