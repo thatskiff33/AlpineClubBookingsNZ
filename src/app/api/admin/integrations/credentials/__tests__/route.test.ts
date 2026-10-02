@@ -53,8 +53,8 @@ vi.mock("@/lib/audit", () => ({
 }));
 // PARTIAL: which keys reset the tokens is the token store's rule, so the real
 // predicate decides; only the database-touching reset is replaced.
-vi.mock("@/lib/xero-token-store", async (importOriginal) => ({
-  ...((await importOriginal()) as typeof import("@/lib/xero-token-store")),
+vi.mock("@/lib/xero-verify-reset", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-verify-reset")),
   withXeroVerifyReset: mocks.withXeroVerifyReset,
 }));
 vi.mock("@/lib/logger", () => ({ default: { error: mocks.loggerError } }));

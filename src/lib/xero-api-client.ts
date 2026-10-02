@@ -265,9 +265,9 @@ export async function getAuthenticatedXeroClient(): Promise<{
           token_type: "Bearer",
         });
         const config = await getOperationalXeroConfig();
-        // #3454: refuse before spending the token if its rotated pair could not be stored.
-        await assertXeroTokensCanBeStored();
         try {
+          // #3454: refuse before spending the token if its rotated pair could not be stored.
+          await assertXeroTokensCanBeStored();
           const newTokenSet = await xero.refreshWithRefreshToken(
             config.clientId,
             config.clientSecret,
@@ -292,14 +292,18 @@ export async function getAuthenticatedXeroClient(): Promise<{
 
           return { xero, tenantId: claimedTokens.tenantId! };
         } catch (err) {
+          // A pre-flight refusal spent nothing and is not a reconnect case, but it
+          // stops every Xero call, so it alerts like any refresh failure (#3454).
+          const unstorable = err instanceof Error && err.name === "XeroTokenSaveUnavailableError";
           logger.error({ err }, "Xero token refresh failed");
           import("./xero-error-alert").then(({ notifyXeroSyncError }) =>
             notifyXeroSyncError({
-              errorType: "Token Refresh Failure",
+              errorType: unstorable ? "Token Store Unavailable" : "Token Refresh Failure",
               operation: "getAuthenticatedXeroClient",
               errorMessage: err instanceof Error ? err.message : String(err),
             })
           ).catch(() => {});
+          if (unstorable) throw err;
           const message = "Xero token refresh failed. Please reconnect Xero via the admin panel.";
           if (refreshFailureRequiresReconnect(err)) {
             throw new XeroReconnectRequiredError(message);

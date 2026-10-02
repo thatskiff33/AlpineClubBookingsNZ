@@ -97,8 +97,7 @@ export function readXeroSourceTenantId(
  */
 export async function connectedXeroTenantId(db: ReadDb): Promise<string | null> {
   const token = await db.xeroToken.findFirst({
-    select: { tenantId: true },
-    orderBy: XERO_TOKEN_ROW_ORDER,
+    select: { tenantId: true }, orderBy: XERO_TOKEN_ROW_ORDER,
   });
   return token?.tenantId ?? null;
 }

@@ -29,13 +29,10 @@ import {
   withCredentialTransaction,
   type CredentialResolution,
 } from "@/lib/integration-credentials";
-import {
-  peekOperationalXeroEncryptionKey,
-  XERO_CREDENTIAL_KEYS,
-  XERO_PROVIDER,
-} from "@/lib/xero-config";
+import { peekOperationalXeroEncryptionKey } from "@/lib/xero-config";
 import { invalidateXeroOrganisationCaches } from "@/lib/xero-organisation-cache-bus";
 import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
+import { getAuthSecretWithSource, isAuthSecretStrongEnough } from "@/lib/integration-crypto";
 import {
   decryptToken,
   decryptWithKey,
@@ -598,10 +595,16 @@ export async function getXeroConnectionStatus(): Promise<{
       tokenExpiresAt: null,
     };
   }
-  const readable = (await getXeroTokenReadability()) === "readable";
+  // Readable is not enough: under an auth secret the capture gate now refuses,
+  // the tokens still decrypt but no refresh can store its rotated pair, so every
+  // call fails once the access token expires. "Connected" must not sit over
+  // that (#3454 review).
+  const usable =
+    (await getXeroTokenReadability()) === "readable" &&
+    isAuthSecretStrongEnough(getAuthSecretWithSource()?.secret);
   return {
-    connected: readable,
-    needsReentry: !readable,
+    connected: usable,
+    needsReentry: !usable,
     tenantId: record.tenantId,
     tokenExpiresAt: record.expiresAt,
   };
@@ -662,53 +665,4 @@ export async function deleteXeroTokens(
   // Disconnect: no org is connected any more, so the cached org name/FYE/lock
   // dates must not linger for the next connection (F1).
   invalidateXeroOrganisationCaches();
-}
-
-/**
- * Does writing this credential orphan the stored tokens? Changing the client id
- * or secret invalidates the OAuth app the tokens belong to, so they are
- * destroyed and the operator must reconnect. Changing only the webhook key does
- * NOT (that surfaces as a webhook amber badge).
- */
-export function credentialWriteResetsXeroTokens(provider: string, key: string): boolean {
-  return (
-    provider === XERO_PROVIDER &&
-    (key === XERO_CREDENTIAL_KEYS.clientId ||
-      key === XERO_CREDENTIAL_KEYS.clientSecret)
-  );
-}
-
-/**
- * The Xero VERIFY-RESET in ONE transaction with the write that causes it (#3454).
- *
- * Saving a Xero client id or secret invalidates the OAuth app the stored tokens
- * belong to, so the tokens are destroyed. Both are database writes and nothing
- * calls Xero, so they commit together: the credential and the destruction of
- * the grant it orphaned can never land one without the other, and the two audit
- * rows share the request and say which credential caused the reset.
- */
-export async function withXeroVerifyReset<T>(
-  params: XeroTokenWriteContext & {
-    /** The `provider:key` whose write causes the reset. A name, never a value. */
-    causedByCredential: string;
-    /** Providers whose cached credential rows the write touches. */
-    providers: readonly string[];
-  },
-  work: (tx: Prisma.TransactionClient) => Promise<T>,
-): Promise<T> {
-  const result = await withCredentialTransaction(
-    [...params.providers, XERO_OAUTH_TOKEN_PROVIDER],
-    async (tx) => {
-      const written = await work(tx);
-      await deleteXeroTokensInTransaction({
-        tx,
-        actor: params.actor,
-        request: params.request,
-        cause: { kind: "verify-reset", credential: params.causedByCredential },
-      });
-      return written;
-    },
-  );
-  invalidateXeroOrganisationCaches();
-  return result;
 }

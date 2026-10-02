@@ -17,9 +17,10 @@ reason: a Xero client id or secret must now be written inside the verify-reset's
   token store.
 
 file: src/lib/xero-api-client.ts
-lines: 785
+lines: 789
 reason: the refresh must check that its rotated pair can be stored before it
   spends the refresh token, so that one call has to sit between building the
   client and calling Xero, inside this function's lease-and-mutex block. The
   check itself lives in `xero-token-crypto.ts`; what is added here is the call,
-  its import and a one-line comment.
+  its import and a one-line comment, plus the two lines that let a refusal
+  alert like any other refresh failure without being rewritten as "reconnect".

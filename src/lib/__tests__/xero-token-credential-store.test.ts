@@ -287,9 +287,9 @@ import {
   loadXeroTokens,
   releaseXeroTokenRefreshLease,
   saveXeroTokens,
-  withXeroVerifyReset,
   type TokenData,
 } from "@/lib/xero-token-store";
+import { withXeroVerifyReset } from "@/lib/xero-verify-reset";
 
 const ADMIN: CredentialActor = { kind: "admin", memberId: "admin-7" };
 const REFRESH_JOB: CredentialActor = { kind: "system", actor: "xero-token-refresh" };

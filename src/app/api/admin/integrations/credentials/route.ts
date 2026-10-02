@@ -20,7 +20,7 @@ import { WeakAuthSecretError } from "@/lib/integration-crypto";
 import {
   credentialWriteResetsXeroTokens,
   withXeroVerifyReset,
-} from "@/lib/xero-token-store";
+} from "@/lib/xero-verify-reset";
 import { XERO_CREDENTIAL_KEYS, XERO_PROVIDER } from "@/lib/xero-config";
 import {
   STRIPE_PROVIDER,

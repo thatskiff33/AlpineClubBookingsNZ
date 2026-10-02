@@ -146,14 +146,27 @@ describe("getAuthenticatedXeroClient token refresh lease", () => {
     mocks.createXeroClient.mockReturnValue(xero);
     mocks.loadXeroTokens.mockResolvedValue(tokens);
     mocks.claimXeroTokenRefreshLease.mockResolvedValue({ claimed: true, tokens, leaseUntil });
-    mocks.assertXeroTokensCanBeStored.mockRejectedValue(
+    const refusal = Object.assign(
       new Error("the token key is not available; the refresh token was not spent"),
+      { name: "XeroTokenSaveUnavailableError" },
     );
+    mocks.assertXeroTokensCanBeStored.mockRejectedValue(refusal);
 
-    await expect(getAuthenticatedXeroClient()).rejects.toThrow("was not spent");
+    // The refusal itself reaches the caller, not a "please reconnect" rewrite:
+    // reconnecting would not help, and nothing was spent.
+    await expect(getAuthenticatedXeroClient()).rejects.toBe(refusal);
     expect(xero.refreshWithRefreshToken).not.toHaveBeenCalled();
     expect(mocks.saveXeroTokens).not.toHaveBeenCalled();
     expect(mocks.releaseXeroTokenRefreshLease).toHaveBeenCalledWith("xero-token-1", leaseUntil);
+    // And it is not silent: it alerts like any refresh failure (#3454 review).
+    await vi.waitFor(() =>
+      expect(mocks.notifyXeroSyncError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          errorType: "Token Store Unavailable",
+          operation: "getAuthenticatedXeroClient",
+        }),
+      ),
+    );
   });
 
   it("logs and alerts no token when the refreshed pair loses its save (#3454 sentinel)", async () => {

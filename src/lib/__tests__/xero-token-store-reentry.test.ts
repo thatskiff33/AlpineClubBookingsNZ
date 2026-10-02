@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // FIX-1 (#2079): a stored Xero token that no longer decrypts (env→DB upgrade or
 // an auth-secret change) must become a TYPED reconnect signal, and the status
@@ -37,8 +37,15 @@ import {
 const KEY_A = "a".repeat(64); // 32 bytes
 const KEY_B = "b".repeat(64); // a different 32-byte key
 
+const originalAuthSecret = process.env.AUTH_SECRET;
+
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  if (originalAuthSecret === undefined) delete process.env.AUTH_SECRET;
+  else process.env.AUTH_SECRET = originalAuthSecret;
 });
 
 /** Encrypt a value under KEY_A using the real crypto, for use as a fixture. */
@@ -115,6 +122,7 @@ describe("getXeroConnectionStatus truthfulness (FIX-1)", () => {
   });
 
   it("reports connected when the stored token still decrypts", async () => {
+    process.env.AUTH_SECRET = "s".repeat(48);
     const accessToken = await cipherUnderKeyA("access");
     const expiresAt = new Date("2026-08-01T00:00:00.000Z");
     h.prisma.xeroToken.findFirst.mockResolvedValue({
@@ -129,6 +137,25 @@ describe("getXeroConnectionStatus truthfulness (FIX-1)", () => {
       needsReentry: false,
       tenantId: "tenant-1",
       tokenExpiresAt: expiresAt,
+    });
+  });
+
+  it("reports NOT connected over readable tokens when no refresh could store its result (#3454 review)", async () => {
+    // A grandfathered secret the capture gate now refuses: the tokens still
+    // decrypt, but every refresh refuses, so "Connected" would be a lie.
+    process.env.AUTH_SECRET = "too-short";
+    const accessToken = await cipherUnderKeyA("access");
+    const expiresAt = new Date("2026-08-01T00:00:00.000Z");
+    h.prisma.xeroToken.findFirst.mockResolvedValue({
+      accessToken,
+      tenantId: "tenant-1",
+      expiresAt,
+    });
+    h.peekOperationalXeroEncryptionKey.mockResolvedValue(KEY_A);
+
+    expect(await getXeroConnectionStatus()).toMatchObject({
+      connected: false,
+      needsReentry: true,
     });
   });
 
