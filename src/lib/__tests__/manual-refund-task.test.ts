@@ -970,6 +970,11 @@ describe("#3030 - pricing an unknown amount at completion", () => {
       const { unpaidInvoiceClearingAmountCents } = await import("@/lib/invoice-clearing-amount");
       const clearingCents = unpaidInvoiceClearingAmountCents({ finalPriceCents: 18_000, changeFeeCents: 0, xeroAllocatedAppliedCreditCents: appliedAfterCents });
       expect(xeroDueCents - clearingCents).toBe(0);
+      // The note follows the re-price, so the invoice stays in line with it.
+      expect(mocks.createAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "booking-payment.review-closure.reprice", severity: "important" }),
+        tx,
+      );
     });
 
     it("MUTATION: warns the treasurer when what was credited is not what the re-price took off the price", async () => {
