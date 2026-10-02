@@ -292,9 +292,11 @@ The other three writers, and why the guarantee is worded the way it is:
 
 **The cron's coverage probes are a fifth decision point, and they are
 deliberately NOT the same rule** (#2926). `cron-hut-leader-auto-assign` asks two
-questions per (lodge, night): *is this night already covered?* — a `findFirst`
-over any assignment spanning the night, once cheaply and once again under the key
-— and *would this assignment overlap?*, which is the shared predicate. The
+questions per (lodge, night): *is this night already covered?* — since #3818
+`isHutLeaderNightCovered` from `hut-leader-night-cover.ts` (an assignment claims
+the night AND its leader is staying it, `INV-DATE-030`), asked once cheaply on
+`prisma` and once again on `tx` under the key; it is two reads and takes no lock
+of its own — and *would this assignment overlap?*, which is the shared predicate. The
 coverage probes stay **source-blind**: a school-teacher row counts as coverage,
 so the job does not auto-assign a leader for a night a school group already has
 teachers on site. The overlap predicate excludes those same rows **only for a
@@ -321,7 +323,9 @@ would make the two skips disagree.
 
 **COVERAGE is a whole class of reader, and every one of them stays
 source-blind.** The cron's two probes are the ones that can refuse an automatic
-write, which is why they are named above, but `hut-leader-coverage.ts`, the
+write, which is why they are named above, but `hut-leader-coverage.ts` (all of
+them now through the one `hut-leader-night-cover.ts` helper, where a teacher row
+is present on its school booking's nights), the
 admin page's uncovered-dates panel and the `eligible-members` suggester all ask
 the same "is somebody on site that night?" question, and all of them should keep
 counting a teacher. The consequence to know about is a conservatism, not a
