@@ -9,11 +9,76 @@ import { buildBookingAppliedCreditDescription, getAmountCentsFromAllocationMetad
 import { isIncludedRefundCreditNoteStatus } from "@/lib/xero-refund-note-status";
 import { findActiveXeroObjectLinks } from "./object-links";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
+import { createAuditLog } from "@/lib/audit";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
 import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { formatCents } from "@/lib/utils";
+
+/** #3792: the operator alert, and the audit action, for a refused change. */
+const RESTORED_BOOKING_ALLOCATION_CHANGE_ERROR_TYPE =
+  "applied-credit-restored-booking-allocation-change";
+const RESTORED_BOOKING_ALLOCATION_CHANGE_AUDIT_ACTION =
+  "xero.allocation.restored-booking-change-refused";
+
+/**
+ * #3792: the durable record of a refused change. The email alert is throttled
+ * to one per hour across every Xero error type (`notifyXeroSyncError`), so it
+ * can be suppressed by an unrelated alert; this critical `xero` audit row, the
+ * category the inbound reconcile already writes, is what an officer can always
+ * find (the audit log, filtered to `xero`). One row per booking, note,
+ * direction and amount, so a replayed sync
+ * adds none. Best-effort, as the inbound audit writes are: a failed write is
+ * logged and never undoes the refusal.
+ */
+async function recordRestoredBookingAllocationRefusal(
+  creditNoteId: string,
+  refused: { bookingId: string; memberId: string; invoiceId: string; direction: "reduced" | "increased"; refusedCents: number; restoredCents: number },
+  errorMessage: string,
+): Promise<void> {
+  try {
+    const recorded = await prisma.auditLog.findFirst({
+      where: {
+        action: RESTORED_BOOKING_ALLOCATION_CHANGE_AUDIT_ACTION,
+        entityId: refused.bookingId,
+        AND: [
+          { metadata: { path: ["xeroCreditNoteId"], equals: creditNoteId } },
+          { metadata: { path: ["direction"], equals: refused.direction } },
+          { metadata: { path: ["refusedCents"], equals: refused.refusedCents } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (recorded) return;
+    await createAuditLog({
+      action: RESTORED_BOOKING_ALLOCATION_CHANGE_AUDIT_ACTION,
+      targetId: refused.bookingId,
+      // No subject member: the row is for officers, and a subject would put
+      // its summary on the member's own timeline (INV-PRIV-018).
+      entityType: "Booking",
+      entityId: refused.bookingId,
+      category: "xero",
+      severity: "critical",
+      outcome: "failure",
+      summary: "Xero allocation change refused on a cancelled booking whose credit was already restored",
+      details: errorMessage,
+      metadata: {
+        source: "xero-inbound-credit-note",
+        xeroCreditNoteId: creditNoteId,
+        xeroInvoiceId: refused.invoiceId,
+        direction: refused.direction,
+        refusedCents: refused.refusedCents,
+        restoredCents: refused.restoredCents,
+      },
+    });
+  } catch (err) {
+    logger.error(
+      { err, creditNoteId, bookingId: refused.bookingId },
+      "Failed to record a refused Xero allocation change on a restored booking (#3792)",
+    );
+  }
+}
 
 const APPLIED_CREDIT_ALLOCATION_ROLES = [
   "APPLIED_CREDIT_ALLOCATION",
@@ -700,12 +765,15 @@ export async function repairAccountCreditAllocationBusinessState(
   let updatedAppliedPayments = 0;
   let skippedAllocations = 0;
 
-  // #3792: provider de-allocations the guard below refused to credit, alerted
-  // after their transaction commits (the alert reads EmailLog and sends mail).
-  const restoredBookingDeallocations: {
+  // #3792: provider allocation changes the guard below refused to post to a
+  // restored booking's member ledger, recorded and alerted after their
+  // transaction commits (the alert reads EmailLog and sends mail).
+  const restoredBookingAllocationChanges: {
     bookingId: string;
+    memberId: string;
     invoiceId: string;
-    refusedCreditCents: number;
+    direction: "reduced" | "increased";
+    refusedCents: number;
     restoredCents: number;
   }[] = [];
 
@@ -792,6 +860,18 @@ export async function repairAccountCreditAllocationBusinessState(
       if (!creditLedgerMemberId) return;
       await lockMemberCreditLedger(creditLedgerMemberId, tx);
       await assertNoAppliedCreditDeallocationFence(payment.id, tx);
+      // #3792 (INV-PAY-019): a cancelled booking whose applied credit was
+      // already given back has a restore row (`restoredFromBookingId`, written
+      // only by restoreCreditFromBooking, on every cancel path). Its member
+      // ledger is settled: a provider allocation change must neither credit
+      // the member again (paid twice) nor debit them (charged for a cancelled
+      // stay). Every BOOKING_APPLIED amount write below is refused for it and
+      // an operator is alerted instead. A live booking has no restore row, so
+      // a genuine Xero change still reaches the member's ledger.
+      const restoredFromThisBooking = await tx.memberCredit.findUnique({
+        where: { restoredFromBookingId: payment.bookingId },
+        select: { amountCents: true },
+      });
 
       const existingAppliedCredits = await tx.memberCredit.findMany({
         where: {
@@ -887,7 +967,7 @@ export async function repairAccountCreditAllocationBusinessState(
             },
             "Skipping account-credit allocation repair because multiple matching unlinked applied-credit rows exist locally"
           );
-        } else {
+        } else if (restoredFromThisBooking === null) {
           await tx.memberCredit.create({
             data: {
               memberId: creditLedgerMemberId,
@@ -952,26 +1032,15 @@ export async function repairAccountCreditAllocationBusinessState(
       );
       const providerAwareAppliedCents = preciseCents + unallocatedCents;
       const ledgerDeltaCents = providerAwareAppliedCents - currentAppliedCents;
-      // #3792 (INV-PAY-019): a negative delta credits the member back. A
-      // cancelled booking whose applied credit was already given back has a
-      // restore row (`restoredFromBookingId`, written only by
-      // restoreCreditFromBooking, for every cancel path), so crediting again
-      // would pay the member twice. Refuse the write and alert an operator.
-      // A live booking has no restore row, so a genuine Xero de-allocation
-      // still credits the member.
-      const restoredFromThisBooking =
-        ledgerDeltaCents < 0
-          ? await tx.memberCredit.findUnique({
-              where: { restoredFromBookingId: payment.bookingId },
-              select: { amountCents: true },
-            })
-          : null;
-      if (restoredFromThisBooking) {
+      // #3792: the restored booking's ledger takes neither direction (above).
+      if (restoredFromThisBooking && ledgerDeltaCents !== 0) {
         skippedAllocations += 1;
-        restoredBookingDeallocations.push({
+        restoredBookingAllocationChanges.push({
           bookingId: payment.bookingId,
+          memberId: creditLedgerMemberId,
           invoiceId: target.invoiceId,
-          refusedCreditCents: -ledgerDeltaCents,
+          direction: ledgerDeltaCents < 0 ? "reduced" : "increased",
+          refusedCents: Math.abs(ledgerDeltaCents),
           restoredCents: restoredFromThisBooking.amountCents,
         });
       } else if (ledgerDeltaCents !== 0) {
@@ -1034,15 +1103,17 @@ export async function repairAccountCreditAllocationBusinessState(
     });
   }
 
-  for (const refused of restoredBookingDeallocations) {
+  for (const refused of restoredBookingAllocationChanges) {
+    const errorMessage = `Credit note ${creditNoteId}'s allocation to invoice ${refused.invoiceId} was ${refused.direction} in Xero by ${formatCents(refused.refusedCents, format)}, but booking ${refused.bookingId} is cancelled and its applied credit (${formatCents(refused.restoredCents, format)}) was already restored to the member. The member's balance was left as it is: ${refused.direction === "reduced" ? "crediting it would pay the member twice" : "debiting it would charge the member for a cancelled booking"}. Check the credit note and the member's balance in Xero; adjust by hand only if they disagree.`;
     logger.warn(
       { creditNoteId, ...refused },
-      "Refused to credit a Xero applied-credit de-allocation: the cancelled booking's applied credit was already restored (#3792)",
+      "Refused to post a Xero applied-credit allocation change to a cancelled booking whose applied credit was already restored (#3792)",
     );
+    await recordRestoredBookingAllocationRefusal(creditNoteId, refused, errorMessage);
     await notifyXeroSyncError({
-      errorType: "applied-credit-restored-booking-deallocation",
+      errorType: RESTORED_BOOKING_ALLOCATION_CHANGE_ERROR_TYPE,
       operation: `inbound-applied-credit-repair:${creditNoteId}`,
-      errorMessage: `Credit note ${creditNoteId}'s allocation to invoice ${refused.invoiceId} was reduced in Xero by ${formatCents(refused.refusedCreditCents, format)}, but booking ${refused.bookingId} is cancelled and its applied credit (${formatCents(refused.restoredCents, format)}) was already restored to the member. No further credit was given, so the member is not paid twice. Check the credit note and the member's balance in Xero; adjust by hand only if they disagree.`,
+      errorMessage,
     });
   }
 

@@ -19,6 +19,9 @@ const h = vi.hoisted(() => {
   const repairPrecise = vi.fn();
   const lockLedger = vi.fn();
   const notifyXeroSyncError = vi.fn();
+  // #3792: the durable record of a refused change.
+  const auditLogFindFirst = vi.fn();
+  const createAuditLog = vi.fn();
   const tx = {
     memberCredit: {
       findMany: memberCreditFindMany,
@@ -36,6 +39,7 @@ const h = vi.hoisted(() => {
     payment: { findMany: paymentFindMany },
     xeroObjectLink: { findMany: linkFindMany },
     memberCreditNoteAllocation: { findMany: sliceFindMany },
+    auditLog: { findFirst: auditLogFindFirst },
     $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
   };
   return {
@@ -57,6 +61,8 @@ const h = vi.hoisted(() => {
     repairPrecise,
     lockLedger,
     notifyXeroSyncError,
+    auditLogFindFirst,
+    createAuditLog,
   };
 });
 
@@ -76,6 +82,7 @@ vi.mock("@/lib/xero-inbound/object-links", () => ({
   findActiveXeroObjectLinks: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("@/lib/xero-error-alert", () => ({ notifyXeroSyncError: h.notifyXeroSyncError }));
+vi.mock("@/lib/audit", () => ({ createAuditLog: h.createAuditLog }));
 vi.mock("@/lib/logger", () => ({
   default: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -107,6 +114,8 @@ describe("provider-aware inbound applied-credit repair", () => {
     h.memberCreditCreate.mockResolvedValue({});
     h.repairPrecise.mockResolvedValue(0);
     h.memberCreditFindUnique.mockResolvedValue(null);
+    h.auditLogFindFirst.mockResolvedValue(null);
+    h.createAuditLog.mockResolvedValue(undefined);
   });
 
   it.each([
@@ -254,17 +263,81 @@ describe("provider-aware inbound applied-credit repair", () => {
     expect(result.skippedAllocations).toBe(1);
     expect(h.notifyXeroSyncError).toHaveBeenCalledTimes(1);
     expect(h.notifyXeroSyncError).toHaveBeenCalledWith(expect.objectContaining({
-      errorType: "applied-credit-restored-booking-deallocation",
+      errorType: "applied-credit-restored-booking-allocation-change",
       operation: "inbound-applied-credit-repair:cn-1",
-      errorMessage: expect.stringContaining("booking booking-1 is cancelled"),
+      errorMessage: expect.stringContaining("was reduced in Xero by $30.00, but booking booking-1 is cancelled"),
     }));
+    // The durable record an officer can always find, whatever the email throttle did.
+    expect(h.createAuditLog).toHaveBeenCalledTimes(1);
+    expect(h.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: "xero.allocation.restored-booking-change-refused",
+      entityType: "Booking",
+      entityId: "booking-1",
+      category: "xero",
+      severity: "critical",
+      metadata: expect.objectContaining({ xeroCreditNoteId: "cn-1", direction: "reduced", refusedCents: 3000, restoredCents: 3000 }),
+    }));
+    expect(h.createAuditLog.mock.calls[0][0]).not.toHaveProperty("subjectMemberId");
     // The alert goes out after the ledger transaction, not inside it.
     expect(h.prisma.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
       h.notifyXeroSyncError.mock.invocationCallOrder[0],
     );
   });
 
-  it("still debits an allocation increase on a booking with no restore row, without reading for one", async () => {
+  it("refuses to debit an allocation INCREASE on a cancelled booking whose applied credit was already restored (#3792)", async () => {
+    h.allocationAggregate.mockResolvedValue({ _sum: { amountCents: 4000 } });
+    h.memberCreditAggregate
+      .mockResolvedValueOnce({ _sum: { amountCents: 0 } })
+      .mockResolvedValueOnce({ _sum: { amountCents: -3000 } })
+      .mockResolvedValue({ _sum: { amountCents: -3000 } });
+    h.memberCreditFindUnique.mockResolvedValue({ amountCents: 3000 });
+
+    const result = await repairAccountCreditAllocationBusinessState("cn-1", [{ invoiceId: "invoice-1", amountCents: 4000 }]);
+
+    expect(h.memberCreditCreate).not.toHaveBeenCalled();
+    expect(h.paymentUpdate).not.toHaveBeenCalled();
+    expect(result.skippedAllocations).toBe(1);
+    expect(h.notifyXeroSyncError).toHaveBeenCalledWith(expect.objectContaining({
+      errorType: "applied-credit-restored-booking-allocation-change",
+      errorMessage: expect.stringContaining("was increased in Xero by $10.00"),
+    }));
+    expect(h.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ direction: "increased", refusedCents: 1000 }),
+    }));
+  });
+
+  it("creates no fresh applied-credit row on a restored booking either: the create branch is refused too (#3792)", async () => {
+    // No applied row linked to the note and none unlinked at the amount: the
+    // repair would otherwise create a fresh BOOKING_APPLIED debit.
+    h.memberCreditFindMany.mockResolvedValue([]);
+    h.allocationAggregate.mockResolvedValue({ _sum: { amountCents: 3000 } });
+    h.memberCreditAggregate.mockResolvedValue({ _sum: { amountCents: -3000 } });
+    h.memberCreditFindUnique.mockResolvedValue({ amountCents: 3000 });
+
+    await repairAccountCreditAllocationBusinessState("cn-1", [{ invoiceId: "invoice-1", amountCents: 3000 }]);
+
+    expect(h.memberCreditCreate).not.toHaveBeenCalled();
+  });
+
+  it("records a refused change once: a replayed sync finds its audit row and writes no second (#3792)", async () => {
+    h.linkFindMany.mockResolvedValue([{
+      metadata: { creditNoteId: "cn-1", invoiceId: "invoice-1", amountCents: 3000 },
+    }]);
+    h.allocationAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
+    h.memberCreditAggregate
+      .mockResolvedValueOnce({ _sum: { amountCents: 0 } })
+      .mockResolvedValueOnce({ _sum: { amountCents: -3000 } })
+      .mockResolvedValue({ _sum: { amountCents: -3000 } });
+    h.memberCreditFindUnique.mockResolvedValue({ amountCents: 3000 });
+    h.auditLogFindFirst.mockResolvedValue({ id: "audit-1" });
+
+    await repairAccountCreditAllocationBusinessState("cn-1", []);
+
+    expect(h.createAuditLog).not.toHaveBeenCalled();
+    expect(h.notifyXeroSyncError).toHaveBeenCalledTimes(1);
+  });
+
+  it("still debits an allocation increase on a booking with no restore row", async () => {
     h.allocationAggregate.mockResolvedValue({ _sum: { amountCents: 4000 } });
     h.memberCreditAggregate
       .mockResolvedValueOnce({ _sum: { amountCents: 0 } })
@@ -273,7 +346,12 @@ describe("provider-aware inbound applied-credit repair", () => {
 
     await repairAccountCreditAllocationBusinessState("cn-1", [{ invoiceId: "invoice-1", amountCents: 4000 }]);
 
-    expect(h.memberCreditFindUnique).not.toHaveBeenCalled();
+    expect(h.memberCreditFindUnique).toHaveBeenCalledWith({
+      where: { restoredFromBookingId: "booking-1" },
+      select: { amountCents: true },
+    });
+    expect(h.notifyXeroSyncError).not.toHaveBeenCalled();
+    expect(h.createAuditLog).not.toHaveBeenCalled();
     expect(h.memberCreditCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ amountCents: -1000 }),
     });
