@@ -2,7 +2,11 @@ import type { Prisma } from "@prisma/client";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 import { getGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
-import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import {
+  addCalendarDays,
+  calendarDateOfDateOnlyInstant,
+  requireCalendarDate,
+} from "@/lib/club-time";
 
 /**
  * Which lodge nights a member is STAYING, for the hut-leader writers (#3817).
@@ -69,15 +73,15 @@ export function stayedNightRunContaining(
 ): { first: string; last: string } | null {
   const stayed = new Set(stayedNightKeys);
   if (!stayed.has(nightKey)) return null;
-  let first = nightKey;
+  let first = requireCalendarDate(nightKey);
   for (;;) {
-    const previous = formatDateOnly(addDaysDateOnly(parseDateOnly(first), -1));
+    const previous = addCalendarDays(first, -1);
     if (!stayed.has(previous)) break;
     first = previous;
   }
-  let last = nightKey;
+  let last = requireCalendarDate(nightKey);
   for (;;) {
-    const next = formatDateOnly(addDaysDateOnly(parseDateOnly(last), 1));
+    const next = addCalendarDays(last, 1);
     if (!stayed.has(next)) break;
     last = next;
   }
@@ -148,8 +152,8 @@ export async function loadHutLeaderStayedNightKeys(
     }),
   ];
 
-  const from = formatDateOnly(input.rangeStart);
-  const to = formatDateOnly(input.rangeEnd);
+  const from = calendarDateOfDateOnlyInstant(input.rangeStart);
+  const to = calendarDateOfDateOnlyInstant(input.rangeEnd);
   return hutLeaderStayNightKeys(stays).filter((key) => from <= key && key <= to);
 }
 
@@ -184,14 +188,10 @@ export async function findHutLeaderStayRefusal(
     rangeEnd: input.endDate,
   });
   const stayedSet = new Set(stayed);
-  const endKey = formatDateOnly(input.endDate);
+  const startKey = calendarDateOfDateOnlyInstant(input.startDate);
+  const endKey = calendarDateOfDateOnlyInstant(input.endDate);
   let firstNightNotStayed: string | null = null;
-  for (
-    let night = input.startDate;
-    formatDateOnly(night) <= endKey;
-    night = addDaysDateOnly(night, 1)
-  ) {
-    const key = formatDateOnly(night);
+  for (let key = startKey; key <= endKey; key = addCalendarDays(key, 1)) {
     if (!stayedSet.has(key)) {
       firstNightNotStayed = key;
       break;
@@ -199,7 +199,7 @@ export async function findHutLeaderStayRefusal(
   }
   if (firstNightNotStayed === null) return null;
 
-  const run = stayedNightRunContaining(stayed, formatDateOnly(input.startDate));
+  const run = stayedNightRunContaining(stayed, startKey);
   const lastNightStayed = run?.last ?? null;
   const error = lastNightStayed
     ? `The member is not staying at this lodge on the night of ${firstNightNotStayed}, so they cannot be hut leader for it. Their last night stayed from the start date is ${lastNightStayed}.`
@@ -225,4 +225,24 @@ export function hutLeaderStayRefusalBody(refusal: HutLeaderStayRefusal): {
     firstNightNotStayed: refusal.firstNightNotStayed,
     lastNightStayed: refusal.lastNightStayed,
   };
+}
+
+/** Thrown inside a transaction so it rolls back; carries the refusal to render. */
+export class HutLeaderNightsNotStayedError extends Error {
+  constructor(readonly refusal: HutLeaderStayRefusal) {
+    super(refusal.error);
+    this.name = "HutLeaderNightsNotStayedError";
+  }
+}
+
+/**
+ * {@link findHutLeaderStayRefusal} for a caller inside a transaction: throws
+ * {@link HutLeaderNightsNotStayedError} so nothing it has written survives.
+ */
+export async function assertHutLeaderNightsStayed(
+  db: StayDb,
+  input: { memberId: string; lodgeId: string; startDate: Date; endDate: Date },
+): Promise<void> {
+  const refusal = await findHutLeaderStayRefusal(db, input);
+  if (refusal) throw new HutLeaderNightsNotStayedError(refusal);
 }

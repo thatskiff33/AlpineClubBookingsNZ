@@ -27,9 +27,10 @@ import { isMinorAgeTier } from "@/lib/custodian-occupancy";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { HutLeaderAssignmentSource } from "@prisma/client";
 import {
+  assertHutLeaderNightsStayed,
   findHutLeaderStayRefusal,
   hutLeaderStayRefusalBody,
-  type HutLeaderStayRefusal,
+  HutLeaderNightsNotStayedError,
 } from "@/lib/hut-leader-stayed-nights";
 
 const createSchema = z.object({
@@ -56,13 +57,6 @@ class HutLeaderOverlapError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "HutLeaderOverlapError";
-  }
-}
-
-class HutLeaderNightsNotStayedError extends Error {
-  constructor(readonly refusal: HutLeaderStayRefusal) {
-    super(refusal.error);
-    this.name = "HutLeaderNightsNotStayedError";
   }
 }
 
@@ -202,25 +196,11 @@ export async function POST(req: NextRequest) {
   // Custodian bed hold (#2286): a bed can only mean anything while the
   // bed-allocation module is on — rooms and beds exist only under it.
   const bedId = parsed.data.bedId ?? null;
-
-  // #3817 (owner decision "Block it outright"): a role-only assignment may
-  // claim only nights the member is staying at this lodge. A bed-holding one is
-  // a custodian occupancy — the held bed IS their stay, with no booking at all
-  // (INV-LIFE-062) — so it is not asked. The cheap pre-lock ask; the same
-  // question is re-asked under the lodge key below.
-  if (!bedId) {
-    const earlyStayRefusal = await findHutLeaderStayRefusal(prisma, {
-      memberId: member.id,
-      lodgeId,
-      startDate: newStart,
-      endDate: newEnd,
-    });
-    if (earlyStayRefusal) {
-      return NextResponse.json(hutLeaderStayRefusalBody(earlyStayRefusal), {
-        status: 409,
-      });
-    }
-  }
+  // #3817: a role-only assignment claims only nights the member stays here; a
+  // held bed is the custodian's stay (INV-DATE-030). Re-asked under the lock.
+  const stayAsk = { memberId: member.id, lodgeId, startDate: newStart, endDate: newEnd };
+  const earlyStay = bedId ? null : await findHutLeaderStayRefusal(prisma, stayAsk);
+  if (earlyStay) return NextResponse.json(hutLeaderStayRefusalBody(earlyStay), { status: 409 });
   if (bedId && !(await isEffectiveModuleEnabled("bedAllocation"))) {
     return NextResponse.json(
       {
@@ -306,19 +286,7 @@ export async function POST(req: NextRequest) {
       });
       if (lockedOverlap) throw new HutLeaderOverlapError(lockedOverlap.error);
 
-      // #3817: re-asked under the lodge key, on this client, so a stay
-      // cancelled between the cheap ask and here is not a stay.
-      if (!bedId) {
-        const lockedStayRefusal = await findHutLeaderStayRefusal(tx, {
-          memberId: lockedMember.id,
-          lodgeId: lockedLodgeId,
-          startDate: newStart,
-          endDate: newEnd,
-        });
-        if (lockedStayRefusal) {
-          throw new HutLeaderNightsNotStayedError(lockedStayRefusal);
-        }
-      }
+      if (!bedId) await assertHutLeaderNightsStayed(tx, { ...stayAsk, lodgeId: lockedLodgeId });
 
       // The hard bed refusals, then the #2698 ordering question — in that
       // order, and shared with the edit so the two cannot drift. Declining
@@ -424,9 +392,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: err.message }, { status: 409 });
     }
     if (err instanceof HutLeaderNightsNotStayedError) {
-      return NextResponse.json(hutLeaderStayRefusalBody(err.refusal), {
-        status: 409,
-      });
+      return NextResponse.json(hutLeaderStayRefusalBody(err.refusal), { status: 409 });
     }
     if (err instanceof Error && err.message === "LOCKED_LODGE_NOT_ACTIVE") {
       return NextResponse.json(

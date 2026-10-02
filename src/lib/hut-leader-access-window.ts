@@ -1,5 +1,9 @@
 import type { Prisma } from "@prisma/client";
-import { addDaysDateOnly } from "./date-only";
+import {
+  addCalendarDays,
+  calendarDateOfDateOnlyInstant,
+  dateOnlyInstantOf,
+} from "@/lib/club-time";
 
 /**
  * When a hut leader may sign in: the ONE definition (#3817, `INV-SSOT`).
@@ -15,8 +19,8 @@ import { addDaysDateOnly } from "./date-only";
  * "Until midnight" needs no time of day here. Every caller judges a club
  * calendar day — the club's today from `@/lib/club-time` (`INV-CONFIG-002`), or
  * a date the kiosk is showing — and the club's today stops being `endDate + 1`
- * at the club's midnight. The arithmetic is whole date-only days on the
- * `@db.Date` encoding (`addDaysDateOnly`), never 24-hour steps on an instant.
+ * at the club's midnight. The arithmetic is whole calendar days on the
+ * `@db.Date` encoding (`addCalendarDays`), never 24-hour steps on an instant.
  *
  * Before #3817 the window closed at `endDate`, which was right only while the
  * writers stored the CHECK-OUT day as `endDate`. The writers now store the last
@@ -40,20 +44,19 @@ export const HUT_LEADER_ACCESS_DAYS_AFTER_LAST_NIGHT = 1;
 
 type AssignmentNights = { startDate: Date; endDate: Date };
 
+/** A stored `@db.Date` day moved by whole calendar days, still a stored day. */
+function shiftStoredDay(day: Date, days: number): Date {
+  return dateOnlyInstantOf(addCalendarDays(calendarDateOfDateOnlyInstant(day), days));
+}
+
 /** The first and last calendar day (inclusive) an assignment grants access on. */
 export function hutLeaderAccessWindowOf(assignment: AssignmentNights): {
   firstDay: Date;
   lastDay: Date;
 } {
   return {
-    firstDay: addDaysDateOnly(
-      assignment.startDate,
-      -HUT_LEADER_ACCESS_DAYS_BEFORE_FIRST_NIGHT,
-    ),
-    lastDay: addDaysDateOnly(
-      assignment.endDate,
-      HUT_LEADER_ACCESS_DAYS_AFTER_LAST_NIGHT,
-    ),
+    firstDay: shiftStoredDay(assignment.startDate, -HUT_LEADER_ACCESS_DAYS_BEFORE_FIRST_NIGHT),
+    lastDay: shiftStoredDay(assignment.endDate, HUT_LEADER_ACCESS_DAYS_AFTER_LAST_NIGHT),
   };
 }
 
@@ -75,8 +78,8 @@ export function hutLeaderAccessWindowCoversDayWhere(
   day: Date,
 ): Pick<Prisma.HutLeaderAssignmentWhereInput, "startDate" | "endDate"> {
   return {
-    startDate: { lte: addDaysDateOnly(day, HUT_LEADER_ACCESS_DAYS_BEFORE_FIRST_NIGHT) },
-    endDate: { gte: addDaysDateOnly(day, -HUT_LEADER_ACCESS_DAYS_AFTER_LAST_NIGHT) },
+    startDate: { lte: shiftStoredDay(day, HUT_LEADER_ACCESS_DAYS_BEFORE_FIRST_NIGHT) },
+    endDate: { gte: shiftStoredDay(day, -HUT_LEADER_ACCESS_DAYS_AFTER_LAST_NIGHT) },
   };
 }
 
@@ -89,6 +92,6 @@ export function hutLeaderAccessWindowNotClosedByWhere(
   day: Date,
 ): Pick<Prisma.HutLeaderAssignmentWhereInput, "endDate"> {
   return {
-    endDate: { gte: addDaysDateOnly(day, -HUT_LEADER_ACCESS_DAYS_AFTER_LAST_NIGHT) },
+    endDate: { gte: shiftStoredDay(day, -HUT_LEADER_ACCESS_DAYS_AFTER_LAST_NIGHT) },
   };
 }

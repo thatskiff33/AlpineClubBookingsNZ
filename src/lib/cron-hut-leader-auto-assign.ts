@@ -57,16 +57,16 @@ export async function autoAssignHutLeaders(): Promise<{
 
   const lookAheadDays = await loadHutLeaderLookaheadDays();
   const today = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
-  // Whole date-only days from the club's today through today + lookahead,
-  // inclusive (#3817). `date-fns`' `eachDayOfInterval` stepped LOCAL midnights,
-  // which under the server's `TZ=Pacific/Auckland` pin are 12:00Z on the
-  // PREVIOUS UTC date: every `day` then narrowed to the day before against the
-  // `@db.Date` columns, so the job looked at yesterday through the day before
-  // its horizon, and the night model below refuses such a value outright.
-  const days = eachDateOnlyInRange(
-    today,
-    addDaysDateOnly(today, lookAheadDays + 1),
-  );
+  const endDate = addDaysDateOnly(today, lookAheadDays);
+  // UTC date-only nights, stepped with the domain's own helper — the same fix
+  // `cron-capacity-warnings.ts` made (#2286 review L3). date-fns
+  // `eachDayOfInterval` returns LOCAL-midnight dates, so in a container running
+  // `TZ=Pacific/Auckland` every `day` here sat at 12:00Z of the PREVIOUS
+  // calendar day: Prisma truncated it to that day, so the job silently ran one
+  // night early, from yesterday. #3818 makes it unmissable: the shared coverage
+  // helper reads the night through `isGuestActiveOnNight`, which refuses a
+  // value that is not a stored calendar day rather than guess.
+  const days = eachDateOnlyInRange(today, addDaysDateOnly(endDate, 1));
 
   const assignedDates: string[] = [];
 
