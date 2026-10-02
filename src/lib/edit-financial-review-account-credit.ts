@@ -1,22 +1,48 @@
 import "server-only";
 
-import { BookingStatus, type Prisma } from "@prisma/client";
+import {
+  BookingEventType,
+  BookingStatus,
+  CreditType,
+  ManualRefundTaskDirection,
+  ManualRefundTaskKind,
+  ManualRefundTaskStatus,
+  type Prisma,
+} from "@prisma/client";
 
+import { recordBookingEvent } from "@/lib/booking-events";
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
 import { calculateAppliedCreditRestore, daysUntilDate, loadCancellationPolicy } from "@/lib/cancellation";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
-import { REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
+import {
+  REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE,
+} from "@/lib/edit-financial-review-refund-refusals";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
+import { dispatchEditReviewAccountCreditXero } from "@/lib/edit-financial-review-xero-leg";
 import { createBookingModificationCredit, giveBackAppliedCredit } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 
 /**
  * What the account-credit route moved: applied credit given back, and credit
- * minted beside it. Their sum is what the member was credited, and only the
- * minted part takes the review's Xero credit note (owner decision 1, #3791).
+ * minted beside it. Their sum is what the member was credited. `cancelled`
+ * says the booking was already cancelled, which decides how Xero hears of it
+ * (`dispatchEditReviewAccountCreditXero`).
  */
-export type EditReviewAccountCreditOutcome = { givenBackCents: number; mintedCents: number };
+export type EditReviewAccountCreditOutcome = {
+  givenBackCents: number;
+  mintedCents: number;
+  cancelled: boolean;
+};
+
+/**
+ * The description every review give-back row carries, and the one way a later
+ * review on the same booking finds the give-backs already made (#3791). Built
+ * here only, so the writer and its readers cannot drift apart (`INV-SSOT`).
+ */
+export function reviewShareGiveBackDescription(bookingId: string): string {
+  return `Applied credit returned after booking ${bookingId.slice(0, 8)} financial review`;
+}
 
 /**
  * #3032/#3791: the account-credit route's write, inside the caller's
@@ -28,17 +54,18 @@ export type EditReviewAccountCreditOutcome = { givenBackCents: number; mintedCen
  *
  * WITHOUT one the booking was paid by account credit, so the share is that
  * credit coming back, through `giveBackAppliedCredit` - the clamp's own
- * mechanism, Xero deallocation included. Minting it instead left the applied
- * figure whole and a later cancellation paid the share a second time. What of
- * the share is applied credit is `creditSliceOfReviewShare`; only the rest is
- * minted, exactly as before.
+ * mechanism. What of the share is applied credit is `creditSliceOfReviewShare`,
+ * held on an unpaid booking to what the booking's review re-prices have
+ * removed; only the rest is minted, exactly as before.
  *
  * A booking CANCELLED before the review completes has had its applied credit
- * restored by tier already, so the slice is netted against that restore and
- * only what is still owed is given back (owner decision 2).
+ * restored by tier already, so the slice is netted against that restore, from
+ * figures frozen at the cancellation and across every review settled since
+ * (owner decision 2).
  */
 export async function writeEditReviewAccountCredit({
   route,
+  taskId,
   memberId,
   bookingId,
   amountCents,
@@ -48,6 +75,8 @@ export async function writeEditReviewAccountCredit({
   store,
 }: {
   route: Extract<EditReviewSettlementRoute, { kind: "account-credit" }>;
+  /** This review task, already claimed COMPLETED in `store`. */
+  taskId: string;
   memberId: string;
   bookingId: string;
   amountCents: number;
@@ -65,42 +94,50 @@ export async function writeEditReviewAccountCredit({
     createBookingModificationCredit(memberId, cents, bookingId, route.bookingModificationId, undefined, store, paymentId);
   if (route.allocateAgainstPaymentId !== null) {
     await mint(amountCents, route.allocateAgainstPaymentId);
-    return { givenBackCents: 0, mintedCents: amountCents };
+    return { givenBackCents: 0, mintedCents: amountCents, cancelled: false };
   }
 
   let creditSliceCents = 0;
+  let cancelled = false;
   const { givenBackCents, payment } = await giveBackAppliedCredit(
     {
       memberId,
       bookingId,
       format,
-      description: `Applied credit returned after booking ${bookingId.slice(0, 8)} financial review`,
-      // Asked under the member's credit-ledger lock (and the completion's
-      // lock(1), which every cancel takes too), so the booking's status, its
-      // restore and the mirror read here cannot move before the write.
-      giveBackCentsOf: async (appliedCreditCents, lockedPayment) => {
+      description: reviewShareGiveBackDescription(bookingId),
+      // Asked under the member's credit-ledger lock and the completion's
+      // lock(1). Every writer of what is read here holds one of the two: the
+      // cancel and the other reviews hold lock(1), the restore and every credit
+      // row a ledger-key holder - so nothing read here can move before the write.
+      giveBackCentsOf: async (appliedCreditCents) => {
         const booking = await store.booking.findUniqueOrThrow({
           where: { id: bookingId },
           select: { status: true, finalPriceCents: true, checkIn: true, lodgeId: true },
         });
-        const cancelled = booking.status === BookingStatus.CANCELLED;
+        cancelled = booking.status === BookingStatus.CANCELLED;
+        if (cancelled) {
+          const netted = await creditSliceStillOwedAfterCancellation({
+            bookingId,
+            taskId,
+            booking,
+            shareCents: amountCents,
+            appliedNowCents: appliedCreditCents,
+            clubZone,
+            store,
+          });
+          creditSliceCents = netted.sliceCents;
+          return netted.owedCents;
+        }
+        const previousFinalPriceCents = rebase?.previousFinalPriceCents ?? booking.finalPriceCents;
+        const unpaid = appliedCreditCents < previousFinalPriceCents;
         creditSliceCents = creditSliceOfReviewShare({
           shareCents: amountCents,
           appliedCreditCents,
-          previousFinalPriceCents: rebase?.previousFinalPriceCents ?? booking.finalPriceCents,
-          repricedAwayCents: rebase ? rebase.previousFinalPriceCents - rebase.newFinalPriceCents : 0,
-          cancelled,
+          repricedAwayHeadroomCents: unpaid
+            ? await reviewRepriceHeadroomCents({ bookingId, rebase, store })
+            : null,
         });
-        if (!cancelled) return creditSliceCents;
-        return creditSliceStillOwedAfterCancellation({
-          bookingId,
-          booking,
-          creditSliceCents,
-          // The figure the cancellation tiered: the mirror, as `booking-cancel.ts` does.
-          appliedAtCancelCents: lockedPayment?.creditAppliedCents ?? appliedCreditCents,
-          clubZone,
-          store,
-        });
+        return creditSliceCents;
       },
     },
     store,
@@ -114,72 +151,131 @@ export async function writeEditReviewAccountCredit({
   }
   const mintedCents = amountCents - creditSliceCents;
   if (mintedCents > 0) await mint(mintedCents);
-  return { givenBackCents, mintedCents };
+  return { givenBackCents, mintedCents, cancelled };
 }
 
 /**
  * How much of a review share on a booking with no captured payment is the
- * member's applied credit coming back: never more than is applied. On an UNPAID
- * booking - credit short of the price it was applied against - never more than
- * the closure's re-price took off the price either, so a review that does not
- * re-price cannot raise what the member owes (orchestrator decision on #3791).
- * A cancelled booking owes nothing, so that limit does not apply to it.
+ * member's applied credit coming back: never more than is applied, and on an
+ * UNPAID booking - credit short of the price - never more than the headroom
+ * the booking's review re-prices left (`reviewRepriceHeadroomCents`), so a
+ * review cannot raise what the member owes (orchestrator decision on #3791).
+ * `null` headroom means the booking is fully paid and is not held to it.
  */
 export function creditSliceOfReviewShare({
   shareCents,
   appliedCreditCents,
-  previousFinalPriceCents,
-  repricedAwayCents,
-  cancelled,
+  repricedAwayHeadroomCents,
 }: {
   shareCents: number;
   appliedCreditCents: number;
-  previousFinalPriceCents: number;
-  repricedAwayCents: number;
-  cancelled: boolean;
+  repricedAwayHeadroomCents: number | null;
 }): number {
   const slice = Math.max(0, Math.min(shareCents, appliedCreditCents));
-  const unpaid = !cancelled && appliedCreditCents < previousFinalPriceCents;
-  return unpaid ? Math.min(slice, Math.max(0, repricedAwayCents)) : slice;
+  return repricedAwayHeadroomCents === null ? slice : Math.min(slice, Math.max(0, repricedAwayHeadroomCents));
 }
 
 /**
- * Owner decision 2 (#3791): the credit slice of a share, netted against what the
- * cancellation already restored. Had the share come back first, the member
- * would hold `slice + restore(applied - slice)`; they hold `restored`; the
- * difference is still owed. `restore` is the cancellation's own tier,
- * `calculateAppliedCreditRestore`, on the day it ran and the policy in force -
- * with no card base, because this route has nothing captured.
+ * The unpaid limit ACROSS THE BOOKING (#3791 M3): what every review re-price on
+ * it has taken off the price - the `PRICE_REBASE` rows earlier closures wrote,
+ * plus this closure's own, not yet written - less the applied credit reviews
+ * have already given back. Two reviews of one edit share one price drop, so
+ * the second cannot mint what the first's re-price already gave the member.
+ */
+async function reviewRepriceHeadroomCents({
+  bookingId,
+  rebase,
+  store,
+}: {
+  bookingId: string;
+  rebase: BookingPriceRebase | null;
+  store: Prisma.TransactionClient;
+}): Promise<number> {
+  const [rebaseRows, givenBack] = await Promise.all([
+    store.bookingModification.findMany({
+      where: { bookingId, modificationType: "PRICE_REBASE" },
+      select: { newData: true },
+    }),
+    store.memberCredit.aggregate({
+      where: reviewGiveBackRowsWhere(bookingId),
+      _sum: { amountCents: true },
+    }),
+  ]);
+  const earlierDropCents = rebaseRows.reduce((sum, row) => {
+    const data = jsonRecord(row.newData);
+    const movement = data && typeof data.financialReviewTaskId === "string" ? data.rebasedPriceMovementCents : null;
+    return typeof movement === "number" && Number.isInteger(movement) ? sum - movement : sum;
+  }, 0);
+  const thisDropCents = rebase ? rebase.previousFinalPriceCents - rebase.newFinalPriceCents : 0;
+  return earlierDropCents + thisDropCents - (givenBack._sum.amountCents ?? 0);
+}
+
+/** The give-back rows reviews have written on this booking. */
+function reviewGiveBackRowsWhere(bookingId: string): Prisma.MemberCreditWhereInput {
+  return {
+    appliedToBookingId: bookingId,
+    type: CreditType.BOOKING_APPLIED,
+    amountCents: { gt: 0 },
+    description: reviewShareGiveBackDescription(bookingId),
+  };
+}
+
+/**
+ * Owner decision 2 (#3791): the credit slice of a share on a cancelled booking,
+ * netted against what the cancellation restored - CUMULATIVELY, so a second
+ * review of the same booking neither re-tiers a figure the first lowered nor
+ * forgets what the first gave back.
  *
- * Nothing restored means the tier kept everything, and it keeps everything of
- * less too, so the whole slice is owed. A restore in full already returned the
- * slice inside it, so nothing is. Otherwise the tier must reproduce the restore
- * actually made before it is trusted with the share; where it does not, the
- * completion is refused with the task still OPEN.
+ * Had every slice settled since the cancellation come back first, the member
+ * would hold `C + restore(A - C)`, where `C` is those slices with this one and
+ * `A` the applied credit the cancellation tiered. They hold the restore `R` and
+ * the give-backs `P` already made - `A` less the applied credit now, since the
+ * restore leaves the applied rows alone; the difference is owed now. `A` is frozen at
+ * the cancellation - its CANCELLED event's ledger figure, else the applied net
+ * as the restore row was written - and `restore` is the cancellation's own
+ * tier, `calculateAppliedCreditRestore`, on the restore's day, with no card
+ * base because this route has nothing captured. That tier must reproduce `R`
+ * from `A` before it is trusted with the share; where it does not, or no
+ * frozen figure exists, the completion is refused with the task OPEN.
+ *
+ * Nothing restored means the tier kept everything, and of less too: the slice
+ * is owed whole. A restore of everything already returned it: nothing is owed.
  */
 async function creditSliceStillOwedAfterCancellation({
   bookingId,
+  taskId,
   booking,
-  creditSliceCents,
-  appliedAtCancelCents,
+  shareCents,
+  appliedNowCents,
   clubZone,
   store,
 }: {
   bookingId: string;
+  taskId: string;
   booking: { checkIn: Date; lodgeId: string };
-  creditSliceCents: number;
-  appliedAtCancelCents: number;
+  shareCents: number;
+  appliedNowCents: number;
   clubZone: ClubTimeZone;
   store: Prisma.TransactionClient;
-}): Promise<number> {
-  if (creditSliceCents <= 0) return 0;
+}): Promise<{ sliceCents: number; owedCents: number }> {
   const restore = await store.memberCredit.findUnique({
     where: { restoredFromBookingId: bookingId },
     select: { amountCents: true, createdAt: true },
   });
   const restoredCents = restore?.amountCents ?? 0;
-  if (restore === null || restoredCents <= 0) return creditSliceCents;
-  if (restoredCents >= appliedAtCancelCents) return 0;
+  if (restore === null || restoredCents <= 0) {
+    const sliceCents = Math.max(0, Math.min(shareCents, appliedNowCents));
+    return { sliceCents, owedCents: sliceCents };
+  }
+
+  const appliedAtCancelCents = await frozenAppliedAtCancellationCents({ bookingId, restoredAt: restore.createdAt, store });
+  if (appliedAtCancelCents === null || appliedAtCancelCents <= 0) {
+    throw new ManualBookingPaymentError(REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE, 409);
+  }
+  const earlierSharesCents = await sharesSettledSinceCents({ bookingId, taskId, since: restore.createdAt, store });
+  const earlierSliceCents = Math.min(appliedAtCancelCents, earlierSharesCents);
+  const sliceCents = Math.max(0, Math.min(shareCents, appliedAtCancelCents - earlierSliceCents));
+  if (restoredCents >= appliedAtCancelCents) return { sliceCents, owedCents: 0 };
 
   const days = daysUntilDate(booking.checkIn, clubCalendarDateOf(restore.createdAt, clubZone));
   const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, store);
@@ -188,5 +284,123 @@ async function creditSliceStillOwedAfterCancellation({
   if (restoreOf(appliedAtCancelCents) !== restoredCents) {
     throw new ManualBookingPaymentError(REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE, 409);
   }
-  return Math.max(0, creditSliceCents + restoreOf(appliedAtCancelCents - creditSliceCents) - restoredCents);
+  const slicesCents = earlierSliceCents + sliceCents;
+  // What reviews have given back since the cancellation: the restore leaves the
+  // applied rows alone, so it is exactly how far they have fallen from `A`.
+  const givenBackSinceCents = Math.max(0, appliedAtCancelCents - appliedNowCents);
+  const owedCents = slicesCents + restoreOf(appliedAtCancelCents - slicesCents) - restoredCents - givenBackSinceCents;
+  return { sliceCents, owedCents: Math.max(0, owedCents) };
+}
+
+/**
+ * The applied credit the cancellation tiered, as frozen then: the CANCELLED
+ * event's `snapshot.ledger.appliedCreditCents` (#3611) where it has one, else
+ * the booking's applied rows as they stood when the restore row was written.
+ */
+async function frozenAppliedAtCancellationCents({
+  bookingId,
+  restoredAt,
+  store,
+}: {
+  bookingId: string;
+  restoredAt: Date;
+  store: Prisma.TransactionClient;
+}): Promise<number | null> {
+  const cancelled = await store.bookingEvent.findFirst({
+    where: { bookingId, type: BookingEventType.CANCELLED },
+    orderBy: { occurredAt: "desc" },
+    select: { snapshot: true },
+  });
+  const frozen = jsonRecord(jsonRecord(cancelled?.snapshot)?.ledger)?.appliedCreditCents;
+  if (typeof frozen === "number" && Number.isInteger(frozen)) return frozen;
+  const asRestored = await store.memberCredit.aggregate({
+    where: { appliedToBookingId: bookingId, type: CreditType.BOOKING_APPLIED, createdAt: { lte: restoredAt } },
+    _sum: { amountCents: true },
+  });
+  return asRestored._sum.amountCents === null ? null : Math.max(0, -asRestored._sum.amountCents);
+}
+
+/**
+ * The shares other reviews of this booking have settled back to the member
+ * since the restore - the slices `C` already counts. A completion with no
+ * payment behind it is this route by construction (`chooseEditReviewSettlementRoute`).
+ */
+async function sharesSettledSinceCents({
+  bookingId,
+  taskId,
+  since,
+  store,
+}: {
+  bookingId: string;
+  taskId: string;
+  since: Date;
+  store: Prisma.TransactionClient;
+}): Promise<number> {
+  const earlier = await store.manualRefundTask.aggregate({
+    where: {
+      bookingId,
+      id: { not: taskId },
+      kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
+      status: ManualRefundTaskStatus.COMPLETED,
+      settlementDirection: ManualRefundTaskDirection.REFUND_TO_MEMBER,
+      paymentId: null,
+      completedAt: { gte: since },
+    },
+    _sum: { amountCents: true },
+  });
+  return earlier._sum.amountCents ?? 0;
+}
+
+function jsonRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+/**
+ * #3791: everything an account-credit completion does AFTER its commit. The
+ * member-facing `CREDITED` event for what was actually credited - `INV-PAY-051`
+ * writes it where the money moved, and none where a share netted against a
+ * cancellation's restore left nothing to credit - and the Xero leg
+ * (`dispatchEditReviewAccountCreditXero`).
+ */
+export async function finishEditReviewAccountCredit({
+  bookingId,
+  taskId,
+  actingMemberId,
+  bookingModificationId,
+  outcome,
+  hasIssuedXeroInvoice,
+  bookingXeroInvoiceId,
+  bookingPaymentStatus,
+}: {
+  bookingId: string;
+  taskId: string;
+  actingMemberId: string;
+  bookingModificationId: string;
+  outcome: EditReviewAccountCreditOutcome;
+  hasIssuedXeroInvoice: boolean;
+  bookingXeroInvoiceId: string | null;
+  bookingPaymentStatus: string | null;
+}): Promise<void> {
+  const creditedCents = outcome.givenBackCents + outcome.mintedCents;
+  if (creditedCents > 0) {
+    await recordBookingEvent({
+      bookingId,
+      type: BookingEventType.CREDITED,
+      actorMemberId: actingMemberId,
+      amountCents: creditedCents,
+      reason: "edit_financial_review_credited",
+    });
+  }
+  await dispatchEditReviewAccountCreditXero({
+    bookingId,
+    taskId,
+    actingMemberId,
+    bookingModificationId,
+    givenBackCents: outcome.givenBackCents,
+    mintedCents: outcome.mintedCents,
+    cancelled: outcome.cancelled,
+    hasIssuedXeroInvoice,
+    bookingXeroInvoiceId,
+    bookingPaymentStatus,
+  });
 }

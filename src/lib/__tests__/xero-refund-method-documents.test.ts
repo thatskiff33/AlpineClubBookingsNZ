@@ -513,6 +513,55 @@ describe("the account-credit note (createUnappliedXeroCreditNote)", () => {
   });
 });
 
+describe("#3791: a review task's share is a document of its own", () => {
+  it("MUTATION: scopes the invoice-allocated note's keys - the note's and its allocation's - to the task, amount kept, and records the task for a retry", async () => {
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 1000,
+      bookingModificationId: "cmmodification01",
+      reviewTaskId: "task-7",
+      refundMethod: "account-credit",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: "booking-mod:cmmodification01:review-task:task-7:mod-credit-note:1000:v1",
+      requestPayload: expect.objectContaining({ reviewTaskId: "task-7" }),
+    }));
+    const allocationKeys = mocks.createCreditNoteAllocation.mock.calls.map((call) => call.at(-1));
+    expect(allocationKeys).toEqual(["booking-mod:cmmodification01:review-task:task-7:mod-credit-note-allocation:1000:v1"]);
+  });
+
+  it("leaves an edit's own note keyed exactly as before", async () => {
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 1000,
+      bookingModificationId: "cmmodification01",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: "booking-mod:cmmodification01:mod-credit-note:1000:v1",
+    }));
+  });
+
+  it("MUTATION: an unallocated note for a review task neither short-cuts on a sibling's link nor shares its key", async () => {
+    mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
+    // A sibling review's note already on the anchor.
+    mocks.xeroObjectLinkFindFirst.mockResolvedValue({ xeroObjectId: "cn-sibling", xeroObjectNumber: "CN-1" });
+
+    await createUnappliedXeroCreditNote(PAYMENT_ID, 1000, CLUB_FORMAT_TEST, {
+      bookingModificationId: "cmmodification01",
+      reviewTaskId: "task-7",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: "booking-mod:cmmodification01:review-task:task-7:mod-unapplied-credit-note:1000:v1",
+    }));
+    expect(builtCreditNote().reference).toBe("Account Credit - Booking cmbookin");
+  });
+});
+
 describe("the modification credit note (createXeroCreditNoteForModification)", () => {
   it("carries the method it was handed", async () => {
     await createXeroCreditNoteForModification({

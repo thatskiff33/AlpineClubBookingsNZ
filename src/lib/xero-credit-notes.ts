@@ -15,6 +15,7 @@
  * Xero credit-note IDs.
  */
 
+import { reviewTaskKeyParts } from "@/lib/xero-review-task-key";
 import {
   findKeptLateCaptureInvoiceIdForPayment,
   findLateCapturePaymentIntents,
@@ -110,6 +111,12 @@ export interface CreateXeroUnappliedCreditNoteOptions
   extends FindOrCreateXeroContactOptions {
   syncOperationId?: string;
   bookingModificationId?: string;
+  /**
+   * #3791: one review task's share of the modification. Scopes the Xero key to
+   * that task (`reviewTaskKeyParts`) and skips the anchor-wide link short-cut,
+   * since a sibling review's note on the same edit is a different document.
+   */
+  reviewTaskId?: string;
 }
 
 export async function createXeroCreditNote(
@@ -725,19 +732,22 @@ export async function createUnappliedXeroCreditNote(
   const linkRole = bookingModificationId
     ? "MODIFICATION_ACCOUNT_CREDIT_NOTE"
     : "ACCOUNT_CREDIT_NOTE";
-  const existingLink = await prisma.xeroObjectLink.findFirst({
-    where: {
-      localModel: linkLocalModel,
-      localId: linkLocalId,
-      xeroObjectType: "CREDIT_NOTE",
-      role: linkRole,
-      active: true,
-    },
-    select: {
-      xeroObjectId: true,
-      xeroObjectNumber: true,
-    },
-  });
+  const reviewTaskId = bookingModificationId ? (options?.reviewTaskId ?? null) : null;
+  const existingLink = reviewTaskId
+    ? null
+    : await prisma.xeroObjectLink.findFirst({
+        where: {
+          localModel: linkLocalModel,
+          localId: linkLocalId,
+          xeroObjectType: "CREDIT_NOTE",
+          role: linkRole,
+          active: true,
+        },
+        select: {
+          xeroObjectId: true,
+          xeroObjectNumber: true,
+        },
+      });
 
   if (existingLink?.xeroObjectId) {
     // #3369: these stamp the Xero note onto the MEMBER CREDIT the refund
@@ -859,6 +869,7 @@ export async function createUnappliedXeroCreditNote(
   const idempotencyKey = buildXeroIdempotencyKey(
     bookingModificationId ? "booking-mod" : "payment",
     linkLocalId,
+    ...reviewTaskKeyParts(reviewTaskId),
     bookingModificationId ? "mod-unapplied-credit-note" : "unapplied-credit-note",
     refundAmountCents,
     "v1"
@@ -866,6 +877,7 @@ export async function createUnappliedXeroCreditNote(
   let operationId = queuedOperationId;
   const requestPayload = {
     creditNotes: [buildCreditNote(contactId)],
+    ...(reviewTaskId ? { reviewTaskId } : {}),
     ...(itemised ? { priceLines: itemised.record } : {}),
   };
 
@@ -903,6 +915,7 @@ export async function createUnappliedXeroCreditNote(
       createdByMemberId: options?.createdByMemberId,
       buildRequestPayload: (resolvedContactId) => ({
         creditNotes: [buildCreditNote(resolvedContactId)],
+        ...(reviewTaskId ? { reviewTaskId } : {}),
         ...(itemised ? { priceLines: itemised.record } : {}),
       }),
       run: ({ contactId: resolvedContactId }) =>
@@ -985,6 +998,8 @@ export async function createUnappliedXeroCreditNoteForModification(params: {
   paymentId: string;
   refundAmountCents: number;
   bookingModificationId: string;
+  /** #3791: see `CreateXeroUnappliedCreditNoteOptions.reviewTaskId`. */
+  reviewTaskId?: string;
   createdByMemberId?: string;
   syncOperationId?: string;
   /**
@@ -1002,6 +1017,7 @@ export async function createUnappliedXeroCreditNoteForModification(params: {
       createdByMemberId: params.createdByMemberId,
       syncOperationId: params.syncOperationId,
       bookingModificationId: params.bookingModificationId,
+      reviewTaskId: params.reviewTaskId,
     },
   );
 }

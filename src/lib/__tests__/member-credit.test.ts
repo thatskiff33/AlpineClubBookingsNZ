@@ -863,6 +863,31 @@ describe("member-credit helpers", () => {
       }));
     });
 
+    it("MUTATION: never deallocates on a CANCELLED booking - its invoice stands as the cancellation left it", async () => {
+      const tx = makeTx(-20000, ibPayment, 20000);
+      tx.booking.findUnique.mockResolvedValue({ status: "CANCELLED", payment: ibPayment });
+
+      const result = await giveBack(tx, () => 2500);
+
+      expect(result.givenBackCents).toBe(2500);
+      expect(mockRepairLegacyAppliedCreditNoteAllocationsForBooking).not.toHaveBeenCalled();
+      expect(mockStartXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: says which deallocation fences it, so a FAILED one can be told from one in flight", async () => {
+      const tx = makeTx(-20000, ibPayment, 20000);
+      tx.xeroSyncOperation.findMany.mockResolvedValue([{ id: "dealloc-failed", status: "FAILED", requestPayload: {} }]);
+      const { needsOperatorXeroRetry, XeroAppliedCreditOperationBusyError } = await import(
+        "@/lib/xero-applied-credit-operation-serialization"
+      );
+
+      const error = await giveBack(tx, () => 5000).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(XeroAppliedCreditOperationBusyError);
+      expect(needsOperatorXeroRetry(error as InstanceType<typeof XeroAppliedCreditOperationBusyError>)).toBe(true);
+      expect(needsOperatorXeroRetry(new XeroAppliedCreditOperationBusyError("x", "PENDING"))).toBe(false);
+    });
+
     it("MUTATION: queues no deallocation where Xero already holds no more than the new applied figure", async () => {
       const tx = makeTx(-20000, ibPayment, 15000);
 

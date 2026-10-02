@@ -40,6 +40,7 @@ import {
 } from "@/lib/xero-refund-method";
 import { resolveModificationDocumentLineItems } from "@/lib/xero-modification-line-items";
 import { XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
+import { reviewTaskKeyParts } from "@/lib/xero-review-task-key";
 import {
   findBookingSupplementaryInvoiceIds,
   planClearingAllocations,
@@ -65,6 +66,12 @@ export async function createXeroCreditNoteForModification(params: {
   repairExistingLink?: boolean;
   syncOperationId?: string;
   /**
+   * #3791: one review task's share of the edit, which scopes the note's Xero
+   * idempotency keys to that task (`reviewTaskKeyParts`) and is kept on the
+   * operation so an operator retry rebuilds the same keys.
+   */
+  reviewTaskId?: string;
+  /**
    * The club's format (#3565), for any amount a line description renders (a
    * promotion delta reads "reduced by $20.00" on the Xero line). Resolved once
    * by the job or request that raised this document, never here.
@@ -79,6 +86,8 @@ export async function createXeroCreditNoteForModification(params: {
     repairExistingLink,
     syncOperationId,
   } = params;
+  const reviewTaskId = bookingModificationId ? params.reviewTaskId : undefined;
+  const recordedReviewTask = reviewTaskId ? { reviewTaskId } : {};
   const wording = modificationNoteWording(params);
   // Recorded on the operation so the treasurer's audit trail and any repair
   // read the same choice the note was built with.
@@ -217,6 +226,7 @@ export async function createXeroCreditNoteForModification(params: {
   const creditNoteIdempotencyKey = buildXeroIdempotencyKey(
     bookingModificationId ? "booking-mod" : "booking",
     localId,
+    ...reviewTaskKeyParts(reviewTaskId),
     "mod-credit-note",
     refundAmountCents,
     "v1"
@@ -226,6 +236,7 @@ export async function createXeroCreditNoteForModification(params: {
     creditNotes: [buildCreditNote(contactId)],
     invoiceId: originalInvoiceId,
     refundAmountCents,
+    ...recordedReviewTask,
     ...recordedWording,
     ...recordedAllocations,
     ...(itemised ? { priceLines: itemised.record } : {}),
@@ -273,6 +284,7 @@ export async function createXeroCreditNoteForModification(params: {
         creditNotes: [buildCreditNote(resolvedContactId)],
         invoiceId: originalInvoiceId,
         refundAmountCents,
+        ...recordedReviewTask,
         ...recordedWording,
         ...recordedAllocations,
         ...(itemised ? { priceLines: itemised.record } : {}),
@@ -320,6 +332,7 @@ export async function createXeroCreditNoteForModification(params: {
       const allocationIdempotencyKey = buildXeroIdempotencyKey(
         bookingModificationId ? "booking-mod" : "booking",
         localId,
+        ...reviewTaskKeyParts(reviewTaskId),
         "mod-credit-note-allocation",
         ...(allocationTargets.length > 1 ? [target.invoiceId] : []),
         target.amountCents,

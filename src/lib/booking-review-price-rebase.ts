@@ -646,14 +646,24 @@ export function bookingRebaseAuditMetadata({
 export function rebaseDivergesFromIssuedInvoice({
   rebase,
   hasIssuedXeroInvoice,
-  settlementIssuesXeroDocument,
+  settlement,
 }: {
-  rebase: BookingPriceRebase;
+  /** What the re-base did, or null where it declined. */
+  rebase: BookingPriceRebase | null;
   hasIssuedXeroInvoice: boolean;
-  settlementIssuesXeroDocument: boolean;
+  /**
+   * Whether the closure's own Xero document corrects the invoice - or, for an
+   * account-credit share (#3791), what the member was credited. That share's
+   * notes move the club's figures by exactly that much, so the invoice stays in
+   * line only where the re-price moved the booking by the same amount; a share
+   * with no re-price at all diverges too.
+   */
+  settlement: { issuesXeroDocument: boolean } | { creditedCents: number };
 }): boolean {
   if (!hasIssuedXeroInvoice) return false;
-  if (settlementIssuesXeroDocument) return false;
+  const priceDropCents = rebase ? rebase.previousFinalPriceCents - rebase.newFinalPriceCents : 0;
+  if ("creditedCents" in settlement) return settlement.creditedCents !== priceDropCents;
+  if (rebase === null || settlement.issuesXeroDocument) return false;
   return rebase.newFinalPriceCents !== rebase.previousFinalPriceCents;
 }
 

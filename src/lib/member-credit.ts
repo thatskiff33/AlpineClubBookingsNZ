@@ -3,6 +3,7 @@ import { ApiError } from "@/lib/api-error";
 import {
   AdminCreditAdjustmentRequestStatus,
   BookingEventType,
+  BookingStatus,
   CreditType,
   PaymentSource,
   Prisma,
@@ -446,8 +447,9 @@ export async function clampAppliedCreditToBookingPrice(
  * internet-banking booking's applied credit is allocated against its Xero
  * invoice beyond the new applied figure, the durable deallocation operation
  * commits with the row, so the next inbound sync cannot pull the applied figure
- * back up to Xero's. The worker makes the provider calls after this
- * transaction, never under the ledger lock.
+ * back up to Xero's. Never on a CANCELLED booking, whose invoice would reopen.
+ * The worker makes the provider calls after this transaction, never under the
+ * ledger lock.
  *
  * `giveBackCentsOf` is asked under the lock, with the applied credit and the
  * payment just read, so its answer cannot be stale. Returns that applied credit
@@ -471,7 +473,7 @@ export async function giveBackAppliedCredit(
   await lockMemberCreditLedger(memberId, tx);
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
-    select: { payment: { select: { id: true, source: true, xeroInvoiceId: true, creditAppliedCents: true } } },
+    select: { status: true, payment: { select: { id: true, source: true, xeroInvoiceId: true, creditAppliedCents: true } } },
   });
   const payment = booking?.payment ?? null;
   if (payment) await assertNoAppliedCreditDeallocationFence(payment.id, tx);
@@ -485,7 +487,14 @@ export async function giveBackAppliedCredit(
   });
   await syncBookingLedgerCredits({ bookingId, store: tx });
 
-  if (payment?.source === PaymentSource.INTERNET_BANKING && payment.xeroInvoiceId) {
+  // Never on a CANCELLED booking: its invoice stands as the cancellation left
+  // it, and releasing credit allocated against it would reopen it with an
+  // amount due. The caller returns that money in Xero another way (#3791).
+  if (
+    booking?.status !== BookingStatus.CANCELLED &&
+    payment?.source === PaymentSource.INTERNET_BANKING &&
+    payment.xeroInvoiceId
+  ) {
     await repairLegacyAppliedCreditNoteAllocationsForBooking(bookingId, payment.xeroInvoiceId, tx, format);
     const allocated = await tx.memberCreditNoteAllocation.aggregate({
       where: { appliedToBookingId: bookingId },

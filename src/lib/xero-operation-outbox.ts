@@ -94,6 +94,7 @@ import {
   type QueuedOutboxExpectedOperation,
   type QueuedOutboxPayload,
 } from "@/lib/xero-operation-outbox-payload";
+import { queuedReviewTaskId, reviewTaskKeyParts } from "@/lib/xero-review-task-key";
 import { formatDateOnly } from "@/lib/date-only";
 import { clubFormatValues } from "@/lib/club-format-server";
 
@@ -2136,6 +2137,12 @@ export async function enqueueXeroModificationCreditNoteOperation(
     bookingId: string;
     refundAmountCents: number;
     bookingModificationId?: string;
+    /**
+     * #3791: one review task's share, so the note is scoped to that task
+     * (`reviewTaskKeyParts`) and a sibling review's note on the same edit is
+     * neither folded into it nor refused by its link.
+     */
+    reviewTaskId?: string;
   } & ModificationNoteWording,
   options?: {
     createdByMemberId?: string;
@@ -2148,6 +2155,7 @@ export async function enqueueXeroModificationCreditNoteOperation(
     refundAmountCents,
     bookingModificationId,
   } = params;
+  const reviewTaskId = bookingModificationId ? params.reviewTaskId : undefined;
   const db = options?.store ?? prisma;
 
   if (refundAmountCents <= 0) {
@@ -2183,16 +2191,21 @@ export async function enqueueXeroModificationCreditNoteOperation(
   const localModel = bookingModificationId ? "BookingModification" : "Booking";
   const localId = bookingModificationId ?? bookingId;
 
-  const existingLink = await db.xeroObjectLink.findFirst({
-    where: {
-      localModel,
-      localId,
-      xeroObjectType: "CREDIT_NOTE",
-      role: "MODIFICATION_CREDIT_NOTE",
-      active: true,
-    },
-    select: { id: true },
-  });
+  // An edit's own note: one per anchor, so a link already there answers it. A
+  // review task's share is one of possibly several on that anchor, so its own
+  // key - including a SUCCEEDED row - is what answers it instead (#3791).
+  const existingLink = reviewTaskId
+    ? null
+    : await db.xeroObjectLink.findFirst({
+        where: {
+          localModel,
+          localId,
+          xeroObjectType: "CREDIT_NOTE",
+          role: "MODIFICATION_CREDIT_NOTE",
+          active: true,
+        },
+        select: { id: true },
+      });
 
   if (existingLink) {
     return {
@@ -2204,6 +2217,7 @@ export async function enqueueXeroModificationCreditNoteOperation(
   const correlationKey = buildXeroIdempotencyKey(
     bookingModificationId ? "booking-mod" : "booking",
     localId,
+    ...reviewTaskKeyParts(reviewTaskId),
     "mod-credit-note",
     refundAmountCents,
     "v1"
@@ -2218,7 +2232,7 @@ export async function enqueueXeroModificationCreditNoteOperation(
       localModel,
       localId,
       status: {
-        in: ["PENDING", "RUNNING"],
+        in: reviewTaskId ? ["PENDING", "RUNNING", "SUCCEEDED"] : ["PENDING", "RUNNING"],
       },
     },
     orderBy: {
@@ -2247,6 +2261,7 @@ export async function enqueueXeroModificationCreditNoteOperation(
       bookingId,
       refundAmountCents,
       bookingModificationId: bookingModificationId ?? null,
+      ...(reviewTaskId ? { reviewTaskId } : {}),
       ...readModificationNoteWording(params),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
@@ -2264,6 +2279,8 @@ export async function enqueueXeroModificationAccountCreditNoteOperation(
     bookingId: string;
     refundAmountCents: number;
     bookingModificationId: string;
+    /** #3791: as on `enqueueXeroModificationCreditNoteOperation`. */
+    reviewTaskId?: string;
   },
   options?: { createdByMemberId?: string }
 ) {
@@ -2271,6 +2288,7 @@ export async function enqueueXeroModificationAccountCreditNoteOperation(
     bookingId,
     refundAmountCents,
     bookingModificationId,
+    reviewTaskId,
   } = params;
 
   if (refundAmountCents <= 0) {
@@ -2303,16 +2321,20 @@ export async function enqueueXeroModificationAccountCreditNoteOperation(
     };
   }
 
-  const existingLink = await prisma.xeroObjectLink.findFirst({
-    where: {
-      localModel: "BookingModification",
-      localId: bookingModificationId,
-      xeroObjectType: "CREDIT_NOTE",
-      role: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
-      active: true,
-    },
-    select: { id: true },
-  });
+  // As on the invoice-applied note: a review task's share answers to its own
+  // key, never to the anchor's link (#3791).
+  const existingLink = reviewTaskId
+    ? null
+    : await prisma.xeroObjectLink.findFirst({
+        where: {
+          localModel: "BookingModification",
+          localId: bookingModificationId,
+          xeroObjectType: "CREDIT_NOTE",
+          role: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+          active: true,
+        },
+        select: { id: true },
+      });
 
   if (existingLink) {
     return {
@@ -2324,6 +2346,7 @@ export async function enqueueXeroModificationAccountCreditNoteOperation(
   const correlationKey = buildXeroIdempotencyKey(
     "booking-mod",
     bookingModificationId,
+    ...reviewTaskKeyParts(reviewTaskId),
     "mod-account-credit-note",
     refundAmountCents,
     "v1"
@@ -2338,7 +2361,7 @@ export async function enqueueXeroModificationAccountCreditNoteOperation(
       localModel: "BookingModification",
       localId: bookingModificationId,
       status: {
-        in: ["PENDING", "RUNNING"],
+        in: reviewTaskId ? ["PENDING", "RUNNING", "SUCCEEDED"] : ["PENDING", "RUNNING"],
       },
     },
     orderBy: {
@@ -2368,6 +2391,7 @@ export async function enqueueXeroModificationAccountCreditNoteOperation(
       paymentId: booking.payment.id,
       refundAmountCents,
       bookingModificationId,
+      ...(reviewTaskId ? { reviewTaskId } : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
   });
@@ -2988,6 +3012,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
           paymentId: payload.paymentId,
           refundAmountCents: payload.refundAmountCents,
           bookingModificationId: payload.bookingModificationId,
+          reviewTaskId: queuedReviewTaskId(queuedOperation),
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
           format,
@@ -3019,6 +3044,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
           bookingId: payload.bookingId,
           refundAmountCents: payload.refundAmountCents,
           bookingModificationId: payload.bookingModificationId,
+          reviewTaskId: queuedReviewTaskId(queuedOperation),
           ...readModificationNoteWording(payload),
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,

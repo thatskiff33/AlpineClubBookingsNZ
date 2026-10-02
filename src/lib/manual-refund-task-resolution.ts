@@ -25,7 +25,10 @@ import { refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { requireMemberCreditRecipient, SchoolHasNoCreditAccountError } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
-import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
+import {
+  needsOperatorXeroRetry,
+  XeroAppliedCreditOperationBusyError,
+} from "@/lib/xero-applied-credit-operation-serialization";
 import { enqueueEditFinancialReviewRefundRecovery } from "@/lib/payment-recovery";
 import {
   applyLocalRefundAllocation,
@@ -467,6 +470,7 @@ export async function resolveManualRefundTask(
               try {
                 accountCredit = await writeEditReviewAccountCredit({
                   route: creditRoute,
+                  taskId: task.id,
                   memberId: requireMemberCreditRecipient(bookingOwner(task.booking).memberId),
                   bookingId: task.bookingId,
                   amountCents: settlement.amountCents,
@@ -478,8 +482,9 @@ export async function resolveManualRefundTask(
               } catch (error) {
                 throw settlementWriteRefusal(error);
               }
-              // Only the minted part takes the review's Xero credit note.
-              return { xeroAmountCents: accountCredit.mintedCents };
+              // What the member was actually credited: the stand-in line and
+              // the invoice-divergence check read this, not the typed share.
+              return { creditedCents: accountCredit.givenBackCents + accountCredit.mintedCents };
             }
           : null,
         format,
@@ -575,6 +580,7 @@ export async function resolveManualRefundTask(
        */
       hasIssuedXeroInvoice,
       bookingPaymentStatus: task.booking.payment?.status ?? null,
+      bookingXeroInvoiceId: task.booking.payment?.xeroInvoiceId ?? null,
       // `INV-PAY-101` (#3529): the invoice a cancellation hand-back refunds
       // against - `hasIssuedXeroInvoice` is false for every CANCELLED booking.
       cancellationHandBackInvoiceId:
@@ -615,6 +621,7 @@ export async function resolveManualRefundTask(
       route: result.settlementRoute,
       amountCents: result.settlementAmountCents,
       accountCredit: result.accountCredit,
+      bookingXeroInvoiceId: result.bookingXeroInvoiceId,
       hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
       bookingPaymentStatus: result.bookingPaymentStatus,
       cancellationHandBackInvoiceId: result.cancellationHandBackInvoiceId,
@@ -664,10 +671,16 @@ function settlementWriteRefusal(error: unknown): unknown {
   if (error instanceof SchoolHasNoCreditAccountError) {
     return new ManualBookingPaymentError(error.message, error.status);
   }
-  // #3791: a give-back of applied credit waits for an in-flight Xero
-  // deallocation on the payment, as the clamp does; the task stays OPEN.
+  // #3791: a give-back of applied credit waits for a Xero deallocation on the
+  // payment, as the clamp does; the task stays OPEN. One that FAILED waits for a
+  // person, so the officer is told who has to act rather than to wait.
   if (error instanceof XeroAppliedCreditOperationBusyError) {
-    return new ManualBookingPaymentError("This booking's account credit is still being updated in Xero — try again in a few minutes.", 409);
+    return new ManualBookingPaymentError(
+      needsOperatorXeroRetry(error)
+        ? "This booking's account credit is held by a Xero update that failed. An operator has to retry that Xero operation (Xero sync failures) before this review can be completed."
+        : "This booking's account credit is still being updated in Xero — try again in a few minutes.",
+      409,
+    );
   }
   return error;
 }

@@ -613,7 +613,7 @@ describe("D1's two consequences, surfaced rather than shipped blind (#3219)", ()
       rebaseDivergesFromIssuedInvoice({
         rebase,
         hasIssuedXeroInvoice: true,
-        settlementIssuesXeroDocument: false,
+        settlement: { issuesXeroDocument: false },
       }),
     ).toBe(true);
   });
@@ -621,11 +621,11 @@ describe("D1's two consequences, surfaced rather than shipped blind (#3219)", ()
   it.each([
     [
       "the settlement issues a Xero document that brings the invoice back into line",
-      { hasIssuedXeroInvoice: true, settlementIssuesXeroDocument: true },
+      { hasIssuedXeroInvoice: true, settlement: { issuesXeroDocument: true } },
     ],
     [
       "the club never invoiced this booking",
-      { hasIssuedXeroInvoice: false, settlementIssuesXeroDocument: false },
+      { hasIssuedXeroInvoice: false, settlement: { issuesXeroDocument: false } },
     ],
   ])("does not diverge when %s", (_name, flags) => {
     expect(rebaseDivergesFromIssuedInvoice({ rebase, ...flags })).toBe(false);
@@ -636,9 +636,22 @@ describe("D1's two consequences, surfaced rather than shipped blind (#3219)", ()
       rebaseDivergesFromIssuedInvoice({
         rebase: { ...rebase, newFinalPriceCents: 24_000 },
         hasIssuedXeroInvoice: true,
-        settlementIssuesXeroDocument: false,
+        settlement: { issuesXeroDocument: false },
       }),
     ).toBe(false);
+  });
+
+  it("MUTATION: #3791 - an account-credit share agrees with the invoice only where it credited exactly what the re-price removed, re-price or none", () => {
+    const diverges = (creditedCents: number, moved: BookingPriceRebase | null) =>
+      rebaseDivergesFromIssuedInvoice({ rebase: moved, hasIssuedXeroInvoice: true, settlement: { creditedCents } });
+
+    expect(diverges(12_000, rebase)).toBe(false);
+    expect(diverges(5_000, rebase)).toBe(true);
+    // A share with no re-price at all: its notes take $50 off an invoice the
+    // booking still prices in full.
+    expect(diverges(5_000, null)).toBe(true);
+    expect(diverges(0, null)).toBe(false);
+    expect(rebaseDivergesFromIssuedInvoice({ rebase: null, hasIssuedXeroInvoice: false, settlement: { creditedCents: 5_000 } })).toBe(false);
   });
 
   it("writes the re-price into the BOOKING'S OWN history, with the divergence on it", async () => {
