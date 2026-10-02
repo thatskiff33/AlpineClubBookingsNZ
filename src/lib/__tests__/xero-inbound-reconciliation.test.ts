@@ -1970,6 +1970,23 @@ describe("processStoredXeroInboundEvents", () => {
     );
   });
 
+  it("restores nothing on an organisation-owned booking: there is no member credit ledger to restore into (#3792, #3369)", async () => {
+    mockCapacityFailInboundEvent();
+    const memberOwned = await mocks.paymentFindUnique();
+    mocks.paymentFindUnique.mockResolvedValue({
+      ...memberOwned,
+      booking: { ...memberOwned.booking, memberId: null, member: null, organisationId: "org_cap", organisation: { name: "Cap School", email: "office@example.com" } },
+    });
+    mocks.memberCreditFindMany.mockResolvedValue([
+      { id: "credit_applied_cap", memberId: "mem_cap", type: "BOOKING_APPLIED", amountCents: -8000, appliedToBookingId: "booking_ib_cap" },
+    ]);
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    expect(mocks.memberCreditCreateMany).not.toHaveBeenCalled();
+    expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledTimes(1);
+  });
+
   it("restores nothing on a cash-only booking: the late capacity cancel mints the cash and writes no restore row (#3792)", async () => {
     mockCapacityFailInboundEvent();
 
