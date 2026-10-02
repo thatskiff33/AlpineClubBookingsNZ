@@ -968,6 +968,19 @@ describe("cancelBooking credit refunds", () => {
       expect.objectContaining({ paymentId: "payment_race", amountCents: 5000 }),
     );
     expect(mocks.foldIntoTransactionRefundedAmount).not.toHaveBeenCalled();
+    // The audit row records the payment the cancel decided from, not the early read.
+    expect(mocks.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.cancel",
+        metadata: expect.objectContaining({
+          paymentId: "payment_race",
+          paymentStatus: "PARTIALLY_REFUNDED",
+          paidAmountCents: 20000,
+          refundedAmountCents: 10000,
+          creditAppliedCents: 0,
+        }),
+      }),
+    );
     // The money-deciding read follows the lock, inside the same transaction.
     expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(mocks.lastTx, "payment_race");
     expect(mocks.txPaymentFindUnique).toHaveBeenCalledWith({ where: { id: "payment_race" } });

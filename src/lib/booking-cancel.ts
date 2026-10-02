@@ -1869,7 +1869,7 @@ async function performBookingCancellation(
 
     return {
       claimed: true as const,
-      fresh,
+      fresh: { ...fresh, payment }, // #3793: the audit records the locked re-read
       payment,
       creditRestoredCents,
       refundAmountCents,
