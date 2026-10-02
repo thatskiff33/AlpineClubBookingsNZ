@@ -111,6 +111,9 @@ vi.mock("@/lib/module-settings", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // #3770 R2: the create route reads the booker's lodge restrictions before
+    // its member lookup; nobody here has one.
+    memberLodgeAccess: { findMany: vi.fn().mockResolvedValue([]) },
     // #3451: the own-dependant guard's parent-link read. This suite's party
     // carries member ids its mocked resolution does not return, so the shared
     // entry point reads them as free text and asks; nobody here has a dependant.
