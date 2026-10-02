@@ -487,3 +487,42 @@ describe("the adult-supervision reason follows the server's rule (#3770)", () =>
     expect(createBody()?.memberReviewJustification).toBeUndefined();
   });
 });
+
+/*
+  #3770: no outsider is added before the family list has answered — a row added
+  blind would carry no consent prediction and the reason field would never show.
+  A failed load blocks the add; a retry that succeeds unblocks it.
+*/
+describe("addMemberGuest waits for the family list (#3770)", () => {
+  it("blocks the add after a failed family load, and allows it after a retry", async () => {
+    const options: Parameters<typeof stubFetch>[0] = { familyOk: false };
+    // Mounted directly: `mountedWizard` waits for the booker's own seeded row,
+    // which needs the family list this case withholds.
+    stubFetch(options);
+    const { result } = renderHook(() => useBookingWizard());
+    await waitFor(() => expect(result.current.memberGuestConfig.enabled).toBe(true));
+    await waitFor(() => expect(result.current.familyMembersLoadFailed).toBe(true));
+    expect(result.current.familyMembersLoaded).toBe(false);
+
+    act(() => {
+      result.current.handleGuestsChange([] as never);
+    });
+    act(() => {
+      result.current.addMemberGuest(STRANGER);
+    });
+    expect(result.current.guests).toHaveLength(0);
+
+    options.familyOk = true;
+    act(() => {
+      result.current.retryFamilyMembersLoad();
+    });
+    await waitFor(() => expect(result.current.familyMembersLoaded).toBe(true));
+    expect(result.current.familyMembersLoadFailed).toBe(false);
+
+    act(() => {
+      result.current.addMemberGuest(STRANGER);
+    });
+    const added = result.current.guests.find((guest) => guest.memberId === STRANGER.memberId);
+    expect(added?.memberGuestConsentPreview).toBe("PENDING");
+  });
+});

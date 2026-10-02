@@ -1387,15 +1387,34 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
       expect((h.checkCapacity.mock.calls[0]?.[3] as unknown[]).length).toBe(2);
     });
 
-    it("counts the whole party of a split-eligible booking that supplies a justification (held for review)", async () => {
+    it("discards a justification when an adult other than X is known, as the service does", async () => {
+      // FAMILY and KIRI are adults the service counts as present, so adult
+      // supervision cannot trip and the booking still splits: only the member
+      // half (FAMILY + X) is counted, and it fits.
       arrangeLookup(true);
       h.checkCapacity.mockImplementation(twoBedsLeft);
       h.holdDecision.mockReturnValue({ shouldBePending: true, status: "PENDING" });
       const res = await POST(
         makeRequest({ guests: [FAMILY, X, KIRI, KID], memberReviewJustification: "x" }),
       );
+      expect(res.status).toBe(201);
+      expect((h.checkCapacity.mock.calls[0]?.[3] as unknown[]).length).toBe(2);
+    });
+
+    it("counts the whole party when a justification is sent and no adult is known without X (held)", async () => {
+      // Children only, plus X: whether the booking is held for review depends on
+      // X, so the justification is taken as held and the whole party counted.
+      arrangeLookup(true);
+      h.checkCapacity.mockImplementation(async (_l: unknown, _i: unknown, _o: unknown, ranges: unknown[]) =>
+        ranges.length > 1
+          ? { available: false, minAvailable: 0, nightDetails: [] }
+          : { available: true, minAvailable: 1, nightDetails: [] });
+      h.holdDecision.mockReturnValue({ shouldBePending: true, status: "PENDING" });
+      const res = await POST(
+        makeRequest({ guests: [KID, X], memberReviewJustification: "x" }),
+      );
       expect(res.status).toBe(409);
-      expect((h.checkCapacity.mock.calls[0]?.[3] as unknown[]).length).toBe(4);
+      expect((h.checkCapacity.mock.calls[0]?.[3] as unknown[]).length).toBe(2);
     });
 
     it("does not ask the pre-flight for a draft, a waitlist join or a family-only party", async () => {
