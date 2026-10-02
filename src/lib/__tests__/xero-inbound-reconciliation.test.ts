@@ -1976,7 +1976,7 @@ describe("processStoredXeroInboundEvents", () => {
     // The member is told about the restored credit, and so is the admin.
     expect(sendBookingCancelledEmail).toHaveBeenCalledWith(
       expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything(),
-      12345, expect.anything(), "credit", 8000, expect.anything(),
+      12345, expect.anything(), "credit", 8000, expect.anything(), "in-full",
     );
     expect(sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
       expect.objectContaining({ errorMessage: expect.stringContaining("credit the booking had applied was restored to the member in full") }),
@@ -2533,7 +2533,8 @@ describe("processStoredXeroInboundEvents", () => {
       CLUB_FORMAT_TEST,
       "credit",
       0,
-      "lodge_ib_cap"
+      "lodge_ib_cap",
+      "in-full",
     );
     // #19: the late-capacity-failure waitlist re-processing is scoped to the
     // cancelled booking's own lodge, not the default lodge.

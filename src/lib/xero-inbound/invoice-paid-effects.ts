@@ -1562,6 +1562,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         // #3792: the applied credit the cancel restored, as the hold release passes it.
         outcome.creditRestoredCents,
         outcome.payment.booking.lodgeId,
+        // A capacity cancel is not the member's choice: restored in full, not by policy.
+        "in-full",
       ).catch((err) =>
         logger.error(
           { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
