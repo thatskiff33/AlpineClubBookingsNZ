@@ -813,3 +813,4 @@ check the others.
   link upsert would then fail on the partial unique index — leaving an orphan
   invoice in Xero (no local double-link, so no local double-charge) that needs
   operator reconciliation.
+
