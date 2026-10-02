@@ -1473,7 +1473,13 @@ Three rules keep it whole:
   always leaves the second read the newer one.
 
 While both colours can run, the `XeroToken` row is also the **connection row**:
-no row means not connected. `isXeroConnected` and the readers that need only the
+no row means not connected. The table has no singleton constraint, so two
+simultaneous first connects can leave two rows; every reader that does not
+hold a row's lock takes the most recently written one (`XERO_TOKEN_ROW_ORDER`),
+and a won refresh claim reads the row it locked by id. If the auth secret no
+longer passes the capture gate, the refresh refuses before spending the token,
+alerts as "Token Store Unavailable", and the status page reports Xero as not
+connected rather than "Connected". `isXeroConnected` and the readers that need only the
 tenant id or expiry read it, and every write keeps those columns exact.
 
 **The token copy is never served from the credential store's cache.** That
