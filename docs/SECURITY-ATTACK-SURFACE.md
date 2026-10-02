@@ -492,14 +492,22 @@ incident can rely on the following:
   release keeps that row current in the same transaction as every write and
   keeps the refresh lease on it, so the two colours can never both spend one
   refresh token. Writes the previous colour makes during that window are not
-  attributed, because that code predates this contract. Retiring the table is a
+  attributed, because that code predates this contract. In this release only
+  the token store may write `XeroToken`: the credential census reports any other
+  writer, raw SQL or migration that rewrites it, because the token store reads
+  that row as the newer copy when it no longer matches. Retiring the table is a
   separate, later change.
-- **A member's TOTP secret** (`Member.totpSecret`) stays where it is, encrypted
-  at rest — it is not a provider credential. Its enrolment and its clearing by the
-  account-erasure executor each write a `security` audit row in the same
-  transaction, naming the member or the administrator, with no field that could
-  hold the secret (`src/lib/two-factor-audit.ts`). The member sees the generic
-  enrolment event on their own timeline; it declares no member-facing text.
+- **A member's second factor** — the TOTP secret (`Member.totpSecret`) and the
+  recovery codes — stays where it is, encrypted or hashed at rest; it is not a
+  provider credential. Enrolment, replacing the recovery codes and the
+  account-erasure clear each write a `security` audit row in the same
+  transaction, naming the member (who may act only on their own) or the
+  administrator, with no field that could hold a secret
+  (`src/lib/two-factor-audit.ts`). There is no compare-and-set here.
+  `two-factor-secret-census.test.ts` pins every writer of those fields and of
+  the recovery-code table, so a new one cannot land unaudited unseen. The member
+  sees the generic event on their own timeline; it declares no member-facing
+  text.
 
 **What the census can and cannot see.** It enumerates every DIRECT CALL of the
 three store mutators, found by walking the tree — not every function that

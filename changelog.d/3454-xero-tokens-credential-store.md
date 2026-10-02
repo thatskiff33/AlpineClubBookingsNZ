@@ -8,11 +8,13 @@
   be split by a failure, and the log entry for the disconnect names the
   credential that caused it. The Xero tokens are now held in the same encrypted
   store as the club's other provider credentials. Turning on two-factor sign-in
-  is recorded too, and so is clearing it when an account is erased. The
-  member can see their own enrolment on their activity history. These entries
+  is recorded too, as are replacing the recovery codes and clearing it all when
+  an account is erased. The member can see their own enrolment on their
+  activity history. These entries
   are filed under Security, so anyone who can read Security entries in the
   audit log (including a support-only operator) can see them. That audience is
   one entry type wider than before, and deliberately so: they hold no secret,
-  only whether two-factor sign-in was turned on or cleared, and by which method.
+  only what changed (two-factor turned on, recovery codes replaced, or the
+  second factor cleared) and by which method.
   Nothing changes for the operator: the existing connection keeps working
   through the upgrade without a reconnect.

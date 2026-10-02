@@ -781,32 +781,32 @@ does.
 
 Every mutation of the encrypted integration-credential store names its writer,
 and the writer is a person or a NAMED background actor, never an absence.
-Decided on [#2723](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2723).
-Since [#3454](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3454)
-the store holds the Xero OAuth token set, and the two-factor secret's enrolment
-and erasure clear follow the same contract (`two-factor-audit.ts`).
+Decided on [#2723](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2723);
+since [#3454](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3454)
+the store holds the Xero OAuth token set. The two-factor secret and recovery
+codes (`two-factor-audit.ts`) take bullets 1, 3, 5 and 6 only: no expectation,
+and a member acts only on their own.
 
-- **`actor` is a required argument on every mutator**, so a write with no
-  attribution does not compile.
-- **A system write NAMES itself** from the closed `CREDENTIAL_SYSTEM_ACTORS`
-  list, so the row says WHICH background writer touched the secret.
-  `assertCredentialActor` is the runtime half, and an `admin` actor carries a
-  non-empty member id.
-- **The secret and its audit row are ONE local transaction**, on the same
-  client, so a failed audit rolls the secret back. A change caused by another —
-  the Xero verify-reset — joins that write's transaction and names it as `cause`.
-- **A stale write LOSES.** Every set and delete declares what it expected to
-  find, and a compare-and-set claims the exact `(ciphertext, iv, authTag)` tuple
-  it read. A loser changes nothing and records nothing.
-- **A read records nothing**, and neither does a delete matching no row nor a
-  freshness marker whose answer would not change.
-- **No plaintext reaches audit, log or error output.** The payload is built from
-  a type with no field a value fits into, and the store calls no logger — a
-  property of its own doors, not of a redactor (`INV-PRIV-011`).
-- **The proof is mechanical, over every DIRECT CALL of a mutator.**
-  `credential-actor-census.test.ts` walks the tree; its scanner test proves a
-  seeded actorless writer and a seeded bypass are reported. A wrapper hides its
-  callers, soundly: it requires an actor, so the type covers them.
+1. **`actor` is a required argument on every mutator**, so a write with no
+   attribution does not compile.
+2. **A system write NAMES itself** from the closed `CREDENTIAL_SYSTEM_ACTORS`
+   list. `assertCredentialActor` is the runtime half; an `admin` actor carries
+   a non-empty member id.
+3. **The secret and its audit row are ONE local transaction**, on the same
+   client. A change caused by another (the Xero verify-reset) joins that
+   write's transaction and names it as `cause`.
+4. **A stale write LOSES.** Every set and delete declares what it expected, and
+   a compare-and-set claims the exact `(ciphertext, iv, authTag)` tuple it
+   read. A loser changes nothing and records nothing.
+5. **A read records nothing**, nor does a delete matching no row or an
+   unchanged freshness marker.
+6. **No plaintext reaches audit, log or error output.** The payload type has no
+   field a value fits into, and the store calls no logger (`INV-PRIV-011`).
+7. **The proof is mechanical, over every DIRECT CALL.**
+   `credential-actor-census.test.ts` walks the tree, and also allows writes to
+   the `XeroToken` mirror only from the token store; `two-factor-secret-census.test.ts`
+   pins every second-factor writer. Scanner tests prove seeded bypasses are
+   reported. A wrapper hides its callers soundly: it requires an actor.
 
 ## INV-PRIV-021
 
