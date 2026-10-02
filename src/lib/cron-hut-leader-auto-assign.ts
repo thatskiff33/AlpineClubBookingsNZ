@@ -1,6 +1,10 @@
 import { prisma } from "./prisma";
-import { eachDayOfInterval, addDays } from "date-fns";
-import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import {
+  addDaysDateOnly,
+  eachDateOnlyInRange,
+  formatDateOnly,
+  parseDateOnly,
+} from "@/lib/date-only";
 import {
   getGuestBedNightKeys,
   isGuestActiveOnNight,
@@ -56,8 +60,16 @@ export async function autoAssignHutLeaders(): Promise<{
 
   const lookAheadDays = await loadHutLeaderLookaheadDays();
   const today = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
-  const endDate = addDays(today, lookAheadDays);
-  const days = eachDayOfInterval({ start: today, end: endDate });
+  // Whole date-only days from the club's today through today + lookahead,
+  // inclusive (#3817). `date-fns`' `eachDayOfInterval` stepped LOCAL midnights,
+  // which under the server's `TZ=Pacific/Auckland` pin are 12:00Z on the
+  // PREVIOUS UTC date: every `day` then narrowed to the day before against the
+  // `@db.Date` columns, so the job looked at yesterday through the day before
+  // its horizon, and the night model below refuses such a value outright.
+  const days = eachDateOnlyInRange(
+    today,
+    addDaysDateOnly(today, lookAheadDays + 1),
+  );
 
   const assignedDates: string[] = [];
 

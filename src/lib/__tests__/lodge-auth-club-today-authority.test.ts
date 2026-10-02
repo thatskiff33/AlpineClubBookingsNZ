@@ -96,9 +96,9 @@ describe("kiosk lodge resolution uses the club's day (#3123)", () => {
     const where = mocks.assignmentFindMany.mock.calls[0]?.[0] as {
       where: { startDate: { lte: Date }; endDate: { gte: Date } };
     };
-    // `startDate <= today + 1` is the arm's own pre-existing window; only the
-    // day it is anchored on changes here.
-    expect(where.where.endDate.gte.toISOString()).toBe(CLUB_DAY);
+    // The access window, `[startDate - 1, endDate + 1]` (#3817), anchored on the
+    // club's day: `startDate <= today + 1` and `endDate >= today - 1`.
+    expect(where.where.endDate.gte.toISOString()).toBe("2026-06-29T00:00:00.000Z");
     expect(where.where.startDate.lte.toISOString()).toBe(CLUB_DAY_PLUS_1);
   });
 
@@ -130,7 +130,8 @@ describe("kiosk lodge resolution uses the club's day (#3123)", () => {
     const where = mocks.assignmentFindMany.mock.calls.at(-1)?.[0] as {
       where: { endDate: { gte: Date } };
     };
-    expect(where.where.endDate.gte.toISOString()).toBe(CLUB_DAY_PLUS_1);
+    // The club's 1 July, less the departure day (#3817).
+    expect(where.where.endDate.gte.toISOString()).toBe(CLUB_DAY);
   });
 
   it("really asks the ClubTimeSettings row for the zone", async () => {

@@ -149,8 +149,10 @@ describe("a hut-leader PIN window is judged on club time (#3123)", () => {
     // The club's 30 June, encoded the way a `@db.Date` column round-trips
     // (`INV-DATE-026`). A club-LOCAL midnight would be 2026-06-30T06:00Z, which
     // Prisma narrows against a DATE column, and the environment's answer would
-    // be 1 July - both are excluded by asserting the exact instant.
-    expect(endDateBound().toISOString()).toBe("2026-06-30T00:00:00.000Z");
+    // be 1 July - both are excluded by asserting the exact instant. The bound is
+    // one day earlier than the club's day because the access window runs to the
+    // departure day, the day after the last night (#3817): `endDate >= day - 1`.
+    expect(endDateBound().toISOString()).toBe("2026-06-29T00:00:00.000Z");
   });
 
   it("MOVES with the persisted zone, which kills a hard-coded Pacific/Auckland", async () => {
@@ -170,19 +172,21 @@ describe("a hut-leader PIN window is judged on club time (#3123)", () => {
     await post();
     const west = endDateBound().toISOString();
 
-    expect(east).toBe("2026-07-01T00:00:00.000Z");
-    expect(west).toBe("2026-06-30T00:00:00.000Z");
+    // Each club's day, less the departure day (#3817).
+    expect(east).toBe("2026-06-30T00:00:00.000Z");
+    expect(west).toBe("2026-06-29T00:00:00.000Z");
     expect(east).not.toBe(west);
   });
 
-  it("an assignment that ended on the club's yesterday is outside the bound", async () => {
-    // The behavioural half: with the club on 30 June, an assignment whose
-    // `endDate` is 29 June must not satisfy `endDate >= today`. The environment's
-    // 1 July would have excluded 30 June too - a hut leader whose assignment ends
-    // TODAY, refused their own instructions.
+  it("an assignment whose departure day was the club's yesterday is outside the bound", async () => {
+    // The behavioural half: with the club on 30 June, an assignment whose last
+    // night was 28 June (departure day 29 June) must not satisfy the bound, and
+    // one whose last night was 29 June (departure day TODAY, #3817) must. The
+    // environment's 1 July would have excluded 29 June too - a hut leader on
+    // their departure day, refused their own instructions.
     await post();
     const bound = endDateBound();
-    expect(new Date("2026-06-29T00:00:00.000Z") >= bound).toBe(false);
-    expect(new Date("2026-06-30T00:00:00.000Z") >= bound).toBe(true);
+    expect(new Date("2026-06-28T00:00:00.000Z") >= bound).toBe(false);
+    expect(new Date("2026-06-29T00:00:00.000Z") >= bound).toBe(true);
   });
 });

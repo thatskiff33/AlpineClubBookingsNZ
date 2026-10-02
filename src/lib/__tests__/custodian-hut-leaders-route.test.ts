@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { hutLeaderStayGuestRow } from "@/lib/__tests__/helpers/hut-leader-stay";
 
 /**
  * Custodian bed hold — the hut-leaders write routes (#2286).
@@ -50,6 +51,10 @@ const mocks = vi.hoisted(() => ({
   txAssignmentUpdate: vi.fn(),
   txAssignmentDelete: vi.fn(),
   txExecuteRaw: vi.fn(),
+  // #3817: the stay check's reads. Defaulted below to a stay covering every
+  // night these cases assign, so the pre-existing cases are unaffected.
+  bookingGuestFindMany: vi.fn(),
+  bookingFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
@@ -135,6 +140,8 @@ vi.mock("@/lib/prisma", () => ({
       update: mocks.assignmentUpdate,
     },
     lodge: { findUnique: mocks.lodgeFindUnique },
+    bookingGuest: { findMany: mocks.bookingGuestFindMany },
+    booking: { findMany: mocks.bookingFindMany },
   },
 }));
 
@@ -227,6 +234,10 @@ beforeEach(() => {
       : null;
   });
   mocks.sendHutLeaderAssignmentEmail.mockResolvedValue(undefined);
+  mocks.bookingGuestFindMany.mockResolvedValue([
+    hutLeaderStayGuestRow("2026-06-01", "2026-10-01"),
+  ]);
+  mocks.bookingFindMany.mockResolvedValue([]);
 
   mocks.acquireLodgeCapacityLock.mockImplementation(async () => {
     callOrder.push("lock");
@@ -261,6 +272,8 @@ beforeEach(() => {
     callOrder.push("txBegin");
     const result = await run({
       member: { findUnique: mocks.memberFindUnique },
+      bookingGuest: { findMany: mocks.bookingGuestFindMany },
+      booking: { findMany: mocks.bookingFindMany },
       // #2698: the global cohort key, taken only on the amend path.
       $executeRaw: mocks.txExecuteRaw,
       hutLeaderAssignment: {
@@ -880,5 +893,124 @@ describe("#2698 whole-lodge hold amendment — the ordering case", () => {
       }),
       expect.anything(),
     );
+  });
+});
+
+describe("#3817 — a role-only assignment may claim only nights the member stays", () => {
+  /** The member stays 1-4 Jul (checks out the morning of 5 Jul). */
+  function staysFirstToFourth() {
+    mocks.bookingGuestFindMany.mockResolvedValue([
+      hutLeaderStayGuestRow("2026-07-01", "2026-07-05"),
+    ]);
+  }
+
+  it("POST refuses the check-out night with 409, naming it and the last night stayed", async () => {
+    staysFirstToFourth();
+    // CREATE_BODY claims 1-5 Jul; the 5th is the check-out morning.
+    const res = await POST(postRequest(CREATE_BODY));
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "HUT_LEADER_NIGHTS_NOT_STAYED",
+      firstNightNotStayed: "2026-07-05",
+      lastNightStayed: "2026-07-04",
+    });
+    // Refused before any lock is taken or anything written.
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.txAssignmentCreate).not.toHaveBeenCalled();
+  });
+
+  it("POST accepts the same assignment ending on the last night stayed", async () => {
+    staysFirstToFourth();
+    const res = await POST(postRequest({ ...CREATE_BODY, endDate: "2026-07-04" }));
+    expect(res.status).toBe(201);
+  });
+
+  it("POST refuses when the member has no stay at all (a cancelled stay is not returned)", async () => {
+    mocks.bookingGuestFindMany.mockResolvedValue([]);
+    const res = await POST(postRequest({ ...CREATE_BODY, endDate: "2026-07-04" }));
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      firstNightNotStayed: "2026-07-01",
+      lastNightStayed: null,
+    });
+  });
+
+  it("POST re-asks under the lodge lock: a stay gone after the cheap ask refuses with nothing written", async () => {
+    mocks.bookingGuestFindMany
+      .mockResolvedValueOnce([hutLeaderStayGuestRow("2026-07-01", "2026-07-05")])
+      .mockResolvedValue([]);
+    const res = await POST(postRequest({ ...CREATE_BODY, endDate: "2026-07-04" }));
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ code: "HUT_LEADER_NIGHTS_NOT_STAYED" });
+    expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalled();
+    expect(mocks.txAssignmentCreate).not.toHaveBeenCalled();
+  });
+
+  it("POST does not ask a BED-HOLDING (custodian) assignment: the held bed is the stay", async () => {
+    mocks.bookingGuestFindMany.mockResolvedValue([]);
+    const res = await POST(postRequest({ ...CREATE_BODY, bedId: "bed-1" }));
+    expect(res.status).toBe(201);
+    expect(mocks.bookingGuestFindMany).not.toHaveBeenCalled();
+  });
+
+  it("PUT refuses a date move onto a night the member is not staying", async () => {
+    staysFirstToFourth();
+    mocks.txAssignmentFindUnique.mockResolvedValue({
+      id: "a1",
+      memberId: "member-1",
+      lodgeId: LODGE,
+      bedId: null,
+      source: "MANUAL",
+      startDate: new Date("2026-07-01T00:00:00.000Z"),
+      endDate: new Date("2026-07-03T00:00:00.000Z"),
+    });
+
+    const res = await PUT(putRequest({ endDate: "2026-07-05" }), { params });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "HUT_LEADER_NIGHTS_NOT_STAYED",
+      firstNightNotStayed: "2026-07-05",
+      lastNightStayed: "2026-07-04",
+    });
+    expect(mocks.txAssignmentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("PUT leaves a bed-only change alone (Release bed keeps working on any row)", async () => {
+    mocks.bookingGuestFindMany.mockResolvedValue([]);
+    mocks.txAssignmentFindUnique.mockResolvedValue({
+      id: "a1",
+      memberId: "member-1",
+      lodgeId: LODGE,
+      bedId: "bed-1",
+      source: "MANUAL",
+      startDate: new Date("2026-07-01T00:00:00.000Z"),
+      endDate: new Date("2026-07-05T00:00:00.000Z"),
+    });
+
+    const res = await PUT(putRequest({ bedId: null }), { params });
+
+    expect(res.status).toBe(200);
+    expect(mocks.bookingGuestFindMany).not.toHaveBeenCalled();
+  });
+
+  it("PUT does not ask a school teacher's row, whose nights are the school booking's", async () => {
+    mocks.bookingGuestFindMany.mockResolvedValue([]);
+    mocks.txAssignmentFindUnique.mockResolvedValue({
+      id: "a1",
+      memberId: "teacher-1",
+      lodgeId: LODGE,
+      bedId: null,
+      source: "SCHOOL_BOOKING",
+      startDate: new Date("2026-07-01T00:00:00.000Z"),
+      endDate: new Date("2026-07-05T00:00:00.000Z"),
+    });
+
+    const res = await PUT(putRequest({ endDate: "2026-07-04" }), { params });
+
+    expect(res.status).toBe(200);
+    expect(mocks.bookingGuestFindMany).not.toHaveBeenCalled();
   });
 });
