@@ -896,8 +896,18 @@ describe("every refusing surface answers with something the caller can act on", 
       const source = readRepoCode(file);
       if (file === "src/app/api/bookings/route.ts") {
         // Catches it only to collapse it (#3770): a body naming the club's
-        // policy would say whether the named outsider is real.
-        expect(source, file).toContain("deferredPolicyRefusal()");
+        // policy would say whether the named outsider is real. The mapping is
+        // ONE function, and each of the three create-service catches calls it.
+        const mapping = source.slice(
+          source.indexOf("const deferredServiceRefusal"),
+          source.indexOf(": null;", source.indexOf("const deferredServiceRefusal")),
+        );
+        expect(mapping, file).toContain("err instanceof AdultMemberHostingRequiredError");
+        expect(mapping, file).toContain("deferredPolicyRefusal()");
+        for (const caught of ["deferredServiceRefusal(err)", "deferredServiceRefusal(waitlistErr)"]) {
+          expect(source, `${file}: ${caught}`).toContain(caught);
+        }
+        expect(source.split("deferredServiceRefusal(err)").length - 1, file).toBe(2);
         continue;
       }
       if (OFFICER_PATHS.includes(file)) {

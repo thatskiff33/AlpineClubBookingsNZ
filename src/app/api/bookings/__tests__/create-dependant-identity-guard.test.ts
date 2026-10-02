@@ -61,6 +61,7 @@ const h = vi.hoisted(() => ({
   lodgeAccessFindMany: vi.fn(),
   lodgeRoomFindUnique: vi.fn(),
   planConsent: vi.fn(),
+  checkCapacity: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
@@ -157,6 +158,10 @@ vi.mock("@/lib/booking-member-night-conflicts", () => ({
 vi.mock("@/lib/lodges", () => ({
   resolveOptionalActiveLodgeId: h.resolveOptionalActiveLodgeId,
   resolvePolicyRowsForLodge: () => [],
+}));
+// #3770 R4: the route's full-lodge pre-flight, read before the outsider lookup.
+vi.mock("@/lib/capacity", () => ({
+  checkCapacityForGuestRanges: h.checkCapacity,
 }));
 vi.mock("@/lib/lodge-capacity", () => ({
   getLodgeCapacity: h.getLodgeCapacity,
@@ -288,6 +293,7 @@ function setPreLookupDefaults() {
   h.evalHosting.mockResolvedValue(null);
   h.lodgeAccessFindMany.mockResolvedValue([]);
   h.lodgeRoomFindUnique.mockResolvedValue(null);
+  h.checkCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
   // Consent planning passes rows through: an outsider is as present as the
   // club's notify-only mode makes them. A case about approval-required consent
   // marks them PENDING itself.
@@ -430,10 +436,13 @@ function familyMemberRow(id: string) {
   return { id, ageTier: "ADULT", firstName: id, lastName: "Family" };
 }
 function arrangeLookup(xIsReal: boolean, xAgeTier: "ADULT" | "CHILD" = "ADULT") {
-  h.computeMemberGuestBoundary.mockResolvedValue({
-    scopeByMemberId: new Map([[MEMBER_X, "BEYOND_FAMILY"]]),
-    beyondFamilyMemberIds: [MEMBER_X],
-  });
+  // The boundary names X beyond the family whenever the party names X.
+  h.computeMemberGuestBoundary.mockImplementation(
+    async (_db: unknown, _booker: unknown, ids: readonly string[]) =>
+      ids.includes(MEMBER_X)
+        ? { scopeByMemberId: new Map([[MEMBER_X, "BEYOND_FAMILY"]]), beyondFamilyMemberIds: [MEMBER_X] }
+        : { scopeByMemberId: new Map(), beyondFamilyMemberIds: [] },
+  );
   h.resolveLinkedBookingMembersWithBoundary.mockImplementation(
     async (_db: unknown, _booker: unknown, ids: Array<string | null | undefined>) => {
       const named = ids.filter((id): id is string => Boolean(id));
@@ -1192,6 +1201,16 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
       rows.some((row) => row.memberId === MEMBER_X);
 
     const KID = { firstName: "Kid", lastName: "Ngata", ageTier: "CHILD" as const, isMember: false };
+    /** A hosting violation shaped as the service's reconciler raises it. */
+    const SERVICE_HOSTING_VIOLATION = {
+      ...hostingViolation,
+      reasonCode: "ADULT_MEMBER_HOSTING_REQUIRED",
+      policyId: "pol_host",
+      policyVersion: 1,
+      affectedNights: ["2026-08-01"],
+      capacityMode: "HOLD",
+      exceptionEligible: true,
+    } as never;
     const policyFailures: Array<[string, () => void, Record<string, unknown>, (xIsReal: boolean) => void]> = [
       ["paid-up adult", () => h.evalNonMember.mockResolvedValue({ violation: paidUpViolation }),
         { guests: [FAMILY, X] }, (real) => arrangeLookup(real)],
@@ -1203,17 +1222,18 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
       // #3770 F1, the race path: the service's own refusal collapses too.
       ["hosting, refused inside the create service", () =>
         h.createConfirmedBooking.mockRejectedValue(
-          new AdultMemberHostingRequiredError({
-            ...hostingViolation,
-            reasonCode: "ADULT_MEMBER_HOSTING_REQUIRED",
-            policyId: "pol_host",
-            policyVersion: 1,
-            affectedNights: ["2026-08-01"],
-            capacityMode: "HOLD",
-            exceptionEligible: true,
-          } as never),
+          new AdultMemberHostingRequiredError(SERVICE_HOSTING_VIOLATION),
         ),
         { guests: [FAMILY, X] }, (real) => arrangeLookup(real)],
+      // #3770 N1: the same mapping in the draft and waitlist catches.
+      ["hosting, refused inside the draft service", () =>
+        h.createDraftBooking.mockRejectedValue(new AdultMemberHostingRequiredError(SERVICE_HOSTING_VIOLATION)),
+        { guests: [FAMILY, X], draft: true }, (real) => arrangeLookup(real)],
+      ["hosting, refused inside the waitlist service", () => {
+        h.createConfirmedBooking.mockResolvedValue({ type: "capacity_exceeded", fullNights: [] });
+        h.createWaitlistedBooking.mockRejectedValue(new AdultMemberHostingRequiredError(SERVICE_HOSTING_VIOLATION));
+      },
+        { guests: [FAMILY, X], waitlist: true }, (real) => arrangeLookup(real)],
       // #3770 F2: minors with no adult, where X is the only possible adult.
       ["adult supervision", () => undefined,
         { guests: [KID, X] }, (real) => arrangeLookup(real, "CHILD")],
@@ -1237,8 +1257,6 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
         arrangeFailure();
         const res = await POST(makeRequest(body));
         responses.push({ status: res.status, body: await res.text() });
-        expect(h.createDraftBooking).not.toHaveBeenCalled();
-        expect(h.createWaitlistedBooking).not.toHaveBeenCalled();
       }
 
       expect(responses[0]?.status).toBe(403);
@@ -1282,6 +1300,50 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
       expect(res.status).toBe(403);
       expect((await res.json()).code).toBe("MEMBER_GUEST_NOT_ADDABLE");
       expectNoBookingWritten();
+    });
+
+    // #3770 R4 (owner decision: "Check 'full' first"): a full lodge is answered
+    // before the outsider is looked up, from the member half of the party.
+    it("answers a full lodge the same whether X resolves", async () => {
+      const full = {
+        available: false,
+        minAvailable: 0,
+        nightDetails: [{ date: new Date("2026-08-01T00:00:00.000Z"), availableBeds: 0, requested: 2, capacity: 30, wholeLodgeBlocked: false, custodianHeld: false }],
+      };
+      const responses: Array<{ status: number; body: string }> = [];
+      for (const xIsReal of [true, false]) {
+        vi.clearAllMocks();
+        h.memberFindMany.mockResolvedValue([DEPENDANT]);
+        h.normalizeGuestStayRanges.mockImplementation((guests: unknown[]) => guests);
+        h.getLodgeCapacity.mockResolvedValue(30);
+        h.resolveOptionalActiveLodgeId.mockResolvedValue("lodge-1");
+        setPreLookupDefaults();
+        arrangeLookup(xIsReal);
+        h.checkCapacity.mockResolvedValue(full);
+        const res = await POST(makeRequest({ guests: [FAMILY, X, KID] }));
+        responses.push({ status: res.status, body: await res.text() });
+        expect(lookupNamedX()).toBe(false);
+        expectNoBookingWritten();
+        // The member half only: the family member and X, never the non-member.
+        const ranges = h.checkCapacity.mock.calls[0]?.[3] as unknown[];
+        expect(ranges).toHaveLength(2);
+      }
+
+      expect(responses[0]).toEqual(responses[1]);
+      expect(responses[0]?.status).toBe(409);
+      expect(JSON.parse(responses[0]?.body ?? "{}").code).toBe("CAPACITY_EXCEEDED");
+    });
+
+    it("does not ask the pre-flight for a draft, a waitlist join or a family-only party", async () => {
+      arrangeLookup(true);
+      for (const body of [
+        { guests: [FAMILY, X], draft: true },
+        { guests: [FAMILY, X], waitlist: true },
+        { guests: [FAMILY] },
+      ]) {
+        await POST(makeRequest(body));
+      }
+      expect(h.checkCapacity).not.toHaveBeenCalled();
     });
 
     it("leaves adult supervision to the create service when nobody beyond the family is named", async () => {

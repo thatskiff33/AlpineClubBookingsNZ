@@ -631,6 +631,24 @@ describe("call-site survey", () => {
     }
   });
 
+  it("has exactly the declared family-first callers (#3770)", () => {
+    // SET EQUALITY again: the module is declared as able to skip, so a new door
+    // calling it with `skipAuthorization: true` would be a consent decision nobody
+    // made, invisible to every check above. The module defines both phases.
+    const familyFirstCallers = [
+      ...new Set(
+        ["resolveFamilyPhase", "resolveBeyondFamilyPhase"].flatMap((helper) =>
+          callersOf(helper).filter(
+            (file) => file !== "src/lib/member-guest-family-first.ts",
+          ),
+        ),
+      ),
+    ].sort();
+    expect(familyFirstCallers).toEqual(
+      FAMILY_FIRST_CALL_SITES.map((site) => site.file).sort(),
+    );
+  });
+
   it("declares each family-first caller's real authorization modes", () => {
     for (const site of FAMILY_FIRST_CALL_SITES) {
       const source = readRepoFile(site.file);
