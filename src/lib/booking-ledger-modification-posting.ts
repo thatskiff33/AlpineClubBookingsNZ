@@ -17,6 +17,8 @@
 import type { AgeTier, ManualRefundTaskDirection } from "@prisma/client";
 
 import {
+  chargeLineReversal,
+  type PostedChargeLine,
   guestNightPosting,
   isSingleNightLine,
   promotionPosting,
@@ -38,22 +40,7 @@ import {
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { editReviewSettlementSign } from "@/lib/edit-financial-review-charge-shape";
 
-/** A charge line already on the ledger, with what a reversal must copy. */
-export type PostedChargeLine = {
-  id: string;
-  kind: "GUEST_NIGHT" | "PROMOTION";
-  sign: 1 | -1;
-  quantity: number;
-  unitCents: number;
-  bookingGuestId: string | null;
-  nightStart: Date | null;
-  nightEndExclusive: Date | null;
-  rateMembershipTypeId: string | null;
-  ageTier: AgeTier | null;
-  guestNames: string[];
-  narration: string;
-  reversesLineId: string | null;
-};
+export type { PostedChargeLine } from "@/lib/booking-ledger-charge-line";
 
 /**
  * The lines that stand: neither a reversal nor reversed by one.
@@ -137,24 +124,7 @@ export function planModificationChargeLines(
   const reversedHere = new Set<string>();
   const reverse = (line: PostedChargeLine): void => {
     reversedHere.add(line.id);
-    postings.push({
-      ...base,
-      kind: line.kind,
-      sign: line.sign === 1 ? -1 : 1,
-      quantity: line.quantity,
-      unitCents: line.unitCents,
-      // Copied from the line, never re-derived: the guest row it names may be
-      // gone by now (a removal deletes it), and the line outlives it.
-      bookingGuestId: line.bookingGuestId,
-      nightStart: line.nightStart,
-      nightEndExclusive: line.nightEndExclusive,
-      rateMembershipTypeId: line.rateMembershipTypeId,
-      ageTier: line.ageTier,
-      guestNames: line.guestNames,
-      narration: `Reversed: ${line.narration}`,
-      reversesLineId: line.id,
-      postingKey: reversalKey(line.id),
-    });
+    postings.push(chargeLineReversal(anchor, line, reversalKey(line.id)));
   };
 
   for (const change of nights.guests) {
@@ -288,6 +258,31 @@ export type PostedAdjustmentLine = {
 };
 
 /**
+ * THE ONE BUILDER FOR TAKING BACK A STAND-IN (INV-SSOT): a review closure whose
+ * re-price now carries the price (§5.3), and a cancellation (§5.1, #3611), both
+ * reverse a live `AGREED_ADJUSTMENT` through here, keyed by its line id. The
+ * person whose decision the reversal records is named where there is one.
+ */
+export function agreedAdjustmentReversal(
+  anchor: Pick<BookingLedgerPosting, "bookingId" | "lodgeId" | "anchorKind" | "anchorId">,
+  line: PostedAdjustmentLine,
+  postedByMemberId?: string,
+): BookingLedgerPosting {
+  return {
+    ...anchor,
+    side: "ADJUSTMENT",
+    kind: "AGREED_ADJUSTMENT",
+    sign: line.sign === 1 ? -1 : 1,
+    quantity: line.quantity,
+    unitCents: line.unitCents,
+    narration: `Reversed: ${line.narration}`,
+    ...(postedByMemberId === undefined ? {} : { postedByMemberId }),
+    reversesLineId: line.id,
+    postingKey: reversalKey(line.id),
+  };
+}
+
+/**
  * WHAT A REVIEW CLOSURE POSTS BESIDE ITS RE-PRICE, decided at booking grain:
  * the reversals of superseded stand-ins, the share as a stand-in, or nothing.
  * The rule and why: design `docs/design/booking-ledger.md` §5.3.
@@ -327,21 +322,13 @@ export function planReviewClosureShareLines({
   const chargesCarryThePrice =
     rebasedFinalPriceCents !== null && (chargedCents === rebasedFinalPriceCents || repriceRecordsMovement);
   if (chargesCarryThePrice) {
-    return liveLines(postedAdjustmentLines).map((line) => ({
-      bookingId,
-      lodgeId,
-      side: "ADJUSTMENT",
-      kind: "AGREED_ADJUSTMENT",
-      sign: line.sign === 1 ? -1 : 1,
-      quantity: line.quantity,
-      unitCents: line.unitCents,
-      anchorKind: "REVIEW_TASK",
-      anchorId: manualRefundTaskId,
-      narration: `Reversed: ${line.narration}`,
-      postedByMemberId: officerMemberId,
-      reversesLineId: line.id,
-      postingKey: reversalKey(line.id),
-    }));
+    return liveLines(postedAdjustmentLines).map((line) =>
+      agreedAdjustmentReversal(
+        { bookingId, lodgeId, anchorKind: "REVIEW_TASK", anchorId: manualRefundTaskId },
+        line,
+        officerMemberId,
+      ),
+    );
   }
   if (settlement === null) return [];
   return [

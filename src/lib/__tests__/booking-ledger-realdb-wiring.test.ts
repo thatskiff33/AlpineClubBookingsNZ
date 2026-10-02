@@ -93,6 +93,28 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
     }
   });
 
+  it("carries #3611's cancellation proof into the same harness", () => {
+    const harness = source(
+      resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
+    );
+    expect(harness).toContain('import "./booking-ledger-cancellation.realdb.test";');
+    const suite = source(
+      resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-cancellation.realdb.test.ts"),
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    for (const caseName of [
+      "AFTER AN EDIT: the cancellation reverses the edit's re-post, never a reversed line; a card refund brings owed to zero; a replay posts nothing",
+      "posts nothing for a booking not yet confirmed on the ledger",
+      "the REAL cancelBooking, cash-settled at a 50% tier: reversals and the kept fee post in the claim, and the hand-back brings owed to zero",
+      "the REAL cancelBooking on an unpaid booking confirmed on the ledger (its mark-paid since reversed): the stay is reversed and no fee posts",
+      "A STALE REPLAY inserts nothing: the reversal key, and under another key the unique reversesLineId, each skip it, and the transaction stays usable",
+      "a live review-share stand-in is reversed by the cancellation, and owed reaches zero once its refund posts (review F1)",
+      "the REAL settle's capacity void on a booking a reversed mark-paid left confirmed: the stay is reversed, nothing kept, and owed reaches zero once the card refund posts (review F4)",
+    ]) {
+      expect(suite).toContain(caseName);
+    }
+  });
+
   it("still gates on the harness's variable and carries its three proofs", () => {
     const suite = source(
       resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-posting-key.realdb.test.ts"),

@@ -447,7 +447,7 @@ checks gate **pushes**, not only merges, so nothing lands on an integration bran
 without the nine checks — which is why the sync opens a pull request from
 `main` rather than pushing a merge commit it has just created. And
 `required_pull_request_reviews` is deliberately absent (`main` has it with a count
-of `0`, and a code-owner rule decided but not yet applied — `AGENTS.md` →
+of `0`, plus the code-owner rule applied on 2 Oct 2026 — `AGENTS.md` →
 "Pre-authorisation and attributability"); on an
 integration branch the pull request arrives from the workflow model rather than
 from enforcement, and the owner's gate is the `epic → main` merge.
@@ -711,7 +711,7 @@ Post one on the issue once the PR is reviewed, every confirmed finding is fixed,
 and CI is green: what was built, which review lenses ran and what they found,
 how each finding was fixed, and whether the PR is eligible for autonomous merge
 or is held for owner approval. On a PR touching a `.github/CODEOWNERS` path,
-once code-owner review is applied, the ask requests the owner's GitHub
+the ask requests the owner's GitHub
 **Approve** as well as the approval comment: the agent account cannot merge
 past a missing Approve (`AGENTS.md` → "Pre-authorisation and
 attributability"). With the CLAIM comment it makes the issue thread
