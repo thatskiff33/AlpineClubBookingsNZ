@@ -6,7 +6,7 @@ pre-checks a refusal the transaction already makes. The growth is the code that
 splits one refusal in two, plus the comment saying why the order matters.
 
 file: src/app/api/bookings/route.ts
-lines: 1830
+lines: 1843
 reason: the route is a long, ordered sequence of guards, and the contract this
   issue fixes IS that order: refusals that read only the request and the booker
   must run before the member lookup, and the ones that read the resolved party
@@ -85,3 +85,19 @@ reason: eleven lines. The plan already read each proposed row's stored or
   that the adult-supervision rule uses too (owner decision on #3770), so the two
   rules cannot judge the same party's presence differently. It has to sit beside
   the review decision it feeds, in the function that builds the proposed party.
+
+file: src/app/(authenticated)/book/_hooks/use-booking-wizard.ts
+lines: 2364
+reason: the wizard now asks for the adult-supervision reason with the server's
+  own rule (#3770), which only holds if every outsider row carries its consent
+  prediction. So the member-guest add waits for the family list, and a failed
+  family load is tracked and retryable. That state belongs beside the family
+  load and the add it gates, in the hook that owns both; the rule itself lives
+  in the shared client-safe module, not here.
+
+file: src/app/(authenticated)/book/page.tsx
+lines: 705
+reason: six lines of prop wiring: the family-load state and its retry are
+  passed from the wizard hook to the guests step, which holds the member-guest
+  finder closed until the family list has loaded (#3770). The page is the only
+  place the hook's values reach the step.
