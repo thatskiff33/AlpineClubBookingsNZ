@@ -110,7 +110,6 @@ describe("MoneyInput", () => {
     const input = screen.getByRole("textbox", { name: "Rate" });
     const alert = screen.getByRole("alert");
     expect(input.getAttribute("aria-invalid")).toBe("true");
-    expect(input.getAttribute("aria-describedby")).toContain("rate-help");
-    expect(input.getAttribute("aria-describedby")).toContain(alert.id);
+    expect(input.getAttribute("aria-describedby")).toBe(`${alert.id} rate-help`);
   });
 });

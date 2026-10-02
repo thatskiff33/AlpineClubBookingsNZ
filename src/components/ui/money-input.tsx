@@ -31,6 +31,8 @@ export interface MoneyInputProps extends NativeMoneyInputProps {
   error?: React.ReactNode;
   /** Enables the leading sign accepted by parseSignedDecimalDollarsToCents. */
   allowNegative?: boolean;
+  /** Reuses a caller's existing accepted draft syntax before exact parsing. */
+  normalizeDraft?: (value: string) => string;
   /** Inclusive cents bounds used by the whole-dollar controls. */
   minCents?: number;
   maxCents?: number;
@@ -59,6 +61,7 @@ export function MoneyInput({
   label,
   error,
   allowNegative = false,
+  normalizeDraft,
   minCents,
   maxCents,
   id,
@@ -83,7 +86,7 @@ export function MoneyInput({
     setFieldName(name || inputProps["aria-label"] || "amount");
   }, [inputId, label, inputProps]);
   const errorId = `${inputId}-error`;
-  const describedBy = [ariaDescribedBy, error ? errorId : undefined]
+  const describedBy = [error ? errorId : undefined, ariaDescribedBy]
     .filter(Boolean)
     .join(" ") || undefined;
   const parser = allowNegative
@@ -93,7 +96,7 @@ export function MoneyInput({
 
   const nextStepValue = (direction: 1 | -1): string | null => {
     if (controlsDisabled) return null;
-    const parsed = parser(value);
+    const parsed = parser(normalizeDraft ? normalizeDraft(value) : value);
     if (parsed === null) return null;
     const next = parsed + direction * 100;
     if (!Number.isSafeInteger(next)) return null;
@@ -106,7 +109,8 @@ export function MoneyInput({
   };
 
   const changeValue = (next: string) => {
-    if (!hasThirdFractionalDigit(next)) onValueChange(next);
+    const normalized = normalizeDraft ? normalizeDraft(next) : next;
+    if (!hasThirdFractionalDigit(normalized)) onValueChange(next);
   };
 
   const step = (direction: 1 | -1) => {

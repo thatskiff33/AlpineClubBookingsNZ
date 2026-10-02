@@ -634,6 +634,11 @@ editing rules in each admin form. Seed an existing cents amount with
 `formatCentsPlain`; the `money-input-component-guard` rejects a return to the
 older `MONEY_INPUT_PROPS` spread.
 
+A caller with an existing accepted prefix shares its draft normalizer with
+`normalizeDraft`; both precision filtering and stepping then use the same syntax
+as save, while the text remains visible. The Diagnostics budget's tolerated
+dollar prefix is one such case. A supplied `error` is announced before hints.
+
 **Placeholder ink is its own token.** `--placeholder-foreground` is declared in
 every scope that restates `--muted-foreground` — a `var()`-bearing custom
 property is substituted on the element that DECLARES it and then inherits as
