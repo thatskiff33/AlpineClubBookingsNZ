@@ -91,17 +91,18 @@ export function MoneyInput({
     : parseDecimalDollarsToCents;
   const controlsDisabled = disabled || readOnly;
 
-  const canStep = (direction: 1 | -1) => {
-    if (controlsDisabled) return false;
+  const nextStepValue = (direction: 1 | -1): string | null => {
+    if (controlsDisabled) return null;
     const parsed = parser(value);
-    if (parsed === null) return false;
+    if (parsed === null) return null;
     const next = parsed + direction * 100;
-    if (!Number.isSafeInteger(next)) return false;
-    if (!allowNegative && next < 0) return false;
-    if (validBound(minCents) && next < minCents) return false;
-    if (validBound(maxCents) && next > maxCents) return false;
+    if (!Number.isSafeInteger(next)) return null;
+    if (!allowNegative && next < 0) return null;
+    if (validBound(minCents) && next < minCents) return null;
+    if (validBound(maxCents) && next > maxCents) return null;
     // The exact parser owns the int32-safe cents ceiling for this boundary.
-    return parser(formatCentsPlain(next)) !== null;
+    const formatted = formatCentsPlain(next);
+    return parser(formatted) === null ? null : formatted;
   };
 
   const changeValue = (next: string) => {
@@ -109,15 +110,12 @@ export function MoneyInput({
   };
 
   const step = (direction: 1 | -1) => {
-    if (!canStep(direction)) return;
-    const parsed = parser(value);
-    if (parsed === null) return; // narrowed by canStep; keeps the value explicit.
-    const next = parsed + direction * 100;
-    onValueChange(formatCentsPlain(next));
+    const next = nextStepValue(direction);
+    if (next !== null) onValueChange(next);
   };
 
-  const increaseDisabled = !canStep(1);
-  const decreaseDisabled = !canStep(-1);
+  const increaseDisabled = nextStepValue(1) === null;
+  const decreaseDisabled = nextStepValue(-1) === null;
 
   return (
     <div className="space-y-1">
