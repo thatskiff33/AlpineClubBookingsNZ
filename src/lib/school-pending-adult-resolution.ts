@@ -2,7 +2,6 @@ import { AgeTier, BookingRequestStatus, BookingStatus, Prisma } from "@prisma/cl
 
 import { logAudit } from "@/lib/audit";
 import { BookingRequestError, linkedGuestMemberMap, parseBookingRequestGuests } from "@/lib/booking-request";
-import { parseBookingRequestQuoteOptions } from "@/lib/booking-request-quotes";
 import { buildApprovalGuestNights, toPipelineGuestCreateData } from "@/lib/booking-request-shared";
 import { normaliseCorrectedTeachers, type CorrectedTeacher } from "@/lib/booking-request-correction-shape";
 import { pendingAdultReservationNightsMatch, releasePendingAdultNights, reservePendingAdultNights } from "@/lib/booking-request-pending-adult-reservations";
@@ -13,7 +12,7 @@ import { areOldSchoolAdultsRuntimesStopped } from "@/lib/pending-school-adults-g
 import { storedSchoolTeacherListSchema } from "@/lib/school-teacher-schema";
 import { resolveGuestRateMembershipTypes, resolveMembershipTypePoliciesForMembers } from "@/lib/membership-type-policy";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
-import { planAcceptedSchoolHeldPrices } from "@/lib/school-pending-adult-price-plan";
+import { planAcceptedSchoolHeldPrices, readAcceptedSchoolTerms } from "@/lib/school-pending-adult-price-plan";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 
 /** Replace accepted anonymous slots with real names without changing the deal. */
@@ -108,18 +107,9 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
       }
     }
 
-    const accepted = request.acceptedQuoteSnapshot
-      ? parseBookingRequestQuoteOptions([request.acceptedQuoteSnapshot])[0]
-      : null;
-    const pendingPrices = accepted?.guestBreakdown.filter((entry) => entry.kind === "PENDING_ADULT") ?? [];
+    const accepted = await readAcceptedSchoolTerms(request, hold, guests.length + request.pendingAdultCount);
+    const pendingPrices = accepted.guestBreakdown.filter((entry) => entry.kind === "PENDING_ADULT");
     const originalPendingCount = pendingPrices.length;
-    if (!accepted || originalPendingCount < request.pendingAdultCount ||
-        accepted.totalCents !== request.acceptedPriceCents ||
-        (request.acceptedQuoteOptionId !== null && accepted.id !== request.acceptedQuoteOptionId) ||
-        hold.checkIn.getTime() !== request.checkIn.getTime() || hold.checkOut.getTime() !== request.checkOut.getTime() ||
-        hold.discountCents !== 0 || hold.promoAdjustmentCents !== 0) {
-      throw new BookingRequestError("The accepted quote no longer proves each pending adult's price. Review the terms before naming adults.", 409);
-    }
     const resolvedSoFar = originalPendingCount - request.pendingAdultCount;
     const heldPrices = planAcceptedSchoolHeldPrices({
       accepted, guests, teacherCount: teachers.length, pendingAdultCount: request.pendingAdultCount,

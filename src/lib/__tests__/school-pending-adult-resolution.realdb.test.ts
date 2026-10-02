@@ -97,7 +97,9 @@ it("runs the pending-adult database proof in CI", () => {
   beforeEach(async () => {
     await prisma.member.deleteMany({ where: { id: { in: ["matching-adult", "matching-contact"] } } });
     await prisma.bookingRequest.deleteMany({ where: { id: "pending-request" } });
+    await prisma.payment.deleteMany({ where: { bookingId: "pending-hold" } });
     await prisma.booking.deleteMany({ where: { id: "pending-hold" } });
+    await prisma.member.deleteMany({ where: { id: "linked-child" } });
     await prisma.booking.create({ data: {
       id: "pending-hold", lodgeId: "pending-lodge", organisationId: "pending-school",
       checkIn, checkOut, status: "AWAITING_REVIEW", totalPriceCents: 601, finalPriceCents: 601,
@@ -241,22 +243,32 @@ it("runs the pending-adult database proof in CI", () => {
     expect(await prisma.bookingRequestPendingAdultReservationNight.count()).toBe(0);
   });
 
-  it("keeps unequal original and resolved prices attached to their identities across partial index shifts", async () => {
+  it.each([false, true])("preserves unequal accepted prices and guest identities through partial naming and approval (linked child: %s)", async (linkedChild) => {
     const child = { firstName: "School Child", lastName: "1", ageTier: "CHILD" as const };
+    const childMemberId = linkedChild ? "linked-child" : null;
+    if (linkedChild) await prisma.member.create({ data: {
+      id: childMemberId!, firstName: "Real", lastName: "Child", email: "child@example.invalid",
+      passwordHash: "test", role: "USER", ageTier: "CHILD", canLogin: false,
+    } });
     const snapshot = { ...option, guestBreakdown: [
       { kind: "NAMED", ...teacher, guestIndex: 0, totalCents: 201 },
       { kind: "NAMED", ...child, guestIndex: 1, totalCents: 111 },
       { kind: "PENDING_ADULT", ageTier: "ADULT", guestIndex: 2, totalCents: 145 },
       { kind: "PENDING_ADULT", ageTier: "ADULT", guestIndex: 3, totalCents: 144 },
-    ].map((entry) => ({ ...entry, isMember: false, memberId: null, nightCount: 2, rateCents: null })) };
-    await prisma.bookingRequest.update({ where: { id: "pending-request" }, data: { guests: [teacher, child], acceptedQuoteSnapshot: snapshot } });
+    ].map((entry) => ({ ...entry, isMember: entry.guestIndex === 1 && linkedChild, memberId: entry.guestIndex === 1 ? childMemberId : null, nightCount: 2, rateCents: null })) };
+    await prisma.bookingRequest.update({ where: { id: "pending-request" }, data: {
+      guests: [teacher, child], schoolName: "Test school", priceCents: snapshot.totalCents,
+      acceptedQuoteSnapshot: snapshot, linkedGuestMembers: linkedChild ? [{ guestIndex: 1, memberId: childMemberId! }] : [],
+    } });
     await prisma.bookingGuest.create({ data: { ...child, bookingId: "pending-hold", priceCents: 100, stayStart: checkIn, stayEnd: checkOut,
+      memberId: childMemberId, isMember: linkedChild, dietaryRequirements: "Child's stay note",
+      ...(linkedChild ? { consentStatus: "CONFIRMED", consentRespondedAt: new Date("2026-07-01T00:00:00.000Z"), consentRespondedByMemberId: "officer" } : {}),
       nights: { create: [checkIn, new Date("2026-08-02T00:00:00.000Z")].map((stayDate) => ({ stayDate, priceCents: 50, priceSource: "EVEN_SPLIT" })) },
     } });
     const original = await prisma.bookingGuest.findMany({ where: { bookingId: "pending-hold" }, include: { nights: true } });
     await nameAdult();
     await nameAdult(5, "Cara");
-    const current = await prisma.bookingGuest.findMany({ where: { bookingId: "pending-hold" }, include: { nights: true } });
+    const current = await prisma.bookingGuest.findMany({ where: { bookingId: "pending-hold" }, include: { nights: true }, omit: { dietaryRequirements: false } });
     expect(Object.fromEntries(current.map((guest) => [guest.firstName, guest.priceCents]))).toEqual({ Ann: 201, "School Child": 111, Beth: 145, Cara: 144 });
     for (const before of original) {
       const after = current.find((guest) => guest.id === before.id)!;
@@ -265,6 +277,19 @@ it("runs the pending-adult database proof in CI", () => {
     }
     expect((await prisma.bookingRequest.findUniqueOrThrow({ where: { id: "pending-request" } })).acceptedQuoteSnapshot).toEqual(snapshot);
     expect(await prisma.bookingRequestPendingAdultReservationNight.count()).toBe(0);
+    await approve({ requestId: "pending-request", adminMemberId: "officer" });
+    const approved = await prisma.bookingGuest.findMany({ where: { bookingId: "pending-hold" }, include: { nights: true }, omit: { dietaryRequirements: false } });
+    for (const named of current) {
+      const after = approved.find((guest) => guest.firstName === named.firstName && guest.lastName === named.lastName)!;
+      expect.soft(after.id, `${named.firstName}'s held guest identity`).toBe(named.id);
+      expect.soft(after.priceCents, `${named.firstName}'s accepted cents`).toBe(named.priceCents);
+      expect.soft(after.nights.map((night) => night.priceCents).sort(), `${named.firstName}'s accepted night cents`).toEqual(named.nights.map((night) => night.priceCents).sort());
+      expect.soft(after).toMatchObject({ memberId: named.memberId, dietaryRequirements: named.dietaryRequirements,
+        consentStatus: named.consentStatus, consentRequestedAt: named.consentRequestedAt,
+        consentRespondedAt: named.consentRespondedAt, consentExpiresAt: named.consentExpiresAt,
+        consentRespondedByMemberId: named.consentRespondedByMemberId });
+    }
+    expect((await prisma.bookingRequest.findUniqueOrThrow({ where: { id: "pending-request" } })).acceptedQuoteSnapshot).toEqual(snapshot);
   });
 
   it.each(["identity", "ordinal", "sum", "night", "pending-night", "partial"])("refuses an ambiguous or inconsistent %s mapping without mutation", async (corruption) => {
@@ -283,6 +308,35 @@ it("runs the pending-adult database proof in CI", () => {
     expect(await prisma.booking.findUniqueOrThrow({ where: { id: "pending-hold" }, include: { guests: { include: { nights: true } } } })).toEqual(before);
     expect(await prisma.bookingRequest.findUniqueOrThrow({ where: { id: "pending-request" } })).toMatchObject({ version: 4, acceptedQuoteSnapshot: snapshot });
     expect(await prisma.bookingRequestPendingAdultReservationNight.count()).toBe(2);
+  });
+
+  it.each(["snapshot", "identity", "ordinal", "sum", "night", "empty-breakdown"])("refuses a corrupted %s mapping at approval before conversion effects", async (corruption) => {
+    const quote = await prisma.bookingRequestQuote.create({ data: {
+      bookingRequestId: "pending-request", version: 1, status: "ACCEPTED", pricingMode: "OVERALL_TOTAL", options: [option],
+    } });
+    await prisma.bookingRequest.update({ where: { id: "pending-request" }, data: {
+      schoolName: "Test school", priceCents: option.totalCents, acceptedQuoteId: quote.id, acceptedQuoteOptionId: option.id,
+    } });
+    await nameAdult();
+    await nameAdult(5, "Cara");
+    const snapshot = structuredClone(option);
+    if (corruption === "identity" && "firstName" in snapshot.guestBreakdown[0]!) snapshot.guestBreakdown[0]!.firstName = "Different";
+    if (corruption === "ordinal") snapshot.guestBreakdown[1]!.guestIndex = 0;
+    if (corruption === "sum") snapshot.guestBreakdown[0]!.totalCents += 1;
+    if (corruption === "empty-breakdown") snapshot.guestBreakdown = [];
+    await prisma.bookingRequest.update({ where: { id: "pending-request" }, data: {
+      acceptedQuoteSnapshot: corruption === "snapshot" ? Prisma.JsonNull : snapshot,
+    } });
+    if (corruption === "night") await prisma.bookingGuestNight.deleteMany({ where: { bookingGuest: { bookingId: "pending-hold" } } });
+    const before = await prisma.booking.findUniqueOrThrow({ where: { id: "pending-hold" }, include: { guests: { include: { nights: true } } } });
+    const memberCount = await prisma.member.count();
+    const contactCount = await prisma.organisationContact.count();
+    await expect(approve({ requestId: "pending-request", adminMemberId: "officer" })).rejects.toMatchObject({ status: 409 });
+    expect(await prisma.booking.findUniqueOrThrow({ where: { id: "pending-hold" }, include: { guests: { include: { nights: true } } } })).toEqual(before);
+    expect(await prisma.bookingRequest.findUniqueOrThrow({ where: { id: "pending-request" } })).toMatchObject({ status: "ACCEPTED", version: 6 });
+    expect(await prisma.member.count()).toBe(memberCount);
+    expect(await prisma.organisationContact.count()).toBe(contactCount);
+    expect(await prisma.payment.count({ where: { bookingId: "pending-hold" } })).toBe(0);
   });
 
   it("persists no held-price or guest side effect when the version claim loses", async () => {

@@ -3894,7 +3894,11 @@ Terminal decline and requester-cancel claims clear the pending adult count;
 quote snapshots remain unchanged. A generic hold release retains the request's
 count so that an open request can be held again. School and general approval
 both refuse a nonzero pending count or residual
-reservation under their own global-then-lodge locks. Provider calls are outside
+reservation under their own global-then-lodge locks. School approval reuses the
+accepted-party proof before claiming conversion, retaining per-person cents
+and pairing rewrites with proven held guest ids after naming shifts request
+positions. Missing or inconsistent accepted snapshots refuse conversion before
+effects. Provider calls are outside
 these transactions.
 
 ### Provisional reservations for held policy-exception requests (#2365)

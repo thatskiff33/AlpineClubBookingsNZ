@@ -1,8 +1,33 @@
-import type { AgeTier } from "@prisma/client";
+import type { AgeTier, BookingRequest } from "@prisma/client";
 
 import { BookingRequestError, type BookingRequestGuest } from "@/lib/booking-request";
 import type { parseBookingRequestQuoteOptions } from "@/lib/booking-request-quotes";
 import { buildApprovalGuestNights } from "@/lib/booking-request-shared";
+
+/** The same immutable terms fence for naming and its later held approval. */
+export async function readAcceptedSchoolTerms(
+  request: Pick<BookingRequest,
+    "acceptedQuoteSnapshot" | "acceptedQuoteOptionId" | "acceptedPriceCents" | "checkIn" | "checkOut"
+  >,
+  hold: { checkIn: Date; checkOut: Date; discountCents: number; promoAdjustmentCents: number } | null,
+  expectedParticipantCount: number,
+) {
+  // Quote construction imports the school service's schemas. Load its strict
+  // reader only after module initialization to avoid that dependency cycle.
+  const { parseBookingRequestQuoteOptions } = await import("@/lib/booking-request-quotes");
+  const accepted = request.acceptedQuoteSnapshot
+    ? parseBookingRequestQuoteOptions([request.acceptedQuoteSnapshot])[0]
+    : null;
+  if (!accepted || !hold || accepted.totalCents !== request.acceptedPriceCents ||
+      accepted.guestBreakdown.length !== expectedParticipantCount ||
+      accepted.guestBreakdown.reduce((sum, entry) => sum + entry.totalCents, 0) !== accepted.totalCents ||
+      (request.acceptedQuoteOptionId !== null && accepted.id !== request.acceptedQuoteOptionId) ||
+      hold.checkIn.getTime() !== request.checkIn.getTime() || hold.checkOut.getTime() !== request.checkOut.getTime() ||
+      hold.discountCents !== 0 || hold.promoAdjustmentCents !== 0) {
+    throw new BookingRequestError("The accepted quote no longer proves each pending adult's price. Review the terms before naming or approving adults.", 409);
+  }
+  return accepted;
+}
 
 /** Prove the original accepted ordinals before changing provisional held cents. */
 export function planAcceptedSchoolHeldPrices(input: {
