@@ -110,6 +110,7 @@ import {
 } from "@/lib/member-guest-family-first";
 import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
 import { requiresAdultSupervisionReview } from "@/lib/booking-review";
+import { hasPresentAdult } from "@/lib/adult-supervision";
 import {
   guestConsentStatus,
   type MemberGuestAddActor,
@@ -1212,11 +1213,16 @@ export async function POST(request: NextRequest) {
      * the service's own definition). A row naming a member id is a member row —
      * an id that does not resolve is refused by the lookup — and the hold
      * decision is the one the route hands the service. Whether the booking is held
-     * for review can depend on the outsider (adult supervision), so a supplied
-     * justification is taken as held, which counts the whole party; the member UI
-     * sends one only when its own rule trips. Never refuses what the service would
-     * admit. Read outside the lodge lock, so a booking or cancellation in the
-     * same instant can rarely make it disagree; the service still decides.
+     * for review (never split) can depend on the outsider's age and consent, so
+     * a supplied justification is taken as held, counting the whole party —
+     * unless an adult the service will count as present is already known without
+     * the outsider (a family member or a non-member guest): then the adult-
+     * supervision rule cannot trip and the justification is discarded, as the
+     * service discards it. What remains is an over-count that depends on the
+     * outsider (a justification sent for a party whose only adult is an agreed
+     * outsider); the member UI sends one only when the server's rule asks for it.
+     * Read outside the lodge lock, so a booking or cancellation in the same
+     * instant can rarely make it disagree; the service still decides.
      */
     if (!isAuthorizedOnBehalf && !draft && !waitlist) {
       const requestParty = stayRangedRequestRows.map((guest) => ({
@@ -1224,10 +1230,17 @@ export async function POST(request: NextRequest) {
         isMember: Boolean(guest.memberId?.trim()),
       }));
       const { shouldBePending: requestWouldHold } = await holdDecisionFor(requestParty);
+      const adultKnownWithoutOutsider = hasPresentAdult(
+        familyParty.map((guest) => ({
+          ageTier: guest.ageTier,
+          consentStatus: guestConsentStatus(guest),
+        })),
+      );
       const { primaryGuests: countedRows } = decideBookingSplit(requestParty, {
         shouldBePending: requestWouldHold,
         cancelIfGuestsBumped,
-        blockForReview: Boolean(memberReviewJustification?.trim()),
+        blockForReview:
+          Boolean(memberReviewJustification?.trim()) && !adultKnownWithoutOutsider,
       });
       const preflight = await checkCapacityForGuestRanges(
         bookingLodgeId,

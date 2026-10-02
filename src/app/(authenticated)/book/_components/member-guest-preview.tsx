@@ -97,7 +97,9 @@ export function memberGuestConsentPreviewColumns(
  * (#3770, owner decision "only agreed adults count"). A row the finder added
  * carries a prediction — pending where the club asks first, confirmed where it
  * only notifies or an officer adds — and every other row needs no consent. So
- * the wizard asks for the reason exactly when the create route will demand it.
+ * the wizard asks for the reason when the create route will demand it. That
+ * holds because the finder adds nobody before the family list has loaded (#3770),
+ * so every outsider row carries its prediction.
  */
 export function partyNeedsSupervisionJustification(
   guests: ReadonlyArray<{

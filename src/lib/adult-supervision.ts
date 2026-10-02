@@ -23,9 +23,7 @@ import {
 export function requiresAdultSupervisionReview(
   guests: ReadonlyArray<{ ageTier: string } & GuestWithConsent>,
 ): boolean {
-  const hasAdult = guests.some(
-    (guest) => guest.ageTier === "ADULT" && isGuestOperationallyPresent(guest),
-  );
+  const hasAdult = hasPresentAdult(guests);
   const hasMinor = guests.some(
     (guest) =>
       guest.ageTier === "CHILD" ||
@@ -33,4 +31,18 @@ export function requiresAdultSupervisionReview(
       guest.ageTier === "INFANT",
   );
   return hasMinor && !hasAdult;
+}
+
+/**
+ * The rule's adult half: is an operationally present adult among these rows?
+ * True for a subset of a party means the rule cannot trip for the whole party,
+ * whoever else is on it — which is how the create route's full-lodge pre-flight
+ * knows, without the outsider, that a booking will not be held for review.
+ */
+export function hasPresentAdult(
+  guests: ReadonlyArray<{ ageTier: string } & GuestWithConsent>,
+): boolean {
+  return guests.some(
+    (guest) => guest.ageTier === "ADULT" && isGuestOperationallyPresent(guest),
+  );
 }
