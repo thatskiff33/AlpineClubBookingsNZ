@@ -549,6 +549,11 @@ describe("authoritative bed-allocation move", () => {
   });
 
   it("stamps moved rows' updatedAt with the bound UTC instant, never the database clock (#3825)", async () => {
+    // Its own instant, distinct from every fixture timestamp, so the assertion
+    // can only be satisfied by the move's clock read (and survives a moved
+    // default test clock).
+    const moveInstant = new Date("2026-07-01T05:43:21.123Z");
+    vi.setSystemTime(moveInstant);
     const rows = [allocationRow({})];
     install({ rows });
     const preview = await previewBedAllocationMove(request(), prismaMock as never);
@@ -573,7 +578,7 @@ describe("authoritative bed-allocation move", () => {
     expect(sql).not.toMatch(/CURRENT_TIMESTAMP|\bnow\(\)|LOCALTIMESTAMP/i);
     expect(sql).toMatch(/"updatedAt" = \?/);
     const stamp = values[strings.findIndex((part) => /"updatedAt" = $/.test(part))];
-    expect(stamp).toEqual(new Date("2026-07-01T00:00:00.000Z"));
+    expect(stamp).toEqual(moveInstant);
   });
 
   it("locks counterpart booking lodges in sorted order before member and tuple locks", async () => {
