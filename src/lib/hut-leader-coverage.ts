@@ -293,6 +293,20 @@ export function coverageNeedsLodgeContext(input: {
 }
 
 /**
+ * One uncovered night as the dashboard lists it (#3818): the night and how many
+ * guests are on site with no leader staying, plus the lodge when
+ * `coverageNeedsLodgeContext` says the club needs it named.
+ */
+export function uncoveredNightLabel(
+  row: UnassignedHutLeaderDate,
+  nameLodge: boolean,
+): string {
+  const night = `${row.date} · ${row.guestCount} guest${row.guestCount === 1 ? "" : "s"}`;
+  const lodgeLabel = nameLodge ? coverageLodgeLabel(row) : null;
+  return lodgeLabel ? `${night} (${lodgeLabel})` : night;
+}
+
+/**
  * The lodge label for one row: its name, marked when the lodge is archived.
  *
  * The marker matters because the hut-leaders workspace cannot select an archived

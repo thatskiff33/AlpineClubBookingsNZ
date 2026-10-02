@@ -776,8 +776,6 @@ async function addLodgeItems(
     owner: "Lodge",
     count: unassignedDates.length,
     href: "/admin/hut-leaders",
-    // "Staying", not "assigned" (#3818): a night is covered only when its
-    // leader is assigned AND in the lodge that night (`INV-DATE-030`).
     summary: `${unassignedDates.length} upcoming ${plural(
       unassignedDates.length,
       unassignedNoun,
