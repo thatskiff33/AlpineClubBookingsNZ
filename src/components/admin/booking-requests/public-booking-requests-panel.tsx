@@ -57,11 +57,11 @@ import {
 // decides which rate boxes exist and what is posted.
 import {
   SCHOOL_CHILD_TIERS,
+  generateSchoolGuests,
   unchangedSchoolGuestPrefixLength,
   sameSchoolGuestList,
   type SchoolChildTier,
 } from "@/lib/school-booking-constants";
-import { SCHOOL_CHILD_NAME_PREFIX } from "@/lib/placeholder-guest-names";
 
 const SCHOOL_CHILD_TIER_LABELS: Record<SchoolChildTier, string> = {
   INFANT: "Infants",
@@ -717,36 +717,16 @@ export function PublicBookingRequestsPanel({
    *
    * It carries NAMES as well as tiers, because every question below is about
    * which stored rows the regeneration moves, and a row is only unmoved if it
-   * is identical — tier and name. This mirrors the server's
-   * `generateSchoolGuests`: the named teachers first, then the children
-   * numbered 1..N across the tiers in order. That mirroring is a known
-   * duplication (the remedy needs the `AgeTier` enum as a runtime value in this
-   * bundle); the comparison helpers below are shared with the server, so what
-   * is duplicated is the composition rule alone.
+   * is identical — tier and name. It is built by the server's own
+   * `generateSchoolGuests` (#3486), so the party quoted here and the party the
+   * save regenerates are one rule, not a copy kept in step by hand.
    */
   function plannedGuests(
     request: PublicBookingRequestData,
   ): Array<{ firstName: string; lastName: string; ageTier: string }> {
     const override = schoolChildCountOverride(request);
     if (!override) return request.guests;
-    let childNumber = 0;
-    return [
-      ...request.teachers.map((teacher) => ({
-        firstName: teacher.firstName,
-        lastName: teacher.lastName,
-        ageTier: "ADULT",
-      })),
-      ...SCHOOL_CHILD_TIERS.flatMap((tier) =>
-        Array.from({ length: override[tier] }, () => {
-          childNumber += 1;
-          return {
-            firstName: SCHOOL_CHILD_NAME_PREFIX,
-            lastName: String(childNumber),
-            ageTier: tier as string,
-          };
-        }),
-      ),
-    ];
+    return generateSchoolGuests({ teachers: request.teachers, childCounts: override });
   }
 
   /**
