@@ -239,6 +239,10 @@ describe("adult-supervision callers: the declared set, and the shape each passes
     "src/lib/booking-create-guests.ts": "consentStatus: guestConsentStatus(guest),",
     "src/lib/booking-guest-removal-service.ts": "requiresAdultSupervisionReview(remainingGuests)",
     "src/lib/booking-modify-plan.ts": "consentStatus: proposedConsentStatus(guest),",
+    // The clients' one door to the rule: each row states the consent its add will
+    // produce (the wizard's preview) or carries (the edit panel's kept rows).
+    "src/app/(authenticated)/book/_components/member-guest-preview.tsx":
+      "memberGuestConsentPreviewColumns(guest)?.consentStatus",
   };
 
   function productionFiles(dir: string): string[] {
@@ -254,7 +258,8 @@ describe("adult-supervision callers: the declared set, and the shape each passes
   it("names exactly the declared callers, each with its declared call shape", () => {
     const callers = productionFiles("src")
       .map((file) => file.split("\\").join("/"))
-      .filter((file) => file !== "src/lib/booking-review.ts")
+      // The rule's one definition; `booking-review.ts` only re-exports it.
+      .filter((file) => file !== "src/lib/adult-supervision.ts")
       .filter((file) =>
         stripComments(readFileSync(file, "utf8")).includes("requiresAdultSupervisionReview("),
       )
