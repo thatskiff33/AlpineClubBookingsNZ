@@ -721,6 +721,36 @@ describe("interleaving inside a read: a write that commits between the two copie
     });
   });
 
+  it("a reconnect that commits just before the lease is taken: the claim hands over the NEW refresh token", async () => {
+    // In PostgreSQL a writer either commits before the claim's guarded UPDATE
+    // takes the row lock, or waits for the claim to commit. This is the first
+    // case: the claim must read the tokens AFTER taking the lock, so it can
+    // only ever hand over what is stored now. A claim that read first handed
+    // over the replaced grant's refresh token.
+    await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
+    const updateMany = h.raw.xeroToken.updateMany;
+    const original = updateMany.getMockImplementation();
+    if (!original) throw new Error("expected the double's updateMany");
+    updateMany.mockImplementationOnce(async (args: { where: Row; data: Row }) => {
+      await saveXeroTokens(tokenSet("reconnect"), { actor: ADMIN });
+      return original(args);
+    });
+
+    const claim = await claimXeroTokenRefreshLease();
+
+    expect(claim.claimed).toBe(true);
+    expect(claim.tokens?.refreshToken).toBe("refresh-reconnect");
+    if (!claim.claimed) return;
+    // And the refresh of it lands: the version it carries is the stored one.
+    await saveXeroTokens(
+      { ...tokenSet("r"), refreshToken: "refresh-from-reconnect" },
+      { actor: REFRESH_JOB, lease: { claimed: claim.tokens, leaseUntil: claim.leaseUntil } },
+    );
+    await expect(loadXeroTokens()).resolves.toMatchObject({
+      refreshToken: "refresh-from-reconnect",
+    });
+  });
+
   it("a read that straddles a save returns the NEW copy, not the one just replaced", async () => {
     await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
     commitDuringStoreRead(() => saveXeroTokens(tokenSet("c2"), { actor: ADMIN }));
