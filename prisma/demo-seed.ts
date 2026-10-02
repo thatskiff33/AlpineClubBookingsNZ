@@ -31,6 +31,7 @@ import {
 } from "../src/lib/member-access-role-writes";
 import { backfillCurrentSeasonMembershipAssignments } from "../src/lib/membership-types";
 import { must } from "../src/lib/indexed-access";
+import { addDaysDateOnly } from "../src/lib/date-only";
 import { getDefaultLodgeId } from "../src/lib/lodges";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import { redeemPromoCode } from "../src/lib/promo";
@@ -830,7 +831,9 @@ async function main() {
     await prisma.choreAssignment.create({ data: { choreTemplateId: thirdTemplateId, bookingId: bConfirmed.id, date: d(daveConfirmedNight2), status: "SUGGESTED" } });
   }
 
-  await prisma.hutLeaderAssignment.create({ data: { memberId: dave.id, startDate: d(W.daveConfirmed.checkIn), endDate: d(W.daveConfirmed.checkOut), hutLeaderPin: "4821" } });
+  // #3817: an assignment covers NIGHTS — the last one is the night before
+  // check-out, never the check-out day (INV-DATE-002).
+  await prisma.hutLeaderAssignment.create({ data: { memberId: dave.id, startDate: d(W.daveConfirmed.checkIn), endDate: addDaysDateOnly(d(W.daveConfirmed.checkOut), -1), hutLeaderPin: "4821" } });
 
   await prisma.issueReport.create({ data: { memberId: alice.id, pageUrl: "https://demo/booking", pageTitle: "New booking", description: "Calendar didn't show August dates." } });
   await prisma.issueReport.create({ data: { memberId: bob.id, pageUrl: "https://demo/dashboard", pageTitle: "Dashboard", description: "Credit balance looked wrong (now fixed).", resolvedAt: d("2026-06-12"), resolvedById: admin.id, resolutionNote: "Cache cleared." } });

@@ -2,6 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
+import { hutLeaderAccessWindowNotClosedByWhere } from "@/lib/hut-leader-access-window";
 import { sanitizePageContentHtml } from "@/lib/page-content-html";
 import { resolveTextTokens } from "@/lib/page-content-embeds";
 import { hasAdminAccess, type PrivilegeCheckInput } from "@/lib/access-roles";
@@ -42,8 +43,9 @@ export type LodgeInstructionDocument = {
 
 /**
  * A member qualifies as a lodge-instructions reader while they hold a
- * current or upcoming hut leader assignment (endDate on or after today,
- * NZ date-only semantics). Expired assignments do not qualify.
+ * current or upcoming hut leader assignment: its access window, which runs to
+ * the departure day (the day after the last night, #3817), has not closed by
+ * the club's today. Expired assignments do not qualify.
  */
 async function hasCurrentOrUpcomingHutLeaderAssignment(
   memberId: string,
@@ -52,7 +54,7 @@ async function hasCurrentOrUpcomingHutLeaderAssignment(
   const count = await prisma.hutLeaderAssignment.count({
     where: {
       memberId,
-      endDate: { gte: today },
+      ...hutLeaderAccessWindowNotClosedByWhere(today),
     },
   });
   return count > 0;

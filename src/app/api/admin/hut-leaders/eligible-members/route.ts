@@ -3,18 +3,14 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { addDaysDateOnly, formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
-import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { getGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
-
-type MemberStay = {
-  checkIn: Date;
-  checkOut: Date;
-  stayStart?: Date | null;
-  stayEnd?: Date | null;
-  nights?: Array<{ stayDate: Date }> | null;
-};
+import {
+  hutLeaderStayBookingWhere,
+  hutLeaderStayNightKeys,
+  type HutLeaderMemberStay as MemberStay,
+} from "@/lib/hut-leader-stayed-nights";
 
 /**
  * GET /api/admin/hut-leaders/eligible-members?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD&lodgeId=...
@@ -63,12 +59,9 @@ export async function GET(req: NextRequest) {
       // collected separately below and are not guest rows, so they are
       // unaffected — a booker is never a consent subject on their own booking.
       ...OPERATIONALLY_PRESENT_GUEST_WHERE,
-      booking: {
-        lodgeId,
-        status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
-        checkIn: { lte: rangeEnd },
-        checkOut: { gt: rangeStart },
-      },
+      // The same bookings the manual create/edit stay check reads (#3817), so
+      // a member offered here is a member the create accepts.
+      booking: hutLeaderStayBookingWhere({ lodgeId, rangeStart, rangeEnd }),
       member: {
         active: true,
         accessRoles: { some: { role: "USER" } },
@@ -151,10 +144,7 @@ export async function GET(req: NextRequest) {
   // Also include booking owners who are adults
   const bookings = await prisma.booking.findMany({
     where: {
-      lodgeId,
-      status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
-      checkIn: { lte: rangeEnd },
-      checkOut: { gt: rangeStart },
+      ...hutLeaderStayBookingWhere({ lodgeId, rangeStart, rangeEnd }),
       member: {
         active: true,
         ageTier: "ADULT",
@@ -272,7 +262,8 @@ export async function GET(req: NextRequest) {
 
   const members = Array.from(memberBookings.values())
     .map((m) => {
-      // Find earliest checkIn and latest checkOut (the member's overall stay span).
+      // Find earliest checkIn and latest checkOut (the member's overall booking
+      // span, shown as the booking dates — never offered as an assignment end).
       const earliestCheckIn = m.bookings.reduce((min, b) => b.checkIn < min ? b.checkIn : min, m.bookings[0].checkIn);
       const latestCheckOut = m.bookings.reduce((max, b) => b.checkOut > max ? b.checkOut : max, m.bookings[0].checkOut);
 
@@ -282,16 +273,7 @@ export async function GET(req: NextRequest) {
       // computation in the repo (getBookingStatsByLodge / getUnassignedHutLeaderDates,
       // which feed the amber "Upcoming Dates Without…" panel on this same page).
       // Only real stay nights count — gap nights between two disjoint bookings do not.
-      const stayNightsByTime = new Map<number, Date>();
-      for (const b of m.bookings) {
-        for (const key of getGuestBedNightKeys(b, b)) {
-          const d = parseDateOnly(key);
-          stayNightsByTime.set(d.getTime(), d);
-        }
-      }
-      const stayNights = Array.from(stayNightsByTime.values()).sort(
-        (a, b) => a.getTime() - b.getTime(),
-      );
+      const stayNights = hutLeaderStayNightKeys(m.bookings).map(parseDateOnly);
 
       // The first uncovered night, read once, with the rest of the run behind
       // it. Its absence IS "fully covered" — the same one condition the count
@@ -302,10 +284,12 @@ export async function GET(req: NextRequest) {
       const fullyCovered = firstUncoveredNight === undefined;
 
       // Suggested range = the first contiguous run of uncovered nights. If the
-      // member is fully covered, fall back to their overall stay span (fields
-      // stay present; the UI disables Confirm for fully-covered members).
-      let suggestedStart = earliestCheckIn;
-      let suggestedEnd = latestCheckOut;
+      // member is fully covered, fall back to their first and LAST NIGHT STAYED
+      // (fields stay present; the UI disables Confirm for fully-covered
+      // members). Never the check-out day, which is a morning, not a night the
+      // create would accept (#3817).
+      let suggestedStart = stayNights[0] ?? earliestCheckIn;
+      let suggestedEnd = stayNights[stayNights.length - 1] ?? suggestedStart;
       if (firstUncoveredNight !== undefined) {
         suggestedStart = firstUncoveredNight;
         suggestedEnd = firstUncoveredNight;

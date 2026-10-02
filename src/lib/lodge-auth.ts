@@ -7,6 +7,7 @@ import {
 } from "./kiosk-access";
 import { addDaysDateOnly, isDateOnlyString, parseDateOnly } from "./date-only";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
+import { hutLeaderAccessWindowCoversDayWhere } from "@/lib/hut-leader-access-window";
 import { LODGE_VISIBLE_BOOKING_STATUSES } from "./lodge-date-scoping";
 import { getActiveLodgePinSessionForRequest } from "./lodge-pin-session";
 import { getDefaultLodgeId } from "./lodges";
@@ -243,8 +244,9 @@ interface ResolveKioskLodgeIdAuthResult {
  * - hut-leader: the PIN session's HutLeaderAssignment carries its own
  *   lodgeId. Signed in on their own account, the leader's lodge is the one
  *   whose assignment covers the day the tier was judged for (`date`) — its own
- *   dates first, the day-before window only when none does (#3029 N4); no such
- *   assignment, or two lodges on the same basis, is denied (#3029 S1).
+ *   nights first, then its departure day, then the day-before window (#3029
+ *   N4, #3817); no such assignment, or two lodges on the same basis, is denied
+ *   (#3029 S1).
  * - lodge / admin: a STAFF MemberLodgeAccess grant binds the kiosk account
  *   to a lodge; no grant falls back to the default lodge. Admin kiosk
  *   devices may also be bound, so the same lookup applies. A grant at more
@@ -286,19 +288,30 @@ export async function resolveKioskLodgeId(
       const covering = await db.hutLeaderAssignment.findMany({
         where: {
           memberId,
-          startDate: { lte: addDaysDateOnly(day, 1) },
-          endDate: { gte: day },
+          ...hutLeaderAccessWindowCoversDayWhere(day),
         },
         orderBy: [{ lodgeId: "asc" }],
-        select: { lodgeId: true, startDate: true },
+        select: { lodgeId: true, startDate: true, endDate: true },
       });
-      // The tier window opens the day BEFORE an assignment starts, so on a
-      // changeover day (lodge A ends on the 10th, lodge B starts on the 11th)
-      // both cover the 10th. The assignment whose own dates cover the day wins;
-      // the day-before window counts only when none does (#3029 N4). Two lodges
-      // on the same basis are still ambiguous.
-      const actual = covering.filter((assignment) => assignment.startDate <= day);
-      const basis = actual.length > 0 ? actual : covering;
+      // The tier window runs from the day BEFORE an assignment's first night to
+      // the day AFTER its last (#3817), so on a changeover (lodge A's last night
+      // the 10th, lodge B's first night the 11th) both windows hold the 10th and
+      // the 11th. The basis is chosen in three tiers, the first non-empty one
+      // winning (#3029 N4, extended by #3817):
+      //   1. an assignment whose own nights include the day;
+      //   2. one whose departure day it is (still at that lodge until midday);
+      //   3. one whose day-before window it is.
+      // Two lodges on the same basis are still ambiguous.
+      const ownNight = covering.filter(
+        (assignment) => assignment.startDate <= day && assignment.endDate >= day,
+      );
+      const departureDay = covering.filter((assignment) => assignment.endDate < day);
+      const basis =
+        ownNight.length > 0
+          ? ownNight
+          : departureDay.length > 0
+            ? departureDay
+            : covering;
       const lodges = [...new Set(basis.map((assignment) => assignment.lodgeId))];
       if (lodges.length > 1) {
         throw new AmbiguousKioskLodgeError(

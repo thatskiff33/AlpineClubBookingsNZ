@@ -182,7 +182,7 @@ export async function PUT(
 
     if (refusal) {
       return NextResponse.json(
-        { error: refusal.error },
+        { error: refusal.error, ...refusal.details },
         { status: refusal.status },
       );
     }

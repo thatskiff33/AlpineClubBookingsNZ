@@ -10,6 +10,11 @@ import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { findHutLeaderOverlapRefusal } from "@/lib/hut-leader-overlap-guard";
 import { recordHutLeaderAssignmentAudit } from "@/lib/hut-leader-assignment-audit";
 import { prisma } from "@/lib/prisma";
+import {
+  findHutLeaderStayRefusal,
+  hutLeaderStayRefusalBody,
+} from "@/lib/hut-leader-stayed-nights";
+import { HutLeaderAssignmentSource } from "@prisma/client";
 
 /**
  * The two hut-leader assignment writes that decide something under a lock: the
@@ -50,6 +55,12 @@ import { prisma } from "@/lib/prisma";
 export interface HutLeaderAssignmentRefusal {
   status: number;
   error: string;
+  /**
+   * #3817: the extra fields a stay refusal carries (`code`,
+   * `firstNightNotStayed`, `lastNightStayed`), rendered into the response body
+   * beside `error` so the form can offer the corrected last night.
+   */
+  details?: Omit<ReturnType<typeof hutLeaderStayRefusalBody>, "error">;
 }
 
 /** Request provenance for the audit rows; absent when it cannot be read. */
@@ -127,6 +138,34 @@ export async function applyHutLeaderAssignmentEditUnderLocks(input: {
       allowOverlappingSchoolRows: true,
     });
     if (overlap) return { status: 409, error: overlap.error };
+
+    // #3817 (owner decision "Block it outright"): an edit that moves the nights
+    // or the lodge may not leave a role-only row claiming a night the member is
+    // not staying there. Asked only when the claim moves, so a bed-only change
+    // (Release bed / Change bed, the only edits the admin page sends) keeps
+    // working on any row. Not asked of a bed-holding row — the held bed IS the
+    // custodian's stay (INV-LIFE-062) — nor of a school teacher's row, whose
+    // nights are the school booking's and whose teacher is not a booking guest.
+    const claimMoves =
+      finalStart.getTime() !== locked.startDate.getTime() ||
+      finalEnd.getTime() !== locked.endDate.getTime() ||
+      finalLodgeId !== locked.lodgeId;
+    if (
+      claimMoves &&
+      !nextBedId &&
+      locked.source !== HutLeaderAssignmentSource.SCHOOL_BOOKING
+    ) {
+      const stayRefusal = await findHutLeaderStayRefusal(tx, {
+        memberId: locked.memberId,
+        lodgeId: finalLodgeId,
+        startDate: finalStart,
+        endDate: finalEnd,
+      });
+      if (stayRefusal) {
+        const { error, ...details } = hutLeaderStayRefusalBody(stayRefusal);
+        return { status: 409, error, details };
+      }
+    }
 
     let amendments: WholeLodgeHoldAmendment[] = [];
     if (nextBedId) {

@@ -57,6 +57,7 @@ import {
   type AssignmentSummary,
   type AssignmentTarget,
   type EligibleMember,
+  type HutLeaderFormError,
 } from "./_components/assignment-form";
 import { CustodianBedPicker } from "./_components/custodian-bed-picker";
 
@@ -195,7 +196,7 @@ export default function HutLeadersPage() {
   const [minorCustodianNote, setMinorCustodianNote] = useState<string | null>(
     null,
   );
-  const [error, setError] = useState<{ message: string; memberId: string | null } | null>(null);
+  const [error, setError] = useState<HutLeaderFormError | null>(null);
   // Lodge context for new assignments; LodgeSelect renders nothing (and
   // reports the sole lodge) while fewer than two lodges exist (ADR-002).
   const {
@@ -445,6 +446,14 @@ export default function HutLeadersPage() {
     setError(null);
   }
 
+  // #3817: adopt the last night stayed the server named. Unlike picking new
+  // nights, this keeps the chosen member — only the end date was wrong.
+  function handleChangeLastNight(endDate: string) {
+    if (!lodgeScopeReady) return;
+    setSelection((current) => ({ ...current, endDate }));
+    setError(null);
+  }
+
   // Step 2b — any member (including a no-booking custodian) keeps the picked range.
   function handleSelectAnyMember(member: PickedMember) {
     if (!lodgeScopeReady) return;
@@ -529,6 +538,13 @@ export default function HutLeadersPage() {
         setError({
           message: data.error || "Failed to create",
           memberId: target.memberId,
+          // #3817: the stay refusal names the last night stayed from the start
+          // date; the form offers it as the corrected end.
+          correctedEndDate:
+            data.code === "HUT_LEADER_NIGHTS_NOT_STAYED" &&
+            typeof data.lastNightStayed === "string"
+              ? data.lastNightStayed
+              : null,
         });
         return;
       }
@@ -947,6 +963,7 @@ export default function HutLeadersPage() {
         creating={creating}
         error={error}
         onConfirm={() => void handleConfirm()}
+        onChangeLastNight={handleChangeLastNight}
         /*
           #2701: this prop is the form's "may the Confirm write proceed" gate
           (its only other use, the form's own banner, is suppressed just below),

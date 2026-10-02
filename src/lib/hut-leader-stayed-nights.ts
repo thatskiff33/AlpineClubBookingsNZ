@@ -1,0 +1,228 @@
+import type { Prisma } from "@prisma/client";
+import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
+import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
+import { getGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
+import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "@/lib/date-only";
+
+/**
+ * Which lodge nights a member is STAYING, for the hut-leader writers (#3817).
+ *
+ * A hut-leader assignment claims lodge nights (`INV-DATE-002`), and the owner
+ * decided (2 Oct 2026, #3789/#3820, "Block it outright") that an officer cannot
+ * assign a night the member is not staying. "Staying" here is exactly what the
+ * eligible-members suggestion path already used, so the list an officer picks
+ * from and the rule that judges the pick cannot disagree:
+ *
+ * - a booking at THIS lodge whose status is an operational stay (PAID or
+ *   COMPLETED — a cancelled stay is not a stay), and
+ * - either a guest row for the member whose own consent does not leave them
+ *   operationally absent (owner decision D-12, #2307), or the member OWNS the
+ *   booking (their own guest row's nights when they have one, else the
+ *   booking's nights);
+ * - nights come from the night model (`getGuestBedNightKeys`, `INV-DATE-020`),
+ *   so a split stay's gap nights are absences and a check-out morning is never
+ *   a night.
+ */
+
+/** A stay as the night model reads it: booking envelope plus the guest's own. */
+export type HutLeaderMemberStay = {
+  checkIn: Date;
+  checkOut: Date;
+  stayStart?: Date | null;
+  stayEnd?: Date | null;
+  nights?: Array<{ stayDate: Date }> | null;
+};
+
+/** The bookings whose nights count as a stay at `lodgeId` overlapping a range. */
+export function hutLeaderStayBookingWhere(input: {
+  lodgeId: string;
+  rangeStart: Date;
+  rangeEnd: Date;
+}): Prisma.BookingWhereInput {
+  return {
+    lodgeId: input.lodgeId,
+    status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
+    checkIn: { lte: input.rangeEnd },
+    checkOut: { gt: input.rangeStart },
+  };
+}
+
+/** Every night key the stays cover, de-duplicated and sorted. */
+export function hutLeaderStayNightKeys(
+  stays: readonly HutLeaderMemberStay[],
+): string[] {
+  const keys = new Set<string>();
+  for (const stay of stays) {
+    for (const key of getGuestBedNightKeys(stay, stay)) keys.add(key);
+  }
+  return [...keys].sort();
+}
+
+/**
+ * The run of consecutive stayed nights containing `nightKey`, or null when
+ * `nightKey` is not stayed. One run is one assignment's worth of nights: a
+ * split stay has one run per segment.
+ */
+export function stayedNightRunContaining(
+  stayedNightKeys: readonly string[],
+  nightKey: string,
+): { first: string; last: string } | null {
+  const stayed = new Set(stayedNightKeys);
+  if (!stayed.has(nightKey)) return null;
+  let first = nightKey;
+  for (;;) {
+    const previous = formatDateOnly(addDaysDateOnly(parseDateOnly(first), -1));
+    if (!stayed.has(previous)) break;
+    first = previous;
+  }
+  let last = nightKey;
+  for (;;) {
+    const next = formatDateOnly(addDaysDateOnly(parseDateOnly(last), 1));
+    if (!stayed.has(next)) break;
+    last = next;
+  }
+  return { first, last };
+}
+
+type StayDb = Pick<Prisma.TransactionClient, "bookingGuest" | "booking">;
+
+/**
+ * The member's stayed nights at `lodgeId` that fall inside
+ * `[rangeStart, rangeEnd]` (both nights, inclusive), sorted. Reads on the
+ * client it is given, so a caller holding the lodge capacity key reads under
+ * it.
+ */
+export async function loadHutLeaderStayedNightKeys(
+  db: StayDb,
+  input: { memberId: string; lodgeId: string; rangeStart: Date; rangeEnd: Date },
+): Promise<string[]> {
+  const bookingWhere = hutLeaderStayBookingWhere(input);
+  const [guestRows, ownedBookings] = await Promise.all([
+    db.bookingGuest.findMany({
+      where: {
+        memberId: input.memberId,
+        ...OPERATIONALLY_PRESENT_GUEST_WHERE,
+        booking: bookingWhere,
+      },
+      select: {
+        stayStart: true,
+        stayEnd: true,
+        nights: { select: { stayDate: true } },
+        booking: { select: { checkIn: true, checkOut: true } },
+      },
+    }),
+    db.booking.findMany({
+      where: { ...bookingWhere, memberId: input.memberId },
+      select: {
+        checkIn: true,
+        checkOut: true,
+        guests: {
+          where: { memberId: input.memberId },
+          select: {
+            stayStart: true,
+            stayEnd: true,
+            nights: { select: { stayDate: true } },
+          },
+        },
+      },
+    }),
+  ]);
+
+  const stays: HutLeaderMemberStay[] = [
+    ...guestRows.map((guest) => ({
+      checkIn: guest.booking.checkIn,
+      checkOut: guest.booking.checkOut,
+      stayStart: guest.stayStart,
+      stayEnd: guest.stayEnd,
+      nights: guest.nights,
+    })),
+    ...ownedBookings.map((booking) => {
+      const ownGuest = booking.guests[0];
+      return {
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        stayStart: ownGuest?.stayStart,
+        stayEnd: ownGuest?.stayEnd,
+        nights: ownGuest?.nights,
+      };
+    }),
+  ];
+
+  const from = formatDateOnly(input.rangeStart);
+  const to = formatDateOnly(input.rangeEnd);
+  return hutLeaderStayNightKeys(stays).filter((key) => from <= key && key <= to);
+}
+
+export const HUT_LEADER_NIGHTS_NOT_STAYED = "HUT_LEADER_NIGHTS_NOT_STAYED";
+
+export type HutLeaderStayRefusal = {
+  code: typeof HUT_LEADER_NIGHTS_NOT_STAYED;
+  error: string;
+  /** The first assigned night the member is not staying. */
+  firstNightNotStayed: string;
+  /**
+   * The last night of the stayed run that begins on the start date, or null
+   * when the start night itself is not stayed. It is also the corrected end
+   * the officer is offered ("Change last night to …").
+   */
+  lastNightStayed: string | null;
+};
+
+/**
+ * Refuse an assignment that claims a night the member is not staying at the
+ * lodge (#3817, owner decision "Block it outright" — there is no override).
+ * Returns null when every night in `[startDate, endDate]` is stayed.
+ */
+export async function findHutLeaderStayRefusal(
+  db: StayDb,
+  input: { memberId: string; lodgeId: string; startDate: Date; endDate: Date },
+): Promise<HutLeaderStayRefusal | null> {
+  const stayed = await loadHutLeaderStayedNightKeys(db, {
+    memberId: input.memberId,
+    lodgeId: input.lodgeId,
+    rangeStart: input.startDate,
+    rangeEnd: input.endDate,
+  });
+  const stayedSet = new Set(stayed);
+  const endKey = formatDateOnly(input.endDate);
+  let firstNightNotStayed: string | null = null;
+  for (
+    let night = input.startDate;
+    formatDateOnly(night) <= endKey;
+    night = addDaysDateOnly(night, 1)
+  ) {
+    const key = formatDateOnly(night);
+    if (!stayedSet.has(key)) {
+      firstNightNotStayed = key;
+      break;
+    }
+  }
+  if (firstNightNotStayed === null) return null;
+
+  const run = stayedNightRunContaining(stayed, formatDateOnly(input.startDate));
+  const lastNightStayed = run?.last ?? null;
+  const error = lastNightStayed
+    ? `The member is not staying at this lodge on the night of ${firstNightNotStayed}, so they cannot be hut leader for it. Their last night stayed from the start date is ${lastNightStayed}.`
+    : `The member is not staying at this lodge on the night of ${firstNightNotStayed}, so they cannot be hut leader for it. A hut leader must be staying every night they cover.`;
+  return {
+    code: HUT_LEADER_NIGHTS_NOT_STAYED,
+    error,
+    firstNightNotStayed,
+    lastNightStayed,
+  };
+}
+
+/** The JSON body a route answers a stay refusal with (status 409). */
+export function hutLeaderStayRefusalBody(refusal: HutLeaderStayRefusal): {
+  error: string;
+  code: typeof HUT_LEADER_NIGHTS_NOT_STAYED;
+  firstNightNotStayed: string;
+  lastNightStayed: string | null;
+} {
+  return {
+    error: refusal.error,
+    code: refusal.code,
+    firstNightNotStayed: refusal.firstNightNotStayed,
+    lastNightStayed: refusal.lastNightStayed,
+  };
+}

@@ -56,6 +56,17 @@ export interface AssignmentSummary {
 
 type MemberTab = "staying" | "any";
 
+/**
+ * An error the form shows. `correctedEndDate` is set only for the #3817 stay
+ * refusal, when the start night is stayed: the form then offers to change the
+ * last night to it.
+ */
+export interface HutLeaderFormError {
+  message: string;
+  memberId: string | null;
+  correctedEndDate?: string | null;
+}
+
 interface AssignmentFormProps {
   hutLeaderLabel: string;
   /**
@@ -82,8 +93,14 @@ interface AssignmentFormProps {
   // Step 3
   summary: AssignmentSummary | null;
   creating: boolean;
-  error: { message: string; memberId: string | null } | null;
+  error: HutLeaderFormError | null;
   onConfirm: () => void;
+  /**
+   * #3817: the server refused nights the member is not staying and named the
+   * last night they do stay from the start date. Adopting it keeps the member
+   * and changes only the end date.
+   */
+  onChangeLastNight: (endDate: string) => void;
   // Lodge edit gating (#1940): a lodge:view admin can view the picker but the
   // Confirm-assignment write is disabled.
   canEdit: boolean | undefined;
@@ -124,6 +141,7 @@ export function AssignmentForm({
   creating,
   error,
   onConfirm,
+  onChangeLastNight,
   canEdit,
   renderViewOnlyBanner = true,
   lodgeSelector,
@@ -391,7 +409,18 @@ export function AssignmentForm({
             )}
             {error && !hasConflict && (
               <div className="rounded-md border border-danger/20 bg-danger-muted px-3 py-2 text-sm text-danger">
-                {error.message}
+                <p>{error.message}</p>
+                {error.correctedEndDate && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => onChangeLastNight(error.correctedEndDate as string)}
+                  >
+                    Change last night to {error.correctedEndDate}
+                  </Button>
+                )}
               </div>
             )}
             <ViewOnlyActionButton
