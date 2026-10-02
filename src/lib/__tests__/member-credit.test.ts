@@ -388,6 +388,37 @@ describe("member-credit helpers", () => {
   });
 
   describe("restoreCreditFromBooking", () => {
+    it("takes the member credit-ledger lock before reading the applied rows when it joins a transaction (#3792)", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([
+        { id: "c1", amountCents: -3000, type: "BOOKING_APPLIED" },
+      ] as any);
+      vi.mocked(prisma.memberCredit.createMany).mockResolvedValue({ count: 1 });
+      vi.mocked(prisma.$executeRaw).mockClear();
+
+      const { restoreCreditFromBooking } = await import("@/lib/member-credit");
+      await restoreCreditFromBooking("member-1", "booking-locked", prisma as any);
+
+      const lockCall = vi.mocked(prisma.$executeRaw).mock.calls.findIndex(
+        (call) => (call as unknown[]).includes("member-credit-ledger") && (call as unknown[]).includes("member-1"),
+      );
+      expect(lockCall).toBeGreaterThanOrEqual(0);
+      expect(vi.mocked(prisma.$executeRaw).mock.invocationCallOrder[lockCall]).toBeLessThan(
+        vi.mocked(prisma.memberCredit.findMany).mock.invocationCallOrder[0],
+      );
+    });
+
+    it("takes no lock outside a transaction: an advisory xact lock there would be released at once (#3792)", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.$executeRaw).mockClear();
+
+      const { restoreCreditFromBooking } = await import("@/lib/member-credit");
+      await restoreCreditFromBooking("member-1", "booking-no-tx");
+
+      expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    });
+
     it("restores the FULL applied total when no override is passed (guards the payment-reconciliation system void, #1164)", async () => {
       // The capacity_failed system void in payment-reconciliation.ts calls this
       // with no override and MUST still restore 100% — a system void never

@@ -29,3 +29,10 @@ lines: 1756
 reason: sendBookingCancelledEmail takes and passes on the restored-credit basis
   (by policy, or in full for a cancel the member did not choose), and its
   override-body message uses the template's shared sentence for it.
+
+file: src/lib/member-credit.ts
+lines: 1038
+reason: restoreCreditFromBooking takes the member credit-ledger lock before its
+  read when it joins a transaction, so a restore in flight excludes the inbound
+  credit-note sync; it has to sit inside the one function every restore path
+  calls, ahead of the read it protects.

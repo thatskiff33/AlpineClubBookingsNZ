@@ -368,4 +368,35 @@ async function reconcile(cashCents: number) {
     expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(0);
     expect(xeroSyncAlert).not.toHaveBeenCalled();
   });
+
+  it("A RESTORE QUEUES BEHIND A HELD MEMBER CREDIT-LEDGER LOCK, so the credit-note sync cannot read applied rows a restore in flight is giving back", async () => {
+    await seedBooking(8_000, 12_000);
+
+    // The sync's side: a transaction holding the member's ledger key.
+    let releaseHolder!: () => void;
+    const holderReleased = new Promise<void>((resolve) => { releaseHolder = resolve; });
+    let holderHasLock!: () => void;
+    const holderLocked = new Promise<void>((resolve) => { holderHasLock = resolve; });
+    const holder = prisma.$transaction(async (tx) => {
+      await memberCredit.lockMemberCreditLedger(MEMBER_ID, tx);
+      holderHasLock();
+      await holderReleased;
+    }, { timeout: 20_000 });
+    await holderLocked;
+
+    // A cancel's restore, inside its own transaction, as every caller runs it.
+    let restoreDone = false;
+    const restore = prisma
+      .$transaction((tx) => memberCredit.restoreCreditFromBooking(MEMBER_ID, BOOKING_ID, tx), { timeout: 20_000 })
+      .then((cents) => { restoreDone = true; return cents; });
+
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect(restoreDone).toBe(false);
+    expect(await prisma.memberCredit.count({ where: { restoredFromBookingId: BOOKING_ID } })).toBe(0);
+
+    releaseHolder();
+    await holder;
+    expect(await restore).toBe(8_000);
+    expect(await prisma.memberCredit.count({ where: { restoredFromBookingId: BOOKING_ID } })).toBe(1);
+  }, 30_000);
 });

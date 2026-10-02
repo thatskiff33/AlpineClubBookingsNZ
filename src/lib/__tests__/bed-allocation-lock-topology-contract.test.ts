@@ -1,6 +1,7 @@
 import fs, { readFileSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
+import { stripComments } from "./support/strip-comments";
 
 function source(relativePath: string): string {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
@@ -316,6 +317,71 @@ describe("bed allocation lock topology", () => {
       "findUnconvergedAppliedCreditDeallocation(fresh.id, tx)",
       "clearStaleCreditElection(tx, locked.booking)",
       "restoreCreditFromBooking(lateCapacityRestoreMemberId, fresh.bookingId, tx)",
+    ]);
+  });
+
+  // #3792: the restore joins the member credit-ledger tier ITSELF, so the
+  // inbound credit-note sync (same key) cannot read applied rows a restore in
+  // flight is about to give back. That makes every caller's transaction take
+  // the member key at the restore: each must already hold lock(1) (or, for the
+  // orphan heal, the member key itself) and must take neither lock(1) nor a
+  // lodge key after it (INV-LOCK-002, global -> lodge -> member).
+  it("takes the member credit-ledger lock inside restoreCreditFromBooking, before its read", () => {
+    const body = functionBody(
+      source("src/lib/member-credit.ts"),
+      "export async function restoreCreditFromBooking(",
+    );
+    expectInOrder(body, [
+      "if (tx) await lockMemberCreditLedger(memberId, tx)",
+      "db.memberCredit.findMany",
+      "db.memberCredit.createMany",
+    ]);
+  });
+
+  it("calls restoreCreditFromBooking only after the global (or member) key, and takes no wider key after it", () => {
+    const CALL = "restoreCreditFromBooking(";
+    const sites: string[] = [];
+    for (const full of walkSources(path.resolve(process.cwd(), "src"))) {
+      const rel = path.relative(process.cwd(), full);
+      if (isTestFile(rel) || rel === path.join("src", "lib", "member-credit.ts")) continue;
+      const text = stripComments(readFileSync(full, "utf8"));
+      let at = text.indexOf(CALL);
+      while (at >= 0) {
+        // The transaction the call runs in: the nearest enclosing
+        // `$transaction(` callback, or the settle's tx-taking function.
+        const txAt = text.lastIndexOf("$transaction(", at);
+        let region = txAt >= 0 ? balancedFrom(text, text.indexOf("(", txAt), "(", ")") : "";
+        let offset = txAt;
+        if (txAt < 0 || txAt + region.length < at) {
+          const fnAt = text.lastIndexOf("async function settleBookingPaymentInTransaction(", at);
+          expect(fnAt, `${rel}: no enclosing transaction for a restore`).toBeGreaterThanOrEqual(0);
+          region = functionBody(text.slice(fnAt), "async function settleBookingPaymentInTransaction(");
+          offset = text.indexOf(region, fnAt);
+        }
+        const callInRegion = at - offset;
+        const before = region.slice(0, callInRegion);
+        const after = region.slice(callInRegion);
+        sites.push(rel);
+        expect(
+          before.includes("pg_advisory_xact_lock(1)") || before.includes("lockMemberCreditLedger("),
+          `${rel}: a restore before the global (or member) key`,
+        ).toBe(true);
+        expect(after, `${rel}: lock(1) taken after a restore`).not.toContain("pg_advisory_xact_lock(1)");
+        expect(after, `${rel}: a lodge key taken after a restore`).not.toContain("acquireLodgeCapacityLock(");
+        at = text.indexOf(CALL, at + CALL.length);
+      }
+    }
+    // The reviewed population: a new caller is a new member-key site.
+    expect(sites.sort()).toEqual([
+      "src/lib/booking-cancel.ts",
+      "src/lib/booking-cancel.ts",
+      "src/lib/booking-cancel.ts",
+      "src/lib/booking-cancel.ts",
+      "src/lib/booking-cancel.ts",
+      "src/lib/internet-banking-payment-cron.ts",
+      "src/lib/orphaned-applied-credit-backfill.ts",
+      "src/lib/payment-reconciliation.ts",
+      "src/lib/xero-inbound/invoice-paid-effects.ts",
     ]);
   });
 

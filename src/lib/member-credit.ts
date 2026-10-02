@@ -559,6 +559,11 @@ export async function restoreCreditFromBooking(
   restoreAmountCentsOverride?: number
 ): Promise<number> {
   const db = tx || prisma;
+  // #3792: the member ledger lock, before the read, so the inbound Xero
+  // credit-note sync (same key) cannot post a de-allocation against applied
+  // rows this restore is about to give back. Re-entrant for callers already
+  // holding it; every caller takes lock(1) (and its lodge lock) first.
+  if (tx) await lockMemberCreditLedger(memberId, tx);
 
   // Find all BOOKING_APPLIED credits for this booking
   const appliedCredits = await db.memberCredit.findMany({
