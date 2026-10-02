@@ -160,6 +160,12 @@ import "./booking-ledger-cancellation.realdb.test";
 // unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3640-`
 // fixtures.
 import "./card-refund-mirror-races.realdb.test";
+// #3793 reuses it to prove a paid cancel tiers its refund off the refunded
+// total read under the Payment row lock: the REAL cancelBooking queues behind a
+// webhook holding that row, which then records a dashboard refund, and only the
+// still-refundable share is tiered. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-3793-` fixtures.
+import "./paid-cancel-refunded-total-race.realdb.test";
 // #2941 reuses it to prove the application client's dietary/allergy omission
 // against PostgreSQL itself: absent from a plain read, a nested relation, an
 // interactive-transaction read and create/update results, present only through
