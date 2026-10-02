@@ -19,6 +19,16 @@ import {
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
+import {
+  deriveCardAppliedCreditDoublePayFinding,
+  type CardAppliedCreditDoublePayFinding,
+} from "@/lib/card-applied-credit-double-pay";
+
+export {
+  deriveCardAppliedCreditDoublePayFinding,
+  type CardAppliedCreditDoublePayFinding,
+  type CardAppliedCreditDoublePayRow,
+} from "@/lib/card-applied-credit-double-pay";
 
 // ---------------------------------------------------------------------------
 // #1641 — CARD double-pay enumeration (its IB sibling, #1620, retired with #3583)
@@ -49,72 +59,11 @@ import type { ClubFormat } from "@/lib/club-format";
 // effective amount, stamped/zero unallocated ledger), so fixed rows never appear.
 // Read-only: local SELECTs only, no Xero calls.
 
-export interface CardAppliedCreditDoublePayRow {
-  paymentId: string;
-  bookingId: string;
-  bookingStatus: string;
-  paymentStatus: string;
-  paymentSource: string;
-  /** payment.amountCents mirror (full finalPriceCents on a pre-fix double-pay). */
-  amountCents: number;
-  /** payment.creditAppliedCents mirror (0 on a pre-fix double-pay). */
-  creditAppliedCents: number;
-  finalPriceCents: number;
-  /** |Σ UN-allocated BOOKING_APPLIED(appliedToBookingId=booking)| — ledger truth. */
-  ledgerAppliedCents: number;
-}
-
-export interface CardAppliedCreditDoublePayFinding {
-  bookingId: string;
-  paymentId: string;
-  bookingStatus: string;
-  paymentStatus: string;
-  paymentSource: string;
-  amountCents: number;
-  creditAppliedCents: number;
-  finalPriceCents: number;
-  ledgerAppliedCents: number;
-  /** Credit the member already lost — the local restore amount. */
-  strandExposureCents: number;
-}
-
 export interface CardAppliedCreditDoublePayAuditResult {
   scannedCardPayments: number;
   /** Captured card payments that also consumed applied credit — double-paid. */
   doublePays: CardAppliedCreditDoublePayFinding[];
   doublePaidCents: number;
-}
-
-/**
- * Pure per-row classification. Returns a finding only for the exact pre-fix
- * double-pay fingerprint (full-price capture + zero mirror + positive unallocated
- * applied ledger); otherwise null. A #1641-fixed booking fails every clause.
- */
-export function deriveCardAppliedCreditDoublePayFinding(
-  row: CardAppliedCreditDoublePayRow,
-): CardAppliedCreditDoublePayFinding | null {
-  if (row.ledgerAppliedCents <= 0) {
-    return null;
-  }
-  if (row.creditAppliedCents !== 0) {
-    return null;
-  }
-  if (row.amountCents !== row.finalPriceCents) {
-    return null;
-  }
-
-  return {
-    bookingId: row.bookingId,
-    paymentId: row.paymentId,
-    bookingStatus: row.bookingStatus,
-    paymentStatus: row.paymentStatus,
-    paymentSource: row.paymentSource,
-    amountCents: row.amountCents,
-    creditAppliedCents: row.creditAppliedCents,
-    finalPriceCents: row.finalPriceCents,
-    ledgerAppliedCents: row.ledgerAppliedCents,
-    strandExposureCents: row.ledgerAppliedCents,
-  };
 }
 
 /**

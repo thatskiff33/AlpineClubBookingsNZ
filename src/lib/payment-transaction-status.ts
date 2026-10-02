@@ -79,6 +79,17 @@ export function latestTransactionOfKind<
   return latest;
 }
 
+/**
+ * The `reason` the mirror's backfill stamps on the transaction rows it seeds
+ * for a legacy payment from that payment's columns (`payment-transactions.ts`).
+ * Such a row's `refundedAmountCents` is copied from the column, with no
+ * `PaymentRefund` row behind it. One home for the writer and the census that
+ * names that seeded figure (#3583).
+ */
+export const LEGACY_PRIMARY_BACKFILL_REASON = "legacy_primary_backfill";
+export const LEGACY_ADDITIONAL_BACKFILL_REASON = "legacy_additional_backfill";
+export const LEGACY_BACKFILL_REASONS: readonly string[] = [LEGACY_PRIMARY_BACKFILL_REASON, LEGACY_ADDITIONAL_BACKFILL_REASON];
+
 /** Stripe refund states that returned no money and are not counted. */
 export const EXCLUDED_LEDGER_REFUND_STATUSES = ["failed", "canceled"];
 

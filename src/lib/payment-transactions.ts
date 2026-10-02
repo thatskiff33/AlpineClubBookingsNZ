@@ -25,6 +25,8 @@ import {
   expectedRefundedFloorCents,
   isCapturedTransactionStatus,
   isRecordedRefundStatus,
+  LEGACY_ADDITIONAL_BACKFILL_REASON,
+  LEGACY_PRIMARY_BACKFILL_REASON,
   latestTransactionOfKind,
 } from "@/lib/payment-transaction-status";
 
@@ -180,7 +182,7 @@ async function ensurePaymentTransactionsBackfilled(
             primaryRefundedAmountCents
           ),
           paymentMethodId: payment.stripePaymentMethodId ?? undefined,
-          reason: "legacy_primary_backfill",
+          reason: LEGACY_PRIMARY_BACKFILL_REASON,
         },
       })
     );
@@ -222,7 +224,7 @@ async function ensurePaymentTransactionsBackfilled(
             payment.additionalAmountCents,
             additionalRefundedAmountCents
           ),
-          reason: "legacy_additional_backfill",
+          reason: LEGACY_ADDITIONAL_BACKFILL_REASON,
         },
       })
     );
