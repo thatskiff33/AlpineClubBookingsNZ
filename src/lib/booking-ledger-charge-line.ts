@@ -7,10 +7,13 @@
  * re-price (`booking-ledger-modification-posting.ts`) — so a night reads the
  * same whichever event sold it, and one reader, `isSingleNightLine`, that is
  * the night builder's inverse: the grain a later edit reverses at is the grain
- * this module writes (`INV-SSOT-002`).
+ * this module writes (`INV-SSOT-002`). And one builder for taking either back,
+ * `chargeLineReversal`, shared by an edit and a cancellation (#3611).
  *
  * Pure: no reads, no writes.
  */
+import type { AgeTier } from "@prisma/client";
+
 import { calendarDateOfDateOnlyInstant, addCalendarDays, dateOnlyInstantOf } from "@/lib/club-time";
 import type { BookingLedgerPosting } from "@/lib/booking-ledger-write";
 
@@ -81,6 +84,61 @@ export function promotionPosting(
     quantity: 1,
     unitCents: Math.abs(promoAdjustmentCents),
     narration: sign < 0 ? "Promotion applied" : "Promotion, price raised",
+    postingKey,
+  };
+}
+
+/**
+ * A charge line already on the ledger, with everything its reversal copies —
+ * the one shape every poster reads one as (#3582, #3611). A change fee carries
+ * no strand, so its strand fields are null.
+ */
+export type ReversibleChargeLine = {
+  id: string;
+  kind: "GUEST_NIGHT" | "PROMOTION" | "CHANGE_FEE";
+  sign: 1 | -1;
+  quantity: number;
+  unitCents: number;
+  bookingGuestId: string | null;
+  nightStart: Date | null;
+  nightEndExclusive: Date | null;
+  rateMembershipTypeId: string | null;
+  ageTier: AgeTier | null;
+  guestNames: string[];
+  narration: string;
+  reversesLineId: string | null;
+};
+
+/** A night or promotion line: what an edit re-prices. */
+export type PostedChargeLine = ReversibleChargeLine & { kind: "GUEST_NIGHT" | "PROMOTION" };
+
+/**
+ * The reversal of one posted night or promotion line, anchored on the event
+ * that takes it back and keyed by the reversed line's id (`reversalKey`, which
+ * the caller passes so every key is still built in the one keys module).
+ */
+export function chargeLineReversal(
+  anchor: ChargeLineAnchor,
+  line: ReversibleChargeLine,
+  postingKey: string,
+): BookingLedgerPosting {
+  return {
+    ...anchor,
+    side: "CHARGE",
+    kind: line.kind,
+    sign: line.sign === 1 ? -1 : 1,
+    quantity: line.quantity,
+    unitCents: line.unitCents,
+    // Copied from the line, never re-derived: the guest row it names may be
+    // gone by now (a removal deletes it), and the line outlives it.
+    bookingGuestId: line.bookingGuestId,
+    nightStart: line.nightStart,
+    nightEndExclusive: line.nightEndExclusive,
+    rateMembershipTypeId: line.rateMembershipTypeId,
+    ageTier: line.ageTier,
+    guestNames: line.guestNames,
+    narration: `Reversed: ${line.narration}`,
+    reversesLineId: line.id,
     postingKey,
   };
 }

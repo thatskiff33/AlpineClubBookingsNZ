@@ -64,6 +64,12 @@ vi.mock("@/lib/audit", () => ({
   createAuditLog: (...args: unknown[]) => mocks.createAuditLog(...args),
 }));
 
+// #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
+const cancellationLedger = vi.hoisted(() => ({
+  postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}),
+}));
+vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (...args: unknown[]) => mocks.transaction(...args),
@@ -999,6 +1005,10 @@ describe("markBookingPaymentSucceeded", () => {
         })
       );
       expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalled();
+      // #3611: the cancel posts its ledger reversals in its own claim, keeping nothing.
+      expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: "booking-1", keptCents: 0, site: "settle:capacity-void" }),
+      );
     });
 
     it("executes the inline refund from the frozen plan under the shared capacity_claim_failed Stripe key prefix and closes the pre-persisted operation on success", async () => {

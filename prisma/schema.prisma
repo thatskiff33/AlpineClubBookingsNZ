@@ -8404,6 +8404,9 @@ enum LedgerLineKind {
   GUEST_NIGHT
   /// CHARGE: the fee an edit charged.
   CHANGE_FEE
+  /// CHARGE: what the club keeps under the cancellation policy, anchored on
+  /// the CANCELLATION (#3611).
+  CANCELLATION_FEE
   /// CHARGE, negative: the promotion's adjustment (`INV-MONEY-029`).
   PROMOTION
   /// CHARGE, negative: the group discount.
