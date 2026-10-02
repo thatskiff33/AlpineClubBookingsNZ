@@ -5,10 +5,7 @@ import {
   formatDateOnly,
   parseDateOnly,
 } from "@/lib/date-only";
-import {
-  getGuestBedNightKeys,
-  isGuestActiveOnNight,
-} from "@/lib/booking-guest-stay-ranges";
+import { getGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
 import { stayedNightRunContaining } from "@/lib/hut-leader-stayed-nights";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -170,11 +167,13 @@ export async function autoAssignHutLeaders(): Promise<{
       // the application log on a completely ordinary success path. The member id
       // identifies the assignment for anyone reading the log.
       //
-      // #3817: a guest counts only if they hold a bed on THIS night
-      // (`isGuestActiveOnNight`), and the nights written are the run of
-      // consecutive stayed nights containing it. The SQL filter above is the
-      // envelope, which is coarse (`INV-DATE-022`): it admits a split stay's gap
-      // night, and its `stayEnd` is a check-out MORNING, not a night.
+      // #3817: a guest counts only if they hold a bed on THIS night, and the
+      // nights written are the run of consecutive stayed nights containing it.
+      // Both come from one read of the night model (`getGuestBedNightKeys`): no
+      // run contains `day` exactly when the guest does not stay it. The SQL
+      // filter above is the envelope, which is coarse (`INV-DATE-022`): it
+      // admits a split stay's gap night, and its `stayEnd` is a check-out
+      // MORNING, not a night.
       const dayKey = formatDateOnly(day);
       const adultMembers = new Map<string, {
         id: string;
@@ -186,12 +185,11 @@ export async function autoAssignHutLeaders(): Promise<{
         for (const guest of booking.guests) {
           if (!guest.memberId || !guest.member || !guest.member.active) continue;
           if (adultMembers.has(guest.memberId)) continue;
-          if (!isGuestActiveOnNight(guest, day, booking)) continue;
           const run = stayedNightRunContaining(
             getGuestBedNightKeys(guest, booking),
             dayKey,
           );
-          // Unreachable: the guest is active on `day`, so `day` is in a run.
+          // Not staying this night (a gap night, or the envelope only).
           if (!run) continue;
           adultMembers.set(guest.memberId, {
             id: guest.memberId,
