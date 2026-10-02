@@ -841,15 +841,12 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 ## INV-PAY-019
 
 - Applied account credit is conserved across cancellation (#1547): EVERY
-  `cancelBooking` branch — and the Internet-Banking hold-expiry release
-  (`internet-banking-payment-cron.ts`), the one automatic cancel outside
-  `cancelBooking` — reverses the negative `BOOKING_APPLIED` ledger rows. The
-  never-captured / no-refund branches and the `PENDING` / no-payment branches
+  `cancelBooking` branch — and the automatic cancels (Internet-Banking
+  hold-expiry release, `internet-banking-payment-cron.ts`, and both capacity
+  cancels, #3792) — reverses the negative `BOOKING_APPLIED` ledger rows. The
+  never-captured / no-refund, `PENDING` / no-payment and automatic cancels
   restore at **100%**; the paid path restores the applied slice at the
-  cancellation tier (#1164 / D7). The two system capacity cancels — the settle's
-  capacity void and the late internet-banking capacity cancel
-  (`invoice-paid-effects.ts`, #3792) — restore at **100%** too, beside any cash
-  they credit back, because neither is the member's choice. Restore idempotency is STRUCTURAL, not
+  cancellation tier (#1164 / D7). Restore idempotency is STRUCTURAL, not
   lock-dependent (#1636): the restore row carries a nullable-unique
   `restoredFromBookingId`, so at most one restore row per booking can exist
   regardless of caller lock granularity — a duplicate insert is a
@@ -872,9 +869,6 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `ADMIN_ADJUSTMENT`/`BOOKING_MODIFICATION_REFUND` row, net-non-zero ledger,
   Xero-linked note, or independently captured/refunded payment still blocks
   (owner decision 2026-07-07, FINAL).
-- The late capacity cancel's restore is pinned by
-  `xero-inbound-reconciliation.test.ts` and, against PostgreSQL,
-  `ib-capacity-cancel-credit-restore.realdb.test.ts`.
 
 ## INV-PAY-020
 
