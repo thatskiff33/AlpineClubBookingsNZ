@@ -1457,14 +1457,20 @@ Three rules keep it whole:
   the one the previous colour claims, so at most one process of either colour
   spends a given refresh token. A refresh's save is fenced twice: the lease
   guard on the `XeroToken` update, and a compare-and-set on the store copy's
-  version read with the lease. Either failing rolls both back.
+  version. The claim takes the lease FIRST and reads both copies after, under
+  that row's lock, so the version is the one that belongs to the tokens it hands
+  over. Either fence failing rolls both copies back. Before calling Xero, the
+  refresh checks that its save can succeed (the auth-secret gate and the token
+  key) and refuses without spending the token if not.
 - **A fingerprint, not a clock, decides which copy is current.** The store copy
   records a hash of the `XeroToken` ciphertext written beside it. A row that no
   longer matches was rewritten by code that writes only that row — the previous
   colour — and is the newer copy, so it is read instead; the next write here
   re-converges them. `updatedAt` was rejected: each container stamps it from its
   own clock. A lease claim changes only `refreshInProgressUntil`, so it does not
-  move the fingerprint.
+  move the fingerprint. A read takes the store row FIRST: every writer rewrites
+  or deletes the `XeroToken` row, so a write landing between the two reads
+  always leaves the second read the newer one.
 
 While both colours can run, the `XeroToken` row is also the **connection row**:
 no row means not connected. `isXeroConnected` and the readers that need only the

@@ -297,7 +297,7 @@ export interface SaveXeroTokenOptions extends XeroTokenWriteContext {
  * A REFRESH (`options.lease`) is fenced twice. The `XeroToken` update is guarded
  * on the lease this process claimed — a reconnect or an expired lease in the
  * meantime matches nothing and the save throws — and the store write is a
- * compare-and-set on the version read with the lease, so a writer that
+ * compare-and-set on the version the claim read under its lock, so a writer that
  * bypassed the lease makes this one lose too. Either failure rolls BOTH copies
  * back. The Xero call that produced these tokens happened outside any
  * transaction (`INV-INT-003`).
