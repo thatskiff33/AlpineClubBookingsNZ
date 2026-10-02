@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { getNonMemberHoldPolicy } from "@/lib/cancellation";
 import {
   calculateBookingHoldDecision,
+  decideBookingSplit,
   toGroupDiscountConfig,
 } from "@/lib/policies/booking-route-decisions";
 import { AgeTier, BookingStatus } from "@prisma/client";
@@ -61,7 +62,6 @@ import {
   MemberGuestAddThrottledError,
   startMemberGuestRefusalClock,
 } from "@/lib/member-guest-probe-guard";
-import type { MemberGuestAddActor } from "@/lib/member-guest-consent";
 import { nameField } from "@/lib/zod-helpers";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
@@ -110,6 +110,10 @@ import {
 } from "@/lib/member-guest-family-first";
 import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
 import { requiresAdultSupervisionReview } from "@/lib/booking-review";
+import {
+  guestConsentStatus,
+  type MemberGuestAddActor,
+} from "@/lib/member-guest-consent";
 import {
   BookingMemberNightConflictError,
   findBookingMemberNightConflicts,
@@ -1160,6 +1164,28 @@ export async function POST(request: NextRequest) {
     if (familyRefusal) return familyRefusal;
   }
 
+  /**
+   * The non-member hold decision the route hands the create service, from a
+   * party's member flags: asked of the request before the outsider lookup (the
+   * full-lodge pre-flight) and of the resolved party for the service. A row
+   * naming a member id is a member either way, so the two answers agree.
+   */
+  const holdDecisionFor = async (party: ReadonlyArray<{ isMember: boolean }>) => {
+    const hasNonMembers = party.some((g) => !g.isMember);
+    const holdPolicy = hasNonMembers
+      ? await getNonMemberHoldPolicy(checkIn, parsed.data.lodgeId ?? null)
+      : { enabled: false, holdDays: 0, source: "default" as const };
+    return {
+      holdPolicy,
+      ...calculateBookingHoldDecision({
+        hasNonMembers,
+        checkIn,
+        holdDays: holdPolicy.holdDays,
+        holdEnabled: holdPolicy.enabled,
+      }),
+    };
+  };
+
   /** The route's one answer for a full lodge (the pre-flight and the service). */
   const capacityExceededResponse = (fullNights: unknown) =>
     NextResponse.json(
@@ -1181,22 +1207,34 @@ export async function POST(request: NextRequest) {
      * decision on R4: "Check 'full' first"). Otherwise the 409 below was reachable
      * only once the outsider resolved. For a member's own booking that will be
      * capacity-checked (not a draft, not a waitlist join), this asks the services'
-     * own capacity question of the MEMBER half of the party — every row naming a
-     * member id; the services count that half, or the whole party, so this can
-     * only refuse what they would refuse too. It is read outside the lodge lock,
-     * so a booking or cancellation in the same instant can rarely make it
-     * disagree; the service's in-transaction check still decides.
+     * own capacity question of the rows the service will COUNT: the whole party,
+     * or only the member half when the booking will split (`decideBookingSplit`,
+     * the service's own definition). A row naming a member id is a member row —
+     * an id that does not resolve is refused by the lookup — and the hold
+     * decision is the one the route hands the service. Whether the booking is held
+     * for review can depend on the outsider (adult supervision), so a supplied
+     * justification is taken as held, which counts the whole party; the member UI
+     * sends one only when its own rule trips. Never refuses what the service would
+     * admit. Read outside the lodge lock, so a booking or cancellation in the
+     * same instant can rarely make it disagree; the service still decides.
      */
     if (!isAuthorizedOnBehalf && !draft && !waitlist) {
-      const memberHalf = stayRangedRequestRows.filter((guest) =>
-        Boolean(guest.memberId?.trim()),
-      );
+      const requestParty = stayRangedRequestRows.map((guest) => ({
+        ...guest,
+        isMember: Boolean(guest.memberId?.trim()),
+      }));
+      const { shouldBePending: requestWouldHold } = await holdDecisionFor(requestParty);
+      const { primaryGuests: countedRows } = decideBookingSplit(requestParty, {
+        shouldBePending: requestWouldHold,
+        cancelIfGuestsBumped,
+        blockForReview: Boolean(memberReviewJustification?.trim()),
+      });
       const preflight = await checkCapacityForGuestRanges(
         bookingLodgeId,
         requestEnvelope.checkIn,
         requestEnvelope.checkOut,
         getCapacityGuestRanges(
-          memberHalf,
+          countedRows,
           requestEnvelope.checkIn,
           requestEnvelope.checkOut,
         ),
@@ -1260,7 +1298,12 @@ export async function POST(request: NextRequest) {
   // say whether that outsider is a real adult, so it is the neutral refusal.
   if (
     deferredPolicyRefusal &&
-    requiresAdultSupervisionReview(guestInputs) &&
+    requiresAdultSupervisionReview(
+      guestInputs.map((guest) => ({
+        ageTier: guest.ageTier,
+        consentStatus: guestConsentStatus(guest),
+      })),
+    ) &&
     !memberReviewJustification?.trim()
   ) {
     return deferredPolicyRefusal();
@@ -1548,16 +1591,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const hasNonMembers = guestInputs.some((g) => !g.isMember);
-  const holdPolicy = hasNonMembers
-    ? await getNonMemberHoldPolicy(checkIn, parsed.data.lodgeId ?? null)
-    : { enabled: false, holdDays: 0, source: "default" as const };
-  const { shouldBePending, status } = calculateBookingHoldDecision({
-    hasNonMembers,
-    checkIn,
-    holdDays: holdPolicy.holdDays,
-    holdEnabled: holdPolicy.enabled,
-  });
+  const { holdPolicy, shouldBePending, status } = await holdDecisionFor(guestInputs);
 
   // Pre-warm the credit balance only if requested; the service will load
   // it again inside the transaction. This call is kept here to preserve

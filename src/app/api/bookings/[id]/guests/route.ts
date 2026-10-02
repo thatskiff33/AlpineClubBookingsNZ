@@ -105,7 +105,10 @@ import {
   handleMemberGuestAddRefusal,
   startMemberGuestRefusalClock,
 } from "@/lib/member-guest-probe-guard";
-import type { MemberGuestAddActor } from "@/lib/member-guest-consent";
+import {
+  guestConsentStatus,
+  type MemberGuestAddActor,
+} from "@/lib/member-guest-consent";
 import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
 import {
@@ -644,7 +647,10 @@ export async function POST(
       // counts (#3770, owner decision).
       const requiresAdminReview = requiresAdultSupervisionReview([
         ...booking.guests,
-        ...normalizedNewGuests,
+        ...normalizedNewGuests.map((guest) => ({
+          ageTier: guest.ageTier,
+          consentStatus: guestConsentStatus(guest),
+        })),
       ]);
       const adminReviewReason = requiresAdminReview
         ? ADULT_SUPERVISION_REVIEW_REASON
