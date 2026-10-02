@@ -1240,8 +1240,9 @@ answered) and built to it:
   inactive, out of its window, for another lodge, assigned to somebody else or
   missing its guest selection. The promo code's usage caps, and which guests may
   use it, read the priced party and are still answered later. A full lodge is
-  answered before the outsider is looked up too (owner decision), judged on the
-  party's member half, so it can arrive a little ahead of other refusals. On the
+  answered before the outsider is looked up too (owner decision), counting the
+  guests the booking would hold beds for, so it can arrive a little ahead of
+  other refusals. On the
   exception
   requests: the stay range and the own-dependant question, a lodge id that names
   no active lodge (new booking), a supersede target that is not the member's

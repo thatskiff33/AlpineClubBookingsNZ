@@ -13,7 +13,8 @@
     unknown lodge, a lodge the booker may not book, a room from another lodge,
     or too many guests;
   - the booker's own unpaid subscription;
-  - a night the lodge is already full on, judged on the member guests;
+  - a night the lodge is already full on, counting the guests the booking
+    would hold beds for;
   - Internet Banking when it is unavailable or too close to check-in;
   - a working bee that cannot apply;
   - a promo code that is unknown, inactive, out of date, for another lodge,

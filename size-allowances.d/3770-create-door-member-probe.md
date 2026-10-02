@@ -1,12 +1,12 @@
 # File-size allowances for #3770 (create-door member-id probe)
 
-Six already-over-budget files grow. None of the changes adds a rule of its
+Several already-over-budget files grow. None of the changes adds a rule of its
 own. Each one either moves existing refusals above the member lookup or
 pre-checks a refusal the transaction already makes. The growth is the code that
 splits one refusal in two, plus the comment saying why the order matters.
 
 file: src/app/api/bookings/route.ts
-lines: 1796
+lines: 1830
 reason: the route is a long, ordered sequence of guards, and the contract this
   issue fixes IS that order: refusals that read only the request and the booker
   must run before the member lookup, and the ones that read the resolved party
@@ -27,7 +27,9 @@ reason: the route is a long, ordered sequence of guards, and the contract this
   Round 4 adds the lodge-access, room-lodge and stay-envelope past-date refusals
   ahead of the lookup; the owner's R4 decision adds the full-lodge pre-flight,
   which has to sit between the family pass and the outsider lookup and shares
-  the route's one CAPACITY_EXCEEDED body with the service's answer. The resolution itself moved out to
+  the route's one CAPACITY_EXCEEDED body with the service's answer; it counts
+  the rows through the service's own `decideBookingSplit` and the route's one
+  hold decision, now a local helper both callers share. The resolution itself moved out to
   `member-guest-family-first.ts`, shared with the exception doors; what stays is
   the ordered sequence of refusals, which is the contract, so it stays readable
   in the one handler that owns it.
@@ -67,17 +69,11 @@ reason: comment only. It records, beside the "the stranger's refusal wins"
   (owner decision, `INV-GUEST-020`). A reader who finds the rule without the
   note would believe the create route still behaves that way.
 
-file: src/lib/booking-create.ts
-lines: 2122
-reason: three lines. The waitlist path's promo-code normalisation and its
-  internal-code refusal now call the one shared helper in
-  `booking-create-promo.ts` instead of spelling the rule out inline. The growth
-  is the two import names and the named result.
-
 file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1710
-reason: six lines. The adult-supervision rule is now asked of the guest rows
-  themselves, which carry each guest's stored or planned consent, instead of
+lines: 1716
+reason: a dozen lines. The adult-supervision rule is now asked of the guest
+  rows themselves, each stating its stored or planned consent (the rule's type
+  now requires it), instead of
   the consent-free pricing view, because only an agreed adult counts (owner
   decision on #3770). The call has to stay where the route already decides the
   review; the growth is the call and the comment saying why it reads the rows.
