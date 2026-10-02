@@ -1462,21 +1462,11 @@ async function performBookingCancellation(
       return { claimed: false as const };
     }
     if (fresh.lodgeId) await acquireLodgeCapacityLock(tx, fresh.lodgeId);
-    // #3793: the Payment row lock (#3640's order: before the fold, the top-up
-    // write and the credit allocation touch any row), THEN the payment re-read.
-    // The card-refund writers take no advisory lock, so the payment read with
-    // the booking above can already be stale: a dashboard refund committed in
-    // between was tiered again. Only the id is taken from that read; the status
-    // the gate below checks and every figure the refund is tiered off come
-    // from this one, which no refunded-total writer can move until commit.
+    // #3793: #3640's Payment row lock, then the re-read the money comes from: a refund
+    // writer takes no advisory lock, so only the id is taken from the read above.
     await lockPaymentForRefundedTotal(tx, fresh.payment.id);
-    const lockedPayment = await tx.payment.findUnique({
-      where: { id: fresh.payment.id },
-    });
-    if (!lockedPayment) {
-      return { claimed: false as const };
-    }
-    fresh.payment = lockedPayment;
+    fresh.payment = await tx.payment.findUnique({ where: { id: fresh.payment.id } });
+    if (!fresh.payment) return { claimed: false as const };
     // #3643: record the part payment Xero showed as captured money and queue
     // the unpaid rest's clearing note, exactly once, before eligibility is
     // re-derived. Anything that moved since the read throws, rolling back.
@@ -1507,8 +1497,6 @@ async function performBookingCancellation(
       if (partPayment) throw new PartPaymentChangedError();
       return { claimed: false as const };
     }
-    // The Payment row is already locked (#3793, above): a card refund's webhook
-    // landing now cannot deadlock against this claim (#3640).
     const payment = fresh.payment;
 
     // #1491 (review): materialize any folded (mirror-only) refund into the
