@@ -3146,12 +3146,15 @@ only where nothing was captured: the share goes back through
 edit door already takes them in, so it closes no cycle. Everything the amount
 depends on is read after that key: the applied credit and the `Payment` mirror,
 the deallocation fence (a PENDING deallocation refuses with the task OPEN, the
-claim rolled back), the booking's status and, on a cancelled booking, its
-restore row and policy, which every cancel writes under the same `lock(1)`. Its
-Xero deallocation is an outbox row committed with the ledger write; the worker
-calls Xero after the commit, so no provider call runs under either key
-(`edit-financial-review-races.realdb.test.ts` forces the ledger-key
-interleaving).
+claim rolled back), the booking's status, the earlier reviews' re-prices and
+settled shares (written under the same `lock(1)`), and on a cancelled booking
+its restore row and frozen applied figure. The restore row is written under
+`lock(1)` by every cancel and under the member key alone by the orphan-restore
+backfill, so holding both keys excludes every writer of it. Its Xero
+deallocation and credit notes are outbox rows committed with the ledger write
+or queued after the commit; the worker calls Xero later, so no provider call
+runs under either key (`edit-financial-review-races.realdb.test.ts` forces the
+ledger-key interleaving).
 
 Registered in `advisory-lock-guard.test.ts` as `resolveManualRefundTask#1`
 (`INV-LOCK-002`). The four edit doors and the batch path post their own lines

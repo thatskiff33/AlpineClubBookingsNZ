@@ -790,9 +790,14 @@ clamp and a credit-paid booking's financial-review share both go through
 against its invoice beyond the new applied figure, it queues the deallocation in
 the same transaction as the ledger row, and the PENDING row fences the inbound
 applied-credit repair until it converges, so an inbound sync cannot pull the
-given-back credit back up to Xero's figure. Money given back this way takes no
-modification account credit note of its own: the deallocation is what returns
-it to the member in Xero.
+given-back credit back up to Xero's figure. It never deallocates on a CANCELLED
+booking, whose invoice must not reopen. A review share then reaches Xero the way
+an ordinary price reduction does (`dispatchEditReviewAccountCreditXero`): an
+invoice-allocated modification credit note for what was given back, the
+unallocated account note only for what was minted, and on a cancelled booking
+one unallocated note for everything credited. Each note's correlation and Xero
+idempotency keys carry the review task (`reviewTaskKeyParts`), so sibling
+reviews of one edit raise a note each.
 
 **Retry taxonomy** (each layer is distinct — do not conflate when changing):
 
