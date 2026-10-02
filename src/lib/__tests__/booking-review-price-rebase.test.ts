@@ -641,9 +641,9 @@ describe("D1's two consequences, surfaced rather than shipped blind (#3219)", ()
     ).toBe(false);
   });
 
-  it("MUTATION: #3791 - an account-credit share agrees with the invoice only where it credited exactly what the re-price removed, re-price or none", () => {
+  it("MUTATION: #3791 - an account-credit share agrees with the stored price only where its note took off exactly what the re-price removed, re-price or none", () => {
     const diverges = (creditedCents: number, moved: BookingPriceRebase | null) =>
-      rebaseDivergesFromIssuedInvoice({ rebase: moved, hasIssuedXeroInvoice: true, settlement: { creditedCents } });
+      rebaseDivergesFromIssuedInvoice({ rebase: moved, hasIssuedXeroInvoice: true, settlement: { invoiceReductionCents: creditedCents } });
 
     expect(diverges(12_000, rebase)).toBe(false);
     expect(diverges(5_000, rebase)).toBe(true);
@@ -651,7 +651,7 @@ describe("D1's two consequences, surfaced rather than shipped blind (#3219)", ()
     // booking still prices in full.
     expect(diverges(5_000, null)).toBe(true);
     expect(diverges(0, null)).toBe(false);
-    expect(rebaseDivergesFromIssuedInvoice({ rebase: null, hasIssuedXeroInvoice: false, settlement: { creditedCents: 5_000 } })).toBe(false);
+    expect(rebaseDivergesFromIssuedInvoice({ rebase: null, hasIssuedXeroInvoice: false, settlement: { invoiceReductionCents: 5_000 } })).toBe(false);
   });
 
   it("writes the re-price into the BOOKING'S OWN history, with the divergence on it", async () => {

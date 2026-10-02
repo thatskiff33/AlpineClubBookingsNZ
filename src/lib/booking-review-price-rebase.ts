@@ -653,16 +653,16 @@ export function rebaseDivergesFromIssuedInvoice({
   hasIssuedXeroInvoice: boolean;
   /**
    * Whether the closure's own Xero document corrects the invoice - or, for an
-   * account-credit share (#3791), what the member was credited. That share's
-   * notes move the club's figures by exactly that much, so the invoice stays in
-   * line only where the re-price moved the booking by the same amount; a share
-   * with no re-price at all diverges too.
+   * account-credit share (#3791), what its allocated note takes off the
+   * invoice. The invoice then agrees with the booking's stored price only where
+   * the re-price moved it by the same amount; a share agreed with no re-price
+   * at all leaves the stored price above the invoice, and says so.
    */
-  settlement: { issuesXeroDocument: boolean } | { creditedCents: number };
+  settlement: { issuesXeroDocument: boolean } | { invoiceReductionCents: number };
 }): boolean {
   if (!hasIssuedXeroInvoice) return false;
   const priceDropCents = rebase ? rebase.previousFinalPriceCents - rebase.newFinalPriceCents : 0;
-  if ("creditedCents" in settlement) return settlement.creditedCents !== priceDropCents;
+  if ("invoiceReductionCents" in settlement) return settlement.invoiceReductionCents !== priceDropCents;
   if (rebase === null || settlement.issuesXeroDocument) return false;
   return rebase.newFinalPriceCents !== rebase.previousFinalPriceCents;
 }

@@ -42,6 +42,10 @@ import { resolveModificationDocumentLineItems } from "@/lib/xero-modification-li
 import { XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { reviewTaskKeyParts } from "@/lib/xero-review-task-key";
 import {
+  findUnconvergedAppliedCreditDeallocation,
+  XeroAppliedCreditOperationBusyError,
+} from "@/lib/xero-applied-credit-operation-serialization";
+import {
   findBookingSupplementaryInvoiceIds,
   planClearingAllocations,
   readInvoiceAmountsDue,
@@ -123,6 +127,20 @@ export async function createXeroCreditNoteForModification(params: {
     return null;
   }
   const originalInvoiceId = booking.payment.xeroInvoiceId;
+
+  // #3791: a review's note follows the give-back's deallocation of the same
+  // payment. Run first, it would meet an invoice the applied credit still
+  // covers and end PARTIAL; so while that deallocation has not converged it
+  // waits, and the outbox returns it to PENDING (a busy error is transient).
+  if (reviewTaskId) {
+    const deallocation = await findUnconvergedAppliedCreditDeallocation(booking.payment.id, prisma);
+    if (deallocation) {
+      throw new XeroAppliedCreditOperationBusyError(
+        `Review credit note waits for applied-credit deallocation ${deallocation.id} (${deallocation.status}) on payment ${booking.payment.id}`,
+        deallocation.status,
+      );
+    }
+  }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   // The INVOICED PARTY, not the booking's member (#3368; #3367's leftover).

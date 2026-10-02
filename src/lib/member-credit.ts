@@ -457,9 +457,15 @@ export async function clampAppliedCreditToBookingPrice(
  * `Payment.creditAppliedCents` mirror stays the caller's.
  */
 export async function giveBackAppliedCredit(
-  { memberId, bookingId, giveBackCentsOf, description, format }: {
+  { memberId, bookingId, giveBackCentsOf, description, format, sourceBookingId }: {
     memberId: string;
     bookingId: string;
+    /**
+     * Marks the row as a financial review's give-back (#3791): later reviews of
+     * the booking find the give-backs already made by it, not by a description
+     * a Xero repair may rewrite. Absent on the clamp's.
+     */
+    sourceBookingId?: string;
     giveBackCentsOf: (
       appliedCreditCents: number,
       payment: AppliedCreditGiveBackPayment | null,
@@ -483,7 +489,14 @@ export async function giveBackAppliedCredit(
   if (givenBackCents <= 0) return { appliedCreditCents, givenBackCents: 0, payment };
 
   await tx.memberCredit.create({
-    data: { memberId, amountCents: givenBackCents, type: CreditType.BOOKING_APPLIED, description, appliedToBookingId: bookingId },
+    data: {
+      memberId,
+      amountCents: givenBackCents,
+      type: CreditType.BOOKING_APPLIED,
+      description,
+      appliedToBookingId: bookingId,
+      ...(sourceBookingId ? { sourceBookingId } : {}),
+    },
   });
   await syncBookingLedgerCredits({ bookingId, store: tx });
 

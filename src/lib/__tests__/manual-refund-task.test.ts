@@ -933,8 +933,9 @@ describe("#3030 - pricing an unknown amount at completion", () => {
       // transfer. The review re-prices to $180 and settles a $60 share.
       const appliedCents = 6_000;
       invoiced(appliedCents, "PAYMENT_PENDING");
+      // Read after the re-price, as the give-back reads it.
       mocks.bookingFindUniqueOrThrow.mockResolvedValue({
-        status: "PAYMENT_PENDING", finalPriceCents: 24_000, checkIn: new Date("2026-08-01T00:00:00.000Z"), lodgeId: "lodge-1",
+        status: "PAYMENT_PENDING", finalPriceCents: 18_000, checkIn: new Date("2026-08-01T00:00:00.000Z"), lodgeId: "lodge-1",
       });
 
       await complete(6_000);
@@ -947,6 +948,28 @@ describe("#3030 - pricing an unknown amount at completion", () => {
       const xeroDueCents = 24_000 - (appliedCents - givenBackCents) - givenBackCents;
       const appDueCents = 18_000 - (appliedCents - givenBackCents);
       expect(xeroDueCents).toBe(appDueCents);
+    });
+
+    it("MUTATION: the reviewer's unpaid example: the allocated note covers the whole re-price, the deallocation the share, and a later unpaid cancel clears to nothing", async () => {
+      // $240 invoiced, $80 credit allocated, re-priced to $180, a $30 share.
+      const appliedCents = 8_000;
+      invoiced(appliedCents, "PAYMENT_PENDING");
+      mocks.bookingFindUniqueOrThrow.mockResolvedValue({
+        status: "PAYMENT_PENDING", finalPriceCents: 18_000, checkIn: new Date("2026-08-01T00:00:00.000Z"), lodgeId: "lodge-1",
+      });
+
+      await complete(3_000);
+
+      const appliedAfterCents = (mocks.paymentUpdate.mock.calls[0]?.[0] as { data: { creditAppliedCents: number } }).data.creditAppliedCents;
+      expect(appliedAfterCents).toBe(5_000);
+      expect(mocks.queueXeroBookingEditSettlement).toHaveBeenCalledTimes(1);
+      expect(mocks.queueXeroBookingEditSettlement).toHaveBeenCalledWith(reviewNote("card", 6_000));
+      const xeroDueCents = 24_000 - appliedAfterCents - 6_000;
+      expect(xeroDueCents).toBe(18_000 - appliedAfterCents);
+      // A later unpaid cancel's clearing note, by the cancel's own formula.
+      const { unpaidInvoiceClearingAmountCents } = await import("@/lib/invoice-clearing-amount");
+      const clearingCents = unpaidInvoiceClearingAmountCents({ finalPriceCents: 18_000, changeFeeCents: 0, xeroAllocatedAppliedCreditCents: appliedAfterCents });
+      expect(xeroDueCents - clearingCents).toBe(0);
     });
 
     it("MUTATION: warns the treasurer when what was credited is not what the re-price took off the price", async () => {
@@ -998,7 +1021,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
       expect(mocks.queueXeroBookingEditSettlement).toHaveBeenCalledWith(reviewNote("credit", 2000));
     });
 
-    it("MUTATION: a cancelled booking's invoice is left as the cancellation left it: one unallocated note for what was credited", async () => {
+    it("MUTATION: a cancelled booking's invoice is left as the cancellation left it, and given-back credit takes no note - it is minted one when spent, as the restore is", async () => {
       invoiced(20_000, "CANCELLED");
       mocks.bookingFindUniqueOrThrow.mockResolvedValue({
         status: "CANCELLED", finalPriceCents: 20_000, checkIn: new Date("2026-08-01T00:00:00.000Z"), lodgeId: "lodge-1",
@@ -1011,8 +1034,23 @@ describe("#3030 - pricing an unknown amount at completion", () => {
 
       await complete();
 
+      // $25 given back, nothing minted: no document at all.
+      expect(mocks.paymentUpdate).toHaveBeenCalled();
+      expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION: and a cancelled booking's MINTED part still takes its unallocated note, for that part only", async () => {
+      invoiced(1_000, "CANCELLED");
+      mocks.bookingFindUniqueOrThrow.mockResolvedValue({
+        status: "CANCELLED", finalPriceCents: 1_000, checkIn: new Date("2026-08-01T00:00:00.000Z"), lodgeId: "lodge-1",
+      });
+      // Nothing restored: the $10 applied comes back whole, the other $40 is minted.
+      mocks.bookingEventFindFirst.mockResolvedValue(null);
+
+      await complete();
+
       expect(mocks.queueXeroBookingEditSettlement).toHaveBeenCalledTimes(1);
-      expect(mocks.queueXeroBookingEditSettlement).toHaveBeenCalledWith(reviewNote("credit", 2_500));
+      expect(mocks.queueXeroBookingEditSettlement).toHaveBeenCalledWith(reviewNote("credit", 4_000));
     });
 
     it("MUTATION: mints only the part of the share the applied credit could not cover", async () => {

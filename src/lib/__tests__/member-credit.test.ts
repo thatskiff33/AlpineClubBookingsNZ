@@ -888,6 +888,20 @@ describe("member-credit helpers", () => {
       expect(needsOperatorXeroRetry(new XeroAppliedCreditOperationBusyError("x", "PENDING"))).toBe(false);
     });
 
+    it("MUTATION: marks a review's give-back row with its booking as source, and the clamp's with none", async () => {
+      const tx = makeTx(-20000, null, null);
+      const { giveBackAppliedCredit } = await import("@/lib/member-credit");
+
+      await giveBackAppliedCredit(
+        { memberId: "member-1", bookingId: "booking-1", giveBackCentsOf: () => 5000, description: "review share", format: CLUB_FORMAT_TEST, sourceBookingId: "booking-1" },
+        tx as any,
+      );
+      await giveBack(tx, () => 1000);
+
+      expect(tx.memberCredit.create.mock.calls[0]![0]).toMatchObject({ data: { sourceBookingId: "booking-1" } });
+      expect(tx.memberCredit.create.mock.calls[1]![0].data).not.toHaveProperty("sourceBookingId");
+    });
+
     it("MUTATION: queues no deallocation where Xero already holds no more than the new applied figure", async () => {
       const tx = makeTx(-20000, ibPayment, 15000);
 

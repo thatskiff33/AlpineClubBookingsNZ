@@ -45,6 +45,8 @@ const mocks = vi.hoisted(() => ({
   readLateCaptureXeroReceipt: vi.fn(),
 }));
 
+const deallocationFence = vi.hoisted(() => ({ findFirst: vi.fn() }));
+
 vi.mock("@/lib/prisma", () => {
   const prisma = {
     // #3548: a new refund note is recorded (payment, link, row) in one transaction.
@@ -60,7 +62,12 @@ vi.mock("@/lib/prisma", () => {
       findFirst: mocks.xeroObjectLinkFindFirst,
       findMany: mocks.xeroObjectLinkFindMany,
     },
-    xeroSyncOperation: { update: mocks.xeroSyncOperationUpdate, findUnique: async () => null },
+    xeroSyncOperation: {
+      update: mocks.xeroSyncOperationUpdate,
+      findUnique: async () => null,
+      // #3791: the unconverged-deallocation read a review's note defers on.
+      findFirst: (...a: unknown[]) => deallocationFence.findFirst(...a),
+    },
     memberCredit: { updateMany: mocks.memberCreditUpdateMany },
   };
   return { prisma };
@@ -514,6 +521,65 @@ describe("the account-credit note (createUnappliedXeroCreditNote)", () => {
 });
 
 describe("#3791: a review task's share is a document of its own", () => {
+  beforeEach(() => {
+    deallocationFence.findFirst.mockResolvedValue(null);
+  });
+
+  it("MUTATION: waits, as a transient busy error, while the payment's deallocation has not converged - and creates nothing", async () => {
+    deallocationFence.findFirst.mockResolvedValue({ id: "dealloc-1", status: "FAILED" });
+    const { XeroAppliedCreditOperationBusyError } = await import("@/lib/xero-applied-credit-operation-serialization");
+
+    await expect(
+      createXeroCreditNoteForModification({
+        format: CLUB_FORMAT_TEST,
+        bookingId: BOOKING_ID,
+        refundAmountCents: 1000,
+        bookingModificationId: "cmmodification01",
+        reviewTaskId: "task-7",
+        refundMethod: "account-credit",
+        syncOperationId: "op-note",
+      }),
+    ).rejects.toBeInstanceOf(XeroAppliedCreditOperationBusyError);
+    expect(mocks.xeroSyncOperationUpdate).not.toHaveBeenCalled();
+    expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+  });
+
+  it("an edit's own note does not wait on a deallocation", async () => {
+    deallocationFence.findFirst.mockResolvedValue({ id: "dealloc-1", status: "PENDING" });
+
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 1000,
+      bookingModificationId: "cmmodification01",
+    });
+
+    expect(mocks.retryXeroWriteWithContactRepair).toHaveBeenCalledTimes(1);
+  });
+
+  it("MUTATION: a queued account note keeps its amount and queue shape when it rewrites the payload, so a retry can rebuild it", async () => {
+    mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
+
+    await createUnappliedXeroCreditNote(PAYMENT_ID, 1000, CLUB_FORMAT_TEST, {
+      bookingModificationId: "cmmodification01",
+      reviewTaskId: "task-7",
+      syncOperationId: "op-queued",
+    });
+
+    expect(mocks.xeroSyncOperationUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "op-queued" },
+      data: {
+        requestPayload: expect.objectContaining({
+          queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+          refundAmountCents: 1000,
+          paymentId: PAYMENT_ID,
+          bookingModificationId: "cmmodification01",
+          reviewTaskId: "task-7",
+        }),
+      },
+    }));
+  });
+
   it("MUTATION: scopes the invoice-allocated note's keys - the note's and its allocation's - to the task, amount kept, and records the task for a retry", async () => {
     await createXeroCreditNoteForModification({
       format: CLUB_FORMAT_TEST,

@@ -27,21 +27,48 @@ import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
  * What the account-credit route moved: applied credit given back, and credit
  * minted beside it. Their sum is what the member was credited. `cancelled`
  * says the booking was already cancelled, which decides how Xero hears of it
- * (`dispatchEditReviewAccountCreditXero`).
+ * (`dispatchEditReviewAccountCreditXero`). `invoiceReductionCents` is what the
+ * booking's issued invoice must come down by (`reviewInvoiceReductionCents`).
  */
 export type EditReviewAccountCreditOutcome = {
   givenBackCents: number;
   mintedCents: number;
   cancelled: boolean;
+  invoiceReductionCents: number;
 };
 
-/**
- * The description every review give-back row carries, and the one way a later
- * review on the same booking finds the give-backs already made (#3791). Built
- * here only, so the writer and its readers cannot drift apart (`INV-SSOT`).
- */
+/** The give-back row's human description; nothing reads it back (#3791). */
 export function reviewShareGiveBackDescription(bookingId: string): string {
   return `Applied credit returned after booking ${bookingId.slice(0, 8)} financial review`;
+}
+
+/**
+ * WHAT THE INVOICE MUST COME DOWN BY, so that Xero owes what the app does
+ * (#3791, the clamp counterpart's invoice-allocated note). The app owes
+ * `price - applied` on an unpaid booking and nothing on one its credit covered,
+ * where a give-back is an agreed reduction of the price. Before the review Xero
+ * owed what the app did; the give-back's deallocation adds `G` to what Xero
+ * says is due; the note takes off the rest of the difference:
+ * `owedBefore + G - owedAfter`. On an unpaid booking that is the re-price's
+ * drop - the whole reduction, not the share - and on a covered one the share.
+ */
+export function reviewInvoiceReductionCents({
+  unpaid,
+  previousFinalPriceCents,
+  finalPriceCents,
+  appliedBeforeCents,
+  givenBackCents,
+}: {
+  /** `bookingIsUnpaid`: credit short of the price for a reason other than a review's give-back. */
+  unpaid: boolean;
+  previousFinalPriceCents: number;
+  finalPriceCents: number;
+  appliedBeforeCents: number;
+  givenBackCents: number;
+}): number {
+  const owedBeforeCents = unpaid ? Math.max(0, previousFinalPriceCents - appliedBeforeCents) : 0;
+  const owedAfterCents = unpaid ? Math.max(0, finalPriceCents - (appliedBeforeCents - givenBackCents)) : 0;
+  return Math.max(0, owedBeforeCents + givenBackCents - owedAfterCents);
 }
 
 /**
@@ -94,17 +121,19 @@ export async function writeEditReviewAccountCredit({
     createBookingModificationCredit(memberId, cents, bookingId, route.bookingModificationId, undefined, store, paymentId);
   if (route.allocateAgainstPaymentId !== null) {
     await mint(amountCents, route.allocateAgainstPaymentId);
-    return { givenBackCents: 0, mintedCents: amountCents, cancelled: false };
+    return { givenBackCents: 0, mintedCents: amountCents, cancelled: false, invoiceReductionCents: 0 };
   }
 
   let creditSliceCents = 0;
   let cancelled = false;
+  let invoice = { unpaid: false, previousFinalPriceCents: 0, finalPriceCents: 0, appliedBeforeCents: 0 };
   const { givenBackCents, payment } = await giveBackAppliedCredit(
     {
       memberId,
       bookingId,
       format,
       description: reviewShareGiveBackDescription(bookingId),
+      sourceBookingId: bookingId,
       // Asked under the member's credit-ledger lock and the completion's
       // lock(1). Every writer of what is read here holds one of the two: the
       // cancel and the other reviews hold lock(1), the restore and every credit
@@ -129,12 +158,17 @@ export async function writeEditReviewAccountCredit({
           return netted.owedCents;
         }
         const previousFinalPriceCents = rebase?.previousFinalPriceCents ?? booking.finalPriceCents;
-        const unpaid = appliedCreditCents < previousFinalPriceCents;
+        // UNPAID: the credit falls short of the price for a reason other than a
+        // review's give-back - an agreed share on a covered booking lowers the
+        // applied figure without leaving anything owed (#3791, second round).
+        const reviewGiveBacksCents = await reviewGiveBacksMadeCents(bookingId, store);
+        const unpaid = appliedCreditCents + reviewGiveBacksCents < previousFinalPriceCents;
+        invoice = { unpaid, previousFinalPriceCents, finalPriceCents: booking.finalPriceCents, appliedBeforeCents: appliedCreditCents };
         creditSliceCents = creditSliceOfReviewShare({
           shareCents: amountCents,
           appliedCreditCents,
           repricedAwayHeadroomCents: unpaid
-            ? await reviewRepriceHeadroomCents({ bookingId, rebase, store })
+            ? await reviewRepriceHeadroomCents({ bookingId, rebase, reviewGiveBacksCents, store })
             : null,
         });
         return creditSliceCents;
@@ -151,7 +185,13 @@ export async function writeEditReviewAccountCredit({
   }
   const mintedCents = amountCents - creditSliceCents;
   if (mintedCents > 0) await mint(mintedCents);
-  return { givenBackCents, mintedCents, cancelled };
+  return {
+    givenBackCents,
+    mintedCents,
+    cancelled,
+    // A cancelled booking's invoice stands as the cancellation left it.
+    invoiceReductionCents: cancelled ? 0 : reviewInvoiceReductionCents({ ...invoice, givenBackCents }),
+  };
 }
 
 /**
@@ -185,38 +225,46 @@ export function creditSliceOfReviewShare({
 async function reviewRepriceHeadroomCents({
   bookingId,
   rebase,
+  reviewGiveBacksCents,
   store,
 }: {
   bookingId: string;
   rebase: BookingPriceRebase | null;
+  reviewGiveBacksCents: number;
   store: Prisma.TransactionClient;
 }): Promise<number> {
-  const [rebaseRows, givenBack] = await Promise.all([
-    store.bookingModification.findMany({
-      where: { bookingId, modificationType: "PRICE_REBASE" },
-      select: { newData: true },
-    }),
-    store.memberCredit.aggregate({
-      where: reviewGiveBackRowsWhere(bookingId),
-      _sum: { amountCents: true },
-    }),
-  ]);
+  const rebaseRows = await store.bookingModification.findMany({
+    where: { bookingId, modificationType: "PRICE_REBASE" },
+    select: { newData: true },
+  });
   const earlierDropCents = rebaseRows.reduce((sum, row) => {
     const data = jsonRecord(row.newData);
     const movement = data && typeof data.financialReviewTaskId === "string" ? data.rebasedPriceMovementCents : null;
     return typeof movement === "number" && Number.isInteger(movement) ? sum - movement : sum;
   }, 0);
   const thisDropCents = rebase ? rebase.previousFinalPriceCents - rebase.newFinalPriceCents : 0;
-  return earlierDropCents + thisDropCents - (givenBack._sum.amountCents ?? 0);
+  return earlierDropCents + thisDropCents - reviewGiveBacksCents;
 }
 
-/** The give-back rows reviews have written on this booking. */
+/** What reviews of this booking have given back so far (`reviewGiveBackRowsWhere`). */
+async function reviewGiveBacksMadeCents(bookingId: string, store: Prisma.TransactionClient): Promise<number> {
+  const givenBack = await store.memberCredit.aggregate({ where: reviewGiveBackRowsWhere(bookingId), _sum: { amountCents: true } });
+  return givenBack._sum.amountCents ?? 0;
+}
+
+/**
+ * The give-back rows reviews have written on this booking, found by STRUCTURE
+ * (#3791): a `BOOKING_APPLIED` row naming the booking as its source as well as
+ * where it applies. No other writer of an applied row sets `sourceBookingId`,
+ * and a Xero repair that stamps a note or rewrites the description of a linked
+ * row leaves it alone.
+ */
 function reviewGiveBackRowsWhere(bookingId: string): Prisma.MemberCreditWhereInput {
   return {
     appliedToBookingId: bookingId,
+    sourceBookingId: bookingId,
     type: CreditType.BOOKING_APPLIED,
     amountCents: { gt: 0 },
-    description: reviewShareGiveBackDescription(bookingId),
   };
 }
 
@@ -396,7 +444,7 @@ export async function finishEditReviewAccountCredit({
     taskId,
     actingMemberId,
     bookingModificationId,
-    givenBackCents: outcome.givenBackCents,
+    invoiceReductionCents: outcome.invoiceReductionCents,
     mintedCents: outcome.mintedCents,
     cancelled: outcome.cancelled,
     hasIssuedXeroInvoice,

@@ -40,6 +40,7 @@ import { calculateAppliedCreditRestore } from "@/lib/cancellation";
 import { requireClubTimeZone } from "@/lib/club-time";
 import {
   creditSliceOfReviewShare,
+  reviewInvoiceReductionCents,
   reviewShareGiveBackDescription,
   writeEditReviewAccountCredit,
 } from "@/lib/edit-financial-review-account-credit";
@@ -70,9 +71,9 @@ const store = {
   booking: { findUniqueOrThrow: vi.fn() },
   memberCredit: {
     findUnique: vi.fn(),
-    aggregate: vi.fn(async ({ where }: { where: { description?: string } }) => ({
+    aggregate: vi.fn(async ({ where }: { where: { sourceBookingId?: string } }) => ({
       _sum: {
-        amountCents: where.description
+        amountCents: where.sourceBookingId
           ? rows.reviewGiveBacksCents
           : rows.appliedAsRestoredCents === null
             ? null
@@ -143,13 +144,13 @@ describe("the worked example: the share comes back first, then the booking is ca
   it.each(TIERS)("MUTATION: at $tier the member gets the share once ($totalBackCents cents in all)", async ({ rule, totalBackCents }) => {
     const outcome = await write();
 
-    expect(outcome).toEqual({ givenBackCents: 5_000, mintedCents: 0, cancelled: false });
+    expect(outcome).toEqual({ givenBackCents: 5_000, mintedCents: 0, cancelled: false, invoiceReductionCents: 5_000 });
     // The mirror the cancellation tiers comes down by the share.
     expect(store.payment.update).toHaveBeenCalledWith({ where: { id: "payment-1" }, data: { creditAppliedCents: 15_000 } });
     expect(h.createBookingModificationCredit).not.toHaveBeenCalled();
     // The row a later review finds this give-back by.
     expect(h.giveBackAppliedCredit).toHaveBeenCalledWith(
-      expect.objectContaining({ description: reviewShareGiveBackDescription("booking-1") }),
+      expect.objectContaining({ description: reviewShareGiveBackDescription("booking-1"), sourceBookingId: "booking-1" }),
       store,
     );
     // The cancellation then tiers the $150 still applied, not the $200.
@@ -168,7 +169,7 @@ describe("owner decision 2: the booking was cancelled before the review complete
     const outcome = await write();
 
     // $0 at 100%, $25 at 50% with a $20 fee - the issue's figures.
-    expect(outcome).toEqual({ givenBackCents: totalBackCents - restoredCents, mintedCents: 0, cancelled: true });
+    expect(outcome).toEqual({ givenBackCents: totalBackCents - restoredCents, mintedCents: 0, cancelled: true, invoiceReductionCents: 0 });
     expect(h.createBookingModificationCredit).not.toHaveBeenCalled();
   });
 
@@ -190,7 +191,7 @@ describe("owner decision 2: the booking was cancelled before the review complete
     h.applied.mirrorCents = 19_000;
     const second = await write(2_000);
 
-    expect(second).toEqual({ givenBackCents: 1_000, mintedCents: 0, cancelled: true });
+    expect(second).toEqual({ givenBackCents: 1_000, mintedCents: 0, cancelled: true, invoiceReductionCents: 0 });
     expect(8_000 + first.givenBackCents + second.givenBackCents).toBe(10_000);
   });
 
@@ -216,7 +217,7 @@ describe("owner decision 2: the booking was cancelled before the review complete
     rows.frozenAppliedCents = 20_000;
     restored(20_000);
 
-    expect(await write()).toEqual({ givenBackCents: 0, mintedCents: 0, cancelled: true });
+    expect(await write()).toEqual({ givenBackCents: 0, mintedCents: 0, cancelled: true, invoiceReductionCents: 0 });
     expect(h.loadCancellationPolicy).not.toHaveBeenCalled();
   });
 
@@ -224,7 +225,7 @@ describe("owner decision 2: the booking was cancelled before the review complete
     bookingIs("CANCELLED");
     restored(null);
 
-    expect(await write()).toEqual({ givenBackCents: 5_000, mintedCents: 0, cancelled: true });
+    expect(await write()).toEqual({ givenBackCents: 5_000, mintedCents: 0, cancelled: true, invoiceReductionCents: 0 });
     expect(h.loadCancellationPolicy).not.toHaveBeenCalled();
   });
 
@@ -247,7 +248,7 @@ describe("what of the share is applied credit coming back", () => {
     h.applied.mirrorCents = 3_000;
     bookingIs("PAID", 3_000);
 
-    expect(await write()).toEqual({ givenBackCents: 3_000, mintedCents: 2_000, cancelled: false });
+    expect(await write()).toEqual({ givenBackCents: 3_000, mintedCents: 2_000, cancelled: false, invoiceReductionCents: 3_000 });
     expect(h.createBookingModificationCredit).toHaveBeenCalledWith("member-1", 2_000, "booking-1", "mod-1", undefined, store, undefined);
   });
 
@@ -261,7 +262,7 @@ describe("what of the share is applied credit coming back", () => {
     h.applied.cents = 5_000;
     h.applied.mirrorCents = 5_000;
 
-    expect(await write(5_000, { previousFinalPriceCents: 20_000, newFinalPriceCents: 17_000 })).toEqual({
+    expect(await write(5_000, { previousFinalPriceCents: 20_000, newFinalPriceCents: 17_000 })).toMatchObject({
       givenBackCents: 3_000,
       mintedCents: 2_000,
       cancelled: false,
@@ -287,14 +288,50 @@ describe("what of the share is applied credit coming back", () => {
     rows.reviewGiveBacksCents = 3_000;
 
     // A $50 share here: $30 of headroom is left, so $30 back and $20 minted.
-    expect(await write(5_000, null)).toEqual({ givenBackCents: 3_000, mintedCents: 2_000, cancelled: false });
+    expect(await write(5_000, null)).toMatchObject({ givenBackCents: 3_000, mintedCents: 2_000, cancelled: false });
   });
 
   it("with a captured payment, mints the whole share against it and gives nothing back", async () => {
     const outcome = await write(5_000, null, "payment-9");
 
-    expect(outcome).toEqual({ givenBackCents: 0, mintedCents: 5_000, cancelled: false });
+    expect(outcome).toEqual({ givenBackCents: 0, mintedCents: 5_000, cancelled: false, invoiceReductionCents: 0 });
     expect(h.giveBackAppliedCredit).not.toHaveBeenCalled();
     expect(h.createBookingModificationCredit).toHaveBeenCalledWith("member-1", 5_000, "booking-1", "mod-1", undefined, store, "payment-9");
+  });
+});
+
+describe("what the issued invoice must come down by, so Xero owes what the app does", () => {
+  /** Xero's due and the app's, once the give-back's deallocation and the note have landed. */
+  /** `earlierGiveBacksCents`: an earlier review's agreed share, whose note the invoice already carries. */
+  const dues = (shape: { previousFinalPriceCents: number; finalPriceCents: number; appliedBeforeCents: number; givenBackCents: number; earlierGiveBacksCents?: number }) => {
+    const invoiceNetBeforeCents = shape.previousFinalPriceCents - (shape.earlierGiveBacksCents ?? 0);
+    const unpaid = shape.appliedBeforeCents + (shape.earlierGiveBacksCents ?? 0) < shape.previousFinalPriceCents;
+    const note = reviewInvoiceReductionCents({ ...shape, unpaid });
+    const appliedAfter = shape.appliedBeforeCents - shape.givenBackCents;
+    return {
+      note,
+      xeroDueCents: Math.max(0, invoiceNetBeforeCents - appliedAfter - note),
+      appDueCents: unpaid ? Math.max(0, shape.finalPriceCents - appliedAfter) : 0,
+    };
+  };
+
+  it("MUTATION: the reviewer's unpaid example - $200, $80 applied, re-priced $50 down, $30 share: a $50 note, and both owe $100", () => {
+    expect(dues({ previousFinalPriceCents: 20_000, finalPriceCents: 15_000, appliedBeforeCents: 8_000, givenBackCents: 3_000 })).toEqual({
+      note: 5_000,
+      xeroDueCents: 10_000,
+      appDueCents: 10_000,
+    });
+  });
+
+  it.each([
+    ["covered, no re-price, $50 given back", { previousFinalPriceCents: 20_000, finalPriceCents: 20_000, appliedBeforeCents: 20_000, givenBackCents: 5_000 }, 5_000],
+    ["covered, a $20 re-price and a larger $50 agreed share", { previousFinalPriceCents: 20_000, finalPriceCents: 18_000, appliedBeforeCents: 20_000, givenBackCents: 5_000 }, 5_000],
+    ["unpaid, a second review of the edit after the first re-priced", { previousFinalPriceCents: 14_000, finalPriceCents: 14_000, appliedBeforeCents: 7_000, givenBackCents: 3_000 }, 0],
+    ["unpaid, re-priced $20, the share held to it", { previousFinalPriceCents: 20_000, finalPriceCents: 18_000, appliedBeforeCents: 8_000, givenBackCents: 2_000 }, 2_000],
+    ["covered, a second review after the first gave $20 back with no re-price", { previousFinalPriceCents: 20_000, finalPriceCents: 20_000, appliedBeforeCents: 18_000, givenBackCents: 2_000, earlierGiveBacksCents: 2_000 }, 2_000],
+  ])("MUTATION: %s", (_shape, shape, note) => {
+    const result = dues(shape);
+    expect(result.note).toBe(note);
+    expect(result.xeroDueCents).toBe(result.appDueCents);
   });
 });

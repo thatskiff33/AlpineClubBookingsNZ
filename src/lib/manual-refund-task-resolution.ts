@@ -484,7 +484,10 @@ export async function resolveManualRefundTask(
               }
               // What the member was actually credited: the stand-in line and
               // the invoice-divergence check read this, not the typed share.
-              return { creditedCents: accountCredit.givenBackCents + accountCredit.mintedCents };
+              return {
+                creditedCents: accountCredit.givenBackCents + accountCredit.mintedCents,
+                invoiceReductionCents: accountCredit.invoiceReductionCents,
+              };
             }
           : null,
         format,

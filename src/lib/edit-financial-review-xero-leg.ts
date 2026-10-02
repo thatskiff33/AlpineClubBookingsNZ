@@ -321,20 +321,25 @@ export async function dispatchEditReviewXeroSettlement({
 }
 
 /**
- * #3791: THE XERO LEG OF AN ACCOUNT-CREDIT SHARE, as the orchestrator's reading
- * of owner decision 1 sets it out (issue comment of 3 October 2026). The share
- * reaches Xero exactly as the clamp's counterpart - an ordinary price
- * reduction - does, through the same classifier and builders:
+ * #3791: THE XERO LEG OF AN ACCOUNT-CREDIT SHARE, held to three invariants for
+ * a booking with an issued invoice (second review round, 3 October 2026): the
+ * invoice less its allocated reduction notes is the booking's price as the app
+ * now holds it; Xero's amount due is what the app says is owed; and the
+ * member's Xero credit - counting credit rows with no note, which are minted
+ * one when spent (#2717) - is the app's. Through the existing classifier and
+ * builders, as the clamp's counterpart, an ordinary price reduction, does:
  *
- *  - applied credit GIVEN BACK on a live booking: the give-back's deallocation
- *    (`giveBackAppliedCredit`) returns it to the member in Xero, and an
- *    invoice-ALLOCATED modification credit note for the same amount takes it
- *    off the invoice - so the invoice owes what the booking does;
- *  - credit MINTED: the unallocated account-credit note, as before, for that
- *    part only;
- *  - on a CANCELLED booking the invoice stands as the cancellation left it (the
- *    give-back takes no deallocation there), so everything credited reaches the
- *    member as one unallocated account-credit note - nothing reopens.
+ *  - the give-back's deallocation (`giveBackAppliedCredit`) returns what was
+ *    given back to the member in Xero;
+ *  - an invoice-ALLOCATED modification credit note takes off the whole
+ *    reduction (`reviewInvoiceReductionCents`) - the re-price's drop on an
+ *    unpaid booking, the agreed share on a covered one;
+ *  - credit MINTED takes the unallocated account note, which the minted row is
+ *    stamped with;
+ *  - on a CANCELLED booking nothing reaches the invoice and nothing is
+ *    deallocated; only the minted part takes its note. What was given back is
+ *    a noteless credit row, minted a note when spent, exactly as the
+ *    cancellation's own restore is - a note for it now would be credited twice.
  *
  * Every note is scoped to THIS review task (`reviewTaskId`), so a sibling
  * review's share on the same edit is a document of its own rather than a
@@ -346,7 +351,7 @@ export async function dispatchEditReviewAccountCreditXero({
   taskId,
   actingMemberId,
   bookingModificationId,
-  givenBackCents,
+  invoiceReductionCents,
   mintedCents,
   cancelled,
   hasIssuedXeroInvoice,
@@ -357,7 +362,7 @@ export async function dispatchEditReviewAccountCreditXero({
   taskId: string;
   actingMemberId: string;
   bookingModificationId: string;
-  givenBackCents: number;
+  invoiceReductionCents: number;
   mintedCents: number;
   cancelled: boolean;
   hasIssuedXeroInvoice: boolean;
@@ -365,16 +370,14 @@ export async function dispatchEditReviewAccountCreditXero({
   bookingXeroInvoiceId: string | null;
   bookingPaymentStatus: string | null;
 }): Promise<void> {
-  const notes: Array<{ cents: number; settlementMethod: "card" | "credit"; refundMethod: RefundMethod }> = cancelled
-    ? [{ cents: givenBackCents + mintedCents, settlementMethod: "credit", refundMethod: "account-credit" }]
-    : [
-        // "card" is the classifier's two-way switch to the invoice-applied note;
-        // the note's wording is the account credit the money went back as.
-        { cents: givenBackCents, settlementMethod: "card", refundMethod: "account-credit" },
-        { cents: mintedCents, settlementMethod: "credit", refundMethod: "account-credit" },
-      ];
+  const notes: Array<{ cents: number; settlementMethod: "card" | "credit" }> = [
+    // "card" is the classifier's two-way switch to the invoice-applied note;
+    // the note's wording is the account credit the money went back as.
+    { cents: cancelled ? 0 : invoiceReductionCents, settlementMethod: "card" },
+    { cents: mintedCents, settlementMethod: "credit" },
+  ];
   // A cancelled booking's invoice no longer counts as issued for an edit, but
-  // it exists, and the member's note is raised against its contact.
+  // it exists, and the minted credit's note is raised against its contact.
   const invoiceExists = cancelled ? bookingXeroInvoiceId !== null : hasIssuedXeroInvoice;
   // No invoice, no document: the classifier would say so too, and the member's
   // credit is whole in the app either way.
@@ -393,7 +396,7 @@ export async function dispatchEditReviewAccountCreditXero({
       datesChanged: false,
       guestIdentityChanged: false,
       settlementMethod: note.settlementMethod,
-      refundMethod: note.refundMethod,
+      refundMethod: "account-credit",
       settlementAmountCents: note.cents,
       requiresAdditionalStripePayment: false,
       additionalPaymentIntentId: null,

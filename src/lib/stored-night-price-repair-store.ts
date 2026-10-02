@@ -169,11 +169,14 @@ export async function recordReviewClosurePricing({
    * account-credit route, which gives back applied credit only up to what the
    * booking's re-prices removed on an unpaid booking. Run straight after the
    * re-base and before anything reads the settled amount, and it answers what
-   * the member was actually credited: the ledger stand-in posts that (none at
-   * zero), and the invoice-divergence check compares it with the re-price.
-   * Null on every other closure.
+   * the member was actually credited - the ledger stand-in posts that, none at
+   * zero - and what its Xero note takes off the invoice, which the
+   * invoice-divergence check compares with the re-price. Null on every other
+   * closure.
    */
-  settleAgainstRebase: ((rebase: BookingPriceRebase | null) => Promise<{ creditedCents: number }>) | null;
+  settleAgainstRebase:
+    | ((rebase: BookingPriceRebase | null) => Promise<{ creditedCents: number; invoiceReductionCents: number }>)
+    | null;
   store: Prisma.TransactionClient;
   /** The club's format (#3565), resolved by the caller before any transaction. */
   format: ClubFormat;
@@ -210,13 +213,14 @@ export async function recordReviewClosurePricing({
     store,
   });
   const rebase = outcome.rebased ? outcome.rebase : null;
-  const creditedCents = settleAgainstRebase ? (await settleAgainstRebase(rebase)).creditedCents : null;
+  const settled = settleAgainstRebase ? await settleAgainstRebase(rebase) : null;
+  const creditedCents = settled?.creditedCents ?? null;
   const xeroInvoiceDiverged = rebaseDivergesFromIssuedInvoice({
     rebase,
     hasIssuedXeroInvoice,
     settlement:
-      creditedCents !== null
-        ? { creditedCents }
+      settled !== null
+        ? { invoiceReductionCents: settled.invoiceReductionCents }
         : {
             issuesXeroDocument: editReviewSettlementIssuesXeroDocument({
               route: settlementRoute,

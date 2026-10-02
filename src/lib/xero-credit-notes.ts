@@ -17,6 +17,10 @@
 
 import { reviewTaskKeyParts } from "@/lib/xero-review-task-key";
 import {
+  XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
+} from "@/lib/xero-operation-outbox-payload";
+import {
   findKeptLateCaptureInvoiceIdForPayment,
   findLateCapturePaymentIntents,
   readLateCaptureXeroReceipt,
@@ -875,9 +879,27 @@ export async function createUnappliedXeroCreditNote(
     "v1"
   );
   let operationId = queuedOperationId;
+  // #3791: the executed payload keeps what an operator retry reads back - the
+  // amount (which is in the Xero key) and, on a queued row, its queue shape -
+  // as the invoice-allocated builder's does. Without them a retry of a review's
+  // note fell back to its parked anchor's net, which is 0, and threw.
+  const retryFields = {
+    refundAmountCents,
+    ...(queuedOperationId
+      ? bookingModificationId
+        ? {
+            queueType: XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
+            bookingId: payment.booking.id,
+            paymentId,
+            bookingModificationId,
+          }
+        : { queueType: XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE }
+      : {}),
+    ...(reviewTaskId ? { reviewTaskId } : {}),
+  };
   const requestPayload = {
     creditNotes: [buildCreditNote(contactId)],
-    ...(reviewTaskId ? { reviewTaskId } : {}),
+    ...retryFields,
     ...(itemised ? { priceLines: itemised.record } : {}),
   };
 
@@ -915,7 +937,7 @@ export async function createUnappliedXeroCreditNote(
       createdByMemberId: options?.createdByMemberId,
       buildRequestPayload: (resolvedContactId) => ({
         creditNotes: [buildCreditNote(resolvedContactId)],
-        ...(reviewTaskId ? { reviewTaskId } : {}),
+        ...retryFields,
         ...(itemised ? { priceLines: itemised.record } : {}),
       }),
       run: ({ contactId: resolvedContactId }) =>
