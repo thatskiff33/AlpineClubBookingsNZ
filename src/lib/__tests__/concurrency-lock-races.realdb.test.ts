@@ -173,6 +173,13 @@ import "./group-settlement-invoice-binding-races.realdb.test";
 // at the provider and on the row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-3402-` fixtures.
 import "./edit-financial-review-charge-raise-claim.realdb.test";
+// #3454 reuses it to prove the Xero token store's two fences against real row
+// locks: simultaneous refresh-lease claims (this code against itself, and
+// against an older colour's own claim statement) let exactly one through, and a
+// refresh whose credential-store compare-and-set loses rolls the `XeroToken`
+// mirror back with it. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it clears
+// the singleton `XeroToken` table and its own `xero-oauth` row.
+import "./xero-token-credential-store.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database
