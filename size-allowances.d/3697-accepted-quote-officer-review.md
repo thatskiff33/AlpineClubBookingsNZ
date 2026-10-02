@@ -34,7 +34,7 @@ reason: #3415's accepted status and #3416's portable booking-policy setting
   #3794 exports the held rewrite order for the accepted-party proof.
 
 file: src/lib/school-booking-request.ts
-lines: 3047
+lines: 3048
 reason: #3415's accepted status and #3416's optional teacher assignment share
   the existing school conversion claim and contact reconciliation; moving
   either branch would split its organisation, booking and bed-allocation

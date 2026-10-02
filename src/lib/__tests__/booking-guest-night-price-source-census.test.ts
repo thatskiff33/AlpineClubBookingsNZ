@@ -13,7 +13,7 @@ const REPO = process.cwd();
 
 const REQUIRED_WRITER_SHAPES = new Map<string, RegExp[]>([
   ["src/lib/school-pending-adult-resolution.ts", [
-    /bookingGuestNight\.update\([\s\S]*?priceSource:\s*night\.priceSource/,
+    /bookingGuestNight\.updateMany\([\s\S]*?priceSource:\s*group\.priceSource/,
   ]],
   [
     "e2e/setup/seed-second-lodge.ts",

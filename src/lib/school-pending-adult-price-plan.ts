@@ -4,6 +4,14 @@ import { BookingRequestError, type BookingRequestGuest } from "@/lib/booking-req
 import type { parseBookingRequestQuoteOptions } from "@/lib/booking-request-quotes";
 import { buildApprovalGuestNights } from "@/lib/booking-request-shared";
 
+function acceptedBreakdownMatches(
+  accepted: ReturnType<typeof parseBookingRequestQuoteOptions>[number],
+  expectedParticipantCount: number,
+) {
+  return accepted.guestBreakdown.length === expectedParticipantCount &&
+    accepted.guestBreakdown.reduce((sum, entry) => sum + entry.totalCents, 0) === accepted.totalCents;
+}
+
 /** The same immutable terms fence for naming and its later held approval. */
 export async function readAcceptedSchoolTerms(
   request: Pick<BookingRequest,
@@ -19,8 +27,7 @@ export async function readAcceptedSchoolTerms(
     ? parseBookingRequestQuoteOptions([request.acceptedQuoteSnapshot])[0]
     : null;
   if (!accepted || !hold || accepted.totalCents !== request.acceptedPriceCents ||
-      accepted.guestBreakdown.length !== expectedParticipantCount ||
-      accepted.guestBreakdown.reduce((sum, entry) => sum + entry.totalCents, 0) !== accepted.totalCents ||
+      !acceptedBreakdownMatches(accepted, expectedParticipantCount) ||
       (request.acceptedQuoteOptionId !== null && accepted.id !== request.acceptedQuoteOptionId) ||
       hold.checkIn.getTime() !== request.checkIn.getTime() || hold.checkOut.getTime() !== request.checkOut.getTime() ||
       hold.discountCents !== 0 || hold.promoAdjustmentCents !== 0) {
@@ -62,7 +69,7 @@ export function planAcceptedSchoolHeldPrices(input: {
         (index < originalNamed.length) !== (entry.kind !== "PENDING_ADULT")) ||
       originalNamed.slice(teacherCount).some((entry) => entry.ageTier === "ADULT") ||
       pending.some((entry) => entry.ageTier !== "ADULT" || entry.isMember || entry.memberId !== null || entry.firstName !== undefined || entry.lastName !== undefined) ||
-      entries.reduce((sum, entry) => sum + entry.totalCents, 0) !== input.accepted.totalCents) refuse();
+      !acceptedBreakdownMatches(input.accepted, input.guests.length + input.pendingAdultCount)) refuse();
 
   const key = (guest: { firstName: string; lastName: string; ageTier: AgeTier }) =>
     `${guest.firstName}\u0000${guest.lastName}\u0000${guest.ageTier}`;

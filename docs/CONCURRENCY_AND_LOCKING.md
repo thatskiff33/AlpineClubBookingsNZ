@@ -3887,6 +3887,8 @@ reconciles provisional held guest/night and booking cents to the accepted
 snapshot before replacing anonymous slots (#3794). Existing guest/night ids,
 member links, consent, dietary and bed identities stay intact. A lost claim
 writes nothing; any failure rolls back prices, names and reservations together.
+Night updates group exact proven ids by cents and provenance and require every
+row to be affected; statement count depends on distinct prices, not stay length.
 Accepted terms and settlement remain unchanged; this writer adds no lock tier
 or provider call. Active matching identities use canonical seasonal membership
 policy, so login-disabled member-rate adults still require terms review.

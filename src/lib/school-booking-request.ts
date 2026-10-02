@@ -1117,7 +1117,8 @@ export async function approveSchoolBookingRequest(input: {
       let acceptedHeldPrices: ReturnType<typeof planAcceptedSchoolHeldPrices> | null = null;
       let acceptedHeldOrder: Array<{ id: string; rateMembershipTypeId: string | null }> | null = null;
       if (request.status === BookingRequestStatus.ACCEPTED &&
-          (request.acceptedQuoteId || request.acceptedQuoteSnapshot)) {
+          (request.acceptedQuoteId || request.acceptedQuoteSnapshot ||
+           request.acceptedPriceCents != null || request.acceptedQuoteOptionId != null || request.acceptedAt != null)) {
         const accepted = await readAcceptedSchoolTerms(request, held, guests.length);
         if (accepted.guestBreakdown.some((entry) => entry.kind === "PENDING_ADULT")) {
           const heldGuests = await tx.bookingGuest.findMany({

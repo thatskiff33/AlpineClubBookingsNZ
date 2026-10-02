@@ -1,4 +1,4 @@
-import { AgeTier, BookingRequestStatus, BookingStatus, Prisma } from "@prisma/client";
+import { AgeTier, type BookingGuestNightPriceSource, BookingRequestStatus, BookingStatus, Prisma } from "@prisma/client";
 
 import { logAudit } from "@/lib/audit";
 import { BookingRequestError, linkedGuestMemberMap, parseBookingRequestGuests } from "@/lib/booking-request";
@@ -167,10 +167,25 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
     }
     // Only provisional held cents move, to the immutable accepted snapshot.
     // Guest/night ids and every identity/consent/dietary/bed field remain intact.
+    const nightUpdates = new Map<string, { ids: string[]; priceCents: number; priceSource: BookingGuestNightPriceSource }>();
     for (const price of heldPrices) {
       await tx.bookingGuest.update({ where: { id: price.guestId }, data: { priceCents: price.priceCents } });
       for (const night of price.nights) {
-        await tx.bookingGuestNight.update({ where: { id: night.id }, data: { priceCents: night.priceCents, priceSource: night.priceSource } });
+        const key = `${night.priceCents}:${night.priceSource}`;
+        const group = nightUpdates.get(key);
+        if (group) group.ids.push(night.id);
+        else nightUpdates.set(key, { ids: [night.id], priceCents: night.priceCents, priceSource: night.priceSource });
+      }
+    }
+    // One statement per distinct amount/source, independent of stay length.
+    // Every id was proved above; a lost row aborts the whole naming transaction.
+    for (const group of nightUpdates.values()) {
+      const updated = await tx.bookingGuestNight.updateMany({
+        where: { id: { in: group.ids } },
+        data: { priceCents: group.priceCents, priceSource: group.priceSource },
+      });
+      if (updated.count !== group.ids.length) {
+        throw new BookingRequestError("The held guest nights changed while adults were being named. Reload and review the held beds.", 409);
       }
     }
     const totalPriceCents = accepted.totalCents;

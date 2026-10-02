@@ -24,7 +24,7 @@ vi.mock("@/lib/prisma", () => ({
     bookingRequest: { findUnique: h.bookingRequestFindUnique, updateMany: h.requestUpdateMany },
     booking: { findUnique: h.bookingFindUnique, update: h.bookingUpdate },
     bookingGuest: { create: h.guestCreate, update: h.guestUpdate },
-    bookingGuestNight: { update: h.nightUpdate },
+    bookingGuestNight: { updateMany: h.nightUpdate },
     bookingRequestPendingAdultReservationNight: {
       findMany: h.reservationFindMany,
       deleteMany: h.reservationDeleteMany,
@@ -116,6 +116,7 @@ beforeEach(() => {
   h.reservationFindMany.mockResolvedValue([{ bookingId: "hold-1", night: inDay, adultCount: 1, lodgeId: "lodge-1" }]);
   h.requestUpdateMany.mockResolvedValue({ count: 1 });
   h.guestCreate.mockResolvedValue({ id: "new-guest" });
+  h.nightUpdate.mockImplementation(async ({ where }) => ({ count: where.id.in.length }));
   h.reservationDeleteMany.mockResolvedValue({ count: 1 });
   h.resolveRates.mockImplementation(async (_db, { guests }) =>
     guests.map((guest: object) => ({ ...guest, rateMembershipTypeId: "non-member-type", rateSource: "NON_MEMBER_DEFAULT" })),
