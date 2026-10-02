@@ -686,21 +686,33 @@ describe("a refresh is fenced by the shared lease and by the store's compare-and
 });
 
 describe("interleaving inside a read: a write that commits between the two copies' reads (#3454 review)", () => {
-  /** Run `during` once, at the store-row read, after that read has its answer. */
-  function commitDuringStoreRead(during: () => Promise<unknown>) {
+  /**
+   * Run `during` once, at the store-row read: `after` that read has its answer
+   * (so the NEXT read sees the write), or `before` it does (so this read does).
+   */
+  function commitDuringStoreRead(
+    during: () => Promise<unknown>,
+    when: "before" | "after" = "after",
+  ) {
     const findUnique = h.raw.integrationCredential.findUnique;
     const original = findUnique.getMockImplementation();
     if (!original) throw new Error("expected the double's findUnique");
     findUnique.mockImplementationOnce(async (args: { where: Row }) => {
+      if (when === "before") await during();
       const answer = await original(args);
-      await during();
+      if (when === "after") await during();
       return answer;
     });
   }
 
   it("a reconnect that commits while a refresh is being claimed survives the refresh", async () => {
     await saveXeroTokens(tokenSet("c1"), { actor: ADMIN });
-    commitDuringStoreRead(() => saveXeroTokens(tokenSet("reconnect"), { actor: ADMIN }));
+    // The review's exact interleaving: the reconnect commits after the
+    // `XeroToken` row was read and before the store row is.
+    commitDuringStoreRead(
+      () => saveXeroTokens(tokenSet("reconnect"), { actor: ADMIN }),
+      "before",
+    );
 
     const claim = await claimXeroTokenRefreshLease();
     if (claim.claimed) {
