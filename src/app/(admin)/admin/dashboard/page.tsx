@@ -51,6 +51,7 @@ import {
   dateOnlyInstantOf,
   daysInCalendarMonth,
   formatClubDayMonth,
+  requireCalendarDate,
 } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { countRosterDaysNeedingChores } from "@/lib/roster-status";
@@ -58,8 +59,10 @@ import { countGuestsAwaitingBed } from "@/lib/bed-allocation-board";
 import {
   coverageLodgeLabel,
   coverageNeedsLodgeContext,
+  getHutLeaderHandovers,
   getUnassignedHutLeaderDates,
 } from "@/lib/hut-leader-coverage";
+import { joinHutLeaderNames } from "@/lib/hut-leader-handover";
 import { countActiveLodges } from "@/lib/lodges";
 import { OPEN_DELETION_REQUEST_STATUSES } from "@/lib/deletion-request-decision";
 import {
@@ -126,6 +129,7 @@ async function getStats() {
     pendingBookingReviews,
     pendingBookingChangeRequests,
     unassignedHutLeaderDates,
+    hutLeaderHandovers,
     activeLodgeCount,
     rosterDaysNeedingChores,
     bedGuestsAwaiting,
@@ -238,6 +242,14 @@ async function getStats() {
     // also saves the extra settings read the fallback would perform
     // (INV-CONFIG-002).
     getUnassignedHutLeaderDates({ scope: { kind: "all" }, today }),
+    // "Handovers this week" (#3818): today and the six days after it, from the
+    // same presence-aware cover as the card above, so a leader who is not
+    // staying is never shown handing over.
+    getHutLeaderHandovers({
+      scope: { kind: "all" },
+      from: today,
+      to: dateOnlyInstantOf(addCalendarDays(todayKey, 6)),
+    }),
     // Whether this club is multi-lodge, for the ADR-002 Presentation Rule below.
     // Keyed on the CLUB, not on how many lodges happen to be uncovered (#2917
     // review): a two-lodge club whose gaps all sit at one lodge must still be
@@ -271,6 +283,10 @@ async function getStats() {
     activeLodgeCount,
     rows: unassignedHutLeaderDates,
   });
+  const handoversNameLodges = coverageNeedsLodgeContext({
+    activeLodgeCount,
+    rows: hutLeaderHandovers,
+  });
 
   return {
     todayKey,
@@ -290,13 +306,25 @@ async function getStats() {
     // has more than one active lodge, per the Presentation Rule (ADR-002), so a
     // single-lodge club sees the same bare dates and count as before while a
     // multi-lodge club is never handed a date it cannot place.
+    //
+    // #3818: "without a leader staying" — the night is uncovered unless a
+    // leader is assigned AND in the lodge that night — and each entry carries
+    // its guest count, so an officer can see how many people are on site with
+    // nobody in charge.
     unassignedDatesWithBookings: unassignedHutLeaderDates.map((item) => {
       const lodgeLabel = unassignedNamesLodges
         ? coverageLodgeLabel(item)
         : null;
-      return lodgeLabel ? `${item.date} (${lodgeLabel})` : item.date;
+      const night = `${item.date} · ${item.guestCount} guest${item.guestCount === 1 ? "" : "s"}`;
+      return lodgeLabel ? `${night} (${lodgeLabel})` : night;
     }),
     unassignedNamesLodges,
+    hutLeaderHandovers: hutLeaderHandovers.map((handover) => ({
+      key: `${handover.date}:${handover.lodgeId ?? ""}`,
+      date: handover.date,
+      summary: `${joinHutLeaderNames(handover.from)} → ${joinHutLeaderNames(handover.to)}`,
+      lodgeLabel: handoversNameLodges ? coverageLodgeLabel(handover) : null,
+    })),
     pendingRefundAppeals,
     pendingCreditApprovals,
     pendingMembershipCancellations,
@@ -552,15 +580,44 @@ export default async function AdminDashboardPage() {
             <CardContent className="flex items-start gap-3 pt-5">
               <AlertTriangle className="h-5 w-5 text-warning-11 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="font-medium text-warning-11">{CLUB_HUT_LEADER_LABEL} Assignment Required</p>
+                <p className="font-medium text-warning-11">
+                  {stats.unassignedNamesLodges ? "Lodge-nights" : "Nights"} without a{" "}
+                  {CLUB_HUT_LEADER_LABEL.toLowerCase()} staying
+                </p>
                 <p className="text-sm text-warning-11 mt-1">
                   {stats.unassignedDatesWithBookings.length} upcoming{" "}
-                  {stats.unassignedNamesLodges ? "lodge-night" : "date"}
-                  {stats.unassignedDatesWithBookings.length !== 1 ? "s" : ""} with bookings but no {CLUB_HUT_LEADER_LABEL.toLowerCase()} assigned:{" "}
+                  {stats.unassignedNamesLodges ? "lodge-night" : "night"}
+                  {stats.unassignedDatesWithBookings.length !== 1 ? "s" : ""} with guests but no {CLUB_HUT_LEADER_LABEL.toLowerCase()} staying:{" "}
                   {stats.unassignedDatesWithBookings.slice(0, 5).join(", ")}
                   {stats.unassignedDatesWithBookings.length > 5 ? ` and ${stats.unassignedDatesWithBookings.length - 5} more` : ""}
                 </p>
               </div>
+            </CardContent>
+          </Card>
+        </Link>
+      )}
+
+      {/* Handovers this week (#3818): each day one leader hands over to
+          another at midday. Gated with the hut-leaders card below. */}
+      {canViewHutLeaders && stats.hutLeaderHandovers.length > 0 && (
+        <Link href="/admin/hut-leaders">
+          <Card className="hover:shadow-md transition-shadow cursor-pointer">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Handovers this week</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-1 text-sm">
+                {stats.hutLeaderHandovers.map((handover) => (
+                  <li key={handover.key}>
+                    <span className="font-medium">
+                      {formatClubDayMonth(requireCalendarDate(handover.date), money.format)}
+                    </span>
+                    {" · "}
+                    {handover.summary} at midday
+                    {handover.lodgeLabel ? ` (${handover.lodgeLabel})` : ""}
+                  </li>
+                ))}
+              </ul>
             </CardContent>
           </Card>
         </Link>
@@ -611,8 +668,8 @@ export default async function AdminDashboardPage() {
                     {stats.unassignedDatesWithBookings.length === 1
                       ? ""
                       : "s"}{" "}
-                    with bookings but no{" "}
-                    {CLUB_HUT_LEADER_LABEL.toLowerCase()} assigned
+                    with guests but no{" "}
+                    {CLUB_HUT_LEADER_LABEL.toLowerCase()} staying
                   </p>
                 </CardContent>
               </Card>

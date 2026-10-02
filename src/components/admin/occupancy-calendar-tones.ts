@@ -16,8 +16,16 @@ export type CalendarOverlayEmphasis = "fill" | "ring";
 
 export type CalendarOverlayValue = {
   tone: CalendarTone;
+  /** The cell's text, and what a screen reader hears after the date. */
   label: string;
   emphasis?: CalendarOverlayEmphasis;
+  /**
+   * Optional: paint the badge as these separate lines instead of `label`
+   * (#3818 — a hut-leader changeover day shows its morning and afternoon
+   * leaders one above the other). `label` stays the accessible text, so a
+   * caller sets it to the same lines joined.
+   */
+  lines?: readonly string[];
 };
 
 // Static class table so Tailwind sees every class literally (no dynamic class

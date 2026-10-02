@@ -59,6 +59,11 @@ import {
   type EligibleMember,
 } from "./_components/assignment-form";
 import { CustodianBedPicker } from "./_components/custodian-bed-picker";
+import {
+  buildLeaderCalendarOverlay,
+  coveredNightsByDate,
+} from "./_components/leader-calendar-overlay";
+import type { HutLeaderOnNight } from "@/lib/hut-leader-handover";
 
 interface HutLeaderAssignment {
   id: string;
@@ -101,21 +106,6 @@ function monthBounds(monthKey: string) {
     `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`,
   );
   return { start, end: addDaysDateOnly(endExclusive, -1) };
-}
-
-// Short calendar-badge label for a covered night: the surname, or initials when
-// the surname is long, so a custodian's multi-month block reads as a band.
-function shortLeaderLabel(memberName: string) {
-  const parts = memberName.trim().split(/\s+/).filter(Boolean);
-  // The last part IS the "there are no parts" check: a blank name has no
-  // surname to abbreviate, which is the same condition the length test
-  // expressed (#2801).
-  const surname = parts[parts.length - 1];
-  if (surname === undefined) return memberName;
-  if (surname.length > 10) {
-    return parts.map((p) => p[0]?.toUpperCase() ?? "").join("");
-  }
-  return surname;
 }
 
 export default function HutLeadersPage() {
@@ -262,6 +252,11 @@ export default function HutLeadersPage() {
   const [guestNightsByMonth, setGuestNightsByMonth] = useState<
     Record<string, Set<string>>
   >({});
+  // Who validly covers each night (assigned AND staying, #3818), keyed by
+  // visible month; each month's map reaches back to the night before its 1st.
+  const [coveredNightsByMonth, setCoveredNightsByMonth] = useState<
+    Record<string, Map<string, readonly HutLeaderOnNight[]>>
+  >({});
 
   const fetchAssignments = useCallback(async () => {
     if (!lodgeScopeReady) {
@@ -317,7 +312,10 @@ export default function HutLeadersPage() {
         `/api/admin/hut-leaders/unassigned-dates?month=${monthKey}&lodgeId=${encodeURIComponent(requestedLodgeId)}`,
       );
       if (res.ok) {
-        const data: { unassignedDates?: UnassignedDate[] } = await res.json();
+        const data: {
+          unassignedDates?: UnassignedDate[];
+          coveredNights?: Array<{ date: string; leaders: HutLeaderOnNight[] }>;
+        } = await res.json();
         // Map EAGERLY, here, inside the try — never inside the state updater.
         // React invokes an updater closure later, during render, where this
         // function's own `catch` can no longer see it: an unexpected body then
@@ -327,8 +325,12 @@ export default function HutLeadersPage() {
         const dates = Array.isArray(data?.unassignedDates)
           ? data.unassignedDates.map((d) => d.date)
           : [];
+        const covered = coveredNightsByDate(
+          Array.isArray(data?.coveredNights) ? data.coveredNights : [],
+        );
         if (activeLodgeIdRef.current === requestedLodgeId) {
           setRedDatesByMonth((prev) => ({ ...prev, [monthKey]: dates }));
+          setCoveredNightsByMonth((prev) => ({ ...prev, [monthKey]: covered }));
         }
       }
     } catch {
@@ -371,6 +373,7 @@ export default function HutLeadersPage() {
     setEligibleMembers([]);
     setRedDatesByMonth({});
     setGuestNightsByMonth({});
+    setCoveredNightsByMonth({});
     setSelection({ startDate: "", endDate: "" });
     setTarget(null);
     setSelectedBedId(null);
@@ -725,51 +728,26 @@ export default function HutLeadersPage() {
     setTarget(null);
   }
 
-  // ---- Calendar overlay (three layers: red needs-leader, violet covered) ----
+  // ---- Calendar overlay (red: no leader tonight; violet: covered) ----------
+  // Painted from the server's presence-aware cover (#3818): a night shows a
+  // leader only when that leader is assigned AND staying, and a changeover day
+  // shows "AM · … until midday" / "PM · … from midday". The derivation is
+  // `buildLeaderCalendarOverlay`, kept out of this file so it is testable alone.
   const overlayByDate = useMemo<Record<string, CalendarOverlayValue>>(() => {
-    const overlay: Record<string, CalendarOverlayValue> = {};
     const { start: monthStart, end: monthEnd } = monthBounds(visibleMonthKey);
-    const guestNights = guestNightsByMonth[visibleMonthKey];
-
-    // Red first (violet overwrites on any collision so "covered" always wins).
-    for (const date of redDatesByMonth[visibleMonthKey] ?? []) {
-      overlay[date] = { tone: "red", label: "Needs leader" };
-    }
-
-    // Violet — covered nights, combining surnames on a shared handover day.
-    const surnamesByDate = new Map<string, Set<string>>();
-    for (const a of assignments) {
-      const aStart = parseDateOnly(a.startDate);
-      const aEnd = parseDateOnly(a.endDate);
-      const from = aStart.getTime() > monthStart.getTime() ? aStart : monthStart;
-      const to = aEnd.getTime() < monthEnd.getTime() ? aEnd : monthEnd;
-      const surname = shortLeaderLabel(a.memberName);
-      for (
-        let day = from;
-        day.getTime() <= to.getTime();
-        day = addDaysDateOnly(day, 1)
-      ) {
-        const ds = formatDateOnly(day);
-        const set = surnamesByDate.get(ds) ?? new Set<string>();
-        set.add(surname);
-        surnamesByDate.set(ds, set);
-      }
-    }
-    for (const [ds, surnames] of surnamesByDate) {
-      overlay[ds] = {
-        tone: "violet",
-        label: [...surnames].join(" / "),
-        emphasis: guestNights?.has(ds) ? "fill" : "ring",
-      };
-    }
-
-    return overlay;
-  }, [assignments, redDatesByMonth, guestNightsByMonth, visibleMonthKey]);
+    return buildLeaderCalendarOverlay({
+      monthStart,
+      monthEnd,
+      coveredNights: coveredNightsByMonth[visibleMonthKey] ?? new Map(),
+      redDates: redDatesByMonth[visibleMonthKey] ?? [],
+      guestNights: guestNightsByMonth[visibleMonthKey],
+    });
+  }, [coveredNightsByMonth, redDatesByMonth, guestNightsByMonth, visibleMonthKey]);
 
   const overlayLegend = useMemo<Array<{ tone: CalendarTone; label: string }>>(
     () => [
-      { tone: "violet", label: `Has a ${hutLeaderLabel}` },
-      { tone: "red", label: `Needs a ${hutLeaderLabel}` },
+      { tone: "violet", label: `${hutLeaderLabel} staying` },
+      { tone: "red", label: `Guests, no ${hutLeaderLabel.toLowerCase()} staying` },
     ],
     [hutLeaderLabel],
   );

@@ -536,13 +536,16 @@ export function OccupancyCalendar({
                   {night?.guestCount}
                 </span>
               )}
-              {overlay && (
-                <span
-                  className={`mt-1 block truncate rounded px-1 py-0.5 text-[10px] font-medium leading-tight ${CALENDAR_TONE_CLASSES[overlay.tone].badge}`}
-                >
-                  {overlay.label}
-                </span>
-              )}
+              {overlay &&
+                (overlay.lines ?? [overlay.label]).map((line) => (
+                  <span
+                    key={line}
+                    title={line}
+                    className={`mt-1 block truncate rounded px-1 py-0.5 text-[10px] font-medium leading-tight ${CALENDAR_TONE_CLASSES[overlay.tone].badge}`}
+                  >
+                    {line}
+                  </span>
+                ))}
             </button>
           );
         })}
