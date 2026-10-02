@@ -1,11 +1,13 @@
 # File-size allowances for #3454
 
 file: src/app/api/admin/deletion-requests/[id]/route.ts
-lines: 1305
+lines: 1307
 reason: the erasure's two-factor clear must be audited inside the erasure
   transaction, after its member row lock, so the call has to sit at that point
   in the transaction body. The read and the audit write already live in
   `two-factor-audit.ts`, and what is left here is the call and its context.
+  The other two lines derive this route's one audit request context from
+  `getAuditRequestContext`, so one erasure records one IP address.
 
 file: src/app/api/admin/integrations/credentials/route.ts
 lines: 315

@@ -176,7 +176,7 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
 
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
-import { createAuditLog } from "@/lib/audit";
+import { createAuditLog, logAudit } from "@/lib/audit";
 import { authConfig } from "@/lib/auth";
 import { resolveGoogleProfile } from "@/lib/google-oauth";
 import { updateAdminMember } from "@/lib/admin-member-detail-service";
@@ -892,6 +892,13 @@ describe("#3454 the erasure's two-factor clear is recorded in its own transactio
     expect(client).not.toBe(prisma);
     expect(client).toBeDefined();
     expect(JSON.stringify(params)).not.toContain("SENTINEL");
+    // ONE erasure, ONE IP: the decision's own row records the same canonical
+    // address as the clear's row, not the first forwarded-for hop (#3454 review).
+    const approved = vi
+      .mocked(logAudit)
+      .mock.calls.map(([event]) => event as { action?: string; ipAddress?: string })
+      .find((event) => event.action === "member.deletion_approved");
+    expect(approved?.ipAddress).toBe("127.0.0.1");
   });
 
   it("records nothing for a member who had no second factor", async () => {

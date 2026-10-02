@@ -293,8 +293,10 @@ export async function POST(
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  // ONE request context for every audit row of this decision (#3454 review):
+  // the canonical helper's proxy-appended hop, not the client-settable first.
+  const auditRequest = getAuditRequestContext(request);
+  const ip = auditRequest?.ipAddress ?? "unknown";
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
@@ -917,7 +919,7 @@ export async function POST(
       await recordErasureTwoFactorClear(tx, {
         memberId: member.id,
         adminMemberId: session.user.id,
-        request: getAuditRequestContext(request),
+        request: auditRequest,
       });
 
       // 3. Anonymise the member record
