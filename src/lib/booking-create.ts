@@ -105,6 +105,8 @@ import { DUPLICATE_STAY_BOOKING_STATUSES } from "./booking-status";
 import {
   type ResolvedPromo,
   getPromoTargetBookingGuestIds,
+  normalizePromoCodeInput,
+  promoCodeVisibilityRefusal,
   remapPromoIndexesToSubset,
   resolveEffectivePromoSource,
   resolvePromoInTransaction,
@@ -1853,7 +1855,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     lodgeId: waitlistLodgeId,
   });
   if (promoSource) {
-    const normalizedCode = promoSource.promoCodeStr.toUpperCase().trim();
+    const normalizedCode = normalizePromoCodeInput(promoSource.promoCodeStr);
     const promoCode = await prisma.promoCode.findUnique({
       where: { code: normalizedCode },
       include: {
@@ -1861,8 +1863,9 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
         lodges: { select: { lodgeId: true } },
       },
     });
-    if (promoCode?.internal && !promoSource.allowInternal) {
-      throw new BookingPromoError("Promo code not found");
+    const hidden = promoCodeVisibilityRefusal(promoCode, promoSource.allowInternal);
+    if (hidden) {
+      throw new BookingPromoError(hidden);
     }
     const assignedMemberIds = promoCode?.assignments?.length
       ? promoCode.assignments.map((a) => a.memberId)

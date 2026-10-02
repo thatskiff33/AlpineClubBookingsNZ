@@ -229,7 +229,6 @@ export function getBookingGuestValidationErrorResponse(
   return { error: error.message };
 }
 
-
 /**
  * Where each requested member sits relative to the booker's family boundary
  * ("+ Add Member Guest", epic #2305, MG1 #2306).
@@ -723,7 +722,10 @@ export async function assertLinkedBookingMembersCanBeBooked(
     // read the same oracle the detailed body used to hand over. Refusing
     // wholesale costs the booker one extra round trip: they drop the member the
     // club will not discuss, retry, and get the full, helpful detail for their
-    // own family exactly as before.
+    // own family exactly as before. The create route does not reach this
+    // ordering (owner decision, issue #3770 comment 5946598639): it gates the
+    // family before resolving any beyond-family member, so a blocked family
+    // member is reported in full there, whether or not a named stranger is real.
     const crossFamilyIds = new Set(context?.crossFamilyMemberIds ?? []);
     const blockedCrossFamilyIds = blockedMembers
       .map((member) => member.memberId)

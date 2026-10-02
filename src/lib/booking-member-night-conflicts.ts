@@ -357,7 +357,11 @@ export async function findBookingMemberNightConflicts(
     // Like the profile gate's collapse, a cross-family clash wins over a
     // family-scope one in the same request: reporting the family clash in full
     // while staying silent about the stranger would let a caller read the same
-    // oracle one member at a time.
+    // oracle one member at a time. NOT ON THE CREATE ROUTE (owner decision,
+    // issue #3770 comment 5946598639): `POST /api/bookings` asks this about the
+    // booker's family BEFORE it resolves any beyond-family member, so there a
+    // family clash is answered first and in full, whether or not a named
+    // stranger is real; the whole party is asked again only after that.
     if (crossFamilyMemberIds.has(guest.memberId)) {
       throw memberGuestCrossFamilyRefusal([guest.memberId]);
     }
