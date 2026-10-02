@@ -15,9 +15,11 @@
  * Where the applied credit was itself a Xero credit note allocated to the
  * booking's invoice, the REAL inbound credit-note sync
  * (`repairAccountCreditAllocationBusinessState`) runs after the cancel: an
- * unchanged allocation changes nothing, and an allocation removed in Xero is
- * not credited a second time on top of the restore — the operator is alerted
- * instead (INV-PAY-019).
+ * unchanged allocation changes nothing, and an allocation removed or raised in
+ * Xero reaches neither direction of the member's ledger — the operator is
+ * alerted and a critical audit row records it, even when the hourly email
+ * throttle swallows the alert (INV-PAY-019). On a live booking both
+ * directions still reach the ledger.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -71,9 +73,11 @@ export function assertSafeIbCapacityRestoreRaceDbUrl(url: string): void {
   }
 }
 
-// The inbound sync's operator alert, observed rather than mailed.
+// The inbound sync's operator alert, observed rather than mailed (one case
+// delegates to the real throttle).
 const xeroSyncAlert = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/xero-error-alert", () => ({ notifyXeroSyncError: xeroSyncAlert }));
+const REFUSAL_AUDIT_ACTION = "xero.allocation.restored-booking-change-refused";
 
 let prisma: PrismaClient;
 let memberCredit: typeof import("@/lib/member-credit");
@@ -96,6 +100,8 @@ function paidInvoice(cashCents: number, allocatedNoteCents = 0): Invoice {
 }
 
 async function clean(): Promise<void> {
+  await prisma.auditLog.deleteMany({ where: { action: REFUSAL_AUDIT_ACTION, entityId: BOOKING_ID } });
+  await prisma.emailLog.deleteMany({ where: { to: "race-3792-unrelated@example.invalid" } });
   const slices = await prisma.memberCreditNoteAllocation.findMany({ where: { appliedToBookingId: BOOKING_ID }, select: { id: true } });
   await prisma.xeroObjectLink.deleteMany({ where: { localModel: "MemberCreditNoteAllocation", localId: { in: slices.map((slice) => slice.id) } } });
   await prisma.memberCreditNoteAllocation.deleteMany({ where: { appliedToBookingId: BOOKING_ID } });
@@ -168,9 +174,10 @@ async function seedBooking(appliedCents: number, cashCents: number): Promise<voi
  * the booking's invoice (a precise slice plus an active allocation link), and
  * the applied row is stamped with the note.
  */
-async function allocateAppliedCreditInXero(appliedCents: number): Promise<void> {
+async function allocateAppliedCreditInXero(appliedCents: number, lotCents = appliedCents): Promise<void> {
+  // `lotCents` above `appliedCents` leaves the note room for a raise in Xero.
   const lot = await prisma.memberCredit.findFirstOrThrow({ where: { memberId: MEMBER_ID, type: "ADMIN_ADJUSTMENT" } });
-  await prisma.memberCredit.update({ where: { id: lot.id }, data: { xeroCreditNoteId: CREDIT_NOTE_ID } });
+  await prisma.memberCredit.update({ where: { id: lot.id }, data: { xeroCreditNoteId: CREDIT_NOTE_ID, amountCents: lotCents } });
   await prisma.memberCredit.updateMany({ where: { memberId: MEMBER_ID, type: "BOOKING_APPLIED" }, data: { xeroCreditNoteId: CREDIT_NOTE_ID } });
   const slice = await prisma.memberCreditNoteAllocation.create({
     data: { memberCreditId: lot.id, xeroCreditNoteId: CREDIT_NOTE_ID, appliedToBookingId: BOOKING_ID, amountCents: appliedCents },
@@ -220,7 +227,7 @@ async function reconcile(cashCents: number) {
 
   beforeEach(async () => {
     await clean();
-    xeroSyncAlert.mockClear();
+    xeroSyncAlert.mockReset();
   });
 
   afterAll(async () => {
@@ -298,13 +305,45 @@ async function reconcile(cashCents: number) {
     expect(await prisma.memberCredit.count({ where: { memberId: MEMBER_ID, description: { startsWith: "Xero allocation reconciliation" } } })).toBe(0);
     expect(xeroSyncAlert).toHaveBeenCalledTimes(1);
     expect(xeroSyncAlert).toHaveBeenCalledWith(expect.objectContaining({
-      errorType: "applied-credit-restored-booking-deallocation",
-      errorMessage: expect.stringContaining(`booking ${BOOKING_ID} is cancelled`),
+      errorType: "applied-credit-restored-booking-allocation-change",
+      errorMessage: expect.stringContaining(`was reduced in Xero by $80.00, but booking ${BOOKING_ID} is cancelled`),
     }));
+    const audit = await prisma.auditLog.findMany({ where: { action: REFUSAL_AUDIT_ACTION, entityId: BOOKING_ID }, select: { category: true, severity: true, subjectMemberId: true, metadata: true } });
+    expect(audit).toEqual([expect.objectContaining({ category: "xero", severity: "critical", subjectMemberId: null, metadata: expect.objectContaining({ direction: "reduced", refusedCents: 8_000 }) })]);
 
     // A replay of the sync is no different.
     await creditNoteRepairs.repairAccountCreditAllocationBusinessState(CREDIT_NOTE_ID, []);
     expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(20_000);
+    expect(await prisma.auditLog.count({ where: { action: REFUSAL_AUDIT_ACTION, entityId: BOOKING_ID } })).toBe(1);
+  });
+
+  it("AFTER THE CANCEL, an allocation RAISED in Xero is not debited from the member either: the $200 restored stands, and the refusal is recorded even when an unrelated alert holds the email throttle", async () => {
+    await seedBooking(8_000, 12_000);
+    // A $100 note, $80 of it applied: the member also holds $20 unspent.
+    await allocateAppliedCreditInXero(8_000, 10_000);
+    await paidEffects.syncInternetBankingPaymentsForPaidInvoice(paidInvoice(12_000, 8_000), [PAYMENT_ID], CLUB_FORMAT_TEST);
+    expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(22_000);
+
+    // The real throttle, held by an unrelated Xero alert sent a minute ago.
+    const actualAlert = (await vi.importActual("@/lib/xero-error-alert")) as typeof import("@/lib/xero-error-alert");
+    xeroSyncAlert.mockImplementation(actualAlert.notifyXeroSyncError);
+    await prisma.emailLog.create({
+      data: { to: "race-3792-unrelated@example.invalid", subject: "Xero Sync Error", templateName: "admin-xero-sync-error", status: "SENT", createdAt: new Date(Date.now() - 60_000) },
+    });
+    const alertMailBefore = await prisma.emailLog.count({ where: { templateName: "admin-xero-sync-error" } });
+
+    const repaired = await creditNoteRepairs.repairAccountCreditAllocationBusinessState(CREDIT_NOTE_ID, [{ invoiceId: INVOICE_ID, amountCents: 10_000 }]);
+
+    expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(22_000);
+    expect(repaired.skippedAllocations).toBe(1);
+    expect(xeroSyncAlert).toHaveBeenCalledWith(expect.objectContaining({
+      errorType: "applied-credit-restored-booking-allocation-change",
+      errorMessage: expect.stringContaining("was increased in Xero by $20.00"),
+    }));
+    // The email was throttled away; the audit row is still there for an officer.
+    expect(await prisma.emailLog.count({ where: { templateName: "admin-xero-sync-error" } })).toBe(alertMailBefore);
+    const audit = await prisma.auditLog.findMany({ where: { action: REFUSAL_AUDIT_ACTION, entityId: BOOKING_ID }, select: { metadata: true } });
+    expect(audit).toEqual([expect.objectContaining({ metadata: expect.objectContaining({ direction: "increased", refusedCents: 2_000, restoredCents: 8_000 }) })]);
   });
 
   it("ON A LIVE BOOKING, the same Xero removal still credits the member: no restore row, so the guard stays out of the way", async () => {
@@ -315,6 +354,18 @@ async function reconcile(cashCents: number) {
     await creditNoteRepairs.repairAccountCreditAllocationBusinessState(CREDIT_NOTE_ID, []);
 
     expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(8_000);
+    expect(xeroSyncAlert).not.toHaveBeenCalled();
+    expect(await prisma.auditLog.count({ where: { action: REFUSAL_AUDIT_ACTION, entityId: BOOKING_ID } })).toBe(0);
+  });
+
+  it("ON A LIVE BOOKING, a Xero raise still debits the member", async () => {
+    await seedBooking(8_000, 12_000);
+    await allocateAppliedCreditInXero(8_000, 10_000);
+    expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(2_000);
+
+    await creditNoteRepairs.repairAccountCreditAllocationBusinessState(CREDIT_NOTE_ID, [{ invoiceId: INVOICE_ID, amountCents: 10_000 }]);
+
+    expect(await memberCredit.getMemberCreditBalance(MEMBER_ID)).toBe(0);
     expect(xeroSyncAlert).not.toHaveBeenCalled();
   });
 });
