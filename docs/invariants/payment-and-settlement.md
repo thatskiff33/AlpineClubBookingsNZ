@@ -240,16 +240,11 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   the fenced `payment.updateMany` re-asserts the outstanding delta (on BOTH
   answers), the settle-from status, the zero refund history and the absence of
   Xero evidence as WHERE clauses, so a concurrent writer yields count 0 → 409;
-  and (3) AFTER THE FACT, NARROWLY — `auditIbAppliedCreditStrands` recomputes
-  `amountCents + creditAppliedCents - finalPriceCents` over committed data and
-  reports the uncollected addition beside it.
-  **(3) is not a safety net for this settle.** It enumerates a payment only when
-  the booking still carries UN-ALLOCATED applied credit
-  (`deriveIbAppliedCreditStrandFinding` returns null on
-  `ledgerAppliedCents <= 0`), scans INTERNET_BANKING payments only, and is an
-  operator-run script (`scripts/audit-ib-hold-clearing.ts`), not a scheduled job
-  or an alert. Within that population a NEGATIVE `mirrorInvariantDeltaCents`
-  equal-and-opposite to the payment's uncollected addition is not drift.
+  and (3) AFTER THE FACT — the booking-ledger census (`INV-MONEY-037`) checks
+  every booking's `amountCents`, `creditAppliedCents` and uncollected
+  addition against its ledger lines over committed data. **(3) is not a safety
+  net for this settle**: it is an operator-run command, not a scheduled job or
+  an alert.
   Either answer is recorded on the mark-paid audit row BOTH ways — with the
   settled figure written, the amount owing, and what was deliberately left
   uncollected. A covered extra also writes
