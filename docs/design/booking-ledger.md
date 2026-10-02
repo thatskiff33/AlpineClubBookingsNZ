@@ -459,11 +459,23 @@ Until §7's reads switch, `Payment.amountCents`, `creditAppliedCents`,
 finalPriceCents        == Σ GUEST_NIGHT + PROMOTION + GROUP_DISCOUNT + adjusted(b)   (not cancelled)
 owed(b)                == 0                                                          (cancelled, once its refunds have posted)
 amountCents            == Σ CARD_CAPTURE + BANK_RECEIPT + CASH_RECORDED     (gross of refunds — today's meaning)
-creditAppliedCents     == Σ CREDIT_APPLIED (a give-back is a negative line; a restore is CREDIT_ISSUED and leaves it alone) — EXCEPT where the mirror is not the applied-row sum: the settle derives it as price − settlement, and the Xero allocation repair caps it at the payment amount; C4 classifies those
+creditAppliedCents     == Σ CREDIT_APPLIED (a give-back is a negative line; a restore is CREDIT_ISSUED and leaves it alone) — EXCEPT where the Xero allocation repair capped the mirror at the payment amount; C4 classifies that, on evidence the money adds up
 refundedAmountCents    == -Σ CARD_REFUND
 changeFeeCents         == Σ CHANGE_FEE
 uncollected ask        == max(0, owed(b)) while the payment's latest, unwithdrawn ADDITIONAL row is not captured, else 0   (not cancelled)
+owed(b)                == INV-PAY-047's residual + the uncollected ask + issued credit the refunded column never counted   (not cancelled, confirmed)
 ```
+
+**The six leave a gap, which the seventh closes** (#3583's review). A
+`CREDIT_ISSUED` or `BANK_REFUND` line projects no column of its own, so one
+could be missing or wrong with all six agreeing — a reduction credited to
+account without its line read the same as with it, `owed(b)` −$50 against $0.
+Every line moves `owed(b)`, so a live booking's `owed(b)` is held against what
+its columns say is owed, and a missing credit line is coverage
+(`UNPOSTED_CREDIT`). A settle that wrote the credit mirror as price minus
+settlement can only differ from the applied rows when the money does not add
+up — #1641's double charge — so that shape is `KNOWN_DEFECT_HISTORY`, not a
+mirror class.
 
 **The first identity as first written was wrong** (#3583's plan): it read
 `finalPriceCents == charged(b) + adjusted(b)`, but `charged(b)` includes the
@@ -474,28 +486,31 @@ is `outstandingAdditionalAskCents`, the money half of `INV-PAY-047`'s own term.
 
 `pnpm run booking-ledger:census` (#3583, `INV-MONEY-037`; read-only, one
 `RepeatableRead`, `READ ONLY` snapshot — the `censusBookingMoneyReconciliation`
-pattern, `INV-MONEY-031`) evaluates those six identities for every booking and
+pattern, `INV-MONEY-031`) evaluates those seven identities for every booking and
 reports, per identity, the count that applies, agrees, disagrees, is
 classified or is a coverage gap, and per disagreeing booking both figures and
 the delta — never a repair. It also reports **coverage** (bookings with money
-columns and no lines at all; paid bookings not confirmed on the ledger; edits
-and change fees no line records), **integrity** (a reversal naming no line or
-not its exact opposite, a second live night, an unknown key namespace, a live
-line its source row no longer bears out) and a verdict, `GATE_OPEN` or
-`GATE_CLOSED`.
+columns and no lines at all; paid bookings not confirmed on the ledger; edits,
+change fees and credit rows no line records), **integrity** (a reversal naming
+no line or not its exact opposite, a second live night, an unknown key
+namespace or one on an anchor it never posts under, a live line its source row
+— or the CANCELLED event's frozen kept figure — no longer bears out) and a
+verdict, `GATE_OPEN` or `GATE_CLOSED`.
 
 **A named class explains an exact amount.** The differences this section
 already expects — and the ones its children found — are classes in
 `booking-ledger-projection-census-classes.ts`, each computed from the
-booking's own rows and matched to the delta to the cent: `NOTHING_CAPTURED`;
-`CREDIT_MIRROR_MANUAL_SETTLE` and `CREDIT_MIRROR_XERO_CAP`; the refunded
+booking's own rows — never from the delta — and matched to the delta to the
+cent: `NOTHING_CAPTURED`; `CREDIT_MIRROR_XERO_CAP`; the refunded
 residual's `REFUND_MIRROR_HAND_BACK`, `_CREDIT_ALLOCATION`, `_FAILED_REFUND` and
 `_LEGACY_SEED`, and `V3_LEGACY_HAND_BACK`; `CHANGE_FEE_REVERSED_BY_CANCELLATION`;
 `RETAINED_REVIEW_SHARE` (§5.3); and a cancelled booking's `IN_FLIGHT_HAND_BACK`,
 `IN_FLIGHT_REFUND`, `V5_PLANNED_REFUND_SHORT` and `D2_DISMISSED_HAND_BACK`.
-`KNOWN_DEFECT_HISTORY` finds bookings #3791 or #3792 damaged, where the ledger
-is right, and `GROUP_SETTLEMENT_OFF_LEDGER` the group-settled children no poster
-reaches.
+`KNOWN_DEFECT_HISTORY` finds bookings #3791, #3792 or #1641 damaged, where the
+ledger is right, and `GROUP_SETTLEMENT_OFF_LEDGER` the group-settled children no
+poster reaches. The owner releases a finding from the gate by listing it, to the
+cent, in an acknowledgement file the census reads; a figure that has moved since
+is reported stale and still holds.
 
 **This census is the cut-over gate, not a monitor** (§7, D-3532-1). Its
 load-bearing run is once, over the club's whole booking history, after the
@@ -512,7 +527,7 @@ word against production read-only — for as long as the columns exist, which
 is what makes Release 2 reversible.
 
 The census retired `auditIbAppliedCreditStrands` (`INV-PAY-047` (3)): that
-script's identity is one of the six, and its #1620 count — applied credit on a
+script's identity is one of the seven, and its #1620 count — applied credit on a
 live internet-banking payment that no Xero note allocates — is reported beside
 the credit identity as information, since it is a Xero exposure figure rather
 than a ledger identity. #1641's card double-pay audit stays where it is.
@@ -529,10 +544,9 @@ through the key functions in `booking-ledger-posting-keys.ts`.
 
 **A cancelled booking leaves the price identity (#3611).** A cancellation does
 not touch `finalPriceCents`, while its charge side becomes what the club kept
-(§5.1). So `finalPriceCents == charged(b) + adjusted(b)`
-(in its corrected form above) holds only for a booking that is not cancelled;
-for a cancelled one, the census's question is whether `owed(b)` is zero once
-its refunds have posted.
+(§5.1). So the price identity above holds only for a booking that is not
+cancelled; for a cancelled one, the census's question is whether `owed(b)` is
+zero once its refunds have posted.
 
 ## 7. Cut-over order
 

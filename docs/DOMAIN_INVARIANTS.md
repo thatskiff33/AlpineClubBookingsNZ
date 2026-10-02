@@ -103,7 +103,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-034` | Settlement lines converge from payment rows where the mirror is derived |
 | `INV-MONEY-035` | Every booking credit row and hand-back posts one line, in its writer |
 | `INV-MONEY-036` | Edits post per-night lines or none; closures record a share once |
-| `INV-MONEY-037` | Six ledger projections proved per booking; the gate opens on exact agreement |
+| `INV-MONEY-037` | Ledger projections proved per booking; the gate opens on exact agreement |
 | `INV-MONEY-006` | Refunds, credits, Stripe and Xero amounts reconcile back to cent-based ledger records |
 | `INV-MONEY-007` | Admin adjustments need audit, approval, and a visible business reason |
 | `INV-MONEY-008` | A confirmed subscription charge is immutable; only delivery, status, Xero metadata advance |

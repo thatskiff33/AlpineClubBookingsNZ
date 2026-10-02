@@ -8,5 +8,8 @@
   named rather than reported as errors, but only when they explain the
   difference to the cent. It reads one snapshot, changes nothing, and ends with
   a verdict: the ledger is not used for anything a member or officer sees until
-  that verdict is clean. The older internet-banking applied-credit report it
-  replaces is now a line in its output.
+  that verdict is clean. Bookings the owner has already dealt with can be
+  listed in a file the census reads, to the cent, so they stop holding it up;
+  if a figure changes afterwards it is flagged again. The older
+  internet-banking applied-credit report it replaces is now a section of its
+  output, listing each booking.

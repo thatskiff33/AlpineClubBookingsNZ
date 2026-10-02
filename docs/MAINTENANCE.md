@@ -1601,17 +1601,19 @@ DATABASE_URL=<non-prod copy or, read-only, production> pnpm run booking-money:ce
 [`booking-ledger.md`](design/booking-ledger.md) §6). It is READ-ONLY: one
 repeatable-read snapshot opened `READ ONLY`, so PostgreSQL itself refuses a
 write inside it; it repairs nothing and calls no provider. For every booking it
-checks the six identities — the price, the captured amount, applied credit, the
-refunded total, change fees and the uncollected ask — against the ledger lines
-that project them, and prints:
+checks seven identities — the price, the captured amount, applied credit, the
+refunded total, change fees, the uncollected ask, and a live booking's balance
+owed — against the ledger lines that project them, and prints:
 
 - per identity, how many bookings it applies to, agree, disagree, are
   classified, or are a coverage gap;
 - **coverage**: bookings with money and no lines (`NO_LINES`), paid bookings not
-  confirmed on the ledger, and edits or change fees no line records;
+  confirmed on the ledger, and edits, change fees or account-credit rows no
+  line records;
 - **integrity**: reversals that name no line or are not its exact opposite, a
-  second live line for one guest-night, an unknown posting-key namespace, and a
-  live line its source row no longer bears out. PostgreSQL's update and delete
+  second live line for one guest-night, an unknown posting-key namespace or one
+  on an anchor it never posts under, and a live line its source row (or a
+  cancellation's frozen kept figure) no longer bears out. PostgreSQL's update and delete
   counts for the table are printed as information only;
 - **named classes** — expected differences, each matched to the cent from the
   booking's own rows (in-flight refunds and hand-backs, a review share kept by
@@ -1619,13 +1621,41 @@ that project them, and prints:
   Each list is for the owner to acknowledge on #3583;
 - every unclassified disagreement: booking, identity, column figure, ledger
   figure and delta;
+- under the credit identity, #1620's internet-banking applied credit no Xero
+  note allocates, realized and pending, with example bookings (`--json` lists
+  every booking and its amount);
+- what the owner's acknowledgement file released, and any entry in it that is
+  stale or matches nothing;
 - the verdict, `GATE_OPEN` or `GATE_CLOSED`, with every reason it is closed.
 
 ```bash
 DATABASE_URL=<non-prod copy, or production under a SELECT-only role> pnpm run booking-ledger:census
 DATABASE_URL=<...> pnpm run booking-ledger:census --json          # every list in full
 DATABASE_URL=<...> pnpm run booking-ledger:census --fail-on-gap   # exit 2 unless GATE_OPEN
+DATABASE_URL=<...> pnpm run booking-ledger:census --acknowledged <owner-file.json>
 ```
+
+**Releasing a finding: the acknowledgement file.** The owner keeps it, outside
+the repository (it names real bookings). It is a JSON array, one entry per
+finding, each naming exactly one of `identity` or `class`:
+
+```json
+[
+  { "bookingId": "<id>", "class": "KNOWN_DEFECT_HISTORY", "cents": -5000, "reference": "written off, decision on #3583" },
+  { "bookingId": "<id>", "identity": "CAPTURED", "cents": 1, "reference": "corrected by the treasurer, see the booking history" }
+]
+```
+
+`cents` is the figure the census prints for that finding: a disagreement's
+delta, or a class instance's cents. An entry that matches to the cent moves the
+finding to the acknowledged list, where it no longer holds the gate. A booking
+can carry one finding on two identities (a #1641 double pay shows on
+`CREDIT_APPLIED` and on `OWED`), and each needs its own entry. An entry whose
+booking and identity or class match but whose cents do not is **stale**: the
+figure moved after it was signed off, so it is listed, the finding still holds,
+and the gate stays closed until somebody looks again. An entry matching nothing
+is listed as unmatched. If the database predates the ledger table, the command
+says so and stops.
 
 **Before the back-post (#3583's second pull request) expect `GATE_CLOSED` on
 coverage alone**: bookings made before the ledger existed have no lines, and
@@ -1636,11 +1666,11 @@ unclassified disagreements, zero coverage gaps, zero integrity findings and no
 booking in a class that holds it. Two classes wait on owner decisions on #3583
 and are one-line switches in `BOOKING_LEDGER_CENSUS_GATE_POLICY`
 (`src/lib/booking-ledger-projection-census-classes.ts`):
-`KNOWN_DEFECT_HISTORY` (bookings #3791 or #3792 damaged) holds the gate until
-each is corrected or written off, and `GROUP_SETTLEMENT_OFF_LEDGER` (children
-settled through the organiser's group settlement) does not. The census does
-not take a lock, so run it off-peak against production; a whole history is
-read in one transaction.
+`KNOWN_DEFECT_HISTORY` (bookings #3791, #3792 or #1641 damaged) holds the gate
+until each is corrected, or written off in the acknowledgement file, and
+`GROUP_SETTLEMENT_OFF_LEDGER` (children settled through the organiser's group
+settlement) does not. The census takes no lock, so run it off-peak against
+production; a whole history is read in one transaction, 500 bookings a page.
 
 ### Census the booking ledger identity (#3340)
 
