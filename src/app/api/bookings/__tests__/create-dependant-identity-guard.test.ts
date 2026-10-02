@@ -1346,6 +1346,68 @@ describe("POST /api/bookings own-dependant identity guard (#2721)", () => {
       expect(h.checkCapacity).not.toHaveBeenCalled();
     });
 
+    // #3770, owner decision "only agreed adults count": a PENDING outsider adult
+    // is not the responsible adult for the member's children.
+    const markXPending = () =>
+      h.planConsent.mockImplementation(({ guests }: { guests: Array<{ memberId?: string | null }> }) => ({
+        guests: guests.map((guest) =>
+          guest.memberId === MEMBER_X
+            ? { ...guest, memberGuestConsent: { consentStatus: "PENDING" } }
+            : guest,
+        ),
+        entriesByMemberId: new Map(),
+      }));
+
+    it("refuses children plus a pending outsider adult, with no justification, like the lookup", async () => {
+      const responses: Array<{ status: number; body: string }> = [];
+      for (const xIsReal of [true, false]) {
+        vi.clearAllMocks();
+        h.memberFindMany.mockResolvedValue([DEPENDANT]);
+        h.normalizeGuestStayRanges.mockImplementation((guests: unknown[]) => guests);
+        h.getLodgeCapacity.mockResolvedValue(30);
+        h.resolveOptionalActiveLodgeId.mockResolvedValue("lodge-1");
+        setPreLookupDefaults();
+        arrangeLookup(xIsReal);
+        markXPending();
+        const res = await POST(makeRequest({ guests: [KID, X] }));
+        responses.push({ status: res.status, body: await res.text() });
+        expectNoBookingWritten();
+      }
+      expect(responses[0]).toEqual(responses[1]);
+      expect(JSON.parse(responses[0]?.body ?? "{}").code).toBe("MEMBER_GUEST_NOT_ADDABLE");
+    });
+
+    it("passes children plus a pending outsider adult WITH a justification on to the service, for review", async () => {
+      arrangeLookup(true);
+      markXPending();
+      const res = await POST(
+        makeRequest({ guests: [KID, X], memberReviewJustification: "Grandad is coming" }),
+      );
+      expect(res.status).toBe(201);
+      expect(h.createConfirmedBooking.mock.calls[0]?.[0]).toMatchObject({
+        memberReviewJustification: "Grandad is coming",
+      });
+    });
+
+    it("counts a notify-only outsider adult (written CONFIRMED) as the adult", async () => {
+      arrangeLookup(true);
+      h.planConsent.mockImplementation(({ guests }: { guests: Array<{ memberId?: string | null }> }) => ({
+        guests: guests.map((guest) =>
+          guest.memberId === MEMBER_X
+            ? { ...guest, memberGuestConsent: { consentStatus: "CONFIRMED" } }
+            : guest,
+        ),
+        entriesByMemberId: new Map(),
+      }));
+      const res = await POST(makeRequest({ guests: [KID, X] }));
+      expect(res.status).toBe(201);
+    });
+
+    it("counts a family adult as before", async () => {
+      const res = await POST(makeRequest({ guests: [KID, FAMILY] }));
+      expect(res.status).toBe(201);
+    });
+
     it("leaves adult supervision to the create service when nobody beyond the family is named", async () => {
       const res = await POST(makeRequest({ guests: [KID] }));
 
