@@ -69,7 +69,8 @@ The dashboard has no settings — it is read-only. The cards it can show:
 | Finished Stays With Unpaid Additions | A settled past stay has an upward change still uncollected | [Bookings](bookings.md) (pre-filtered) |
 | Account Deletion Requests | A member self-service deletion is pending | [Deletion Requests](deletion-requests.md) |
 | Membership Lifecycle Review | A cancellation or archive request is waiting | [Cancellation Requests](membership-cancellations.md) |
-| Hut Leader Assignment Required | Upcoming dates have bookings but no hut leader. On a club with more than one active lodge this counts **lodge-nights** and names the lodge on every date, because each lodge needs its own leader — see [Hut Leaders](hut-leaders.md) | [Hut Leaders](hut-leaders.md) |
+| Nights without a hut leader staying | Upcoming nights have guests but no hut leader who is both assigned and staying that night. Each entry gives the night and how many guests are on site. On a club with more than one active lodge this counts **lodge-nights** and names the lodge on every date, because each lodge needs its own leader — see [Hut Leaders](hut-leaders.md#what-counts-as-a-covered-night) | [Hut Leaders](hut-leaders.md) |
+| Handovers this week | A hut leader hands over to another at midday on one of the next seven days. Each line names the day and who hands over to whom (and the lodge, on a club with more than one). Shown only to admins who can open Hut Leaders | [Hut Leaders](hut-leaders.md) |
 
 Stat cards (each links to its detail area):
 
