@@ -1,9 +1,5 @@
-import { AdminReviewStatus, AgeTier, BookingStatus, type Prisma } from "@prisma/client";
+import { AdminReviewStatus, BookingStatus, type Prisma } from "@prisma/client";
 import { isCapacityHoldingBookingStatus } from "@/lib/booking-status";
-import {
-  isGuestOperationallyPresent,
-  type GuestWithConsent,
-} from "@/lib/member-guest-consent";
 
 export const ADULT_SUPERVISION_REVIEW_REASON =
   "This booking does not include an adult guest, so it should be reviewed by an admin.";
@@ -61,29 +57,9 @@ export function bookingReviewReasonSentences(
   );
 }
 
-/**
- * Minors with no adult go to review (#1100, #1422). The adult must be
- * operationally present (D-12): a member guest still waiting to agree, who may
- * never come, is not the responsible adult — the same rule the paid-up-adult
- * requirement applies (#3770, owner decision "only agreed adults count"). Each
- * row must STATE its consent (`GuestWithConsent`; `null` for a guest who never
- * needed any), so a consent-free view does not type-check. Minors count whatever
- * their consent, as they always have.
- */
-export function requiresAdultSupervisionReview(
-  guests: ReadonlyArray<{ ageTier: AgeTier | string } & GuestWithConsent>
-): boolean {
-  const hasAdult = guests.some(
-    (guest) => guest.ageTier === AgeTier.ADULT && isGuestOperationallyPresent(guest),
-  );
-  const hasMinor = guests.some((guest) =>
-    guest.ageTier === AgeTier.CHILD ||
-    guest.ageTier === AgeTier.YOUTH ||
-    guest.ageTier === AgeTier.INFANT
-  );
-
-  return hasMinor && !hasAdult;
-}
+// The adult-supervision rule lives in its client-safe home (#3770); re-exported
+// here so every server caller keeps importing it from the review module.
+export { requiresAdultSupervisionReview } from "@/lib/adult-supervision";
 
 type ReviewGate = {
   requiresAdminReview: boolean;

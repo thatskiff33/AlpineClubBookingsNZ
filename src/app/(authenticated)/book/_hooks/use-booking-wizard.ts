@@ -46,7 +46,10 @@ import {
   useDependantIdentityAnswers,
 } from "@/lib/use-dependant-identity-answers";
 import type { MemberGuestCandidate } from "@/lib/member-guest-find";
-import { predictMemberGuestConsent } from "../_components/member-guest-preview";
+import {
+  partyNeedsSupervisionJustification,
+  predictMemberGuestConsent,
+} from "../_components/member-guest-preview";
 import {
   readExceptionOffer,
   type ExceptionOffer,
@@ -453,14 +456,10 @@ export function useBookingWizard() {
     useState<MemberGuestConfig>(MEMBER_GUEST_CONFIG_OFF);
   const [memberGuestAddError, setMemberGuestAddError] = useState<string | null>(null);
   const [memberReviewJustification, setMemberReviewJustification] = useState("");
-  const requiresAdminReviewLocal = (() => {
-    if (guests.length === 0) return false;
-    const hasAdult = guests.some((g) => g.ageTier === "ADULT");
-    const hasMinor = guests.some(
-      (g) => g.ageTier === "YOUTH" || g.ageTier === "CHILD" || g.ageTier === "INFANT",
-    );
-    return hasMinor && !hasAdult;
-  })();
+  // The server's adult-supervision rule, asked of the rows as added: an outsider
+  // still waiting to agree is not the adult (#3770), so children plus one need
+  // the written reason the create route will otherwise refuse without.
+  const requiresAdminReviewLocal = partyNeedsSupervisionJustification(guests);
 
   // Display label for capacity copy: the lodge's name once a second lodge
   // exists, the generic phrase otherwise (ADR-002 presentation rule).
