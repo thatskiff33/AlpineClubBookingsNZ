@@ -365,8 +365,10 @@ once, elsewhere, and only linked from here:
 - **the code-owner rule itself** — what needs an Approve and how agents treat
   it — is `AGENTS.md` → "Pre-authorisation and attributability".
 
-**Decided, waiting for the owner to apply** (owner decisions of 26 Sep 2026 on
-#3341: code-owner review, option A; stale approvals dismissed on push). Agents
+**Applied by the owner on 2 Oct 2026** (owner decisions of 26 Sep 2026 on
+#3341: code-owner review, option A; stale approvals dismissed on push). Step 4's
+test passed on #3807/#3808, recorded on #3341; the steps stay here so the
+configuration can be rebuilt. Agents
 must not make this change; it is a repository setting.
 
 1. Once the pull request that adds `.github/CODEOWNERS` has reached `main`
