@@ -639,7 +639,13 @@ export async function POST(
         })),
         ...newGuestInputs,
       ];
-      const requiresAdminReview = requiresAdultSupervisionReview(allGuestsForPricing);
+      // The rows themselves, not the pricing view: they carry each guest's
+      // consent (stored, or planned for an added row), and only an agreed adult
+      // counts (#3770, owner decision).
+      const requiresAdminReview = requiresAdultSupervisionReview([
+        ...booking.guests,
+        ...normalizedNewGuests,
+      ]);
       const adminReviewReason = requiresAdminReview
         ? ADULT_SUPERVISION_REVIEW_REASON
         : null;

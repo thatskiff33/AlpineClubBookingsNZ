@@ -107,6 +107,29 @@ export function isOperationallyPresentConsent(
 }
 
 /**
+ * The consent a guest row carries, under either name it travels by: a persisted
+ * row's `consentStatus`, or a pre-persist row's planned `memberGuestConsent`
+ * (the write `planMemberGuestConsentWrites` is about to make). Absent under both
+ * means no consent was ever needed — a family-scope or non-member guest.
+ */
+export type GuestConsentFields = {
+  consentStatus?: MemberGuestConsentStatus | null;
+  memberGuestConsent?: { consentStatus?: MemberGuestConsentStatus | null } | null;
+};
+
+/**
+ * D-12 for a guest ROW: is this person operationally present? The one answer the
+ * paid-up-adult requirement and the adult-supervision rule both read (#3770,
+ * owner decision: "only agreed adults count"), so a member guest still waiting to
+ * agree is the responsible adult for neither.
+ */
+export function isGuestOperationallyPresent(guest: GuestConsentFields): boolean {
+  return isOperationallyPresentConsent(
+    guest.consentStatus ?? guest.memberGuestConsent?.consentStatus ?? null,
+  );
+}
+
+/**
  * The shortest hold a request may be given, mirroring `MIN_GRACE_MS` in
  * `cron-group-settlement-reaper.ts`: never mint a request that has already
  * expired by the time the confirmation email lands.
