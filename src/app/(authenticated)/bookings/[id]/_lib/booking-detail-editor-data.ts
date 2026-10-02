@@ -194,6 +194,8 @@ export async function buildBookingDetailEditorData({
       // viewer because it is not a secret — it is what a non-member row is being
       // charged — but only an admin is offered the control that changes it.
       otherLodgeMember: g.otherLodgeMember,
+      // #3770: the panel's supervision check reads it, as the server does.
+      consentStatus: g.consentStatus ?? null,
       nights: g.nights.map((n) => formatDateOnly(n.stayDate)),
       // #2307 (MG2-M-2): null for family and non-member rows — no badge, no
       // layout change. A conditional spread so those rows' serialised payload

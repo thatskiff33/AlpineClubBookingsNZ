@@ -31,6 +31,9 @@ const mockTx = {
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // #3770 R2: the create route reads the booker's lodge restrictions before
+    // its member lookup; nobody here has one.
+    memberLodgeAccess: { findMany: vi.fn().mockResolvedValue([]) },
     lodge: {
       findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
       // #2701: the create resolves the lodge the request NAMED, so the route
