@@ -541,6 +541,19 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   `booking-ledger-credit-sync.realdb.test.ts` proves the `member-credit.ts`
   writers and the real resolver.
 
+## INV-MONEY-036
+
+- **An edit posts its own lines, per guest-night, or none; a review closure
+  records one parked edit's money once** (#3582). Rule and reason: design
+  `booking-ledger.md` §5.1 (edits: reversal plus re-post per night, sum or
+  nothing, only on a booking confirmed on the ledger, asked under `lock(1)`;
+  a parked edit posts nothing, `INV-MOD-040`) and §5.3 (a closure's share,
+  decided at booking grain). No review share posts a settlement line
+  (`INV-MONEY-034`, `INV-MONEY-035`). Pins:
+  `booking-ledger-modification-posting.test.ts`,
+  `booking-ledger-modification-sync.test.ts` (two-sibling fixtures per
+  direction), `booking-ledger-modification.realdb.test.ts`.
+
 ## INV-MONEY-006
 
 **Related: `INV-MONEY-001`** (money is held as integer cents) and

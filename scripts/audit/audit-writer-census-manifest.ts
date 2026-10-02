@@ -586,7 +586,12 @@ export const AUDIT_CENSUS_TOTALS = {
   // RE-MEASURED on the composed tree with #3639.
   // 492 -> 493 (#3413): pending-adult identity resolution adds one classified
   // booking-category logAudit site. RE-MEASURED on the composed tree.
-  writeSites: 493,
+  // 493 -> 494 (#3462): `xero.operation.marked_failed`, the per-row Mark
+  // failed on a stale RUNNING Xero operation. One awaited `createAuditLog` in
+  // `src/app/api/admin/xero/operations/[id]/mark-failed/route.ts`,
+  // categorised `xero` at the site like its `mark-non-replayable` sibling.
+  // RE-MEASURED with `pnpm run audit:census`, not incremented.
+  writeSites: 494,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -672,7 +677,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // 270 -> 271 (#3639 review): the setting-change record, above.
     // 271 -> 270 (#3415): no accept-time capacity-block/revert writer.
     // 270 -> 271 (#3413): pending-adult identity resolution, above.
-    logAudit: { total: 271, uncategorised: 0 },
+    // 271 -> 270 (#3462 review): the bulk stale-RUNNING reset moved to an
+    // awaited `createAuditLog` inside the reset's own transaction, so the
+    // reset and its record commit together. RE-MEASURED with
+    // `pnpm run audit:census`.
+    logAudit: { total: 270, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -731,7 +740,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // 122 -> 123 (#3371): the carried-unpaid-balance record, declared as
     // `recordCarriedEditReviewChargeBalance` in
     // `edit-financial-review-carried-balance.ts` and called post-commit from
-    // `edit-financial-review-charge.ts`, awaited the same best-effort way as
+    // `edit-financial-review-charge-sync.ts`, awaited the same best-effort way as
     // the two review-charge writers it belongs with.
     // NOT `edit-financial-review-charge-request.ts`, which imports only the
     // pure `measureCarriedAskShortfall` from that module and writes no row.
@@ -753,7 +762,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // 131 -> 132 (#3498): the manual-refund-task reopen record.
     // 134 -> 135 (#3029): the booking dietary edit record, awaited inside the
     // edit's own transaction so the row and its audit commit together.
-    createAuditLog: { total: 135, uncategorised: 0 },
+    // 135 -> 136 (#3462): the Xero operation Mark failed record.
+    // 136 -> 137 (#3462 review): the bulk stale-RUNNING reset, moved here
+    // from `logAudit`. Mark failed, mark non-replayable and the bulk reset now
+    // each await their record inside the state change's transaction.
+    createAuditLog: { total: 137, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1152,7 +1165,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // category every other writer of a member's Xero contact link already uses
     // (`xero.contact.synced_to_member`), so this keeps the subsystem uniform —
     // the test `INV-PRIV-013` applies. Nobody's readership changes.
-    xero: 37,
+    //
+    // 37 -> 38 (#3462): `xero.operation.marked_failed`, beside the other
+    // operation-panel writers. Nobody's readership changes.
+    xero: 38,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership
@@ -1379,7 +1395,7 @@ export const APPLIED_AUDIT_CATEGORIES: Readonly<Record<string, string>> = {
   "src/app/api/admin/xero/member-grouping/route.ts::POST#6": "xero",
   "src/app/api/admin/xero/operations/[id]/requeue/route.ts::POST#0": "xero",
   "src/app/api/admin/xero/operations/[id]/retry/route.ts::POST#0": "xero",
-  "src/app/api/admin/xero/operations/reset-stale-running/route.ts::POST#0": "xero",
+  "src/app/api/admin/xero/operations/reset-stale-running/route.ts::POST.count#0": "xero",
   "src/app/api/admin/xero/operations/retry-all/route.ts::POST#0": "xero",
 
   // ─── Lodge display configuration and kiosk accounts → `lodge` ──────────────
@@ -2735,7 +2751,7 @@ export const AUDIT_WRITERS_WITHOUT_ENTITY_IDENTIFIER: Readonly<
     "A bulk resync spanning many members; the dry-run id stays in `details`.",
   "src/app/api/admin/xero/member-grouping/route.ts::POST#6":
     "The same bulk resync, on the accepted path.",
-  "src/app/api/admin/xero/operations/reset-stale-running/route.ts::POST#0":
+  "src/app/api/admin/xero/operations/reset-stale-running/route.ts::POST.count#0":
     "An updateMany over every stale RUNNING operation.",
   "src/app/api/admin/xero/operations/retry-all/route.ts::POST#0":
     "Enqueues retries for up to 200 operations.",

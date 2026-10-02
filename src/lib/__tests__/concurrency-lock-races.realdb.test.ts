@@ -139,6 +139,20 @@ import "./booking-ledger-settlement-sync.realdb.test";
 // credit, and a hand-back completed through the real resolver. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3599-` fixtures.
 import "./booking-ledger-credit-sync.realdb.test";
+// #3582 reuses it to prove an edit's and a review closure's charge lines against
+// the table's real constraints: two edits in turn (the second reverses the first
+// edit's re-post, never a line already reversed), a replay that posts nothing
+// and still commits, an unconfirmed booking that posts nothing, and a closure's
+// re-price under its history row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-3582-` fixtures.
+import "./booking-ledger-modification.realdb.test";
+// #3611 reuses it to prove a cancellation's charge lines: after an edit the
+// cancellation reverses the edit's re-post and never a line already reversed,
+// the CANCELLATION_FEE posts what the policy kept, and through the REAL
+// cancelBooking the lines commit with the claim and owed(b) reaches zero once
+// the hand-back posts. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
+// cleans its own `race-3611-` fixtures.
+import "./booking-ledger-cancellation.realdb.test";
 // #3640 reuses it to prove the one card-refund writer adds each refund exactly
 // once: two writers recording the SAME refund meet at `ON CONFLICT DO NOTHING`
 // and add it once, and two recording DIFFERENT refunds both survive the mirror's
@@ -159,6 +173,13 @@ import "./member-dietary-omit.realdb.test";
 // one VOID row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans
 // its own `race-3642-` fixtures.
 import "./group-settlement-invoice-binding-races.realdb.test";
+// #3402 reuses it to prove a review-charge raise is single-flight per edit: two
+// claims parked on the one claim row let exactly one through, an expired lease
+// is taken over by exact token, and the $60/$100-against-$50 interleaving -
+// forced through the real sync with only Stripe gated - ends with the true total
+// at the provider and on the row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-3402-` fixtures.
+import "./edit-financial-review-charge-raise-claim.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

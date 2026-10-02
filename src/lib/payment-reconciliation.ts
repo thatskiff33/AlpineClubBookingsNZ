@@ -73,6 +73,7 @@ import {
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
 } from "@/lib/booking-status";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
+import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { bookingHasConfirmationLines } from "@/lib/booking-ledger-read";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import {
@@ -1397,6 +1398,10 @@ async function settleBookingPaymentInTransaction(
       if (restoreMemberId) {
         await restoreCreditFromBooking(restoreMemberId, booking.id, tx);
       }
+      // #3611: the whole charge goes back, so nothing is kept; a booking already
+      // confirmed on the ledger (a mark-paid since reversed) has its stay taken
+      // back, under the lock(1) this settle took first.
+      await postCancellationLedgerLines({ store: tx, bookingId: booking.id, lodgeId: bookingLodgeId, keptCents: 0, site: "settle:capacity-void" });
 
       // Durable refund debt, ATOMIC with the cancel claim (mirrors the #1349
       // enqueue-then-execute pattern in booking-cancel): freeze the refund

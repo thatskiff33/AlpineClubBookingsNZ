@@ -97,6 +97,12 @@ vi.mock("@/lib/booking-ledger-credit-sync", () => ({
   syncBookingLedgerCredits: syncCredits,
 }));
 
+// #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
+const cancellationLedger = vi.hoisted(() => ({
+  postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}),
+}));
+vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroInboundEvent: {
@@ -1912,6 +1918,10 @@ describe("processStoredXeroInboundEvents", () => {
     expect(mocks.txOperationFindFirst).toHaveBeenCalledTimes(1);
     // Not the paid path.
     expect(sendBookingConfirmedEmail).not.toHaveBeenCalled();
+    // #3611: the cancel posts its ledger reversals in its own claim, keeping nothing.
+    expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "booking_ib_cap", keptCents: 0, site: "xero-inbound:late-capacity-cancel" }),
+    );
   });
 
   // #1771 — a PAYMENT_PENDING Internet Banking booking deliberately admitted

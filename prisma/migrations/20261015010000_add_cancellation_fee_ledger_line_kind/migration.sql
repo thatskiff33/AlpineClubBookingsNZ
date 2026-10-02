@@ -1,0 +1,22 @@
+-- #3611 (programme #3527, Stage 4 C3b; owner decision B, 24 Sep 2026): what the
+-- club keeps on a cancellation posts as its own charge line kind,
+-- CANCELLATION_FEE, anchored on the CANCELLATION and narrated "Cancellation fee
+-- retained". It does not reuse CHANGE_FEE.
+--
+-- Purely additive EXPAND: one enum value, catalog-only, no table lock, no DML.
+-- The new colour starts writing it in the same release, and that is safe for
+-- the draining colour because no read it makes can return such a row. Every
+-- BookingLedgerLine read in the release before this one (main, plus #3582 if it
+-- ships first) is filtered, all in src/lib/booking-ledger-read.ts:
+--   anchorKind CONFIRMATION                     (bookingHasConfirmationLines)
+--   anchorKind PAYMENT_TRANSACTION, PAYMENT_REFUND (findPostedSettlementLines)
+--   kind CREDIT_APPLIED, CREDIT_ISSUED          (findPostedCreditLines)
+--   kind GUEST_NIGHT, PROMOTION                 (findPostedChargeLines, #3582)
+--   kind AGREED_ADJUSTMENT                      (findPostedAdjustmentLines, #3582)
+-- A CANCELLATION_FEE line is anchored CANCELLATION and is its own kind, so none
+-- of them returns it, and no unfiltered read of the table exists.
+--
+-- Nothing in this migration uses the value, so PostgreSQL's refusal to use a
+-- label in the transaction that added it does not arise. PostgreSQL cannot
+-- drop an enum value; the reverse is to leave it unused.
+ALTER TYPE "LedgerLineKind" ADD VALUE IF NOT EXISTS 'CANCELLATION_FEE';

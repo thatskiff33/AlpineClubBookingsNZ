@@ -41,6 +41,7 @@ import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
+import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import {
   hasInvoiceClearingNote,
@@ -1103,6 +1104,10 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             bookingId: fresh.bookingId,
             db: tx,
           });
+          // #3611: the cash goes back as credit, so nothing is kept; a booking
+          // already confirmed on the ledger (a mark-paid since reversed) has its
+          // stay taken back, under the lock(1) this transaction took first.
+          await postCancellationLedgerLines({ store: tx, bookingId: fresh.bookingId, lodgeId: locked.booking.lodgeId, keptCents: 0, site: "xero-inbound:late-capacity-cancel" });
 
           // #1459: this arm mints too, so it takes the same quantified-cash
           // clamp as the already-cancelled arm — a live booking's invoice can

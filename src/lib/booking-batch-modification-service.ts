@@ -124,9 +124,9 @@ import {
 } from "@/lib/roster-lock";
 import { formatDateOnly } from "@/lib/date-only";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
+import { computeModificationPricing } from "@/lib/booking-modification-pricing";
 import {
-  computeModificationPriceLines,
-  diffBookingPricing,
   loadModificationLinesAuditFields,
   pricingSideFromStoredGuests,
   pricingSideFromWrittenGuests,
@@ -1768,10 +1768,10 @@ export async function modifyBookingBatch({
      * price are exactly what landed - no index alignment with the plan's
      * ordering to get wrong. A parked or price-preserving edit stores none.
      */
-    const priceLines =
+    const { priceLines, sides: pricingSides } =
       parked || promoFiguresStubbedHere
-        ? null
-        : await computeModificationPriceLines(
+        ? { priceLines: null, sides: null }
+        : await computeModificationPricing(
             { bookingId, site: "batch-modify" },
             async () => {
               // The re-read is narration's own I/O and runs INSIDE the guard:
@@ -1789,22 +1789,22 @@ export async function modifyBookingBatch({
                 },
               });
               const existingPromoCode = booking.promoRedemption?.promoCode?.code ?? null;
-              return diffBookingPricing(
-                  pricingSideFromStoredGuests(booking.guests, {
-                    promoAdjustmentCents: booking.promoAdjustmentCents,
-                    promoCode: existingPromoCode,
-                  }),
-                  pricingSideFromWrittenGuests(writtenGuests, {
-                    promoAdjustmentCents: promo.newPromoAdjustmentCents,
-                    promoCode: promo.promoRemoved
-                      ? null
-                      : promo.promoChanged
-                        ? (input.promoCode?.trim() || existingPromoCode)
-                        : existingPromoCode,
-                  }),
-                  priceDiffCents,
-                );
+              return {
+                before: pricingSideFromStoredGuests(booking.guests, {
+                  promoAdjustmentCents: booking.promoAdjustmentCents,
+                  promoCode: existingPromoCode,
+                }),
+                after: pricingSideFromWrittenGuests(writtenGuests, {
+                  promoAdjustmentCents: promo.newPromoAdjustmentCents,
+                  promoCode: promo.promoRemoved
+                    ? null
+                    : promo.promoChanged
+                      ? (input.promoCode?.trim() || existingPromoCode)
+                      : existingPromoCode,
+                }),
+              };
             },
+            priceDiffCents,
             logger,
           );
 
@@ -1935,6 +1935,19 @@ export async function modifyBookingBatch({
         changeFeeCents,
         ...(priceLines ? { priceLines } : {}),
       },
+    });
+
+    // #3582: the same before and after, per night, on the booking ledger —
+    // under the `lock(1)` this transaction took first. A parked or
+    // price-preserving edit posts nothing (`INV-MOD-040`); a parked edit's
+    // review closure does.
+    await postModificationLedgerLines({
+      store: tx,
+      bookingId,
+      lodgeId: booking.lodgeId,
+      bookingModification,
+      sides: pricingSides,
+      site: "batch-modify",
     });
 
     /**

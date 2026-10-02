@@ -35,6 +35,52 @@ export function confirmationPromotionKey(bookingId: string): string {
 }
 
 /**
+ * One guest's one night as an edit sold it (#3582). The edit's
+ * `BookingModification` row is written once and never again, so its id plus the
+ * night is the whole identity; a later edit that re-sells the same night has a
+ * different modification id and so a different key. A price rebase at review
+ * closure posts under its own `PRICE_REBASE` history row the same way.
+ */
+export function modificationNightKey(
+  bookingModificationId: string,
+  bookingGuestId: string,
+  stayDate: Date,
+): string {
+  return `modification:${bookingModificationId}:night:${bookingGuestId}:${calendarDateOfDateOnlyInstant(stayDate)}`;
+}
+
+/** The promotion as an edit (or a closure's rebase) left it, re-posted (#3582). */
+export function modificationPromotionKey(bookingModificationId: string): string {
+  return `modification:${bookingModificationId}:promotion`;
+}
+
+/** The change fee an edit charged (#3582). */
+export function modificationChangeFeeKey(bookingModificationId: string): string {
+  return `modification:${bookingModificationId}:change-fee`;
+}
+
+/**
+ * What the club keeps when a booking is cancelled (#3611). A booking is
+ * cancelled once — `CANCELLED` is terminal, and every cancel path claims it once
+ * under `lock(1)` (a re-read under the lock, a status-guarded flip, or both) —
+ * so its id is the whole identity. Were a booking ever un-cancelled, this key
+ * would have to name the cancellation as well, or a second fee would be skipped.
+ * The reversals that post beside it are keyed by `reversalKey`, like every other.
+ */
+export function cancellationFeeKey(bookingId: string): string {
+  return `cancellation:${bookingId}:fee`;
+}
+
+/**
+ * The adjustment an officer agreed with the member by completing one review
+ * task (#3582). A task completes at most once — its claim is status-guarded —
+ * so its id is the whole identity.
+ */
+export function agreedAdjustmentKey(manualRefundTaskId: string): string {
+  return `agreed-adjustment:${manualRefundTaskId}`;
+}
+
+/**
  * The reversal of a line, keyed by the REVERSED LINE'S ID rather than its key:
  * every line has an id, but a line posted before #3595 has no key. Keyed this
  * way, a second reversal of the same line always carries the same key as the

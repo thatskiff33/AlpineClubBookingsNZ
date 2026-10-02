@@ -3139,11 +3139,20 @@ queued retry (REQUEUE) RUNNING -> CANCELLED when its operation read as resolved
   in Xero (before the claim, or the claim lost to the resolve); nothing ran
 outbox copy RUNNING -> CANCELLED when a sibling for the same document was
   resolved after the copy was queued; no Xero call
+retry claims original FAILED/PARTIAL -> RUNNING -> handler completes it
+  handler throws before completing -> original RUNNING -> FAILED with the
+  run's error (guarded: still RUNNING, still this claim's startedAt) (#3462)
+  queued retry (REQUEUE) -> FAILED, naming the original and its status
+stale RUNNING (> 15 min) -> FAILED by an officer's Mark failed (one row) or
+  Reset stale running (all), code ORPHANED_STALE_RUNNING; then retryable
 ```
 
 To verify: status strings, stale processing reset, tenant selection, link
 cleanup, and exact retry exhaustion alerts. The resolved-in-Xero arm is pinned
 by `xero-operation-retry.test.ts` and `xero-booking-repair.test.ts` (#3635).
+The claimed-original abandon and Mark failed are pinned by
+`xero-operation-retry.test.ts`, `xero-sync.test.ts`,
+`xero-operation-queue.test.ts` and `xero-operation-routes.test.ts` (#3462).
 
 ## Cron And Recovery Lifecycle
 
@@ -3156,6 +3165,25 @@ failure -> run/failure visible and retryable where business-critical
 
 To verify: which cron jobs record `CronJobRun`, exact statuses, stale queue
 health thresholds, and skipped-module reporting.
+
+### Edit review-charge recovery row (#3402)
+
+One booking edit's review charge has ONE payment-recovery row. Unlike other
+recovery rows, a finished one can be reopened, because a later share of the
+same edit can still defer to it:
+
+```text
+PENDING -> PROCESSING (worker claim) -> SUCCEEDED (replay raised everything owed)
+SUCCEEDED -> PENDING   (a later share deferred, or its raise was refused: re-armed, attempts reset)
+PROCESSING             (re-arm moves only nextRetryAt; the close is fenced on processingStartedAt
+                        and the claimed nextRetryAt, else the row is handed back to PENDING)
+terminal FAILED        (never re-armed: the edit belongs to the booking-vs-Xero repair pass, INV-PAY-057)
+```
+
+The rule and its stated limits are `INV-PAY-112`; the interleavings are in
+`docs/CONCURRENCY_AND_LOCKING.md`. To verify:
+`edit-financial-review-charge-raise-claim.realdb.test.ts` and
+`payment-recovery.test.ts` ("#3402").
 
 ### Confirm-pending saved-card charge (#3268)
 
