@@ -1276,8 +1276,14 @@ let observerClient: PrismaClient;
         // Nothing credited, nothing claimed: no CREDITED event at 100%.
         const credited = await prisma.bookingEvent.count({ where: { bookingId: BOOKING_ID, type: "CREDITED" } });
         expect(credited).toBe(netCents > 0 ? 1 : 0);
-        // The stand-in posts what was credited, not the typed $50.
+        // The stand-in posts what was credited, not the typed $50 - and at 100%,
+        // where nothing was, no stand-in at all.
         expect(await owed()).toBe(0);
+        const standIns = await prisma.bookingLedgerLine.findMany({
+          where: { bookingId: BOOKING_ID, kind: "AGREED_ADJUSTMENT", anchorId: raised.taskId },
+          select: { amountCents: true },
+        });
+        expect(standIns.map((line) => line.amountCents)).toEqual(netCents > 0 ? [-netCents] : []);
       }, 60_000);
 
       it("two reviews of one edit, after the REAL cancel at 50% less $20: each $20 share gives back $10, the member ends at $100, and each review has its own Xero note", async () => {
