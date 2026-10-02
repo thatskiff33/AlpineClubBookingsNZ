@@ -83,7 +83,12 @@ import {
   RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS,
   type BookingGuestInput,
 } from "@/lib/booking-create";
-import { resolveBookingDateEnvelope } from "@/lib/booking-create-guests";
+import {
+  getCapacityGuestRanges,
+  resolveBookingDateEnvelope,
+} from "@/lib/booking-create-guests";
+import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import {
   promoCodeRequestRefusal,
   resolveEffectivePromoSource,
@@ -440,9 +445,11 @@ export async function POST(request: NextRequest) {
    * below read it rather than the requested dates.
    */
   let requestEnvelope: { checkIn: Date; checkOut: Date };
+  let stayRangedRequestRows: BookingGuestInput[];
   try {
+    stayRangedRequestRows = normalizeGuestStayRanges(guests, { checkIn, checkOut });
     requestEnvelope = resolveBookingDateEnvelope(
-      normalizeGuestStayRanges(guests, { checkIn, checkOut }),
+      stayRangedRequestRows,
       checkIn,
       checkOut,
     );
@@ -1153,10 +1160,53 @@ export async function POST(request: NextRequest) {
     if (familyRefusal) return familyRefusal;
   }
 
+  /** The route's one answer for a full lodge (the pre-flight and the service). */
+  const capacityExceededResponse = (fullNights: unknown) =>
+    NextResponse.json(
+      {
+        error: "The lodge is fully booked on some of your requested dates.",
+        code: "CAPACITY_EXCEEDED",
+        fullNights,
+        canWaitlist: true,
+      },
+      { status: 409 }
+    );
+
   if (beyondFamilyIds.size === 0) {
     guestInputs = familyParty;
     memberGuestEntries = familyEntries;
   } else {
+    /*
+     * A FULL LODGE IS ANSWERED BEFORE THE OUTSIDER IS LOOKED UP (#3770, owner
+     * decision on R4: "Check 'full' first"). Otherwise the 409 below was reachable
+     * only once the outsider resolved. For a member's own booking that will be
+     * capacity-checked (not a draft, not a waitlist join), this asks the services'
+     * own capacity question of the MEMBER half of the party — every row naming a
+     * member id; the services count that half, or the whole party, so this can
+     * only refuse what they would refuse too. It is read outside the lodge lock,
+     * so a booking or cancellation in the same instant can rarely make it
+     * disagree; the service's in-transaction check still decides.
+     */
+    if (!isAuthorizedOnBehalf && !draft && !waitlist) {
+      const memberHalf = stayRangedRequestRows.filter((guest) =>
+        Boolean(guest.memberId?.trim()),
+      );
+      const preflight = await checkCapacityForGuestRanges(
+        bookingLodgeId,
+        requestEnvelope.checkIn,
+        requestEnvelope.checkOut,
+        getCapacityGuestRanges(
+          memberHalf,
+          requestEnvelope.checkIn,
+          requestEnvelope.checkOut,
+        ),
+      );
+      if (!preflight.available) {
+        return capacityExceededResponse(
+          getCapacityFullNights(preflight.nightDetails),
+        );
+      }
+    }
     try {
       const beyondMembers = await resolveBeyondFamilyPhase(
         prisma,
@@ -1565,15 +1615,7 @@ export async function POST(request: NextRequest) {
     // Capacity exceeded path: 409 unless the caller already opted into
     // the waitlist, in which case we create the WAITLISTED booking.
     if (!waitlist) {
-      return NextResponse.json(
-        {
-          error: "The lodge is fully booked on some of your requested dates.",
-          code: "CAPACITY_EXCEEDED",
-          fullNights: outcome.fullNights,
-          canWaitlist: true,
-        },
-        { status: 409 }
-      );
+      return capacityExceededResponse(outcome.fullNights);
     }
 
     try {
