@@ -1181,7 +1181,9 @@ async function updateReviewedMoveRows(
       "approvedByMemberId" = NULL,
       "isSecondOccupant" = reviewed."targetSecond",
       "bedType" = ${state.destination.bedType}::"BedType",
-      "updatedAt" = CURRENT_TIMESTAMP
+      -- A bound Date, never CURRENT_TIMESTAMP: the column holds UTC, and the
+      -- database clock converts to the session zone (Pacific/Auckland) (#3825).
+      "updatedAt" = ${new Date()}
     FROM (VALUES ${reviewedRows}) AS reviewed(
       "id",
       "bookingId",
