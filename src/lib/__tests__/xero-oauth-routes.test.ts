@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-const { mockAuth, mockRequireActiveSessionUser, mockGetXeroConsentUrl, mockHandleXeroCallback, mockLogger } =
+const { mockAuth, mockRequireActiveSessionUser, mockGetXeroConsentUrl, mockHandleXeroCallback, mockDisconnectXero, mockLogger } =
   vi.hoisted(() => ({
     mockAuth: vi.fn(),
     mockRequireActiveSessionUser: vi.fn().mockResolvedValue(null),
     mockGetXeroConsentUrl: vi.fn(),
     mockHandleXeroCallback: vi.fn(),
+    mockDisconnectXero: vi.fn(),
     mockLogger: {
       info: vi.fn(),
       warn: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("@/lib/session-guards", async () => ({
 vi.mock("@/lib/xero", () => ({
   getXeroConsentUrl: mockGetXeroConsentUrl,
   handleXeroCallback: mockHandleXeroCallback,
+  disconnectXero: mockDisconnectXero,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -36,6 +38,7 @@ vi.mock("@/lib/logger", () => ({
 
 import { GET as connectXero } from "@/app/api/admin/xero/connect/route";
 import { GET as handleXeroConnectCallback } from "@/app/api/admin/xero/callback/route";
+import { POST as disconnectXeroRoute } from "@/app/api/admin/xero/disconnect/route";
 import {
   toSafeXeroOAuthCallbackMessage,
   XERO_OAUTH_CALLBACK_GENERIC_MESSAGE,
@@ -209,5 +212,28 @@ describe("toSafeXeroOAuthCallbackMessage (the read side of ?error=)", () => {
     expect(toSafeXeroOAuthCallbackMessage(null)).toBeNull();
     expect(toSafeXeroOAuthCallbackMessage(undefined)).toBeNull();
     expect(toSafeXeroOAuthCallbackMessage("")).toBeNull();
+  });
+});
+
+describe("Xero disconnect route (#3454)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuth.mockResolvedValue(adminSession);
+    mockDisconnectXero.mockResolvedValue(undefined);
+  });
+
+  it("records the disconnect as this administrator's act, on this request", async () => {
+    const response = await disconnectXeroRoute(
+      new Request("https://example.org/api/admin/xero/disconnect", {
+        method: "POST",
+        headers: { "x-request-id": "req-disconnect-1" },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockDisconnectXero).toHaveBeenCalledWith({
+      actor: { kind: "admin", memberId: "admin-1" },
+      request: expect.objectContaining({ id: "req-disconnect-1" }),
+    });
   });
 });

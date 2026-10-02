@@ -438,6 +438,15 @@ export async function deleteIntegrationCredential(
   );
 }
 
+/**
+ * The audit summary of a credential delete. One home, so a caller recording a
+ * delete the store itself could not see (the token store's pre-upgrade copy,
+ * #3454) words it the same way.
+ */
+export function deletedCredentialSummary(provider: string, key: string): string {
+  return `Deleted ${provider} credential "${key}"`;
+}
+
 /** What every credential delete declares. */
 export interface DeleteIntegrationCredentialParams {
   provider: string;
@@ -542,7 +551,7 @@ export async function deleteIntegrationCredentialInTransaction(
 
   await recordCredentialMutation(params.tx, {
     action: CREDENTIAL_AUDIT_ACTIONS.deleted,
-    summary: `Deleted ${params.provider} credential "${params.key}"`,
+    summary: deletedCredentialSummary(params.provider, params.key),
     actor: params.actor,
     provider: params.provider,
     key: params.key,

@@ -23,6 +23,7 @@ import {
 } from "@/lib/integration-credential-actor";
 import {
   deleteIntegrationCredentialInTransaction,
+  deletedCredentialSummary,
   readIntegrationCredentialRow,
   setIntegrationCredentialInTransaction,
   withCredentialTransaction,
@@ -655,7 +656,7 @@ export async function deleteXeroTokensInTransaction(
   if (!storeRemoved && legacy.count > 0) {
     await recordCredentialMutation(params.tx, {
       action: CREDENTIAL_AUDIT_ACTIONS.deleted,
-      summary: `Deleted ${XERO_OAUTH_TOKEN_PROVIDER} credential "${XERO_OAUTH_TOKEN_KEY}" (pre-upgrade copy only)`,
+      summary: `${deletedCredentialSummary(XERO_OAUTH_TOKEN_PROVIDER, XERO_OAUTH_TOKEN_KEY)} (pre-upgrade copy only)`,
       actor: params.actor,
       provider: XERO_OAUTH_TOKEN_PROVIDER,
       key: XERO_OAUTH_TOKEN_KEY,
