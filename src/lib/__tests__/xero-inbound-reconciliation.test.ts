@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   memberCreditAggregate: vi.fn(),
   memberCreditCreate: vi.fn(),
   memberCreditFindMany: vi.fn(),
+  // #3792: the late capacity cancel's restore of the booking's applied credit.
+  memberCreditCreateMany: vi.fn(),
   memberCreditUpdate: vi.fn(),
   memberCreditUpdateMany: vi.fn(),
   memberCreditNoteAllocationAggregate: vi.fn(),
@@ -532,6 +534,7 @@ describe("processStoredXeroInboundEvents", () => {
     });
     mocks.memberCreditCreate.mockResolvedValue({ id: "credit_1" });
     mocks.memberCreditFindMany.mockResolvedValue([]);
+    mocks.memberCreditCreateMany.mockResolvedValue({ count: 1 });
     mocks.linkFindMany.mockResolvedValue([]);
     mocks.linkFindFirst.mockResolvedValue(null);
     mocks.memberCreditUpdate.mockResolvedValue({ id: "credit_1" });
@@ -1703,6 +1706,9 @@ describe("processStoredXeroInboundEvents", () => {
             findFirst: mocks.memberCreditFindFirst,
             create: mocks.memberCreditCreate,
             aggregate: mocks.memberCreditAggregate,
+            // #3792: read and written by the applied-credit restore.
+            findMany: mocks.memberCreditFindMany,
+            createMany: mocks.memberCreditCreateMany,
           },
           // #3369: the durable record of money the system cannot move itself.
           manualRefundTask: {
@@ -1921,6 +1927,61 @@ describe("processStoredXeroInboundEvents", () => {
     // #3611: the cancel posts its ledger reversals in its own claim, keeping nothing.
     expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
       expect.objectContaining({ bookingId: "booking_ib_cap", keptCents: 0, site: "xero-inbound:late-capacity-cancel" }),
+    );
+  });
+
+  // #3792: the issue's worked example. $80 of account credit applied, a $120
+  // (here $123.45) Internet Banking payment arriving after capacity is gone: the
+  // cash is minted as credit AND the applied $80 is restored, in full, by the
+  // same helper the settle's capacity void uses, before the cancellation posts.
+  it("restores the booking's applied account credit in full when a late Internet Banking payment lands after capacity is gone (#3792)", async () => {
+    const txRef = mockCapacityFailInboundEvent();
+    mocks.memberCreditFindMany.mockResolvedValue([
+      { id: "credit_applied_cap", memberId: "mem_cap", type: "BOOKING_APPLIED", amountCents: -8000, appliedToBookingId: "booking_ib_cap" },
+    ]);
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    expect(mocks.memberCreditCreateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.memberCreditCreateMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          memberId: "mem_cap",
+          amountCents: 8000,
+          type: "CANCELLATION_REFUND",
+          sourceBookingId: "booking_ib_cap",
+          restoredFromBookingId: "booking_ib_cap",
+        }),
+      ],
+      skipDuplicates: true,
+    });
+    // The cash is still minted, unchanged.
+    expect(mocks.memberCreditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ memberId: "mem_cap", amountCents: 12345, type: "CANCELLATION_REFUND" }),
+    });
+    // The restore posts its ledger line in the cancel's own transaction, and
+    // lands before the cancellation's lines, as at the settle's capacity void.
+    expect(syncCredits).toHaveBeenCalledWith({ bookingId: "booking_ib_cap", store: txRef.current });
+    expect(mocks.memberCreditCreateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      cancellationLedger.postCancellationLedgerLines.mock.invocationCallOrder[0],
+    );
+    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "booking_ib_cap", type: "CREDITED", amountCents: 8000 }),
+    );
+  });
+
+  it("restores nothing on a cash-only booking: the late capacity cancel mints the cash and writes no restore row (#3792)", async () => {
+    mockCapacityFailInboundEvent();
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    expect(mocks.memberCreditCreateMany).not.toHaveBeenCalled();
+    expect(mocks.memberCreditCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CREDITED", amountCents: 8000 }),
+    );
+    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CREDITED", amountCents: 12345 }),
     );
   });
 

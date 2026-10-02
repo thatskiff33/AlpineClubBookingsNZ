@@ -43,6 +43,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
+import { restoreCreditFromBooking } from "@/lib/member-credit";
 import {
   hasInvoiceClearingNote,
   retirePendingClearingNote,
@@ -1104,6 +1105,17 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             bookingId: fresh.bookingId,
             db: tx,
           });
+          // #3792: the account credit the booking had applied goes back too, in
+          // full — a capacity cancel is not the member's choice, so no policy
+          // tier applies. The same helper and the same place as the settle's
+          // capacity void (payment-reconciliation.ts), under the locks taken
+          // above. The helper posts the restore's ledger line, and its unique
+          // `restoredFromBookingId` makes a replay, or the orphan heal, a no-op.
+          // #3369: an organisation-owned booking has no credit ledger.
+          const lateCapacityRestoreMemberId = bookingOwner(locked.booking).memberId;
+          const creditRestoredCents = lateCapacityRestoreMemberId
+            ? await restoreCreditFromBooking(lateCapacityRestoreMemberId, fresh.bookingId, tx)
+            : 0;
           // #3611: the cash goes back as credit, so nothing is kept; a booking
           // already confirmed on the ledger (a mark-paid since reversed) has its
           // stay taken back, under the lock(1) this transaction took first.
@@ -1191,6 +1203,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             creditedPartial: mintPartial,
             cashUnverified,
             aggregateCapped,
+            creditRestoredCents,
           };
         }
       }
@@ -1489,6 +1502,16 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           reason: outcome.creditedPartial
             ? "Cash portion of the Internet Banking payment held as account credit."
             : "Paid Internet Banking amount held as account credit.",
+        });
+      }
+      // #3792: the applied credit restored in the cancel's claim, recorded the
+      // way the hold release records its own.
+      if (outcome.creditRestoredCents > 0) {
+        await recordBookingEvent({
+          bookingId: outcome.payment.bookingId,
+          type: BookingEventType.CREDITED,
+          amountCents: outcome.creditRestoredCents,
+          reason: "Applied account credit returned in full: the booking was cancelled for capacity.",
         });
       }
 
