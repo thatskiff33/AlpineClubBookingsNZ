@@ -18,9 +18,14 @@
  *  1. A Prisma write (`create`, `createMany`, `update`, `updateMany`, `upsert`
  *     and their `…AndReturn` forms) whose `data`, `create` or `update` object
  *     names `totpSecret`, `twoFactorEnabled` or `twoFactorMethod` — as a key or
- *     a shorthand property.
+ *     a shorthand property — AT ANY DEPTH of nested relation writes
+ *     (`data: { member: { update: { totpSecret: null } } }`). A nested
+ *     `where`, `select`, `include`, `orderBy` or `cursor` is a filter or a
+ *     projection, not a write, and is not searched.
  *  2. Any write to the `twoFactorRecoveryCode` delegate — every method that is
- *     not a read, the same inverted rule the credential census uses.
+ *     not a read, the same inverted rule the credential census uses — and any
+ *     nested relation write through `twoFactorRecoveryCodes` inside another
+ *     model's payload (`data: { twoFactorRecoveryCodes: { deleteMany: {} } }`).
  *
  * WHAT IT DOES NOT SEE, stated rather than implied: a field reached through a
  * SPREAD (`data: { ...patch }`) or a computed key, a delegate parked in a local,
@@ -104,7 +109,22 @@ export type TwoFactorSecretCensus = {
   filesScanned: number;
 };
 
-/** Field names a payload object literal sets explicitly (keys and shorthands). */
+/** The nested relation on `Member` that writes recovery codes. */
+const RECOVERY_CODE_RELATION = "twoFactorRecoveryCodes";
+
+/** Keys under which a payload holds a filter or a projection, never a write. */
+const NON_WRITE_KEYS: ReadonlySet<string> = new Set([
+  "where",
+  "select",
+  "include",
+  "orderBy",
+  "cursor",
+]);
+
+/**
+ * Secret fields and recovery-code relation writes a payload object literal sets
+ * explicitly (keys and shorthands), recursing into nested relation writes.
+ */
 function secretFieldsIn(payload: ts.Expression): string[] {
   const inner = unwrap(payload);
   if (!ts.isObjectLiteralExpression(inner)) return [];
@@ -116,7 +136,14 @@ function secretFieldsIn(payload: ts.Expression): string[] {
         : ts.isShorthandPropertyAssignment(property)
           ? property.name.text
           : null;
-    if (name !== null && SECRET_FIELD_SET.has(name)) found.push(name);
+    if (name === null || NON_WRITE_KEYS.has(name)) continue;
+    if (SECRET_FIELD_SET.has(name) || name === RECOVERY_CODE_RELATION) {
+      found.push(name);
+      continue;
+    }
+    if (ts.isPropertyAssignment(property)) {
+      found.push(...secretFieldsIn(property.initializer));
+    }
   }
   return found;
 }

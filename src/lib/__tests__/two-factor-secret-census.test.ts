@@ -101,6 +101,29 @@ describe("two-factor secret census: the scanner discriminates (#3454)", () => {
     ]);
   });
 
+  it("REPORTS nested relation writes of the secret and of the recovery codes", () => {
+    expect(
+      tree({
+        "src/lane.ts": `
+          export async function nested(tx: any) {
+            await tx.member.update({
+              where: { id: "m" },
+              data: { twoFactorRecoveryCodes: { deleteMany: {} } },
+            });
+            await tx.user.update({
+              where: { id: "u" },
+              data: { member: { update: { totpSecret: null } } },
+            });
+            await tx.member.update({
+              where: { id: "m" },
+              data: { firstName: "x", partner: { update: { where: { twoFactorEnabled: true }, data: { lastName: "y" } } } },
+            });
+          }
+        `,
+      }),
+    ).toEqual(["member.update{twoFactorRecoveryCodes}", "user.update{totpSecret}"]);
+  });
+
   it("does NOT report a read, a select or a filter", () => {
     expect(
       tree({
