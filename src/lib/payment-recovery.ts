@@ -547,6 +547,7 @@ import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
   bookingModificationRefundReasonForKeyPrefix,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
+  isOrganiserChildRefundKey,
   stripeIdempotencyKeyForAskAmount,
 } from "./payment-recovery-keys";
 export {
@@ -2033,6 +2034,14 @@ async function processBookingModificationRefundOperation(
   operation: PaymentRecoveryOperation,
   format: ClubFormat,
 ) {
+  // #3653: an organiser child's refund out of the group's combined card payment.
+  // Before anything reads the child's transactions, of which it has none; the
+  // executor closes the row in the transaction that records the refund.
+  if (isOrganiserChildRefundKey(operation.idempotencyKey)) {
+    const { processOrganiserChildRefundOperation } = await import("@/lib/organiser-child-refund-executor");
+    await processOrganiserChildRefundOperation(operation, format);
+    return;
+  }
   // Group settlement refund replay (F3, #1351): dispatch on the key prefix
   // BEFORE any payment lookup — these operations anchor paymentId to the
   // organiser's own payment purely for the schema FK, and deriving a refund
@@ -3168,6 +3177,12 @@ export async function runPaymentRecoveryOperationNow(
 
 export async function processPaymentRecoveryOperations(options?: {
   limit?: number;
+  /**
+   * #3653: also read pending organiser child refunds back from Stripe. The
+   * payments cron passes it; the inline drain after an edit does not, so a
+   * member's request never waits on those provider reads.
+   */
+  reconcilePendingChildRefunds?: boolean;
 }): Promise<PaymentRecoveryProcessResult> {
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
@@ -3227,6 +3242,19 @@ export async function processPaymentRecoveryOperations(options?: {
       } else {
         result.retried += 1;
       }
+    }
+  }
+
+  // #3653: an organiser child refund Stripe accepted as pending and later
+  // failed is owed again. The combined intent has no Payment for the webhook to
+  // resolve, so the cron's run reads those refunds back. Isolated: a failure
+  // here never fails the run that has already processed the queue above.
+  if (options?.reconcilePendingChildRefunds) {
+    try {
+      const { reconcilePendingOrganiserChildRefunds } = await import("@/lib/organiser-child-refund-executor");
+      await reconcilePendingOrganiserChildRefunds();
+    } catch (err) {
+      logger.error({ err }, "Could not re-read pending organiser child refunds (#3653)");
     }
   }
 

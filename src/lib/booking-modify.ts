@@ -54,6 +54,7 @@ export {
   applyLifecycleTransitions,
   applyPaymentAdjustments,
   calculateModificationSettlementOptions,
+  organiserChildChargeRefusal,
   type BookingModificationSettlementOptions,
   type LifecycleTransitionResult,
   type PaymentAdjustmentResult,

@@ -591,7 +591,14 @@ export const AUDIT_CENSUS_TOTALS = {
   // enrolment and the erasure's clear, categorised `security` at the site. The
   // Xero token writes add no site: they go through the credential store's
   // existing `recordCredentialMutation`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 495,
+  // 495 -> 496 (#3653 fix round): `booking.payment.refund_recovered` written by
+  // the organiser child refund executor when a refund an earlier attempt failed
+  // to make is finally made - the corrective row the group cancel's own record
+  // ("refund owed") needs. One `logAudit` in
+  // `src/lib/organiser-child-refund-executor.ts`, categorised `booking` like the
+  // legacy group replay's row with the same action. RE-MEASURED with
+  // `pnpm run audit:census`, not incremented.
+  writeSites: 496,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -679,7 +686,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // awaited `createAuditLog` inside the reset's own transaction, so the
     // reset and its record commit together. RE-MEASURED with
     // `pnpm run audit:census`.
-    logAudit: { total: 270, uncategorised: 0 },
+    // 270 -> 271 (#3653 fix round): the organiser child refund recovery record,
+    // above. RE-MEASURED with `pnpm run audit:census`.
+    logAudit: { total: 271, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -885,7 +894,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // 104 -> 105 (#3029): the booking dietary edit record. A stay's dietary
     // note is booking data, read by booking officers, so `booking` is its
     // affected domain (`INV-PRIV-012`); the row names the field, never its value.
-    booking: 105,
+    // 105 -> 106 (#3653 fix round): the organiser child refund recovery record,
+    // `booking` like the legacy group replay's row with the same action - the
+    // same readers, and no member-facing disclosure. RE-MEASURED with
+    // `pnpm run audit:census`.
+    booking: 106,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the
