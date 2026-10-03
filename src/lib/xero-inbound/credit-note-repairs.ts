@@ -14,7 +14,7 @@ import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-a
 import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { formatCents } from "@/lib/utils";
-import { EXCLUDED_LEDGER_REFUND_STATUSES } from "@/lib/payment-transaction-status";
+import { capOrganiserChildMirrorAtStripeRefunds } from "@/lib/organiser-child-refund";
 
 const APPLIED_CREDIT_ALLOCATION_ROLES = [
   "APPLIED_CREDIT_ALLOCATION",
@@ -406,24 +406,10 @@ export async function repairRefundedPaymentBusinessState(input: {
       });
       effectiveRefundedTotalCents = payment.refundedAmountCents;
     }
-    // #3653 (`INV-PAY-113`): an organiser-settled child's cash comes back only
-    // through a refund of the group's combined payment, recorded against the
-    // child by Stripe's own refund id. A Xero note is not that evidence, so it
-    // may not raise the child's mirror past what Stripe has recorded - a raised
-    // mirror would shrink what a later cancellation returns to the organiser.
+    // #3653 (`INV-PAY-113`): a Xero note never raises an organiser child's cash
+    // mirror past the refunds Stripe recorded for it.
     if (isStripePayment && payment.booking.organiserSettled) {
-      const recorded = await prisma.paymentRefund.aggregate({
-        where: { paymentId: payment.id, status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES } },
-        _sum: { amountCents: true },
-      });
-      const backedCents = Math.max(payment.refundedAmountCents, recorded._sum.amountCents ?? 0);
-      if (effectiveRefundedTotalCents > backedCents) {
-        logger.warn(
-          { creditNoteId: input.creditNoteId, paymentId: payment.id, backedCents, xeroDerivedRefundedTotalCents: effectiveRefundedTotalCents },
-          "Xero-derived refund total exceeds the organiser child's Stripe refunds; not raising the mirror (#3653)"
-        );
-        effectiveRefundedTotalCents = backedCents;
-      }
+      effectiveRefundedTotalCents = await capOrganiserChildMirrorAtStripeRefunds(prisma, payment, effectiveRefundedTotalCents);
     }
 
     let nextStatus = getNextRefundedPaymentStatus(

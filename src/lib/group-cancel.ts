@@ -68,7 +68,6 @@ import {
   BookingStatus,
   GroupBookingPaymentMode,
   GroupBookingStatus,
-  PaymentRecoveryOperationStatus,
   PaymentStatus,
   Prisma,
 } from "@prisma/client";
@@ -106,16 +105,12 @@ import { isXeroConnected } from "./xero";
 import {
   enqueueGroupSettlementRefundRecovery,
   markGroupSettlementRefundRecoverySucceeded,
-  runPaymentRecoveryOperationNow,
 } from "@/lib/payment-recovery";
-import {
-  planOrganiserCancelChildRefunds,
-  readPerChildRefundPlan,
-} from "@/lib/organiser-child-refund";
-import { buildOrganiserChildCancellationRefundKey } from "@/lib/payment-recovery-keys";
+import { readPerChildRefundPlan } from "@/lib/organiser-child-refund";
+import { refundOrganiserCancelChildren } from "@/lib/organiser-child-refund-executor";
 import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 import logger from "@/lib/logger";
-import { clubToday, type CalendarDate } from "@/lib/club-time";
+import { clubToday } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -167,55 +162,6 @@ function deserializeRefundPlan(value: unknown): Map<string, number> {
     }
   }
   return plan;
-}
-
-/**
- * #3653: plan (or read back) one refund per paid child and run each now. Returns
- * the cents each child's refund has ACTUALLY returned - a debt still owed after
- * this run (Stripe failed, or another worker holds it) reads as nothing yet,
- * exactly as the legacy path zeroes its view when its refund fails. The debts
- * stay owed; the recovery cron completes them and alerts on exhaustion.
- */
-async function refundOrganiserCancelChildren({
-  settlementId,
-  organiserBookingId,
-  firstChild,
-  todayAtClub,
-  format,
-}: {
-  settlementId: string;
-  organiserBookingId: string;
-  firstChild: { checkIn: Date; lodgeId: string } | null;
-  todayAtClub: CalendarDate;
-  format: ClubFormat;
-}): Promise<Map<string, number>> {
-  // All children share the organiser's lodge (one booking = one lodge,
-  // ADR-001). Read OUTSIDE the plan's lock(1) transaction (`INV-LOCK-004`).
-  const policy = firstChild
-    ? await loadCancellationPolicy(firstChild.checkIn, firstChild.lodgeId)
-    : [];
-  const plan = await planOrganiserCancelChildRefunds({
-    settlementId,
-    organiserBookingId,
-    activeChildStatuses: ACTIVE_CHILD_STATUSES,
-    daysUntilCheckIn: firstChild ? daysUntilDate(firstChild.checkIn, todayAtClub) : 0,
-    policy,
-  });
-  const refunded = new Map<string, number>();
-  for (const [childId, cents] of plan) {
-    const key = buildOrganiserChildCancellationRefundKey(settlementId, childId);
-    const debt = await prisma.paymentRecoveryOperation.findUnique({ where: { idempotencyKey: key } });
-    if (!debt) continue;
-    if (debt.status !== PaymentRecoveryOperationStatus.SUCCEEDED) {
-      await runPaymentRecoveryOperationNow(debt.id, format);
-    }
-    const after = await prisma.paymentRecoveryOperation.findUnique({
-      where: { idempotencyKey: key },
-      select: { status: true },
-    });
-    if (after?.status === PaymentRecoveryOperationStatus.SUCCEEDED) refunded.set(childId, cents);
-  }
-  return refunded;
 }
 
 async function markGroupCancelled(groupBookingId: string): Promise<void> {
@@ -438,6 +384,7 @@ export async function settleGroupBookingOnOrganiserCancel(
       settlementId: settlement.id,
       organiserBookingId,
       firstChild: children[0] ?? null,
+      activeChildStatuses: ACTIVE_CHILD_STATUSES,
       todayAtClub,
       format,
     });

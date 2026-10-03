@@ -6,6 +6,7 @@
  */
 import {
   BookingEventType,
+  type BookingStatus,
   PaymentRecoveryOperationStatus,
   PaymentStatus,
   type PaymentRecoveryOperation,
@@ -13,13 +14,21 @@ import {
 import type Stripe from "stripe";
 
 import { recordBookingEvent } from "@/lib/booking-events";
+import { daysUntilDate, loadCancellationPolicy } from "@/lib/cancellation";
+import type { CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
 import logger from "@/lib/logger";
 import {
   findCombinedCardSettlementForChild,
+  planOrganiserCancelChildRefunds,
   REFUNDABLE_SETTLEMENT_STATUSES,
 } from "@/lib/organiser-child-refund";
-import { isOrganiserChildRefundKey, organiserChildRefundReasonForKey } from "@/lib/payment-recovery-keys";
+import { runPaymentRecoveryOperationNow } from "@/lib/payment-recovery";
+import {
+  buildOrganiserChildCancellationRefundKey,
+  isOrganiserChildRefundKey,
+  organiserChildRefundReasonForKey,
+} from "@/lib/payment-recovery-keys";
 import { EXCLUDED_LEDGER_REFUND_STATUSES, isRecordedRefundStatus } from "@/lib/payment-transaction-status";
 import { lockPaymentForRefundedTotal, recordStripeRefundLedgerEntry } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
@@ -177,4 +186,55 @@ export async function processOrganiserChildRefundOperation(
     );
   }
   return refund.id;
+}
+
+/**
+ * #3653: plan (or read back) one refund per paid child and run each now. Returns
+ * the cents each child's refund has ACTUALLY returned - a debt still owed after
+ * this run (Stripe failed, or another worker holds it) reads as nothing yet,
+ * exactly as the legacy path zeroes its view when its refund fails. The debts
+ * stay owed; the recovery cron completes them and alerts on exhaustion.
+ */
+export async function refundOrganiserCancelChildren({
+  settlementId,
+  organiserBookingId,
+  firstChild,
+  activeChildStatuses,
+  todayAtClub,
+  format,
+}: {
+  settlementId: string;
+  organiserBookingId: string;
+  firstChild: { checkIn: Date; lodgeId: string } | null;
+  activeChildStatuses: readonly BookingStatus[];
+  todayAtClub: CalendarDate;
+  format: ClubFormat;
+}): Promise<Map<string, number>> {
+  // All children share the organiser's lodge (one booking = one lodge,
+  // ADR-001). Read OUTSIDE the plan's lock(1) transaction (`INV-LOCK-004`).
+  const policy = firstChild
+    ? await loadCancellationPolicy(firstChild.checkIn, firstChild.lodgeId)
+    : [];
+  const plan = await planOrganiserCancelChildRefunds({
+    settlementId,
+    organiserBookingId,
+    activeChildStatuses,
+    daysUntilCheckIn: firstChild ? daysUntilDate(firstChild.checkIn, todayAtClub) : 0,
+    policy,
+  });
+  const refunded = new Map<string, number>();
+  for (const [childId, cents] of plan) {
+    const key = buildOrganiserChildCancellationRefundKey(settlementId, childId);
+    const debt = await prisma.paymentRecoveryOperation.findUnique({ where: { idempotencyKey: key } });
+    if (!debt) continue;
+    if (debt.status !== PaymentRecoveryOperationStatus.SUCCEEDED) {
+      await runPaymentRecoveryOperationNow(debt.id, format);
+    }
+    const after = await prisma.paymentRecoveryOperation.findUnique({
+      where: { idempotencyKey: key },
+      select: { status: true },
+    });
+    if (after?.status === PaymentRecoveryOperationStatus.SUCCEEDED) refunded.set(childId, cents);
+  }
+  return refunded;
 }

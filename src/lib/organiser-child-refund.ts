@@ -364,3 +364,28 @@ export async function reserveOrganiserChildModificationRefund(
     overCap: "refuse",
   });
 }
+
+/**
+ * The most an organiser child's cash mirror may read: what it reads now, or the
+ * refunds Stripe recorded against it if more. A Xero note is not that evidence -
+ * a mirror raised from one would shrink what a later cancellation returns to the
+ * organiser. Used by the Xero inbound credit-note repair.
+ */
+export async function capOrganiserChildMirrorAtStripeRefunds(
+  db: Db,
+  payment: { id: string; refundedAmountCents: number },
+  proposedCents: number,
+): Promise<number> {
+  const recorded = await db.paymentRefund.aggregate({
+    where: { paymentId: payment.id, status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES } },
+    _sum: { amountCents: true },
+  });
+  const backedCents = Math.max(payment.refundedAmountCents, recorded._sum.amountCents ?? 0);
+  if (proposedCents > backedCents) {
+    logger.warn(
+      { paymentId: payment.id, backedCents, proposedCents },
+      "Xero-derived refund total exceeds the organiser child's Stripe refunds; not raising the mirror (#3653)",
+    );
+  }
+  return Math.min(proposedCents, backedCents);
+}
