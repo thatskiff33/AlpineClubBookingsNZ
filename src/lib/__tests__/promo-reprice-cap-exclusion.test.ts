@@ -640,7 +640,9 @@ describe("every reprice path excludes its own booking and takes the promo lock",
         // The shared re-price excludes exactly this id from the caps; without
         // it the booking's own allocation rows count against the total-uses
         // cap and it fails its own reprice.
-        expect(call.text).toMatch(/\bbookingId[,:]/);
+        // The path's OWN `bookingId`, handed over as the first property —
+        // not some other id under that name.
+        expect(call.text).toMatch(/^repriceBookingPromotions\(tx, \{\s*bookingId,/);
       }
     },
   );
