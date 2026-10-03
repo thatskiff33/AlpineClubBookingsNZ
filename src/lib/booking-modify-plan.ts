@@ -159,7 +159,7 @@ import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-
 import {
   BookingModifyReviewJustificationRequiredError,
   isBookingFullyPaidForGuestNameEdits,
-  requestedPromoCodeList,
+  requestedPromoCodeListFor,
   resolveStayRangesOrApiError,
   type BatchModifyInput,
   type LoadedBookingForModify,
@@ -2368,7 +2368,10 @@ export async function applyPromoCodeChanges(
   const stored = bookingPromoRedemptions(booking);
   const existing = stored.filter((redemption) => redemption.promoCode);
   const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
-  const requested = requestedPromoCodeList(input);
+  const requested = requestedPromoCodeListFor(
+    input,
+    existing.map((redemption) => redemption.promoCode),
+  );
 
   if (requested === null) {
     // No promo change asked for: re-price every code the booking carries

@@ -674,6 +674,27 @@ export function requestedPromoCodeList(input: PromoCodeRequestFields): Requested
   return null;
 }
 
+/**
+ * The code list an edit asks for, read against the codes the booking already
+ * carries (#3827). The plural `promoCodes` is the BOOKER's list, and a
+ * working-bee discount is not the booker's code — the system applied it, and
+ * the booker cannot type it — so a stored internal code the list leaves out is
+ * carried, first, rather than silently dropped. The legacy fields keep their
+ * meaning exactly (they replace or remove whatever the booking carries).
+ */
+export function requestedPromoCodeListFor(
+  input: PromoCodeRequestFields,
+  stored: ReadonlyArray<{ code: string; internal: boolean }>,
+): RequestedPromoCode[] | null {
+  const requested = requestedPromoCodeList(input);
+  if (requested === null || !input.promoCodes) return requested;
+  const listed = new Set(requested.map((entry) => entry.code));
+  const carried = stored
+    .filter((code) => code.internal && !listed.has(code.code))
+    .map((code) => ({ code: code.code, reapply: false }));
+  return [...carried, ...requested];
+}
+
 /** Does this edit ask for any promo-code change at all? */
 export function requestChangesPromoCodes(input: PromoCodeRequestFields): boolean {
   return requestedPromoCodeList(input) !== null;

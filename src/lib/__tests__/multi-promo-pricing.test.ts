@@ -23,6 +23,8 @@ import {
 } from "../booking-promotions";
 import { validateAndCalculatePromoDiscount, type PromoApplicationSubject } from "../promo";
 import { resolvePromotionsInTransaction } from "../booking-create-promo";
+import { applyPromoCodeChanges } from "../booking-modify-plan";
+import { requestedPromoCodeListFor } from "../booking-modify-validation";
 import { requireCalendarDate } from "@/lib/club-time";
 
 const TODAY = requireCalendarDate("2026-07-01");
@@ -398,6 +400,46 @@ describe("a concurrent two-code create takes the code rows in one global order",
     ]);
   });
 
+  it("shows a typed code no guest whose place is still pending (D-3813-4, no back door)", async () => {
+    const pct = { ...PCT, code: "PCT", internal: false, archivedAt: null };
+    const tx = {
+      ...usageDb(),
+      $executeRaw: vi.fn(async () => 1),
+      promoCode: {
+        findMany: vi.fn(async ({ where }: { where: { id?: unknown } }) =>
+          where.id ? [pct] : [{ id: pct.id, code: "PCT" }],
+        ),
+      },
+      promoCodeAssignment: { findMany: vi.fn(async () => []) },
+      promoCodeLodge: { findMany: vi.fn(async () => []) },
+    };
+    const resolved = await resolvePromotionsInTransaction(tx as never, {
+      sources: [{ promoCodeStr: "pct", allowInternal: false }],
+      lockRows: true,
+      effectiveMemberId: "ann",
+      checkIn: N1,
+      guests: [
+        { firstName: "A", lastName: "A", ageTier: "ADULT", isMember: true, memberId: "ann" },
+        // A cross-family guest this create adds as PENDING.
+        {
+          firstName: "C",
+          lastName: "C",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: "cara",
+          memberGuestConsent: { consentStatus: "PENDING" },
+        },
+      ] as never,
+      totalPriceCents: 16000,
+      perNightCentsByGuest: [[10000], [6000]],
+      nightDatesByGuest: [[N1], [N1]],
+      lodgeId: "lodge-1",
+      todayAtClub: TODAY,
+    });
+    expect(resolved.discountCents).toBe(5000);
+    expect(resolved.promoAdjustmentTargets.map((t) => t.guestIndex)).toEqual([0]);
+  });
+
   it("refuses a code renamed between the unlocked read and the lock", async () => {
     const tx = {
       ...usageDb(),
@@ -426,5 +468,108 @@ describe("a concurrent two-code create takes the code rows in one global order",
         todayAtClub: TODAY,
       }),
     ).rejects.toThrow("Promo code not found");
+  });
+});
+
+describe("an edit's code list (D-3813-2: add, remove or reorder in one field)", () => {
+  it("reads the plural list in order, re-applying a code sent with a guest choice", () => {
+    expect(
+      requestedPromoCodeListFor(
+        { promoCodes: [{ code: " bob " }, { code: "ann", promoGuestIds: ["g1"] }] },
+        [],
+      ),
+    ).toEqual([
+      { code: "BOB", reapply: false },
+      { code: "ANN", promoGuestIds: ["g1"], reapply: true },
+    ]);
+  });
+
+  it("keeps the legacy fields' meaning: one code replaces, removal removes, silence re-prices", () => {
+    expect(requestedPromoCodeListFor({ promoCode: "ann" }, [])).toEqual([
+      { code: "ANN", reapply: true },
+    ]);
+    expect(requestedPromoCodeListFor({ removePromoCode: true }, [])).toEqual([]);
+    expect(requestedPromoCodeListFor({}, [])).toBeNull();
+  });
+
+  it("carries a stored working-bee discount the booker's list leaves out", () => {
+    expect(
+      requestedPromoCodeListFor({ promoCodes: [{ code: "ann" }] }, [
+        { code: "WB-INTERNAL", internal: true },
+        { code: "BOB", internal: false },
+      ]),
+    ).toEqual([
+      { code: "WB-INTERNAL", reapply: false },
+      { code: "ANN", reapply: false },
+    ]);
+  });
+});
+
+describe("an edit that reorders the booking's codes stores the new order", () => {
+  it("re-prices both codes in the new order and writes the moved positions", async () => {
+    const updates: Array<{ id: string; data: Record<string, unknown> }> = [];
+    const tx = {
+      ...usageDb(),
+      $executeRaw: vi.fn(async () => 1),
+      clubModuleSettings: { findUnique: vi.fn(async () => ({ multiPromoCodes: true, promoCodes: true })) },
+      promoCode: {
+        findUnique: vi.fn(async () => ({ currentRedemptions: 1 })),
+        findMany: vi.fn(async () => []),
+        update: vi.fn(),
+      },
+      promoRedemption: {
+        update: vi.fn(async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+          updates.push({ id: where.id, data });
+        }),
+        delete: vi.fn(),
+      },
+      promoRedemptionGuestTarget: { deleteMany: vi.fn(), createMany: vi.fn() },
+      member: { findMany: vi.fn(async () => []) },
+    };
+    Object.assign(tx.promoRedemptionAllocation, {
+      deleteMany: vi.fn(),
+      createMany: vi.fn(),
+      count: vi.fn(async () => 1),
+    });
+    const stored = (id: string, promoCode: PromoApplicationSubject, code: string, holders: string[] | null, order: number) => ({
+      id,
+      promoCodeId: promoCode.id,
+      bookingId: "booking-1",
+      memberId: "ann",
+      applicationOrder: order,
+      guestTargets: [],
+      promoCode: {
+        ...promoCode,
+        code,
+        internal: false,
+        assignments: (holders ?? []).map((memberId) => ({ memberId })),
+        lodges: [],
+      },
+    });
+    const result = await applyPromoCodeChanges(tx as never, {
+      booking: {
+        memberId: "ann",
+        lodgeId: "lodge-1",
+        promoRedemptions: [stored("r-pct", PCT, "PCT", null, 0), stored("r-ann", ANN, "ANN", ["ann"], 1)],
+      } as never,
+      bookingId: "booking-1",
+      // The booker moves ANN ahead of PCT.
+      input: { promoCodes: [{ code: "ANN" }, { code: "PCT" }] } as never,
+      inProgressPlan: null,
+      newCheckIn: N1,
+      newTotalPriceCents: 19000,
+      guestNightRates: [{ ...guest("ann", [10000, 9000]) }],
+      todayAtClub: TODAY,
+    });
+    expect(result.promoChanged).toBe(true);
+    expect(result.promoRemoved).toBe(false);
+    // ANN frees the 10000 night, PCT halves the 9000 one.
+    expect(result.newDiscountCents).toBe(10000 + 4500);
+    expect(result.promoCodeLabel).toBe("ANN, PCT");
+    const orderWrites = updates.filter((update) => "applicationOrder" in update.data);
+    expect(orderWrites).toEqual([
+      { id: "r-ann", data: { applicationOrder: 0 } },
+      { id: "r-pct", data: { applicationOrder: 1 } },
+    ]);
   });
 });

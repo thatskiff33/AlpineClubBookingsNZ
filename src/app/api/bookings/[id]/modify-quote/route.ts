@@ -74,7 +74,7 @@ import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import {
   requestChangesPromoCodes,
   requestedPromoCodeChange,
-  requestedPromoCodeList,
+  requestedPromoCodeListFor,
 } from "@/lib/booking-modify-validation";
 import {
   describePromoChangeNotApplied,
@@ -2283,7 +2283,10 @@ export async function POST(
     // the save's pricing (`applyBookingPromotions`), unlocked and read-only, so
     // the preview and the save cannot tell different stories (#2390). `null`
     // means no promo change: every code the booking carries is re-priced.
-    const requested = requestedPromoCodeList(promoRequest);
+    const requested = requestedPromoCodeListFor(
+      promoRequest,
+      promoRedemptions.map((redemption) => redemption.promoCode),
+    );
     const quoteGuestNightRates = getGuestNightRates();
     const existingByCode = new Map(
       promoRedemptions.map((redemption) => [redemption.promoCode.code, redemption]),
