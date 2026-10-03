@@ -22,6 +22,11 @@ RUN npm install -g "$(node -p "require('/tmp/package-manager/package.json').pack
 FROM base AS deps
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# The reviewed runtime patches pnpm applies at install (`patchedDependencies` in
+# pnpm-workspace.yaml, #3843). The lockfile records each patch's hash, so the
+# frozen install below fails without them. `patches/.gitkeep` keeps the
+# directory, and so this COPY, valid when no patch is registered.
+COPY patches ./patches/
 COPY prisma ./prisma/
 COPY prisma.config.ts ./
 # The store lives on a BuildKit cache mount, so repeat builds reuse downloaded
