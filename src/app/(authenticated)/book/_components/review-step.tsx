@@ -35,7 +35,7 @@ import {
   requireCalendarDate,
 } from "@/lib/club-time";
 import { type PromoResult } from "@/components/promo-code-input";
-import { BookingPromoCodes } from "@/components/booking-promo-codes";
+import { BookingPromoCodes, PromoAdjustmentRows } from "@/components/booking-promo-codes";
 import { TimePicker } from "@/components/time-picker";
 import {
   RequestOfficerApprovalCard,
@@ -48,7 +48,7 @@ import {
   type NewBookingExceptionExtras,
 } from "@/lib/booking-exception-offer";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
-import { formatCents, formatSignedCents } from "@/lib/utils";
+import { formatCents } from "@/lib/utils";
 import { CheckCircle2, CreditCard, Landmark } from "lucide-react";
 import { useClubFormat } from "@/components/club-format-provider";
 import type {
@@ -509,19 +509,7 @@ export function ReviewStep({
                 <span>Subtotal</span>
                 <span>{formatCents(priceQuote.totalPriceCents, format)}</span>
               </div>
-              {/* #3492: one row per code, in the booker's order. */}
-              {appliedPromos
-                .filter((promo) => promo.promoAdjustmentCents !== 0)
-                .map((promo) => (
-                  <div key={promo.code ?? promo.workPartyEvent?.id} className={`flex justify-between gap-3 text-sm ${promo.promoAdjustmentCents > 0 ? "text-warning" : "text-success"}`}>
-                    <span>
-                      {promo.workPartyEvent
-                        ? `Working bee discount (${promo.workPartyEvent.name})`
-                        : `Promo adjustment (${promo.code})`}
-                    </span>
-                    <span>{formatSignedCents(promo.promoAdjustmentCents, format)}</span>
-                  </div>
-                ))}
+              <PromoAdjustmentRows applied={appliedPromos} palette="member" />
               {appliedCreditCents > 0 && (
                 <div className="flex justify-between gap-3 text-sm text-success">
                   <span>Account credit</span>

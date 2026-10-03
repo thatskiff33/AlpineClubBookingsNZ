@@ -25,11 +25,8 @@ import { useClubIdentity } from "@/components/club-identity-provider";
 import { LodgeSelect, useLodgeOptions } from "@/components/lodge-select";
 import { LodgeOptionsUnavailableNotice } from "@/components/admin/lodge-options-status";
 import { type PromoResult } from "@/components/promo-code-input";
-import { BookingPromoCodes } from "@/components/booking-promo-codes";
-import {
-  appliedPromosFinalPriceCents,
-  createRequestPromoFields,
-} from "@/components/promo-code-list-client";
+import { BookingPromoCodes, PromoAdjustmentRows } from "@/components/booking-promo-codes";
+import { appliedPromosFinalPriceCents, createRequestPromoFields } from "@/components/promo-code-list-client";
 import { TimePicker } from "@/components/time-picker";
 import { MemberPicker } from "@/components/admin/member-picker";
 import {
@@ -56,7 +53,7 @@ import {
   type ClubDateFormat,
 } from "@/lib/club-time";
 
-import { formatCents, formatSignedCents } from "@/lib/utils";
+import { formatCents } from "@/lib/utils";
 import { CreditCard, Landmark } from "lucide-react";
 import { useClubFormat } from "@/components/club-format-provider";
 
@@ -227,7 +224,6 @@ export default function AdminBookPage() {
   /** Derived once, so the three add-guest affordances cannot disagree. */
   const atPartySizeCeiling =
     partySizeCeiling !== null && guests.length >= partySizeCeiling;
-  // #3492: every code on the booking, in the booker's order.
   const [appliedPromos, setAppliedPromos] = useState<PromoResult[]>([]);
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [useCredit, setUseCredit] = useState(false);
@@ -1276,14 +1272,7 @@ export default function AdminBookPage() {
                     <span>Subtotal</span>
                     <span>{formatCents(priceQuote.totalPriceCents, format)}</span>
                   </div>
-                  {appliedPromos
-                    .filter((promo) => promo.promoAdjustmentCents !== 0)
-                    .map((promo) => (
-                      <div key={promo.code} className={`flex justify-between text-sm ${promo.promoAdjustmentCents > 0 ? "text-warning-11" : "text-success-11"}`}>
-                        <span>Promo adjustment ({promo.code})</span>
-                        <span>{formatSignedCents(promo.promoAdjustmentCents, format)}</span>
-                      </div>
-                    ))}
+                  <PromoAdjustmentRows applied={appliedPromos} palette="admin" />
                   {appliedCreditCents > 0 && (
                     <div className="flex justify-between text-sm text-success-11">
                       <span>Account credit</span>

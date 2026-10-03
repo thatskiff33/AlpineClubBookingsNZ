@@ -4,6 +4,8 @@ import { useMemo } from "react";
 import type { PromoResult } from "@/components/promo-code-input";
 import { PromoCodeList, type PromoChipOption } from "@/components/promo-code-list";
 import { useGuestPromoCodes, validatePromoCodeList } from "@/components/promo-code-list-client";
+import { useClubFormat } from "@/components/club-format-provider";
+import { formatSignedCents } from "@/lib/utils";
 
 type PartyGuest = {
   firstName?: string;
@@ -95,4 +97,38 @@ export function BookingPromoCodes({
       disabledReason={disabledReason}
     />
   );
+}
+
+/**
+ * The price summary's promo rows (#3492): one per applied code — or the working
+ * bee — in the booker's order, each with its own signed adjustment. Shared by
+ * the member wizard and Book on Behalf, which differ only in their colour tokens.
+ */
+export function PromoAdjustmentRows({
+  applied,
+  palette,
+}: {
+  applied: PromoResult[];
+  palette: "member" | "admin";
+}) {
+  const format = useClubFormat();
+  const tone = (cents: number) =>
+    palette === "member"
+      ? cents > 0 ? "text-warning" : "text-success"
+      : cents > 0 ? "text-warning-11" : "text-success-11";
+  return applied
+    .filter((promo) => promo.promoAdjustmentCents !== 0)
+    .map((promo) => (
+      <div
+        key={promo.code ?? promo.workPartyEvent?.id}
+        className={`flex justify-between gap-3 text-sm ${tone(promo.promoAdjustmentCents)}`}
+      >
+        <span>
+          {promo.workPartyEvent
+            ? `Working bee discount (${promo.workPartyEvent.name})`
+            : `Promo adjustment (${promo.code})`}
+        </span>
+        <span>{formatSignedCents(promo.promoAdjustmentCents, format)}</span>
+      </div>
+    ));
 }
