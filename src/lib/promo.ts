@@ -20,6 +20,7 @@ import {
   inWindowNightIndexes,
 } from "@/lib/work-party";
 import { ApiError } from "@/lib/api-error";
+import { compareOrdinal } from "@/lib/ordinal-order";
 import {
   DEFAULT_MODULE_SETTINGS,
   readClubModuleSettingsRecord,
@@ -2099,7 +2100,7 @@ export async function releasePromoRedemptions(
   redemptions: ReadonlyArray<{ id: string; promoCodeId: string }>,
 ): Promise<void> {
   const ordered = [...redemptions].sort((a, b) =>
-    a.promoCodeId < b.promoCodeId ? -1 : a.promoCodeId > b.promoCodeId ? 1 : 0,
+    compareOrdinal(a.promoCodeId, b.promoCodeId),
   );
   for (const redemption of ordered) {
     await deletePromoRedemptionAndAdjustCount(tx, redemption);
