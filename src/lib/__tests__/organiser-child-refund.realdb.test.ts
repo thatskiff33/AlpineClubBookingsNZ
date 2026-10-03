@@ -292,14 +292,17 @@ let audit: typeof import("@/lib/organiser-child-refund-audit");
         organiserBookingId: ORGANISER_BOOKING,
         activeChildStatuses: ["PAYMENT_PENDING", "CONFIRMED", "PAID"],
         daysUntilCheckIn: 300,
-        policy: [{ daysBeforeStay: 0, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0, creditFixedFeeCents: 0 }],
+        policy: [{ daysBeforeStay: 0, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0, creditFixedFeeCents: 0 }],
       });
-      // Child 1 is fully refunded; child 2 has 3000 owed of 4500; child 3 is
-      // the phantom - 1000 already off its mirror - and the planner never
-      // raises what the combined payment holds: 9000 - 4500 - 3000 = 1500
-      // is shared, child 2's 1500 first (id order), child 3 clamped to 0.
-      expect(Object.fromEntries(plan)).toEqual({ [CHILDREN[1]!]: 1_500 });
-      expect((await settlement()).refundPlan).toEqual({ perChildRefunds: { [CHILDREN[1]!]: 1_500 } });
+      // A 50% tier. Child 1 is fully refunded, so it gets nothing. Child 2 has
+      // 3000 owed of 4500: 50% of the 1500 that remains is 750 (never 50% of
+      // the 4500 paid). Child 3 is the phantom - 1000 already off its mirror -
+      // so 50% of 3500 is 1750, clamped to the 750 the combined payment still
+      // holds (9000 - 4500 refunded - 3000 owed - 750 just reserved).
+      expect(Object.fromEntries(plan)).toEqual({ [CHILDREN[1]!]: 750, [CHILDREN[2]!]: 750 });
+      expect((await settlement()).refundPlan).toEqual({
+        perChildRefunds: { [CHILDREN[1]!]: 750, [CHILDREN[2]!]: 750 },
+      });
 
       const again = await core.planOrganiserCancelChildRefunds({
         settlementId: SETTLEMENT_ID,
@@ -308,7 +311,7 @@ let audit: typeof import("@/lib/organiser-child-refund-audit");
         daysUntilCheckIn: 1,
         policy: [{ daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0, creditFixedFeeCents: 0 }],
       });
-      expect(Object.fromEntries(again)).toEqual({ [CHILDREN[1]!]: 1_500 });
+      expect(Object.fromEntries(again)).toEqual({ [CHILDREN[1]!]: 750, [CHILDREN[2]!]: 750 });
     });
 
     it("runs every owed debt to completion without exceeding the combined capture", async () => {
@@ -321,8 +324,8 @@ let audit: typeof import("@/lib/organiser-child-refund-audit");
       expect(total._sum.amountCents).toBe(COMBINED_CENTS);
       expect((await settlement()).status).toBe("REFUNDED");
       expect(await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENTS[1] } })).toMatchObject({
-        refundedAmountCents: 4_500,
-        status: "REFUNDED",
+        refundedAmountCents: 3_750,
+        status: "PARTIALLY_REFUNDED",
       });
     });
 
