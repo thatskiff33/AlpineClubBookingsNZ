@@ -475,7 +475,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/confirm-payment/route.ts:85",
   "src/app/api/bookings/[id]/exception-requests/route.ts:142",
   "src/app/api/bookings/[id]/guests/route.ts:340",
-  "src/app/api/bookings/[id]/modify-quote/route.ts:359",
+  "src/app/api/bookings/[id]/modify-quote/route.ts:360",
   "src/app/api/bookings/[id]/notes/route.ts:48",
   "src/app/api/bookings/[id]/refund-request/route.ts:227",
   "src/app/api/bookings/[id]/refund-request/route.ts:43",
@@ -485,21 +485,21 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:118",
   "src/lib/adult-member-hosting-review.ts:3256",
-  "src/lib/booking-batch-modification-service.ts:1011",
+  "src/lib/booking-batch-modification-service.ts:1015",
   "src/lib/booking-cancel.ts:512",
-  "src/lib/booking-date-modification-service.ts:387",
+  "src/lib/booking-date-modification-service.ts:391",
   "src/lib/booking-delete.ts:125",
   "src/lib/booking-delete.ts:74",
   "src/lib/booking-email-authority.ts:115",
-  "src/lib/booking-guest-removal-service.ts:443",
-  "src/lib/booking-guest-removal-service.ts:779",
+  "src/lib/booking-guest-removal-service.ts:444",
+  "src/lib/booking-guest-removal-service.ts:780",
   "src/lib/booking-linked-date-move-service.ts:240",
   "src/lib/booking-member-night-conflicts.ts:369",
   "src/lib/booking-modify-validation.ts:549",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:274",
   "src/lib/kiosk-access.ts:232",
-  "src/lib/manual-refund-task-queue-payload.ts:225",
+  "src/lib/manual-refund-task-queue-payload.ts:238",
   "src/lib/requested-room-write.ts:62",
   "src/lib/waitlist-cross-lodge.ts:343",
   "src/lib/waitlist-cross-lodge.ts:531",
@@ -786,7 +786,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // it in budget. Verified by hand: written through
   // `Prisma.validator<Prisma.ManualRefundTaskSelect>()`, and `organisation` sits
   // under its `booking` relation, which declares it.
-  "src/lib/manual-refund-task-resolution-select.ts:54",
+  "src/lib/manual-refund-task-resolution-select.ts:57",
   // Added when the member lodge roster (#2942, from `main`) was routed through
   // `bookingOwner()` on the eighth epic sync. Verified by hand, which is what
   // this list asks for: `MEMBER_ROSTER_BOOKING_SELECT` is written
