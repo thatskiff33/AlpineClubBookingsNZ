@@ -39,6 +39,7 @@ import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { reportUnappliedCreditElection } from "@/lib/booking-credit-election-report";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
+import { NOT_EDIT_REFUND_HAND_BACK_WHERE } from "@/lib/manual-refund-task-settlement-rules";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
@@ -746,6 +747,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
                   bookingId: settlementPayment.bookingId,
                   paymentId: settlementPayment.id,
                   kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+                  // #3827 (`INV-PAY-113`): an edit's refund hand-back on the
+                  // same payment is not this cancellation's.
+                  ...NOT_EDIT_REFUND_HAND_BACK_WHERE,
                 },
                 select: { id: true },
               })

@@ -69,6 +69,10 @@ import {
 } from "@/lib/over-capacity-confirmation";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
+  editRefundGoesBackByHand,
+  raiseEditRefundHandBackIfOwed,
+} from "@/lib/edit-refund-hand-back";
+import {
   applyPaymentAdjustments,
   assertBookingNotQuotePriced,
   calculateModificationSettlementOptions,
@@ -1311,6 +1315,16 @@ export async function modifyBookingDates({
       site: "date-change",
     });
 
+    // D-3813-6 (`INV-PAY-113`): a reduction on a booking paid by internet
+    // banking or by hand asks the treasurer to send it back.
+    await raiseEditRefundHandBackIfOwed(tx, {
+      bookingId,
+      paymentId: booking.payment?.id ?? null,
+      bookingModificationId: bookingModification.id,
+      adjusted: payments,
+      editLabel: "date change",
+    });
+
     /**
      * #3166: one OPEN review task per unreadable strand, inside this same
      * transaction and under the locks it already holds.
@@ -1690,6 +1704,7 @@ async function dispatchDatePostTransactionSideEffects({
       // #2390: same words as the edit preview and the booking history.
       promoCoverageNote: result.promoCoverage?.message ?? null,
       financialReviewPending,
+      refundByBankTransfer: editRefundGoesBackByHand(result),
       lodgeId: result.booking.lodgeId,
     }, format).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send booking modified email"),
@@ -2252,6 +2267,8 @@ export async function adminShiftBookingDates({
       paymentReference: result.paymentReference,
       xeroInvoiceNumber: result.xeroInvoiceNumber,
       financialReviewPending,
+      // A shift keeps the price, so nothing is refunded.
+      refundByBankTransfer: false,
       lodgeId: result.lodgeId,
     }, format).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send admin override date-shift email"),

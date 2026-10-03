@@ -34,6 +34,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 // both read it (`INV-SSOT`).
 import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 import {
+  isEditRefundHandBackTask,
   isPartPaymentReviewTask,
   manualRefundTaskSettlementRefusal,
 } from "@/lib/manual-refund-task-settlement-rules";
@@ -588,10 +589,15 @@ export async function resolveManualRefundTask(
       bookingPaymentStatus: task.booking.payment?.status ?? null,
       // `INV-PAY-101` (#3529): the invoice a cancellation hand-back refunds
       // against - `hasIssuedXeroInvoice` is false for every CANCELLED booking.
+      // #3827 (`INV-PAY-113`): never for an edit refund hand-back, whose edit
+      // already queued the Xero credit note that corrects the invoice.
       cancellationHandBackInvoiceId:
-        task.kind === ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK
+        task.kind === ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK &&
+        !isEditRefundHandBackTask(task)
           ? (task.booking.payment?.xeroInvoiceId ?? null)
           : null,
+      /** #3827: the Xero leg owes nothing for an edit refund hand-back. */
+      editRefundHandBack: isEditRefundHandBackTask(task),
       status:
         resolution === "completed"
           ? ManualRefundTaskStatus.COMPLETED
@@ -628,6 +634,7 @@ export async function resolveManualRefundTask(
       hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
       bookingPaymentStatus: result.bookingPaymentStatus,
       cancellationHandBackInvoiceId: result.cancellationHandBackInvoiceId,
+      editRefundHandBack: result.editRefundHandBack,
       format,
     });
 

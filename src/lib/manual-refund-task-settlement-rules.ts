@@ -42,6 +42,52 @@ export function isPartPaymentReviewTask<
 }
 
 /**
+ * #3827 (owner decision D-3813-6, `INV-PAY-113`): THE OCCURRENCE-KEY PREFIX of
+ * an edit refund hand-back — the task an internet-banking (or cash) price
+ * reduction raises so the treasurer sends the money back. One per
+ * `BookingModification`, so the key is the duplicate fence and, with the kind,
+ * the marker. The one spelling, read by the writer and by every reader below.
+ */
+export const EDIT_REFUND_HAND_BACK_KEY_PREFIX = "edit-refund-hand-back:";
+
+/** The one occurrence key of one edit's refund hand-back (`INV-PAY-113`). */
+export function editRefundHandBackOccurrenceKey(bookingModificationId: string): string {
+  return `${EDIT_REFUND_HAND_BACK_KEY_PREFIX}${bookingModificationId}`;
+}
+
+/**
+ * #3827 (`INV-PAY-113`): IS THIS TASK AN EDIT REFUND HAND-BACK? It is a
+ * `CANCELLED_BOOKING_HAND_BACK` — reused rather than a new label for the reason
+ * #3639 and #3643 give: the previous app version cannot read a label it does
+ * not know, and lists this kind as money to pay back by hand, which is what it
+ * is — marked by its occurrence key, which no cancellation writer sets. So the
+ * kind cannot say it; this can. Every server reader that treats a hand-back as
+ * a CANCELLATION's (its Xero note, the repair tool's late-cash evidence, the
+ * organisation hand-back's duplicate check) asks it here.
+ */
+export function isEditRefundHandBackTask(task: {
+  kind: ManualRefundTaskKind | string | null;
+  occurrenceKey: string | null;
+}): boolean {
+  return (
+    task.kind === "CANCELLED_BOOKING_HAND_BACK" &&
+    (task.occurrenceKey?.startsWith(EDIT_REFUND_HAND_BACK_KEY_PREFIX) ?? false)
+  );
+}
+
+/**
+ * #3827 (`INV-PAY-113`): the same question as a query fragment, for the server
+ * readers that select a CANCELLATION's hand-backs by kind and must not count an
+ * edit's. Spread into a `ManualRefundTask` where clause beside the kind.
+ */
+export const NOT_EDIT_REFUND_HAND_BACK_WHERE = {
+  OR: [
+    { occurrenceKey: null },
+    { NOT: { occurrenceKey: { startsWith: EDIT_REFUND_HAND_BACK_KEY_PREFIX } } },
+  ],
+};
+
+/**
  * May a task of this kind be closed as money that moved?
  *
  * FALSE FOR EXACTLY ONE KIND. `UNCOLLECTED_EDIT_REVIEW_SHARE` is a notice that

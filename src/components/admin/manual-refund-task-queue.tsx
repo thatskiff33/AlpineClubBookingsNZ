@@ -99,6 +99,8 @@ interface ManualRefundTask {
   awaitingLateCaptureApproval?: boolean;
   /** #3643: a part payment the club settles in Xero. Optional, as above. */
   partPaymentReview?: boolean;
+  /** #3827: an edit's refund, sent back by bank transfer. Optional, as above. */
+  editRefundHandBack?: boolean;
   /**
    * #3643 (`INV-PAY-108`): Xero reported the review's invoice paid after the
    * cancel, and the invoice's cash then. Optional, as above.
@@ -230,6 +232,17 @@ function isLateCaptureApproval(task: ManualRefundTask): boolean {
  */
 function isPartPaymentReview(task: ManualRefundTask): boolean {
   return task.partPaymentReview === true;
+}
+
+/**
+ * #3827 (owner decision D-3813-6, `INV-PAY-113`): an edit lowered the price of
+ * a booking paid by internet banking or by hand, so the club owes the
+ * difference back by bank transfer. Completed exactly like a cancellation's
+ * hand-back; only the sentence explaining where it came from differs, because
+ * the booking was not cancelled. The route's flag marks it.
+ */
+function isEditRefundHandBack(task: ManualRefundTask): boolean {
+  return task.editRefundHandBack === true;
 }
 
 /**
@@ -1445,12 +1458,14 @@ export function ManualRefundTaskQueue() {
   */
   const hasLateCaptureRows = openTasks.some(isLateCaptureApproval);
   const hasPartPaymentReviewRows = openTasks.some(isPartPaymentReview);
+  const hasEditRefundRows = openTasks.some(isEditRefundHandBack);
   const hasHandBackRows = openTasks.some(
     (task) =>
       !isFinancialReview(task) &&
       !isWithheldShare(task) &&
       !isLateCaptureApproval(task) &&
-      !isPartPaymentReview(task),
+      !isPartPaymentReview(task) &&
+      !isEditRefundHandBack(task),
   );
   if (
     !showQueue &&
@@ -1504,6 +1519,19 @@ export function ManualRefundTaskQueue() {
                 no card payment to reverse, so the club has to pay the member
                 back directly. Mark a refund as paid back once the money has
                 actually gone — that is when the ledger records it.
+              </p>
+            ) : null}
+            {hasEditRefundRows ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="manual-refund-task-edit-refund-intro"
+              >
+                Some of these are booking changes that lowered the price of a
+                booking paid by internet banking or in cash. There is no card
+                to refund, so the club sends the difference back by bank
+                transfer; the member has been told it is coming. The Xero
+                credit note for the change was raised with the change. Mark a
+                refund as paid back once the money has actually gone.
               </p>
             ) : null}
             {hasReviewRows ? (
