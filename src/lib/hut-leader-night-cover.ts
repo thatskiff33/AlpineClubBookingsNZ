@@ -34,7 +34,12 @@ import {
  *    custodian has no `BookingGuest`, so asking for a stay would discard every
  *    custodian.
  *  - **A school-booking teacher row** (`source = SCHOOL_BOOKING`) is present on
- *    the school booking's own nights. See {@link isSchoolRowPresentOnNight}.
+ *    its OWN dates, `startDate` through `endDate − 1`. The school writer stamps
+ *    the booking's stay onto the row, but nothing links the row back to the
+ *    booking, so a later cancellation or date change is not seen: a cancelled
+ *    school booking's teacher rows still cover until an officer deletes them.
+ *    That is a stated limit #3819 (lane C) inherits. See
+ *    {@link isSchoolRowPresentOnNight}.
  *  - **Every other row** needs its member on an operational stay at the SAME
  *    lodge that night: a `BookingGuest` row for that member, on a non-deleted
  *    booking in `OPERATIONAL_STAY_BOOKING_STATUSES` (the same set that decides a
@@ -107,12 +112,15 @@ function shiftClaimsNight(shift: HutLeaderShift, night: Date): boolean {
 }
 
 /**
- * A school-booking teacher row's presence: the school booking's own nights,
- * arrival through checkout − 1.
+ * A school-booking teacher row's presence: the row's own dates, `startDate`
+ * through `endDate − 1`.
  *
  * The school writer stamps the row with `request.checkIn .. request.checkOut`
- * (`school-booking-request.ts`), so the row's span IS the booking's stay and its
- * last calendar day is the departure morning. Teachers are not `BookingGuest`
+ * (`school-booking-request.ts`), so at write time the row's span is the
+ * booking's stay and its last calendar day is the departure morning. The row
+ * carries no booking key, so presence is read from the row alone: a school
+ * booking cancelled or re-dated afterwards leaves its teacher rows covering
+ * their original nights (a stated limit, not checked here). Teachers are not `BookingGuest`
  * rows, so their presence cannot be read the way a member's is; this keeps
  * teacher rows counting as cover on the nights the school is actually there,
  * as #2926 decided, and stops them covering the night after the school leaves.
@@ -183,18 +191,46 @@ export function buildHutLeaderNightCover(
   };
 }
 
+/** The scalar columns every coverage answer needs. */
+const SHIFT_COVER_SELECT = {
+  id: true,
+  memberId: true,
+  lodgeId: true,
+  startDate: true,
+  endDate: true,
+  source: true,
+  bedId: true,
+} as const;
+
+/**
+ * The same, plus the member's and lodge's names, for the two callers that show
+ * who covers a night (the hut-leaders calendar and the dashboard's handovers).
+ */
+const SHIFT_COVER_SELECT_WITH_NAMES = {
+  ...SHIFT_COVER_SELECT,
+  member: { select: { firstName: true, lastName: true } },
+  lodge: { select: { name: true, active: true } },
+} as const;
+
 /**
  * Load the cover for every lodge in `scope` over the inclusive night window
- * `[from, to]`. Two reads, whatever the window: the assignments, then the stays
- * of the members on them — never one read per night or per member, because the
- * dashboard and the sidebar badge run this on every admin page load.
+ * `[from, to]`. Two Prisma reads, whatever the window: the assignments, then
+ * the stays of the members on them — never one read per night or per member,
+ * because the dashboard and the sidebar badge run this on every admin page
+ * load. The default select is lean (scalar columns only); pass `withNames`
+ * only when the caller shows who covers a night.
  *
  * Pass the transaction client when the answer decides a write (the cron's
  * locked re-ask): it is a read, so it is only authoritative under that lock.
  */
 export async function loadHutLeaderNightCover(
   reader: HutLeaderNightCoverReader,
-  input: { scope: HutLeaderNightCoverScope; from: Date; to: Date },
+  input: {
+    scope: HutLeaderNightCoverScope;
+    from: Date;
+    to: Date;
+    withNames?: boolean;
+  },
 ): Promise<HutLeaderNightCover> {
   const db = reader as unknown as HutLeaderNightCoverDb;
   const shifts = await db.hutLeaderAssignment.findMany({
@@ -203,17 +239,7 @@ export async function loadHutLeaderNightCover(
       startDate: { lte: input.to },
       endDate: { gte: input.from },
     },
-    select: {
-      id: true,
-      memberId: true,
-      lodgeId: true,
-      startDate: true,
-      endDate: true,
-      source: true,
-      bedId: true,
-      member: { select: { firstName: true, lastName: true } },
-      lodge: { select: { name: true, active: true } },
-    },
+    select: input.withNames ? SHIFT_COVER_SELECT_WITH_NAMES : SHIFT_COVER_SELECT,
   });
 
   const memberShifts = shifts.filter(needsMemberStay);
@@ -341,7 +367,10 @@ export function listHutLeaderNightLeaders(
   return rows;
 }
 
-/** One changeover: the leader of night D − 1 hands over to the leader of night D. */
+/**
+ * One changeover on day D: `from` are the leaders who finish at midday (on
+ * night D − 1, not on night D); `to` are everyone on duty from midday (night D).
+ */
 export type HutLeaderHandover = {
   /** Calendar day D: the morning belongs to `from`, the afternoon to `to`. */
   date: string;
@@ -353,8 +382,8 @@ export type HutLeaderHandover = {
 };
 
 /**
- * Every handover on a day in `[from, to]`: a day whose morning and afternoon
- * have different leaders and both have one (`deriveHutLeaderDayHalves`). The
+ * Every handover on a day in `[from, to]`: a day on which somebody finishes at
+ * midday and somebody is on duty from midday (`deriveHutLeaderDayHalves`). The
  * cover must reach back to the night before `from`, because the morning of
  * `from` belongs to that night.
  */
@@ -374,7 +403,7 @@ export function listHutLeaderHandovers(
       handovers.push({
         date: calendarDateOfDateOnlyInstant(day),
         ...lodge,
-        from: [...halves.morning],
+        from: [...halves.leaving],
         to: [...halves.afternoon],
       });
     }

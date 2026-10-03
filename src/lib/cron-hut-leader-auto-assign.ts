@@ -9,7 +9,10 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { lodgeNullTolerantScope } from "./lodges";
 import { acquireLodgeCapacityLock } from "./lodge-capacity-lock";
 import { findHutLeaderOverlapRefusal } from "./hut-leader-overlap-guard";
-import { isHutLeaderNightCovered } from "./hut-leader-night-cover";
+import {
+  isHutLeaderNightCovered,
+  loadHutLeaderNightCover,
+} from "./hut-leader-night-cover";
 import { loadHutLeaderLookaheadDays } from "./lodge-settings";
 import { loadEffectiveModuleFlags } from "./module-settings";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
@@ -71,7 +74,20 @@ export async function autoAssignHutLeaders(): Promise<{
     orderBy: { createdAt: "asc" },
   });
 
+  const windowEnd = days[days.length - 1] ?? today;
   for (const lodge of activeLodges) {
+    // The cheap already-covered probe reads this lodge's whole window ONCE
+    // (#3818 review): two Prisma reads per lodge, not two per night. It is only
+    // a skip hint — the authoritative answer is re-asked per night under the
+    // lodge capacity lock below — and it is reloaded after each create, since
+    // the row just written covers later nights of this same loop.
+    const loadCheapCover = () =>
+      loadHutLeaderNightCover(prisma, {
+        scope: { kind: "lodge", lodgeId: lodge.id },
+        from: today,
+        to: windowEnd,
+      });
+    let cheapCover = await loadCheapCover();
     for (const day of days) {
       // Check if there's already an assignment for this date AT THIS LODGE.
       //
@@ -91,12 +107,7 @@ export async function autoAssignHutLeaders(): Promise<{
       // and the dashboard can never disagree about which nights need a leader.
       // Still source-blind as above: a teacher row covers its school booking's
       // nights (`hut-leader-night-cover.ts`).
-      const alreadyCovered = await isHutLeaderNightCovered(prisma, {
-        lodgeId: lodge.id,
-        night: day,
-      });
-
-      if (alreadyCovered) continue;
+      if (cheapCover.isCovered(lodge.id, day)) continue;
 
       // Find distinct adult members with PAID bookings for this date at this
       // lodge. Scoped, so the "exactly one adult member" test below counts the
@@ -254,6 +265,7 @@ export async function autoAssignHutLeaders(): Promise<{
         });
 
         if (!created) continue;
+        cheapCover = await loadCheapCover();
 
         const dateStr = formatDateOnly(day);
         assignedDates.push(dateStr);

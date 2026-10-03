@@ -86,11 +86,16 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // ONE cover per request, reaching back one night for the labels and lent to
+  // the uncovered-night read, which therefore reads only the bookings.
   const coverFrom = addDaysDateOnly(window.from, -1);
-  const [unassignedDates, cover] = await Promise.all([
-    getUnassignedHutLeaderDates({ ...window, scope }),
-    loadHutLeaderNightCover(prisma, { scope, from: coverFrom, to: window.to }),
-  ]);
+  const cover = await loadHutLeaderNightCover(prisma, {
+    scope,
+    from: coverFrom,
+    to: window.to,
+    withNames: true,
+  });
+  const unassignedDates = await getUnassignedHutLeaderDates({ ...window, scope, cover });
   return NextResponse.json({
     unassignedDates,
     coveredNights: listHutLeaderNightLeaders(cover, {

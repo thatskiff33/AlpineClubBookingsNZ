@@ -254,8 +254,8 @@ export async function GET(req: NextRequest) {
     latestStayEnd.getTime() > rangeEnd.getTime() ? latestStayEnd : rangeEnd;
 
   // Which nights in the widened window already have a leader, read through the
-  // ONE coverage helper the amber "Upcoming Dates Without…" panel uses (#3818,
-  // `INV-DATE-030`): a night is covered when an assignment claims it AND its
+  // ONE coverage helper the amber "Upcoming nights with no … staying" panel
+  // uses (#3818, `INV-DATE-030`): a night is covered when an assignment claims it AND its
   // leader is staying that night. Suggestions therefore never point at a night
   // that already has a leader on site. A night whose assignment's leader is not
   // there (a row stamped through its leader's checkout day) reads as uncovered,
@@ -279,7 +279,8 @@ export async function GET(req: NextRequest) {
       // half-open [checkIn, checkOut) day range of each booking. checkOut is the
       // departure morning, NOT an occupied night — this matches every occupancy
       // computation in the repo (getBookingStatsByLodge / getUnassignedHutLeaderDates,
-      // which feed the amber "Upcoming Dates Without…" panel on this same page).
+      // which feed the amber "Upcoming nights with no … staying" panel on this
+      // same page).
       // Only real stay nights count — gap nights between two disjoint bookings do not.
       const stayNightsByTime = new Map<number, Date>();
       for (const b of m.bookings) {
