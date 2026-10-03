@@ -147,8 +147,10 @@ export async function writeEditReviewAccountCredit({
     const owed = booking.status === BookingStatus.CANCELLED
       ? await capturedShareOwedAfterCancellation({ bookingId, taskId, booking, shareCents: amountCents, clubZone, store })
       : { captureCents: amountCents, creditCents: 0 };
-    if (owed.captureCents > 0) await mint(owed.captureCents, route.allocateAgainstPaymentId);
+    // The give-back first: its member credit-ledger lock precedes the Payment
+    // row the mint's allocation locks (INV-LOCK-002).
     const givenBackCents = await giveBackCancelledShareCredit({ memberId, bookingId, cents: owed.creditCents, format, store });
+    if (owed.captureCents > 0) await mint(owed.captureCents, route.allocateAgainstPaymentId);
     return { givenBackCents, mintedCents: owed.captureCents, cancelled: false, invoiceReductionCents: null, agreedGiveBackCents: null };
   }
 

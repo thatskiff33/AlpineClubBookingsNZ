@@ -303,7 +303,7 @@ export async function resolveManualRefundTask(
           amountCents: settlement.amountCents,
           hasIssuedXeroInvoice,
           direction: settlementDirection,
-          clubZone,
+          club: { zone: clubZone, format },
           store: tx,
         })
       : null;
@@ -361,6 +361,11 @@ export async function resolveManualRefundTask(
     }
 
     if (settlement && settlementRoute) {
+      // #3835: the credit part goes back FIRST: member ledger lock before any Payment row (INV-LOCK-002).
+      if ("creditBackCents" in settlementRoute && settlementRoute.creditBackCents > 0) {
+        const memberId = requireMemberCreditRecipient(bookingOwner(task.booking).memberId);
+        await giveBackCancelledShareCredit({ memberId, bookingId: task.bookingId, cents: settlementRoute.creditBackCents, format, store: tx }).catch((error: unknown) => { throw settlementWriteRefusal(error); });
+      }
       // #2797 (owner decision D2) and #3032: the money moves only NOW, after the
       // claim, so a lost claim moves nothing at all. `applyLocalRefundAllocation`
       // INCREMENTS `refundedAmountCents` and is not idempotent - its only
@@ -435,11 +440,6 @@ export async function resolveManualRefundTask(
           officerMemberId: actingMemberId,
           store: tx,
         });
-      }
-      // #3835: the applied-credit part of a cancelled booking's share goes back as credit.
-      if ("creditBackCents" in settlementRoute && settlementRoute.creditBackCents > 0) {
-        const memberId = requireMemberCreditRecipient(bookingOwner(task.booking).memberId);
-        await giveBackCancelledShareCredit({ memberId, bookingId: task.bookingId, cents: settlementRoute.creditBackCents, format, store: tx }).catch((error: unknown) => { throw settlementWriteRefusal(error); });
       }
     }
 

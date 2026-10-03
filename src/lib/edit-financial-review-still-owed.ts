@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 
 import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
+import type { ClubFormat } from "@/lib/club-format";
 import type { ClubTimeZone } from "@/lib/club-time";
 import { capturedShareOwedAfterCancellation } from "@/lib/edit-financial-review-cancel-netting";
 import { chooseEditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
@@ -58,10 +59,13 @@ export async function previewEditReviewStillOwed({
   taskId,
   shareCents,
   clubZone,
+  format,
 }: {
   taskId: string;
   shareCents: number;
   clubZone: ClubTimeZone;
+  /** The club's format, for a refusal's sentence. */
+  format: ClubFormat;
 }): Promise<EditReviewStillOwedPreview | null> {
   try {
     await prisma.$transaction(async (tx) => {
@@ -83,7 +87,7 @@ export async function previewEditReviewStillOwed({
           amountCents: shareCents,
           hasIssuedXeroInvoice: hasIssuedPrimaryXeroInvoice(task.booking),
           direction: ManualRefundTaskDirection.REFUND_TO_MEMBER,
-          clubZone,
+          club: { zone: clubZone, format },
           store: tx,
         });
         if (route?.kind === "stripe-refund" || route?.kind === "local-allocation") {

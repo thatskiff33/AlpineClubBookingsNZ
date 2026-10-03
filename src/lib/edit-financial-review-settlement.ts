@@ -50,8 +50,8 @@ import {
 import type { ClubFormat } from "@/lib/club-format";
 import type { ClubTimeZone } from "@/lib/club-time";
 import {
+  assertCardRefundNotOverPromised,
   capturedShareOwedAfterCancellation,
-  unfinishedCardRefundDebtsCents,
 } from "@/lib/edit-financial-review-cancel-netting";
 import type { EditReviewSettlementTask } from "@/lib/edit-financial-review-settlement-task";
 
@@ -256,7 +256,7 @@ export async function chooseEditReviewSettlementRoute({
   amountCents,
   hasIssuedXeroInvoice,
   direction,
-  clubZone,
+  club,
   store,
 }: {
   task: EditReviewSettlementTask;
@@ -288,8 +288,8 @@ export async function chooseEditReviewSettlementRoute({
    * the member's card.
    */
   direction: ManualRefundTaskDirection;
-  /** The club's zone, resolved before the transaction (`INV-LOCK-004`), for #3835's netting. */
-  clubZone: ClubTimeZone;
+  /** #3835: the club's zone (`INV-LOCK-004`) and format, resolved before the transaction. */
+  club: { zone: ClubTimeZone; format: ClubFormat };
   store: Prisma.TransactionClient;
 }): Promise<EditReviewSettlementRoute | null> {
   if (task.kind !== ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
@@ -395,7 +395,7 @@ export async function chooseEditReviewSettlementRoute({
   const owed = () =>
     task.booking.status === BookingStatus.CANCELLED
       ? capturedShareOwedAfterCancellation({
-          bookingId: task.bookingId, taskId: task.id, booking: task.booking, shareCents: amountCents, clubZone, store,
+          bookingId: task.bookingId, taskId: task.id, booking: task.booking, shareCents: amountCents, clubZone: club.zone, store,
         })
       : Promise.resolve({ captureCents: amountCents, creditCents: 0 });
 
@@ -419,14 +419,12 @@ export async function chooseEditReviewSettlementRoute({
       amountCents: refundCents,
       store,
     });
-    // #3835: less the card refunds already promised and not yet made.
-    const debtsCents = await unfinishedCardRefundDebtsCents({ paymentId: settlementPaymentId, bookingId: task.bookingId }, store);
-    if (refundCents > totalRefundableCents - debtsCents) {
-      throw new ManualBookingPaymentError(
-        REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE,
-        400,
-      );
+    if (refundCents > totalRefundableCents) {
+      throw new ManualBookingPaymentError(REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE, 400);
     }
+    // #3835: and less the card refunds already promised and not yet made.
+    const capped = { paymentId: settlementPaymentId, bookingId: task.bookingId, refundCents, totalRefundableCents };
+    await assertCardRefundNotOverPromised({ ...capped, format: club.format, store });
     return {
       kind: "stripe-refund",
       paymentId: settlementPaymentId,

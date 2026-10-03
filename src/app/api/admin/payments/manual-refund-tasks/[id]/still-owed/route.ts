@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { clubFormatValues } from "@/lib/club-format-server";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
 import { previewEditReviewStillOwed } from "@/lib/edit-financial-review-still-owed";
@@ -30,7 +31,7 @@ export async function GET(
   try {
     // `INV-LOCK-004`: the club's zone, outside any transaction.
     const clubZone = await readClubTimeZoneOutsideRequest();
-    const preview = await previewEditReviewStillOwed({ taskId: id, shareCents: shareCents.data, clubZone });
+    const preview = await previewEditReviewStillOwed({ taskId: id, shareCents: shareCents.data, clubZone, format: await clubFormatValues() });
     return NextResponse.json({ preview });
   } catch (error) {
     logger.error({ err: error, taskId: id }, "Could not work out what a financial review still owes");
