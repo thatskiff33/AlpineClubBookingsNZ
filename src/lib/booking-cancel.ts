@@ -596,7 +596,7 @@ async function performBookingCancellation(
     return {
       status: 409,
       error:
-        "This hold can no longer be released (it may have just been accepted).",
+        "This hold can no longer be released (it was just approved or cancelled).",
     };
   }
 
