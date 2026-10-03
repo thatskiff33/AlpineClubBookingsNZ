@@ -135,8 +135,8 @@ output names the case**:
 | First line | What it means | What to do |
 | --- | --- | --- |
 | `Dependency audit: CLEAN - ...` | The advisory service answered and this branch has nothing at high or above. | Nothing. The job exits 0. |
-| `Dependency audit: MITIGATED — NOT CLEAN ...` | One reviewed, unfixed high advisory is still reported, and an owner-approved record in `dependency-mitigations.d/` says a reviewed patch covers the copy the audit sees. The raw advisory, the record's scope (including copies it does **not** cover) and the unfiltered pnpm report are printed underneath. | Nothing until the record expires or a fixed release ships; then retire it (see "Mitigated advisories"). The job exits 0. |
-| `Dependency audit: FAILED - VULNERABILITY FOUND ...` | A real finding. The service answered; the packages are listed underneath. When a mitigation record exists but does not apply, each reason is printed as `Mitigation record NOT applied: ...`. | Upgrade the dependency, or add a deliberate override with its reasoning to the register above. **Re-running will not help.** |
+| `Dependency audit: MITIGATED — NOT CLEAN ...` | One reviewed, unfixed high advisory is still reported, and an owner-approved record in `dependency-mitigations.d/` says a reviewed patch covers the copy the audit sees. The raw advisory, the record's scope (including copies it does **not** cover) and the unfiltered pnpm report are printed underneath. | Nothing until the record expires or a fixed release ships; then retire it ([`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md) -> "Retiring a record"). The job exits 0 and raises a warning annotation. |
+| `Dependency audit: FAILED - VULNERABILITY FOUND ...` | A real finding. The service answered; the packages are listed underneath. When a mitigation record exists but does not apply, each reason is printed as `Mitigation record NOT applied: ...`. | Upgrade the dependency, or add a deliberate override with its reasoning to the register above. When a record was refused (expired, or its patch or dependency inputs changed), extend or retire it per [`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md). **Re-running will not help.** |
 | `Dependency audit: FAILED - ADVISORY SERVICE UNREACHABLE ...` | npmjs.org did not answer, after four attempts. Nothing is known to be wrong with the branch - but it has not been cleared either. | Check <https://status.npmjs.org>, then re-run the job once the service has recovered. |
 | `Dependency audit: FAILED - THE AUDIT COULD NOT RUN ...` | pnpm answered with something that is not a readable audit report - usually a missing or malformed `pnpm-lock.yaml`, or a report whose severity counts are missing or non-numeric. | Read the pnpm output above the verdict. The verdict names which severities it could not read when that is the cause. |
 
@@ -186,40 +186,14 @@ The pieces, all in one reviewed pull request:
   an expiry, the patch's SHA256, and the SHA256 of the exact reviewed
   `pnpm-workspace.yaml` and `pnpm-lock.yaml`.
 
-`scripts/ci/dependency-mitigation.mjs` accepts the record only when pnpm exited
-1 with a complete report of the reviewed shape holding exactly one high and
-nothing else, that advisory and its single finding match the record, the patch
-and both dependency inputs match their digests and registrations, and the
-record has not expired. Any dependency change at all - a Dependabot bump
-included - invalidates the acceptance until the advisory is re-reviewed
-against the new tree and the owner approves new digests. The directory's README
-is the entry contract.
-
-**The live record (#3843).** `braces@3.0.3`, GHSA-vfj7-8cjw-p6xm, a
-stack-exhaustion denial of service with no published fix, reached only through
-the development path `eslint-config-next > @next/eslint-plugin-next > fast-glob
-> micromatch > braces`. The patch is the five production files of
-[micromatch/braces#72](https://github.com/micromatch/braces/pull/72) at
-`d0d575e55e74a4e0218e5248fafb79efc3e54ebb`, bounding parser and AST-walker
-depth. The record expires **2026-10-10T00:00:00Z**.
-
-**It covers only the audited copy.** Nine more copies of braces are compiled
-into other packages' own files, where no pnpm patch reaches and `pnpm audit`
-cannot see them: `rollup` 4.62.2 (two, via `@sentry/nextjs`), the `prisma` 7.10.0
-CLI, `@prisma/fetch-engine` 7.10.0 (two), `@prisma/get-platform` 7.10.0 and
-7.2.0, `vite` 8.3.0 (the test runner's) and `tsx` 4.23.15. They are known,
-unpatched and out of reach of the record, and the MITIGATED output lists them on
-every run. The owner's
-[second decision](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3843#issuecomment-5966882860)
-bounded the record to the case where none can receive input from outside the
-club's own developers and build, and the
-[reachability trace](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3843#issuecomment-5966944832)
-found that none can.
-
-**Retiring it.** When a fixed braces release ships, delete the record, the
-patch and its `patchedDependencies` entry together, re-audit with no
-mitigation, and re-check the bundling tools above for releases that carry the
-fix. Extending the expiry is a new reviewed change with a new owner approval.
+Exactly when the wrapper accepts a record, who authorises one, the 14-day
+expiry cap, the warning annotation a MITIGATED pass raises, and the retirement
+checklist are all stated once, in
+[`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md).
+Any dependency change at all - a Dependabot bump included - invalidates the
+acceptance until the advisory is re-reviewed against the new tree and the owner
+approves new digests. The live records, with their scope and their retirement
+issue, are listed in that README's "Current records" table, not here.
 
 ### Why a stale override is not harmless
 
@@ -776,9 +750,7 @@ Accepted residual risk:
   GHCR package publish job.
 - The `pnpm audit --audit-level=high` gate keeps high/critical npm advisories
   blocking, while lower severity advisories remain review-driven. The one
-  exception is a MITIGATED record (#3843, "Mitigated advisories" above): one
-  reviewed high advisory, patched, digest-bound and expiring, covering only the
-  copy the audit can see.
+  exception is a MITIGATED record (#3843, "Mitigated advisories" above).
 - A sustained npmjs.org advisory outage blocks every merge, by deliberate
   decision (#3254). See "When the advisory service is down" above.
 - Until `Dependency audit` is added to branch protection it is a red check

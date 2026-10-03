@@ -16,36 +16,17 @@ import path from "node:path";
  * (`audit-dependencies.mjs`) say MITIGATED instead of VULNERABILITY FOUND —
  * and only while every fact the approval was given on is still true.
  *
- * ## What "still true" means, and why each condition is there
+ * ## When a record is accepted
  *
- * The record lives in `dependency-mitigations.d/` (see its README). The audit
- * may only be called MITIGATED when ALL of the following hold; any one failing
- * leaves the verdict VULNERABILITY FOUND, with the reasons printed under it.
- *
- * - **The report is complete and is exactly the reviewed one.** pnpm exited 1
- *   (its own "I found something at high"), the report has exactly the measured
- *   top-level, advisory and finding shapes (an unfamiliar shape is not guessed
- *   at), it audited a non-empty tree, the counts are non-negative integers
- *   summing to ONE, high is 1 and critical is 0, and the single advisory is the
- *   recorded GHSA, package, range and severity. Any second advisory — at any
- *   severity — means the report is no longer the one the owner looked at.
- * - **Only the covered copy is affected.** One finding, at the recorded
- *   version, on the recorded dependency path, flagged dev and not bundled.
- * - **The patch is the reviewed patch, and pnpm applies it.** The patch file's
- *   SHA256 matches the record, `pnpm-workspace.yaml` registers it for exactly
- *   this package@version, and `pnpm-lock.yaml` records the same hash.
- * - **Nothing else about the dependency inputs moved.** The SHA256 of the raw
- *   bytes of `pnpm-workspace.yaml` and of `pnpm-lock.yaml`, as checked out (both
- *   are pinned `eol=lf` in `.gitattributes`, so every platform hashes the same
- *   bytes), match the record. Any dependency change at all invalidates the
- *   acceptance until somebody reviews and re-records it.
- * - **The approval has not expired.** The clock is injected, never read here.
- * - **The record itself is well-formed and unique.** Exact key set (an unknown
- *   key is rejected, so nobody can invent `allowExtra: true`), owner-decision
- *   URLs, and no second record for the same GHSA.
+ * The conditions are stated ONCE, with the reason for each, in
+ * `dependency-mitigations.d/README.md` -> "When the wrapper says MITIGATED".
+ * This module implements that list: `recordProblems` (a well-formed record),
+ * `reportProblems` (the report is exactly the reviewed one), `inputProblems`
+ * (the patch and the dependency inputs) and the expiry checks in
+ * `applyMitigation`. Change the list there and the code here together.
  *
  * Anything this module cannot read is a reason to refuse, never a reason to
- * accept: there is exactly one return path that says `accepted: true`.
+ * accept: there is exactly one return path that says `outcome: "mitigated"`.
  *
  * ## What it does not do
  *
@@ -53,8 +34,8 @@ import path from "node:path";
  * and the counts are still the counts. It does not change the threshold, read
  * an environment variable, or accept anything after the expiry. It covers ONLY
  * the copy `pnpm audit` can see: copies of the same package compiled into
- * other packages' bundles are neither patched nor audited, and the record lists
- * them so the verdict says so on every run.
+ * other packages' bundles are neither patched nor audited, and the record's
+ * `knownUncoveredCopies` lists them so the verdict says so on every run.
  *
  * Install-free, like the wrapper: Node built-ins only.
  */

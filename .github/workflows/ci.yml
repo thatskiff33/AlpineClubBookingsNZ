@@ -112,10 +112,9 @@ jobs:
   # lockfile-only, install-free reading of the tree.
   #
   # Since #3843 the wrapper has one more passing verdict, MITIGATED — NOT
-  # CLEAN: exactly one reviewed high advisory, a reviewed patch and dependency
-  # inputs matching the SHA256 digests in an owner-approved record in
-  # `dependency-mitigations.d/`, before that record's expiry. Anything else
-  # about the report keeps the job red. See that directory's README.
+  # CLEAN, under an owner-approved record in `dependency-mitigations.d/`. Its
+  # conditions are stated once, in that directory's README; anything else
+  # about the report keeps the job red.
   #
   # This does NOT duplicate the `dependency-review` job above, and neither
   # replaces the other. That one is pull-request-only — it carries a job-level
