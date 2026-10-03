@@ -1,3 +1,5 @@
+import { bookingPromoCodeLabel } from "@/lib/booking-promo-redemptions";
+
 /**
  * #2267: the promo options a booking-confirmation email needs, read off a
  * booking once.
@@ -11,13 +13,42 @@
  * Deliberately a standalone, dependency-free module rather than part of the
  * email barrel: it composes data, sends nothing, and tests that stub the email
  * module (to avoid its send machinery) still get the real behaviour here.
+ *
+ * #3826: a booking may carry several codes; `promoCode` names them all, in
+ * application order, through `bookingPromoCodeLabel` — exactly the one code a
+ * single-code booking always showed.
  */
-export function bookingPromoEmailOptions(booking: {
-  lodgeId: string | null;
+type BookingPromoEmailSource = {
   discountCents: number;
   promoAdjustmentCents: number;
-  promoRedemption?: { promoCode?: { code: string } | null } | null;
-}): {
+  promoRedemptions?: ReadonlyArray<{
+    applicationOrder?: number | null;
+    promoCode?: { code: string } | null;
+  }> | null;
+};
+
+/**
+ * The promo fields alone, for a send site that builds the rest of its options
+ * itself. Empty when the booking carries no code.
+ */
+export function bookingPromoEmailFields(booking: BookingPromoEmailSource): {
+  discountCents?: number;
+  promoAdjustmentCents?: number;
+  promoCode?: string;
+} {
+  const promoCode = bookingPromoCodeLabel(booking);
+  return promoCode
+    ? {
+        discountCents: booking.discountCents,
+        promoAdjustmentCents: booking.promoAdjustmentCents,
+        promoCode,
+      }
+    : {};
+}
+
+export function bookingPromoEmailOptions(
+  booking: BookingPromoEmailSource & { lodgeId: string | null },
+): {
   lodgeId: string | null;
   discountCents?: number;
   promoAdjustmentCents?: number;
@@ -25,12 +56,6 @@ export function bookingPromoEmailOptions(booking: {
 } {
   return {
     lodgeId: booking.lodgeId,
-    ...(booking.promoRedemption?.promoCode
-      ? {
-          discountCents: booking.discountCents,
-          promoAdjustmentCents: booking.promoAdjustmentCents,
-          promoCode: booking.promoRedemption.promoCode.code,
-        }
-      : {}),
+    ...bookingPromoEmailFields(booking),
   };
 }

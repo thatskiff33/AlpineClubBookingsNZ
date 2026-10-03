@@ -1,10 +1,11 @@
 import type { Prisma } from "@prisma/client";
 
-import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
+import { releasePromoRedemptions } from "@/lib/promo";
 
 export type DraftBookingForCleanup = {
   id: string;
-  promoRedemption: { id: string; promoCodeId: string } | null;
+  // Every redemption the draft carries (#3826: one per promo code).
+  promoRedemptions: Array<{ id: string; promoCodeId: string }>;
 };
 
 export type DraftBookingDependentCleanupSummary = {
@@ -32,10 +33,8 @@ export async function deleteDraftBookingDependents(
 
   let promoRedemptions = 0;
   for (const draft of drafts) {
-    if (draft.promoRedemption) {
-      await deletePromoRedemptionAndAdjustCount(tx, draft.promoRedemption);
-      promoRedemptions += 1;
-    }
+    await releasePromoRedemptions(tx, draft.promoRedemptions);
+    promoRedemptions += draft.promoRedemptions.length;
   }
 
   const changeRequestResult = await tx.bookingChangeRequest.deleteMany({

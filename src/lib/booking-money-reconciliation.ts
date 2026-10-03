@@ -3,7 +3,7 @@ import type { BookingGuestNightPriceSource } from "@prisma/client";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import {
   deriveNightAdjustmentState,
-  memberBenefitAllocations,
+  combinedPromoRedemptionEvidence,
 } from "@/lib/night-adjustment-write";
 import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
 
@@ -90,13 +90,14 @@ export type BookingMoneyReconciliationProjection = {
       priceSource: BookingGuestNightPriceSource;
     }>;
   }>;
-  promoRedemption: {
+  // Every redemption the booking carries (#3826, epic #3813): one per code.
+  promoRedemptions: ReadonlyArray<{
     priceAdjustmentCents: number;
     allocations: ReadonlyArray<{
       memberId: string | null;
       priceAdjustmentCents: number;
     }>;
-  } | null;
+  }>;
   nightAdjustments: ReadonlyArray<{
     beneficiaryMemberId: string;
     amountCents: number | null;
@@ -147,10 +148,7 @@ export function reconcileBookingMoney(
 
   const adjustmentState = deriveNightAdjustmentState({
     rows: booking.nightAdjustments,
-    redemption: booking.promoRedemption && {
-      priceAdjustmentCents: booking.promoRedemption.priceAdjustmentCents,
-      allocations: memberBenefitAllocations(booking.promoRedemption.allocations),
-    },
+    redemption: combinedPromoRedemptionEvidence(booking.promoRedemptions),
   });
   if (adjustmentState === "NOT_KNOWN") {
     found.add("PROMO_BUILD_UP_NOT_KNOWN");

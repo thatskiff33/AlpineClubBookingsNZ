@@ -21,6 +21,10 @@ import {
 } from "@/lib/work-party";
 import { ApiError } from "@/lib/api-error";
 import {
+  DEFAULT_MODULE_SETTINGS,
+  readClubModuleSettingsRecord,
+} from "@/config/modules";
+import {
   assignmentRequiresAssignedBooker,
   assignmentRequiresGuestSelection,
   filterGuestsByIndexes,
@@ -1798,6 +1802,44 @@ async function assertPromoRedeemableAtLodge(
   }
 }
 
+/** The refusal `redeemPromoCode` gives a second code while `multiPromoCodes` is off. */
+export const SECOND_PROMO_CODE_REFUSED_MESSAGE =
+  "This booking already carries a promo code.";
+
+/**
+ * Where a new redemption sits in the booking's application order — or a
+ * refusal, when the booking already carries a code and the club has not
+ * switched on several codes per booking (#3826, epic #3813).
+ *
+ * THE ROLLOUT SWITCH'S ONE ENFORCEMENT POINT. `redeemPromoCode` is the only
+ * writer that creates a PromoRedemption row, so refusing here is what keeps the
+ * database free of multi-code bookings while `multiPromoCodes` is off — which
+ * is what keeps the previously deployed release, that reads the redemption as
+ * one-to-one, correct through a blue-green cut-over and a rollback. Before
+ * #3826 the database itself refused the second row (PromoRedemption_bookingId_key);
+ * this refusal replaces that unique while the switch is off.
+ *
+ * The switch is read only when the booking already holds a redemption, so a
+ * single-code booking — every booking today — costs one indexed probe and
+ * nothing else. A new code is appended after the last (D-3813-2: the booker's
+ * order; a later child lets the booker choose it).
+ */
+async function nextPromoApplicationOrder(tx: PrismaTx, bookingId: string): Promise<number> {
+  const last = await tx.promoRedemption.findFirst({
+    where: { bookingId },
+    orderBy: { applicationOrder: "desc" },
+    select: { applicationOrder: true },
+  });
+  if (!last) return 0;
+  const settings = await readClubModuleSettingsRecord(tx);
+  const multiPromoCodes =
+    settings?.multiPromoCodes ?? DEFAULT_MODULE_SETTINGS.multiPromoCodes;
+  if (!multiPromoCodes) {
+    throw new ApiError(SECOND_PROMO_CODE_REFUSED_MESSAGE, 409);
+  }
+  return last.applicationOrder + 1;
+}
+
 /**
  * Create a PromoRedemption record and increment the promo code's
  * currentRedemptions by the number of BENEFICIAL allocation rows written —
@@ -1823,10 +1865,14 @@ export async function redeemPromoCode(
   lodgeId?: string | null
 ): Promise<void> {
   await assertPromoRedeemableAtLodge(tx, promoCodeId, lodgeId);
+  const applicationOrder = await nextPromoApplicationOrder(tx, bookingId);
   const redemption = await tx.promoRedemption.create({
     data: {
       promoCodeId,
       bookingId,
+      // Omitted at 0 (the column default) so a single-code booking's write is
+      // exactly the one it was before #3826.
+      ...(applicationOrder > 0 ? { applicationOrder } : {}),
       memberId,
       discountCents,
       priceAdjustmentCents,
@@ -2014,5 +2060,48 @@ export async function deletePromoRedemptionAndAdjustCount(
       where: { id: redemption.promoCodeId },
       data: { currentRedemptions: { decrement: allocationCount } },
     });
+  }
+}
+
+/**
+ * Release EVERY promo redemption a booking carries (#3826, epic #3813): each
+ * row is deleted and its code's usage counter given back, exactly as
+ * `deletePromoRedemptionAndAdjustCount` does for one. The release paths —
+ * cancel, a capacity bump, a request hold ending, draft cleanup — call this so
+ * a booking holding several codes never leaks a usage slot.
+ *
+ * Read INSIDE the caller's transaction, so what is released is what the
+ * transaction sees under its own locks. Released in promo-code-id order, the
+ * same application-side sort `lockPromoCodeRowsForUpdate` uses, so two
+ * transactions releasing overlapping codes take the PromoCode row locks in one
+ * global order and cannot deadlock on each other.
+ *
+ * Returns how many redemptions were released.
+ */
+export async function releaseBookingPromoRedemptions(
+  tx: PrismaTx,
+  bookingId: string,
+): Promise<number> {
+  const redemptions = await tx.promoRedemption.findMany({
+    where: { bookingId },
+    select: { id: true, promoCodeId: true },
+  });
+  await releasePromoRedemptions(tx, redemptions);
+  return redemptions.length;
+}
+
+/**
+ * The same release, over redemptions the caller already loaded under its locks
+ * (draft cleanup reads them with the drafts it is about to delete).
+ */
+export async function releasePromoRedemptions(
+  tx: PrismaTx,
+  redemptions: ReadonlyArray<{ id: string; promoCodeId: string }>,
+): Promise<void> {
+  const ordered = [...redemptions].sort((a, b) =>
+    a.promoCodeId < b.promoCodeId ? -1 : a.promoCodeId > b.promoCodeId ? 1 : 0,
+  );
+  for (const redemption of ordered) {
+    await deletePromoRedemptionAndAdjustCount(tx, redemption);
   }
 }
