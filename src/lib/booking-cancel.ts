@@ -51,7 +51,7 @@ import {
   markBookingCancellationRefundRecoverySucceeded,
   recordBookingCancellationRefundRecoveryInlineError,
 } from "@/lib/payment-recovery";
-import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
+import { releasePromoRedemptions } from "@/lib/promo";
 import {
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
@@ -2586,15 +2586,16 @@ async function cancelOutstandingPaymentIntents({
 }
 
 /**
- * Clean up promo redemption if booking used a promo code.
+ * Release every promo redemption the booking carries (#3826: one per code).
  */
 async function cleanupPromoRedemption(bookingId: string) {
-  const redemption = await prisma.promoRedemption.findUnique({
+  const redemptions = await prisma.promoRedemption.findMany({
     where: { bookingId },
+    select: { id: true, promoCodeId: true },
   });
-  if (redemption) {
+  if (redemptions.length > 0) {
     await prisma.$transaction(async (tx) => {
-      await deletePromoRedemptionAndAdjustCount(tx, redemption);
+      await releasePromoRedemptions(tx, redemptions);
     });
   }
 }

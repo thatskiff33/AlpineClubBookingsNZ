@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingPromoCodeLabel, soleBookingPromoRedemption } from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
 import {
   checkOwnDependantIdentityForParty,
@@ -323,7 +324,7 @@ export async function POST(
           member: true,
           // #3369: the owner may be an Organisation; bookingOwner() reads both.
           organisation: { select: { name: true, email: true } },
-          promoRedemption: {
+          promoRedemptions: {
             include: {
               guestTargets: { select: { bookingGuestId: true } },
               promoCode: {
@@ -340,6 +341,10 @@ export async function POST(
       if (!booking) {
         throw new ApiError("Booking not found", 404);
       }
+
+      // #3826: a booking may carry several promo codes; this edit path prices
+      // one, so it refuses a booking carrying more (epic #3813 C2 widens it).
+      const promoRedemption = soleBookingPromoRedemption(booking);
 
       if (
         bookingOwner(booking).memberId !== session.user.id &&
@@ -899,7 +904,7 @@ export async function POST(
         // account for.
         newDiscountCents = booking.discountCents;
         newPromoAdjustmentCents = booking.promoAdjustmentCents;
-      } else if (booking.promoRedemption?.promoCode) {
+      } else if (promoRedemption?.promoCode) {
         // Row-lock the promo code and re-read its usage counter before the caps
         // are checked (#2299). Adding a member guest to an assigned promo makes
         // that member a NEW beneficiary, so this path can take a
@@ -909,10 +914,10 @@ export async function POST(
         // the order stays lodge -> promo row.
         const promo = await lockAndRefreshPromoCodeUsage(
           tx,
-          booking.promoRedemption.promoCode
+          promoRedemption.promoCode
         );
         const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
-          booking.promoRedemption,
+          promoRedemption,
           guestNightRates
         );
         const application = await validateAndCalculatePromoDiscount(
@@ -943,7 +948,7 @@ export async function POST(
 
         if (application.error || !application.discount) {
           promoRemoved = true;
-          await deletePromoRedemptionAndAdjustCount(tx, booking.promoRedemption);
+          await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
         } else {
           const promoResult = application.discount;
           newDiscountCents = promoResult.discountCents;
@@ -956,7 +961,7 @@ export async function POST(
 
           await replacePromoRedemptionAllocations(
             tx,
-            booking.promoRedemption,
+            promoRedemption,
             newDiscountCents,
             newPromoAdjustmentCents,
             promoResult.freeNightsUsed,
@@ -1219,7 +1224,7 @@ export async function POST(
                   nights: { select: { stayDate: true, priceCents: true } },
                 },
               });
-              const promoCode = booking.promoRedemption?.promoCode?.code ?? null;
+              const promoCode = bookingPromoCodeLabel(booking);
               return {
                 before: pricingSideFromStoredGuests(booking.guests, {
                   promoAdjustmentCents: booking.promoAdjustmentCents,

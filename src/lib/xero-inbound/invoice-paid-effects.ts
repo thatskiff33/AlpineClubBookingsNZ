@@ -1,4 +1,5 @@
 import { type Invoice } from "xero-node";
+import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { BookingEventType, BookingStatus, CreditType, ManualRefundTaskKind, PaymentSource, PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
@@ -425,7 +426,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           // #3369: the owner may be an Organisation; bookingOwner() reads both.
           organisation: { select: { name: true, email: true } },
           guests: { include: { nights: true } },
-          promoRedemption: {
+          promoRedemptions: {
             include: {
               promoCode: true,
             },
@@ -461,7 +462,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
               // #3369: the owner may be an Organisation; bookingOwner() reads both.
               organisation: { select: { name: true, email: true } },
               guests: { include: { nights: true } },
-              promoRedemption: { include: { promoCode: true } },
+              promoRedemptions: { include: { promoCode: true } },
             },
           },
         },
@@ -972,7 +973,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
               // #3369: the owner may be an Organisation; bookingOwner() reads both.
               organisation: { select: { name: true, email: true } },
               guests: { include: { nights: true } },
-              promoRedemption: { include: { promoCode: true } },
+              promoRedemptions: { include: { promoCode: true } },
             },
           },
         },
@@ -1636,13 +1637,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         // that lodge's name/travel note/door code, promo or not (multi-lodge).
         lodgeId: outcome.payment.booking.lodgeId,
         ...(provisionalGuests ? { provisionalGuests } : {}),
-        ...(outcome.payment.booking.promoRedemption?.promoCode
-          ? {
-              discountCents: outcome.payment.booking.discountCents,
-              promoAdjustmentCents: outcome.payment.booking.promoAdjustmentCents,
-              promoCode: outcome.payment.booking.promoRedemption.promoCode.code,
-            }
-          : {}),
+        ...bookingPromoEmailFields(outcome.payment.booking),
       }
     ).catch((err) =>
       logger.error(

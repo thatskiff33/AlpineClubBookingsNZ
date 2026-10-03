@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { HOSTING_COVERAGE_RETRY_CODE } from "@/lib/adult-member-hosting-queue-participants";
@@ -203,7 +204,7 @@ export async function POST(
       // #3369: the owner may be an Organisation; bookingOwner() reads both.
       organisation: { select: { name: true, email: true } },
       guests: { include: { nights: true } }, // per-night sets (issue #713)
-      promoRedemption: { include: { promoCode: true } },
+      promoRedemptions: { include: { promoCode: true } },
     },
   });
 
@@ -514,13 +515,7 @@ export async function POST(
       format,
       {
         lodgeId: booking.lodgeId,
-        ...(booking.promoRedemption?.promoCode
-          ? {
-              discountCents: booking.discountCents,
-              promoAdjustmentCents: booking.promoAdjustmentCents,
-              promoCode: booking.promoRedemption.promoCode.code,
-            }
-          : {}),
+        ...bookingPromoEmailFields(booking),
       }
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send confirmation email after waitlist confirm"));
 

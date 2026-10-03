@@ -120,7 +120,7 @@ export async function POST(
       // #3269: a split child (#738) may be charged on its parent's saved card;
       // the parent's row is what proves the card was saved for reuse.
       parentBooking: { include: { payment: true } },
-      promoRedemption: { include: { promoCode: true } },
+      promoRedemptions: { include: { promoCode: true } },
     },
   });
 

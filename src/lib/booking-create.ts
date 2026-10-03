@@ -18,6 +18,7 @@
  *     acquireLodgeCapacityLock so capacity checks stay safe without
  *     cross-lodge contention
  */
+import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import {
   BookingEventType,
   BookingStatus,
@@ -1567,7 +1568,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
             // #3369: the owner may be an Organisation; bookingOwner() reads both.
             organisation: { select: { name: true, email: true } },
             guests: true,
-            promoRedemption: {
+            promoRedemptions: {
               include: {
                 promoCode: { include: { workPartyEvent: { select: { name: true } } } },
               },
@@ -1575,6 +1576,16 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           },
         });
         if (fullBooking) {
+          // Internal work-party promo codes are meaningless to members; label
+          // the discount with the event name instead. #3826: every code the
+          // booking carries, in application order — the one label it always
+          // was for a single-code booking.
+          const createdPromoLabel = bookingPromoRedemptions(fullBooking)
+            .map(
+              (redemption) =>
+                redemption.promoCode.workPartyEvent?.name ?? redemption.promoCode.code,
+            )
+            .join(", ");
           // The member confirmation email is suppressed when an admin on-behalf
           // create opts out (#1695); the Xero invoice below is still queued.
           if (notifyMember) {
@@ -1602,15 +1613,11 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
               {
                 lodgeId: fullBooking.lodgeId,
                 ...(provisionalGuests ? { provisionalGuests } : {}),
-                ...(fullBooking.promoRedemption?.promoCode
+                ...(createdPromoLabel
                   ? {
                       discountCents: fullBooking.discountCents,
                       promoAdjustmentCents: fullBooking.promoAdjustmentCents,
-                      // Internal work-party promo codes are meaningless to
-                      // members; label the discount with the event name instead.
-                      promoCode:
-                        fullBooking.promoRedemption.promoCode.workPartyEvent?.name ??
-                        fullBooking.promoRedemption.promoCode.code,
+                      promoCode: createdPromoLabel,
                     }
                   : {}),
               },

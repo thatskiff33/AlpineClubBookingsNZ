@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { soleBookingPromoRedemption } from "@/lib/booking-promo-redemptions";
 import type { AgeTier } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
@@ -323,7 +324,7 @@ export async function POST(
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       },
       payment: true,
-      promoRedemption: {
+      promoRedemptions: {
         include: {
           guestTargets: { select: { bookingGuestId: true } },
           promoCode: {
@@ -340,6 +341,10 @@ export async function POST(
   if (!booking) {
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
+
+  // #3826: a booking may carry several promo codes; this edit path prices
+  // one, so it refuses a booking carrying more (epic #3813 C2 widens it).
+  const promoRedemption = soleBookingPromoRedemption(booking);
 
   if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -1798,7 +1803,7 @@ export async function POST(
       promoChangeNotApplied: describePromoChangeNotApplied({
         requestedPromoCode: newPromoCode,
         removePromoCodeRequested: Boolean(removePromoCode),
-        currentPromoCode: booking.promoRedemption?.promoCode?.code,
+        currentPromoCode: promoRedemption?.promoCode?.code,
         // The resolved removals, matching the save exactly - a preview that
         // promised "who it covers has not changed" would be contradicted by the
         // save it is previewing.
@@ -2241,7 +2246,7 @@ export async function POST(
     promoChangeNotApplied = describePromoChangeNotApplied({
       requestedPromoCode: newPromoCode,
       removePromoCodeRequested: Boolean(removePromoCode),
-      currentPromoCode: booking.promoRedemption?.promoCode?.code,
+      currentPromoCode: promoRedemption?.promoCode?.code,
       guestRemovalsRequested: removedGuests.length > 0,
       reason: "STAY_IN_PROGRESS",
       phase: "preview",
@@ -2306,12 +2311,12 @@ export async function POST(
       };
       // Invalid new promo — discount stays 0, don't fall back to old promo
     }
-  } else if (booking.promoRedemption?.promoCode) {
+  } else if (promoRedemption?.promoCode) {
     // Keep existing promo, recalculate with new price
-    const promo = booking.promoRedemption.promoCode;
+    const promo = promoRedemption.promoCode;
     const guestNightRates = getGuestNightRates();
     const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
-      booking.promoRedemption,
+      promoRedemption,
       guestNightRates
     );
     const application = await validateAndCalculatePromoDiscount(
@@ -2354,8 +2359,8 @@ export async function POST(
   if (newPromoAdjustmentCents !== 0) {
     const promoLabel = newPromoCode
       ? `Promo '${newPromoCode.toUpperCase()}'`
-      : booking.promoRedemption?.promoCode
-        ? `Promo '${booking.promoRedemption.promoCode.code}'`
+      : promoRedemption?.promoCode
+        ? `Promo '${promoRedemption.promoCode.code}'`
         : "Promo discount";
     itemizedChanges.push({
       label: promoLabel,
@@ -2366,7 +2371,7 @@ export async function POST(
   // Show removed promo as the inverse of its previous signed adjustment.
   if (removePromoCode && booking.promoAdjustmentCents !== 0) {
     itemizedChanges.push({
-      label: `Removed promo '${booking.promoRedemption?.promoCode?.code || "adjustment"}'`,
+      label: `Removed promo '${promoRedemption?.promoCode?.code || "adjustment"}'`,
       amountCents: -booking.promoAdjustmentCents,
     });
   }
