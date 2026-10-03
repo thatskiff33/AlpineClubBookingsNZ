@@ -220,6 +220,14 @@ describe("#3213 fix round: the durable summary names the money's direction", () 
     }
   });
 
+  it("MUTATION: #3791 - a share the cancellation had already returned is not receipted as credit issued", () => {
+    const toast = (accountCredit: { givenBackCents: number; mintedCents: number }) =>
+      completionMessage({ amountAmended: false, settlementRoute: CREDIT, stripeRefundId: null, additionalPaymentIntentId: null, accountCredit });
+
+    expect(toast({ givenBackCents: 0, mintedCents: 0 })).toMatch(/^Nothing further was credited/);
+    expect(toast({ givenBackCents: 2_500, mintedCents: 0 })).toBe("Account credit issued to the member.");
+  });
+
   it("makes no claim the provider call succeeded, because it is written before it", async () => {
     // The audit entry is composed INSIDE the completion transaction; the Stripe
     // refund and the payment request happen after the commit. "sent" or

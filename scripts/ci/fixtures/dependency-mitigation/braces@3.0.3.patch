@@ -1,0 +1,9 @@
+diff --git a/lib/parse.js b/lib/parse.js
+index 0000000..1111111 100644
+--- a/lib/parse.js
++++ b/lib/parse.js
+@@ -1,3 +1,4 @@
+ 'use strict';
++// Synthetic fixture for scripts/ci/dependency-mitigation.test.mjs; never applied.
+ 
+ module.exports = parse;

@@ -136,6 +136,8 @@ export function completionMessage(result: {
   settlementRoute: { kind: string; collectVia?: "stripe" | "invoice" } | null;
   stripeRefundId: string | null;
   additionalPaymentIntentId: string | null;
+  /** #3791: what the account-credit route gave back and minted, where it ran. */
+  accountCredit?: { givenBackCents: number; mintedCents: number } | null;
 }) {
   const amended = result.amountAmended ? " at the confirmed amount" : "";
   switch (completionSettlementShape(result.settlementRoute)) {
@@ -144,7 +146,11 @@ export function completionMessage(result: {
         ? `Refund sent back to the card${amended}.`
         : "The card refund could not be sent just now. It has been recorded and will be retried automatically — check this booking's payment history before handing the money back another way.";
     case "account-credit":
-      return `Account credit issued to the member${amended}.`;
+      // #3791: a share netted against a cancellation's restore can leave
+      // nothing to credit, and "credit issued" would be a receipt for nothing.
+      return result.accountCredit && result.accountCredit.givenBackCents + result.accountCredit.mintedCents === 0
+        ? "Nothing further was credited: the booking's cancellation had already returned this share to the member's account credit."
+        : `Account credit issued to the member${amended}.`;
     // #3170: the direction that asks for money rather than returning it. Its two
     // sentences say what the member will actually receive, because "adjustment
     // recorded" over a request that was never sent is the same false receipt the
