@@ -344,10 +344,14 @@ member needs another; a bedless tick takes one only when its member is not among
 the night's guest members. `computeNightOccupancy` builds that set from term 1's
 own guest list, so the custodian is de-duplicated against exactly the guests
 counted, plus the party being admitted. That second half is what reaches the
-booking being admitted: every engine passes each night's party members
+booking being admitted: every admission passes each night's party members
 (`checkCapacityForGuestRanges` and the partner-shared check from their guests,
 `checkCapacity` through `partyMemberIds`), and `CapacityProposedGuest` makes
-`memberId` required so no admission caller can omit it. The custodian writer's
+`memberId` required so no admission caller can omit it. The booking wizard's
+advisory (`/api/availability/check`) passes the asking member, so a custodian
+booking themselves is not sent to the waitlist; it can show one space more when
+they book only for others, and the admission decides. Display-only readers (the
+dashboard, the officer's hold preview, diagnostics) pass no party. The custodian writer's
 over-capacity warning and whole-lodge question ask the same rule of the
 assignment being written. Two guest rows for one member are still two guests;
 only the tick is given back.
