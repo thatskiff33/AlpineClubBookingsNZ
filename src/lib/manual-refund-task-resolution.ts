@@ -38,6 +38,7 @@ import {
   EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE,
   isEditRefundHandBackTask,
   isNonCancellationHandBackTask,
+  refundRequestIdOfHandBack,
   isPartPaymentReviewTask,
   nonCancellationHandBackCompletedSnapshot,
   manualRefundTaskSettlementRefusal,
@@ -627,11 +628,16 @@ export async function resolveManualRefundTask(
       /**
        * #3827 (`INV-PAY-114`): the Xero leg owes nothing for an edit refund
        * hand-back - its edit already queued the credit note that corrects the
-       * invoice - nor (D-3813-7) for a refund request's, whose approval queued
-       * the refund credit note. The ONE fence: the dispatch returns before
-       * reading anything else, the cancellation invoice above included.
+       * invoice. A refund request's (D-3813-8) queues that request's own note
+       * instead (`refundRequestId` below), never the cancellation's.
        */
       nonCancellationHandBack: isNonCancellationHandBackTask(task),
+      /**
+       * #3827 (D-3813-8): a refund request's hand-back - its completion queues
+       * that request's own Xero refund credit note. Null on a dismissal (no
+       * route, so the leg queues nothing) as on every other task.
+       */
+      refundRequestId: refundRequestIdOfHandBack(task),
       /** The REFUNDED event's marker for those two (`INV-PAY-114`), else null. */
       nonCancellationHandBackSnapshot: isNonCancellationHandBackTask(task)
         ? nonCancellationHandBackCompletedSnapshot({ id: task.id, kind: task.kind, occurrenceKey: task.occurrenceKey })
@@ -679,6 +685,7 @@ export async function resolveManualRefundTask(
       bookingPaymentStatus: result.bookingPaymentStatus,
       cancellationHandBackInvoiceId: result.cancellationHandBackInvoiceId,
       nonCancellationHandBack: result.nonCancellationHandBack,
+      refundRequestId: result.refundRequestId,
       format,
     });
 

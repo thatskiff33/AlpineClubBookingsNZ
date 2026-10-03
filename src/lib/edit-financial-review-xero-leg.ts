@@ -9,6 +9,7 @@ import logger from "@/lib/logger";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import {
   enqueueXeroRefundCreditNoteOperation,
+  enqueueXeroRefundRequestCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
 import type { RefundMethod } from "@/lib/xero-refund-method";
@@ -109,6 +110,7 @@ export async function dispatchEditReviewXeroSettlement({
   bookingPaymentStatus,
   cancellationHandBackInvoiceId,
   nonCancellationHandBack,
+  refundRequestId,
   additionalPaymentIntentId,
   format,
 }: {
@@ -120,6 +122,14 @@ export async function dispatchEditReviewXeroSettlement({
    * money twice.
    */
   nonCancellationHandBack: boolean;
+  /**
+   * #3827 (owner decision D-3813-8, `INV-PAY-115`): the task closed is a
+   * refund request's hand-back, for this request. Unlike an edit's, its
+   * completion DOES owe Xero a note - that request's own refund credit note,
+   * for exactly the amount paid back, queued here after the money has moved.
+   * Null for every other task.
+   */
+  refundRequestId?: string | null;
   bookingId: string;
   taskId: string;
   /**
@@ -165,6 +175,39 @@ export async function dispatchEditReviewXeroSettlement({
    * Best-effort and after the commit, matching every other caller: a Xero outage
    * must not undo a completion whose money has already moved.
    */
+  if (refundRequestId) {
+    // D-3813-8: the request's own note, keyed by the request, so a second
+    // request on the same payment gets its own. Gated on the paid invoice the
+    // note answers, exactly as the cancellation hand-back's note below is: a
+    // note against no invoice is a permanently failing outbox row.
+    if (
+      route?.kind === "local-allocation" &&
+      cancellationHandBackInvoiceId !== null &&
+      amountCents !== null &&
+      amountCents > 0
+    ) {
+      await enqueueXeroRefundRequestCreditNoteOperation({
+        paymentId: route.paymentId,
+        refundRequestId,
+        amountCents,
+        createdByMemberId: actingMemberId,
+      })
+        .then(async (queued) => {
+          if (queued.queueOperationId) {
+            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+          }
+        })
+        .catch((err) =>
+          logger.error(
+            { err, bookingId, taskId, refundRequestId },
+            "Failed to queue the Xero refund credit note for a completed refund-request hand-back",
+          ),
+        );
+    }
+    return;
+  }
+  // An EDIT refund hand-back owes Xero nothing more: its edit's credit note
+  // already corrects the invoice (`INV-PAY-114`).
   if (nonCancellationHandBack) return;
   const isCharge = route?.kind === "additional-charge";
   // Captured outside the dispatch closure: `isCharge` is a boolean and does not

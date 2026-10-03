@@ -376,18 +376,20 @@ export async function PUT(
       }
     }
 
-    // Queue the Xero credit note durably and try to kick the worker. It covers
-    // the whole approved amount, the bank-transfer part included: completing
-    // that part's officer task queues no second note (#3827, `INV-PAY-114` -
-    // the completion's Xero leg returns early for a non-cancellation hand-back).
+    // Queue the Xero credit note durably and try to kick the worker - for the
+    // part refunded through the card only (the whole approval, on a card
+    // payment, exactly as before). The bank-transfer part gets NO note here:
+    // owner decision D-3813-8 (`INV-PAY-115`) queues that request's own note
+    // when the treasurer marks its task paid back, after the money has moved
+    // (`enqueueXeroRefundRequestCreditNoteOperation`).
+    const cardNoteCents = approvedAmountCents - bankTransferCents;
     try {
-      const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
-        payment.id,
-        approvedAmountCents,
-        {
-          createdByMemberId: session.user.id,
-        }
-      );
+      const queuedCreditNote =
+        cardNoteCents > 0
+          ? await enqueueXeroRefundCreditNoteOperation(payment.id, cardNoteCents, {
+              createdByMemberId: session.user.id,
+            })
+          : { queueOperationId: null };
 
       if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
         void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((xeroErr) => {

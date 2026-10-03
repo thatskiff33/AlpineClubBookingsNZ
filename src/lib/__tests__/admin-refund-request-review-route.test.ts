@@ -470,12 +470,9 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
         expect.objectContaining({ amountCents: 0, allocation: [] }),
       );
       expect(mocks.paymentUpdate).not.toHaveBeenCalled();
-      // The Xero credit note still covers the whole approved amount.
-      expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
-        "payment_1",
-        2500,
-        expect.anything(),
-      );
+      // D-3813-8: NO note at approval for the bank-transfer part - the
+      // request's own note is queued when its task is marked paid back.
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
       expect(mocks.refundRequestApprovedTemplate).toHaveBeenCalledWith(
         expect.objectContaining({ amountCents: 2500, bankTransferCents: 2500 }),
         expect.anything(),
@@ -505,6 +502,12 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       );
       expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(
         expect.objectContaining({ amountCents: 1000 }),
+      );
+      // The card part's note only; the bank-transfer part's comes at payout.
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+        "payment_1",
+        1000,
+        expect.anything(),
       );
       expect(sentTemplateData().refundSentence).toBe(
         "A refund of $10.00 will be processed to your original payment method, and the club will refund the remaining $15.00 to you by bank transfer.",
@@ -601,6 +604,12 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       expect(mocks.manualRefundTaskCreateMany).not.toHaveBeenCalled();
       expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(
         expect.objectContaining({ amountCents: 1000 }),
+      );
+      // A card payment keeps today's behaviour: the whole approval's note.
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+        "payment_1",
+        2500,
+        expect.anything(),
       );
       expect(mocks.loggerError).toHaveBeenCalledWith(
         expect.objectContaining({ approvedAmountCents: 2500, plannedAmountCents: 1000 }),

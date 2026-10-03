@@ -53,6 +53,7 @@ const mocks = vi.hoisted(() => ({
   // `INV-PAY-101` (#3529): the bank-transfer refund note a completed
   // cancellation hand-back raises, which no edit-settlement dispatch covers.
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
+  enqueueXeroRefundRequestCreditNoteOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
   // #3639: the treasurer-approved late-capture refund - its capture row, its
   // refund debt, the happy-path close, the Xero correction and its audit entry.
@@ -146,6 +147,8 @@ vi.mock("@/lib/xero-booking-edit-settlement", () => ({
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroRefundCreditNoteOperation: (...a: unknown[]) =>
     mocks.enqueueXeroRefundCreditNoteOperation(...a),
+  enqueueXeroRefundRequestCreditNoteOperation: (...a: unknown[]) =>
+    mocks.enqueueXeroRefundRequestCreditNoteOperation(...a),
   kickQueuedXeroOutboxOperationsIfConnected: (...a: unknown[]) =>
     mocks.kickQueuedXeroOutboxOperationsIfConnected(...a),
 }));
@@ -423,6 +426,10 @@ beforeEach(() => {
   });
   mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({
     queueOperationId: "op-refund-1",
+    message: "queued",
+  });
+  mocks.enqueueXeroRefundRequestCreditNoteOperation.mockResolvedValue({
+    queueOperationId: "op-request-note-1",
     message: "queued",
   });
   mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue(null);
@@ -1708,6 +1715,8 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     );
     // ...and no second Xero document is raised for it.
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    // D-3813-8 is for a refund request's task only: an EDIT task still sends Xero nothing.
+    expect(mocks.enqueueXeroRefundRequestCreditNoteOperation).not.toHaveBeenCalled();
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
     // #3827 (`INV-PAY-114`): it takes lock(1) FIRST, before the task is read for
     // its money and before the claim, so its completion cannot commit between
@@ -1822,7 +1831,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       });
     }
 
-    it("completes under lock(1): records the refund, marks its event, and sends Xero nothing", async () => {
+    it("completes under lock(1): records the refund, marks its event, and queues THAT request's own note (D-3813-8)", async () => {
       appealTask();
 
       await resolveManualRefundTask({
@@ -1848,7 +1857,18 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
           snapshot: { kind: "refund_request_hand_back_completed", manualRefundTaskId: "task-7" },
         })
       );
-      // The approval queued the appeal's refund credit note; no second one.
+      // D-3813-8: after the money moved, the request's own note for exactly
+      // the amount paid back - never the cancellation's one-per-payment note.
+      expect(mocks.enqueueXeroRefundRequestCreditNoteOperation).toHaveBeenCalledTimes(1);
+      expect(mocks.enqueueXeroRefundRequestCreditNoteOperation).toHaveBeenCalledWith({
+        paymentId: "payment-1",
+        refundRequestId: "req-1",
+        amountCents: 10000,
+        createdByMemberId: "admin-1",
+      });
+      expect(mocks.applyLocalRefundAllocation.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.enqueueXeroRefundRequestCreditNoteOperation.mock.invocationCallOrder[0]!,
+      );
       expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
       expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
       expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
@@ -1876,6 +1896,8 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         expect.objectContaining({ data: expect.objectContaining({ status: ManualRefundTaskStatus.DISMISSED }) }),
       );
       expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+      // Nothing was paid back, so no note.
+      expect(mocks.enqueueXeroRefundRequestCreditNoteOperation).not.toHaveBeenCalled();
     });
   });
 

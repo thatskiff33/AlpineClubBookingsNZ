@@ -122,12 +122,29 @@ export function isRefundRequestHandBackTask(task: {
 }
 
 /**
+ * #3827 (D-3813-8, `INV-PAY-115`): the refund request a refund-request
+ * hand-back was raised for, read off its occurrence key - or null for any
+ * other task. Its completion queues THAT request's own Xero refund credit
+ * note, keyed by the request.
+ */
+export function refundRequestIdOfHandBack(task: {
+  kind: ManualRefundTaskKind | string | null;
+  occurrenceKey: string | null;
+}): string | null {
+  if (!isRefundRequestHandBackTask(task) || task.occurrenceKey === null) return null;
+  const id = task.occurrenceKey.slice(REFUND_REQUEST_HAND_BACK_KEY_PREFIX.length);
+  return id.length > 0 ? id : null;
+}
+
+/**
  * #3827 (`INV-PAY-114`): IS THIS HAND-BACK SOMETHING OTHER THAN A
  * CANCELLATION'S - an edit's refund or an approved refund request's? Both are
  * money promised back by bank transfer whose `refundedAmountCents` moves only
  * when the treasurer marks the task paid back, both take `lock(1)` to close,
- * both are netted from refundable cash while open, and neither owes Xero a
- * second note on completion (the edit or the approval queued it). Every server
+ * and both are netted from refundable cash while open. On completion an
+ * edit's owes Xero nothing (the edit queued its note); a refund request's
+ * queues that request's own refund note (D-3813-8,
+ * `refundRequestIdOfHandBack`). Every server
  * reader that asks "is this a CANCELLATION's hand-back?" asks this.
  */
 export function isNonCancellationHandBackTask(task: {

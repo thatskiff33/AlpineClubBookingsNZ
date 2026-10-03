@@ -517,6 +517,7 @@ export async function executeEditReviewSettlement({
   bookingPaymentStatus,
   cancellationHandBackInvoiceId,
   nonCancellationHandBack,
+  refundRequestId = null,
   format,
 }: {
   bookingId: string;
@@ -530,6 +531,8 @@ export async function executeEditReviewSettlement({
   cancellationHandBackInvoiceId: string | null;
   /** #3827 (`INV-PAY-114`): see `dispatchEditReviewXeroSettlement`. */
   nonCancellationHandBack: boolean;
+  /** #3827 (D-3813-8): see `dispatchEditReviewXeroSettlement`. */
+  refundRequestId?: string | null;
   /** The club's format (#3565), resolved once by the caller, before its transaction. */
   format: ClubFormat;
 }): Promise<{
@@ -678,6 +681,7 @@ export async function executeEditReviewSettlement({
     bookingPaymentStatus,
     cancellationHandBackInvoiceId,
     nonCancellationHandBack,
+    refundRequestId,
     additionalPaymentIntentId,
   });
 
