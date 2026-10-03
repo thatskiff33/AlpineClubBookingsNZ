@@ -403,9 +403,11 @@ export async function findWholeLodgeHoldAmendments(input: {
   /** Present when editing, so nights this assignment already holds do not re-prompt. */
   assignmentId?: string;
   /**
-   * Bedless custodian only: the nights this assignment ALREADY counted as a
-   * custodian before this edit (its previous range, when it was ticked or held
-   * a bed), which left the hold's set when they were first written.
+   * Editing: the nights this assignment ALREADY counted as a custodian before
+   * this edit (its previous range, when it was ticked or held a bed), which
+   * left the hold's set when they were first written. Honoured with or
+   * without a bed (#3817 review), so adding, changing or releasing a bed on
+   * those nights does not re-ask about a narrowing already accepted.
    */
   previouslyCounted?: { startDate: Date; endDate: Date } | null;
   db: CustodianAssignmentDb;
@@ -446,7 +448,6 @@ export async function findWholeLodgeHoldAmendments(input: {
       // Already outside this hold's set, so nothing changes tonight.
       if (input.bedId && isCustodianHeldBedNight(ownHolds, input.bedId, nightKey)) continue;
       if (
-        !input.bedId &&
         input.previouslyCounted &&
         formatDateOnly(input.previouslyCounted.startDate) <= nightKey &&
         nightKey <= formatDateOnly(input.previouslyCounted.endDate)

@@ -808,6 +808,64 @@ describe("#2698 whole-lodge hold amendment — the ordering case", () => {
     expect(mocks.createAuditLog).not.toHaveBeenCalled();
   });
 
+  it("accepts a BEDLESS ticked custodian's narrowing on create: global key first, amendment recorded with no bed (#3817)", async () => {
+    mocks.findWholeLodgeHoldAmendments.mockResolvedValue(AMENDMENTS);
+    const res = await POST(
+      postRequest({ ...CREATE_BODY, isCustodian: true, amendOverlappingHolds: true }),
+    );
+    expect(res.status).toBe(201);
+    expect(callOrder.indexOf("globalLock")).toBeGreaterThan(callOrder.indexOf("txBegin"));
+    expect(callOrder.indexOf("globalLock")).toBeLessThan(callOrder.indexOf("lock"));
+    expect(mocks.recordWholeLodgeHoldAmendment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ bedId: null, amendments: AMENDMENTS }),
+    );
+  });
+
+  it("accepts a BEDLESS ticked custodian's narrowing on edit: global key first, amendment recorded with no bed (#3817)", async () => {
+    mocks.assignmentFindUnique.mockResolvedValue({
+      id: "a1",
+      memberId: "member-1",
+      lodgeId: LODGE,
+      bedId: null,
+      isCustodian: false,
+      source: "MANUAL",
+      startDate: new Date("2026-07-01T00:00:00.000Z"),
+      endDate: new Date("2026-07-05T00:00:00.000Z"),
+    });
+    mocks.findWholeLodgeHoldAmendments.mockResolvedValue(AMENDMENTS);
+    const res = await PUT(
+      putRequest({ isCustodian: true, amendOverlappingHolds: true }),
+      { params },
+    );
+    expect(res.status).toBe(200);
+    expect(callOrder.indexOf("globalLock")).toBeGreaterThan(callOrder.indexOf("txBegin"));
+    expect(callOrder.indexOf("globalLock")).toBeLessThan(callOrder.indexOf("lock"));
+    expect(mocks.recordWholeLodgeHoldAmendment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ bedId: null, amendments: AMENDMENTS }),
+    );
+  });
+
+  it("takes no global key for an accepted narrowing on a role-only, unticked edit", async () => {
+    mocks.assignmentFindUnique.mockResolvedValue({
+      id: "a1",
+      memberId: "member-1",
+      lodgeId: LODGE,
+      bedId: null,
+      isCustodian: false,
+      source: "MANUAL",
+      startDate: new Date("2026-07-01T00:00:00.000Z"),
+      endDate: new Date("2026-07-05T00:00:00.000Z"),
+    });
+    const res = await PUT(
+      putRequest({ endDate: "2026-07-04", amendOverlappingHolds: true }),
+      { params },
+    );
+    expect(res.status).toBe(200);
+    expect(callOrder).not.toContain("globalLock");
+  });
+
   it("passes the assignment's own id, so nights it already holds do not re-prompt", async () => {
     // "New and amended holds only": a bed-night this assignment already holds
     // left the overlapping hold's set when it was first created, so an
@@ -960,7 +1018,9 @@ describe("#3817 — a role-only assignment may claim only nights the member stay
     const res = await POST(postRequest({ ...CREATE_BODY, isCustodian: true }));
 
     expect(res.status).toBe(201);
-    expect(mocks.bookingGuestFindMany).not.toHaveBeenCalled();
+    // Never the stay CHECK (neither the cheap ask nor the locked re-ask): the
+    // one read is the post-commit "also a guest here?" advisory.
+    expect(mocks.bookingGuestFindMany).toHaveBeenCalledTimes(1);
     // The tick takes a space off capacity, so the bed path's capacity check
     // runs for it too — after the lodge lock, before the write.
     expect(mocks.validateCustodianBedHold).toHaveBeenCalledWith(
@@ -1027,22 +1087,78 @@ describe("#3817 — a role-only assignment may claim only nights the member stay
     expect(mocks.txAssignmentUpdate).not.toHaveBeenCalled();
   });
 
-  it("PUT leaves a bed-only change alone (Release bed keeps working on any row)", async () => {
+  /** A legacy custodian row: holds a bed, never ticked, no booking. */
+  function legacyBedRowWithNoStay() {
     mocks.bookingGuestFindMany.mockResolvedValue([]);
     mocks.txAssignmentFindUnique.mockResolvedValue({
       id: "a1",
       memberId: "member-1",
       lodgeId: LODGE,
       bedId: "bed-1",
+      isCustodian: false,
       source: "MANUAL",
       startDate: new Date("2026-07-01T00:00:00.000Z"),
       endDate: new Date("2026-07-05T00:00:00.000Z"),
     });
+  }
 
+  it("PUT refuses RELEASE BED on an unstayed, unticked row, and says to mark them Custodian first", async () => {
+    legacyBedRowWithNoStay();
     const res = await PUT(putRequest({ bedId: null }), { params });
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body).toMatchObject({ code: "HUT_LEADER_NIGHTS_NOT_STAYED" });
+    expect(body.error).toContain("mark them Custodian (lives on site)");
+    expect(mocks.txAssignmentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("PUT releases the bed when the same request ticks Custodian", async () => {
+    legacyBedRowWithNoStay();
+    const res = await PUT(putRequest({ bedId: null, isCustodian: true }), { params });
 
     expect(res.status).toBe(200);
     expect(mocks.bookingGuestFindMany).not.toHaveBeenCalled();
+    expect(mocks.txAssignmentUpdate.mock.calls[0][0].data).toMatchObject({
+      bedId: null,
+      isCustodian: true,
+    });
+  });
+
+  it("PUT lets an officer tick Custodian on a bed row with the bed module OFF", async () => {
+    legacyBedRowWithNoStay();
+    mocks.isEffectiveModuleEnabled.mockResolvedValue(false);
+    const res = await PUT(putRequest({ isCustodian: true }), { params });
+    expect(res.status).toBe(200);
+  });
+
+  it("PUT leaves changing one bed for another alone (the row stays a custodian occupancy)", async () => {
+    legacyBedRowWithNoStay();
+    const res = await PUT(putRequest({ bedId: "bed-2" }), { params });
+    expect(res.status).toBe(200);
+    expect(mocks.bookingGuestFindMany).not.toHaveBeenCalled();
+  });
+
+  it("POST warns a ticked custodian with no bed who is also a guest here takes two spaces", async () => {
+    const res = await POST(postRequest({ ...CREATE_BODY, isCustodian: true }));
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toMatchObject({
+      custodianBookedWarning: expect.stringMatching(/two spaces/),
+    });
+  });
+
+  it("POST does not give that warning to a custodian with no booking here", async () => {
+    mocks.bookingGuestFindMany.mockResolvedValue([]);
+    const res = await POST(postRequest({ ...CREATE_BODY, isCustodian: true }));
+    await expect(res.json()).resolves.toMatchObject({ custodianBookedWarning: null });
+  });
+
+  it("POST warns that a ticked MINOR custodian with no bed is never named on the lodge screen", async () => {
+    memberRow = { ...memberRow, ageTier: "YOUTH" };
+    const res = await POST(postRequest({ ...CREATE_BODY, isCustodian: true }));
+    await expect(res.json()).resolves.toMatchObject({
+      minorCustodianWarning: expect.stringMatching(/never their name/i),
+    });
   });
 
   it("PUT does not ask a school teacher's row, whose nights are the school booking's", async () => {

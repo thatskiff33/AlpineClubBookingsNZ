@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { HutLeaderAssignmentSource } from "@prisma/client";
+import { isCustodianOccupancy } from "@/lib/custodian-occupancy";
 import {
   findHutLeaderStayRefusal,
   HUT_LEADER_NIGHTS_NOT_STAYED,
@@ -197,9 +199,23 @@ describe("findHutLeaderStayRefusal (#3817)", () => {
     );
   });
 
-  it("counts the member as a booking OWNER with no guest row (the booking's nights)", async () => {
+  it("does NOT count a booking the member OWNS but is not a guest on (owner decision, 3 Oct)", async () => {
+    // The fake still answers `booking.findMany` with the owned booking, so a
+    // reintroduced owner arm would count it and this test would fail.
     const owned: Booking = { ...stay("2026-07-06", "2026-07-08"), memberId: "member-1", guests: [] };
-    expect(await ask(fakeDb([owned]), "2026-07-06", "2026-07-07")).toBeNull();
+    expect(await ask(fakeDb([owned]), "2026-07-06", "2026-07-07")).toEqual(
+      expect.objectContaining({ firstNightNotStayed: "2026-07-06", lastNightStayed: null }),
+    );
+  });
+
+  it("counts an owner who IS a guest on their own booking, through the guest row", async () => {
+    const ownedAndOn: Booking = { ...stay("2026-07-06", "2026-07-08"), memberId: "member-1" };
+    expect(await ask(fakeDb([ownedAndOn]), "2026-07-06", "2026-07-07")).toBeNull();
+  });
+
+  it("names the custodian way out in every refusal", async () => {
+    const refusal = await ask(fakeDb([monToWed]), "2026-07-06", "2026-07-08");
+    expect(refusal?.error).toContain("mark them Custodian (lives on site)");
   });
 
   it("joins two back-to-back stays into one run", async () => {
@@ -248,10 +264,28 @@ describe("stayedNightRunContaining", () => {
 });
 
 describe("isHutLeaderStayCheckExempt (#3817)", () => {
-  it("exempts a held bed or the custodian tick, and nothing else", () => {
-    expect(isHutLeaderStayCheckExempt({ bedId: "bed-1", isCustodian: false })).toBe(true);
-    expect(isHutLeaderStayCheckExempt({ bedId: null, isCustodian: true })).toBe(true);
-    expect(isHutLeaderStayCheckExempt({ bedId: "bed-1", isCustodian: true })).toBe(true);
-    expect(isHutLeaderStayCheckExempt({ bedId: null, isCustodian: false })).toBe(false);
+  const MANUAL = HutLeaderAssignmentSource.MANUAL;
+  it("exempts a held bed, the custodian tick or a school teacher's row, and nothing else", () => {
+    expect(isHutLeaderStayCheckExempt({ bedId: "bed-1", isCustodian: false, source: MANUAL })).toBe(true);
+    expect(isHutLeaderStayCheckExempt({ bedId: null, isCustodian: true, source: MANUAL })).toBe(true);
+    expect(isHutLeaderStayCheckExempt({ bedId: "bed-1", isCustodian: true, source: MANUAL })).toBe(true);
+    expect(isHutLeaderStayCheckExempt({ bedId: null, isCustodian: false, source: MANUAL })).toBe(false);
+    expect(
+      isHutLeaderStayCheckExempt({
+        bedId: null,
+        isCustodian: false,
+        source: HutLeaderAssignmentSource.SCHOOL_BOOKING,
+      }),
+    ).toBe(true);
+  });
+
+  it("is the custodian-occupancy predicate plus the school carve-out", () => {
+    for (const bedId of ["bed-1", null, undefined]) {
+      for (const isCustodian of [true, false, null, undefined]) {
+        expect(isHutLeaderStayCheckExempt({ bedId, isCustodian, source: MANUAL })).toBe(
+          isCustodianOccupancy({ bedId, isCustodian }),
+        );
+      }
+    }
   });
 });

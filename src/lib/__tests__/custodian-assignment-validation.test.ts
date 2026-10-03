@@ -590,4 +590,37 @@ describe("a ticked custodian with no bed (#3817)", () => {
       { bookingId: "booking-hold", nights: ["2026-07-03", "2026-07-04"] },
     ]);
   });
+
+  it("does not re-ask a ticked custodian who now ADDS a bed about nights it already counted", async () => {
+    // F4 (#3817 review): the row is ticked with no bed, so the new bed has no
+    // own hold yet; what it already counted is `previouslyCounted`, honoured
+    // with a bed as well as without.
+    mocks.holdBookingFindMany.mockResolvedValue([
+      {
+        id: "booking-hold",
+        status: "PAID",
+        checkIn: parseDateOnly("2026-07-01"),
+        checkOut: parseDateOnly("2026-07-06"),
+        lodgeId: LODGE,
+        wholeLodgeHold: true,
+        originBookingRequest: null,
+        adminCapacityHoldAt: null,
+      },
+    ]);
+    mocks.hutLeaderAssignmentFindMany.mockResolvedValue([]);
+    await expect(
+      findWholeLodgeHoldAmendments({
+        bedId: "bed-1",
+        assignmentId: "assignment-1",
+        lodgeId: LODGE,
+        startDate: parseDateOnly("2026-07-02"),
+        endDate: parseDateOnly("2026-07-04"),
+        previouslyCounted: {
+          startDate: parseDateOnly("2026-07-02"),
+          endDate: parseDateOnly("2026-07-03"),
+        },
+        db: db(),
+      }),
+    ).resolves.toEqual([{ bookingId: "booking-hold", nights: ["2026-07-04"] }]);
+  });
 });

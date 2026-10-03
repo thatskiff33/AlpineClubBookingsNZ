@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { isMinorAgeTier } from "./display-name-granularity";
 import { prisma } from "./prisma";
 import { formatDateOnly, parseDateOnly } from "./date-only";
@@ -5,12 +6,17 @@ import { lodgeNullTolerantScope } from "./lodges";
 
 /**
  * Custodian occupancy (#2286, epic #2245) — THE single source of truth for
- * "which bed-nights are held by a custodian".
+ * "which bed-nights are held by a custodian" and, since #3817, for "which
+ * assignments are present without a stay" ({@link isCustodianOccupancy}).
  *
  * A `HutLeaderAssignment` with a `bedId` is a **custodian bed hold**: for the
  * night of every covered date the bed is out of the bookable pool and out of
  * the allocatable pool, with no `Booking` and no `BedAllocation` row anywhere.
- * An assignment WITHOUT a bed — including every row
+ * An assignment ticked **"Custodian (lives on site)"** (#3817) takes one space
+ * off capacity on every covered night too, with or without a bed, but holds no
+ * BED, so it reaches the per-night COUNT ({@link findCustodianOccupancies})
+ * and never a bed-identity consumer ({@link findCustodianBedHolds}). An
+ * assignment with neither — including every row
  * `cron-hut-leader-auto-assign.ts` creates — is a role only and has zero
  * capacity effect, exactly as before this feature existed.
  *
@@ -67,6 +73,29 @@ import { lodgeNullTolerantScope } from "./lodges";
 
 type PrismaClient = typeof prisma;
 type CustodianDb = Pick<PrismaClient, "hutLeaderAssignment">;
+
+/**
+ * Is this hut-leader assignment a custodian OCCUPANCY — present at the lodge
+ * on every night it covers without a stay (#3817)? It is when it holds a bed
+ * (`INV-LIFE-062`) or is ticked "Custodian (lives on site)" (owner decision on
+ * #3820, 3 Oct 2026), or both. THE one definition: the stay check's exemption,
+ * the capacity count's loader ({@link CUSTODIAN_OCCUPANCY_WHERE}) and the
+ * minor-custodian warning all ask it here (`INV-SSOT`).
+ */
+export function isCustodianOccupancy(assignment: {
+  bedId: string | null | undefined;
+  isCustodian: boolean | null | undefined;
+}): boolean {
+  return Boolean(assignment.bedId) || assignment.isCustodian === true;
+}
+
+/**
+ * {@link isCustodianOccupancy} as a Prisma filter. Spread it into a
+ * `hutLeaderAssignment` where clause that has no `OR` of its own.
+ */
+export const CUSTODIAN_OCCUPANCY_WHERE = {
+  OR: [{ bedId: { not: null } }, { isCustodian: true }],
+} satisfies Prisma.HutLeaderAssignmentWhereInput;
 
 /** A bed-holding hut-leader assignment, resolved for capacity/allocation use. */
 export interface CustodianBedHold {
@@ -170,10 +199,17 @@ export function holdCoversNight(
  *   already holds, because that one left the set when it was first created.
  *
  * The capacity engines work in per-night COUNTS rather than bed sets, so they
- * subtract the same fact through the same loaded holds in its count shape —
- * `buildCustodianNightIndex` / `buildLodgeCustodianNightCounter` above, fed to
- * `wholeLodgeHoldRepresentedBeds` in `capacity.ts`. One source
- * (`findCustodianBedHolds` + {@link holdCoversNight}), two views of it; never a
+ * subtract the custodians in count shape — `buildCustodianNightIndex` /
+ * `buildLodgeCustodianNightCounter`, fed to `wholeLodgeHoldRepresentedBeds` in
+ * `capacity.ts`. Two loaders, one per question, both keyed by the same
+ * inclusive {@link holdCoversNight}: the COUNT reads
+ * {@link findCustodianOccupancies} (a held bed or the custodian tick, #3817),
+ * the BED views read {@link findCustodianBedHolds} (a held bed only). A ticked
+ * custodian with no bed is therefore in the count and in no bed set: on a
+ * whole-lodge-held night the count says the hold represents one bed fewer,
+ * while the planner, which has no bed to skip, still emits every active bed
+ * for the hold. No admission number moves (the held night is pinned to the
+ * full lodge either way); it is a stated limit in `INV-CAP-038`. Never a
  * second inventory of which beds a custodian has.
  *
  * No lodge argument: a bed belongs to exactly one lodge and `bedId` is unique,
@@ -196,8 +232,10 @@ export function isCustodianHeldBedNight(
  * `[checkIn, checkOut)` window they already hold; the inclusive-endDate
  * semantics are handled here.
  *
- * Only rows with a bed are returned — a bed-less assignment is not an
- * occupancy and must never influence capacity or allocation.
+ * Only rows with a bed are returned: this answers "which BED is held", for
+ * the allocation and bed-identity consumers. A bedless assignment holds no
+ * bed and never reaches them. A bedless custodian (the #3817 tick) still takes
+ * a capacity space, through {@link findCustodianOccupancies}, not this.
  */
 export async function findCustodianBedHolds(input: {
   lodgeId?: string;
@@ -215,8 +253,8 @@ export async function findCustodianBedHolds(input: {
 
   const rows = await db.hutLeaderAssignment.findMany({
     where: {
-      // `not: null` is the whole feature gate: a role-only assignment can
-      // never reach a capacity or allocation consumer.
+      // `not: null` is the whole feature gate: a bedless assignment never
+      // reaches a bed-identity consumer (the count is a separate loader).
       bedId: input.bedIds ? { in: input.bedIds } : { not: null },
       // Inclusive endDate vs exclusive window end, as documented above.
       startDate: { lt: toExclusive },
@@ -309,7 +347,7 @@ export async function findCustodianOccupancies(input: {
   const rows = await db.hutLeaderAssignment.findMany({
     where: {
       // A role-only, unticked assignment still never reaches capacity.
-      OR: [{ bedId: { not: null } }, { isCustodian: true }],
+      ...CUSTODIAN_OCCUPANCY_WHERE,
       startDate: { lt: toExclusive },
       endDate: { gte: from },
       ...lodgeNullTolerantScope(input.lodgeId),

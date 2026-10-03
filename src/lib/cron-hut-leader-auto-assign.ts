@@ -6,7 +6,10 @@ import {
   parseDateOnly,
 } from "@/lib/date-only";
 import { getGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
-import { stayedNightRunContaining } from "@/lib/hut-leader-stayed-nights";
+import {
+  hutLeaderStayBookingWhere,
+  stayedNightRunContaining,
+} from "@/lib/hut-leader-stayed-nights";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { lodgeNullTolerantScope } from "./lodges";
@@ -102,15 +105,16 @@ export async function autoAssignHutLeaders(): Promise<{
 
       if (existingAssignment) continue;
 
-      // Find distinct adult members with PAID bookings for this date at this
-      // lodge. Scoped, so the "exactly one adult member" test below counts the
-      // people actually at THIS lodge rather than pooling every lodge's guests.
+      // Find distinct adult members staying this night at this lodge. Scoped,
+      // so the "exactly one adult member" test below counts the people actually
+      // at THIS lodge rather than pooling every lodge's guests. The booking
+      // filter is THE hut-leader stay definition the manual create/edit check
+      // and the eligible-members list use (#3817, `INV-SSOT`): an operational
+      // stay (PAID or COMPLETED; a booking still ahead of its check-out is
+      // PAID, so COMPLETED adds nobody here) and never a soft-deleted booking.
       const bookingsForDate = await prisma.booking.findMany({
         where: {
-          status: "PAID",
-          checkIn: { lte: day },
-          checkOut: { gt: day },
-          ...lodgeNullTolerantScope(lodge.id),
+          ...hutLeaderStayBookingWhere({ lodgeId: lodge.id, rangeStart: day, rangeEnd: day }),
           guests: {
             some: {
               ageTier: "ADULT",

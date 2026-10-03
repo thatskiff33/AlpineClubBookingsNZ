@@ -23,7 +23,7 @@ import {
 } from "@/lib/custodian-assignment";
 import { validateCustodianBedHoldAndHoldAmendment } from "@/lib/hut-leader-assignment-service";
 import { custodianBedHoldErrorResponse } from "@/lib/custodian-assignment-routes";
-import { isMinorAgeTier } from "@/lib/custodian-occupancy";
+import { isCustodianOccupancy, isMinorAgeTier } from "@/lib/custodian-occupancy";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { HutLeaderAssignmentSource } from "@prisma/client";
 import {
@@ -32,6 +32,7 @@ import {
   hutLeaderStayRefusalBody,
   HutLeaderNightsNotStayedError,
   isHutLeaderStayCheckExempt,
+  loadHutLeaderStayedNightKeys,
 } from "@/lib/hut-leader-stayed-nights";
 
 const createSchema = z.object({
@@ -207,7 +208,11 @@ export async function POST(req: NextRequest) {
   // stays here; a held bed or the custodian tick exempts it (INV-DATE-030).
   // Re-asked under the lock.
   const isCustodian = parsed.data.isCustodian === true;
-  const stayExempt = isHutLeaderStayCheckExempt({ bedId, isCustodian });
+  const stayExempt = isHutLeaderStayCheckExempt({
+    bedId,
+    isCustodian,
+    source: HutLeaderAssignmentSource.MANUAL,
+  });
   const stayAsk = { memberId: member.id, lodgeId, startDate: newStart, endDate: newEnd };
   const earlyStay = stayExempt ? null : await findHutLeaderStayRefusal(prisma, stayAsk);
   if (earlyStay) return NextResponse.json(hutLeaderStayRefusalBody(earlyStay), { status: 409 });
@@ -363,6 +368,19 @@ export async function POST(req: NextRequest) {
       return { assignment, member: lockedMember, amendments };
     });
     const { assignment } = created;
+    // #3817 stated limit: a ticked custodian with no bed who is ALSO a guest on
+    // a booking here takes two spaces on those nights (custodian + guest), so
+    // the officer is told rather than left to find a lodge full one bed early.
+    // Advisory, after commit: a failed read must not turn the create into a 500.
+    const bookedNights = isCustodian && !bedId
+      ? await loadHutLeaderStayedNightKeys(prisma, {
+          memberId: member.id,
+          lodgeId,
+          rangeStart: newStart,
+          rangeEnd: newEnd,
+        }).catch(() => [])
+      : [];
+    const bookedAsGuestToo = bookedNights.length > 0;
 
     let emailSent = true;
     try {
@@ -391,14 +409,17 @@ export async function POST(req: NextRequest) {
       {
         id: assignment.id,
         emailSent,
-        // #2286 privacy guard: a minor holding a bed is never individually
+        // #2286 privacy guard: a minor custodian (bed or tick, #3817) is never individually
         // named on the lobby TV (the display contract forbids it at every
         // granularity), so the screen shows the role word alone. Tell the admin
         // now rather than letting them expect a name that will never appear.
         minorCustodianWarning:
-          bedId && isMinorAgeTier(created.member.ageTier)
+          isCustodianOccupancy({ bedId, isCustodian }) && isMinorAgeTier(created.member.ageTier)
             ? "This member is a minor, so the lodge screen will show the custodian role only and never their name."
             : null,
+        custodianBookedWarning: bookedAsGuestToo
+          ? "This custodian is also a guest on a booking at this lodge on some of these nights, so they take two spaces on those nights. Remove them from the booking if they sleep in their own quarters."
+          : null,
       },
       { status: 201 }
     );

@@ -171,11 +171,13 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
       ],
       [
         "src/app/api/admin/hut-leaders/[id]/route.ts",
-        "(Boolean(requestedBedId) || (parsed.data.isCustodian ?? existing.isCustodian));",
+        "const amendRequested = parsed.data.amendOverlappingHolds === true && (Boolean(requestedBedId) || (parsed.data.isCustodian ?? existing.isCustodian));",
       ],
     ] as const) {
+      // Whitespace-normalised, so a line break inside the expression cannot
+      // drop a conjunct out of the pinned literal (#3817 review).
       expect(
-        source(route),
+        source(route).replace(/\s+/g, " "),
         `${route}: the global cohort key must be gated on the officer's acceptance AND on a bed being involved (INV-LOCK-002, INV-CAP-038)`,
       ).toContain(gate);
     }
@@ -222,7 +224,10 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
     }
     // Every lodge-scoped read in the job carries the scope; a club-wide one
     // suppressed valid auto-assignments at other lodges and raced the routes.
-    expect(cron.match(/lodgeNullTolerantScope\(lodge\.id\)/g) ?? []).toHaveLength(3);
+    // #3817: the booking read is scoped through the shared stay definition,
+    // which carries the same lodge, so two literal scopes plus that one.
+    expect(cron.match(/lodgeNullTolerantScope\(lodge\.id\)/g) ?? []).toHaveLength(2);
+    expect(cron).toContain("...hutLeaderStayBookingWhere({ lodgeId: lodge.id,");
     // And the per-lodge decision replaced the club-wide adult count.
     // #2915's loop decides per (lodge, night); the count is per lodge because
     // the booking read above it is scoped to `lodge.id`.

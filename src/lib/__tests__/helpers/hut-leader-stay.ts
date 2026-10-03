@@ -3,9 +3,9 @@
  *
  * The manual create and edit refuse a role-only assignment that claims a night
  * the member is not staying (`findHutLeaderStayRefusal`), which reads
- * `bookingGuest.findMany` (the member's guest rows) and `booking.findMany` (the
- * bookings they own). A route test about something else — overlap, locking,
- * audit — answers those reads with a stay covering the assignment's nights.
+ * `bookingGuest.findMany` (the member's guest rows; owning a booking is not a
+ * stay). A route test about something else — overlap, locking, audit —
+ * answers that read with a stay covering the assignment's nights.
  */
 
 function storedDay(day: string): Date {

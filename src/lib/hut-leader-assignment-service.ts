@@ -7,6 +7,7 @@ import {
   type WholeLodgeHoldAmendment,
 } from "@/lib/custodian-assignment";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { isCustodianOccupancy } from "@/lib/custodian-occupancy";
 import { findHutLeaderOverlapRefusal } from "@/lib/hut-leader-overlap-guard";
 import { recordHutLeaderAssignmentAudit } from "@/lib/hut-leader-assignment-audit";
 import { prisma } from "@/lib/prisma";
@@ -15,7 +16,6 @@ import {
   hutLeaderStayRefusalBody,
   isHutLeaderStayCheckExempt,
 } from "@/lib/hut-leader-stayed-nights";
-import { HutLeaderAssignmentSource } from "@prisma/client";
 
 /**
  * The two hut-leader assignment writes that decide something under a lock: the
@@ -142,23 +142,22 @@ export async function applyHutLeaderAssignmentEditUnderLocks(input: {
     if (overlap) return { status: 409, error: overlap.error };
 
     // #3817 (owner decision "Block it outright"): an edit that moves the nights
-    // or the lodge, or takes the custodian tick away, may not leave a role-only,
-    // non-custodian row claiming a night the member is not staying there. Asked
-    // only when the claim moves, so a bed-only change (Release bed / Change bed)
-    // keeps working on any row. Not asked of a row holding a bed or ticked
-    // custodian (`isHutLeaderStayCheckExempt`), nor of a school teacher's row,
-    // whose nights are the school booking's and whose teacher is not a guest.
+    // or the lodge, or takes away what made the row present without a stay —
+    // the custodian tick OR the held bed (Release bed) — may not leave a
+    // role-only, non-custodian row claiming a night the member is not staying
+    // there. Asked only when the claim moves, so changing one bed for another
+    // keeps working on any row. Not asked of a row that stays exempt
+    // (`isHutLeaderStayCheckExempt`: a custodian occupancy, or a school
+    // teacher's row). The refusal tells the officer to mark the member
+    // Custodian first, which the same PUT can do.
     const finalIsCustodian = updateData.isCustodian ?? locked.isCustodian;
+    const finalRow = { bedId: nextBedId, isCustodian: finalIsCustodian, source: locked.source };
     const claimMoves =
       finalStart.getTime() !== locked.startDate.getTime() ||
       finalEnd.getTime() !== locked.endDate.getTime() ||
       finalLodgeId !== locked.lodgeId ||
-      (locked.isCustodian && !finalIsCustodian);
-    if (
-      claimMoves &&
-      !isHutLeaderStayCheckExempt({ bedId: nextBedId, isCustodian: finalIsCustodian }) &&
-      locked.source !== HutLeaderAssignmentSource.SCHOOL_BOOKING
-    ) {
+      isHutLeaderStayCheckExempt(locked);
+    if (claimMoves && !isHutLeaderStayCheckExempt(finalRow)) {
       const stayRefusal = await findHutLeaderStayRefusal(tx, {
         memberId: locked.memberId,
         lodgeId: finalLodgeId,
@@ -174,11 +173,10 @@ export async function applyHutLeaderAssignmentEditUnderLocks(input: {
     // A held bed or the custodian tick takes a space off capacity (#3817), so
     // either brings the capacity re-check under this lodge key.
     let amendments: WholeLodgeHoldAmendment[] = [];
-    if (nextBedId || finalIsCustodian) {
-      const previouslyCounted =
-        locked.bedId || locked.isCustodian
-          ? { startDate: locked.startDate, endDate: locked.endDate }
-          : null;
+    if (isCustodianOccupancy(finalRow)) {
+      const previouslyCounted = isCustodianOccupancy(locked)
+        ? { startDate: locked.startDate, endDate: locked.endDate }
+        : null;
       amendments = await validateCustodianBedHoldAndHoldAmendment(tx, {
         bedId: nextBedId ?? null,
         isCustodian: finalIsCustodian,

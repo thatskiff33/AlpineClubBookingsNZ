@@ -42,6 +42,7 @@ vi.mock("./logger", () => ({
 }));
 
 import { autoAssignHutLeaders } from "@/lib/cron-hut-leader-auto-assign";
+import { hutLeaderStayBookingWhere } from "@/lib/hut-leader-stayed-nights";
 
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 const iso = (value: Date) => value.toISOString().slice(0, 10);
@@ -168,17 +169,47 @@ describe("autoAssignHutLeaders writes stayed nights (#3817)", () => {
     expect(rows.some((r) => r.startDate <= wednesday && r.endDate >= wednesday)).toBe(false);
   });
 
-  it("starts at the club's today, not the day before (date-only days)", async () => {
-    // A stay whose only night is yesterday must not be assigned.
-    withGuests([guest("m-past", "2026-06-30", "2026-07-01")]);
+  it("reads bookings through THE hut-leader stay definition: no soft-deleted booking (#3817)", async () => {
+    withGuests([guest("m-1", "2026-07-01", "2026-07-03")]);
     mockLookahead.mockResolvedValue(0);
-
     await autoAssignHutLeaders();
-
-    expect(written()).toEqual([]);
-    const askedDays = mockPrisma.hutLeaderAssignment.findFirst.mock.calls.map(([args]) =>
-      iso((args as { where: { startDate: { lte: Date } } }).where.startDate.lte),
+    const [{ where }] = mockPrisma.booking.findMany.mock.calls[0] as [
+      { where: Record<string, unknown> },
+    ];
+    expect(where).toMatchObject(
+      hutLeaderStayBookingWhere({
+        lodgeId: "lodge-a",
+        rangeStart: day("2026-07-01"),
+        rangeEnd: day("2026-07-01"),
+      }) as Record<string, unknown>,
     );
-    expect(askedDays).toEqual(["2026-07-01"]);
+    expect(where).toMatchObject({ deletedAt: null });
+  });
+
+  it("starts at the club's today, not the day before (date-only days)", async () => {
+    // The defect this pins (date-fns `eachDayOfInterval` returning LOCAL
+    // midnights) shows only when the process zone is ahead of UTC, and CI runs
+    // in UTC, so the zone is pinned here or the test cannot fail (#3817
+    // review). Node re-reads `process.env.TZ` on assignment; restored after.
+    const previousTz = process.env.TZ;
+    process.env.TZ = "Pacific/Auckland";
+    try {
+      // A stay whose only night is yesterday must not be assigned.
+      withGuests([guest("m-past", "2026-06-30", "2026-07-01")]);
+      mockLookahead.mockResolvedValue(0);
+
+      await autoAssignHutLeaders();
+
+      expect(written()).toEqual([]);
+      const asked = mockPrisma.hutLeaderAssignment.findFirst.mock.calls.map(
+        ([args]) => (args as { where: { startDate: { lte: Date } } }).where.startDate.lte,
+      );
+      expect(asked.map(iso)).toEqual(["2026-07-01"]);
+      // Every asked day is a stored calendar day: a UTC-midnight instant.
+      for (const instant of asked) expect(instant.getTime() % 86_400_000).toBe(0);
+    } finally {
+      if (previousTz === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTz;
+    }
   });
 });

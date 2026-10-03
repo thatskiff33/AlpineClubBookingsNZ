@@ -1,7 +1,8 @@
-import type { Prisma } from "@prisma/client";
+import { HutLeaderAssignmentSource, type Prisma } from "@prisma/client";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 import { getGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
+import { isCustodianOccupancy } from "@/lib/custodian-occupancy";
 import {
   addCalendarDays,
   calendarDateOfDateOnlyInstant,
@@ -19,10 +20,11 @@ import {
  *
  * - a booking at THIS lodge, not soft-deleted, whose status is an operational
  *   stay (PAID or COMPLETED — a cancelled stay is not a stay), and
- * - either a guest row for the member whose own consent does not leave them
- *   operationally absent (owner decision D-12, #2307), or the member OWNS the
- *   booking (their own guest row's nights when they have one, else the
- *   booking's nights);
+ * - a guest row for the member on it whose own consent does not leave them
+ *   operationally absent (owner decision D-12, #2307). Owning a booking is NOT
+ *   a stay: a member counts only on nights they are a guest (owner decision on
+ *   #3820, 3 Oct 2026, "Only if they're a guest"), which is also what the
+ *   nightly auto-assign has always counted;
  * - nights come from the night model (`getGuestBedNightKeys`, `INV-DATE-020`),
  *   so a split stay's gap nights are absences and a check-out morning is never
  *   a night.
@@ -41,9 +43,10 @@ export type HutLeaderMemberStay = {
  * The bookings whose nights count as a member's stay at `lodgeId` overlapping a
  * range — THE one definition of "a booking that is a stay" for hut leaders
  * (`INV-SSOT`). The manual create/edit stay check, the eligible-members
- * suggestions and the presence-aware coverage reader all route here, so they
- * cannot disagree about which bookings count. A soft-deleted booking is not a
- * stay, whatever its status.
+ * suggestions and the nightly auto-assign's candidate query route here, so
+ * they cannot disagree about which bookings count. The presence-aware coverage
+ * reader (#3818) is meant to route here too and does not yet. A soft-deleted
+ * booking is not a stay, whatever its status.
  */
 export function hutLeaderStayBookingWhere(input: {
   lodgeId: string;
@@ -96,7 +99,7 @@ export function stayedNightRunContaining(
   return { first, last };
 }
 
-type StayDb = Pick<Prisma.TransactionClient, "bookingGuest" | "booking">;
+type StayDb = Pick<Prisma.TransactionClient, "bookingGuest">;
 
 /**
  * The member's stayed nights at `lodgeId` that fall inside
@@ -108,57 +111,29 @@ export async function loadHutLeaderStayedNightKeys(
   db: StayDb,
   input: { memberId: string; lodgeId: string; rangeStart: Date; rangeEnd: Date },
 ): Promise<string[]> {
-  const bookingWhere = hutLeaderStayBookingWhere(input);
-  const [guestRows, ownedBookings] = await Promise.all([
-    db.bookingGuest.findMany({
-      where: {
-        memberId: input.memberId,
-        ...OPERATIONALLY_PRESENT_GUEST_WHERE,
-        booking: bookingWhere,
-      },
-      select: {
-        stayStart: true,
-        stayEnd: true,
-        nights: { select: { stayDate: true } },
-        booking: { select: { checkIn: true, checkOut: true } },
-      },
-    }),
-    db.booking.findMany({
-      where: { ...bookingWhere, memberId: input.memberId },
-      select: {
-        checkIn: true,
-        checkOut: true,
-        guests: {
-          where: { memberId: input.memberId },
-          select: {
-            stayStart: true,
-            stayEnd: true,
-            nights: { select: { stayDate: true } },
-          },
-        },
-      },
-    }),
-  ]);
+  // Guest rows only: a booking the member owns but is not a guest on is not
+  // a stay (owner decision on #3820, 3 Oct 2026).
+  const guestRows = await db.bookingGuest.findMany({
+    where: {
+      memberId: input.memberId,
+      ...OPERATIONALLY_PRESENT_GUEST_WHERE,
+      booking: hutLeaderStayBookingWhere(input),
+    },
+    select: {
+      stayStart: true,
+      stayEnd: true,
+      nights: { select: { stayDate: true } },
+      booking: { select: { checkIn: true, checkOut: true } },
+    },
+  });
 
-  const stays: HutLeaderMemberStay[] = [
-    ...guestRows.map((guest) => ({
-      checkIn: guest.booking.checkIn,
-      checkOut: guest.booking.checkOut,
-      stayStart: guest.stayStart,
-      stayEnd: guest.stayEnd,
-      nights: guest.nights,
-    })),
-    ...ownedBookings.map((booking) => {
-      const ownGuest = booking.guests[0];
-      return {
-        checkIn: booking.checkIn,
-        checkOut: booking.checkOut,
-        stayStart: ownGuest?.stayStart,
-        stayEnd: ownGuest?.stayEnd,
-        nights: ownGuest?.nights,
-      };
-    }),
-  ];
+  const stays: HutLeaderMemberStay[] = guestRows.map((guest) => ({
+    checkIn: guest.booking.checkIn,
+    checkOut: guest.booking.checkOut,
+    stayStart: guest.stayStart,
+    stayEnd: guest.stayEnd,
+    nights: guest.nights,
+  }));
 
   const from = calendarDateOfDateOnlyInstant(input.rangeStart);
   const to = calendarDateOfDateOnlyInstant(input.rangeEnd);
@@ -166,6 +141,14 @@ export async function loadHutLeaderStayedNightKeys(
 }
 
 export const HUT_LEADER_NIGHTS_NOT_STAYED = "HUT_LEADER_NIGHTS_NOT_STAYED";
+
+/**
+ * The way out the refusal names: a member who lives on site is marked
+ * custodian (the form's tick on a new assignment, the row's Custodian control
+ * on an existing one) and is then present without a stay.
+ */
+const HUT_LEADER_CUSTODIAN_HINT =
+  "If they live on site, mark them Custodian (lives on site) first.";
 
 export type HutLeaderStayRefusal = {
   code: typeof HUT_LEADER_NIGHTS_NOT_STAYED;
@@ -181,17 +164,23 @@ export type HutLeaderStayRefusal = {
 };
 
 /**
- * Is this assignment exempt from the stay check? A bed-holding assignment is a
- * custodian occupancy whose held bed is the stay (`INV-LIFE-062`), and an
- * assignment ticked "Custodian (lives on site)" counts as present on every
- * night it covers (owner decision on #3820, 3 Oct 2026). Everything else —
- * a role-only, non-custodian assignment — must be stayed.
+ * Is this assignment exempt from the stay check? A custodian occupancy — one
+ * holding a bed or ticked "Custodian (lives on site)" — is present on every
+ * night it covers without a stay ({@link isCustodianOccupancy}, `INV-LIFE-062`,
+ * owner decision on #3820, 3 Oct 2026). A school teacher's row is exempt too:
+ * its nights are the school booking's and its teacher is not a guest (#2926;
+ * lane C owns who may lead those nights). Everything else — a role-only,
+ * non-custodian assignment — must be stayed.
  */
 export function isHutLeaderStayCheckExempt(assignment: {
   bedId: string | null | undefined;
   isCustodian: boolean | null | undefined;
+  source: HutLeaderAssignmentSource;
 }): boolean {
-  return Boolean(assignment.bedId) || assignment.isCustodian === true;
+  return (
+    isCustodianOccupancy(assignment) ||
+    assignment.source === HutLeaderAssignmentSource.SCHOOL_BOOKING
+  );
 }
 
 /**
@@ -223,9 +212,10 @@ export async function findHutLeaderStayRefusal(
 
   const run = stayedNightRunContaining(stayed, startKey);
   const lastNightStayed = run?.last ?? null;
+  const reason = `The member is not staying at this lodge on the night of ${firstNightNotStayed}, so they cannot be hut leader for it.`;
   const error = lastNightStayed
-    ? `The member is not staying at this lodge on the night of ${firstNightNotStayed}, so they cannot be hut leader for it. Their last night stayed from the start date is ${lastNightStayed}.`
-    : `The member is not staying at this lodge on the night of ${firstNightNotStayed}, so they cannot be hut leader for it. A hut leader must be staying every night they cover.`;
+    ? `${reason} Their last night stayed from the start date is ${lastNightStayed}. ${HUT_LEADER_CUSTODIAN_HINT}`
+    : `${reason} A hut leader must be staying every night they cover. ${HUT_LEADER_CUSTODIAN_HINT}`;
   return {
     code: HUT_LEADER_NIGHTS_NOT_STAYED,
     error,

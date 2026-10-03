@@ -141,10 +141,11 @@ export async function PUT(
   if (bedIdProvided) {
     updateData.bedId = parsed.data.bedId ?? null;
   }
-  // Module gate on the pre-lock view: this is a feature-availability refusal
-  // aimed at what the operator ASKED for, not a capacity decision.
+  // Module gate: a feature-availability refusal aimed at what the operator
+  // ASKED for — setting a bed — so a module-off officer can still tick
+  // Custodian on a legacy bed row and then release its bed (#3817).
   const requestedBedId = bedIdProvided ? parsed.data.bedId : existing.bedId;
-  if (requestedBedId && !(await isEffectiveModuleEnabled("bedAllocation"))) {
+  if (parsed.data.bedId && !(await isEffectiveModuleEnabled("bedAllocation"))) {
     return NextResponse.json(
       {
         error:
