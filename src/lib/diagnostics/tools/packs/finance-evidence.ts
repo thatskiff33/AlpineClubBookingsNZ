@@ -128,7 +128,10 @@ import {
   deriveBookingAppliedCreditCents,
   getMemberCreditBalance,
 } from "@/lib/member-credit";
-import { getPaymentDisplayStatus } from "@/lib/payment-status-display";
+import {
+  getPaymentDisplayStatus,
+  type CancellationCreditEntry,
+} from "@/lib/payment-status-display";
 import { readBookingInvoiceEvidence } from "@/lib/xero-booking-invoice-evidence";
 
 import type { DiagnosticsToolRawRow } from "../define";
@@ -333,14 +336,7 @@ const CANCELLATION_CREDIT_CEILING = 50;
 async function readCancellationCredits(
   tx: Prisma.TransactionClient,
   bookingId: string,
-): Promise<
-  {
-    amountCents: number;
-    description: string | null;
-    type: string;
-    restoredFromBookingId: string | null;
-  }[]
-> {
+): Promise<(CancellationCreditEntry & { description: string | null; type: string })[]> {
   const rows = await tx.memberCredit.findMany({
     where: { sourceBookingId: bookingId },
     select: { amountCents: true, description: true, type: true, restoredFromBookingId: true },
@@ -351,12 +347,7 @@ async function readCancellationCredits(
       "Booking finance state: more credit rows than this source can classify from.",
     );
   }
-  return rows.map((row) => ({
-    amountCents: row.amountCents,
-    description: row.description,
-    type: String(row.type),
-    restoredFromBookingId: row.restoredFromBookingId,
-  }));
+  return rows.map((row) => ({ ...row, type: String(row.type) }));
 }
 
 /**
