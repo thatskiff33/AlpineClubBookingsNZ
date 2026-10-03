@@ -1700,6 +1700,13 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     // ...and no second Xero document is raised for it.
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
+    // Nor is the officer told the invoice needs correcting by hand: the edit's
+    // own credit note already corrected it.
+    const { default: logger } = await import("@/lib/logger");
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining("must be corrected manually"),
+    );
   });
 
   it("MUTATION: a DISMISSED hand-back raises no refund note even with an issued invoice", async () => {
