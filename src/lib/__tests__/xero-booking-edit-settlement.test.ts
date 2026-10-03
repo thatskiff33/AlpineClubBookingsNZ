@@ -208,6 +208,7 @@ describe("classifyXeroBookingEditSettlement", () => {
     expect(decision.financialAction).toEqual({
       type: "modification-account-credit-note",
       refundAmountCents: 3750,
+      allocatedGiveBackCents: 0,
       reason: expect.stringContaining("account credit"),
     });
   });
@@ -426,5 +427,41 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
       expect.objectContaining({ createdByMemberId: "admin_1" }),
     );
     expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#3809): a credit election beside applied credit given back queues the unallocated note AND an allocated note for the give-back", async () => {
+    await queueXeroBookingEditSettlement({
+      bookingId: "booking_4",
+      bookingModificationId: "mod_4",
+      createdByMemberId: "admin_1",
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -15000,
+      settlementMethod: "credit",
+      settlementAmountCents: 10000,
+      appliedCreditGiveBackCents: 5000,
+      datesChanged: false,
+    });
+
+    expect(mocks.enqueueXeroModificationAccountCreditNoteOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 10000, bookingModificationId: "mod_4" }),
+      expect.anything(),
+    );
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 5000, bookingModificationId: "mod_4", refundMethod: "account-credit" }),
+      expect.anything(),
+    );
+  });
+
+  it("(#3809) applied credit given back with nothing else returned is one allocated note worded as account credit", () => {
+    expect(
+      classifyXeroBookingEditSettlement({
+        hasIssuedXeroInvoice: true,
+        originalPaymentStatus: "SUCCEEDED",
+        priceDiffCents: -5000,
+        settlementAmountCents: 0,
+        appliedCreditGiveBackCents: 500,
+      }).financialAction,
+    ).toMatchObject({ type: "modification-credit-note", refundAmountCents: 500, refundMethod: "account-credit" });
   });
 });

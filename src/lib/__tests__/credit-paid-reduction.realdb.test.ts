@@ -5,7 +5,7 @@
  * give-back (`giveBackAppliedCredit`), its Xero deallocation step included.
  *
  * Through the REAL guest removal (`removeBookingGuestInTransaction`, the
- * reduction door every removal takes) and the REAL `cancelBooking`, on real
+ * reduction door every removal takes, and its Xero leg) and the REAL `cancelBooking`, on real
  * rows: the member-credit ledger, the booking ledger, the queued Xero
  * documents. The lock-order case is FORCED, not raced: a third connection holds
  * the member's credit-ledger key, PostgreSQL reports the removal queued behind
@@ -46,6 +46,11 @@ const CHECK_OUT = new Date("2026-08-03T00:00:00.000Z");
 const GUESTS = [
   { id: STAYING_GUEST_ID, firstName: "Staying", nightCents: 7_500 },
   { id: LEAVING_GUEST_ID, firstName: "Leaving", nightCents: 2_500 },
+];
+/** The card-and-credit case: the $150 guest leaves, a $150 reduction. */
+const MIXED_GUESTS = [
+  { id: STAYING_GUEST_ID, firstName: "Staying", nightCents: 2_500 },
+  { id: LEAVING_GUEST_ID, firstName: "Leaving", nightCents: 7_500 },
 ];
 
 const TIERS = [
@@ -104,7 +109,9 @@ let observerClient: PrismaClient;
      * booking whose credit is allocated against its Xero invoice;
      * `card-invoiced` is the card path's, whose credit never was (#3836).
      */
-    async function creditPaidBooking(shape: "ib-allocated" | "card-invoiced", rule: (typeof TIERS)[number]["rule"]) {
+    async function creditPaidBooking(shape: "ib-allocated" | "card-invoiced" | "card-and-credit", rule: (typeof TIERS)[number]["rule"]) {
+      const mixed = shape === "card-and-credit";
+      const appliedCents = mixed ? 10_000 : 20_000;
       await deleteFixtures();
       await prisma.member.create({
         data: { id: MEMBER_ID, email: "race-3809@example.invalid", passwordHash: "x", firstName: "Credit", lastName: "Payer", role: "USER", ageTier: "ADULT" },
@@ -114,7 +121,7 @@ let observerClient: PrismaClient;
       await prisma.booking.create({
         data: { id: BOOKING_ID, memberId: MEMBER_ID, lodgeId: LODGE_ID, checkIn: CHECK_IN, checkOut: CHECK_OUT, status: "PAID", totalPriceCents: 20_000, finalPriceCents: 20_000 },
       });
-      for (const guest of GUESTS) {
+      for (const guest of mixed ? MIXED_GUESTS : GUESTS) {
         await prisma.bookingGuest.create({
           data: {
             id: guest.id, bookingId: BOOKING_ID, firstName: guest.firstName, lastName: "Guest", ageTier: "ADULT",
@@ -135,55 +142,44 @@ let observerClient: PrismaClient;
       }
       await prisma.payment.create({
         data: {
-          id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: 0, status: "SUCCEEDED", creditAppliedCents: 20_000,
+          id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: 20_000 - appliedCents, status: "SUCCEEDED", creditAppliedCents: appliedCents,
           source: shape === "ib-allocated" ? "INTERNET_BANKING" : "STRIPE", xeroInvoiceId: XERO_INVOICE_ID,
         },
       });
       await prisma.memberCredit.create({
         data: {
-          memberId: MEMBER_ID, amountCents: 20_000, type: "ADMIN_ADJUSTMENT", description: "race 3809 opening balance",
+          memberId: MEMBER_ID, amountCents: appliedCents, type: "ADMIN_ADJUSTMENT", description: "race 3809 opening balance",
           ...(shape === "ib-allocated" ? { xeroCreditNoteId: CREDIT_NOTE_ID } : {}),
         },
       });
-      await prisma.$transaction((tx) => credit.applyCreditToBooking(MEMBER_ID, 20_000, BOOKING_ID, tx, CLUB_FORMAT_TEST));
+      await prisma.$transaction((tx) => credit.applyCreditToBooking(MEMBER_ID, appliedCents, BOOKING_ID, tx, CLUB_FORMAT_TEST));
       if (shape === "ib-allocated") {
         await prisma.memberCredit.updateMany({ where: { appliedToBookingId: BOOKING_ID, type: "BOOKING_APPLIED" }, data: { xeroCreditNoteId: CREDIT_NOTE_ID } });
         const { repairLegacyAppliedCreditNoteAllocationsForBooking } = await import("@/lib/xero-applied-credit-allocation-repair");
         await prisma.$transaction((tx) => repairLegacyAppliedCreditNoteAllocationsForBooking(BOOKING_ID, XERO_INVOICE_ID, tx, CLUB_FORMAT_TEST));
       }
       expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(0);
-      expect(await owed()).toBe(0);
+      if (!mixed) expect(await owed()).toBe(0);
     }
 
     const ledgerLines = () => prisma.bookingLedgerLine.findMany({ where: { bookingId: BOOKING_ID } });
     const owed = async () => ledger.bookingLedgerBalance(await ledgerLines()).owedCents;
 
     /** The REAL removal of the $50 guest, then the Xero leg exactly as the DELETE route queues it. */
-    async function removeLeavingGuest() {
+    async function removeLeavingGuest(settlementMethod?: "card" | "credit") {
       const { removeBookingGuestInTransaction } = await import("@/lib/booking-guest-removal-service");
       const result = await prisma.$transaction(
         (tx) => removeBookingGuestInTransaction({
           tx, bookingId: BOOKING_ID, guestId: LEAVING_GUEST_ID, actorMemberId: MEMBER_ID, actorRole: "ADMIN", today: TODAY, format: CLUB_FORMAT_TEST,
+          ...(settlementMethod ? { settlementMethod } : {}),
         }),
         { maxWait: 10_000, timeout: 20_000 },
       );
-      const { queueXeroBookingEditSettlement } = await import("@/lib/xero-booking-edit-settlement");
-      await queueXeroBookingEditSettlement({
-        bookingId: BOOKING_ID,
-        bookingModificationId: result.bookingModificationId,
+      // The DELETE route's own Xero leg, shared with the consent doors.
+      const { guestRemovalXeroSettlement, queueGuestRemovalXeroSettlement } = await import("@/lib/booking-guest-removal-xero");
+      await queueGuestRemovalXeroSettlement(guestRemovalXeroSettlement(result), {
         createdByMemberId: MEMBER_ID,
-        hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
-        originalPaymentStatus: result.paymentStatus,
-        priceDiffCents: result.priceDiffCents,
-        changeFeeCents: 0,
-        datesChanged: false,
-        settlementAmountCents: result.xeroRefundAmountCents,
-        settlementMethod: result.settlementMethod,
-        refundedThroughStripe: result.hasSucceededPayment,
-        refundMethod: result.xeroRefundMethod,
-        requiresAdditionalStripePayment: false,
         additionalPaymentIntentId: null,
-        createPrimaryInvoiceWhenMissing: false,
       });
       return result;
     }
@@ -331,6 +327,40 @@ let observerClient: PrismaClient;
         { queueType: "MODIFICATION_CREDIT_NOTE", cents: 5_000, refundMethod: "account-credit" },
       ]);
       expect(await owed()).toBe(0);
+    });
+
+    it("finding 1: $5 back at 50% less $20, then the REAL cancel at 50% less $20 tiers the $150 the booking is worth, not the $195 still applied - $60 in all, the card-paid figure, and the ledger owes nothing", async () => {
+      await creditPaidBooking("ib-allocated", FIFTY_LESS_TWENTY);
+      await removeLeavingGuest();
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(500);
+      await deallocationConverges();
+
+      await cancelAt(FIFTY_LESS_TWENTY);
+
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(6_000);
+      expect(await owed()).toBe(0);
+      // The cap is frozen with the decision, for a later review's netting (INV-PAY-113).
+      const cancelled = await prisma.bookingEvent.findFirstOrThrow({ where: { bookingId: BOOKING_ID, type: "CANCELLED" }, select: { snapshot: true } });
+      expect((cancelled.snapshot as { ledger: { appliedCreditBaseCents: number } }).ledger.appliedCreditBaseCents).toBe(15_000);
+    });
+
+    it.each([
+      { tier: "100%", rule: TIERS[0]!.rule, cardCents: 10_000, givenBackCents: 5_000 },
+      { tier: "50% with a $20 fee", rule: FIFTY_LESS_TWENTY, cardCents: 3_000, givenBackCents: 2_500 },
+    ])("finding 4: $100 by card and $100 by credit, the 15000-cent guest removed at $tier: $cardCents cents to the card and $givenBackCents cents of credit back, the all-card figure, in one allocated note", async ({ rule, cardCents, givenBackCents }) => {
+      await creditPaidBooking("card-and-credit", rule);
+
+      const result = await removeLeavingGuest("card");
+
+      expect(result.priceDiffCents).toBe(-15_000);
+      expect(result.refundAmountCents).toBe(cardCents);
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(givenBackCents);
+      expect(await credit.deriveBookingAppliedCreditCents(BOOKING_ID)).toBe(10_000 - givenBackCents);
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { creditAppliedCents: true } });
+      expect(payment.creditAppliedCents).toBe(10_000 - givenBackCents);
+      expect(await queuedNotes(result.bookingModificationId)).toEqual([
+        { queueType: "MODIFICATION_CREDIT_NOTE", cents: cardCents + givenBackCents, refundMethod: "card" },
+      ]);
     });
 
     it("FORCES the lock order: the removal queues on the member's credit-ledger key holding NO lock on the Payment row, and completes once the key is released", async () => {

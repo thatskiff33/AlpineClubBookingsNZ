@@ -38,7 +38,11 @@ vi.mock("@/lib/cancellation", async (importOriginal) => ({
   loadCancellationPolicy: vi.fn(async () => credit.policy),
 }));
 
-const { applyPaymentAdjustments } = await import("@/lib/booking-modify-settlement");
+const { applyPaymentAdjustments, calculateModificationSettlementOptions } = await import("@/lib/booking-modify-settlement");
+const { calculateDualRefundAmounts } = await import("@/lib/cancellation");
+const { previewPaidReductionCreditGiveBackCents } = await import("@/lib/booking-modify-credit-give-back");
+const { calculateCancellationPreview } = await import("@/lib/policies/booking-route-decisions");
+const { cancelAppliedCreditBaseCents } = await import("@/lib/booking-payment-state");
 const { classifyXeroBookingEditSettlement } = await import("@/lib/xero-booking-edit-settlement");
 const { paidCancellationMoney } = await import("@/lib/paid-cancellation-money");
 
@@ -115,10 +119,9 @@ describe("#3809: a credit-paid booking's $50 reduction, tiered like a card refun
     expect(result.refundAmountCents).toBe(0);
     expect(result.accountCreditAmountCents).toBe(0);
     expect(result.pendingRefundAmountCents).toBe(0);
-    // Xero: the invoice-allocated note is the give-back, as a card refund's
-    // note is the refund - not the whole $50 reduction.
-    expect(result.xeroRefundAmountCents).toBe(givenBackCents);
-    expect(result.xeroRefundMethod).toBe("account-credit");
+    // Xero: no refund note - the give-back is its own figure, which the Xero
+    // leg takes as an invoice-allocated note (below), not the whole $50.
+    expect(result.xeroRefundAmountCents).toBe(0);
     // The mirror a later cancellation tiers comes down to the ledger's figure.
     if (givenBackCents > 0) {
       expect(paymentUpdate).toHaveBeenCalledWith({
@@ -168,7 +171,7 @@ describe("#3809: a credit-paid booking's $50 reduction, tiered like a card refun
       settlementMethod: result.settlementMethod,
       settlementAmountCents: result.xeroRefundAmountCents,
       refundedThroughStripe: result.hasSucceededPayment,
-      refundMethod: result.xeroRefundMethod,
+      appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     });
 
     expect(decision.financialAction).toEqual(expect.objectContaining({
@@ -187,7 +190,7 @@ describe("#3809: a credit-paid booking's $50 reduction, tiered like a card refun
       priceDiffCents: -5_000,
       settlementMethod: result.settlementMethod,
       settlementAmountCents: result.xeroRefundAmountCents,
-      refundMethod: result.xeroRefundMethod,
+      appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     });
 
     expect(decision.financialAction.type).toBe("none");
@@ -234,7 +237,6 @@ describe("#3809: every other booking settles exactly as before", () => {
     expect(credit.giveBack).not.toHaveBeenCalled();
     expect(result.appliedCreditGivenBackCents).toBe(0);
     expect(result.xeroRefundAmountCents).toBe(5_000);
-    expect(result.xeroRefundMethod).toBeNull();
   });
 
   it("MUTATION: a booking with no applied credit never takes the member's ledger key", async () => {
@@ -245,7 +247,6 @@ describe("#3809: every other booking settles exactly as before", () => {
     expect(credit.derive).toHaveBeenCalledTimes(1);
     expect(credit.giveBack).not.toHaveBeenCalled();
     expect(result.xeroRefundAmountCents).toBe(5_000);
-    expect(result.xeroRefundMethod).toBeNull();
   });
 
   it("an organisation-owned booking holds no member credit to give back", async () => {
@@ -256,13 +257,12 @@ describe("#3809: every other booking settles exactly as before", () => {
     expect(result.appliedCreditGivenBackCents).toBe(0);
   });
 
-  it("MUTATION: a captured payment keeps the card path - no give-back of the credit beside it", async () => {
+  it("MUTATION: a card payment that covers the whole reduction keeps the card path - the member key is never taken", async () => {
     const result = await reduce(creditPaidBooking({ payment: { amountCents: 20_000, source: PaymentSource.STRIPE } }));
 
     expect(credit.derive).not.toHaveBeenCalled();
     expect(credit.giveBack).not.toHaveBeenCalled();
     expect(result.appliedCreditGivenBackCents).toBe(0);
-    expect(result.xeroRefundMethod).toBeNull();
   });
 
   it("a price increase gives nothing back", async () => {
@@ -270,5 +270,196 @@ describe("#3809: every other booking settles exactly as before", () => {
 
     expect(credit.derive).not.toHaveBeenCalled();
     expect(result.appliedCreditGivenBackCents).toBe(0);
+  });
+});
+
+/*
+  Finding 4 of the #3809 fix round: $100 by card and $100 by credit, a $150
+  reduction. The card basis returns what money paid can ($100); the rest comes
+  back from the applied credit, tiered by the same card tier with the fixed fee
+  once, card-first - so the member gets what a $200 card-paid booking would.
+*/
+describe("#3809: a booking paid by card AND credit gets back what an all-card one would", () => {
+  const MIXED = { amountCents: 10_000, source: PaymentSource.STRIPE, creditAppliedCents: 10_000 };
+
+  async function reduceMixed(rule: CancellationRule[], settlementMethod: "card" | "credit") {
+    credit.policy = rule;
+    credit.applied = 10_000;
+    const booking = creditPaidBooking({ payment: MIXED });
+    const settlementOptions = await calculateModificationSettlementOptions({
+      booking,
+      netChargeCents: -15_000,
+      db: {} as never,
+      todayAtClub: TODAY,
+    });
+    return applyPaymentAdjustments(tx, {
+      booking,
+      priceDiffCents: -15_000,
+      changeFeeCents: 0,
+      settlementOptions,
+      settlementMethod,
+      todayAtClub: TODAY,
+      format: CLUB_FORMAT_TEST,
+    });
+  }
+
+  it.each([
+    { tier: "100%" as const, cardCents: 10_000, givenBackCents: 5_000, allCardCents: 15_000 },
+    { tier: "50% with a $20 fee" as const, cardCents: 3_000, givenBackCents: 2_500, allCardCents: 5_500 },
+  ])("MUTATION: at $tier, $cardCents cents to the card and $givenBackCents cents of credit back - $allCardCents cents, the all-card figure", async ({ tier, cardCents, givenBackCents, allCardCents }) => {
+    const result = await reduceMixed(TIERS[tier], "card");
+
+    expect(result.refundAmountCents).toBe(cardCents);
+    expect(result.appliedCreditGivenBackCents).toBe(givenBackCents);
+    expect(result.refundAmountCents + result.appliedCreditGivenBackCents).toBe(allCardCents);
+    // The same tier on a $200 card payment, for the comparison.
+    const { cardRefundAmountCents } = calculateDualRefundAmounts(15_000, 31, TIERS[tier]);
+    expect(cardRefundAmountCents).toBe(allCardCents);
+    // The member key and the mirror come before the Payment row's other writes.
+    expect(paymentUpdate).toHaveBeenCalledWith({ where: { id: "payment_1" }, data: { creditAppliedCents: 10_000 - givenBackCents } });
+  });
+
+  it("Xero, card election: one invoice-allocated note for the refund and the give-back together", async () => {
+    const result = await reduceMixed(TIERS["100%"], "card");
+
+    const decision = classifyXeroBookingEditSettlement({
+      hasIssuedXeroInvoice: true,
+      priceDiffCents: -15_000,
+      settlementMethod: result.settlementMethod,
+      settlementAmountCents: result.xeroRefundAmountCents,
+      refundedThroughStripe: result.hasSucceededPayment,
+      appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
+    });
+
+    expect(decision.financialAction).toEqual(expect.objectContaining({
+      type: "modification-credit-note",
+      refundAmountCents: 15_000,
+      refundMethod: "card",
+    }));
+  });
+
+  it("MUTATION: Xero, credit election: the minted credit's unallocated note AND an invoice-allocated note for the give-back", async () => {
+    const result = await reduceMixed(TIERS["100%"], "credit");
+    expect(result.accountCreditAmountCents).toBe(10_000);
+
+    const decision = classifyXeroBookingEditSettlement({
+      hasIssuedXeroInvoice: true,
+      priceDiffCents: -15_000,
+      settlementMethod: result.settlementMethod,
+      settlementAmountCents: result.xeroRefundAmountCents,
+      appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
+    });
+
+    expect(decision.financialAction).toEqual(expect.objectContaining({
+      type: "modification-account-credit-note",
+      refundAmountCents: 10_000,
+      allocatedGiveBackCents: 5_000,
+    }));
+  });
+});
+
+/*
+  Finding 1 of the #3809 fix round: the cancellation tiers the applied credit
+  capped, with the money paid, at what the booking is now worth - exactly as it
+  caps paid money (`cancelRefundableBaseCents`) - in the executed cancel and in
+  the preview the member sees first.
+*/
+describe("#3809: a cancellation tiers applied credit capped at what the booking is worth", () => {
+  const cancelCredit = (mirror: number, finalPriceCents: number, policy: CancellationRule[]) =>
+    paidCancellationMoney({
+      payment: { amountCents: 0, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: mirror },
+      finalPriceCents,
+      appliedCreditCents: mirror,
+      restoresToMemberLedger: true,
+      days: 31,
+      policy,
+      refundMethod: "card",
+    });
+
+  it("MUTATION: $5 back at 50% less $20, then a cancel at 50% less $20 tiers $150, not the $195 still applied - $60 in all, the card-paid figure", async () => {
+    credit.policy = TIERS["50% with a $20 fee"];
+    const reduced = await reduce(creditPaidBooking());
+    const mirror = 20_000 - reduced.appliedCreditGivenBackCents;
+
+    const cancel = cancelCredit(mirror, 15_000, TIERS["50% with a $20 fee"]);
+
+    expect(cancel.appliedCreditBaseCents).toBe(15_000);
+    expect(reduced.appliedCreditGivenBackCents + cancel.creditRestoredCents).toBe(6_000);
+    // The $45 the reduction's policy kept is not called a cancellation fee.
+    expect(cancel.appliedCreditAboveRefundableCents).toBe(4_500);
+    expect(cancel.ledgerKeptCents - cancel.policyKeptCents).toBe(4_500);
+    // A card-paid $200 booking: $5 refunded, then the cancel tiers $150.
+    const card = paidCancellationMoney({
+      payment: { amountCents: 20_000, refundedAmountCents: 500, changeFeeCents: 0, creditAppliedCents: 0 },
+      finalPriceCents: 15_000,
+      appliedCreditCents: 0,
+      restoresToMemberLedger: true,
+      days: 31,
+      policy: TIERS["50% with a $20 fee"],
+      refundMethod: "card",
+    });
+    expect(500 + card.refundAmountCents).toBe(6_000);
+  });
+
+  it("MUTATION: the preview a member is shown names the same restore as the cancel", () => {
+    const preview = calculateCancellationPreview({
+      payment: { amountCents: 0, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: 19_500 },
+      finalPriceCents: 15_000,
+      checkIn: CHECK_IN,
+      policyRules: TIERS["50% with a $20 fee"],
+      todayAtClub: TODAY,
+    });
+
+    expect(preview.creditRestoredCents).toBe(cancelCredit(19_500, 15_000, TIERS["50% with a $20 fee"]).creditRestoredCents);
+    expect(preview.creditRestoredCents).toBe(5_500);
+  });
+
+  it("credit no higher than the price is tiered whole, as before", () => {
+    expect(cancelCredit(15_000, 15_000, TIERS["50% with a $20 fee"]).creditRestoredCents).toBe(5_500);
+    expect(cancelCredit(20_000, 20_000, TIERS["50% with a $20 fee"]).creditRestoredCents).toBe(8_000);
+  });
+
+  it("money paid counts first: $100 paid and $150 applied on a $150 booking tiers $100 of money and $50 of credit", () => {
+    expect(
+      cancelAppliedCreditBaseCents({ amountCents: 10_000, refundedAmountCents: 0, finalPriceCents: 15_000, changeFeeCents: 0, creditAppliedCents: 15_000 }),
+    ).toBe(5_000);
+  });
+});
+
+/*
+  Finding 3 of the #3809 fix round: the edit's quote names what saving would
+  give back, from the SAME figure the save computes under the lock.
+*/
+describe("#3809: the quote previews the give-back the save makes", () => {
+  const preview = (booking: LoadedBookingForModify, reductionCents: number, cardBasisCents: number) =>
+    previewPaidReductionCreditGiveBackCents({
+      booking,
+      ownerMemberId: "member_1",
+      reductionCents,
+      cardBasisCents,
+      todayAtClub: TODAY,
+      db: {} as never,
+    });
+
+  it.each([
+    { tier: "100%" as const, cents: 5_000 },
+    { tier: "50% with a $20 fee" as const, cents: 500 },
+    { tier: "0%" as const, cents: 0 },
+  ])("MUTATION: a credit-paid booking at $tier previews $cents cents, what the save gives back", async ({ tier, cents }) => {
+    credit.policy = TIERS[tier];
+
+    expect(await preview(creditPaidBooking(), 5_000, 0)).toBe(cents);
+    expect((await reduce(creditPaidBooking())).appliedCreditGivenBackCents).toBe(cents);
+  });
+
+  it("a card-and-credit booking previews the credit part beyond the card basis", async () => {
+    credit.policy = TIERS["50% with a $20 fee"];
+    credit.applied = 10_000;
+
+    expect(await preview(creditPaidBooking({ payment: { amountCents: 10_000 } }), 15_000, 10_000)).toBe(2_500);
+  });
+
+  it("a booking still owing previews nothing", async () => {
+    expect(await preview(creditPaidBooking({ status: "CONFIRMED" }), 5_000, 0)).toBe(0);
   });
 });

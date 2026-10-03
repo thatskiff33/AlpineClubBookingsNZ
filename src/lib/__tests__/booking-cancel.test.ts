@@ -2360,7 +2360,7 @@ describe("cancelBooking credit refunds", () => {
         expect.stringContaining("beyond what its policy keeps"),
       );
       const snapshot = mocks.txBookingEventCreate.mock.calls.find((call) => call[0].data.type === "CANCELLED")?.[0].data.snapshot;
-      expect(snapshot.ledger).toEqual({ keptCents: 8000, policyKeptCents: 5000, keptBeyondPolicyCents: 3000, appliedCreditCents: 3000, creditRestoredCents: 0 });
+      expect(snapshot.ledger).toEqual({ keptCents: 8000, policyKeptCents: 5000, keptBeyondPolicyCents: 3000, appliedCreditCents: 3000, creditRestoredCents: 0, appliedCreditBaseCents: 0 });
       // The member's narrative figure is untouched.
       expect(snapshot.retainedAmountCents).toBe(5000);
     });
@@ -2431,7 +2431,7 @@ describe("cancelBooking credit refunds", () => {
             retainedAmountCents: 10000,
             changeFeeCents: 0,
             // #3611: what the ledger was told the club keeps, frozen with the decision.
-            ledger: { keptCents: 10000, policyKeptCents: 10000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0 },
+            ledger: { keptCents: 10000, policyKeptCents: 10000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0, appliedCreditBaseCents: 0 },
           },
         },
       });
@@ -2462,7 +2462,7 @@ describe("cancelBooking credit refunds", () => {
         settledAmountCents: 5000,
         retainedAmountCents: 5000,
         changeFeeCents: 0,
-        ledger: { keptCents: 5000, policyKeptCents: 5000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0 },
+        ledger: { keptCents: 5000, policyKeptCents: 5000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0, appliedCreditBaseCents: 0 },
       });
       expect(
         mocks.txBookingEventCreate.mock.invocationCallOrder[0]

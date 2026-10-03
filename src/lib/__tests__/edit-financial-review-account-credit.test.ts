@@ -58,6 +58,8 @@ const TIERS = [
 const rows = {
   /** The CANCELLED event's frozen ledger figure, or null for none. */
   frozenAppliedCents: null as number | null,
+  /** #3809: the capped base the cancellation tiered, or null where it froze none. */
+  frozenBaseCents: null as number | null,
   /** The applied net as the restore row was written. */
   appliedAsRestoredCents: null as number | null,
   /** Review give-backs on the booking. */
@@ -83,7 +85,16 @@ const store = {
   },
   bookingEvent: {
     findFirst: vi.fn(async () =>
-      rows.frozenAppliedCents === null ? null : { snapshot: { ledger: { appliedCreditCents: rows.frozenAppliedCents } } },
+      rows.frozenAppliedCents === null
+        ? null
+        : {
+            snapshot: {
+              ledger: {
+                appliedCreditCents: rows.frozenAppliedCents,
+                ...(rows.frozenBaseCents === null ? {} : { appliedCreditBaseCents: rows.frozenBaseCents }),
+              },
+            },
+          },
     ),
   },
   manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: rows.earlierSharesCents } })) },
@@ -124,6 +135,7 @@ beforeEach(() => {
   h.applied.mirrorCents = 20_000;
   Object.assign(rows, {
     frozenAppliedCents: null,
+    frozenBaseCents: null,
     appliedAsRestoredCents: null,
     reviewGiveBacksCents: 0,
     earlierSharesCents: 0,
@@ -227,6 +239,22 @@ describe("owner decision 2: the booking was cancelled before the review complete
 
     expect(await write()).toEqual({ givenBackCents: 5_000, mintedCents: 0, cancelled: true, invoiceReductionCents: 0, agreedGiveBackCents: null });
     expect(h.loadCancellationPolicy).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#3809): re-runs the tier on the cap the cancellation froze - $195 applied above a $150 price, $55 restored - instead of refusing", async () => {
+    // A $50 reduction at 50% less $20 gave $5 back; the cancel at the same tier
+    // tiered the $150 the booking was worth (INV-PAY-114), not the $195 applied.
+    bookingIs("CANCELLED", 15_000);
+    rows.frozenAppliedCents = 19_500;
+    rows.frozenBaseCents = 15_000;
+    h.applied.cents = 19_500;
+    h.applied.mirrorCents = 19_500;
+    h.loadCancellationPolicy.mockResolvedValue([TIERS[1]!.rule]);
+    restored(5_500);
+
+    // Had the $50 come back first: $50 + tier($145) = $50 + $52.50; the
+    // member holds $55, so $47.50 is still owed.
+    expect((await write()).givenBackCents).toBe(4_750);
   });
 
   it("MUTATION: refuses, with nothing written, when the policy in force no longer reproduces the restore", async () => {

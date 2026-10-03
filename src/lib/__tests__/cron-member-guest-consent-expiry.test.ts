@@ -295,7 +295,21 @@ beforeEach(() => {
       throw new h.BookingGuestRemovalError(LAST_GUEST_MESSAGE, 400);
     }
     world().guests.delete(guestId);
-    return { accountCreditAmountCents: 4500 };
+    // #3809: with the figures the removal's Xero leg reads.
+    return {
+      accountCreditAmountCents: 4500,
+      appliedCreditGivenBackCents: 0,
+      booking: { id: bookingId },
+      bookingModificationId: `mod-${guestId}`,
+      hasIssuedXeroInvoice: false,
+      paymentStatus: null,
+      priceDiffCents: -4500,
+      xeroRefundAmountCents: 0,
+      settlementMethod: "credit",
+      hasSucceededPayment: false,
+      xeroAdditionalAmountCents: 0,
+      zeroDollarAutoPaid: false,
+    };
   });
 });
 
