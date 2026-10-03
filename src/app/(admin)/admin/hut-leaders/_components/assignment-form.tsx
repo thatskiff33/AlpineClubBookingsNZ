@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Check, CalendarDays, Users, UserSearch } from "lucide-react";
 import {
   OccupancyCalendar,
@@ -120,6 +121,14 @@ interface AssignmentFormProps {
   // chosen after the person and before the confirm. The form stays purely
   // presentational — the parent owns the selection and sends it with the POST.
   bedPicker?: ReactNode;
+  /**
+   * #3817 (owner decision on #3820): the "Custodian (lives on site)" tick. A
+   * custodian counts as present on every night covered, with no booking or bed
+   * needed, so it is offered whether or not bed allocation is on. View-only
+   * admins see it disabled, like every other edit affordance on this form.
+   */
+  isCustodian: boolean;
+  onCustodianChange: (isCustodian: boolean) => void;
 }
 
 export function AssignmentForm({
@@ -146,6 +155,8 @@ export function AssignmentForm({
   renderViewOnlyBanner = true,
   lodgeSelector,
   bedPicker,
+  isCustodian,
+  onCustodianChange,
 }: AssignmentFormProps) {
   const label = hutLeaderLabel.toLowerCase();
   const datesSelected = Boolean(
@@ -373,6 +384,26 @@ export function AssignmentForm({
 
         {/* Optional custodian bed hold (#2286) — only meaningful once both the
             nights and the person are settled, so it sits between steps 2 and 3. */}
+        {datesSelected && target ? (
+          <div className="border-t border-border pt-4">
+            <div className="flex items-start gap-2">
+              <Checkbox
+                id="hut-leader-is-custodian"
+                checked={isCustodian}
+                disabled={!canEdit || creating}
+                onCheckedChange={onCustodianChange}
+                className="mt-0.5"
+              />
+              <div>
+                <Label htmlFor="hut-leader-is-custodian">Custodian (lives on site)</Label>
+                <p className="text-xs text-muted-foreground">
+                  Counts as staying every night covered, with no booking needed.
+                  Otherwise the {label} must be staying every night they cover.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : null}
         {bedPicker && datesSelected && target ? (
           <div className="border-t border-border pt-4">{bedPicker}</div>
         ) : null}

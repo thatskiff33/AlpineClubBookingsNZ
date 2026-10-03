@@ -6544,6 +6544,12 @@ model HutLeaderAssignment {
   // move it. See docs/CONCURRENCY_AND_LOCKING.md -> "Composition: lodge
   // admission, deactivation and hut-leader assignments".
   source       HutLeaderAssignmentSource @default(MANUAL)
+  // The officer's "Custodian (lives on site)" tick (#3817, owner decision on
+  // #3820, 3 Oct 2026). A custodian lives at the lodge, so the assignment counts
+  // as present on every night it covers with no booking and no bed, whether bed
+  // allocation is on or off. Set only by the manual create and edit; the cron
+  // and the school writer never set it. Expand-only, default false.
+  isCustodian  Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

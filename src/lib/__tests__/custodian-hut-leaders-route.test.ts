@@ -955,6 +955,55 @@ describe("#3817 — a role-only assignment may claim only nights the member stay
     expect(mocks.bookingGuestFindMany).not.toHaveBeenCalled();
   });
 
+  it("POST does not ask a ticked CUSTODIAN with no bed, and re-checks capacity under the lock", async () => {
+    mocks.bookingGuestFindMany.mockResolvedValue([]);
+    const res = await POST(postRequest({ ...CREATE_BODY, isCustodian: true }));
+
+    expect(res.status).toBe(201);
+    expect(mocks.bookingGuestFindMany).not.toHaveBeenCalled();
+    // The tick takes a space off capacity, so the bed path's capacity check
+    // runs for it too — after the lodge lock, before the write.
+    expect(mocks.validateCustodianBedHold).toHaveBeenCalledWith(
+      expect.objectContaining({ bedId: null, isCustodian: true }),
+    );
+    expect(callOrder.indexOf("validate")).toBeGreaterThan(callOrder.indexOf("lock"));
+    expect(callOrder.indexOf("validate")).toBeLessThan(callOrder.indexOf("create"));
+    expect(mocks.txAssignmentCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ isCustodian: true }) }),
+    );
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: expect.objectContaining({ isCustodian: true }) }),
+      expect.anything(),
+    );
+  });
+
+  it("POST still refuses an UNTICKED role-only assignment with no stay", async () => {
+    mocks.bookingGuestFindMany.mockResolvedValue([]);
+    const res = await POST(postRequest({ ...CREATE_BODY, isCustodian: false }));
+    expect(res.status).toBe(409);
+    expect(mocks.validateCustodianBedHold).not.toHaveBeenCalled();
+  });
+
+  it("PUT refuses taking the custodian tick away from a member who is not staying", async () => {
+    mocks.bookingGuestFindMany.mockResolvedValue([]);
+    mocks.txAssignmentFindUnique.mockResolvedValue({
+      id: "a1",
+      memberId: "member-1",
+      lodgeId: LODGE,
+      bedId: null,
+      isCustodian: true,
+      source: "MANUAL",
+      startDate: new Date("2026-07-01T00:00:00.000Z"),
+      endDate: new Date("2026-07-04T00:00:00.000Z"),
+    });
+
+    const res = await PUT(putRequest({ isCustodian: false }), { params });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ code: "HUT_LEADER_NIGHTS_NOT_STAYED" });
+    expect(mocks.txAssignmentUpdate).not.toHaveBeenCalled();
+  });
+
   it("PUT refuses a date move onto a night the member is not staying", async () => {
     staysFirstToFourth();
     mocks.txAssignmentFindUnique.mockResolvedValue({

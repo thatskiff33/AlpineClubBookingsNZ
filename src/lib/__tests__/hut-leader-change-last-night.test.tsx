@@ -113,8 +113,9 @@ describe("hut-leader stay refusal offers the last night stayed (#3817)", () => {
     fireEvent.change(screen.getByLabelText("Start Date"), { target: { value: "2099-07-10" } });
     fireEvent.change(screen.getByLabelText("End Date"), { target: { value: "2099-07-13" } });
 
-    // The suggestions load after the dates settle; give that fetch its time.
-    await screen.findByText("Sam Stayer", {}, { timeout: 3000 });
+    // The suggestions load after the dates settle; a cold transform of the
+    // page can take seconds on a loaded runner, so give that fetch its time.
+    await screen.findByText("Sam Stayer", {}, { timeout: 10000 });
     fireEvent.click(await screen.findByRole("button", { name: /^Select$/ }));
     fireEvent.click(await screen.findByRole("button", { name: /Confirm assignment/ }));
 
@@ -133,5 +134,63 @@ describe("hut-leader stay refusal offers the last night stayed (#3817)", () => {
     expect(
       screen.queryByRole("button", { name: /Change last night to/ }),
     ).not.toBeInTheDocument();
+  });
+
+  it("sends the Custodian (lives on site) tick with the assignment (#3817)", async () => {
+    const posts: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/admin/lodges")) {
+        return Response.json({ lodges: [{ id: "lodge-1", name: "Lodge One", active: true }] });
+      }
+      if (url.includes("/api/admin/hut-leaders/eligible-members")) {
+        return Response.json({
+          members: [
+            {
+              id: "m1", firstName: "Cat", lastName: "Custodian", email: "cat@example.org",
+              hutLeaderEligible: true, hutLeaderEligibleAt: null,
+              bookingCheckIn: "2099-07-10", bookingCheckOut: "2099-07-13",
+              suggestedStartDate: "2099-07-10", suggestedEndDate: "2099-07-12",
+              uncoveredNightCount: 3, fullyCovered: false,
+            },
+          ],
+        });
+      }
+      if (url.includes("/api/admin/hut-leaders/unassigned-dates")) {
+        return Response.json({ unassignedDates: [] });
+      }
+      if (url.includes("/api/admin/hut-leaders") && init?.method === "POST") {
+        posts.push(JSON.parse(String(init.body)));
+        return Response.json({ id: "new-1", emailSent: true }, { status: 201 });
+      }
+      if (url.includes("/api/admin/hut-leaders")) {
+        return Response.json({ assignments: [], bedAllocationEnabled: false });
+      }
+      if (url.includes("/api/admin/occupancy")) {
+        return Response.json({ month: "2099-07", nights: [], bookings: [] });
+      }
+      return Response.json({});
+    }));
+
+    render(
+      <ClubIdentityProvider value={clubIdentity}>
+        <HutLeadersPage />
+      </ClubIdentityProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Start Date")).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("Start Date"), { target: { value: "2099-07-10" } });
+    fireEvent.change(screen.getByLabelText("End Date"), { target: { value: "2099-07-12" } });
+    await screen.findByText("Cat Custodian", {}, { timeout: 10000 });
+    fireEvent.click(await screen.findByRole("button", { name: /^Select$/ }));
+
+    // Offered with bed allocation OFF, and the bed picker is not.
+    const tick = await screen.findByLabelText("Custodian (lives on site)");
+    expect(screen.queryByText("Hold a bed (optional)")).not.toBeInTheDocument();
+    fireEvent.click(tick);
+    fireEvent.click(await screen.findByRole("button", { name: /Confirm assignment/ }));
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).toMatchObject({ memberId: "m1", isCustodian: true });
   });
 });

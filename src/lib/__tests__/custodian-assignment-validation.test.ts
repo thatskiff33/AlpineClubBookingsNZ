@@ -515,3 +515,79 @@ describe("wholeLodgeHoldAmendmentNights", () => {
     ).toEqual(["2026-07-02", "2026-07-03", "2026-07-05"]);
   });
 });
+
+/**
+ * #3817 (owner decisions on #3820, 3 Oct 2026): a ticked custodian with NO bed
+ * takes one space off capacity exactly as a held bed does, so it gets the same
+ * over-capacity warn-and-confirm and the same whole-lodge hold question — and
+ * none of the bed refusals, because there is no bed (bed allocation may be off).
+ */
+describe("a ticked custodian with no bed (#3817)", () => {
+  function fullNight() {
+    mocks.getLodgeCapacity.mockResolvedValue(1);
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        checkIn: parseDateOnly("2026-07-02"),
+        checkOut: parseDateOnly("2026-07-03"),
+        guests: [
+          {
+            stayStart: parseDateOnly("2026-07-02"),
+            stayEnd: parseDateOnly("2026-07-03"),
+            nights: [],
+          },
+        ],
+      },
+    ]);
+  }
+
+  it("asks for confirmation when the tick tips a full lodge over, without reading any bed", async () => {
+    fullNight();
+    await expect(validate({ bedId: null, isCustodian: true })).rejects.toBeInstanceOf(
+      CustodianOverCapacityConfirmationRequiredError,
+    );
+    expect(mocks.lodgeBedFindUnique).not.toHaveBeenCalled();
+    expect(mocks.bedAllocationFindMany).not.toHaveBeenCalled();
+  });
+
+  it("proceeds once the officer confirms", async () => {
+    fullNight();
+    await expect(
+      validate({ bedId: null, isCustodian: true, confirmOverCapacity: true }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("asks nothing of an unticked role-only assignment, however full the lodge", async () => {
+    fullNight();
+    await expect(validate({ bedId: null, isCustodian: false })).resolves.toBeUndefined();
+  });
+
+  it("asks the whole-lodge hold question for a bedless custodian, skipping nights it already counted", async () => {
+    mocks.holdBookingFindMany.mockResolvedValue([
+      {
+        id: "booking-hold",
+        status: "PAID",
+        checkIn: parseDateOnly("2026-07-01"),
+        checkOut: parseDateOnly("2026-07-06"),
+        lodgeId: LODGE,
+        wholeLodgeHold: true,
+        originBookingRequest: null,
+        adminCapacityHoldAt: null,
+      },
+    ]);
+    await expect(
+      findWholeLodgeHoldAmendments({
+        bedId: null,
+        lodgeId: LODGE,
+        startDate: parseDateOnly("2026-07-02"),
+        endDate: parseDateOnly("2026-07-04"),
+        previouslyCounted: {
+          startDate: parseDateOnly("2026-07-02"),
+          endDate: parseDateOnly("2026-07-02"),
+        },
+        db: db(),
+      }),
+    ).resolves.toEqual([
+      { bookingId: "booking-hold", nights: ["2026-07-03", "2026-07-04"] },
+    ]);
+  });
+});

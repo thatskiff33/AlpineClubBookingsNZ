@@ -17,8 +17,8 @@ import {
  * eligible-members suggestion path already used, so the list an officer picks
  * from and the rule that judges the pick cannot disagree:
  *
- * - a booking at THIS lodge whose status is an operational stay (PAID or
- *   COMPLETED — a cancelled stay is not a stay), and
+ * - a booking at THIS lodge, not soft-deleted, whose status is an operational
+ *   stay (PAID or COMPLETED — a cancelled stay is not a stay), and
  * - either a guest row for the member whose own consent does not leave them
  *   operationally absent (owner decision D-12, #2307), or the member OWNS the
  *   booking (their own guest row's nights when they have one, else the
@@ -37,13 +37,21 @@ export type HutLeaderMemberStay = {
   nights?: Array<{ stayDate: Date }> | null;
 };
 
-/** The bookings whose nights count as a stay at `lodgeId` overlapping a range. */
+/**
+ * The bookings whose nights count as a member's stay at `lodgeId` overlapping a
+ * range — THE one definition of "a booking that is a stay" for hut leaders
+ * (`INV-SSOT`). The manual create/edit stay check, the eligible-members
+ * suggestions and the presence-aware coverage reader all route here, so they
+ * cannot disagree about which bookings count. A soft-deleted booking is not a
+ * stay, whatever its status.
+ */
 export function hutLeaderStayBookingWhere(input: {
   lodgeId: string;
   rangeStart: Date;
   rangeEnd: Date;
 }): Prisma.BookingWhereInput {
   return {
+    deletedAt: null,
     lodgeId: input.lodgeId,
     status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
     checkIn: { lte: input.rangeEnd },
@@ -171,6 +179,20 @@ export type HutLeaderStayRefusal = {
    */
   lastNightStayed: string | null;
 };
+
+/**
+ * Is this assignment exempt from the stay check? A bed-holding assignment is a
+ * custodian occupancy whose held bed is the stay (`INV-LIFE-062`), and an
+ * assignment ticked "Custodian (lives on site)" counts as present on every
+ * night it covers (owner decision on #3820, 3 Oct 2026). Everything else —
+ * a role-only, non-custodian assignment — must be stayed.
+ */
+export function isHutLeaderStayCheckExempt(assignment: {
+  bedId: string | null | undefined;
+  isCustodian: boolean | null | undefined;
+}): boolean {
+  return Boolean(assignment.bedId) || assignment.isCustodian === true;
+}
 
 /**
  * Refuse an assignment that claims a night the member is not staying at the

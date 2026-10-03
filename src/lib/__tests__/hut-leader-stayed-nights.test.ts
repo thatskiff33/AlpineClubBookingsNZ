@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   findHutLeaderStayRefusal,
   HUT_LEADER_NIGHTS_NOT_STAYED,
+  isHutLeaderStayCheckExempt,
   loadHutLeaderStayedNightKeys,
   stayedNightRunContaining,
 } from "@/lib/hut-leader-stayed-nights";
@@ -24,6 +25,7 @@ type Booking = {
   lodgeId: string;
   status: string;
   memberId: string | null;
+  deletedAt?: Date | null;
   checkIn: Date;
   checkOut: Date;
   guests: Array<{
@@ -36,6 +38,7 @@ type Booking = {
 };
 
 type BookingWhere = {
+  deletedAt?: null;
   lodgeId: string;
   status: { in: string[] };
   checkIn: { lte: Date };
@@ -45,6 +48,7 @@ type BookingWhere = {
 
 function bookingMatches(booking: Booking, where: BookingWhere) {
   return (
+    (where.deletedAt === undefined || (booking.deletedAt ?? null) === null) &&
     booking.lodgeId === where.lodgeId &&
     where.status.in.includes(booking.status) &&
     booking.checkIn <= where.checkIn.lte &&
@@ -167,6 +171,11 @@ describe("findHutLeaderStayRefusal (#3817)", () => {
     expect(await ask(fakeDb([completed]), "2026-07-06", "2026-07-07")).toBeNull();
   });
 
+  it("refuses a SOFT-DELETED stay, whatever its status", async () => {
+    const deleted = stay("2026-07-06", "2026-07-08", { deletedAt: day("2026-07-01") });
+    expect(await ask(fakeDb([deleted]), "2026-07-06", "2026-07-07")).not.toBeNull();
+  });
+
   it("refuses a stay at ANOTHER lodge", async () => {
     const elsewhere = stay("2026-07-06", "2026-07-08", { lodgeId: "lodge-b" });
     expect(await ask(fakeDb([elsewhere]), "2026-07-06", "2026-07-07")).not.toBeNull();
@@ -235,5 +244,14 @@ describe("stayedNightRunContaining", () => {
       last: "2026-07-10",
     });
     expect(stayedNightRunContaining(nights, "2026-07-08")).toBeNull();
+  });
+});
+
+describe("isHutLeaderStayCheckExempt (#3817)", () => {
+  it("exempts a held bed or the custodian tick, and nothing else", () => {
+    expect(isHutLeaderStayCheckExempt({ bedId: "bed-1", isCustodian: false })).toBe(true);
+    expect(isHutLeaderStayCheckExempt({ bedId: null, isCustodian: true })).toBe(true);
+    expect(isHutLeaderStayCheckExempt({ bedId: "bed-1", isCustodian: true })).toBe(true);
+    expect(isHutLeaderStayCheckExempt({ bedId: null, isCustodian: false })).toBe(false);
   });
 });

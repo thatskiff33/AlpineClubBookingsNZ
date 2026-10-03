@@ -201,6 +201,8 @@ describe("custodian bed hold controls (#2286)", () => {
       ok: true,
       body: {},
     },
+    // #3817: the list route says whether bed allocation is on.
+    bedAllocationEnabled = true,
   ) {
     const putQueue = Array.isArray(putResponse) ? putResponse : [putResponse];
     let putCount = 0;
@@ -245,7 +247,10 @@ describe("custodian bed hold controls (#2286)", () => {
       if (url.startsWith("/api/admin/hut-leaders?lodgeId=")) {
         return {
           ok: true,
-          json: async () => ({ assignments: [ASSIGNMENT_WITH_BED] }),
+          json: async () => ({
+            assignments: [ASSIGNMENT_WITH_BED],
+            bedAllocationEnabled,
+          }),
         };
       }
       return { ok: true, json: async () => ({}) };
@@ -325,6 +330,16 @@ describe("custodian bed hold controls (#2286)", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /change bed/i }));
     expect(await screen.findByTestId("bed-picker-a1")).toBeInTheDocument();
+  });
+
+  it("offers no Hold/Change bed while bed allocation is off, but keeps Release bed (#3817)", async () => {
+    stubWithAssignment(undefined, undefined, false);
+    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
+      .default;
+    render(<HutLeadersPage />);
+
+    expect(await screen.findByRole("button", { name: /release bed/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /change bed|hold a bed/i })).not.toBeInTheDocument();
   });
 
   /*

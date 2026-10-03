@@ -269,6 +269,63 @@ export async function findCustodianBedHolds(input: {
 }
 
 /**
+ * One custodian occupancy for COUNTING (#3817): an assignment that holds a bed,
+ * is ticked "Custodian (lives on site)", or both.
+ */
+export interface CustodianOccupancy {
+  assignmentId: string;
+  /** The held bed, or null for a ticked custodian with no bed. */
+  bedId: string | null;
+  /** Inclusive first night, `YYYY-MM-DD`. */
+  startDate: string;
+  /** Inclusive last night, `YYYY-MM-DD`. */
+  endDate: string;
+}
+
+/**
+ * Load every custodian OCCUPANCY overlapping a half-open window — the capacity
+ * count's one source (#3817, owner decision "Yes, one space per night" on
+ * #3820, 3 Oct 2026).
+ *
+ * A ticked custodian takes one space off the lodge on every night covered,
+ * exactly as a held bed does, and does so whether or not bed allocation is on.
+ * An assignment that both holds a bed and is ticked is ONE row here, so it is
+ * counted once. This is deliberately a different question from
+ * {@link findCustodianBedHolds}: that one answers "which BED is held", which a
+ * bedless custodian has no answer to, and every allocation consumer keeps
+ * reading it. Only the per-night COUNT reads this.
+ */
+export async function findCustodianOccupancies(input: {
+  lodgeId: string;
+  from: Date;
+  toExclusive: Date;
+  db?: CustodianDb;
+}): Promise<CustodianOccupancy[]> {
+  const db = input.db ?? prisma;
+  const from = truncateToDateOnly(input.from);
+  const toExclusive = truncateToDateOnly(input.toExclusive);
+  if (from >= toExclusive) return [];
+
+  const rows = await db.hutLeaderAssignment.findMany({
+    where: {
+      // A role-only, unticked assignment still never reaches capacity.
+      OR: [{ bedId: { not: null } }, { isCustodian: true }],
+      startDate: { lt: toExclusive },
+      endDate: { gte: from },
+      ...lodgeNullTolerantScope(input.lodgeId),
+    },
+    select: { id: true, bedId: true, startDate: true, endDate: true },
+    orderBy: [{ startDate: "asc" }, { id: "asc" }],
+  });
+  return rows.map((row) => ({
+    assignmentId: row.id,
+    bedId: row.bedId,
+    startDate: formatDateOnly(row.startDate),
+    endDate: formatDateOnly(row.endDate),
+  }));
+}
+
+/**
  * Per-night custodian head COUNT for a set of holds.
  *
  * A count, not a flag: two custodians handing over on the same night hold two
@@ -295,7 +352,9 @@ export function buildCustodianNightIndex(
 /**
  * The custodian head count on one night for a lodge, as a ready-to-use
  * `(night) => number` closure. The four admission/availability engines and the
- * capacity-warnings cron all add this to `occupiedBeds`.
+ * capacity-warnings cron all add this to `occupiedBeds`. It counts every
+ * custodian OCCUPANCY — a held bed or the custodian tick, once per assignment
+ * ({@link findCustodianOccupancies}, #3817).
  *
  * Counted as an OCCUPANT rather than as a reduction of `lodgeCapacity`: the
  * arithmetic for `availableBeds` is identical, but it preserves
@@ -320,7 +379,7 @@ export async function buildLodgeCustodianNightCounter(input: {
    */
   excludeAssignmentId?: string;
 }): Promise<(night: Date) => number> {
-  const loaded = await findCustodianBedHolds({
+  const loaded = await findCustodianOccupancies({
     lodgeId: input.lodgeId,
     from: input.from,
     toExclusive: input.toExclusive,

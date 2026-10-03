@@ -75,6 +75,7 @@ interface HutLeaderAssignment {
   bedId: string | null;
   bedName: string | null;
   bedRoomName: string | null;
+  isCustodian?: boolean; // #3817
 }
 
 interface UnassignedDate {
@@ -142,6 +143,9 @@ export default function HutLeadersPage() {
   // #2286: the optional custodian bed hold. null = "No bed — role only", the
   // default and the pre-#2286 behaviour.
   const [selectedBedId, setSelectedBedId] = useState<string | null>(null);
+  const [isCustodian, setIsCustodian] = useState(false); // #3817 custodian tick
+  // #3817: no "Hold a bed" while bed allocation is off (Release bed stays).
+  const [bedAllocationOn, setBedAllocationOn] = useState(false);
   // Set when the server answered CUSTODIAN_OVER_CAPACITY_CONFIRM_REQUIRED: the
   // hold is legitimate but tips the lodge past its ceiling on these nights, so
   // the admin re-confirms rather than discovering it later (#1668 precedent).
@@ -278,6 +282,7 @@ export default function HutLeadersPage() {
         const data = await res.json();
         if (activeLodgeIdRef.current === requestedLodgeId) {
           setAssignments(Array.isArray(data?.assignments) ? data.assignments : []);
+          setBedAllocationOn(data?.bedAllocationEnabled === true);
         }
       }
     } finally {
@@ -488,6 +493,7 @@ export default function HutLeadersPage() {
           // #2286: omitted entirely for a role-only assignment, so the request
           // is byte-for-byte what it was before this feature.
           ...(selectedBedId ? { bedId: selectedBedId } : {}),
+          ...(isCustodian ? { isCustodian: true } : {}),
           ...(confirmOverCapacity ? { confirmOverCapacity: true } : {}),
           // #2698: sent ONLY after the officer has accepted on the card below.
           // Its absence is the decline, which is why it is omitted rather than
@@ -556,6 +562,7 @@ export default function HutLeadersPage() {
       setSelection({ startDate: "", endDate: "" });
       setTarget(null);
       setSelectedBedId(null);
+      setIsCustodian(false);
       setOverCapacity(null);
       setHoldAmendment(null);
       fetchAssignments();
@@ -964,6 +971,8 @@ export default function HutLeadersPage() {
         error={error}
         onConfirm={() => void handleConfirm()}
         onChangeLastNight={handleChangeLastNight}
+        isCustodian={isCustodian}
+        onCustodianChange={(next) => { setIsCustodian(next); setError(null); }}
         /*
           #2701: this prop is the form's "may the Confirm write proceed" gate
           (its only other use, the form's own banner, is suppressed just below),
@@ -985,7 +994,7 @@ export default function HutLeadersPage() {
           a picker offering another property's beds is worse than none.
         */
         bedPicker={
-          (
+          bedAllocationOn && (
             <CustodianBedPicker
               lodgeId={scopedLodgeId}
               startDate={selection.startDate}
@@ -1230,7 +1239,10 @@ export default function HutLeadersPage() {
                     <div className="flex items-center gap-2">
                       <UserCheck className="h-4 w-4 text-muted-foreground" />
                       <div>
-                        <div className="font-medium">{a.memberName}</div>
+                        <div className="font-medium">
+                          {a.memberName}
+                          {a.isCustodian ? <Badge variant="outline" className="ml-2">Custodian</Badge> : null}
+                        </div>
                         <div className="text-xs text-muted-foreground">{a.memberEmail}</div>
                       </div>
                     </div>
@@ -1314,7 +1326,7 @@ export default function HutLeadersPage() {
                           <span className="sr-only">Release bed</span>
                         </ViewOnlyActionButton>
                       ) : null}
-                      <ViewOnlyActionButton
+                      {bedAllocationOn ? <ViewOnlyActionButton
                         canEdit={canEdit}
                         describeReason={false}
                         variant="ghost"
@@ -1332,7 +1344,7 @@ export default function HutLeadersPage() {
                         <span className="sr-only">
                           {a.bedId ? "Change bed" : "Hold a bed"}
                         </span>
-                      </ViewOnlyActionButton>
+                      </ViewOnlyActionButton> : null}
                       <ViewOnlyActionButton
                         canEdit={canEdit}
                         describeReason={false}

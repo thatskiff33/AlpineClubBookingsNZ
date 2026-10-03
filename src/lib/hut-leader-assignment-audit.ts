@@ -115,6 +115,14 @@ const DETAILS: Record<
  * the row looked like before — a released bed and a moved date range are both
  * capacity changes a reader needs to reconstruct.
  */
+/** The lead sentence when the custodian tick, and no bed, is involved (#3817). */
+const CUSTODIAN_ONLY_DETAILS: Record<HutLeaderAssignmentAuditEvent, string> = {
+  created: "An officer created a hut-leader assignment holding no bed.",
+  updated: "An officer changed a hut-leader assignment that holds no bed.",
+  deleted:
+    "An officer deleted a hut-leader assignment marked as a custodian; the space it took off the lodge's capacity on the covered nights is free again.",
+};
+
 export async function recordHutLeaderAssignmentAudit(
   db: HutLeaderAuditDb,
   input: {
@@ -130,11 +138,17 @@ export async function recordHutLeaderAssignmentAudit(
     endDate: Date;
     /** The bed held after this write; null for a role-only assignment. */
     bedId: string | null;
+    /**
+     * The "Custodian (lives on site)" tick after this write (#3817). Required so
+     * no writer can forget to record it.
+     */
+    isCustodian: boolean;
     previous?: {
       lodgeId: string;
       startDate: Date;
       endDate: Date;
       bedId: string | null;
+      isCustodian: boolean;
     };
     requestId?: string | null;
     ipAddress?: string | null;
@@ -148,6 +162,17 @@ export async function recordHutLeaderAssignmentAudit(
     previousBedId: input.previous?.bedId ?? null,
   };
   const heldBed = Boolean(beds.bedId ?? beds.previousBedId);
+  // #3817: a ticked custodian takes one space off the lodge's capacity on each
+  // covered night, so the tick on either side is a capacity event too.
+  const wasCustodian = input.previous?.isCustodian ?? false;
+  const custodianEvent = input.isCustodian || wasCustodian;
+  const custodianNote = !custodianEvent || input.event === "deleted"
+    ? ""
+    : input.isCustodian && !wasCustodian && input.event === "updated"
+      ? " It is now marked as a custodian living on site, who takes one space off the lodge's capacity on each covered night."
+      : !input.isCustodian && wasCustodian
+        ? " It is no longer marked as a custodian, so it no longer takes a space off the lodge's capacity."
+        : " It is marked as a custodian living on site, who takes one space off the lodge's capacity on each covered night.";
   await createAuditLog(
     {
       action: `lodge.hut-leader-assignment.${input.event}`,
@@ -158,21 +183,26 @@ export async function recordHutLeaderAssignmentAudit(
       entityType: "HutLeaderAssignment",
       entityId: input.assignmentId,
       category: "lodge",
-      severity: heldBed ? "important" : "info",
+      severity: heldBed || custodianEvent ? "important" : "info",
       outcome: "success",
       summary: SUMMARIES[input.event],
-      details: DETAILS[input.event](beds),
+      details:
+        custodianEvent && !heldBed
+          ? CUSTODIAN_ONLY_DETAILS[input.event] + custodianNote
+          : DETAILS[input.event](beds) + custodianNote,
       metadata: {
         lodgeId: input.lodgeId,
         startDate: formatDateOnly(input.startDate),
         endDate: formatDateOnly(input.endDate),
         bedId: input.bedId,
+        isCustodian: input.isCustodian,
         ...(input.previous
           ? {
               previousLodgeId: input.previous.lodgeId,
               previousStartDate: formatDateOnly(input.previous.startDate),
               previousEndDate: formatDateOnly(input.previous.endDate),
               previousBedId: input.previous.bedId,
+              previousIsCustodian: input.previous.isCustodian,
             }
           : {}),
       },

@@ -13,6 +13,7 @@ import { prisma } from "@/lib/prisma";
 import {
   findHutLeaderStayRefusal,
   hutLeaderStayRefusalBody,
+  isHutLeaderStayCheckExempt,
 } from "@/lib/hut-leader-stayed-nights";
 import { HutLeaderAssignmentSource } from "@prisma/client";
 
@@ -88,6 +89,7 @@ export async function applyHutLeaderAssignmentEditUnderLocks(input: {
     endDate?: Date;
     lodgeId?: string;
     bedId?: string | null;
+    isCustodian?: boolean;
   };
   /** Was `bedId` present in the request at all? Absent means "leave the bed". */
   bedIdProvided: boolean;
@@ -140,19 +142,21 @@ export async function applyHutLeaderAssignmentEditUnderLocks(input: {
     if (overlap) return { status: 409, error: overlap.error };
 
     // #3817 (owner decision "Block it outright"): an edit that moves the nights
-    // or the lodge may not leave a role-only row claiming a night the member is
-    // not staying there. Asked only when the claim moves, so a bed-only change
-    // (Release bed / Change bed, the only edits the admin page sends) keeps
-    // working on any row. Not asked of a bed-holding row — the held bed IS the
-    // custodian's stay (INV-LIFE-062) — nor of a school teacher's row, whose
-    // nights are the school booking's and whose teacher is not a booking guest.
+    // or the lodge, or takes the custodian tick away, may not leave a role-only,
+    // non-custodian row claiming a night the member is not staying there. Asked
+    // only when the claim moves, so a bed-only change (Release bed / Change bed)
+    // keeps working on any row. Not asked of a row holding a bed or ticked
+    // custodian (`isHutLeaderStayCheckExempt`), nor of a school teacher's row,
+    // whose nights are the school booking's and whose teacher is not a guest.
+    const finalIsCustodian = updateData.isCustodian ?? locked.isCustodian;
     const claimMoves =
       finalStart.getTime() !== locked.startDate.getTime() ||
       finalEnd.getTime() !== locked.endDate.getTime() ||
-      finalLodgeId !== locked.lodgeId;
+      finalLodgeId !== locked.lodgeId ||
+      (locked.isCustodian && !finalIsCustodian);
     if (
       claimMoves &&
-      !nextBedId &&
+      !isHutLeaderStayCheckExempt({ bedId: nextBedId, isCustodian: finalIsCustodian }) &&
       locked.source !== HutLeaderAssignmentSource.SCHOOL_BOOKING
     ) {
       const stayRefusal = await findHutLeaderStayRefusal(tx, {
@@ -167,10 +171,18 @@ export async function applyHutLeaderAssignmentEditUnderLocks(input: {
       }
     }
 
+    // A held bed or the custodian tick takes a space off capacity (#3817), so
+    // either brings the capacity re-check under this lodge key.
     let amendments: WholeLodgeHoldAmendment[] = [];
-    if (nextBedId) {
+    if (nextBedId || finalIsCustodian) {
+      const previouslyCounted =
+        locked.bedId || locked.isCustodian
+          ? { startDate: locked.startDate, endDate: locked.endDate }
+          : null;
       amendments = await validateCustodianBedHoldAndHoldAmendment(tx, {
-        bedId: nextBedId,
+        bedId: nextBedId ?? null,
+        isCustodian: finalIsCustodian,
+        previouslyCounted: locked.lodgeId === finalLodgeId ? previouslyCounted : null,
         lodgeId: finalLodgeId,
         startDate: finalStart,
         endDate: finalEnd,
@@ -190,24 +202,26 @@ export async function applyHutLeaderAssignmentEditUnderLocks(input: {
       startDate: finalStart,
       endDate: finalEnd,
       bedId: nextBedId ?? null,
+      isCustodian: finalIsCustodian,
       previous: {
         lodgeId: locked.lodgeId,
         startDate: locked.startDate,
         endDate: locked.endDate,
         bedId: locked.bedId,
+        isCustodian: locked.isCustodian,
       },
       requestId: input.auditRequest?.id,
       ipAddress: input.auditRequest?.ipAddress,
       userAgent: input.auditRequest?.userAgent,
     });
 
-    if (nextBedId && amendments.length > 0) {
+    if (amendments.length > 0) {
       // Same transaction as the edit: accept writes both facts or neither.
       await recordWholeLodgeHoldAmendment(tx, {
         actorMemberId: input.actorMemberId,
         assignmentId: id,
         lodgeId: finalLodgeId,
-        bedId: nextBedId,
+        bedId: nextBedId ?? null,
         amendments,
         requestId: input.auditRequest?.id,
         ipAddress: input.auditRequest?.ipAddress,
@@ -256,6 +270,7 @@ export async function deleteHutLeaderAssignmentUnderLodgeLock(input: {
       startDate: locked.startDate,
       endDate: locked.endDate,
       bedId: locked.bedId,
+      isCustodian: locked.isCustodian,
       requestId: input.auditRequest?.id,
       ipAddress: input.auditRequest?.ipAddress,
       userAgent: input.auditRequest?.userAgent,
@@ -280,7 +295,12 @@ export async function deleteHutLeaderAssignmentUnderLodgeLock(input: {
 export async function validateCustodianBedHoldAndHoldAmendment(
   tx: Parameters<typeof findWholeLodgeHoldAmendments>[0]["db"],
   input: {
-    bedId: string;
+    /** The held bed, or null for a ticked custodian with no bed (#3817). */
+    bedId: string | null;
+    /** The custodian tick; with no bed, it alone brings the capacity checks. */
+    isCustodian?: boolean;
+    /** Editing a bedless custodian: the range it already counted before. */
+    previouslyCounted?: { startDate: Date; endDate: Date } | null;
     lodgeId: string;
     startDate: Date;
     endDate: Date;
@@ -297,6 +317,7 @@ export async function validateCustodianBedHoldAndHoldAmendment(
     endDate: input.endDate,
     assignmentId: input.assignmentId,
     confirmOverCapacity: input.confirmOverCapacity,
+    isCustodian: input.isCustodian,
     db: tx,
   });
 
@@ -306,6 +327,7 @@ export async function validateCustodianBedHoldAndHoldAmendment(
     startDate: input.startDate,
     endDate: input.endDate,
     assignmentId: input.assignmentId,
+    previouslyCounted: input.previouslyCounted,
     db: tx,
   });
   if (amendments.length > 0 && !input.amendAccepted) {

@@ -1,0 +1,12 @@
+-- #3817 (wave #3820; owner decision "Mark as custodian", 3 Oct 2026): the
+-- officer's "Custodian (lives on site)" tick on a hut-leader assignment. A
+-- custodian assignment counts as present on every night it covers, with no
+-- booking or bed needed, whether bed allocation is on or off.
+--
+-- Purely additive EXPAND: one NOT NULL column with a constant default. On
+-- PostgreSQL 11+ a constant default is catalog-only (no table rewrite, no scan).
+-- Every existing row reads false, which is today's behaviour: a bed-holding
+-- assignment keeps counting as present through its bed (INV-LIFE-062), so no
+-- backfill is needed. The draining colour never names the column, and its
+-- inserts omit it and receive the default.
+ALTER TABLE "HutLeaderAssignment" ADD COLUMN "isCustodian" BOOLEAN NOT NULL DEFAULT false;
