@@ -114,7 +114,7 @@ export interface ClassifyXeroBookingEditSettlementInput {
    */
   refundedThroughStripe?: boolean | null;
   /**
-   * #3536 (`INV-PAY-101`): the club handed this reduction back in cash. Words
+   * #3536 (`INV-PAY-113`): the club handed this reduction back in cash. Words
    * only: the note keeps its bank-transfer `refundMethod` (a modification note
    * is allocated, never settled by a payment), and carries the cash wording.
    */

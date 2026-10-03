@@ -62,7 +62,7 @@ export const UNPAID_INVOICE_CLEARING_WORDING = "Invoice cleared - booking not pa
 export const UNPAID_BALANCE_CLEARING_WORDING = "Unpaid balance cleared - booking cancelled";
 
 /**
- * #3536 (`INV-PAY-101`): the two wordings the owner added on 2 Oct 2026 for
+ * #3536 (`INV-PAY-113`): the two wordings the owner added on 2 Oct 2026 for
  * booking-edit credit notes that were previously worded as bank transfers.
  * Neither is a refund method and neither changes a note's settlement: a
  * modification credit note is allocated against the original invoice, never
@@ -71,7 +71,12 @@ export const UNPAID_BALANCE_CLEARING_WORDING = "Unpaid balance cleared - booking
  * - `"invoice-correction"`: a booking change that lowers an UNPAID pay-on-account
  *   invoice. The note corrects the invoice; nothing was paid, so nothing is
  *   refunded.
- * - `"cash"`: an edit-review refund the club handed back in cash.
+ * - `"cash"`: an edit-review refund the club handed back in cash. Refined by
+ *   the owner on 3 Oct 2026: the OFFICER chooses it on the settle screen, and
+ *   only for a refund paid back by hand (the `local-allocation` route). The app
+ *   never infers cash from "marked paid by hand", which covers bank transfers
+ *   recorded outside Xero too; with no answer the note keeps the bank-transfer
+ *   wording.
  */
 export const MODIFICATION_NOTE_SPECIAL_WORDINGS = ["invoice-correction", "cash"] as const;
 

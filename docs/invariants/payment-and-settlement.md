@@ -1490,7 +1490,10 @@ total at apply).
 - Home: `src/lib/xero-refund-method.ts`, censused over `src/lib` with the other
   wordings. Pinned by `xero-booking-edit-settlement.test.ts`,
   `xero-refund-method-documents.test.ts`, `manual-refund-task.test.ts`,
-  `xero-operation-retry.test.ts` and `xero-booking-repair.test.ts`.
+  `xero-operation-retry.test.ts`, `xero-booking-repair.test.ts`,
+  `booking-payment-state.test.ts`,
+  `manual-refund-task-queue-financial-review.test.tsx` and
+  `resolve-route.test.ts`.
 
 ## INV-PAY-060
 
