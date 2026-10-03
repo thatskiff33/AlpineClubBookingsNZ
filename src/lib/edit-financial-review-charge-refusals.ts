@@ -40,6 +40,16 @@ export const REVIEW_CHARGE_WRONG_KIND_MESSAGE =
  * Refused BEFORE the claim, so the task stays OPEN and still holds the money
  * question.
  */
+/**
+ * #3653 (`INV-PAY-114`): a charge on a joiner's booking the group organiser paid
+ * for by card. The card behind the booking's payment mirror is the ORGANISER's
+ * combined payment, and an invoice would bill the joiner for a booking somebody
+ * else paid for, so neither instrument is the right one. Refused before the
+ * claim, so the task stays open for a person to settle with the organiser.
+ */
+export const REVIEW_CHARGE_ORGANISER_PAID_MESSAGE =
+  "The group organiser paid for this booking by card, so the extra amount cannot be charged to the joiner from here. Agree it with the organiser and collect it another way, then dismiss this task with a note recording what was collected and how.";
+
 export const REVIEW_CHARGE_NO_INSTRUMENT_MESSAGE =
   "There is no card payment on this booking and no invoice to add this to, so the club cannot ask for the money automatically. Collect it another way, then dismiss this task with a note recording what was collected and how - the note is the record that the money was settled outside the system.";
 

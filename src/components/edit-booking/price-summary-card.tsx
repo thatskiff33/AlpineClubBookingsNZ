@@ -377,6 +377,17 @@ export function PriceSummaryCard({
               </div>
             )}
 
+            {quote.chargeRefusal && (
+              // #3653: the organiser paid by card; the save refuses this charge.
+              <p
+                role="alert"
+                data-testid="organiser-charge-refusal"
+                className="rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11"
+              >
+                {quote.chargeRefusal}
+              </p>
+            )}
+
             {quote.netChargeCents < 0 && quote.settlementOptions && (
               <div className="space-y-2 rounded-md border p-3 text-sm">
                 <div className="flex items-center justify-between">

@@ -34,6 +34,14 @@ export function organiserHasPaidSettlement(
 }
 
 /**
+ * #3653 (`INV-PAY-114`): what a joiner is told when an edit would raise the
+ * price of a booking the organiser paid for by card. Every door that refuses
+ * that charge - the edit saves and the quote that previews them - says this.
+ */
+export const ORGANISER_CHILD_CHARGE_REFUSAL =
+  "This booking was paid for by the group organiser, so a change that raises its price cannot be charged here. Contact the club to make this change.";
+
+/**
  * #3653 (`INV-PAY-114`): a joiner's booking the organiser paid for BY CARD - an
  * organiser-settled child whose payment mirror came from the group's combined
  * Stripe payment. Its reductions and cancellation go back to the organiser's

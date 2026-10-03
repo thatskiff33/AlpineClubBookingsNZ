@@ -53,7 +53,7 @@ import {
   planOrganiserChildModificationRefund,
   type CombinedCardSettlement,
 } from "@/lib/organiser-child-refund";
-import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard } from "@/lib/group-organiser-paid";
 
 export type BookingModificationSettlementOptions = {
   basisAmountCents: number;
@@ -101,6 +101,28 @@ export type PaymentAdjustmentResult = {
    */
   organiserChildRefund: { settlement: CombinedCardSettlement; amountCents: number } | null;
 };
+
+/**
+ * #3653 (`INV-PAY-114`): the refusal an edit that raises the price of a booking
+ * the organiser paid for by card meets, or null. One predicate for the save
+ * (`applyPaymentAdjustments`) and the quote that previews it, so the quote
+ * cannot offer a change the save refuses.
+ */
+export function organiserChildChargeRefusal({
+  booking,
+  netChargeCents,
+}: {
+  booking: Pick<LoadedBookingForModify, "status" | "payment" | "organiserSettled" | "parentBookingId">;
+  netChargeCents: number;
+}): string | null {
+  const hasSucceededPayment =
+    isSettledBookingStatus(booking.status) &&
+    hasCapturedPayment(booking.payment) &&
+    booking.payment?.source === PaymentSource.STRIPE;
+  return netChargeCents > 0 && hasSucceededPayment && paidByOrganiserCard(booking)
+    ? ORGANISER_CHILD_CHARGE_REFUSAL
+    : null;
+}
 
 // isSettledBookingStatus moved to booking-payment-state (#1729) so the Xero
 // period lock-date guard shares the hasIssuedPrimaryXeroInvoice derivation.
@@ -351,15 +373,14 @@ export async function applyPaymentAdjustments(
       // The Xero arm below is deliberately untouched: `xeroAdditionalAmountCents`
       // sizes a SUPPLEMENTARY INVOICE for THIS edit, which supersedes nothing and
       // is collected alongside whatever came before it.
-      if (hasSucceededPayment && paidByOrganiserCard(booking)) {
+      const organiserChargeRefusal = organiserChildChargeRefusal({ booking, netChargeCents: netAmountCents });
+      if (organiserChargeRefusal) {
         // #3653: the organiser paid for this booking out of ONE combined card
         // payment. An ask minted here would charge the JOINER, and its
         // transaction row would make the next reconcile recompute this
         // payment's refunded total from rows that do not hold the organiser's
         // refunds. Refused before the edit commits.
-        throw new OrganiserChildRefundRefusedError(
-          "This booking was paid for by the group organiser, so a change that raises its price cannot be charged here. Contact the club to make this change.",
-        );
+        throw new OrganiserChildRefundRefusedError(organiserChargeRefusal);
       } else if (hasSucceededPayment) {
         additionalAsk = sizeAdditionalAsk({
           priceDiffCents,

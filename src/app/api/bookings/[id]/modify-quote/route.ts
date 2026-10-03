@@ -131,6 +131,7 @@ import { clubTime } from "@/lib/club-time/server";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
   calculateModificationSettlementOptions,
+  organiserChildChargeRefusal,
   GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE,
   editedGuestPricingLocks,
   resolveGuestMemberLinks,
@@ -2397,6 +2398,9 @@ export async function POST(
     changeFeeCents,
     netChargeCents,
     settlementOptions,
+    // #3653: an increase the save would refuse, because the group organiser
+    // paid for this booking by card. Null on every other quote.
+    chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }),
     // #2266: create-flow parity (api/bookings/quote/route.ts) — the member's
     // live balance so the edit panel can offer credit against the new price.
     availableCreditCents,

@@ -244,6 +244,9 @@ export type EditReviewSettlementTask = {
      * selected by the caller for `hasIssuedPrimaryXeroInvoice`.
      */
     status: string;
+    /** #3653: whether the group organiser paid for this booking by card. */
+    organiserSettled: boolean;
+    parentBookingId: string | null;
     payment: {
       id: string;
       status: string;
@@ -361,6 +364,7 @@ export async function chooseEditReviewSettlementRoute({
     // refund path is that the two share no code at all.
     return chooseEditReviewChargeRoute({
       bookingModificationId,
+      booking: task.booking,
       bookingPayment: task.booking.payment,
       member: bookingOwner(task.booking).member,
       hasIssuedXeroInvoice,

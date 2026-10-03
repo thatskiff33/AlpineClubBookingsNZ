@@ -61,7 +61,7 @@ import {
   targetBookingGuestIdsForSelectedIndexes,
 } from "@/lib/promo-stored-guest-targets";
 import { ApiError as SharedApiError } from "@/lib/api-error";
-import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard } from "@/lib/group-organiser-paid";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
@@ -1117,10 +1117,7 @@ export async function POST(
         // #3653: the organiser paid for this booking out of one combined card
         // payment; an ask here would charge the joiner. Refused before commit,
         // exactly as `applyPaymentAdjustments` refuses the other doors' asks.
-        throw new ApiError(
-          "This booking was paid for by the group organiser, so a change that raises its price cannot be charged here. Contact the club to make this change.",
-          409,
-        );
+        throw new ApiError(ORGANISER_CHILD_CHARGE_REFUSAL, 409);
       } else if (hasSucceededPayment && priceDiffCents > 0) {
         additionalAsk = sizeAdditionalAsk({
           priceDiffCents,

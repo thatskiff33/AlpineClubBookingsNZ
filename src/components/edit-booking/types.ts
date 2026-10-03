@@ -262,6 +262,12 @@ export interface QuoteResult {
   changeFeeCents: number;
   netChargeCents: number;
   settlementOptions: SettlementOptions | null;
+  /**
+   * #3653: set when the save would refuse this increase because the group
+   * organiser paid for the booking by card. The server's sentence, shown
+   * verbatim; Save stays off while it is set.
+   */
+  chargeRefusal?: string | null;
   // #2266: the member's live credit balance (create-flow quote parity).
   availableCreditCents?: number;
   capacityAvailable: boolean;
