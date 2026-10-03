@@ -174,6 +174,12 @@ vi.mock("@/lib/group-cancel", () => ({
     mockExecuteGroupSettlementRefundPlan(...args),
 }));
 
+const mockProcessOrganiserChildRefundOperation = vi.fn();
+vi.mock("@/lib/organiser-child-refund-executor", () => ({
+  processOrganiserChildRefundOperation: (...args: unknown[]) =>
+    mockProcessOrganiserChildRefundOperation(...args),
+}));
+
 /**
  * #3341 (`INV-OPS-015`): the ADDITIONAL supersede runs for REAL. The replay
  * asserts the ask it re-mints, and a stubbed supersede is how #3340's sizing
@@ -1892,6 +1898,33 @@ describe("payment recovery worker", () => {
         }),
       }),
     );
+  });
+
+  it("dispatches an organiser child's refund to its own executor, never to the child's transactions (#3653)", async () => {
+    const childOp = makeOperation({
+      id: "recovery-organiser-child",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 1500,
+      idempotencyKey: "organiser_child_refund_mod_mod-1",
+      paymentTransactionId: null,
+      paymentIntentId: "pi_settle_1",
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(childOp);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) =>
+        Promise.resolve(isStaleWorkerSweep(args) ? [] : [{ ...childOp, status: "PENDING" }]),
+    );
+    mockProcessOrganiserChildRefundOperation.mockResolvedValue("re_child");
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(mockProcessOrganiserChildRefundOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "recovery-organiser-child" }),
+      CLUB_FORMAT_TEST,
+    );
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    expect(mockExecuteGroupSettlementRefundPlan).not.toHaveBeenCalled();
   });
 
   it("retries a group settlement replay whose Stripe call failed, alerting only on exhaustion (#1351)", async () => {
