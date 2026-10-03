@@ -694,7 +694,7 @@ export default function HutLeadersPage() {
       setOverCapacity(null);
       setHoldAmendment(null);
       fetchAssignments();
-      // A held bed is presence (#3818, INV-DATE-030), so setting or releasing
+      // A held bed is presence (#3818, INV-DATE-031), so setting or releasing
       // one changes which nights are covered: the amber list must move with
       // the calendar, as it does after a create or a delete.
       fetchUnassignedDates();

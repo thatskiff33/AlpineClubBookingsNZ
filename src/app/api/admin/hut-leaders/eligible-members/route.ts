@@ -172,7 +172,7 @@ export async function GET(req: NextRequest) {
 
   // Which nights in the widened window already have a leader, read through the
   // ONE coverage helper the amber "Upcoming nights with no … staying" panel
-  // uses (#3818, `INV-DATE-030`): a night is covered when an assignment claims it AND its
+  // uses (#3818, `INV-DATE-031`): a night is covered when an assignment claims it AND its
   // leader is staying that night. Suggestions therefore never point at a night
   // that already has a leader on site. A night whose assignment's leader is not
   // there (a row stamped through its leader's checkout day) reads as uncovered,

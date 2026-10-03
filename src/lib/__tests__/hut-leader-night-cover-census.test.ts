@@ -1,5 +1,5 @@
 // Every hut-leader coverage reader goes through ONE helper (#3818,
-// `INV-DATE-030`, `INV-SSOT-001`).
+// `INV-DATE-031`, `INV-SSOT-001`).
 //
 // "Is lodge night D covered?" is answered by `src/lib/hut-leader-night-cover.ts`:
 // an assignment must claim the night AND its leader must be staying. Before
@@ -159,7 +159,7 @@ function coverageShapedReasons(source: string): string[] {
   return reasons;
 }
 
-describe("hut-leader coverage census (#3818, INV-DATE-030)", () => {
+describe("hut-leader coverage census (#3818, INV-DATE-031)", () => {
   it("every registered coverage reader calls the one helper", () => {
     const missing = COVERAGE_READERS.flatMap(({ file, entries }) => {
       const source = read(file);
@@ -169,7 +169,7 @@ describe("hut-leader coverage census (#3818, INV-DATE-030)", () => {
     });
     expect(
       missing,
-      "INV-DATE-030: a hut-leader coverage reader must answer through src/lib/hut-leader-night-cover.ts",
+      "INV-DATE-031: a hut-leader coverage reader must answer through src/lib/hut-leader-night-cover.ts",
     ).toEqual([]);
   });
 
@@ -179,7 +179,7 @@ describe("hut-leader coverage census (#3818, INV-DATE-030)", () => {
     );
     expect(
       direct,
-      "INV-DATE-030: a coverage reader takes assignments from the cover, never from its own hutLeaderAssignment read",
+      "INV-DATE-031: a coverage reader takes assignments from the cover, never from its own hutLeaderAssignment read",
     ).toEqual([]);
   });
 
@@ -192,7 +192,7 @@ describe("hut-leader coverage census (#3818, INV-DATE-030)", () => {
         .filter((pattern) => !pattern.test(body))
         .map((pattern) => `${name} (expected ${pattern.source})`);
     });
-    expect(missing, "INV-DATE-030: answer through the cover, not through a sibling").toEqual([]);
+    expect(missing, "INV-DATE-031: answer through the cover, not through a sibling").toEqual([]);
   });
 
   it("no other file reads an assignment's dates as coverage", () => {
@@ -205,7 +205,7 @@ describe("hut-leader coverage census (#3818, INV-DATE-030)", () => {
     }
     expect(
       offenders,
-      "INV-DATE-030: 'is night D covered?' needs presence as well as dates — call " +
+      "INV-DATE-031: 'is night D covered?' needs presence as well as dates — call " +
         "isHutLeaderNightCovered / loadHutLeaderNightCover, or, if this is not a " +
         "coverage question, add the file to NOT_COVERAGE with the reason.",
     ).toEqual([]);

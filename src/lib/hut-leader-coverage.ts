@@ -132,7 +132,7 @@ export async function getUnassignedHutLeaderDates(input: {
   const [cover, bookings] = await Promise.all([
     // #3818: a night is covered only when an assignment claims it AND its
     // leader is in the lodge that night — `hut-leader-night-cover.ts` is the
-    // one definition (`INV-DATE-030`). Assignment dates alone are no longer an
+    // one definition (`INV-DATE-031`). Assignment dates alone are no longer an
     // answer, which is what lets a cron row stamped through the checkout day
     // stop "covering" the night after its leader left, with no backfill.
     input.cover ??

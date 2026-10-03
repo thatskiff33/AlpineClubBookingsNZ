@@ -17,7 +17,7 @@ import {
 } from "@/lib/club-time";
 
 /**
- * IS LODGE NIGHT D COVERED BY A HUT LEADER? — the one answer (#3818, `INV-DATE-030`).
+ * IS LODGE NIGHT D COVERED BY A HUT LEADER? — the one answer (#3818, `INV-DATE-031`).
  *
  * A night is covered when an assignment's nights include D **and** the person
  * on it is in the lodge that night. An assignment row alone used to be enough,

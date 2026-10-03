@@ -200,7 +200,7 @@ derivation).
   acceptance agree by construction, but a stale page or a direct call bypasses
   the offer.
 
-### INV-DATE-030
+### INV-DATE-031
 
 **A hut-leader night is covered only when its leader is assigned to it AND in
 the lodge that night** (#3818). One night is one duty shift, midday to midday

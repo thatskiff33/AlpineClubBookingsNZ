@@ -294,7 +294,7 @@ The other three writers, and why the guarantee is worded the way it is:
 deliberately NOT the same rule** (#2926). `cron-hut-leader-auto-assign` asks two
 questions per (lodge, night): *is this night already covered?* — since #3818
 `isHutLeaderNightCovered` from `hut-leader-night-cover.ts` (an assignment claims
-the night AND its leader is staying it, `INV-DATE-030`), asked once cheaply on
+the night AND its leader is staying it, `INV-DATE-031`), asked once cheaply on
 `prisma` and once again on `tx` under the key; it is two reads and takes no lock
 of its own — and *would this assignment overlap?*, which is the shared predicate. The
 coverage probes stay **source-blind**: a school-teacher row counts as coverage,

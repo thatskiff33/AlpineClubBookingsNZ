@@ -11,7 +11,7 @@ import {
 } from "@/lib/hut-leader-night-cover";
 
 /**
- * The one presence-aware coverage definition (#3818, `INV-DATE-030`): a night
+ * The one presence-aware coverage definition (#3818, `INV-DATE-031`): a night
  * is covered when an assignment claims it AND its leader is in the lodge.
  */
 

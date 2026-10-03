@@ -13,7 +13,7 @@ import type { HutLeaderHandover } from "@/lib/hut-leader-night-cover";
  * "Handovers this week" on the admin dashboard (#3818): each day in the coming
  * week on which a hut leader finishes at midday and another is on duty from
  * midday (`from` names only who finishes). The handovers
- * come from the presence-aware cover (`INV-DATE-030`), so a leader who is not
+ * come from the presence-aware cover (`INV-DATE-031`), so a leader who is not
  * staying is never shown handing over. Renders nothing when there are none.
  *
  * `nameLodges` is the dashboard's ADR-002 Presentation Rule answer
