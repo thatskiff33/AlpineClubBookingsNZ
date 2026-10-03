@@ -99,6 +99,36 @@ export const EDIT_REFUND_HAND_BACK_WHERE = {
 } as const;
 
 /**
+ * #3827 (`INV-PAY-114`): the snapshot discriminator on the REFUNDED booking
+ * event an edit refund hand-back's completion writes. The booking is LIVE when
+ * that money goes back, so the event is the settlement of an EDIT, never of a
+ * cancellation - and the booking narrative takes the first REFUNDED event as a
+ * later cancellation's settlement sentence. It excludes these the way it
+ * excludes the #2008 duplicate-capture and #3340 supersede refunds. The
+ * event's `reason` stays `manual_refund_completed`, so nothing that reads the
+ * reason sees a new value.
+ */
+export const EDIT_REFUND_HAND_BACK_COMPLETED_EVENT_KIND = "edit_refund_hand_back_completed" as const;
+
+/** The snapshot an edit refund hand-back's completion event carries. */
+export function editRefundHandBackCompletedSnapshot(manualRefundTaskId: string): {
+  kind: typeof EDIT_REFUND_HAND_BACK_COMPLETED_EVENT_KIND;
+  manualRefundTaskId: string;
+} {
+  return { kind: EDIT_REFUND_HAND_BACK_COMPLETED_EVENT_KIND, manualRefundTaskId };
+}
+
+/** Is this booking event an edit refund hand-back's completion? */
+export function isEditRefundHandBackCompletedEvent(event: { type: string; snapshot: unknown }): boolean {
+  return (
+    event.type === "REFUNDED" &&
+    typeof event.snapshot === "object" &&
+    event.snapshot !== null &&
+    (event.snapshot as { kind?: unknown }).kind === EDIT_REFUND_HAND_BACK_COMPLETED_EVENT_KIND
+  );
+}
+
+/**
  * May a task of this kind be closed as money that moved?
  *
  * FALSE FOR EXACTLY ONE KIND. `UNCOLLECTED_EDIT_REVIEW_SHARE` is a notice that

@@ -6,6 +6,7 @@ import {
   type NarrativeEvent,
 } from "@/lib/booking-narrative";
 import { DUPLICATE_CAPTURE_REFUND_EVENT_KIND } from "@/lib/duplicate-capture-refund-event";
+import { editRefundHandBackCompletedSnapshot } from "@/lib/manual-refund-task-settlement-rules";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -266,6 +267,42 @@ describe("resolveBookingNarrative", () => {
     );
     // The duplicate-capture refund amount/date never leaks into the narrative.
     expect(result.message).not.toContain("$50.00");
+    expect(result.message).not.toContain("3 May 2026");
+    expect(result.message).not.toContain("was refunded");
+  });
+
+  it("EXCLUDES an edit refund sent back by hand from a later cancellation's settlement (#3827, INV-PAY-114)", () => {
+    // An edit lowered the live booking by $30 and the treasurer sent that back
+    // by bank transfer (a REFUNDED event marked as the edit task's completion);
+    // the member later cancelled under a no-refund policy. The narrative must
+    // describe the cancellation from its own snapshot, never the edit's refund.
+    const result = resolveBookingNarrative({
+      club: CLUB,
+      booking: booking({ status: "CANCELLED" }),
+      events: [
+        event(BookingEventType.MEMBER_PAID, "2026-05-02T00:00:00.000Z", { amountCents: 12000 }),
+        event(BookingEventType.REFUNDED, "2026-05-03T00:00:00.000Z", {
+          amountCents: 3000,
+          reason: "manual_refund_completed",
+          snapshot: editRefundHandBackCompletedSnapshot("task-1"),
+        }),
+        event(BookingEventType.CANCELLED, "2026-05-05T00:00:00.000Z", {
+          amountCents: 9000,
+          snapshot: {
+            policySummary: "Cancelled inside the no-refund window under the policy in effect at the time.",
+            refundMethod: "card",
+            refundPercentage: 0,
+            paidAmountCents: 9000,
+            settledAmountCents: 0,
+            retainedAmountCents: 9000,
+            changeFeeCents: 0,
+          },
+        }),
+      ],
+    }, CLUB_FORMAT_TEST);
+
+    expect(result.state).toBe("cancelled_post_payment");
+    expect(result.message).not.toContain("$30.00");
     expect(result.message).not.toContain("3 May 2026");
     expect(result.message).not.toContain("was refunded");
   });

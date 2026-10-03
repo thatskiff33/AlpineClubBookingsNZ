@@ -1596,6 +1596,8 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: BookingEventType.REFUNDED })
     );
+    // #3827: a CANCELLATION hand-back's refund IS its settlement - unmarked.
+    expect(mocks.recordBookingEvent.mock.calls[0]![0]).not.toHaveProperty("snapshot");
     // #3599: the money handed back by hand is on the booking ledger, inside the
     // same transaction, named as a bank transfer (`INV-PAY-101`) and the officer.
     expect(vi.mocked(postHandBackLedgerLine)).toHaveBeenCalledWith({
@@ -1695,7 +1697,13 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       store: tx,
     });
     expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ type: BookingEventType.REFUNDED, amountCents: 6000 })
+      expect.objectContaining({
+        type: BookingEventType.REFUNDED,
+        amountCents: 6000,
+        reason: "manual_refund_completed",
+        // #3827: marked, so the narrative never reads it as a cancellation's.
+        snapshot: { kind: "edit_refund_hand_back_completed", manualRefundTaskId: "task-1" },
+      })
     );
     // ...and no second Xero document is raised for it.
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();

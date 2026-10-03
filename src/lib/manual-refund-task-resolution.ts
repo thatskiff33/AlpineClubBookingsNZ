@@ -34,6 +34,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 // both read it (`INV-SSOT`).
 import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 import {
+  editRefundHandBackCompletedSnapshot,
   isEditRefundHandBackTask,
   isPartPaymentReviewTask,
   manualRefundTaskSettlementRefusal,
@@ -630,6 +631,11 @@ export async function resolveManualRefundTask(
       actorMemberId: actingMemberId,
       amountCents: result.recordedRefund.amountCents,
       reason: "manual_refund_completed",
+      // #3827 (`INV-PAY-114`): an edit's refund, on a live booking - marked so
+      // the narrative never reads it as a later cancellation's settlement.
+      ...(result.editRefundHandBack
+        ? { snapshot: editRefundHandBackCompletedSnapshot(result.taskId) }
+        : {}),
     });
   }
 

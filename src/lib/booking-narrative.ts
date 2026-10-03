@@ -50,6 +50,7 @@ import type {
 } from "@/lib/booking-events";
 import { isDuplicateCaptureRefundEvent } from "@/lib/duplicate-capture-refund-event";
 import { isSupersededAdditionalRefundEvent } from "@/lib/superseded-additional-refund-event";
+import { isEditRefundHandBackCompletedEvent } from "@/lib/manual-refund-task-settlement-rules";
 import { isManualSettlementMarkerEvent } from "@/lib/manual-settlement-reversal-event";
 import {
   FINANCIAL_REVIEW_NOTHING_MOVED,
@@ -366,7 +367,10 @@ function buildCancelledNarrative(
         (e.type === BookingEventType.REFUNDED ||
           e.type === BookingEventType.CREDITED) &&
         !isDuplicateCaptureRefundEvent(e) &&
-        !isSupersededAdditionalRefundEvent(e)
+        !isSupersededAdditionalRefundEvent(e) &&
+        // #3827 (`INV-PAY-114`): an edit's refund, sent back by hand while the
+        // booking was live, is not this cancellation's settlement either.
+        !isEditRefundHandBackCompletedEvent(e)
     );
     return buildCancelledPostPaymentNarrative(
       paidEvent,
