@@ -1274,7 +1274,9 @@ describe("processStoredXeroInboundEvents", () => {
         draftExpiresAt: null,
       },
     });
-    // The inbound path reads the payment twice. The booking ledger's
+    // The inbound path reads the payment three times: the lodge key only, then
+    // (#3792) the full snapshot after the lodge key, then the capacity re-read.
+    // The booking ledger's
     // settlement sync (#3581) adds its own two reads — the owner, then the
     // rows it posts from — which are counted separately so this still pins
     // what it always pinned.
@@ -1286,7 +1288,7 @@ describe("processStoredXeroInboundEvents", () => {
       );
     expect(
       mocks.paymentFindUnique.mock.calls.filter(([args]) => !ledgerSyncRead(args)),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(
       mocks.paymentFindUnique.mock.calls.filter(([args]) => ledgerSyncRead(args)),
     ).toHaveLength(2);
@@ -1299,9 +1301,13 @@ describe("processStoredXeroInboundEvents", () => {
     // now sit between the first read and the lock, right after the receipt
     // row they post from — correct, since the receipt stands even if the
     // capacity check below cancels the booking.
-    const postLockReread = mocks.paymentFindUnique.mock.calls
+    const ownReads = mocks.paymentFindUnique.mock.calls
       .map(([args], index) => ({ args, order: mocks.paymentFindUnique.mock.invocationCallOrder[index]! }))
-      .filter(({ args }) => !ledgerSyncRead(args))[1]!.order;
+      .filter(({ args }) => !ledgerSyncRead(args));
+    const postLockReread = ownReads[2]!.order;
+    // #3792: the owner the member key is taken on is read after the lodge key.
+    expect(ownReads[0]!.order).toBeLessThan(mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]);
+    expect(mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]).toBeLessThan(ownReads[1]!.order);
     expect(mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]).toBeLessThan(postLockReread);
     expect(postLockReread).toBeLessThan(
       mocks.bookingUpdateMany.mock.invocationCallOrder.at(-1)!,

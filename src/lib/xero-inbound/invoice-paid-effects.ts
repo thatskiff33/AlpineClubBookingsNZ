@@ -454,6 +454,19 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     const outcome = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
+      // Pre-lock read: only the lodge key, which is immutable. The booking's
+      // owner is NOT (member merge re-points it holding the lodge key, #3792),
+      // so every field below, the owner included, comes from the post-lodge-lock
+      // read that follows.
+      const lodgeTarget = await tx.payment.findUnique({
+        where: { id: payment.id },
+        select: { source: true, booking: { select: { lodgeId: true } } },
+      });
+      if (!lodgeTarget || lodgeTarget.source !== PaymentSource.INTERNET_BANKING) {
+        return { type: "missing" as const };
+      }
+      await acquireLodgeCapacityLock(tx, lodgeTarget.booking.lodgeId);
+
       const fresh = await tx.payment.findUnique({
         where: { id: payment.id },
         include: {
@@ -475,8 +488,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       // #3792 (INV-LOCK-002): lock(1), then the immutable lodge key, then the
       // member credit-ledger key, all before the first Payment row write below:
       // the order the inbound credit-note sync (member key, then Payment) and
-      // every cancel take them in, so no two can deadlock. #3369: no member, no key.
-      await acquireLodgeCapacityLock(tx, fresh.booking.lodgeId);
+      // every cancel take them in, so no two can deadlock. The key comes from
+      // this post-lodge-lock read, and the late capacity cancel's restore reuses
+      // it. #3369: no member, no key.
       const creditLedgerMemberId = bookingOwner(fresh.booking).memberId;
       if (creditLedgerMemberId) await lockMemberCreditLedger(creditLedgerMemberId, tx);
 
@@ -1093,7 +1107,6 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           // never-captured cancel do. Throwing rolls the whole claim back; the
           // inbound event retries after its backoff.
           // #3369: an organisation-owned booking has no credit ledger.
-          const lateCapacityRestoreMemberId = bookingOwner(locked.booking).memberId;
           const unconvergedDeallocation = await findUnconvergedAppliedCreditDeallocation(fresh.id, tx);
           if (unconvergedDeallocation) {
             throw new XeroAppliedCreditOperationBusyError(
@@ -1133,8 +1146,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           // capacity void (payment-reconciliation.ts), under the locks taken
           // above. The helper posts the restore's ledger line, and its unique
           // `restoredFromBookingId` makes a replay, or the orphan heal, a no-op.
-          const creditRestoredCents = lateCapacityRestoreMemberId
-            ? await restoreCreditFromBooking(lateCapacityRestoreMemberId, fresh.bookingId, tx)
+          const creditRestoredCents = creditLedgerMemberId
+            ? await restoreCreditFromBooking(creditLedgerMemberId, fresh.bookingId, tx)
             : 0;
           // #3611: the cash goes back as credit, so nothing is kept; a booking
           // already confirmed on the ledger (a mark-paid since reversed) has its

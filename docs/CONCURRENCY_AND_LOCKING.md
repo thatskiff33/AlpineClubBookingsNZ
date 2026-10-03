@@ -4276,7 +4276,12 @@ and then waited for the key would deadlock against it (reproduced as `40P01`,
 `lockPaymentForRefundedTotal`, the pending cancel before its `Payment` write,
 the settle before its `Payment` upsert, and the inbound reconcile before its
 receipt write) therefore take the member key explicitly, right after their
-lodge key. The caller set and both orders are pinned by
+lodge key. The settle and the inbound reconcile read the owner that key names
+**after** the lodge key, and their restore reuses that same id: member merge
+re-points `Booking.memberId` holding the lodge key but not `lock(1)`, so an owner
+read taken before the lodge key can name a member the booking no longer has,
+and the restore would then take a second member key after the `Payment` row.
+The caller set and both orders are pinned by
 `bed-allocation-lock-topology-contract.test.ts`, and the interleaving is proved
 against PostgreSQL in `ib-capacity-cancel-credit-restore.realdb.test.ts`. The Xero inbound applied-credit repair
 (`xero-inbound/credit-note-repairs.ts`) takes the **per-member credit ledger

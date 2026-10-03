@@ -797,11 +797,12 @@ describe("markBookingPaymentSucceeded", () => {
     });
 
     expect(result.outcome).toBe("paid");
-    // Pre-lock read selects only the lock keys: the lodge, and (#3792) the
-    // immutable owner the member credit-ledger key is taken on.
+    // Pre-lock read selects only the immutable lodge key. The owner the member
+    // credit-ledger key is taken on is NOT immutable (member merge re-points it
+    // under the lodge key), so it comes from the post-lock re-read (#3792).
     expect(mocks.bookingFindUnique).toHaveBeenNthCalledWith(1, {
       where: { id: "booking-1" },
-      select: { lodgeId: true, memberId: true },
+      select: { lodgeId: true },
     });
     // The capacity occupancy query is bounded by the POST-lock (May) dates, not
     // the January dates that only the pre-lock read carried.

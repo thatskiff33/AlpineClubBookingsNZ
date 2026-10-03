@@ -311,14 +311,39 @@ describe("bed allocation lock topology", () => {
     );
     expectInOrder(reconcile, [
       "pg_advisory_xact_lock(1)",
-      "acquireLodgeCapacityLock(tx, fresh.booking.lodgeId)",
+      "acquireLodgeCapacityLock(tx, lodgeTarget.booking.lodgeId)",
+      "const fresh = await tx.payment.findUnique(",
+      "const creditLedgerMemberId = bookingOwner(fresh.booking).memberId",
       "lockMemberCreditLedger(creditLedgerMemberId, tx)",
       "tx.payment.update(",
       "if (!capacity.available && !lockedHasOverride)",
       "findUnconvergedAppliedCreditDeallocation(fresh.id, tx)",
       "clearStaleCreditElection(tx, locked.booking)",
-      "restoreCreditFromBooking(lateCapacityRestoreMemberId, fresh.bookingId, tx)",
+      "restoreCreditFromBooking(creditLedgerMemberId, fresh.bookingId, tx)",
     ]);
+  });
+
+  // #3792: member merge re-points `Booking.memberId` holding the lodge key but
+  // not lock(1), so an owner read taken before the lodge key can name a member
+  // the booking no longer has. The member key must come from a read made AFTER
+  // the lodge key, and the restore must reuse that same id, or the restore takes
+  // a second member key after the Payment row and reopens the 40P01.
+  it("keys the settle capacity void's member lock and restore on one post-lodge-lock owner read", () => {
+    const settle = stripComments(functionBody(
+      source("src/lib/payment-reconciliation.ts"),
+      "async function settleBookingPaymentInTransaction(",
+    ));
+    expectInOrder(settle, [
+      "pg_advisory_xact_lock(1)",
+      "acquireLodgeCapacityLock(tx, bookingLodgeId)",
+      "const booking = await tx.booking.findUnique(",
+      "const settleCreditLedgerMemberId = bookingOwner(booking).memberId",
+      "lockMemberCreditLedger(settleCreditLedgerMemberId, tx)",
+      "tx.payment.upsert(",
+      "restoreCreditFromBooking(settleCreditLedgerMemberId, booking.id, tx)",
+    ]);
+    const restores = settle.split("restoreCreditFromBooking(").length - 1;
+    expect(restores, "the settle has exactly one restore, keyed on the locked id").toBe(1);
   });
 
   // #3792: the restore joins the member credit-ledger tier ITSELF, so the
