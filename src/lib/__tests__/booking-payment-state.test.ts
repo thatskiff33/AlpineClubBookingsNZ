@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { PaymentSource } from "@prisma/client";
 import {
+  editReviewRefundGoesBackOnCard,
   editReviewRefundIsPaidBackByHand,
   getRemainingRefundableCents,
   hasCapturedPayment,
@@ -87,5 +89,22 @@ describe("booking payment state helpers", () => {
         booking: { status: "PAID", payment: { ...captured("INTERNET_BANKING"), status: "PENDING" } },
       }),
     ).toBe(false);
+  });
+
+  it("asks the settle screen exactly the complement of the chooser's card test, for every source (#3536, INV-SSOT)", () => {
+    // The chooser takes the card route exactly when `editReviewRefundGoesBackOnCard`
+    // holds; the screen offers cash-or-bank exactly when it does not. A source
+    // added later lands on one side of both, never on opposite sides.
+    const sources: Array<string | null> = [...Object.values(PaymentSource), null];
+    for (const source of sources) {
+      const byHand = editReviewRefundIsPaidBackByHand({
+        paymentId: "payment-1",
+        payment: source === null ? null : { source },
+        booking: { status: "PAID", payment: null },
+      });
+      expect(byHand).toBe(!editReviewRefundGoesBackOnCard({ source }));
+    }
+    expect(editReviewRefundGoesBackOnCard({ source: PaymentSource.STRIPE })).toBe(true);
+    expect(editReviewRefundGoesBackOnCard({ source: null })).toBe(false);
   });
 });

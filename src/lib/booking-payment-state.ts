@@ -279,6 +279,21 @@ export function editReviewRefundSettlementPayment(task: {
 }
 
 /**
+ * #3536: THE one test of "this refund goes back on the card" for a payment
+ * `editReviewRefundSettlementPayment` returned (`INV-SSOT`).
+ * `chooseEditReviewSettlementRoute` takes the `stripe-refund` route exactly when
+ * this is true, and `editReviewRefundIsPaidBackByHand` below is exactly its
+ * complement over a non-null payment, so a new `PaymentSource` cannot be sent
+ * down one route by the chooser and offered the other by the settle screen. A
+ * missing source counts as NOT a card, matching the chooser's ledger fallback.
+ */
+export function editReviewRefundGoesBackOnCard(payment: {
+  source: string | null;
+}): boolean {
+  return payment.source === "STRIPE";
+}
+
+/**
  * #3536: a refund on this review would be paid back by hand - the
  * `local-allocation` route - because the money behind it did not go out on a
  * card. Only the officer knows whether that hand-back was cash or a bank
@@ -288,5 +303,5 @@ export function editReviewRefundIsPaidBackByHand(
   task: Parameters<typeof editReviewRefundSettlementPayment>[0],
 ): boolean {
   const payment = editReviewRefundSettlementPayment(task);
-  return payment !== null && payment.source !== "STRIPE";
+  return payment !== null && !editReviewRefundGoesBackOnCard(payment);
 }

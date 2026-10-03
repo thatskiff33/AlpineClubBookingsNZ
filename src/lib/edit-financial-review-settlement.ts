@@ -10,7 +10,11 @@ import {
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { recordBookingEvent } from "@/lib/booking-events";
-import { editReviewRefundSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
+import {
+  editReviewRefundGoesBackOnCard,
+  editReviewRefundSettlementPayment,
+  hasCapturedPayment,
+} from "@/lib/booking-payment-state";
 import {
   chooseEditReviewChargeRoute,
   executeEditReviewCharge,
@@ -415,16 +419,17 @@ export async function chooseEditReviewSettlementRoute({
    * claim, and a capture or webhook replay cannot duplicate a backfill that does
    * not exist.
    */
-  // #3536: the derivation lives in `editReviewRefundSettlementPayment` so the
-  // settle queue can ask, ahead of time, whether this route is the hand-settled
-  // one (`INV-SSOT`).
+  // #3536: both the payment derivation (`editReviewRefundSettlementPayment`)
+  // and the card-or-by-hand test (`editReviewRefundGoesBackOnCard`) are shared
+  // with `editReviewRefundIsPaidBackByHand`, which the settle queue asks ahead
+  // of time to decide whether to offer the cash-or-bank question (`INV-SSOT`).
   const settlementPayment = editReviewRefundSettlementPayment(task);
   const settlementPaymentId = settlementPayment?.id ?? null;
-  const settlementPaymentSource = settlementPayment?.source ?? null;
 
   if (
+    settlementPayment !== null &&
     settlementPaymentId !== null &&
-    settlementPaymentSource === PaymentSource.STRIPE
+    editReviewRefundGoesBackOnCard(settlementPayment)
   ) {
     if (!bookingModificationId) {
       throw new ManualBookingPaymentError(
