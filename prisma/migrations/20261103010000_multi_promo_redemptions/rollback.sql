@@ -1,4 +1,4 @@
--- Reverse of 20261102010000_multi_promo_redemptions (#3826, epic #3813).
+-- Reverse of 20261103010000_multi_promo_redemptions (#3826, epic #3813).
 --
 -- Operator-run only: Prisma never applies or checksums this file.
 --
