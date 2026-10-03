@@ -39,7 +39,12 @@ import {
 } from "@/lib/xero-sync";
 import logger from "@/lib/logger";
 import { CLUB_NAME } from "@/config/club-identity";
-import { readModificationNoteWording, resolveRefundNoteMethod } from "@/lib/xero-refund-method";
+import {
+  parseRefundMethod,
+  readModificationNoteWording,
+  resolveRefundNoteMethod,
+} from "@/lib/xero-refund-method";
+import { queuedReviewTaskId } from "@/lib/xero-review-task-key";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
 import {
   readBookingClearingNoteRetryInput,
@@ -1702,6 +1707,10 @@ export async function retryXeroSyncOperation(
         throw new XeroOperationRetryError("Booking modification no longer has a refundable Xero delta.");
       }
 
+      // #3791: both payload shapes (queued and executed) carry the task under
+      // one key, so it is read raw like the refund method below.
+      const retriedReviewTaskId = queuedReviewTaskId(operation);
+
       // An account-credit settlement must be rebuilt as an UNAPPLIED credit
       // note, never applied against the invoice — the member already holds
       // the matching spendable credit locally. Discriminate via the queued
@@ -1731,6 +1740,8 @@ export async function retryXeroSyncOperation(
           paymentId,
           refundAmountCents,
           bookingModificationId: operation.localId!,
+          // #3791: a review task's share rebuilds its own task-scoped key.
+          reviewTaskId: retriedReviewTaskId,
           createdByMemberId,
           format,
         });
@@ -1739,7 +1750,10 @@ export async function retryXeroSyncOperation(
 
       // `INV-PAY-101`: both payload shapes carry the method under one key; the
       // execution-time shape is not the typed queued payload, so it is read raw.
-      const modificationRefundMethod = readCashRefundMethod(asRecord(operation.requestPayload));
+      // #3791: an invoice-allocated note for a review's given-back credit reads
+      // "account credit", so this note - unlike a payment's refund note - can
+      // carry any of the three.
+      const modificationRefundMethod = parseRefundMethod(asRecord(operation.requestPayload)?.refundMethod);
       // #3536: the two booking-edit wordings ride beside the method, so a retry
       // says what the original attempt would have said.
       const { noteWording: modificationNoteWording } = readModificationNoteWording(
@@ -1749,6 +1763,7 @@ export async function retryXeroSyncOperation(
         bookingId: modification.bookingId,
         refundAmountCents,
         bookingModificationId: operation.localId!,
+        reviewTaskId: retriedReviewTaskId,
         createdByMemberId,
         repairExistingLink: true,
         ...(modificationRefundMethod ? { refundMethod: modificationRefundMethod } : {}),

@@ -37,6 +37,10 @@ import {
 } from "@/lib/payment-transactions";
 import { dispatchEditReviewXeroSettlement } from "@/lib/edit-financial-review-xero-leg";
 import {
+  finishEditReviewAccountCredit,
+  type EditReviewAccountCreditOutcome,
+} from "@/lib/edit-financial-review-account-credit";
+import {
   assertLateCaptureHandBackStillOwed,
   executeLateCaptureApprovalRefund,
   planLateCaptureApprovalRefund,
@@ -174,14 +178,8 @@ export type EditReviewSettlementRoute =
        * behind them and no invoice line to correct.
        */
       bookingModificationId: string | null;
-      /**
-       * #3536 (`INV-PAY-113`): the officer resolving the review said the club
-       * handed this money back in cash. Present only when they said so - the app
-       * never infers cash from "marked paid by hand", which covers bank transfers
-       * recorded outside Xero too. It changes the words on the Xero note and
-       * nothing else: the ledger line and the settlement still treat the
-       * hand-back as internet banking.
-       */
+      /** #3536 (`INV-PAY-114`): the officer said this went back in cash, never inferred from
+       * "marked paid by hand". Words on the Xero note only; settlement and ledger unchanged. */
       handedBackInCash?: true;
     }
   | {
@@ -203,6 +201,11 @@ export type EditReviewSettlementRoute =
        * the booking that has LEFT it - cancelled, most obviously - whose cents
        * are just as capable of being refunded twice. Matching the route gate
        * would drop the allocation on the one shape that still needs it.
+       *
+       * NULL also decides HOW the share is credited (#3791): with no captured
+       * payment, what the member paid is their applied account credit, so
+       * `writeEditReviewAccountCredit` gives that back rather than minting new
+       * credit beside it.
        */
       allocateAgainstPaymentId: string | null;
     }
@@ -322,11 +325,8 @@ export async function chooseEditReviewSettlementRoute({
    * the member's card.
    */
   direction: ManualRefundTaskDirection;
-  /**
-   * #3536 (`INV-PAY-113`): the officer's answer that a hand-settled refund went
-   * back in cash. Read only where the review takes the `local-allocation` route;
-   * absent or false keeps the bank-transfer wording.
-   */
+  /** #3536 (`INV-PAY-114`): the officer's cash answer, read only on the `local-allocation` route;
+   * absent or false keeps the bank-transfer wording. */
   handedBackInCash?: boolean;
   store: Prisma.TransactionClient;
 }): Promise<EditReviewSettlementRoute | null> {
@@ -415,10 +415,8 @@ export async function chooseEditReviewSettlementRoute({
    * claim, and a capture or webhook replay cannot duplicate a backfill that does
    * not exist.
    */
-  // #3536: both the payment derivation (`editReviewRefundSettlementPayment`)
-  // and the card-or-by-hand test (`editReviewRefundGoesBackOnCard`) are shared
-  // with `editReviewRefundIsPaidBackByHand`, which the settle queue asks ahead
-  // of time to decide whether to offer the cash-or-bank question (`INV-SSOT`).
+  // #3536 (`INV-SSOT`): this payment and the card-or-by-hand test are shared with
+  // `editReviewRefundIsPaidBackByHand`, which decides whether the settle queue asks cash-or-bank.
   const settlementPayment = editReviewRefundSettlementPayment(task);
   const settlementPaymentId = settlementPayment?.id ?? null;
 
@@ -463,7 +461,6 @@ export async function chooseEditReviewSettlementRoute({
       kind: "local-allocation",
       paymentId: settlementPaymentId,
       bookingModificationId,
-      // #3536: words only, and the officer's answer, never inferred.
       ...(handedBackInCash ? { handedBackInCash: true as const } : {}),
     };
   }
@@ -525,8 +522,10 @@ export async function executeEditReviewSettlement({
   actingMemberId,
   route,
   amountCents,
+  accountCredit,
   hasIssuedXeroInvoice,
   bookingPaymentStatus,
+  bookingXeroInvoiceId = null,
   cancellationHandBackInvoiceId,
   format,
 }: {
@@ -535,6 +534,10 @@ export async function executeEditReviewSettlement({
   actingMemberId: string;
   route: EditReviewSettlementRoute | null;
   amountCents: number | null;
+  /** #3791: what the account-credit route gave back and minted, else null. */
+  accountCredit: EditReviewAccountCreditOutcome | null;
+  /** #3791: the booking's primary invoice, which a cancelled booking still has. */
+  bookingXeroInvoiceId?: string | null;
   hasIssuedXeroInvoice: boolean;
   bookingPaymentStatus: string | null;
   /** `INV-PAY-101` (#3529): see `dispatchEditReviewXeroSettlement`. */
@@ -651,17 +654,20 @@ export async function executeEditReviewSettlement({
     chargeTotalCents = charged.totalCents;
   }
 
-  if (route?.kind === "account-credit") {
-    // `INV-PAY-051` asks for the booking event to be written where the money
-    // moves, and this is that place: the credit row is committed, so the claim
-    // the member reads is one the ledger can be pointed at.
-    await recordBookingEvent({
+  // #3791: an account-credit share's event and Xero leg - given back, minted,
+  // or on a cancelled booking - are its own, after the commit as everything here.
+  if (route?.kind === "account-credit" && accountCredit) {
+    await finishEditReviewAccountCredit({
       bookingId,
-      type: BookingEventType.CREDITED,
-      actorMemberId: actingMemberId,
-      amountCents: amountCents ?? 0,
-      reason: "edit_financial_review_credited",
+      taskId,
+      actingMemberId,
+      bookingModificationId: route.bookingModificationId,
+      outcome: accountCredit,
+      hasIssuedXeroInvoice,
+      bookingXeroInvoiceId,
+      bookingPaymentStatus,
     });
+    return { stripeRefundId, additionalPaymentIntentId };
   }
 
   /**

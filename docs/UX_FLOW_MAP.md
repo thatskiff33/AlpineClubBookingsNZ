@@ -536,7 +536,7 @@ saying it is already settled.
 member" and the booking's money did not come in by card, a **How did the club
 pay the member back?** choice appears: **By bank transfer** or **In cash**,
 neither pre-selected. It sets only the wording on the Xero credit note; leaving
-it blank keeps the bank-transfer wording (`INV-PAY-113`).
+it blank keeps the bank-transfer wording (`INV-PAY-114`).
 
 **A third kind of row, and it has no settle box at all (#3213, registered in this
 release and written in the next).** A booking change settled as money the member

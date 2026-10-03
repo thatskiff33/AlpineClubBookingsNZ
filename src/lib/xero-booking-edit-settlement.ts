@@ -114,7 +114,7 @@ export interface ClassifyXeroBookingEditSettlementInput {
    */
   refundedThroughStripe?: boolean | null;
   /**
-   * #3536 (`INV-PAY-113`): the club handed this reduction back in cash. Words
+   * #3536 (`INV-PAY-114`): the club handed this reduction back in cash. Words
    * only: the note keeps its bank-transfer `refundMethod` (a modification note
    * is allocated, never settled by a payment), and carries the cash wording.
    */
@@ -126,6 +126,12 @@ export interface QueueXeroBookingEditSettlementInput
   bookingId: string;
   bookingModificationId: string;
   createdByMemberId?: string;
+  /**
+   * #3791: the review task whose share this settles, which scopes the credit
+   * note it raises to that task, so a sibling review of the same edit raises
+   * its own. Absent on every edit's own settlement.
+   */
+  reviewTaskId?: string;
 }
 
 // test seam
@@ -313,6 +319,7 @@ export async function queueXeroBookingEditSettlement(
         ...(decision.financialAction.noteWording
           ? { noteWording: decision.financialAction.noteWording }
           : {}),
+        ...(input.reviewTaskId ? { reviewTaskId: input.reviewTaskId } : {}),
       },
       {
         createdByMemberId: input.createdByMemberId,
@@ -325,6 +332,7 @@ export async function queueXeroBookingEditSettlement(
         bookingId: input.bookingId,
         refundAmountCents: decision.financialAction.refundAmountCents,
         bookingModificationId: input.bookingModificationId,
+        ...(input.reviewTaskId ? { reviewTaskId: input.reviewTaskId } : {}),
       },
       {
         createdByMemberId: input.createdByMemberId,

@@ -154,7 +154,7 @@ export type OpenManualRefundTaskPayload = {
    */
   partPaymentReviewXeroPaid: { reportedAt: string; cashCents: number } | null;
   /**
-   * #3536 (`INV-PAY-113`): a financial review whose refund the club would pay
+   * #3536 (`INV-PAY-114`): a financial review whose refund the club would pay
    * back by hand, so the settle screen asks the officer whether it went back in
    * cash or by bank transfer. A preview only: the completion re-chooses the
    * route under its lock, and the answer counts only on that route.

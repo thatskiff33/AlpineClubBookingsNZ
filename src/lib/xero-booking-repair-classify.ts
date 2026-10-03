@@ -961,7 +961,7 @@ export function classifyBookingContext(
                 bookingId: booking.id,
                 bookingModificationId: modification.id,
                 refundAmountCents: expectedCreditNoteCents,
-                // #3536 (`INV-PAY-113`): the wording the original attempt
+                // #3536 (`INV-PAY-114`): the wording the original attempt
                 // recorded - its refund method and any owner-added wording,
                 // such as the officer's "Refunded in cash" - read from the
                 // same stored request the amount came from, so the repair

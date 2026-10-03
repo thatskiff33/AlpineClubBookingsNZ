@@ -16,7 +16,7 @@ reason: the repaired note has to carry its wording from the same stored
   across two files.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1838
+lines: 1853
 reason: the modification-note retry reads the stored wording beside the
   stored method it already reads, in the one branch that rebuilds that call;
   lifting six lines out of a single call site would leave the retry's inputs

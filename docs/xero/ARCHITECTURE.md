@@ -637,7 +637,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-booking-invoices` | Primary booking invoice create/update (`buildInvoiceLineItems`). |
 | `xero-invoice-payments` | Recording Stripe payments against invoices and Stripe refunds as credit-note payments. |
 | `xero-credit-notes` | Refund credit notes, unapplied (account-credit) credit notes, allocation to invoices. Stripe refunds settle **per delta** (#1162): a payment refunded in several steps gets one credit note per uncovered delta, keyed on a cumulative refunded-cents watermark; non-Stripe refunds keep one note per payment. A cash refund note's settling payment is recorded only where the money verifiably moved (`resolveRefundSettlement`, `INV-PAY-101`): Stripe for a card refund, the configured bank-transfer refund account for a recorded bank transfer, and otherwise the note is left unsettled with `refundPaymentSkipped` on the operation. The note is recorded (payment field, covering link, the row's `xeroObjectId`) in one transaction the moment Xero returns it, so an attempt that dies before its payment leaves a FAILED row naming its note; the retry and repair legs and the repair tool finish it through one read-back-then-settle (`xero-refund-note-settlement.ts`, `INV-PAY-111`): the payment or the skip, PARTIAL if the payment fails, one note-keyed payment key, dated the note's own day, and never a second payment on a note Xero already shows paid, part-paid or allocated. Rows written before #3548 with neither are listed by the reconciliation report and the repair tool (`xero-refund-note-unsettled.ts`) and settled only by an operator. |
-| `xero-refund-method` | Leaf, pure: how the money went back — `card`, `internet-banking`, `account-credit` — as the ONE home for the wording every refund or credit document carries (#3529, `INV-PAY-101`), the default a method-less legacy row falls to (Stripe → card, anything else → bank transfer), and which mapping key settles a cash refund. The method is threaded from the settlement decision through the outbox payload; the builders never infer it from `Payment.source` when the caller said. Two booking-edit wordings (#3536) — *Invoice correction — nothing refunded* (an unpaid pay-on-account invoice lowered) and *Refunded in cash* (an edit-review refund paid back by hand, when the resolving officer says it went in cash; never inferred, `INV-PAY-113`) — ride beside the method as `noteWording`, which retries and the repair tool carry forward; words only, no settlement changes. |
+| `xero-refund-method` | Leaf, pure: how the money went back — `card`, `internet-banking`, `account-credit` — as the ONE home for the wording every refund or credit document carries (#3529, `INV-PAY-101`), the default a method-less legacy row falls to (Stripe → card, anything else → bank transfer), and which mapping key settles a cash refund. The method is threaded from the settlement decision through the outbox payload; the builders never infer it from `Payment.source` when the caller said. Two booking-edit wordings (#3536) — *Invoice correction — nothing refunded* (an unpaid pay-on-account invoice lowered) and *Refunded in cash* (an edit-review refund paid back by hand, when the resolving officer says it went in cash; never inferred, `INV-PAY-114`) — ride beside the method as `noteWording`, which retries and the repair tool carry forward; words only, no settlement changes. |
 | `xero-supplementary-invoices` | Positive booking-modification delta invoices. Since #3530 (stage 2b) itemised from the edit's stored lines when they sum exactly to what the invoice bills; otherwise the single price-adjustment line, with the reason under `requestPayload.priceLines`. |
 | `xero-modification-credit-notes` | Negative booking-modification credit notes. Itemised the same way, every sign inverted, only when the note returns the whole reduction (#3530). |
 | `xero-modification-line-items` | The itemised lines on a booking-edit document (#3530): loads the codes the original invoice uses, renders one Xero line per stored line, one `Adjustment agreed with member: <note>` line per COMPLETED review share settled against the modification (stage 2c — how a parked edit's closure reads on its invoice or note), and the fee line; records `{source, reason, storedSumCents, sharesSumCents, billedCents}`. Selection is `booking-modification-document-lines` (pure); the per-line sentence is `booking-modification-lines`; the share rows are `edit-financial-review-charge-shape`'s. |
@@ -782,6 +782,40 @@ credit note, credit-note allocation, applied-credit allocation, applied-credit
 deallocation, membership-cancellation credit note, membership-cancellation
 contact update, group-settlement invoice, group-settlement invoice void,
 membership subscription invoice, and kept late-capture invoice (#3635).
+
+**An applied-credit deallocation has one producer**: `giveBackAppliedCredit`
+(`member-credit.ts`), the give-back of applied credit that the pre-payment
+clamp and a credit-paid booking's financial-review share both go through
+(#3791, `INV-PAY-113`). Where an internet-banking booking's credit is allocated
+against its invoice beyond the new applied figure, it queues the deallocation in
+the same transaction as the ledger row, and the PENDING row fences the inbound
+applied-credit repair until it converges, so an inbound sync cannot pull the
+given-back credit back up to Xero's figure. It never deallocates on a CANCELLED
+booking, whose invoice must not reopen. A review share then reaches Xero the way
+an ordinary price reduction does (`dispatchEditReviewAccountCreditXero`), held
+to three invariants for an issued invoice: the invoice less its reduction notes
+is the booking's price, Xero's due is the app's owed, and the member's Xero
+credit (counting noteless rows minted when spent, #2717) is the app's. So an
+invoice-allocated modification credit note takes off the whole reduction
+(`reviewInvoiceReductionCents`: the re-price's drop on an unpaid booking, the
+agreed share on a covered one), the unallocated account note is raised only for
+minted credit, and on a cancelled booking nothing but that minted note is sent:
+given-back credit there is a noteless row, as the cancellation's own restore is.
+Each note's correlation and Xero idempotency keys carry the review task
+(`reviewTaskKeyParts`), so sibling reviews of one edit raise a note each, and a
+review's allocated note waits, returned to PENDING with the reason kept in
+`lastErrorMessage`, while the payment's deallocation is PENDING or RUNNING. A
+FAILED or PARTIAL deallocation only moves on an operator retry, so the note
+fails instead, naming it: retry the deallocation, then the note.
+
+**Deploy note (blue/green, #3791).** A review's note carries `reviewTaskId` in
+its outbox payload, which the previous release ignores: it would raise the note
+under the anchor's unscoped keys and without waiting for the deallocation.
+Before the old colour's workers stop, drain or pause the outbox's modification
+credit-note rows written by the new release (or stop the old workers before the
+new release completes its first financial review). The outbox claim filters on
+known queue types only, so the alternative is a queue type of its own for review
+notes; that was not added.
 
 **Retry taxonomy** (each layer is distinct — do not conflate when changing):
 
