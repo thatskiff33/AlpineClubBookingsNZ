@@ -97,9 +97,11 @@ the lodge without ever making a booking.
 Without the tick or a bed, an assignment for someone who is not staying is
 refused. **No bed — role only** is only for a leader who is staying on a booking.
 
-A custodian should not also be a guest on a booking at the same lodge for the
-same nights unless they really take a second bed: the tick and the booking each
-take a space. The page tells you after confirming if that is the case.
+A custodian with no bed who is also a guest on a booking at the same lodge is
+one person, so they take **one space** on those nights, not two. Their place on
+the booking is their space, and a full night still has room for that booking. A
+custodian who holds a bed keeps that bed, so a booking of their own needs
+another one.
 
 **Marking an existing assignment as custodian.** Each row in the assignments
 table has a **Custodian (lives on site)** button (the house icon). Press it to
@@ -234,7 +236,7 @@ away.
 | Pick any member | Assign a member who is not in the suggestions (e.g. a custodian) | Keeps the range you picked. A member with no stay on those nights can be assigned only as a custodian (the tick) or with a held bed |
 | Custodian (lives on site) | Marks the leader as living at the lodge | Counts as staying every covered night with no booking, and takes one space off capacity on each (once, even with a bed). Available with bed allocation on or off. Never set by the automatic assignment or a school booking |
 | Hold a bed (optional) | Holds one bed for every covered night, with no booking | Default is **No bed — role only** (no capacity effect unless ticked custodian). Only offered while the `bedAllocation` module is on. Inclusive of the end date's night. Each choice names the bed type, so a double is obvious before you take it. If a booking already has the whole lodge on any covered night, you are asked to accept narrowing it by that one bed before anything is written |
-| Custodian (house icon, on a row) | Ticks or unticks **Custodian (lives on site)** on an existing assignment | Same capacity questions as the form. Ticking a leader who is also a guest on a booking here warns that they now take two spaces on those nights. Unticking a row with no bed and no stay is refused, and the message says to keep them marked or shorten or delete the assignment. Works with bed allocation on or off |
+| Custodian (house icon, on a row) | Ticks or unticks **Custodian (lives on site)** on an existing assignment | Same capacity questions as the form. A leader who is also a guest on a booking here stays one space on those nights. Unticking a row with no bed and no stay is refused, and the message says to keep them marked or shorten or delete the assignment. Works with bed allocation on or off |
 | Release bed (undo icon) | Hands the held bed back and keeps the assignment | Available whether or not the `bedAllocation` module is on — a hold made while it was on still occupies a real bed. Refused on an unticked row whose member is not staying: tick Custodian first |
 | Change bed (bed icon) | Opens the bed picker for that row's own dates | Works on automatically created assignments too, which never come with a bed |
 | Reset kiosk PIN (key icon) | Issues a new kiosk PIN for that leader | Shown once; emailed if delivery works; old PIN is revoked |

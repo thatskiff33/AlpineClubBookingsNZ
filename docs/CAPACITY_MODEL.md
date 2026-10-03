@@ -336,8 +336,24 @@ first only when the officer accepts it. Only the officer's manual create and edi
 set the tick (the form, or the row's Custodian button); the cron and the school
 writer never do.
 
-Two stated limits of the tick, neither of which moves an admission number in the
-wrong direction silently:
+**One person is one space (owner decision on #3820, 3 Oct 2026).** A ticked
+custodian with no bed who is also a guest at the lodge is counted once. The one
+rule is `custodianOccupancyTakesSpace`: a held bed always takes its own space,
+because it is a physical bed kept out of the pool and a guest row for the same
+member needs another; a bedless tick takes one only when its member is not among
+the night's guest members. `computeNightOccupancy` builds that set from term 1's
+own guest list, so the custodian is de-duplicated against exactly the guests
+counted, plus the party being admitted. That second half is what reaches the
+booking being admitted: every engine passes each night's party members
+(`checkCapacityForGuestRanges` and the partner-shared check from their guests,
+`checkCapacity` through `partyMemberIds`), and `CapacityProposedGuest` makes
+`memberId` required so no admission caller can omit it. The custodian writer's
+over-capacity warning and whole-lodge question ask the same rule of the
+assignment being written. Two guest rows for one member are still two guests;
+only the tick is given back.
+
+One stated limit of the tick, which moves no admission number in the wrong
+direction silently:
 
 - *Planner versus count on a whole-lodge-held night.* The count subtracts a
   bedless ticked custodian from what the hold represents; the bed planner
@@ -345,16 +361,8 @@ wrong direction silently:
   it still emits every active bed for the hold. A held night is pinned to the
   full lodge either way (`INV-CAP-038`), and outside held nights admission is
   capped at capacity less the custodian, so the planner only ever sees one spare
-  bed.
-- *A ticked custodian who is also a guest.* The tick and a guest row on a
-  booking at the same lodge are two occupants to the counter, so a ticked
-  custodian with no bed who also books takes two spaces on those nights. The
-  counter does not de-duplicate them: the admission engines add the requested
-  party on top of the count, so a de-duplication inside the counter would not
-  reach the booking being admitted. The create and the edit (the row's
-  Custodian toggle included) return a `custodianBookedWarning` the page shows
-  instead — one string and one failure-tolerant post-commit read
-  (`custodianBookedAsGuestWarning`), so the two cannot drift.
+  bed. A custodian who is a guest of the held booking that night is not
+  subtracted at all, and the planner places them as a guest.
 
 **Night semantics.** The hold covers `startDate <= night <= endDate`,
 **inclusive** — matching the existing hut-leader coverage semantics. This is
@@ -380,7 +388,7 @@ two custodians handing over on the same night, on different beds, subtract two.
 |---|---|---|
 | `checkCapacity`, `checkCapacityForGuestRanges`, `checkCapacityForPartnerSharedAdmission`, `getMonthAvailability` | **Yes** | Every admission path and both calendars must see the bed as taken |
 | Capacity-warnings cron | **Yes** | Its whole job is fullness; excluding the hold would under-fire the warning all season |
-| Custodian bed-hold write path (`validateCustodianBedHold`) | **Yes**, other custodians only | The hold being created or edited is excluded and added once as `+ 1`, so a handover never double-counts one bed |
+| Custodian bed-hold write path (`validateCustodianBedHold`) | **Yes**, other custodians only | The hold being created or edited is excluded and added once as `+ 1` (not at all on a night a bedless tick's member is a counted guest), so a handover never double-counts one bed |
 | Admin reports `occupancyByDate` | **No** | Utilisation measures *booked* usage, so the report reads slightly low during custodian season. Stated here so the gap is a decision, not a bug |
 
 Since #2681 the first three rows — six surfaces in all, since the first row
