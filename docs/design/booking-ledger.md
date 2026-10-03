@@ -289,7 +289,10 @@ money deserves a line of its own is the Xero rendering's question (C6, #3585).
 
 `paid` is the payment net of earlier refunds, change fees included; `applied` is
 the credit the booking's applied rows actually hold, which the mirror can
-disagree with. Only the paid `cancelBooking` branch keeps anything; every other
+disagree with. Only the paid `cancelBooking` branch keeps anything - and, since
+#3809, the unpaid branch on a payment that captured money and was refunded
+whole, which keeps the applied credit its tier did not restore
+(`INV-PAY-114`); every other
 cancel keeps nothing. The CANCELLED snapshot freezes `ledger: { keptCents,
 policyKeptCents, keptBeyondPolicyCents, appliedCreditCents, creditRestoredCents, appliedCreditBaseCents }`
 in the same claim, so #3583's
@@ -320,7 +323,7 @@ proves the ledger was in step rather than assuming it. The completion takes
 | Booking edited and priced (four doors + batch, `INV-MOD-044`) | per guest-night, all or nothing (the rule above); a `PROMOTION` reversal + re-post when the promo delta is non-zero; a `CHANGE_FEE` (+) when the edit charged one | `MODIFICATION` / modification id | the four edit services and the batch path, in the transaction that already writes `priceLines` (`INV-MOD-058`) |
 | Admin date shift (`adminShiftBookingDates`, #3741) | the same per-night rule: each old-date night's live line reversed, each new-date night posted at the same figure, netting to the row's zero; both sides read as written rows, since a shift sells nothing | `MODIFICATION` / the `ADMIN_DATE_SHIFT` row | `adminShiftBookingDates`, under the `lock(1)` it takes first |
 | Booking edited and **parked** (`INV-MOD-040`) | **nothing** — a parked edit writes structure, never an amount; the lines post when the review closes | — | — |
-| Booking cancelled — member or admin cancel (all four `cancelBooking` branches), the linked provisional child, the internet banking hold-expiry release, a group organiser's settled children, the settle's capacity void, the late internet banking capacity cancel, and `cron-confirm-pending`'s three hold-window cancels | the rule above. Only the paid `cancelBooking` branch keeps anything; every other path keeps nothing and posts reversals only — a group organiser's settled children included, since they hold no settlement line of their own (where their kept money belongs is #3583's) | `CANCELLATION` / booking id | each cancel path, in the claim transaction that flips the booking `CANCELLED`, under its `lock(1)` |
+| Booking cancelled — member or admin cancel (all four `cancelBooking` branches), the linked provisional child, the internet banking hold-expiry release, a group organiser's settled children, the settle's capacity void, the late internet banking capacity cancel, and `cron-confirm-pending`'s three hold-window cancels | the rule above. Only the paid `cancelBooking` branch keeps anything (and the unpaid branch's tiered credit on a captured, refunded-whole payment, #3809); every other path keeps nothing and posts reversals only — a group organiser's settled children included, since they hold no settlement line of their own (where their kept money belongs is #3583's) | `CANCELLATION` / booking id | each cancel path, in the claim transaction that flips the booking `CANCELLED`, under its `lock(1)` |
 | Review closed by re-pricing (`INV-MOD-055`) — the admin price rebase (`booking-review-price-rebase.ts`), whose only caller is the closure | reversal of every live `GUEST_NIGHT` the re-price changed + re-post at the new figure, and the promotion likewise — all or nothing against the re-base's movement of the final price; **nothing** where the re-base declines or writes no history row | `MODIFICATION` / the `PRICE_REBASE` history row the re-base writes (both money components zero) | the closure (`recordReviewClosurePricing`), under the completion's `lock(1)` |
 
 ### 5.2 Moving money (SETTLEMENT)

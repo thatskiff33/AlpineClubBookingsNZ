@@ -532,8 +532,8 @@ card-first (`calculateAppliedCreditRestore`), through `giveBackAppliedCredit`
 an all-card one would. The member's credit-ledger key is taken before any
 `Payment` row write; the mirror then falls to the ledger's figure. In Xero the
 give-back is invoice-allocated: the edit's note (worded as account credit when
-nothing else is refunded), or a note beside a credit election's unallocated
-one; edit notes wait for the deallocation. Every guest-removal door, the
+nothing else is refunded), or a note of its own beside a refund's or a credit
+election's; edit notes wait for the deallocation. Every guest-removal door, the
 consent decline and expiry included, queues that Xero leg. The quote and the
 "Booking Modified" email state the amount. A booking still owing (CONFIRMED or
 PAYMENT_PENDING) gives nothing back: its reduction lowers what it owes.

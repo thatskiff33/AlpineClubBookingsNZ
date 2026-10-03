@@ -1613,19 +1613,29 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
 ## INV-PAY-114
 
 - **A cancellation tiers applied credit capped at what the booking is now worth,
-  money paid first** (#3809, owner decision A: credit-paid members are treated
-  the same as card-paid ones). The card slice's base caps money paid at price
-  plus change fee (`cancelRefundableBaseCents`); the credit slice is what the
-  same cap leaves of the applied credit (`cancelAppliedCreditBaseCents`, the
-  difference of two such bases), tiered by `calculateAppliedCreditRestore`.
-  Credit left applied above the price - a reduction's policy-kept share - is
-  not restored, as paid money above the price is not refunded: $200
-  credit-paid, $5 back on a $50 reduction at 50% less $20, then a cancel at the
-  same tier restores $55, $60 in all, the card-paid figure. The executed cancel
-  (`paidCancellationMoney`) and the member's preview
-  (`calculateCancellationPreview`) use the one base; the CANCELLED event freezes
-  it (`appliedCreditBaseCents`) for a later review's netting (`INV-PAY-113`). The
-  kept-back credit counts as kept beyond the policy (design §5.1).
+  money paid first - for a booking reduced through #3809's settlement** (owner
+  decision A: credit-paid members are treated the same as card-paid ones). The
+  card slice's base caps money paid at price plus change fee
+  (`cancelRefundableBaseCents`); the credit slice is what the same cap leaves of
+  the applied credit (`cancelAppliedCreditBaseCents`), tiered by
+  `calculateAppliedCreditRestore`. $200 credit-paid, $5 back on a $50 reduction
+  at 50% less $20, then a cancel at the same tier restores $55: $60 in all, the
+  card-paid figure.
+  - **Only new reductions** (owner decision, 4 Oct 2026, "Cap new reductions
+    only"): the cap applies where an edit's history row records the settlement
+    of applied credit (`bookingReducedThroughCreditGiveBack`,
+    `BookingModification.newData`). A booking reduced before that release tiers
+    all the credit still applied, as before: never short, and up to about $20
+    more than an all-card member at partial tiers. No data change.
+  - **A captured payment the cancel cannot refund** - a reduction refunded the
+    card whole - has its credit tiered the same way, with no card slice, not
+    restored whole (`refundedPaymentCreditRestore`); a never-captured booking
+    still restores it whole.
+  - The executed cancel, the member's preview and the review's netting
+    (`INV-PAY-113`) use one base; the CANCELLED event freezes it
+    (`appliedCreditBaseCents`), capped or not. Credit kept above the cap counts
+    as kept beyond the policy (design §5.1).
+
 ## INV-PAY-069
 
 - **A completion states WHICH WAY the money goes, and the row records it**

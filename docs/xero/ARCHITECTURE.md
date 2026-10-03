@@ -812,11 +812,18 @@ edit's own modification note waits the same way: a paid booking's price
 reduction gives back applied credit through the same deallocation - all of a
 credit-paid booking's tiered reduction, or what a card-and-credit booking's
 card basis could not return - and `queueXeroBookingEditSettlement` takes it as
-`appliedCreditGiveBackCents`: folded into the edit's invoice-allocated note
-(worded as account credit where nothing else was refunded), or, beside a credit
-election's unallocated account note, as an allocated note of its own. So the
-invoice reopened by the deallocation is closed again and no unallocated note is
-raised for it. A card-path booking paid by credit has no allocation to release
+`appliedCreditGiveBackCents`: the edit's invoice-allocated note, worded as
+account credit, where nothing else was refunded; otherwise an allocated note of
+its own beside the card or bank refund's note or a credit election's
+unallocated one, since one note names one method (`INV-PAY-101`). That second
+note rides the per-share key slot (`reviewTaskKeyParts`) under the scope
+`applied-credit-give-back`, so the edit's own note neither answers for it nor
+folds an equal amount into its key. So the invoice reopened by the deallocation
+is closed again and no unallocated note is raised for it. The note is queued
+after the commit, as every edit's is; if that queue fails, the repair pass
+(`MISSING_MODIFICATION_CREDIT_NOTE`) re-queues it at the give-back the edit's
+history row records - none where the tier gave nothing back - never at the
+whole reduction. A card-path booking paid by credit has no allocation to release
 (#3836); there the note alone takes the give-back off the invoice. Every
 guest-removal door queues this leg through `queueGuestRemovalXeroSettlement`,
 the consent decline and expiry included, which before #3809 queued nothing.
