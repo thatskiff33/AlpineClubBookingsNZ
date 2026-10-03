@@ -25,6 +25,7 @@ import {
 } from "@/lib/promo-guest-scope";
 import { resolveWorkPartyEventPromoForBooking } from "@/lib/work-party";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { normalizePromoCodeInput, promoCodeListRefusal } from "@/lib/promo-code-list-rules";
 import { type BookingGuestInput, BookingPromoError } from "./booking-create-types";
 
 /** One promo code a create request carries, in the booker's order (D-3813-2). */
@@ -302,10 +303,14 @@ export function orderedPromoCodeRequests(body: {
     }));
 }
 
-/** ONE spelling of a typed promo code as it is stored (#3770, `INV-SSOT-001`). */
-export function normalizePromoCodeInput(code: string): string {
-  return code.toUpperCase().trim();
-}
+// The stored spelling of a typed code and the code-list refusals live in the
+// leaf `promo-code-list-rules.ts` (#3827), re-exported here for this module's
+// importers.
+export {
+  DUPLICATE_PROMO_CODE_MESSAGE,
+  normalizePromoCodeInput,
+  ONE_PROMO_CODE_PER_BOOKING_MESSAGE,
+} from "@/lib/promo-code-list-rules";
 
 /**
  * An internal (working-bee) code is "not found" to anyone who typed it; only the
@@ -375,16 +380,6 @@ export async function promoCodeRequestRefusal(options: {
   );
 }
 
-const PROMO_WORK_PARTY_EXCLUSION_MESSAGE =
-  "A promo code cannot be combined with a working bee discount. Please remove one of them and try again.";
-
-/** While `multiPromoCodes` is off a booking holds one code (#3826). */
-export const ONE_PROMO_CODE_PER_BOOKING_MESSAGE =
-  "Only one promo code can be used on a booking.";
-
-export const DUPLICATE_PROMO_CODE_MESSAGE =
-  "The same promo code was entered more than once.";
-
 /**
  * Resolve the codes a create applies, in order (#3827): the selected working
  * bee's internal promo first — it claims its in-window nights before any code
@@ -423,18 +418,12 @@ export async function resolveEffectivePromoSources(
     ? options.promoCodes.filter((request) => request.code.trim().length > 0)
     : [];
 
-  const typed = promoCodes.map((request) => normalizePromoCodeInput(request.code));
-  if (new Set(typed).size !== typed.length) {
-    throw new BookingPromoError(DUPLICATE_PROMO_CODE_MESSAGE);
-  }
-  if (!modules.multiPromoCodes) {
-    if (workPartyEventId && promoCodes.length > 0) {
-      throw new BookingPromoError(PROMO_WORK_PARTY_EXCLUSION_MESSAGE);
-    }
-    if (promoCodes.length > 1) {
-      throw new BookingPromoError(ONE_PROMO_CODE_PER_BOOKING_MESSAGE);
-    }
-  }
+  const listRefusal = promoCodeListRefusal({
+    typedCodes: promoCodes.map((request) => normalizePromoCodeInput(request.code)),
+    workPartyApplied: Boolean(workPartyEventId),
+    multiPromoCodes: modules.multiPromoCodes,
+  });
+  if (listRefusal) throw new BookingPromoError(listRefusal);
   const sources: EffectivePromoSource[] = [];
   if (workPartyEventId) {
     const resolution = await resolveWorkPartyEventPromoForBooking(

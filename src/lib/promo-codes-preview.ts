@@ -3,6 +3,7 @@ import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { applyBookingPromotions, type PromotionGuest } from "@/lib/booking-promotions";
 import type { CalendarDate } from "@/lib/club-time";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
+import { normalizePromoCodeInput, promoCodeListRefusal } from "@/lib/promo-code-list-rules";
 
 // The several-code half of `/api/promo-codes/validate` (#3827), kept out of the
 // route handler so the route stays a thin door over the one orchestrator.
@@ -29,14 +30,14 @@ export async function validateSeveralPromoCodes(params: {
   /** The club's day, resolved by the route (`INV-CONFIG-002`). */
   todayAtClub: CalendarDate;
 }) {
-  const typed = params.codes.map((entry) => entry.code.toUpperCase().trim());
+  const typed = params.codes.map((entry) => normalizePromoCodeInput(entry.code));
   const sources = (params.workPartyPromo ? 1 : 0) + typed.length;
-  const refusal =
-    new Set(typed).size !== typed.length
-      ? "The same promo code was entered more than once."
-      : sources > 1 && !(await multiPromoCodesEnabled(prisma))
-        ? "Only one promo code can be used on a booking."
-        : null;
+  // The create's own refusal, so the preview words it as the save will.
+  const refusal = promoCodeListRefusal({
+    typedCodes: typed,
+    workPartyApplied: Boolean(params.workPartyPromo),
+    multiPromoCodes: sources > 1 ? await multiPromoCodesEnabled(prisma) : true,
+  });
   const finalPrice = (promoAdjustmentCents: number) =>
     bookingFinalPriceCents({ totalPriceCents: params.totalPriceCents, promoAdjustmentCents });
   if (refusal) {

@@ -7,7 +7,12 @@
 import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { applyBookingPromotions, repriceBookingPromotions } from "@/lib/booking-promotions";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
-import { requestedPromoCodeListFor } from "@/lib/booking-modify-promo-request";
+import {
+  keptStoredPromoRedemption,
+  requestedPromoCodeListFor,
+  splitRequestedPromoCodes,
+} from "@/lib/booking-modify-promo-request";
+import { promoCodeListRefusal } from "@/lib/promo-code-list-rules";
 import {
   AdminReviewStatus,
   BookingStatus,
@@ -2402,16 +2407,16 @@ export async function applyPromoCodeChanges(
   }
 
   // The booker's new list (D-3813-2: add, remove or reorder in one request).
-  if (new Set(requested.map((entry) => entry.code)).size !== requested.length) {
-    throw new ApiError("The same promo code was entered more than once.", 400);
-  }
-  if (requested.length > 1 && !(await multiPromoCodesEnabled(tx))) {
-    throw new ApiError("Only one promo code can be used on a booking.", 400);
-  }
+  const listRefusal = promoCodeListRefusal({
+    ...splitRequestedPromoCodes(requested, existing),
+    // Read only when it can matter: one code is never refused by the switch.
+    multiPromoCodes: requested.length > 1 ? await multiPromoCodesEnabled(tx) : true,
+  });
+  if (listRefusal) throw new ApiError(listRefusal, 400);
   const existingByCode = new Map(existing.map((redemption) => [redemption.promoCode.code, redemption]));
   const kept = new Set(
     requested
-      .filter((entry) => !entry.reapply && existingByCode.has(entry.code))
+      .filter((entry) => keptStoredPromoRedemption(entry, existingByCode))
       .map((entry) => entry.code),
   );
   const incomingCodes = requested.filter((entry) => !kept.has(entry.code)).map((entry) => entry.code);

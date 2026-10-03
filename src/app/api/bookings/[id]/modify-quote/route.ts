@@ -70,11 +70,14 @@ import {
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
+import { promoCodeListRefusal } from "@/lib/promo-code-list-rules";
 // Pure readers of the request, from their home rather than the barrel (#3827).
 import {
   requestChangesPromoCodes,
   requestedPromoCodeChange,
+  keptStoredPromoRedemption,
   requestedPromoCodeListFor,
+  splitRequestedPromoCodes,
 } from "@/lib/booking-modify-promo-request";
 import {
   describePromoChangeNotApplied,
@@ -2299,15 +2302,16 @@ export async function POST(
         promoGuestIds: undefined,
         promoAddedGuestIndexes: undefined,
       }));
-    let refusal: string | null = null;
-    if (requested && new Set(requested.map((entry) => entry.code)).size !== requested.length) {
-      refusal = "The same promo code was entered more than once.";
-    } else if (requested && requested.length > 1 && !(await multiPromoCodesEnabled(prisma))) {
-      refusal = "Only one promo code can be used on a booking.";
-    }
+    // The save's own refusal (`promoCodeListRefusal`), read the same way.
+    let refusal: string | null = requested
+      ? promoCodeListRefusal({
+          ...splitRequestedPromoCodes(requested, promoRedemptions),
+          multiPromoCodes: requested.length > 1 ? await multiPromoCodesEnabled(prisma) : true,
+        })
+      : null;
     const applications: Array<PromotionApplicationInput & { kept: boolean }> = [];
     for (const entry of refusal ? [] : entries) {
-      const keptRedemption = entry.reapply ? undefined : existingByCode.get(entry.code);
+      const keptRedemption = keptStoredPromoRedemption(entry, existingByCode);
       if (keptRedemption) {
         const promo = keptRedemption.promoCode;
         applications.push({
