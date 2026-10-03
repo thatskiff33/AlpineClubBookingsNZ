@@ -35,6 +35,7 @@
 import type Stripe from "stripe";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -241,6 +242,24 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
       });
     }
 
+    /**
+     * The audit writer is fire-and-forget, so a count is read only once it has
+     * stopped moving: at least 300ms in, and unchanged across three reads.
+     */
+    async function settledAuditCount(where: { action: string; targetId: string }) {
+      const started = process.hrtime.bigint();
+      let last = -1;
+      let stable = 0;
+      for (;;) {
+        const count = await prisma.auditLog.count({ where });
+        stable = count === last ? stable + 1 : 0;
+        last = count;
+        if (stable >= 3 && realElapsedMs(started) >= 300) return count;
+        if (realElapsedMs(started) > 10_000) throw new Error("The audit count never settled");
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+
     /** Claim the row as the recovery runner does, then run it. */
     async function run(operationId: string) {
       const claimed = await prisma.paymentRecoveryOperation.update({
@@ -350,6 +369,9 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
       expect(await prisma.paymentRefund.count({ where: { paymentId: PAYMENTS[0] } })).toBe(1);
       expect((await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENTS[0] } })).refundedAmountCents).toBe(1_500);
       expect(await prisma.xeroSyncOperation.count({ where: { localModel: "Payment", localId: PAYMENTS[0], entityType: "CREDIT_NOTE" } })).toBe(1);
+
+      // Made on its first attempt, so nothing was recovered and nothing says so.
+      expect(await settledAuditCount({ action: "booking.payment.refund_recovered", targetId: CHILDREN[0]! })).toBe(0);
     });
 
     it("converges an ambiguous Stripe answer on the one refund Stripe made, and keeps a failed call owed", async () => {
@@ -377,11 +399,9 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
       // Fix round: the refund an earlier attempt failed to make is audited as
       // recovered - once, and only for the refund that needed recovering (the
       // first test's refund was made on its first attempt). The writer is
-      // fire-and-forget, so the row is awaited, not assumed.
-      const recovered = { action: "booking.payment.refund_recovered", targetId: CHILDREN[0] };
-      for (let tries = 0; tries < 50 && (await prisma.auditLog.count({ where: recovered })) === 0; tries += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      // fire-and-forget, so the count is read once it has settled.
+      const recovered = { action: "booking.payment.refund_recovered", targetId: CHILDREN[0]! };
+      expect(await settledAuditCount(recovered)).toBe(1);
       const rows = await prisma.auditLog.findMany({ where: recovered });
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ category: "booking", entityType: "Booking", entityId: CHILDREN[0] });
