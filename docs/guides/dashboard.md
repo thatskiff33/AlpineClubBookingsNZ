@@ -70,7 +70,7 @@ The dashboard has no settings — it is read-only. The cards it can show:
 | Account Deletion Requests | A member self-service deletion is pending | [Deletion Requests](deletion-requests.md) |
 | Membership Lifecycle Review | A cancellation or archive request is waiting | [Cancellation Requests](membership-cancellations.md) |
 | Nights without a hut leader staying | Upcoming nights have guests but no hut leader who is both assigned and staying that night. Each entry gives the night and how many guests are on site. On a club with more than one active lodge this counts **lodge-nights** and names the lodge on every date, because each lodge needs its own leader — see [Hut Leaders](hut-leaders.md#what-counts-as-a-covered-night) | [Hut Leaders](hut-leaders.md) |
-| Handovers this week | A hut leader hands over to another at midday on one of the next seven days. Each line names the day and who hands over to whom (and the lodge, on a club with more than one). Shown only to admins who can open Hut Leaders | [Hut Leaders](hut-leaders.md) |
+| Handovers this week | On one of the next seven days a hut leader finishes at midday and another is on duty from midday. Each line names the day, who finishes and who takes over (and the lodge, on a club with more than one). Shown, and read, only for admins who can open Hut Leaders | [Hut Leaders](hut-leaders.md) |
 
 Stat cards (each links to its detail area):
 

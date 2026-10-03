@@ -35,10 +35,12 @@ lodges clears the previous results while the new lodge loads. If the lodge list
 cannot be loaded, the page explains the failure, offers **Try again**, and sends
 no hut-leader request or assignment write until a real lodge returns.
 
-1. Go to **Admin → Lodge Operations → Hut Leaders**. The amber **Upcoming Dates
-   Without …** card lists booked nights with no leader; the calendar paints
-   **Guests, no hut leader staying** (red, labelled **No leader tonight**) and
-   **Hut Leader staying** (violet) nights.
+1. Go to **Admin → Lodge Operations → Hut Leaders**. The amber **Upcoming
+   nights with no hut leader staying** card lists the coming nights that have
+   guests but no leader staying; the calendar paints **Guests, no hut leader
+   staying** (red, labelled **No hut leader tonight**) and **Hut Leader
+   staying** (violet) nights. Every one of these uses your club's own word for
+   the role, set under **Admin → Club identity**.
 
    A night "needs a leader" **at one lodge**: it has a booking with at least one
    guest staying, and no leader **assigned to that night and staying that night**
@@ -47,7 +49,7 @@ no hut-leader request or assignment write until a real lodge returns.
    selector above it, so it only ever describes that one lodge. See
    [What counts as a covered night](#what-counts-as-a-covered-night) below.
 
-   ![Hut Leader Assignments page showing the pick-the-nights calendar with "Needs leader" nights, the choose-the-leader step, and the assignments table](../images/admin/admin-hut-leaders.png)
+   ![Hut Leader Assignments page showing the pick-the-nights calendar with nights that need a leader, the choose-the-leader step, and the assignments table](../images/admin/admin-hut-leaders.png)
 
 2. **Pick the nights to cover** — set the **Start Date** and **End Date**, or click
    **Assign** on an upcoming-date card to pre-fill a single night.
@@ -81,9 +83,12 @@ both of these are true:
 
 | Assignment | Counts as in the lodge on… |
 | --- | --- |
-| An ordinary member (assigned by hand or automatically) | the nights of their own paid stay at **this** lodge. A cancelled, bumped, archived or unpaid stay counts for nothing, and neither does a stay at another lodge |
-| A custodian holding a bed | every night the assignment covers — the held bed is where they sleep |
-| A school group's teacher | the school booking's own nights, arrival to the night before departure |
+| An ordinary member (assigned by hand or automatically) | the nights of their own paid stay at **this** lodge. A cancelled, bumped, archived or unpaid stay counts for nothing, and neither does a stay at another lodge, or a stay as another member's guest that they have not yet confirmed |
+| A custodian — ticked **Custodian (lives on site)**, or holding a bed | every night the assignment covers. They live in the lodge, so no booking is needed |
+| A school group's teacher | the assignment's own dates, arrival to the night before departure, as recorded when the school booking was approved. These assignments are not linked back to the booking: if the school booking is later cancelled or moved, its teachers still count on the original nights until you delete or change their assignments here |
+
+An assignment for someone who is neither a custodian nor staying covers nothing,
+and the page refuses to save one.
 
 So an assignment that runs past the leader's departure does **not** cover the
 nights after they leave. Older automatic assignments were recorded through the
@@ -92,29 +97,44 @@ still staying, with no clean-up needed — the assignment itself is unchanged.
 
 The calendar shows who is on duty each half of a changeover day:
 
-- **AM · Smith until midday** — the leader of the night before is on duty until
+- **AM · Smith until midday** — a leader of the night before finishes at
   midday.
-- **PM · Jones from midday** — tonight's leader is on duty from midday.
-- **No leader tonight** — guests are staying and nobody is assigned and staying.
+- **PM · Jones from midday** — a leader of tonight starts at midday.
+- **No hut leader tonight** — guests are staying and nobody is assigned and
+  staying.
 
-A day shows the AM/PM split only when the two nights have different leaders,
-including the first and last day of a stint. A plain surname means the same
-leader holds both nights. The admin dashboard lists these handovers for the
-coming week under **Handovers this week**, and its **Nights without a hut leader
-staying** card gives each uncovered night with its guest count.
+A day shows the AM/PM lines only when the two nights have different leaders,
+including the first and last day of a stint. A plain surname means a leader on
+duty all day: on a one-night overlap, the leader who stays on is shown plainly
+beside the one arriving or leaving, never as leaving. On a phone the lines drop
+"until midday" / "from midday" so the name still fits; a screen reader always
+hears the full wording. The admin dashboard lists the coming week's handovers —
+a day on which a leader finishes at midday and another is on duty from midday —
+under **Handovers this week**, and its **Nights without a hut leader staying**
+card gives each uncovered night with its guest count.
 
 ### Hold a bed for a custodian
 
 Some clubs keep someone on site for a whole season — a custodian who lives in
-the lodge without ever making a booking. An assignment can **hold one bed** for
-its whole range to represent exactly that.
+the lodge without ever making a booking. Tick **Custodian (lives on site)** on
+the assignment to say so; with bed allocation on, the assignment can also
+**hold one bed** for its whole range.
 
-1. Pick the nights and the member as above. For a season-long custodian with no
-   booking of their own, use the **Any member** tab.
-2. In **Hold a bed (optional)**, choose the bed they sleep in. The default,
-   **No bed — role only**, is the original behaviour and changes no capacity.
-3. Confirm. From that moment the bed is out of the bookable pool and off the
-   allocation board for every covered night — with **no booking anywhere**.
+1. Pick the nights and the member as above. For a custodian with no booking of
+   their own, use the **Any member** tab.
+2. Tick **Custodian (lives on site)**. A ticked custodian counts as the leader
+   on every night the assignment covers, with no booking and no bed needed,
+   whether or not your club uses bed allocation. Each covered night takes one
+   space off the lodge's capacity, once, even if they also hold a bed.
+3. Optionally, in **Hold a bed (optional)**, choose the bed they sleep in (this
+   needs the `bedAllocation` module). An assignment holding a bed also counts as
+   a custodian, which is how custodians recorded before the tick existed keep
+   counting.
+4. Confirm. A held bed is out of the bookable pool and off the allocation board
+   for every covered night — with **no booking anywhere**.
+
+An assignment with no tick, no bed and no stay of the member's own is refused:
+it would show the role on nights nobody is there.
 
 What a held bed does, and does not, do:
 
@@ -212,7 +232,7 @@ away.
 | --- | --- | --- |
 | Start Date / End Date | The nights the leader covers | NZ date-only; an >1-day overlap with an existing assignment is blocked, EXCEPT against a school group's teacher assignments, which never block you |
 | Eligible members list | Members whose bookings make them a natural fit | Adopts each member's conflict-free suggested range |
-| Pick any member | Assign a member with no booking (e.g. a visiting custodian) | Keeps the range you picked |
+| Pick any member | Find any member, including one with no booking | Keeps the range you picked. Someone with no booking must be ticked **Custodian (lives on site)**; anyone else must be staying on the nights you pick |
 | Hold a bed (optional) | Holds one bed for every covered night, with no booking | Default is **No bed — role only** (no capacity effect). Needs the `bedAllocation` module on to *set* a bed. Inclusive of the end date's night. Each choice names the bed type, so a double is obvious before you take it. If a booking already has the whole lodge on any covered night, you are asked to accept narrowing it by that one bed before anything is written |
 | Release bed (undo icon) | Hands the held bed back and keeps the assignment | Available whether or not the `bedAllocation` module is on — a hold made while it was on still occupies a real bed |
 | Change bed (bed icon) | Opens the bed picker for that row's own dates | Works on automatically created assignments too, which never come with a bed |

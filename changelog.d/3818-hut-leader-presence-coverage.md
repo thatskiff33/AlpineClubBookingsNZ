@@ -6,12 +6,12 @@
   was fine. The dashboard, the sidebar badge, the stuck-state tile, the
   hut-leaders calendar, the eligible-member suggestions and the nightly
   automatic assignment now all ask one question: is someone assigned to this
-  night **and** in the lodge that night? A custodian holding a bed and a school
-  group's teachers count as being there. Older automatic assignments that ran to
+  night **and** in the lodge that night? A custodian (holding a bed, or ticked
+  as living on site) and a school group's teachers count as being there. Older automatic assignments that ran to
   their leader's check-out day correct themselves; nothing needs cleaning up.
   The hut-leaders calendar now shows **AM · Smith until midday** and **PM ·
-  Jones from midday** on a changeover day and **No leader tonight** on a night
-  with guests and no leader staying; the dashboard's card becomes **Nights
+  Jones from midday** on a changeover day and **No hut leader tonight** (in your
+  club's own word for the role) on a night with guests and no leader staying; the dashboard's card becomes **Nights
   without a hut leader staying** with each night's guest count, and a new
   **Handovers this week** card lists the coming week's changeovers. The nightly
   automatic assignment also now works through today and the nights ahead in the
