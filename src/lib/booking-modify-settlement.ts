@@ -115,18 +115,8 @@ export async function calculateModificationSettlementOptions({
    */
   todayAtClub: CalendarDate;
 }): Promise<BookingModificationSettlementOptions | null> {
-  const reductionAmountCents = Math.max(0, -netChargeCents);
-  const remainingRefundableCents = getRemainingRefundableCents(booking.payment);
-  const basisAmountCents = Math.min(
-    reductionAmountCents,
-    remainingRefundableCents,
-  );
-  const hasSettledPayment =
-    isSettledBookingStatus(booking.status) && hasCapturedPayment(booking.payment);
-
-  if (basisAmountCents <= 0 || !hasSettledPayment) {
-    return null;
-  }
+  const basisAmountCents = settlementBasisCents(booking, netChargeCents);
+  if (basisAmountCents === null) return null;
 
   const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, db);
   const daysUntilCheckIn = daysUntilDate(booking.checkIn, todayAtClub);
@@ -146,6 +136,55 @@ export async function calculateModificationSettlementOptions({
     daysUntilCheckIn,
     requiresSettlementMethod:
       cardRefundAmountCents > 0 || creditRefundAmountCents > 0,
+  };
+}
+
+/**
+ * What a reduction can return from the captured payment: the reduction, capped
+ * at what is still refundable — or null when the booking holds no captured
+ * payment in a settled status, or there is nothing to return. ONE basis for the
+ * policy-tiered options above and the untiered ones below.
+ */
+function settlementBasisCents(
+  booking: Pick<LoadedBookingForModify, "status" | "payment">,
+  netChargeCents: number,
+): number | null {
+  const basisAmountCents = Math.min(
+    Math.max(0, -netChargeCents),
+    getRemainingRefundableCents(booking.payment),
+  );
+  const hasSettledPayment =
+    isSettledBookingStatus(booking.status) && hasCapturedPayment(booking.payment);
+  return basisAmountCents > 0 && hasSettledPayment ? basisAmountCents : null;
+}
+
+/**
+ * The settlement options for a reduction that is NOT a cancellation, so no
+ * cancellation-policy tier applies: the whole basis comes back, by either arm
+ * (#3827, owner decision D-3813-5 — a guest's acceptance re-pricing the
+ * booking's promo codes). The same basis and shape as
+ * {@link calculateModificationSettlementOptions}, at 100%, so the ordinary
+ * `applyPaymentAdjustments` settles it unchanged. Pure: no policy is read.
+ */
+export function calculateFullReductionSettlementOptions({
+  booking,
+  netChargeCents,
+  todayAtClub,
+}: {
+  booking: Pick<LoadedBookingForModify, "checkIn" | "status" | "payment">;
+  netChargeCents: number;
+  todayAtClub: CalendarDate;
+}): BookingModificationSettlementOptions | null {
+  const basisAmountCents = settlementBasisCents(booking, netChargeCents);
+  if (basisAmountCents === null) return null;
+  return {
+    basisAmountCents,
+    cardRefundAmountCents: basisAmountCents,
+    cardRefundPercentage: 100,
+    accountCreditAmountCents: basisAmountCents,
+    accountCreditPercentage: 100,
+    daysUntilCheckIn: daysUntilDate(booking.checkIn, todayAtClub),
+    requiresSettlementMethod: true,
   };
 }
 

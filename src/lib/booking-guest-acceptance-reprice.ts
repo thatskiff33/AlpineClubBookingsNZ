@@ -1,37 +1,60 @@
-import type { Prisma } from "@prisma/client";
+import { Role, type Prisma } from "@prisma/client";
 
+import { NO_ADDITIONAL_ASK } from "@/lib/additional-payment-ask";
+import { logAudit } from "@/lib/audit";
+import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
-import { pricingSideFromStoredGuests } from "@/lib/booking-modification-lines";
+import {
+  loadModificationLinesAuditFields,
+  pricingSideFromStoredGuests,
+  type ModificationLine,
+} from "@/lib/booking-modification-lines";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
+import {
+  drainSupersededPrimaryIntents,
+  executeBookingModificationRefund,
+} from "@/lib/booking-modification-settlement";
 import {
   applyLifecycleTransitions,
   applyPaymentAdjustments,
-  calculateModificationSettlementOptions,
   isQuotePricedBooking,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
+import {
+  calculateFullReductionSettlementOptions,
+  type BookingModificationSettlementOptions,
+} from "@/lib/booking-modify-settlement";
 import { bookingOwner } from "@/lib/booking-owner";
-import { hasCapturedPayment, hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
+import {
+  hasCapturedPayment,
+  hasIssuedPrimaryXeroInvoice,
+  isSettledBookingStatus,
+} from "@/lib/booking-payment-state";
 import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import {
   persistRepricedPromotions,
   priceStoredBookingPromotions,
 } from "@/lib/booking-promotions";
-import { SELF_REMOVABLE_GUEST_BOOKING_STATUSES } from "@/lib/booking-guest-self-removal";
+import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 import { readStrandNightPrices } from "@/lib/booking-strand-night-prices";
-import type { CalendarDate } from "@/lib/club-time";
+import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
 import {
   assertNoPendingEditFinancialReview,
   EditFinancialReviewPendingError,
 } from "@/lib/edit-financial-review";
+import { sendBookingModifiedEmail } from "@/lib/email/booking";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import logger from "@/lib/logger";
-import { drainSupersededPrimaryIntents } from "@/lib/booking-modification-settlement";
-import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
-import { createBookingModificationCredit, requireMemberCreditRecipient } from "@/lib/member-credit";
+import {
+  createBookingModificationCredit,
+  deriveBookingAppliedCreditCents,
+  requireMemberCreditRecipient,
+} from "@/lib/member-credit";
 import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
+import { prisma } from "@/lib/prisma";
+import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 
 /**
  * #3827 (D-3813-4): A GUEST'S ACCEPTANCE RE-PRICES THE BOOKING'S CODES.
@@ -44,29 +67,43 @@ import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
  * applied that the booker did not choose (no code is added here), and a decline
  * consumed nothing, so it needs no counterpart.
  *
- * THE MONEY IS SETTLED BY THE ORDINARY EDIT MACHINERY, never a parallel copy:
- * `calculateModificationSettlementOptions` (the cancellation-policy tier for a
- * reduction), `applyPaymentAdjustments`, `applyLifecycleTransitions`, a
- * `BookingModification` row with its price lines and ledger postings, and
- * account credit through `createBookingModificationCredit`. The Xero half is
- * queued after commit by the caller (`queueXeroBookingEditSettlement`), as the
- * guest-removal route queues it.
+ * THE MONEY GOES BACK IN FULL, THE WAY IT WAS PAID (D-3813-5). An acceptance
+ * re-price is not a cancellation, so no cancellation-policy tier applies and
+ * nobody is asked to choose:
+ * - a captured card or internet-banking payment gets the whole reduction back
+ *   through the ordinary edit's "money back" arm (`applyPaymentAdjustments` with
+ *   `calculateFullReductionSettlementOptions`) — a Stripe refund after commit,
+ *   or the bank-transfer refund credit note an internet-banking edit raises;
+ * - a booking paid with account credit gets it back as account credit
+ *   (`createBookingModificationCredit`, the ordinary edit's credit arm);
+ * - a booking not yet paid simply costs less (`applyLifecycleTransitions`
+ *   returns any over-applied credit and settles a $0 booking, as an edit does).
+ * The ledger posting, the history row, the Xero correction (queued after commit
+ * by `settleGuestAcceptanceRepriceAfterCommit`), the member's email and the
+ * audit row are the ordinary edit's own.
  *
- * WHO CHOOSES CARD OR CREDIT. A reduction on a settled booking needs an
- * election, and the person accepting is the guest, not the payer. As the
- * consent-expiry sweep does for the same reason (owner decision D-15), the
- * system elects ACCOUNT CREDIT to the booking owner: no card refund is issued
- * that nobody asked for, and the owner keeps the value.
+ * FREE NIGHTS ARE USED ONLY FOR WHAT IS RETURNED. The re-price is decided under
+ * the locks and WRITTEN only once the settlement above is known to return the
+ * whole reduction; where it cannot — the captured payment has less left to give
+ * back than the reduction, or a reduction on a credit-paid booking exceeds the
+ * credit applied to it (a split payment, or a slice an earlier edit kept) — the
+ * re-price is not written at all, so no code's allocation moves.
  *
  * WHEN IT DOES NOT RE-PRICE, and the booking keeps the figures it had, to be
  * re-priced by its next ordinary edit — the same outcome a parked edit has:
  * - the booking carries no code (by far the common case: nothing to do);
- * - its status takes no guest change, it is quote-priced, or a parked edit's
- *   financial review is still open (`INV-MOD-028`);
+ * - a member could not edit it for a stay yet to start (`getBookingEditPolicy`
+ *   in "future" mode: DRAFT, PENDING, PAYMENT_PENDING, CONFIRMED or PAID, check-in
+ *   after today — so never AWAITING_REVIEW, `INV-MOD-013`, a waitlist status or
+ *   a stay under way), it is quote-priced, or a parked edit's financial review is
+ *   still open (`INV-MOD-028`);
  * - its nights cannot be read back as exact money (the review re-base's rule);
- * - the re-price would RAISE the price of a booking already paid or invoiced:
- *   collecting more needs an ask only the payer can answer, which an
- *   acceptance has no door for. (Only a `SET_PRICE` code can raise a night.)
+ * - the re-price would RAISE the price of a booking whose price is settled in
+ *   any form — captured cash, paid with credit or at $0, or invoiced: collecting
+ *   more needs an ask only the payer can answer, which an acceptance has no door
+ *   for. Any combination of codes can raise it (a code's guest cap reshuffling
+ *   who it covers, as well as a `SET_PRICE` code);
+ * - the reduction cannot be returned in full (above).
  *
  * Runs inside the consent transaction, which holds `pg_advisory_xact_lock(1)`
  * and the per-lodge capacity key; the promo rows are locked after both, in
@@ -79,7 +116,8 @@ export type GuestAcceptanceRepriceSkip =
   | "QUOTE_PRICED"
   | "UNDER_FINANCIAL_REVIEW"
   | "STRANDS_UNREADABLE"
-  | "INCREASE_NEEDS_COLLECTION";
+  | "INCREASE_NEEDS_COLLECTION"
+  | "REDUCTION_NOT_FULLY_RETURNABLE";
 
 export type GuestAcceptanceReprice =
   | { repriced: false; reason: GuestAcceptanceRepriceSkip }
@@ -88,6 +126,9 @@ export type GuestAcceptanceReprice =
       /** Null when the codes were re-decided but the booking's price did not move. */
       bookingModificationId: string | null;
       priceDiffCents: number;
+      refundAmountCents: number;
+      /** The Stripe slice of `refundAmountCents`, refunded after commit. */
+      pendingRefundAmountCents: number;
       accountCreditAmountCents: number;
       xeroRefundAmountCents: number;
       xeroAdditionalAmountCents: number;
@@ -95,9 +136,20 @@ export type GuestAcceptanceReprice =
       hasIssuedXeroInvoice: boolean;
       hasSucceededPayment: boolean;
       paymentStatus: string | null;
+      paymentId: string | null;
       zeroDollarAutoPaid: boolean;
       /** Primary intents a zero-dollar auto-pay superseded, to cancel after commit. */
       supersededPrimaryPaymentIntentCount: number;
+      /** What the member's email and the audit row read, as an ordinary edit carries them. */
+      oldFinalPriceCents: number;
+      newFinalPriceCents: number;
+      checkIn: Date;
+      checkOut: Date;
+      guestCount: number;
+      lodgeId: string | null;
+      promoCoverageNote: string | null;
+      priceLines: ModificationLine[] | null;
+      owner: { memberId: string | null; email: string; firstName: string };
     };
 
 
@@ -141,7 +193,17 @@ export async function repriceBookingAfterGuestAcceptance(
   if (!booking) return { repriced: false, reason: "BOOKING_STATUS" };
   const redemptions = bookingPromoRedemptions(booking).filter((redemption) => redemption.promoCode);
   if (redemptions.length === 0) return { repriced: false, reason: "NO_PROMOTION" };
-  if (booking.deletedAt || !SELF_REMOVABLE_GUEST_BOOKING_STATUSES.has(booking.status)) {
+  // The member edit door for a stay yet to start (A4, #3827): the statuses a
+  // member may edit (`INV-MOD-013` keeps AWAITING_REVIEW out) and check-in
+  // after the club's today.
+  const editPolicy = getBookingEditPolicy({
+    status: booking.status,
+    role: Role.USER,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+    today: dateOnlyInstantOf(todayAtClub),
+  });
+  if (booking.deletedAt || editPolicy.mode !== "future") {
     return { repriced: false, reason: "BOOKING_STATUS" };
   }
   if (await isQuotePricedBooking(tx, bookingId)) return { repriced: false, reason: "QUOTE_PRICED" };
@@ -180,15 +242,27 @@ export async function repriceBookingAfterGuestAcceptance(
   });
   const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
   const loaded = booking as unknown as LoadedBookingForModify;
-  if (
-    priceDiffCents > 0 &&
-    (hasCapturedPayment(booking.payment) || hasIssuedPrimaryXeroInvoice(loaded))
-  ) {
+  const priceSettled =
+    hasCapturedPayment(booking.payment) ||
+    isPaidLikeBookingStatus(booking.status) ||
+    hasIssuedPrimaryXeroInvoice(loaded);
+  if (priceDiffCents > 0 && priceSettled) {
     logger.warn(
       { bookingId, priceDiffCents },
-      "A guest's acceptance would raise a paid or invoiced booking's price; its codes keep their figures until the next edit (#3827)",
+      "A guest's acceptance would raise a settled booking's price; its codes keep their figures until the next edit (#3827)",
     );
     return { repriced: false, reason: "INCREASE_NEEDS_COLLECTION" };
+  }
+
+  // D-3813-5: how the whole reduction goes back, decided BEFORE anything is
+  // written, so a reduction that cannot be returned in full moves no code.
+  const returnRoute = await fullReductionReturnRoute(tx, booking, loaded, priceDiffCents, todayAtClub);
+  if (returnRoute === null) {
+    logger.warn(
+      { bookingId, priceDiffCents },
+      "A guest's acceptance would lower a paid booking by more than can be returned the way it was paid; its codes keep their figures until the next edit (#3827)",
+    );
+    return { repriced: false, reason: "REDUCTION_NOT_FULLY_RETURNABLE" };
   }
 
   const promo = await persistRepricedPromotions(tx, decided);
@@ -201,6 +275,17 @@ export async function repriceBookingAfterGuestAcceptance(
     targets: promo.adjustmentTargets,
     writer: "guest acceptance",
   });
+  const owner = bookingOwner(booking);
+  const unmoved = {
+    oldFinalPriceCents: booking.finalPriceCents,
+    newFinalPriceCents,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+    guestCount: booking.guests.length,
+    lodgeId: booking.lodgeId,
+    promoCoverageNote: promo.promoCoverage?.message ?? null,
+    owner: { memberId: owner.memberId, email: owner.member.email, firstName: owner.member.firstName },
+  };
 
   if (priceDiffCents === 0) {
     // The codes were re-decided and the price did not move; the discount half
@@ -221,6 +306,8 @@ export async function repriceBookingAfterGuestAcceptance(
       repriced: true,
       bookingModificationId: null,
       priceDiffCents: 0,
+      refundAmountCents: 0,
+      pendingRefundAmountCents: 0,
       accountCreditAmountCents: 0,
       xeroRefundAmountCents: 0,
       xeroAdditionalAmountCents: 0,
@@ -228,26 +315,35 @@ export async function repriceBookingAfterGuestAcceptance(
       hasIssuedXeroInvoice: hasIssuedPrimaryXeroInvoice(loaded),
       hasSucceededPayment: false,
       paymentStatus: booking.payment?.status ?? null,
+      paymentId: booking.payment?.id ?? null,
       zeroDollarAutoPaid: false,
       supersededPrimaryPaymentIntentCount: 0,
+      priceLines: null,
+      ...unmoved,
     };
   }
 
   // The ordinary edit machinery from here (see the module docblock).
-  const settlementOptions = await calculateModificationSettlementOptions({
-    booking: loaded,
-    netChargeCents: priceDiffCents,
-    db: tx,
-    todayAtClub,
-  });
-  const paymentImpact = await applyPaymentAdjustments(tx, {
+  const adjusted = await applyPaymentAdjustments(tx, {
     booking: loaded,
     priceDiffCents,
     changeFeeCents: 0,
-    settlementOptions,
-    // D-15's election: credit to the booking owner, never an unasked card refund.
-    ...(settlementOptions?.requiresSettlementMethod ? { settlementMethod: "credit" as const } : {}),
+    ...(returnRoute.kind === "money-back"
+      ? { settlementOptions: returnRoute.settlementOptions, settlementMethod: "card" as const }
+      : {}),
   });
+  // A credit-paid booking captured no cash, so the ordinary arm above returns
+  // nothing; its reduction goes back as the credit it was paid with, through
+  // the edit's credit arm — the same figures an edit electing credit records.
+  const paymentImpact =
+    returnRoute.kind === "account-credit"
+      ? {
+          ...adjusted,
+          accountCreditAmountCents: returnRoute.amountCents,
+          settlementMethod: "credit" as const,
+          xeroRefundAmountCents: adjusted.hasIssuedXeroInvoice ? returnRoute.amountCents : 0,
+        }
+      : adjusted;
   const lifecycle = await applyLifecycleTransitions(tx, {
     booking: loaded,
     bookingId,
@@ -311,6 +407,7 @@ export async function repriceBookingAfterGuestAcceptance(
         promoCode: promo.remainingPromoCodeLabel,
         promoRemoved: promo.promoRemoved,
         settlementMethod: paymentImpact.settlementMethod,
+        refundAmountCents: paymentImpact.refundAmountCents,
         accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
         policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
         ...(promo.promoCoverage ? { promoCoverageNote: promo.promoCoverage.message } : {}),
@@ -329,8 +426,10 @@ export async function repriceBookingAfterGuestAcceptance(
     site: "guest-acceptance",
   });
   if (paymentImpact.accountCreditAmountCents > 0) {
+    // Only the credit route reaches here, and it is chosen only for a member's
+    // booking (an organisation holds no credit, so it never paid with any).
     await createBookingModificationCredit(
-      requireMemberCreditRecipient(bookingOwner(booking).memberId),
+      requireMemberCreditRecipient(owner.memberId),
       paymentImpact.accountCreditAmountCents,
       bookingId,
       bookingModification.id,
@@ -344,6 +443,8 @@ export async function repriceBookingAfterGuestAcceptance(
     repriced: true,
     bookingModificationId: bookingModification.id,
     priceDiffCents,
+    refundAmountCents: paymentImpact.refundAmountCents,
+    pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
     accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,
     xeroAdditionalAmountCents: paymentImpact.xeroAdditionalAmountCents,
@@ -351,33 +452,105 @@ export async function repriceBookingAfterGuestAcceptance(
     hasIssuedXeroInvoice: paymentImpact.hasIssuedXeroInvoice,
     hasSucceededPayment: paymentImpact.hasSucceededPayment,
     paymentStatus: booking.payment?.status ?? null,
+    paymentId: booking.payment?.id ?? null,
     zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid,
     supersededPrimaryPaymentIntentCount: lifecycle.supersededPrimaryPaymentIntents.length,
+    priceLines: priceLines ?? null,
+    ...unmoved,
   };
+}
+
+type FullReductionReturnRoute =
+  | { kind: "none" }
+  | { kind: "money-back"; settlementOptions: BookingModificationSettlementOptions }
+  | { kind: "account-credit"; amountCents: number };
+
+/**
+ * D-3813-5: the one way the whole of a reduction can go back, or null when it
+ * cannot go back in full by the way the booking was paid. `none` is a booking
+ * whose price is not settled (nothing was paid, so it simply costs less) and
+ * every non-reduction.
+ */
+async function fullReductionReturnRoute(
+  tx: Prisma.TransactionClient,
+  booking: { id: string; status: string; payment: LoadedBookingForModify["payment"] },
+  loaded: LoadedBookingForModify,
+  priceDiffCents: number,
+  todayAtClub: CalendarDate,
+): Promise<FullReductionReturnRoute | null> {
+  const reductionCents = Math.max(0, -priceDiffCents);
+  if (reductionCents === 0) return { kind: "none" };
+  if (isSettledBookingStatus(booking.status) && hasCapturedPayment(booking.payment)) {
+    // Captured cash: the edit's money-back arm, at 100% and never above what
+    // is still refundable (`calculateFullReductionSettlementOptions`).
+    const settlementOptions = calculateFullReductionSettlementOptions({
+      booking: loaded,
+      netChargeCents: priceDiffCents,
+      todayAtClub,
+    });
+    return settlementOptions?.basisAmountCents === reductionCents
+      ? { kind: "money-back", settlementOptions }
+      : null;
+  }
+  if (!isPaidLikeBookingStatus(booking.status)) return { kind: "none" };
+  // Paid with no captured cash: paid with account credit (or at $0). It goes
+  // back as credit, never more than the credit the booking was paid with.
+  const appliedCreditCents = await deriveBookingAppliedCreditCents(booking.id, tx);
+  return bookingOwner(loaded).memberId !== null && appliedCreditCents >= reductionCents
+    ? { kind: "account-credit", amountCents: reductionCents }
+    : null;
 }
 
 /**
  * The after-commit half of a guest-acceptance re-price (#3827), as the guest
  * routes run theirs: cancel any primary intent a zero-dollar auto-pay
- * superseded, and queue the Xero correction of an issued invoice. Best-effort
- * for the reason every such drain is: the booking is committed, and the
- * recovery sweep and the Xero outbox are the authority on completion.
+ * superseded, refund a card's share through Stripe, queue the Xero correction,
+ * then tell the booking's owner and write the audit row an edit writes.
+ * Best-effort for the reason every such drain is: the booking is committed,
+ * and the recovery sweep and the Xero outbox are the authority on completion.
  */
 export async function settleGuestAcceptanceRepriceAfterCommit(params: {
   bookingId: string;
   actorMemberId: string | null;
   reprice: Extract<GuestAcceptanceReprice, { repriced: true }>;
+  format: ClubFormat;
 }): Promise<void> {
-  const { bookingId, reprice } = params;
+  const { bookingId, reprice, format } = params;
   if (reprice.bookingModificationId === null) return;
+  const bookingModificationId = reprice.bookingModificationId;
   await drainSupersededPrimaryIntents({
     bookingId,
     supersededPrimaryPaymentIntents: { length: reprice.supersededPrimaryPaymentIntentCount },
   });
+  // The card's share, through the edit's own refund helper: a key scoped to
+  // this modification and durable recovery on failure (#818).
+  const stripeRefundId = await executeBookingModificationRefund({
+    format,
+    bookingId,
+    result: {
+      pendingRefundAmountCents: reprice.pendingRefundAmountCents,
+      paymentId: reprice.paymentId,
+      additionalAsk: NO_ADDITIONAL_ASK,
+      hasSucceededPayment: reprice.hasSucceededPayment,
+      hasIssuedXeroInvoice: reprice.hasIssuedXeroInvoice,
+      paymentCustomerId: null,
+      memberEmail: reprice.owner.email,
+      memberName: reprice.owner.firstName,
+      memberFirstName: reprice.owner.firstName,
+      memberId: reprice.owner.memberId,
+      bookingModificationId,
+      priceLines: reprice.priceLines,
+    },
+    metadataReason: "guest_accepted_promo_reprice",
+    idempotencyKeyPrefix: `guest_accept_refund_${bookingId}`,
+    failureMessage: "Stripe refund failed after a guest-acceptance re-price - enqueueing recovery",
+    recoveryFailureMessage:
+      "Failed to enqueue guest-acceptance re-price refund recovery - manual reconciliation required",
+  });
   try {
     await queueXeroBookingEditSettlement({
       bookingId,
-      bookingModificationId: reprice.bookingModificationId,
+      bookingModificationId,
       ...(params.actorMemberId ? { createdByMemberId: params.actorMemberId } : {}),
       hasIssuedXeroInvoice: reprice.hasIssuedXeroInvoice,
       originalPaymentStatus: reprice.paymentStatus,
@@ -387,7 +560,7 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       settlementAmountCents: reprice.xeroRefundAmountCents,
       settlementMethod: reprice.settlementMethod,
       refundedThroughStripe: reprice.hasSucceededPayment,
-      // An acceptance never raises a paid or invoiced booking's price (see
+      // An acceptance never raises a settled booking's price (see
       // `repriceBookingAfterGuestAcceptance`), so there is no Stripe ask to wait on.
       requiresAdditionalStripePayment: false,
       additionalPaymentIntentId: null,
@@ -399,4 +572,60 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       "Failed to queue the Xero settlement for a guest-acceptance re-price",
     );
   }
+
+  const audited = {
+    acceptedPromoReprice: true,
+    priceDiffCents: reprice.priceDiffCents,
+    refundAmountCents: reprice.refundAmountCents,
+    accountCreditAmountCents: reprice.accountCreditAmountCents,
+    settlementMethod: reprice.settlementMethod,
+    zeroDollarAutoPaid: reprice.zeroDollarAutoPaid,
+    stripeRefundId: stripeRefundId ?? null,
+    ...(await loadModificationLinesAuditFields(prisma, reprice.priceLines, logger, format)),
+  };
+  logAudit({
+    action: "booking.modify.promo_reprice",
+    ...(params.actorMemberId ? { actorMemberId: params.actorMemberId, memberId: params.actorMemberId } : {}),
+    targetId: bookingId,
+    subjectMemberId: reprice.owner.memberId,
+    entityType: "BookingModification",
+    entityId: bookingModificationId,
+    category: "booking",
+    outcome: "success",
+    summary: "Booking re-priced after a guest accepted their place",
+    details: JSON.stringify(audited),
+    metadata: { bookingId, ...audited },
+  });
+
+  // The ordinary edit's email, to the booking's owner (or an organisation's
+  // contact), with the same old/new price, refund or credit and coverage note.
+  await sendBookingModifiedEmail(
+    {
+      bookingId,
+      recipientMemberId: reprice.owner.memberId,
+      email: reprice.owner.email,
+      firstName: reprice.owner.firstName,
+      modificationType: "PROMO_REPRICE",
+      oldCheckIn: reprice.checkIn,
+      oldCheckOut: reprice.checkOut,
+      newCheckIn: reprice.checkIn,
+      newCheckOut: reprice.checkOut,
+      oldGuestCount: reprice.guestCount,
+      newGuestCount: reprice.guestCount,
+      oldFinalPriceCents: reprice.oldFinalPriceCents,
+      newFinalPriceCents: reprice.newFinalPriceCents,
+      changeFeeCents: 0,
+      refundAmountCents: reprice.refundAmountCents,
+      accountCreditAmountCents: reprice.accountCreditAmountCents,
+      promoCoverageNote: reprice.promoCoverageNote,
+      // The re-price is applied only where its money is decided in full, and
+      // a booking under an open financial review is never re-priced.
+      financialReviewPending: false,
+      lodgeId: reprice.lodgeId,
+      additionalAmountCents: 0,
+    },
+    format,
+  ).catch((err) =>
+    logger.error({ err, bookingId }, "Failed to send the booking-modified email for a guest-acceptance re-price"),
+  );
 }
