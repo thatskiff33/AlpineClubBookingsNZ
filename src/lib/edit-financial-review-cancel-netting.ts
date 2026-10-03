@@ -6,20 +6,21 @@ import {
   ManualRefundTaskDirection,
   ManualRefundTaskKind,
   ManualRefundTaskStatus,
+  PaymentRecoveryOperationStatus,
   type Prisma,
 } from "@prisma/client";
 
-import {
-  calculateAppliedCreditRestore,
-  calculateRefundAmount,
-  daysUntilDate,
-  loadCancellationPolicy,
-  type CancellationRule,
-} from "@/lib/cancellation";
+import { daysUntilDate, loadCancellationPolicy, type CancellationRule } from "@/lib/cancellation";
+import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
+import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
+import { paidCancellationMoney } from "@/lib/paid-cancellation-money";
 import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
 import { REVIEW_CANCELLATION_REFUND_UNREPRODUCIBLE_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
-import { buildEditFinancialReviewRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
+import {
+  buildBookingCancellationRefundIdempotencyKey,
+  buildEditFinancialReviewRefundRecoveryIdempotencyKey,
+} from "@/lib/payment-recovery-keys";
 
 /**
  * OWNER DECISION 2 ON #3791, AS ONE FORMULA (#3791, #3835): a review completed
@@ -61,19 +62,42 @@ export function shareOwedAfterCancellationCents({
 }
 
 /**
- * What a paid cancellation returns of a card base and an applied-credit slice:
- * `calculateRefundAmount` on the base and `calculateAppliedCreditRestore` on
- * the credit, the fee once and card-first - the two figures
- * `paidCancellationMoney` computes on the cancel path.
+ * What a paid cancellation returns of a capture base and an applied-credit
+ * slice, by `paidCancellationMoney` itself - the cancel path's one call - on a
+ * payment of exactly that base: the refund (`card`) and the restore (`credit`),
+ * the fee once and card-first. The credit-only route (#3791) is the case with
+ * no capture base.
  */
+export function cancellationTierOf(
+  days: number,
+  policy: CancellationRule[],
+  refundMethod: "card" | "credit",
+): (baseCents: number, appliedCents: number) => { captureCents: number; creditCents: number } {
+  return (baseCents, appliedCents) => {
+    const money = paidCancellationMoney({
+      payment: { amountCents: baseCents, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: appliedCents },
+      finalPriceCents: baseCents,
+      appliedCreditCents: appliedCents,
+      restoresToMemberLedger: true,
+      days,
+      policy,
+      refundMethod,
+    });
+    return { captureCents: money.refundAmountCents, creditCents: money.creditRestoredCents };
+  };
+}
+
+/** `cancellationTierOf` as one figure, for `shareOwedAfterCancellationCents`. */
 export function cancellationReturnOf(
   days: number,
   policy: CancellationRule[],
   refundMethod: "card" | "credit",
 ): (cardBaseCents: number, appliedCents: number) => number {
-  return (cardBaseCents, appliedCents) =>
-    calculateRefundAmount(cardBaseCents, days, policy, refundMethod).refundAmountCents +
-    calculateAppliedCreditRestore(appliedCents, cardBaseCents, days, policy).creditRestoredCents;
+  const tierOf = cancellationTierOf(days, policy, refundMethod);
+  return (cardBaseCents, appliedCents) => {
+    const tier = tierOf(cardBaseCents, appliedCents);
+    return tier.captureCents + tier.creditCents;
+  };
 }
 
 export function jsonRecord(value: unknown): Record<string, unknown> | null {
@@ -81,33 +105,58 @@ export function jsonRecord(value: unknown): Record<string, unknown> | null {
 }
 
 /** An integer figure in a frozen snapshot, or null where it is missing. */
-function frozenCents(record: Record<string, unknown> | null, key: string): number | null {
+export function frozenCents(record: Record<string, unknown> | null, key: string): number | null {
   const value = record?.[key];
   return typeof value === "number" && Number.isInteger(value) ? value : null;
 }
 
 /**
- * #3835: owner decision 2 on a CAPTURED payment's share - the Stripe refund
- * route, the hand-back route (internet banking, whose cancellation returned
- * account credit) and the account-credit route that mints against the
- * payment. The cancellation refunded by tier on the full price; the share is netted against
- * that refund and the credit it restored, cumulatively across sibling reviews,
- * by `shareOwedAfterCancellationCents`. Never more than the share typed.
+ * The applied credit a cancellation TIERED: #3809's `appliedCreditBaseCents`
+ * (capped at the price, applied only where its give-back ran) where the
+ * CANCELLED event carries it, else the ledger's applied credit as frozen.
+ */
+export function frozenAppliedCreditBaseCents(snapshot: Record<string, unknown> | null): number | null {
+  return frozenCents(snapshot, "appliedCreditBaseCents") ?? frozenCents(jsonRecord(snapshot?.ledger), "appliedCreditCents");
+}
+
+/** What a captured payment's share still owes, and which way each part goes back. */
+export type CapturedShareOwed = {
+  /** To the capture: the card, or a bank transfer. */
+  captureCents: number;
+  /** As account credit: the member's applied credit given back. */
+  creditCents: number;
+};
+
+/**
+ * #3835: owner decision 2 on #3791 on a CAPTURED payment's share - the Stripe
+ * refund route, the hand-back route (internet banking, whose cancellation
+ * returned account credit) and the account-credit route that mints against the
+ * payment. The total still owed is `shareOwedAfterCancellationCents`,
+ * cumulatively across the reviews settled after the cancel; never more than the
+ * share typed.
+ *
+ * IT GOES BACK THE WAY IT CAME IN. Had the shares come back first they would
+ * have come off the capture base first and then the applied credit, and the
+ * cancellation would have tiered each remainder. So the capture part is what
+ * that would have returned to the capture less what the capture has had back
+ * (the cancellation's refund, earlier reviews' refunds, hand-backs and minted
+ * credit), held to the total; the rest is applied credit given back. The
+ * capture is never asked for the credit's part.
  *
  * Every figure is the cancellation's own, frozen on its CANCELLED event
- * (`writePaidCancellationEvent`, #3611): the paid money, its change fee, the
- * refund, the refund method, the applied credit and the restore. The card base
- * is the paid money less the change fee (`cancelRefundableBaseCents` below the
- * price cap). The tier is re-run on the cancellation's day and must reproduce
- * the refund and the restore before it is trusted with the share; where it
- * does not, or nothing was frozen, the completion is refused with the task
- * OPEN. A cancellation that returned nothing is not re-tiered: the share is
- * owed whole; one that returned everything owed nothing.
+ * (`writePaidCancellationEvent`): the refund and its method, the refundable
+ * base, the applied credit tiered and restored, and the reviews already
+ * settled when it ran. Events older than #3835 fall back to the paid money
+ * less the change fee and the branch's method. The tier is re-run on the
+ * cancellation's day by `cancellationTierOf` and must reproduce the refund and
+ * the restore before it is trusted; where it does not, or nothing was frozen,
+ * the completion is refused with the task OPEN. A cancellation that returned
+ * nothing is not re-tiered; one that returned everything owes nothing.
  *
  * Reads under the completion's `lock(1)`, which the cancel and every sibling
- * review hold too.
+ * review hold too; on a cancelled booking only reviews write applied rows.
  */
-export async function capturedShareOwedAfterCancellationCents({
+export async function capturedShareOwedAfterCancellation({
   bookingId,
   taskId,
   booking,
@@ -121,7 +170,7 @@ export async function capturedShareOwedAfterCancellationCents({
   shareCents: number;
   clubZone: ClubTimeZone;
   store: Prisma.TransactionClient;
-}): Promise<number> {
+}): Promise<CapturedShareOwed> {
   const refuse = () => new ManualBookingPaymentError(REVIEW_CANCELLATION_REFUND_UNREPRODUCIBLE_MESSAGE, 409);
   const cancelled = await store.bookingEvent.findFirst({
     where: { bookingId, type: BookingEventType.CANCELLED },
@@ -133,82 +182,133 @@ export async function capturedShareOwedAfterCancellationCents({
   const paidCents = frozenCents(snapshot, "paidAmountCents");
   const changeFeeCents = frozenCents(snapshot, "changeFeeCents");
   const refundedCents = frozenCents(snapshot, "settledAmountCents");
-  const appliedCents = frozenCents(ledger, "appliedCreditCents");
+  const appliedRowsCents = frozenCents(ledger, "appliedCreditCents");
+  const appliedCents = frozenAppliedCreditBaseCents(snapshot);
   const restoredCents = frozenCents(ledger, "creditRestoredCents");
-  if (!cancelled || paidCents === null || changeFeeCents === null || refundedCents === null || appliedCents === null || restoredCents === null) {
+  if (
+    !cancelled || paidCents === null || changeFeeCents === null || refundedCents === null ||
+    appliedRowsCents === null || appliedCents === null || restoredCents === null
+  ) {
     throw refuse();
   }
+  const baseCents = frozenCents(snapshot, "refundableBaseCents") ?? Math.max(0, paidCents - changeFeeCents);
+  const refundMethod = (snapshot?.tierRefundMethod ?? snapshot?.refundMethod) === "credit" ? "credit" : "card";
 
-  const since = await settledSinceCancellation({ bookingId, taskId, since: cancelled.occurredAt, store });
-  const returnedByCancellationCents = refundedCents + restoredCents;
-  const cardBaseCents = Math.max(0, paidCents - changeFeeCents);
-  if (returnedByCancellationCents <= 0) return Math.max(0, Math.min(shareCents, shareCents + since.sharesCents - since.returnedCents));
-  if (returnedByCancellationCents >= cardBaseCents + appliedCents) return 0;
+  const since = await settledSinceCancellation({ bookingId, taskId, snapshot, since: cancelled.occurredAt, store });
+  // The restore leaves the applied rows alone, so what reviews have given back
+  // since is exactly how far the rows have fallen from the frozen figure.
+  const creditBackSinceCents = Math.max(0, appliedRowsCents - (await deriveBookingAppliedCreditCents(bookingId, store)));
+  const sharesCents = since.sharesCents + shareCents;
+  const captureSliceCents = Math.max(0, Math.min(sharesCents, baseCents));
+  const creditSliceCents = Math.max(0, Math.min(appliedCents, sharesCents - captureSliceCents));
 
-  const days = daysUntilDate(booking.checkIn, clubCalendarDateOf(cancelled.occurredAt, clubZone));
-  const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, store);
-  const refundMethod = snapshot?.refundMethod === "credit" ? "credit" : "card";
-  const reproducedRefundCents = calculateRefundAmount(cardBaseCents, days, policy, refundMethod).refundAmountCents;
-  const reproducedRestoreCents = calculateAppliedCreditRestore(appliedCents, cardBaseCents, days, policy).creditRestoredCents;
-  if (reproducedRefundCents !== refundedCents || Math.min(reproducedRestoreCents, appliedCents) !== restoredCents) {
-    throw refuse();
+  // Nothing returned: the tier kept everything, and of less too.
+  let tierOf: ReturnType<typeof cancellationTierOf> = () => ({ captureCents: 0, creditCents: 0 });
+  let returnOf: ReturnType<typeof cancellationReturnOf> = () => 0;
+  if (refundedCents + restoredCents >= baseCents + appliedCents) return { captureCents: 0, creditCents: 0 };
+  if (refundedCents + restoredCents > 0) {
+    const days = daysUntilDate(booking.checkIn, clubCalendarDateOf(cancelled.occurredAt, clubZone));
+    const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, store);
+    tierOf = cancellationTierOf(days, policy, refundMethod);
+    returnOf = cancellationReturnOf(days, policy, refundMethod);
+    const reproduced = tierOf(baseCents, appliedCents);
+    if (reproduced.captureCents !== refundedCents || reproduced.creditCents !== restoredCents) throw refuse();
   }
-  const owedCents = shareOwedAfterCancellationCents({
-    sharesCents: since.sharesCents + shareCents,
-    cardBaseCents,
-    appliedCents,
-    returnedByCancellationCents,
-    returnedSinceCents: since.returnedCents,
-    returnOf: cancellationReturnOf(days, policy, refundMethod),
-  });
-  return Math.min(shareCents, owedCents);
+  const totalCents = Math.min(
+    shareCents,
+    shareOwedAfterCancellationCents({
+      sharesCents,
+      cardBaseCents: baseCents,
+      appliedCents,
+      returnedByCancellationCents: refundedCents + restoredCents,
+      returnedSinceCents: since.captureReturnedCents + creditBackSinceCents,
+      returnOf,
+    }),
+  );
+  const leftTier = tierOf(baseCents - captureSliceCents, appliedCents - creditSliceCents);
+  const captureOwedCents = captureSliceCents + leftTier.captureCents - refundedCents - since.captureReturnedCents;
+  const captureCents = Math.max(0, Math.min(totalCents, captureOwedCents));
+  return { captureCents, creditCents: totalCents - captureCents };
 }
 
 /**
- * The other reviews of this booking settled to the member since the
- * cancellation: the shares they were typed at, and what they actually
- * returned - a card refund's frozen debt (its recovery operation), a hand-back's
- * `BANK_REFUND` line, or the credit minted against the payment. Edits are
- * refused on a cancelled booking, so a modification credit on it since then is
- * a review's.
+ * The other reviews of this booking settled to the member AFTER the
+ * cancellation: the shares they were typed at, and what they returned to the
+ * capture - a card refund's frozen debt (its recovery operation), a
+ * hand-back's `BANK_REFUND` line, or credit minted against the payment on
+ * their anchor. Settled after it means not among the ids the CANCELLED event
+ * froze (#3835); an older event without them falls back to completion time.
  */
 async function settledSinceCancellation({
   bookingId,
   taskId,
+  snapshot,
   since,
   store,
 }: {
   bookingId: string;
   taskId: string;
+  snapshot: Record<string, unknown> | null;
   since: Date;
   store: Prisma.TransactionClient;
-}): Promise<{ sharesCents: number; returnedCents: number }> {
+}): Promise<{ sharesCents: number; captureReturnedCents: number }> {
+  const frozenIds = snapshot?.completedReviewTaskIds;
+  const priorIds = Array.isArray(frozenIds) ? frozenIds.filter((id): id is string => typeof id === "string") : null;
   const siblings = await store.manualRefundTask.findMany({
     where: {
       bookingId,
-      id: { not: taskId },
+      id: { notIn: [taskId, ...(priorIds ?? [])] },
       kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
       status: ManualRefundTaskStatus.COMPLETED,
       settlementDirection: ManualRefundTaskDirection.REFUND_TO_MEMBER,
-      completedAt: { gte: since },
+      ...(priorIds === null ? { completedAt: { gte: since } } : {}),
     },
-    select: { id: true, amountCents: true },
+    select: { id: true, amountCents: true, reviewContext: true },
   });
-  if (siblings.length === 0) return { sharesCents: 0, returnedCents: 0 };
+  if (siblings.length === 0) return { sharesCents: 0, captureReturnedCents: 0 };
+  const ids = siblings.map((task) => task.id);
   const refunded = await store.paymentRecoveryOperation.aggregate({
-    where: { idempotencyKey: { in: siblings.map((task) => buildEditFinancialReviewRefundRecoveryIdempotencyKey(task.id)) } },
+    where: { idempotencyKey: { in: ids.map((id) => buildEditFinancialReviewRefundRecoveryIdempotencyKey(id)) } },
     _sum: { amountCents: true },
   });
   const handedBack = await store.bookingLedgerLine.aggregate({
-    where: { bookingId, kind: "BANK_REFUND", anchorKind: "REVIEW_TASK", anchorId: { in: siblings.map((task) => task.id) }, reversesLineId: null },
+    where: { bookingId, kind: "BANK_REFUND", anchorKind: "REVIEW_TASK", anchorId: { in: ids }, reversesLineId: null },
     _sum: { unitCents: true },
   });
-  const minted = await store.memberCredit.aggregate({
-    where: { sourceBookingId: bookingId, type: CreditType.BOOKING_MODIFICATION_REFUND, createdAt: { gte: since } },
+  const anchors = siblings
+    .map((task) => parseEditFinancialReviewContext(task.reviewContext)?.bookingModificationId ?? null)
+    .filter((anchor): anchor is string => anchor !== null);
+  const minted = anchors.length === 0 ? null : await store.memberCredit.aggregate({
+    where: { sourceBookingModificationId: { in: anchors }, type: CreditType.BOOKING_MODIFICATION_REFUND },
     _sum: { amountCents: true },
   });
   return {
     sharesCents: siblings.reduce((sum, task) => sum + (task.amountCents ?? 0), 0),
-    returnedCents: (refunded._sum.amountCents ?? 0) + (handedBack._sum.unitCents ?? 0) + (minted._sum.amountCents ?? 0),
+    captureReturnedCents: (refunded._sum.amountCents ?? 0) + (handedBack._sum.unitCents ?? 0) + (minted?._sum.amountCents ?? 0),
   };
+}
+
+/**
+ * #3835: card refunds already promised out of this payment and not yet made -
+ * the cancellation's and earlier reviews' frozen Stripe debts that have not
+ * SUCCEEDED. The card route caps against the capture less these, so no mix of
+ * pending refunds can promise more than was captured. A debt partly made
+ * counts whole: the cap errs towards refusing, with the task OPEN.
+ */
+export async function unfinishedCardRefundDebtsCents(
+  { paymentId, bookingId }: { paymentId: string; bookingId: string },
+  store: Prisma.TransactionClient,
+): Promise<number> {
+  const debts = await store.paymentRecoveryOperation.aggregate({
+    where: {
+      paymentId,
+      status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+      OR: [
+        { idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId) },
+        { idempotencyKey: { startsWith: buildEditFinancialReviewRefundRecoveryIdempotencyKey("") } },
+      ],
+    },
+    _sum: { amountCents: true },
+  });
+  return debts._sum.amountCents ?? 0;
 }

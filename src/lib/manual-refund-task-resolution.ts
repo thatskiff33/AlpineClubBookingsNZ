@@ -18,6 +18,7 @@ import {
   type EditReviewSettlementRoute,
 } from "@/lib/edit-financial-review-settlement";
 import {
+  giveBackCancelledShareCredit,
   writeEditReviewAccountCredit,
   type EditReviewAccountCreditOutcome,
 } from "@/lib/edit-financial-review-account-credit";
@@ -307,7 +308,7 @@ export async function resolveManualRefundTask(
         })
       : null;
     // #3835: what actually goes back - by card or by hand, netted against a cancellation.
-    const settledCents = settlementRoute && "refundCents" in settlementRoute ? settlementRoute.refundCents : (settlement?.amountCents ?? null);
+    const settledCents = settlementRoute && "refundCents" in settlementRoute ? settlementRoute.refundCents + settlementRoute.creditBackCents : (settlement?.amountCents ?? null);
 
     // #3191/#3219 D2: the night prices, checked BEFORE the claim so a refusal
     // leaves the task OPEN - one plan per repairable strand since #3498.
@@ -434,6 +435,11 @@ export async function resolveManualRefundTask(
           officerMemberId: actingMemberId,
           store: tx,
         });
+      }
+      // #3835: the applied-credit part of a cancelled booking's share goes back as credit.
+      if ("creditBackCents" in settlementRoute && settlementRoute.creditBackCents > 0) {
+        const memberId = requireMemberCreditRecipient(bookingOwner(task.booking).memberId);
+        await giveBackCancelledShareCredit({ memberId, bookingId: task.bookingId, cents: settlementRoute.creditBackCents, format, store: tx }).catch((error: unknown) => { throw settlementWriteRefusal(error); });
       }
     }
 

@@ -140,7 +140,7 @@ const NOTHING_FURTHER_RETURNED =
  */
 export function completionMessage(result: {
   amountAmended: boolean;
-  settlementRoute: { kind: string; collectVia?: "stripe" | "invoice"; refundCents?: number } | null;
+  settlementRoute: { kind: string; collectVia?: "stripe" | "invoice"; refundCents?: number; creditBackCents?: number } | null;
   stripeRefundId: string | null;
   additionalPaymentIntentId: string | null;
   /** #3791: what the account-credit route gave back and minted, where it ran. */
@@ -149,13 +149,16 @@ export function completionMessage(result: {
   amountCents?: number | null;
 }, format: ClubFormat) {
   const amended = result.amountAmended ? " at the confirmed amount" : "";
+  // #3835: on a cancelled booking, the applied-credit part of what was still owed went back as credit.
+  const creditBackCents = result.settlementRoute?.creditBackCents ?? 0;
+  const creditBack = creditBackCents > 0 ? ` ${formatCents(creditBackCents, format)} was given back as account credit.` : "";
   switch (completionSettlementShape(result.settlementRoute)) {
     case "card-refund":
       // #3835: a share netted against a cancellation's refund can leave nothing to send.
-      if (result.settlementRoute?.refundCents === 0) return NOTHING_FURTHER_RETURNED;
+      if (result.settlementRoute?.refundCents === 0) return creditBack ? `Nothing was sent to the card.${creditBack}` : NOTHING_FURTHER_RETURNED;
       return result.stripeRefundId
-        ? `Refund sent back to the card${amended}.`
-        : "The card refund could not be sent just now. It has been recorded and will be retried automatically — check this booking's payment history before handing the money back another way.";
+        ? `Refund sent back to the card${amended}.${creditBack}`
+        : `The card refund could not be sent just now. It has been recorded and will be retried automatically — check this booking's payment history before handing the money back another way.${creditBack}`;
     case "account-credit":
       // #3791: a share netted against a cancellation's restore can leave
       // nothing to credit, and "credit issued" would be a receipt for nothing.
@@ -176,10 +179,11 @@ export function completionMessage(result: {
       // #3835: a share netted against a cancellation is handed back at what is
       // still owed, and the officer moving the money must be told that figure.
       const refundCents = result.settlementRoute?.refundCents;
-      if (refundCents === 0) return NOTHING_FURTHER_RETURNED;
-      if (refundCents !== undefined && result.amountCents != null && refundCents < result.amountCents) {
-        return `Only ${formatCents(refundCents, format)} of the ${formatCents(result.amountCents, format)} share was still owed: the booking's cancellation had already returned the rest. ${formatCents(refundCents, format)} is recorded as paid back by hand - hand back that amount, not the full share.`;
+      if (refundCents === 0) return creditBack ? `Nothing is to be handed back.${creditBack}` : NOTHING_FURTHER_RETURNED;
+      if (refundCents !== undefined && result.amountCents != null && refundCents + creditBackCents < result.amountCents) {
+        return `Only ${formatCents(refundCents + creditBackCents, format)} of the ${formatCents(result.amountCents, format)} share was still owed: the booking's cancellation had already returned the rest. ${formatCents(refundCents, format)} is recorded as paid back by hand - hand back that amount, not the full share.${creditBack}`;
       }
+      if (creditBack) return `Refund recorded as paid back by hand${amended}.${creditBack}`;
       return `Refund recorded as paid back by hand${amended}.`;
     }
   }
@@ -307,12 +311,19 @@ export function dismissalMessage(
 export function stillOwedNoticeText(preview: EditReviewStillOwedPreview | null, format: ClubFormat): string | null {
   if (preview === null) return null;
   if ("refusal" in preview) return preview.refusal;
-  const { shareCents, stillOwedCents, route } = preview;
-  if (stillOwedCents >= shareCents) return null;
+  const { shareCents, stillOwedCents, captureCents, creditCents, route } = preview;
   const owed = formatCents(stillOwedCents, format);
+  const capture = formatCents(captureCents, format);
+  const credit = formatCents(creditCents, format);
+  // #3835: a capture never takes the credit's part, so a split is always said.
+  const split = route !== "account-credit" && creditCents > 0
+    ? { "hand-back": captureCents > 0 ? `hand back ${capture}, not the full share, and ${credit} goes back as account credit` : `hand nothing back: ${credit} goes back as account credit`, card: captureCents > 0 ? `${capture} to the card and ${credit} as account credit` : `${credit} as account credit, nothing to the card` }[route]
+    : null;
+  if (stillOwedCents >= shareCents && split === null) return null;
+  if (stillOwedCents >= shareCents) return `The ${formatCents(shareCents, format)} share goes back in two parts - ${split}.`;
   if (stillOwedCents === 0) {
     return `Nothing of this share is still owed: the booking's cancellation already returned it.${route === "hand-back" ? " Do not hand anything back." : ""} Completing records no refund.`;
   }
-  const then = { "hand-back": `hand back ${owed}, not the full share`, card: `${owed} will be refunded to the card`, "account-credit": `${owed} will be credited` }[route];
+  const then = split ?? { "hand-back": `hand back ${owed}, not the full share`, card: `${owed} will be refunded to the card`, "account-credit": `${owed} will be credited` }[route];
   return `Only ${owed} of the ${formatCents(shareCents, format)} share is still owed after the booking's cancellation - ${then}.`;
 }

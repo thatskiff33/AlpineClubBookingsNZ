@@ -9,7 +9,7 @@ import {
 
 import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
 import type { ClubTimeZone } from "@/lib/club-time";
-import { capturedShareOwedAfterCancellationCents } from "@/lib/edit-financial-review-cancel-netting";
+import { capturedShareOwedAfterCancellation } from "@/lib/edit-financial-review-cancel-netting";
 import { chooseEditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { MANUAL_REFUND_TASK_RESOLUTION_SELECT } from "@/lib/manual-refund-task-resolution-select";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -25,7 +25,14 @@ import { prisma } from "@/lib/prisma";
  * refuse with, where it would.
  */
 export type EditReviewStillOwedPreview =
-  | { shareCents: number; stillOwedCents: number; route: "card" | "hand-back" | "account-credit" }
+  | {
+      shareCents: number;
+      /** The whole still owed: `captureCents` to the card or by hand, `creditCents` as account credit. */
+      stillOwedCents: number;
+      captureCents: number;
+      creditCents: number;
+      route: "card" | "hand-back" | "account-credit";
+    }
   | { shareCents: number; refusal: string };
 
 /** The rollback that keeps the preview a read: the route choice may backfill legacy rows. */
@@ -81,13 +88,16 @@ export async function previewEditReviewStillOwed({
         });
         if (route?.kind === "stripe-refund" || route?.kind === "local-allocation") {
           const kind = route.kind === "stripe-refund" ? "card" : "hand-back";
-          throw new PreviewRollback({ shareCents, stillOwedCents: route.refundCents, route: kind });
+          const { refundCents: captureCents, creditBackCents: creditCents } = route;
+          throw new PreviewRollback({ shareCents, stillOwedCents: captureCents + creditCents, captureCents, creditCents, route: kind });
         }
         if (route?.kind === "account-credit" && route.allocateAgainstPaymentId !== null) {
-          const stillOwedCents = await capturedShareOwedAfterCancellationCents({
+          // Minted against the payment and given back alike, it all reaches the member as credit.
+          const owed = await capturedShareOwedAfterCancellation({
             bookingId: task.bookingId, taskId: task.id, booking: task.booking, shareCents, clubZone, store: tx,
           });
-          throw new PreviewRollback({ shareCents, stillOwedCents, route: "account-credit" });
+          const stillOwedCents = owed.captureCents + owed.creditCents;
+          throw new PreviewRollback({ shareCents, stillOwedCents, captureCents: 0, creditCents: stillOwedCents, route: "account-credit" });
         }
         throw new PreviewRollback(null);
       } catch (error) {

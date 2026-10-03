@@ -49,7 +49,10 @@ import {
 } from "@/lib/late-capture-refund-approval";
 import type { ClubFormat } from "@/lib/club-format";
 import type { ClubTimeZone } from "@/lib/club-time";
-import { capturedShareOwedAfterCancellationCents } from "@/lib/edit-financial-review-cancel-netting";
+import {
+  capturedShareOwedAfterCancellation,
+  unfinishedCardRefundDebtsCents,
+} from "@/lib/edit-financial-review-cancel-netting";
 import type { EditReviewSettlementTask } from "@/lib/edit-financial-review-settlement-task";
 
 /**
@@ -171,8 +174,10 @@ export type EditReviewSettlementRoute =
        * replay send byte-identical Stripe requests and converge on one refund.
        */
       allocation: RefundAllocationSlice[];
-      /** What goes back: the share, or on a cancelled booking what is still owed (#3835). */
+      /** What goes back to the card: the share, or on a cancelled booking the card's part of what is still owed (#3835). */
       refundCents: number;
+      /** #3835: the applied-credit part of what is still owed, given back as credit, never to the card. */
+      creditBackCents: number;
     }
   | {
       kind: "local-allocation";
@@ -184,8 +189,10 @@ export type EditReviewSettlementRoute =
        * behind them and no invoice line to correct.
        */
       bookingModificationId: string | null;
-      /** What is handed back: the share, or on a cancelled booking what is still owed (#3835). */
+      /** What is handed back: the share, or on a cancelled booking the capture's part of what is still owed (#3835). */
       refundCents: number;
+      /** #3835: the applied-credit part of what is still owed, given back as credit. */
+      creditBackCents: number;
     }
   | {
       kind: "account-credit";
@@ -305,6 +312,7 @@ export async function chooseEditReviewSettlementRoute({
           paymentId: task.paymentId,
           bookingModificationId: null,
           refundCents: amountCents,
+          creditBackCents: 0,
         }
       : null;
   }
@@ -384,12 +392,12 @@ export async function chooseEditReviewSettlementRoute({
   // #3835: on a cancelled booking a captured payment's share - by card or by
   // hand - is netted against what the cancellation returned (owner decision 2
   // on #3791), and only that is planned, capped and handed back.
-  const owedCents = () =>
+  const owed = () =>
     task.booking.status === BookingStatus.CANCELLED
-      ? capturedShareOwedAfterCancellationCents({
+      ? capturedShareOwedAfterCancellation({
           bookingId: task.bookingId, taskId: task.id, booking: task.booking, shareCents: amountCents, clubZone, store,
         })
-      : Promise.resolve(amountCents);
+      : Promise.resolve({ captureCents: amountCents, creditCents: 0 });
 
   if (
     settlementPaymentId !== null &&
@@ -401,7 +409,7 @@ export async function chooseEditReviewSettlementRoute({
         409,
       );
     }
-    const refundCents = await owedCents();
+    const { captureCents: refundCents, creditCents: creditBackCents } = await owed();
     // Freeze the allocation and cap the amount in ONE read, on the caller's
     // transaction and before its claim. Once the cap has passed the planned total
     // cannot be short of it: the planner allocates newest-first across exactly
@@ -411,7 +419,9 @@ export async function chooseEditReviewSettlementRoute({
       amountCents: refundCents,
       store,
     });
-    if (refundCents > totalRefundableCents) {
+    // #3835: less the card refunds already promised and not yet made.
+    const debtsCents = await unfinishedCardRefundDebtsCents({ paymentId: settlementPaymentId, bookingId: task.bookingId }, store);
+    if (refundCents > totalRefundableCents - debtsCents) {
       throw new ManualBookingPaymentError(
         REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE,
         400,
@@ -423,6 +433,7 @@ export async function chooseEditReviewSettlementRoute({
       bookingModificationId,
       allocation: slices,
       refundCents,
+      creditBackCents,
     };
   }
 
@@ -433,11 +444,13 @@ export async function chooseEditReviewSettlementRoute({
     // the caller's transaction - so its refusal rolls the claim back and leaves
     // the task OPEN, which is the guarantee the pre-claim card cap above has to
     // buy by hand.
+    const handBack = await owed();
     return {
       kind: "local-allocation",
       paymentId: settlementPaymentId,
       bookingModificationId,
-      refundCents: await owedCents(),
+      refundCents: handBack.captureCents,
+      creditBackCents: handBack.creditCents,
     };
   }
 
@@ -597,6 +610,18 @@ export async function executeEditReviewSettlement({
         reason: "edit_financial_review_completed",
       });
     }
+  }
+
+  // #3835: the applied-credit part of a cancelled booking's share, given back
+  // inside the completion's transaction (`giveBackCancelledShareCredit`).
+  if ((route?.kind === "stripe-refund" || route?.kind === "local-allocation") && route.creditBackCents > 0) {
+    await recordBookingEvent({
+      bookingId,
+      type: BookingEventType.CREDITED,
+      actorMemberId: actingMemberId,
+      amountCents: route.creditBackCents,
+      reason: "edit_financial_review_credited",
+    });
   }
 
   /**

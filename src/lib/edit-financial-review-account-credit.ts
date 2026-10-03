@@ -12,16 +12,20 @@ import {
 
 import { recordBookingEvent } from "@/lib/booking-events";
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
-import { calculateAppliedCreditRestore, daysUntilDate, loadCancellationPolicy } from "@/lib/cancellation";
+import { daysUntilDate, loadCancellationPolicy } from "@/lib/cancellation";
 import type { ClubFormat } from "@/lib/club-format";
 import {
   cancellationReturnOf,
-  capturedShareOwedAfterCancellationCents,
+  cancellationTierOf,
+  capturedShareOwedAfterCancellation,
+  frozenAppliedCreditBaseCents,
+  frozenCents,
   jsonRecord,
   shareOwedAfterCancellationCents,
 } from "@/lib/edit-financial-review-cancel-netting";
 import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
 import {
+  REVIEW_CANCELLATION_REFUND_UNREPRODUCIBLE_MESSAGE,
   REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE,
 } from "@/lib/edit-financial-review-refund-refusals";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
@@ -140,11 +144,14 @@ export async function writeEditReviewAccountCredit({
       where: { id: bookingId },
       select: { status: true, checkIn: true, lodgeId: true },
     });
-    const mintedCents = booking.status === BookingStatus.CANCELLED
-      ? await capturedShareOwedAfterCancellationCents({ bookingId, taskId, booking, shareCents: amountCents, clubZone, store })
-      : amountCents;
-    if (mintedCents > 0) await mint(mintedCents, route.allocateAgainstPaymentId);
-    return { givenBackCents: 0, mintedCents, cancelled: false, invoiceReductionCents: null, agreedGiveBackCents: null };
+    // The capture's part is minted against the payment; the credit's part is
+    // the member's applied credit given back, never charged to the capture.
+    const owed = booking.status === BookingStatus.CANCELLED
+      ? await capturedShareOwedAfterCancellation({ bookingId, taskId, booking, shareCents: amountCents, clubZone, store })
+      : { captureCents: amountCents, creditCents: 0 };
+    if (owed.captureCents > 0) await mint(owed.captureCents, route.allocateAgainstPaymentId);
+    const givenBackCents = await giveBackCancelledShareCredit({ memberId, bookingId, cents: owed.creditCents, format, store });
+    return { givenBackCents, mintedCents: owed.captureCents, cancelled: false, invoiceReductionCents: null, agreedGiveBackCents: null };
   }
 
   let creditSliceCents = 0;
@@ -219,6 +226,42 @@ export async function writeEditReviewAccountCredit({
     agreedGiveBackCents:
       !cancelled && !invoice.unpaid && givenBackCents > 0 ? Math.max(0, invoiceReductionCents - repricedAwayCents) : null,
   };
+}
+
+/**
+ * #3835: the applied-credit part of a captured payment's share on a cancelled
+ * booking, given back through `giveBackAppliedCredit` - the clamp's and #3791's
+ * one mechanism, under the member's credit-ledger lock after the completion's
+ * `lock(1)` - so it is never asked of the capture. Returns what was given back.
+ */
+export async function giveBackCancelledShareCredit({
+  memberId,
+  bookingId,
+  cents,
+  format,
+  store,
+}: {
+  memberId: string;
+  bookingId: string;
+  cents: number;
+  format: ClubFormat;
+  store: Prisma.TransactionClient;
+}): Promise<number> {
+  if (cents <= 0) return 0;
+  const { givenBackCents, payment } = await giveBackAppliedCredit(
+    { memberId, bookingId, format, description: reviewShareGiveBackDescription(bookingId), sourceBookingId: bookingId, giveBackCentsOf: () => cents },
+    store,
+  );
+  // The netting gave back no more than the rows hold; short of it, the figures
+  // moved under it, so the completion is refused with the task OPEN.
+  if (givenBackCents !== cents) throw new ManualBookingPaymentError(REVIEW_CANCELLATION_REFUND_UNREPRODUCIBLE_MESSAGE, 409);
+  if (payment) {
+    await store.payment.update({
+      where: { id: payment.id },
+      data: { creditAppliedCents: Math.max(0, payment.creditAppliedCents - givenBackCents) },
+    });
+  }
+  return givenBackCents;
 }
 
 /**
@@ -343,8 +386,10 @@ async function creditSliceStillOwedAfterCancellation({
     return { sliceCents, owedCents: sliceCents };
   }
 
-  const appliedAtCancelCents = await frozenAppliedAtCancellationCents({ bookingId, restoredAt: restore.createdAt, store });
-  if (appliedAtCancelCents === null || appliedAtCancelCents <= 0) {
+  const frozen = await frozenAppliedAtCancellationCents({ bookingId, restoredAt: restore.createdAt, store });
+  // #3809: the applied credit the cancel TIERED, which can be less than the rows.
+  const appliedAtCancelCents = frozen?.tieredCents ?? null;
+  if (frozen === null || appliedAtCancelCents === null || appliedAtCancelCents <= 0) {
     throw new ManualBookingPaymentError(REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE, 409);
   }
   const earlierSharesCents = await sharesSettledSinceCents({ bookingId, taskId, since: restore.createdAt, store });
@@ -354,9 +399,7 @@ async function creditSliceStillOwedAfterCancellation({
 
   const days = daysUntilDate(booking.checkIn, clubCalendarDateOf(restore.createdAt, clubZone));
   const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, store);
-  const restoreOf = (appliedCents: number) =>
-    calculateAppliedCreditRestore(appliedCents, 0, days, policy).creditRestoredCents;
-  if (restoreOf(appliedAtCancelCents) !== restoredCents) {
+  if (cancellationTierOf(days, policy, "card")(0, appliedAtCancelCents).creditCents !== restoredCents) {
     throw new ManualBookingPaymentError(REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE, 409);
   }
   // What reviews have given back since the cancellation: the restore leaves the
@@ -366,7 +409,7 @@ async function creditSliceStillOwedAfterCancellation({
     cardBaseCents: 0,
     appliedCents: appliedAtCancelCents,
     returnedByCancellationCents: restoredCents,
-    returnedSinceCents: Math.max(0, appliedAtCancelCents - appliedNowCents),
+    returnedSinceCents: Math.max(0, frozen.rowsCents - appliedNowCents),
     returnOf: cancellationReturnOf(days, policy, "card"),
   });
   return { sliceCents, owedCents };
@@ -385,19 +428,22 @@ async function frozenAppliedAtCancellationCents({
   bookingId: string;
   restoredAt: Date;
   store: Prisma.TransactionClient;
-}): Promise<number | null> {
+}): Promise<{ rowsCents: number; tieredCents: number } | null> {
   const cancelled = await store.bookingEvent.findFirst({
     where: { bookingId, type: BookingEventType.CANCELLED },
     orderBy: { occurredAt: "desc" },
     select: { snapshot: true },
   });
-  const frozen = jsonRecord(jsonRecord(cancelled?.snapshot)?.ledger)?.appliedCreditCents;
-  if (typeof frozen === "number" && Number.isInteger(frozen)) return frozen;
+  const snapshot = jsonRecord(cancelled?.snapshot);
+  const rowsCents = frozenCents(jsonRecord(snapshot?.ledger), "appliedCreditCents");
+  if (rowsCents !== null) return { rowsCents, tieredCents: frozenAppliedCreditBaseCents(snapshot) ?? rowsCents };
   const asRestored = await store.memberCredit.aggregate({
     where: { appliedToBookingId: bookingId, type: CreditType.BOOKING_APPLIED, createdAt: { lte: restoredAt } },
     _sum: { amountCents: true },
   });
-  return asRestored._sum.amountCents === null ? null : Math.max(0, -asRestored._sum.amountCents);
+  if (asRestored._sum.amountCents === null) return null;
+  const asRestoredCents = Math.max(0, -asRestored._sum.amountCents);
+  return { rowsCents: asRestoredCents, tieredCents: asRestoredCents };
 }
 
 /**
