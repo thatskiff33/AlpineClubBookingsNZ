@@ -7,6 +7,7 @@ import {
   automaticallyRefundedManualRefundTaskFilter,
 } from "@/lib/deleted-booking-modification-payment";
 import {
+  OPEN_TASK_BOOKING_PAYMENT_SELECT, OPEN_TASK_REFUND_PAYMENT_SELECT,
   toAutoRefundedManualRefundTaskPayload,
   toDismissedManualRefundTaskPayload,
   toOpenManualRefundTaskPayload,
@@ -90,6 +91,7 @@ export async function GET() {
     ...bookingSummary,
     memberId: true,
     deletedAt: true,
+    ...OPEN_TASK_BOOKING_PAYMENT_SELECT,
   } as const;
 
   /*
@@ -158,14 +160,13 @@ export async function GET() {
         reviewContext: true,
         reason: true,
         createdAt: true,
+        ...OPEN_TASK_REFUND_PAYMENT_SELECT,
         booking: { select: handBackBookingSummary },
       },
     }),
     /*
-      #2750. Newest first, and oldest-first would be wrong here for the same
-      reason it is right above: the OPEN queue is worked from the top, whereas
-      this is "what happened lately" and the most recent automatic refund is the
-      one an operator can still act on if the deletion was the mistake.
+      #2750. Newest first: this is "what happened lately", and the most recent
+      automatic refund is the one an operator can still act on.
     */
     readOrDegrade(
       prisma.manualRefundTask.findMany({

@@ -69,9 +69,6 @@ export const MANUAL_REFUND_TASK_RESOLUTION_SELECT = Prisma.validator<Prisma.Manu
           // OUT of, and a charge has none.
           source: true,
           stripeCustomerId: true,
-          // #3536: a hand-back on a payment an officer recorded by hand is
-          // cash, and the Xero note says so.
-          manuallyMarkedPaidAt: true,
         },
       },
     },

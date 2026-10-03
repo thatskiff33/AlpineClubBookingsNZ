@@ -90,6 +90,13 @@ const bodySchema = z.discriminatedUnion("resolution", [
       recordedNightPrices: recordedStrandNightPricesSchema
         .optional()
         .nullable(),
+      /**
+       * #3536 (`INV-PAY-113`): on a refund the club pays back by hand, the
+       * officer's answer to how it went back - true for cash, false for a bank
+       * transfer. Optional: no answer keeps the bank-transfer wording. It
+       * changes the words on the Xero credit note and nothing else.
+       */
+      handedBackInCash: z.boolean().optional().nullable(),
     })
     .strict(),
   z
@@ -182,6 +189,7 @@ export async function POST(
             confirmedAmountCents: parsed.data.confirmedAmountCents ?? null,
             direction: parsed.data.direction ?? null,
             recordedNightPrices: parsed.data.recordedNightPrices ?? null,
+            handedBackInCash: parsed.data.handedBackInCash ?? null,
           }
         : {
             taskId: id,

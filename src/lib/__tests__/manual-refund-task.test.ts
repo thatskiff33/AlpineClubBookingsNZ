@@ -1378,7 +1378,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         priceDiffCents: -7300,
         settlementMethod: "card",
         refundMethod: "internet-banking",
-        // #3536: a payment nobody marked paid by hand is not a cash hand-back.
+        // #3536: no answer from the officer keeps the bank-transfer wording.
         handedBackInCash: false,
       })
     );
@@ -1386,42 +1386,57 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
   });
 
-  it("words a review refund on a hand-marked (cash) payment as cash, and settles it exactly as before (#3536)", async () => {
-    mocks.manualRefundTaskFindUnique.mockResolvedValue(
-      editReviewTask({
-        booking: {
-          memberId: "member-1",
-          status: "PAID",
-          payment: {
-            id: "payment-1",
-            status: "SUCCEEDED",
-            xeroInvoiceId: "inv-1",
-            manuallyMarkedPaidAt: new Date("2026-09-01T00:00:00Z"),
-          },
+  it("words a review refund as cash only when the officer says so, and settles it exactly as before (#3536)", async () => {
+    // A payment marked paid by hand is NOT evidence of cash (owner decision,
+    // 3 Oct 2026): the officer's answer is the only source of the wording.
+    const handMarked = editReviewTask({
+      booking: {
+        memberId: "member-1",
+        status: "PAID",
+        payment: {
+          id: "payment-1",
+          status: "SUCCEEDED",
+          xeroInvoiceId: "inv-1",
+          manuallyMarkedPaidAt: new Date("2026-06-01T00:00:00Z"),
         },
-      })
+      },
+    });
+    const complete = (handedBackInCash?: boolean | null) =>
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "Handed back at the lodge.",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 7300,
+        direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: null,
+        ...(handedBackInCash === undefined ? {} : { handedBackInCash }),
+      }, CLUB_FORMAT_TEST);
+
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(handMarked);
+    await complete();
+    expect(mocks.queueXeroBookingEditSettlement).toHaveBeenLastCalledWith(
+      expect.objectContaining({ refundMethod: "internet-banking", handedBackInCash: false })
     );
 
-    await resolveManualRefundTask({
-      taskId: "task-1",
-      resolution: "completed",
-      note: "Handed back in cash at the lodge.",
-      actingMemberId: "admin-1",
-      confirmedAmountCents: 7300,
-      direction: "REFUND_TO_MEMBER",
-      recordedNightPrices: null,
-    }, CLUB_FORMAT_TEST);
-
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(handMarked);
+    await complete(true);
     // Words only: the same ledger mirror, the same ordinary credit note, and
     // the method stays the internet-banking one the settlement reads.
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalled();
-    expect(mocks.queueXeroBookingEditSettlement).toHaveBeenCalledWith(
+    expect(mocks.queueXeroBookingEditSettlement).toHaveBeenLastCalledWith(
       expect.objectContaining({
         priceDiffCents: -7300,
         settlementMethod: "card",
         refundMethod: "internet-banking",
         handedBackInCash: true,
       })
+    );
+
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(handMarked);
+    await complete(false);
+    expect(mocks.queueXeroBookingEditSettlement).toHaveBeenLastCalledWith(
+      expect.objectContaining({ refundMethod: "internet-banking", handedBackInCash: false })
     );
   });
 

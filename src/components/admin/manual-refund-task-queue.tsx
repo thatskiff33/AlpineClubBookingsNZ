@@ -71,6 +71,7 @@ import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import type { ClubFormat } from "@/lib/club-format";
 import { useClubFormat } from "@/components/club-format-provider";
 import { PartPaymentReviewXeroPaidLine } from "@/components/admin/part-payment-review-xero-paid-line";
+import { HandBackMethodChoice } from "@/components/admin/hand-back-method-choice";
 
 const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 
@@ -104,6 +105,8 @@ interface ManualRefundTask {
    * cancel, and the invoice's cash then. Optional, as above.
    */
   partPaymentReviewXeroPaid?: { reportedAt: string; cashCents: number } | null;
+  /** #3536: a refund here is paid back by hand, so ask cash or bank. Optional, as above. */
+  paidBackByHand?: boolean;
   reason: string;
   createdAt: string;
   memberName: string;
@@ -1020,6 +1023,8 @@ export function ManualRefundTaskQueue() {
    * null for anything malformed rather than a zero.
    */
   const [direction, setDirection] = useState<SettlementDirection | null>(null);
+  /** #3536: the officer's cash-or-bank answer; null is "not said" (bank wording). */
+  const [handedBackInCash, setHandedBackInCash] = useState<boolean | null>(null);
   const [amountInput, setAmountInput] = useState("");
   /**
    * #3191: what the officer says each unpriced night sold for, as typed text
@@ -1133,6 +1138,9 @@ export function ManualRefundTaskQueue() {
     target !== null &&
     target.resolution === "completed" &&
     isFinancialReview(target.task);
+  // #3536: only a refund the club pays back by hand asks how it went back.
+  const askHandBackMethod =
+    pricingReview && direction === "REFUND_TO_MEMBER" && target.task.paidBackByHand === true;
   const pricedAmountCents = pricingReview
     ? parseDecimalDollarsToCents(amountInput)
     : null;
@@ -1352,6 +1360,9 @@ export function ManualRefundTaskQueue() {
               ? {
                   confirmedAmountCents: pricedAmountCents,
                   direction,
+                  ...(askHandBackMethod && handedBackInCash !== null
+                    ? { handedBackInCash }
+                    : {}),
                 }
               : {}),
             /*
@@ -1376,6 +1387,7 @@ export function ManualRefundTaskQueue() {
       setTarget(null);
       setNote("");
       setDirection(null);
+      setHandedBackInCash(null);
       setAmountInput("");
       setNightPriceInputs({});
       await load();
@@ -1793,6 +1805,7 @@ export function ManualRefundTaskQueue() {
                 // typed for. Carrying either onto the next row would offer a
                 // pre-filled figure nobody priced.
                 setDirection(null);
+                setHandedBackInCash(null);
                 setAmountInput("");
                 // #3191: figures typed for one booking's nights must never be
                 // carried onto another's, for the same reason the amount is not.
@@ -1857,6 +1870,12 @@ export function ManualRefundTaskQueue() {
                           </label>
                         ))}
                       </fieldset>
+                      {askHandBackMethod && (
+                        <HandBackMethodChoice
+                          handedBackInCash={handedBackInCash}
+                          onChange={setHandedBackInCash}
+                        />
+                      )}
                       <div className="space-y-2">
                         <Label htmlFor="manual-refund-task-amount">Amount</Label>
                         <div className="flex items-center gap-2">

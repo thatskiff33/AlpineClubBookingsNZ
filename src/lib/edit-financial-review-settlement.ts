@@ -10,7 +10,7 @@ import {
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { recordBookingEvent } from "@/lib/booking-events";
-import { editReviewSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
+import { editReviewRefundSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
 import {
   chooseEditReviewChargeRoute,
   executeEditReviewCharge,
@@ -175,11 +175,12 @@ export type EditReviewSettlementRoute =
        */
       bookingModificationId: string | null;
       /**
-       * #3536 (`INV-PAY-101`): the payment behind the hand-back was marked paid
-       * by hand (`Payment.manuallyMarkedPaidAt`), which is how the club records
-       * cash, so the money goes back in cash. Present only when true. It changes
-       * the words on the Xero note and nothing else: the ledger line and the
-       * settlement still treat the hand-back exactly as before.
+       * #3536 (`INV-PAY-113`): the officer resolving the review said the club
+       * handed this money back in cash. Present only when they said so - the app
+       * never infers cash from "marked paid by hand", which covers bank transfers
+       * recorded outside Xero too. It changes the words on the Xero note and
+       * nothing else: the ledger line and the settlement still treat the
+       * hand-back as internet banking.
        */
       handedBackInCash?: true;
     }
@@ -255,8 +256,6 @@ export type EditReviewSettlementTask = {
        */
       source: PaymentSource;
       stripeCustomerId: string | null;
-      /** #3536: set when an officer recorded the payment by hand (cash). */
-      manuallyMarkedPaidAt?: Date | null;
     } | null;
     /**
      * #3170: for `findOrCreateCustomer` when a charge has to mint a Stripe
@@ -291,6 +290,7 @@ export async function chooseEditReviewSettlementRoute({
   amountCents,
   hasIssuedXeroInvoice,
   direction,
+  handedBackInCash = false,
   store,
 }: {
   task: EditReviewSettlementTask;
@@ -322,6 +322,12 @@ export async function chooseEditReviewSettlementRoute({
    * the member's card.
    */
   direction: ManualRefundTaskDirection;
+  /**
+   * #3536 (`INV-PAY-113`): the officer's answer that a hand-settled refund went
+   * back in cash. Read only where the review takes the `local-allocation` route;
+   * absent or false keeps the bank-transfer wording.
+   */
+  handedBackInCash?: boolean;
   store: Prisma.TransactionClient;
 }): Promise<EditReviewSettlementRoute | null> {
   if (task.kind !== ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
@@ -409,15 +415,12 @@ export async function chooseEditReviewSettlementRoute({
    * claim, and a capture or webhook replay cannot duplicate a backfill that does
    * not exist.
    */
-  const backfilledPayment =
-    task.paymentId === null
-      ? editReviewSettlementPayment(task.booking)
-      : null;
-  const settlementPaymentId = task.paymentId ?? backfilledPayment?.id ?? null;
-  const settlementPaymentSource =
-    task.paymentId !== null
-      ? (task.payment?.source ?? null)
-      : (backfilledPayment?.source ?? null);
+  // #3536: the derivation lives in `editReviewRefundSettlementPayment` so the
+  // settle queue can ask, ahead of time, whether this route is the hand-settled
+  // one (`INV-SSOT`).
+  const settlementPayment = editReviewRefundSettlementPayment(task);
+  const settlementPaymentId = settlementPayment?.id ?? null;
+  const settlementPaymentSource = settlementPayment?.source ?? null;
 
   if (
     settlementPaymentId !== null &&
@@ -463,12 +466,8 @@ export async function chooseEditReviewSettlementRoute({
       kind: "local-allocation",
       paymentId: settlementPaymentId,
       bookingModificationId,
-      // #3536: words only. The booking has one payment, so the one the money
-      // comes back out of is the booking's own when the ids agree.
-      ...(task.booking.payment?.id === settlementPaymentId &&
-      task.booking.payment.manuallyMarkedPaidAt
-        ? { handedBackInCash: true as const }
-        : {}),
+      // #3536: words only, and the officer's answer, never inferred.
+      ...(handedBackInCash ? { handedBackInCash: true as const } : {}),
     };
   }
 
