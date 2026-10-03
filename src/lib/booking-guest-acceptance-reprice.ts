@@ -495,8 +495,11 @@ async function fullReductionReturnRoute(
   if (!isPaidLikeBookingStatus(booking.status)) return { kind: "none" };
   // Paid with no captured cash: paid with account credit (or at $0). It goes
   // back as credit, never more than the credit the booking was paid with.
+  // An organisation holds no credit, so it never paid with any.
+  const creditHolder = bookingOwner(loaded).memberId;
+  if (creditHolder === null) return null;
   const appliedCreditCents = await deriveBookingAppliedCreditCents(booking.id, tx);
-  return bookingOwner(loaded).memberId !== null && appliedCreditCents >= reductionCents
+  return appliedCreditCents >= reductionCents
     ? { kind: "account-credit", amountCents: reductionCents }
     : null;
 }
