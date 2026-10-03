@@ -75,6 +75,7 @@ import {
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
+import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { markCrossFamilyGuestsOnBooking } from "@/lib/member-guest-add-policy";
 import {
@@ -1337,6 +1338,7 @@ export async function modifyBookingDates({
           settlementMethod: payments.settlementMethod,
           accountCreditAmountCents: payments.accountCreditAmountCents,
           policyRetainedAmountCents: payments.policyRetainedAmountCents,
+          ...creditGiveBackHistory(payments.appliedCreditGiveBack),
           // #2390: the same sentence the member was shown at the edit, kept on
           // the booking's own history so the split has an answer later.
           ...(promoCoverage ? { promoCoverageNote: promoCoverage.message } : {}),

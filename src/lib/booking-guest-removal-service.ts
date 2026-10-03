@@ -65,6 +65,7 @@ import {
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
+import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
 import {
   assertNoPendingEditFinancialReview,
@@ -1184,6 +1185,7 @@ export async function removeBookingGuestInTransaction({
         settlementMethod: paymentImpact.settlementMethod,
         accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
         policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
+        ...creditGiveBackHistory(paymentImpact.appliedCreditGiveBack),
         // #2390: the same sentence the member saw when they made the edit,
         // kept on the booking's own history so "why was I charged that?" has
         // an answer months later. Absent unless a cap left somebody out.

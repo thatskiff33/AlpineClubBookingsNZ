@@ -189,6 +189,12 @@ export function cancelRefundableBaseCents(input: {
  * applied above a reduced price (a reduction's policy-kept share) came back at
  * the cancellation, so a credit-paid member got more than a card-paid one.
  * The difference of two `cancelRefundableBaseCents`, so there is one base rule.
+ *
+ * ONLY FOR A BOOKING REDUCED THROUGH #3809's SETTLEMENT (owner decision of 4 Oct
+ * 2026, "Cap new reductions only"): `capAtWorth` is
+ * `bookingReducedThroughCreditGiveBack`. Any other booking tiers all the credit
+ * still applied, as before the cap - a credit-paid booking reduced before that
+ * release is never short.
  */
 export function cancelAppliedCreditBaseCents(input: {
   amountCents: number;
@@ -196,7 +202,9 @@ export function cancelAppliedCreditBaseCents(input: {
   finalPriceCents: number;
   changeFeeCents: number;
   creditAppliedCents: number;
+  capAtWorth: boolean;
 }): number {
+  if (!input.capAtWorth) return Math.max(0, input.creditAppliedCents);
   const withCredit = cancelRefundableBaseCents({ ...input, amountCents: input.amountCents + input.creditAppliedCents });
   return Math.max(0, Math.min(input.creditAppliedCents, withCredit - cancelRefundableBaseCents(input)));
 }

@@ -12,13 +12,7 @@ import {
 import type { ClubFormat } from "@/lib/club-format";
 import type { CalendarDate } from "@/lib/club-time";
 import { deriveBookingAppliedCreditCents, giveBackAppliedCredit } from "@/lib/member-credit";
-
-/** What a paid booking's price reduction gave back of its applied credit (#3809). */
-export type PaidReductionCreditGiveBack = {
-  /** The credit slice the tier applies to: the reduction the card basis left, capped at the credit applied. */
-  basisCents: number;
-  givenBackCents: number;
-};
+import type { PaidReductionCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
 
 /** A paid booking - by its status. A CONFIRMED or PAYMENT_PENDING one is still owing, and a reduction lowers what it owes. */
 function isPaid(status: string): boolean {
@@ -67,11 +61,13 @@ type ReductionInput = {
  * (`Payment.creditAppliedCents`) is set to the ledger's applied figure, so a
  * later cancellation tiers what is still applied (`INV-LOCK-002`).
  *
- * Null where the booking is not paid, has no member, or has no reduction left
- * beyond the card basis, which leaves the caller's settlement exactly as it
- * was. A cheap unlocked ledger read decides whether any credit is applied at
- * all, so a booking with none never takes the member's key (the clamp's F1
- * gate, `INV-MOD-012`).
+ * Null where the booking is not paid, has no member or holds no applied
+ * credit, which leaves the caller's settlement exactly as it was. A cheap
+ * unlocked ledger read decides whether any credit is applied at all, so a
+ * booking with none never takes the member's key (the clamp's F1 gate,
+ * `INV-MOD-012`). Where the card basis returns the whole reduction it gives
+ * back nothing and takes no key, but still answers - the edit's history row
+ * records it, and a cancellation caps that booking's credit (`INV-PAY-114`).
  */
 export async function giveBackPaidReductionCredit(
   tx: Prisma.TransactionClient,
@@ -88,8 +84,9 @@ export async function giveBackPaidReductionCredit(
   },
 ): Promise<PaidReductionCreditGiveBack | null> {
   const memberId = bookingOwner(booking).memberId;
-  if (reductionCents - cardBasisCents <= 0 || memberId === null || !isPaid(booking.status)) return null;
+  if (reductionCents <= 0 || memberId === null || !isPaid(booking.status)) return null;
   if ((await deriveBookingAppliedCreditCents(booking.id, tx)) <= 0) return null;
+  if (reductionCents - cardBasisCents <= 0) return { basisCents: 0, givenBackCents: 0 };
 
   const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, tx);
   const days = daysUntilDate(booking.checkIn, todayAtClub);

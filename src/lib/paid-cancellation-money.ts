@@ -33,7 +33,8 @@ export type PaidCancellationMoney = {
   refundPercentage: number;
   /**
    * The applied-credit slice the tier applies to: the mirror, capped with the
-   * money paid at what the booking is now worth (#3809, `cancelAppliedCreditBaseCents`).
+   * money paid at what the booking is now worth where the booking was reduced
+   * through #3809's settlement, else the whole mirror (`cancelAppliedCreditBaseCents`).
    */
   appliedCreditBaseCents: number;
   /** What the policy restores of that slice, by the card tier. */
@@ -83,6 +84,7 @@ export function paidCancellationMoney({
   days,
   policy,
   refundMethod,
+  capAppliedCredit,
 }: {
   payment: {
     amountCents: number;
@@ -98,10 +100,12 @@ export function paidCancellationMoney({
   days: number;
   policy: CancellationRule[];
   refundMethod: "card" | "credit";
+  /** `bookingReducedThroughCreditGiveBack`: whether the credit base is capped (`INV-PAY-114`). */
+  capAppliedCredit: boolean;
 }): PaidCancellationMoney {
   const paidAmountCents = payment.amountCents - payment.refundedAmountCents;
   const refundableBaseCents = cancelRefundableBaseCents({ ...payment, finalPriceCents });
-  const appliedCreditBaseCents = cancelAppliedCreditBaseCents({ ...payment, finalPriceCents });
+  const appliedCreditBaseCents = cancelAppliedCreditBaseCents({ ...payment, finalPriceCents, capAtWorth: capAppliedCredit });
   const creditToRestoreCents =
     payment.creditAppliedCents > 0
       ? calculateAppliedCreditRestore(appliedCreditBaseCents, refundableBaseCents, days, policy)

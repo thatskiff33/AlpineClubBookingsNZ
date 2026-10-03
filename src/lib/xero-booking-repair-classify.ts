@@ -65,6 +65,7 @@ import {
 } from "./xero-booking-repair-utils";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { isCancellationRefundDecisionRecorded } from "@/lib/cancellation-settled-money";
+import { recordedCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
 import { isRecordedBookingInvoicePayment } from "@/lib/xero-inbound/object-links";
 import { PART_PAYMENT_RECOGNISED_REASON } from "@/lib/part-payment-recognition-reason";
 import {
@@ -912,9 +913,19 @@ export function classifyBookingContext(
         storedEvidence.amountCents <= refundDueCents
           ? storedEvidence
           : null;
+      // #3809: with nothing captured, a paid booking's reduction settled as
+      // applied credit given back, and its note is that give-back - none at
+      // all where the tier gave nothing back - as the edit's history row
+      // records (`recordedCreditGiveBack`). The whole reduction would credit
+      // the invoice for money the policy kept. This is also what recovers a
+      // note whose post-commit queue failed after its deallocation committed.
+      const recordedGiveBack = paymentHasCapturedMoney ? null : recordedCreditGiveBack(modification.newData);
+      if (!modificationCreditNote && recordedGiveBack && recordedGiveBack.givenBackCents <= 0) {
+        continue;
+      }
       const expectedCreditNoteCents =
-        storedSettlement?.amountCents ?? refundDueCents;
-      const expectedAmountSource = storedSettlement?.source ?? "net-amount";
+        storedSettlement?.amountCents ?? recordedGiveBack?.givenBackCents ?? refundDueCents;
+      const expectedAmountSource = storedSettlement?.source ?? (recordedGiveBack ? "recorded-give-back" : "net-amount");
 
       if (!modificationCreditNote) {
         const blockingOperation = getBlockingOperation(
@@ -959,6 +970,8 @@ export function classifyBookingContext(
                 bookingId: booking.id,
                 bookingModificationId: modification.id,
                 refundAmountCents: expectedCreditNoteCents,
+                // #3809: worded as the account credit it gave back (`INV-PAY-101`).
+                ...(recordedGiveBack ? { refundMethod: "account-credit" } : {}),
               },
             });
             addFinding(findings, {

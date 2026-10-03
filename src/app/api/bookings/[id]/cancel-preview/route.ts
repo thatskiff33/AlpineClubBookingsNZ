@@ -7,7 +7,9 @@ import { prisma } from "@/lib/prisma";
 import { loadCancellationPolicy } from "@/lib/cancellation";
 import { calculateCancellationPreview } from "@/lib/policies/booking-route-decisions";
 import { clubTime } from "@/lib/club-time/server";
-import { paymentEligibleForPaidCancelPath } from "@/lib/booking-cancel";
+import { paymentEligibleForPaidCancelPath, paymentHasCaptureEvidence } from "@/lib/booking-cancel";
+import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
+import { refundedPaymentCreditRestore } from "@/lib/cancel-refunded-payment-credit";
 import { memberCancelRefusal } from "@/lib/booking-cancel-eligibility";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
@@ -118,10 +120,15 @@ export async function GET(
         },
         _sum: { amountCents: true },
       });
-      const creditRestoredCents = Math.max(
-        0,
-        -(appliedAggregate._sum.amountCents ?? 0)
-      );
+      const appliedCents = Math.max(0, -(appliedAggregate._sum.amountCents ?? 0));
+      // #3809 (F2): a captured payment the cancel cannot refund has its credit
+      // tiered as the cancel tiers it - the same helper, so the two agree.
+      const todayAtClub = (await clubTime()).today();
+      const tiered =
+        booking.payment && bookingOwner(booking).memberId && (await paymentHasCaptureEvidence(booking.payment))
+          ? await refundedPaymentCreditRestore(prisma, { bookingId: booking.id, booking: { ...booking, payment: booking.payment }, todayAtClub })
+          : null;
+      const creditRestoredCents = tiered ? Math.min(tiered.creditToRestoreCents, appliedCents) : appliedCents;
 
       return NextResponse.json({
         refundAmountCents: 0,
@@ -156,6 +163,8 @@ export async function GET(
       // or from instrumentation, so the request-scoped `server-only` binding is
       // the right reader (`docs/CLUB_TIME_KERNEL.md`).
       todayAtClub: (await clubTime()).today(),
+      // #3809 (`INV-PAY-114`): capped only where the cancel caps it.
+      capAppliedCredit: await bookingReducedThroughCreditGiveBack(booking.id, prisma),
     });
 
     return NextResponse.json({

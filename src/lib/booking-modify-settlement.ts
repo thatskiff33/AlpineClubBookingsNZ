@@ -20,6 +20,7 @@ import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-
 import type { CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
 import { giveBackPaidReductionCredit } from "@/lib/booking-modify-credit-give-back";
+import type { PaidReductionCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
 import {
   calculateDualRefundAmounts,
   daysUntilDate,
@@ -90,6 +91,12 @@ export type PaymentAdjustmentResult = {
    * (`appliedCreditGiveBackCents` on `queueXeroBookingEditSettlement`).
    */
   appliedCreditGivenBackCents: number;
+  /**
+   * #3809: the settlement of applied credit, null where the reduction did not
+   * reach it. The edit's history row records it (`creditGiveBackHistory`),
+   * which is what a later cancellation caps by (`INV-PAY-114`).
+   */
+  appliedCreditGiveBack: PaidReductionCreditGiveBack | null;
 };
 
 // isSettledBookingStatus moved to booking-payment-state (#1729) so the Xero
@@ -368,6 +375,7 @@ export async function applyPaymentAdjustments(
       selectedSettlement.policyRetainedAmountCents +
       (creditGiveBack ? creditGiveBack.basisCents - creditGiveBack.givenBackCents : 0),
     appliedCreditGivenBackCents: creditGiveBack?.givenBackCents ?? 0,
+    appliedCreditGiveBack: creditGiveBack,
   };
 }
 

@@ -17,6 +17,7 @@ import {
   recordSkippedXeroBookingInvoiceUpdateOperation,
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
+import { APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE } from "@/lib/xero-review-task-key";
 import {
   refundMethodForSettlementMethod,
   type RefundMethod,
@@ -41,6 +42,13 @@ type XeroBookingEditFinancialAction =
       refundAmountCents: number;
       /** `INV-PAY-101`: how the reduction went back, as the note will say. */
       refundMethod: RefundMethod;
+      /**
+       * #3809: applied credit given back BESIDE a card or bank refund - an
+       * allocated note of its own, worded as account credit, since one note
+       * may name only one method (`INV-PAY-101`). 0 where the note above is
+       * the give-back itself.
+       */
+      allocatedGiveBackCents: number;
       reason: string;
     }
   | {
@@ -117,8 +125,9 @@ export interface ClassifyXeroBookingEditSettlementInput {
    * #3809: applied credit a paid booking's reduction gave back
    * (`appliedCreditGivenBackCents`). Its deallocation reopens the invoice by
    * this much, so an invoice-allocated note takes it off again, as for a card
-   * refund: folded into the edit's allocated note, worded as account credit
-   * where it is the whole of it, or raised beside an unallocated account note.
+   * refund: the edit's allocated note, worded as account credit, where it is
+   * all that came back; else an allocated note of its own, beside the card or
+   * bank refund's note or the credit election's unallocated one.
    */
   appliedCreditGiveBackCents?: number;
 }
@@ -196,12 +205,13 @@ export function classifyXeroBookingEditSettlement(
     } else {
       financialAction = {
         type: "modification-credit-note",
-        refundAmountCents: refundAmountCents + giveBackCents,
+        refundAmountCents: refundAmountCents > 0 ? refundAmountCents : giveBackCents,
         refundMethod:
           refundAmountCents <= 0
             ? "account-credit"
             : (input.refundMethod ??
               refundMethodForSettlementMethod(input.settlementMethod, input.refundedThroughStripe)),
+        allocatedGiveBackCents: refundAmountCents > 0 ? giveBackCents : 0,
         reason: "Negative booking-edit delta needs a modification credit note instead of mutating the original invoice.",
       };
     }
@@ -247,6 +257,28 @@ async function kickQueuedXeroOperation(queued: { queueOperationId: string | null
   if (queued.queueOperationId) {
     await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
   }
+}
+
+/**
+ * #3809: the allocated note for applied credit given back beside another note
+ * on the same edit. Scoped by the existing per-share key slot
+ * (`reviewTaskKeyParts`, #3791) under `APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE`, so
+ * the edit's own note neither answers for it by its link nor folds an equal
+ * amount into one key, and an operator retry rebuilds the same keys.
+ */
+async function queueGiveBackNote(input: QueueXeroBookingEditSettlementInput, cents: number) {
+  if (cents <= 0) return;
+  const queued = await enqueueXeroModificationCreditNoteOperation(
+    {
+      bookingId: input.bookingId,
+      refundAmountCents: cents,
+      bookingModificationId: input.bookingModificationId,
+      refundMethod: "account-credit",
+      reviewTaskId: input.reviewTaskId ?? APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE,
+    },
+    { createdByMemberId: input.createdByMemberId }
+  );
+  await kickQueuedXeroOperation(queued);
 }
 
 export async function queueXeroBookingEditSettlement(
@@ -310,6 +342,7 @@ export async function queueXeroBookingEditSettlement(
       }
     );
     await kickQueuedXeroOperation(queued);
+    await queueGiveBackNote(input, decision.financialAction.allocatedGiveBackCents);
   } else if (decision.financialAction.type === "modification-account-credit-note") {
     const queued = await enqueueXeroModificationAccountCreditNoteOperation(
       {
@@ -323,19 +356,7 @@ export async function queueXeroBookingEditSettlement(
       }
     );
     await kickQueuedXeroOperation(queued);
-    if (decision.financialAction.allocatedGiveBackCents > 0) {
-      const allocated = await enqueueXeroModificationCreditNoteOperation(
-        {
-          bookingId: input.bookingId,
-          refundAmountCents: decision.financialAction.allocatedGiveBackCents,
-          bookingModificationId: input.bookingModificationId,
-          refundMethod: "account-credit",
-          ...(input.reviewTaskId ? { reviewTaskId: input.reviewTaskId } : {}),
-        },
-        { createdByMemberId: input.createdByMemberId }
-      );
-      await kickQueuedXeroOperation(allocated);
-    }
+    await queueGiveBackNote(input, decision.financialAction.allocatedGiveBackCents);
   }
 
   if (decision.primaryInvoiceUpdateAction.type === "queue") {

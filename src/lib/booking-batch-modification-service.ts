@@ -36,6 +36,7 @@ import {
   isQuotePricedBooking,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
+import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import {
   OtherLodgeRateAmountUnderReviewError,
   requestCarriesOtherLodgeElection,
@@ -1908,6 +1909,7 @@ export async function modifyBookingBatch({
           settlementMethod: payments.settlementMethod,
           accountCreditAmountCents: payments.accountCreditAmountCents,
           policyRetainedAmountCents: payments.policyRetainedAmountCents,
+          ...creditGiveBackHistory(payments.appliedCreditGiveBack),
           // #2266: what this edit did to the stored credit election (#2265),
           // recorded whenever the request carried a credit input — the
           // member's booking history reads it back.

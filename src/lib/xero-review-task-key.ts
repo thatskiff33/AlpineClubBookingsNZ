@@ -8,6 +8,14 @@ import { asRecord, readString } from "@/lib/xero-json";
  * adds the task beside it, and nothing at all where there is no task, so every
  * key written before it is unchanged.
  */
+/**
+ * #3809: the scope of an edit's second invoice-allocated note - applied credit
+ * given back beside a card or bank refund's note on the same edit. Not a review
+ * task; it rides the same slot so the enqueue's own-key dedupe, the builder's
+ * keys and the operator retry need nothing new.
+ */
+export const APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE = "applied-credit-give-back";
+
 export function reviewTaskKeyParts(reviewTaskId: string | null | undefined): string[] {
   return reviewTaskId ? ["review-task", reviewTaskId] : [];
 }

@@ -507,6 +507,8 @@ export function calculateCancellationPreview(input: {
    * supplied, which is why this parameter cannot be an instant.
    */
   todayAtClub: CalendarDate;
+  /** #3809: `bookingReducedThroughCreditGiveBack`, as the cancel reads it (`INV-PAY-114`). */
+  capAppliedCredit: boolean;
 }): {
   refundAmountCents: number;
   keptAmountCents: number;
@@ -554,6 +556,7 @@ export function calculateCancellationPreview(input: {
         finalPriceCents: input.finalPriceCents,
         changeFeeCents,
         creditAppliedCents: input.payment.creditAppliedCents ?? 0,
+        capAtWorth: input.capAppliedCredit,
       }),
       refundableBaseCents,
       days,
