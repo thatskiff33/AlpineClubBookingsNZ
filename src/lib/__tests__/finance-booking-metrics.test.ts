@@ -39,6 +39,7 @@ import { getFinanceBookingMetrics } from "@/lib/finance-booking-metrics";
 import {
   NET_COLLECTED_SCOPE_FIXTURE,
   NET_COLLECTED_SCOPE_PAYMENTS,
+  netCollectedFixtureBooking,
 } from "@/lib/__tests__/helpers/net-collected-scope-fixture";
 import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
@@ -395,6 +396,8 @@ describe("finance-booking-metrics", () => {
       additionalLedgerGapCents: 0,
       additionalLedgerGapBookings: 0,
       refundedCents: 2000,
+      handBackOwedCents: 0,
+      keptCreditCents: 0,
       netCollectedCents: 40000,
       creditAppliedCents: 1000,
       changeFeeCents: 500,
@@ -1228,7 +1231,7 @@ describe("finance-booking-metrics", () => {
 });
 
 /**
- * #3637 (epic #3372, owner decision A): Finance's "Net Collected Cash" is
+ * #3637 (epic #3372, owner decision A): Finance's "Net Collected" is
  * `summarizeCollectedCash` over the one Net Collected booking scope - every
  * booking staying in the window, whatever its status, soft-deleted ones left
  * out - and no longer the status-listed bookings the stay figures count.
@@ -1507,7 +1510,7 @@ describe("finance net collected cash: the one Net Collected scope (#3637)", () =
         refundedAmountCents: row.refundedAmountCents,
         booking: {
           ...stay(row.bookingId, "2026-04-02", "2026-04-04"),
-          deletedAt: row.deletedAt,
+          ...netCollectedFixtureBooking(row),
         },
       })),
     );

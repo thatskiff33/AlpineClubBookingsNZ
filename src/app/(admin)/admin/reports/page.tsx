@@ -358,9 +358,9 @@ export default function ReportsPage() {
       if (count > 0) rows.push([`Booking Money Reason: ${reason}`, String(count)]);
     }
     rows.push(["Booked Revenue", formatCentsPlain(data.summary.totalRevenueCents)]);
-    rows.push(["Net Collected Cash", formatCentsPlain(data.summary.netCollectedCents)]);
+    rows.push(["Net Collected", formatCentsPlain(data.summary.netCollectedCents)]);
     if (additionalLedgerGapWarning) {
-      rows.push(["Net Collected Cash Warning", additionalLedgerGapWarning]);
+      rows.push(["Net Collected Warning", additionalLedgerGapWarning]);
       rows.push([
         "Possible Additional Ledger Gap",
         formatCentsPlain(data.summary.additionalLedgerGapCents),
@@ -573,7 +573,7 @@ export default function ReportsPage() {
               role="alert"
               className="reports-print-card rounded-lg border border-warning-6 bg-warning-3 p-4 text-sm text-warning-11 print:border-warning-6"
             >
-              <p className="font-semibold">Net Collected Cash needs reconciliation</p>
+              <p className="font-semibold">Net Collected needs reconciliation</p>
               <p className="mt-1">{additionalLedgerGapWarning}</p>
             </div>
           ) : null}
@@ -611,9 +611,9 @@ export default function ReportsPage() {
                 icon={DollarSign}
               />
               <StatCard
-                title="Net Collected Cash"
+                title="Net Collected"
                 value={formatCents(data.summary.netCollectedCents, clubFormat)}
-                subtitle={`Captured payment cash less refunds and credits for overlapping bookings of any status, cancelled ones at the fee kept; not allocated by night${deleted === "hide" ? "" : ". Deleted bookings never count here"}`}
+                subtitle={`Money kept on overlapping bookings of any status: cash less refunds, plus account credit kept and less refunds still owed back on cancelled ones; not allocated by night${deleted === "hide" ? "" : ". Deleted bookings never count here"}`}
                 icon={DollarSign}
               />
               <StatCard

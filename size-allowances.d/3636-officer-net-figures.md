@@ -14,7 +14,7 @@ reason: the Net Collected This Month card's read, its breakdown line and the
   of its own, not part of relabelling a figure.
 
 file: src/app/(admin)/admin/payments/page.tsx
-lines: 1420
+lines: 1418
 reason: the net tile, its hints, the tolerant summary reader and the
   ledger-gap warning (its count in the club number format, #3637) belong beside the tiles they describe in this one client
   page; splitting the page is a separate refactor that would move the tiles

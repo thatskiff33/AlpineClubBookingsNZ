@@ -487,12 +487,12 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
   #3372 — the rendered half of #3340, on the payments board's summary tiles. It
   is asserted here because this is the one harness that mounts the real page
   over a stubbed API. The tile used to be titled "Total Revenue" over a gross
-  sum; the API now returns `netCollectedCents`, the tile says "Net Collected
-  Cash" (Reports' name for the same derivation), and the two money tiles each
+  sum; the API now returns `netCollectedCents`, the tile says "Net
+  Collected" (Reports' name for the same derivation), and the two money tiles each
   state what they cover, because they are not a subtraction of one another.
 */
 describe("/admin/payments titles its revenue tile as net (#3372)", () => {
-  it("shows Net Collected Cash with the hints that name each tile's population", async () => {
+  it("shows Net Collected with the hints that name each tile's population", async () => {
     // The #3340 booking as the whole filtered set: $130.00 captured, $65.00
     // refunded → $65.00 net.
     respondWith({
@@ -514,11 +514,11 @@ describe("/admin/payments titles its revenue tile as net (#3372)", () => {
 
     // `SummaryCard` is Card > CardHeader > CardTitle, so the card is the
     // title's grandparent; the figure and the hint sit in its CardContent.
-    const netTitle = await screen.findByText("Net Collected Cash");
+    const netTitle = await screen.findByText("Net Collected");
     const netCard = netTitle.parentElement?.parentElement;
     expect(netCard).toHaveTextContent("$65.00");
     expect(netCard).toHaveTextContent(
-      "Payments received, less refunds and credits. Cancelled bookings count at the fee kept; deleted bookings are left out.",
+      "Payments received, less refunds and credits. Cancelled bookings count only what was kept of what was paid; deleted bookings are left out.",
     );
     const refundCard = screen.getByText("Refunded / Credited").parentElement
       ?.parentElement;
@@ -557,7 +557,7 @@ describe("/admin/payments titles its revenue tile as net (#3372)", () => {
       </HelpWidgetProvider>,
     );
 
-    const netCard = (await screen.findByText("Net Collected Cash")).parentElement
+    const netCard = (await screen.findByText("Net Collected")).parentElement
       ?.parentElement;
     const refundCard = screen.getByText("Refunded / Credited").parentElement
       ?.parentElement;
@@ -597,7 +597,7 @@ describe("/admin/payments titles its revenue tile as net (#3372)", () => {
     ).toBeInTheDocument();
   });
 
-  it("warns that Net Collected Cash may understate, as Reports does, when the ledger check finds a gap", async () => {
+  it("warns that Net Collected may understate, as Reports does, when the ledger check finds a gap", async () => {
     respondWith({
       data: [],
       total: 0,
@@ -623,7 +623,7 @@ describe("/admin/payments titles its revenue tile as net (#3372)", () => {
 
     expect(
       await screen.findByText(
-        "Net Collected Cash may understate by $21.00: 1 payment counted in it records an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile that payment's ledger before trusting this figure.",
+        "Net Collected may understate by $21.00: 1 payment counted in it records an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile that payment's ledger before trusting this figure.",
       ),
     ).toBeInTheDocument();
   });

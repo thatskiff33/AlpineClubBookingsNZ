@@ -27,11 +27,11 @@ integer cents and shown as dollars.
 ### Open and read the ledger
 
 1. Go to **Admin → Finance → Payments**. The stat cards summarise the current
-   filter (Net Collected Cash, Refunded / Credited, Payments count, Success
+   filter (Net Collected, Refunded / Credited, Payments count, Success
    Rate),
    and the table lists each payment.
 
-   ![Payments page: the filter bar, summary stat cards (Net Collected Cash, Refunded/Credited, Payments, Success Rate), and the payments table with status and Xero columns](../images/admin/admin-payments.png)
+   ![Payments page: the filter bar, summary stat cards (Net Collected, Refunded/Credited, Payments, Success Rate), and the payments table with status and Xero columns](../images/admin/admin-payments.png)
 
 2. Each row shows the last-updated date, check-in, member, a **View** link to
    the booking, the amount (net of refunds and credits, with "paid, refunded or
@@ -686,20 +686,23 @@ Payments is a read-only ledger (aside from Generate Invoice). Its controls:
 | Record the adjustment / No adjustment | Close a booking change the system would not price | — | Needs finance **edit**. "Record the adjustment" is disabled until an amount has been confirmed; "No adjustment" closes the review as looked-at with nothing due, moves no money, and needs a note |
 | Refunded automatically — nothing to pay back | Read-only record of a payment Stripe returned by itself, because the booking had already been cancelled — the booking's own payment or one for a change to it | last 30 days | No controls at all: the money has already gone back. Every such refund of the last 30 days is listed, grouped into bookings that were deleted (worth a look) and bookings still on file (normally nothing to do); the audit log holds anything older. A capture you had already paid back by hand is not refunded again and is not listed here — you are emailed instead |
 
-Page size is fixed at 25. **Net Collected Cash** and **Refunded / Credited**
+Page size is fixed at 25. **Net Collected** and **Refunded / Credited**
 reflect the whole filtered set; **Success Rate** is computed from the visible
 page.
 
 The two money cards are not a subtraction of one another, and each says on
 the card what it covers:
 
-- **Net Collected Cash** counts captured payments, less the refunds and
+- **Net Collected** counts captured payments, less the refunds and
   account credits on them. A payment that is still pending or failed does not
-  count. A **cancelled** booking counts at the fee the club kept (what it took
-  less what it refunded or credited), and a **deleted** booking does not count
+  count. A **cancelled** booking counts only what the club kept of what was
+  paid on it: money not refunded or credited back, less any refund still owed
+  on an open hand-back task, plus any account credit the cancellation kept. One
+  cancelled before anything was paid adds nothing, and a **deleted** booking
+  does not count
   at all, even though its row stays in the list. All four Net Collected
   figures (this card, the dashboard's, Reports' and the Finance dashboard's
-  Net Collected Cash) use that same rule for which bookings count. It is worked out the same way as the Net Collected Cash card
+  Net Collected) use that same rule for which bookings count. It is worked out the same way as the Net Collected card
   on [Reports](reports.md), but over different payments: this card uses the payments matching your
   filters, and Reports uses the bookings staying in its chosen dates, so the
   two figures need not match. Like Reports, it runs the missing-ledger check:

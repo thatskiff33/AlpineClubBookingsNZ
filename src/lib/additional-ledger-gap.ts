@@ -83,13 +83,15 @@ export function summarizeAdditionalLedgerGap(
 
 /**
  * #3372 / #3637: the shared Prisma select for a payment read behind a "Net
- * Collected Cash" figure and its ledger-gap warning, used by Reports and Finance.
+ * Collected" figure and its ledger-gap warning, used by Reports and Finance.
  * The payments board and the dashboard keep their own selects (the board loads
  * transactions of every kind for its list), and the compiler holds all of them
  * to the columns below - the columns
  * `summarizeCollectedCash` reads, `summarizeAdditionalLedgerGap`'s inputs, and
- * the booking's `deletedAt` for the Net Collected booking scope. A surface may
- * widen `booking.select` with what its own filters need.
+ * the booking fields `netCollectedBookingSelect` names (the scope's `deletedAt`
+ * and a cancelled booking's credit and hand-back rows). The dashboard spreads
+ * that booking select too. A surface may widen `booking.select` with what its
+ * own filters need.
  *
  * ADDITIONAL ledger rows only (#2408): only a captured ADDITIONAL row proves a
  * collected increase is inside `amountCents`, and the cash total is never
@@ -97,6 +99,29 @@ export function summarizeAdditionalLedgerGap(
  * re-checked by `summarizeAdditionalLedgerGap`; the filter is an optimisation,
  * not the correctness boundary.
  */
+export const netCollectedBookingSelect = Prisma.validator<Prisma.BookingSelect>()({
+  deletedAt: true,
+  // Owner decision on #3372 (3 Oct 2026): a cancelled booking's kept credit and
+  // owed hand-back. Loaded as relations of the one payment query - no per-row
+  // read - and judged in code (`getNetCollectedPaymentParts`), the one home of
+  // which rows count; no `where` here, so the query cannot disagree with it.
+  status: true,
+  creditsApplied: { select: { type: true, amountCents: true } },
+  creditsFromCancellation: {
+    // `description` for a restore written before the marker existed
+    // (`isCancellationCreditRestoreRow`).
+    select: { type: true, amountCents: true, description: true, restoredFromBookingId: true },
+  },
+  manualRefundTasks: {
+    select: {
+      status: true,
+      kind: true,
+      amountCents: true,
+      partPaymentReviewPaymentId: true,
+    },
+  },
+});
+
 export const netCollectedPaymentSelect = Prisma.validator<Prisma.PaymentSelect>()({
   bookingId: true,
   status: true,
@@ -108,11 +133,11 @@ export const netCollectedPaymentSelect = Prisma.validator<Prisma.PaymentSelect>(
     where: { kind: PaymentTransactionKind.ADDITIONAL },
     select: { kind: true, status: true, amountCents: true },
   },
-  booking: { select: { deletedAt: true } },
+  booking: { select: netCollectedBookingSelect },
 });
 
 /**
- * #3372 / #3637: a Net Collected Cash figure and its "may understate" ledger
+ * #3372 / #3637: a Net Collected figure and its "may understate" ledger
  * gap, over ONE set of payments. The gap runs over exactly the payments the
  * figure counts (the Net Collected booking scope), so no surface can warn about
  * a payment its figure left out, or stay silent about one it counted. Reports,

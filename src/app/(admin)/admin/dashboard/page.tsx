@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
+import { netCollectedBookingSelect } from "@/lib/additional-ledger-gap";
 import {
-  formatPaidRefundedBreakdown,
+  formatNetCollectedBreakdown,
   summarizeCollectedCash,
 } from "@/lib/booking-payment-state";
 import {
@@ -147,8 +148,8 @@ async function getStats() {
     // net-collected-cash derivation (`summarizeCollectedCash`) decides which
     // statuses count as captured AND which bookings count (the one Net
     // Collected booking scope, owner decision A: every booking not
-    // soft-deleted, so a kept cancellation fee counts). The booking's
-    // `deletedAt` is loaded because the derivation's row type requires it.
+    // soft-deleted; a cancelled booking adds only what it kept of what was paid,
+    // nil if never paid). The shared booking select loads what the rule reads.
     // This used to sum `SUCCEEDED` alone: a partly-refunded payment left the
     // figure entirely, and nothing subtracted a refund on the ones that stayed.
     //
@@ -163,7 +164,7 @@ async function getStats() {
         status: true,
         amountCents: true,
         refundedAmountCents: true,
-        booking: { select: { deletedAt: true } },
+        booking: { select: netCollectedBookingSelect },
       },
     }),
     // Bookings officer card headline (#2091): check-ins in the next 7 days.
@@ -366,9 +367,8 @@ export default async function AdminDashboardPage() {
   ]);
   // #3372: exact cents, never `money.dollars`, here and on the headline - a
   // rounded figure can disagree with the line beneath it by a dollar.
-  const netCollectedBreakdown = formatPaidRefundedBreakdown(
-    stats.netCollectedThisMonth.capturedGrossCents,
-    stats.netCollectedThisMonth.refundedCents,
+  const netCollectedBreakdown = formatNetCollectedBreakdown(
+    stats.netCollectedThisMonth,
     money.cents,
   );
 

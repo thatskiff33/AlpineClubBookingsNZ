@@ -802,12 +802,12 @@ describe("finance dashboard page model", () => {
       model.warnings.some(
         (warning) =>
           // #3637: the one wording Reports and Payments show.
-          warning.includes("Net Collected Cash may understate by $21") &&
+          warning.includes("Net Collected may understate by $21") &&
           warning.includes("1 booking in this range records an additional payment"),
       ),
     ).toBe(true);
     expect(
-      model.cards.find((entry) => entry.title === "Net Collected Cash")
+      model.cards.find((entry) => entry.title === "Net Collected")
         ?.footnote,
     ).toContain("May understate by $21");
   });
@@ -825,11 +825,11 @@ describe("finance dashboard page model", () => {
 
     expect(
       model.warnings.some((warning) =>
-        warning.includes("Net Collected Cash may understate by $0.50: 1 booking"),
+        warning.includes("Net Collected may understate by $0.50: 1 booking"),
       ),
     ).toBe(true);
     expect(
-      model.cards.find((entry) => entry.title === "Net Collected Cash")
+      model.cards.find((entry) => entry.title === "Net Collected")
         ?.footnote,
     ).toContain("May understate by $0.50");
   });
@@ -860,13 +860,13 @@ describe("finance dashboard page model", () => {
 
     expect(
       model.warnings.some((warning) =>
-        warning.includes("Net Collected Cash may understate"),
+        warning.includes("Net Collected may understate"),
       ),
     ).toBe(false);
     expect(
-      model.cards.find((entry) => entry.title === "Net Collected Cash")
+      model.cards.find((entry) => entry.title === "Net Collected")
         ?.footnote,
-    ).toBe("Cash is local payment-derived and separate from Xero revenue.");
+    ).toBe("Worked out from this app's own payment, account credit and refund records, not from Xero revenue.");
   });
 
   it("warns and exports primary reconciliation reason counts for pricing sensitivity", async () => {

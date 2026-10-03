@@ -1,8 +1,4 @@
-import type {
-  PaymentStatus,
-  PaymentTransactionKind,
-  Prisma,
-} from "@prisma/client";
+import type { PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
 import { BOOKING_ISSUED_CREDIT_TYPES } from "@/lib/member-credit-booking-rows";
 import { z } from "zod";
 import {
@@ -20,10 +16,14 @@ import {
   type XeroState,
 } from "@/lib/admin-operational-state";
 import { bookingOwner } from "@/lib/booking-owner";
-import { summarizeNetCollectedWithLedgerGap } from "@/lib/additional-ledger-gap";
+import {
+  netCollectedBookingSelect,
+  summarizeNetCollectedWithLedgerGap,
+} from "@/lib/additional-ledger-gap";
 import {
   getPaymentNetOfRefundsCents,
   sumRefundedAndCreditedCents,
+  type NetCollectedBookingFields,
 } from "@/lib/booking-payment-state";
 import logger from "@/lib/logger";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
@@ -157,12 +157,7 @@ type PaymentCandidate = {
   additionalAmountCents: number;
   additionalPaymentStatus: string | null;
   updatedAt: Date;
-  transactions: Array<{
-    updatedAt: Date;
-    kind: PaymentTransactionKind;
-    status: PaymentStatus;
-    amountCents: number;
-  }>;
+  transactions: Array<{ updatedAt: Date; kind: PaymentTransactionKind; status: PaymentStatus; amountCents: number }>;
   refunds: Array<{ updatedAt: Date }>;
   booking: {
     id: string;
@@ -177,11 +172,11 @@ type PaymentCandidate = {
     } | null;
     // #3369: the owner may be an Organisation; bookingOwner() reads both.
     organisation: { name: string; email: string | null } | null;
-    creditsFromCancellation: Array<{
-      amountCents: number;
-      description: string | null;
-    }>;
-  };
+    // #3372: the Net Collected rule's rows, widened by the chip's description.
+    creditsFromCancellation: Array<
+      NetCollectedBookingFields["creditsFromCancellation"][number] & { description: string | null }
+    >;
+  } & Pick<NetCollectedBookingFields, "creditsApplied" | "manualRefundTasks">;
 };
 
 type EnrichedPaymentCandidate = PaymentCandidate & {
@@ -488,17 +483,16 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         booking: {
           select: {
             id: true,
-            status: true,
             checkIn: true,
-            // #3372: the Net Collected booking scope reads it.
-            deletedAt: true,
+            // #3372: the Net Collected booking fields shared by all four surfaces.
+            ...netCollectedBookingSelect,
             // Credit ISSUED from the booking only (#3791): a review's give-back
             // of applied credit names the booking as its source too, and is not
-            // a settlement of it.
+            // a settlement of it. Kept credit loses nothing (`cancelledBookingKeptCreditCents`).
             creditsFromCancellation: {
               where: { type: { in: [...BOOKING_ISSUED_CREDIT_TYPES] } },
               select: {
-                amountCents: true,
+                ...netCollectedBookingSelect.creditsFromCancellation.select,
                 description: true,
               },
             },
@@ -628,6 +622,9 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
                   select: {
                     amountCents: true,
                     description: true,
+                    // The restore test reads both (`isCancellationCreditRestoreRow`).
+                    type: true,
+                    restoredFromBookingId: true,
                   },
                 },
                 member: {
@@ -666,7 +663,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
           "none",
       }));
 
-    // #3372: "Net Collected Cash" is net of refunds and credits over captured
+    // #3372: "Net Collected" is net of refunds and credits over captured
     // payments, in the one Net Collected booking scope (owner decision A) -
     // both applied by `summarizeCollectedCash`, as on the dashboard and
     // Reports. It was "Total Revenue": gross, pending and failed included,

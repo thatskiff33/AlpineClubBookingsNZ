@@ -122,7 +122,7 @@ type BookingMetricsRecord = Prisma.BookingGetPayload<{
 }>;
 
 /**
- * #3637 (#3372 decision A): Net collected cash reads its own payments - every
+ * #3637 (#3372 decision A): Net Collected reads its own payments - every
  * booking staying in the window, ANY status - through the shared Net Collected
  * select, widened by the stay dates the window test reads.
  * `summarizeNetCollectedWithLedgerGap` drops soft-deleted bookings and runs the
@@ -237,7 +237,7 @@ interface FinanceBookingMetricsPaymentSummary {
   >;
   /**
    * Gross captured cash: `Payment.amountCents` summed over the payments whose
-   * status says money was taken. It, `refundedCents`, `netCollectedCents` and
+   * status says money was taken. It, `refundedCents`, `handBackOwedCents`, `keptCreditCents`, `netCollectedCents` and
    * the two ledger-gap fields count the Net Collected scope (#3637): every
    * booking staying in the window, ANY status. Every OTHER field here counts
    * the status-listed contributing bookings. Neither counts a soft-deleted one.
@@ -280,9 +280,13 @@ interface FinanceBookingMetricsPaymentSummary {
   additionalLedgerGapCents: number;
   additionalLedgerGapBookings: number;
   refundedCents: number;
+  /** Cancelled bookings' open hand-back refunds, taken off at once (#3372, 3 Oct 2026). */
+  handBackOwedCents: number;
+  /** Applied account credit cancellations kept (#3372 owner decision, 3 Oct 2026). */
+  keptCreditCents: number;
   /**
-   * `capturedGrossCents - refundedCents`, floored at zero: collected money net
-   * of refunds and credits, from `summarizeCollectedCash`. Never sums the gross
+   * `summarizeCollectedCash`'s figure: `capturedGrossCents - refundedCents -
+   * handBackOwedCents + keptCreditCents`, each payment netted on its own. Never sums the gross
    * and additional columns — see `capturedGrossCents` (#2408).
    */
   netCollectedCents: number;
@@ -407,6 +411,8 @@ function createZeroPaymentSummary(): FinanceBookingMetricsPaymentSummary {
     additionalLedgerGapCents: 0,
     additionalLedgerGapBookings: 0,
     refundedCents: 0,
+    handBackOwedCents: 0,
+    keptCreditCents: 0,
     netCollectedCents: 0,
     creditAppliedCents: 0,
     changeFeeCents: 0,
@@ -703,9 +709,11 @@ function summarizePayments(
   const summary = createZeroPaymentSummary();
 
   summary.bookingCount = bookings.length;
-  // #3637: these five are over the Net Collected scope, not the loop below.
+  // #3637: these seven are over the Net Collected scope, not the loop below.
   summary.capturedGrossCents = collectedCash.capturedGrossCents;
   summary.refundedCents = collectedCash.refundedCents;
+  summary.handBackOwedCents = collectedCash.handBackOwedCents;
+  summary.keptCreditCents = collectedCash.keptCreditCents;
   summary.netCollectedCents = collectedCash.netCollectedCents;
   summary.additionalLedgerGapCents = ledgerGap.additionalLedgerGapCents;
   summary.additionalLedgerGapBookings = ledgerGap.additionalLedgerGapBookings;
@@ -757,7 +765,7 @@ function summarizePayments(
         additionalLedgerGapCents: summary.additionalLedgerGapCents,
         netCollectedCents: summary.netCollectedCents,
       },
-      "Finance metrics: payments record a collected additional payment with no captured ADDITIONAL PaymentTransaction behind it. Net collected cash may understate by additionalLedgerGapCents. Reconcile those payments' ledgers (reconcilePaymentAggregates) before trusting the collected figure."
+      "Finance metrics: payments record a collected additional payment with no captured ADDITIONAL PaymentTransaction behind it. Net Collected may understate by additionalLedgerGapCents. Reconcile those payments' ledgers (reconcilePaymentAggregates) before trusting the collected figure."
     );
   }
 

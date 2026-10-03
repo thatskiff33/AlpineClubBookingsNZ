@@ -93,7 +93,8 @@ per-route index if you would rather start from a URL.
 - [Payments](../guides/payments.md) — the booking-payment ledger and Xero
   invoice state.
 - [Reports](../guides/reports.md) — stay-night occupancy, booked revenue,
-  payment-derived collected cash, outstanding additions, and member analytics.
+  Net Collected (the money the club kept), outstanding additions, and member
+  analytics.
 
 ### Membership and applications
 
