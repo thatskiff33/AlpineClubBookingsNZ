@@ -15,7 +15,7 @@ reason: #3414's shared money fields, #3415's accepted request action and
   state.
 
 file: src/lib/booking-cancel.ts
-lines: 2609
+lines: 2617
 reason: the accepted-hold guard and #3413 anonymous-reservation release belong
   with the existing cancellation lock and hold-release branch they fence.
 
