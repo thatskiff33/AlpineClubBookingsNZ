@@ -614,7 +614,9 @@ export async function computeNightOccupancy(input: {
   const occupancyIndex = buildOccupancyIndex(overlappingBookings);
   // Term 4.
   const holdIndex = buildWholeLodgeHoldIndex(overlappingBookings);
-  // Term 2.
+  // Term 2. When a custodian in the window holds a bed it also reads the
+  // bed-allocation module flag, on this same `db` (`INV-LOCK-004`), because the
+  // one-space rule waives a guest custodian's held bed only while it is off.
   const custodianCount = await buildLodgeCustodianNightCounter({
     lodgeId: input.lodgeId,
     from: input.from,

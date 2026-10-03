@@ -474,10 +474,25 @@ describe("a ticked custodian who is also a guest takes one space (#3817)", () =>
     expect(result.nightDetails[0]!.occupiedBeds).toBe(3);
   });
 
-  it("keeps a held bed's own space when its custodian is also a guest (ticked or not)", async () => {
+  it("keeps a held bed's own space when its custodian is also a guest, while bed allocation is on", async () => {
+    // The allocators refuse to put the guest row on the held bed, so the guest
+    // needs a second bed: two spaces (ticked or not).
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
     for (const isCustodian of [true, false]) {
       serve([tick({ bedId: "bed-1", isCustodian })], [otherGuestBooking]);
       expect((await admit(["custodian"])).available).toBe(false);
+    }
+  });
+
+  it("counts a bed-holding custodian who is also a guest once while bed allocation is off", async () => {
+    // Nothing keeps the guest row off the held bed with the module off, so
+    // the held bed is counted like a tick: one person, one space.
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: false });
+    for (const isCustodian of [true, false]) {
+      serve([tick({ bedId: "bed-1", isCustodian })], [otherGuestBooking]);
+      expect((await admit(["custodian"])).available).toBe(true);
+      // Anyone else still finds the night full.
+      expect((await admit(["someone-new"])).available).toBe(false);
     }
   });
 

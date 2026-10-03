@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     hutLeaderAssignment: { findMany: mocks.hutLeaderAssignmentFindMany },
+    // The counter reads the bed-allocation flag when a custodian holds a bed.
+    clubModuleSettings: { findUnique: async () => ({ bedAllocation: true }) },
   },
 }));
 
@@ -114,6 +116,40 @@ describe("buildLodgeCustodianNightCounter", () => {
     expect(count(parseDateOnly("2026-07-02"), none)).toBe(2);
     expect(count(parseDateOnly("2026-07-03"), none)).toBe(1);
     expect(count(parseDateOnly("2026-07-04"), none)).toBe(0);
+  });
+
+  it("one person is one space: a guest custodian's held bed is waived only while bed allocation is off (#3817)", async () => {
+    const findUnique = vi.fn();
+    const db = (rows: ReturnType<typeof occupancyRow>[]) =>
+      ({
+        hutLeaderAssignment: { findMany: async () => rows },
+        clubModuleSettings: { findUnique },
+      }) as never;
+    const night = parseDateOnly("2026-07-01");
+    const asGuest = new Set(["member-c"]);
+    const counter = (rows: ReturnType<typeof occupancyRow>[]) =>
+      buildLodgeCustodianNightCounter({
+        lodgeId: "lodge-1",
+        from: night,
+        toExclusive: parseDateOnly("2026-07-02"),
+        db: db(rows),
+      });
+    const held = occupancyRow({ id: "c", memberId: "member-c", bedId: "bed-1", startDate: "2026-07-01", endDate: "2026-07-01" });
+    const tick = { ...held, bedId: null };
+
+    findUnique.mockResolvedValue({ bedAllocation: true });
+    expect((await counter([held]))(night, asGuest)).toBe(1);
+    expect((await counter([held]))(night, new Set())).toBe(1);
+
+    findUnique.mockResolvedValue({ bedAllocation: false });
+    expect((await counter([held]))(night, asGuest)).toBe(0);
+    expect((await counter([held]))(night, new Set())).toBe(1);
+
+    // A bedless tick never depends on the flag, so it is never read for one.
+    findUnique.mockClear();
+    expect((await counter([tick]))(night, asGuest)).toBe(0);
+    expect((await counter([tick]))(night, new Set())).toBe(1);
+    expect(findUnique).not.toHaveBeenCalled();
   });
 
   it("counts nothing, without reading, for an empty window", async () => {

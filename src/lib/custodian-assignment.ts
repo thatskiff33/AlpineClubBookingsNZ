@@ -7,6 +7,7 @@ import {
 } from "@/lib/capacity";
 import {
   custodianHeldNightsForBed,
+  custodianBedAllocationEnabled,
   custodianOccupancyTakesSpace,
   findCustodianBedHolds,
   isCustodianHeldBedNight,
@@ -325,12 +326,16 @@ export async function validateCustodianBedHold(input: {
   });
 
   const overCapacity: CustodianOverCapacityNight[] = [];
+  const own = { bedId, memberId: input.memberId };
+  const bedAllocationEnabled = await custodianBedAllocationEnabled([own], db);
   for (const night of nights) {
     // + 1 for the hold being created/edited, by the counter's own rule (#3817):
-    // a bedless tick adds nothing on a night its member is a counted guest.
+    // it adds nothing on a night its member is a counted guest, unless it holds
+    // a bed while bed allocation is on.
     const reading = occupancy(night);
-    const own = { bedId, memberId: input.memberId };
-    if (!custodianOccupancyTakesSpace(own, reading.guestMemberIds)) continue;
+    if (!custodianOccupancyTakesSpace(own, reading.guestMemberIds, bedAllocationEnabled)) {
+      continue;
+    }
     const occupiedBeds = reading.occupiedBeds + 1;
     if (occupiedBeds > capacity) {
       overCapacity.push({ date: formatDateOnly(night), occupiedBeds, capacity });
@@ -468,7 +473,8 @@ export async function findWholeLodgeHoldAmendments(input: {
       const nightKey = formatDateOnly(night);
       if (!wholeLodgeHoldCoversNight(hold, nightKey)) continue;
       const own = { bedId: null, memberId: input.memberId };
-      if (occupancy && !custodianOccupancyTakesSpace(own, occupancy(night).guestMemberIds)) {
+      // A bedless tick's answer never reads the module flag, so `false`.
+      if (occupancy && !custodianOccupancyTakesSpace(own, occupancy(night).guestMemberIds, false)) {
         continue;
       }
       // Already outside this hold's set, so nothing changes tonight.

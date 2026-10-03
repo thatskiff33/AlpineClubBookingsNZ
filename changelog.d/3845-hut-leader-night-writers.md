@@ -12,8 +12,9 @@
   **Custodian (lives on site)** tick, with or without bed allocation. A
   custodian counts as staying every night covered with no booking, and takes one
   space off the lodge's capacity on each of those nights (once, even if they
-  also hold a bed). A custodian with no bed who is also a guest on a booking at
-  that lodge is one space, not two, so a full night still takes their booking.
+  also hold a bed). A custodian who is also a guest on a booking at that lodge
+  is one space, not two, so a full night still takes their booking; only while
+  bed allocation is on does a held bed stay a second space.
   **Hold a bed** is no longer offered while bed allocation is off.
   Each assignment row has a **Custodian** button to mark an existing
   assignment, so a custodian who holds a bed can be ticked and then have the

@@ -309,9 +309,10 @@ owner decisions on #3820):
   bed — is checked like a date move.
 - A ticked custodian takes one space off the lodge's capacity on each covered
   night, as a held bed does, counted once if it also holds a bed. One person is
-  one space (owner decision, 3 Oct 2026): on a night a ticked custodian with no
-  bed is a counted guest there, or in the party being admitted, only the guest
-  counts (`custodianOccupancyTakesSpace`). A held bed is still its own bed.
+  one space (owner decision, 3 Oct 2026): on a night a custodian is a counted
+  guest there, or in the party being admitted, only the guest counts
+  (`custodianOccupancyTakesSpace`), unless they hold a bed while bed allocation
+  is on, which allocators keep the guest off.
 - Sign-in, kiosk access and the dietary grant run from the day before the first
   night to the day after the last, `[startDate - 1, endDate + 1]`, judged on the
   club's calendar day (`INV-CONFIG-002`); the instructions reader and nav link

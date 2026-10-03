@@ -338,10 +338,13 @@ writer never do.
 
 **One person is one space (owner decision on #3820, 3 Oct 2026).** A ticked
 custodian with no bed who is also a guest at the lodge is counted once. The one
-rule is `custodianOccupancyTakesSpace`: a held bed always takes its own space,
-because it is a physical bed kept out of the pool and a guest row for the same
-member needs another; a bedless tick takes one only when its member is not among
-the night's guest members. `computeNightOccupancy` builds that set from term 1's
+rule is `custodianOccupancyTakesSpace`: a custodian takes no space of their own
+on a night their member is among the night's guest members, unless they hold a
+bed while the `bedAllocation` module is on. Then the held bed is kept out of the
+pool and every allocator refuses the guest row on it, so the guest needs another
+bed: two spaces. With the module off nothing keeps the guest off the held bed,
+so it counts like the tick. The flag is read on the caller's transaction through
+`isEffectiveModuleEnabled`, only when a counted custodian holds a bed. `computeNightOccupancy` builds that set from term 1's
 own guest list, so the custodian is de-duplicated against exactly the guests
 counted, plus the party being admitted. That second half is what reaches the
 booking being admitted: every admission passes each night's party members

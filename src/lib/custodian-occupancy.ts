@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { isEffectiveModuleEnabled } from "./admin-modules";
 import { isMinorAgeTier } from "./display-name-granularity";
 import { prisma } from "./prisma";
 import { formatDateOnly, parseDateOnly } from "./date-only";
@@ -73,6 +74,8 @@ import { lodgeNullTolerantScope } from "./lodges";
 
 type PrismaClient = typeof prisma;
 type CustodianDb = Pick<PrismaClient, "hutLeaderAssignment">;
+/** A client the module-settings reader accepts — the caller's transaction. */
+type CustodianModuleDb = NonNullable<Parameters<typeof isEffectiveModuleEnabled>[1]>;
 
 /**
  * Is this hut-leader assignment a custodian OCCUPANCY — present at the lodge
@@ -367,21 +370,42 @@ export async function findCustodianOccupancies(input: {
 
 /**
  * Does this custodian occupancy take its OWN space on a night? THE rule for
- * "one person is one space" (owner decision on #3820, 3 Oct 2026): a held bed
- * always does — it is a physical bed kept out of the pool, and a guest row for
- * the same member needs a different one — and a bedless custodian tick does
- * only when that member is not already counted on the night as a guest at the
- * lodge. `guestMemberIds` is every member counted that night: existing guest
- * rows (the occupancy count's own population, never a second definition) plus
- * the party being admitted. The counter below, the admission engines through
- * it, and the custodian writer's over-capacity warning all ask it here
- * (`INV-SSOT`).
+ * "one person is one space" (owner decisions on #3820, 3 Oct 2026). A custodian
+ * who is not counted on the night as a guest at the lodge always does. One who
+ * is takes no space of their own — the guest row is their space — unless they
+ * hold a bed while the `bedAllocation` module is on: then the held bed is
+ * physically kept out of the pool and every allocator refuses to put their
+ * guest row on it, so the guest needs a second bed and the two are two
+ * spaces. With the module off nothing keeps the guest off the held bed, so a
+ * held bed is counted like a tick. `guestMemberIds` is every member counted
+ * that night: existing guest rows (the occupancy count's own population, never
+ * a second definition) plus the party being admitted. `bedAllocationEnabled`
+ * is read by the caller through `isEffectiveModuleEnabled` on its own client,
+ * and only matters for an occupancy with a bed. The counter below, the
+ * admission engines through it, and the custodian writer's warning all ask it
+ * here (`INV-SSOT`).
  */
 export function custodianOccupancyTakesSpace(
   occupancy: { bedId: string | null | undefined; memberId: string },
   guestMemberIds: ReadonlySet<string>,
+  bedAllocationEnabled: boolean,
 ): boolean {
-  return Boolean(occupancy.bedId) || !guestMemberIds.has(occupancy.memberId);
+  if (!guestMemberIds.has(occupancy.memberId)) return true;
+  return Boolean(occupancy.bedId) && bedAllocationEnabled;
+}
+
+/**
+ * Is the `bedAllocation` module on, as {@link custodianOccupancyTakesSpace}
+ * needs it — read on the caller's client (`INV-LOCK-004`) through the one
+ * module-settings reader, and only when an occupancy holds a bed, because a
+ * bedless tick's answer never depends on it.
+ */
+export async function custodianBedAllocationEnabled(
+  occupancies: readonly { bedId: string | null | undefined }[],
+  db: CustodianModuleDb | undefined,
+): Promise<boolean> {
+  if (!occupancies.some((occupancy) => occupancy.bedId)) return false;
+  return isEffectiveModuleEnabled("bedAllocation", db);
 }
 
 /**
@@ -390,10 +414,11 @@ export function custodianOccupancyTakesSpace(
  * engines and the capacity-warnings cron all add this to `occupiedBeds`
  * through `computeNightOccupancy`. It counts every custodian OCCUPANCY — a held
  * bed or the custodian tick, once per assignment
- * ({@link findCustodianOccupancies}, #3817) — less a bedless tick whose member
- * is in `guestMemberIds`: the guests counted that night plus the party being
- * admitted, so the custodian is never counted twice on a create or an edit
- * ({@link custodianOccupancyTakesSpace}).
+ * ({@link findCustodianOccupancies}, #3817) — less one whose member is in
+ * `guestMemberIds` (the guests counted that night plus the party being
+ * admitted), so the custodian is never counted twice on a create or an edit
+ * ({@link custodianOccupancyTakesSpace}; a held bed keeps its own space only
+ * while bed allocation is on).
  *
  * Counted as an OCCUPANT rather than as a reduction of `lodgeCapacity`: the
  * arithmetic for `availableBeds` is identical, but it preserves
@@ -407,7 +432,8 @@ export async function buildLodgeCustodianNightCounter(input: {
   lodgeId: string;
   from: Date;
   toExclusive: Date;
-  db?: CustodianDb;
+  /** Also answers the module flag when a counted occupancy holds a bed. */
+  db?: CustodianDb & CustodianModuleDb;
   /**
    * Ignore one assignment's own hold — used when the caller is evaluating what
    * occupancy would be with that assignment counted exactly once, by itself
@@ -427,13 +453,17 @@ export async function buildLodgeCustodianNightCounter(input: {
     ? loaded.filter((hold) => hold.assignmentId !== input.excludeAssignmentId)
     : loaded;
   if (occupancies.length === 0) return () => 0;
+  const bedAllocationEnabled = await custodianBedAllocationEnabled(
+    occupancies,
+    input.db,
+  );
   return (night, guestMemberIds) => {
     const key = formatDateOnly(night);
     let count = 0;
     for (const occupancy of occupancies) {
       if (
         holdCoversNight(occupancy, key) &&
-        custodianOccupancyTakesSpace(occupancy, guestMemberIds)
+        custodianOccupancyTakesSpace(occupancy, guestMemberIds, bedAllocationEnabled)
       ) {
         count += 1;
       }

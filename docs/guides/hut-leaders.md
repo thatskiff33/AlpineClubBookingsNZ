@@ -99,9 +99,10 @@ refused. **No bed — role only** is only for a leader who is staying on a booki
 
 A custodian with no bed who is also a guest on a booking at the same lodge is
 one person, so they take **one space** on those nights, not two. Their place on
-the booking is their space, and a full night still has room for that booking. A
-custodian who holds a bed keeps that bed, so a booking of their own needs
-another one.
+the booking is their space, and a full night still has room for that booking. While
+bed allocation is on, a custodian who holds a bed keeps that bed, so a booking
+of their own needs another one; with it off, nothing separates the two, so they
+are one space too.
 
 **Marking an existing assignment as custodian.** Each row in the assignments
 table has a **Custodian (lives on site)** button (the house icon). Press it to

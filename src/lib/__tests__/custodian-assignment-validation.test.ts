@@ -30,6 +30,9 @@ const mocks = vi.hoisted(() => ({
   // each case sets stays exactly what it was.
   holdBookingFindMany: vi.fn(),
   getLodgeCapacity: vi.fn(),
+  // #3817 review: the one-space rule reads the bed-allocation module flag on
+  // the caller's client when a custodian holds a bed.
+  clubModuleSettingsFindUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
@@ -54,6 +57,7 @@ function db() {
     hutLeaderAssignment: { findMany: mocks.hutLeaderAssignmentFindMany },
     lodgeBed: { findUnique: mocks.lodgeBedFindUnique },
     bedAllocation: { findMany: mocks.bedAllocationFindMany },
+    clubModuleSettings: { findUnique: mocks.clubModuleSettingsFindUnique },
     booking: {
       findMany: (args: { where?: Record<string, unknown> }) => {
         if (args?.where && "capacityOverriddenAt" in args.where) {
@@ -96,6 +100,7 @@ function validate(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
   mocks.lodgeBedFindUnique.mockResolvedValue(bed());
   mocks.hutLeaderAssignmentFindMany.mockResolvedValue([]);
   mocks.bedAllocationFindMany.mockResolvedValue([]);
@@ -579,10 +584,17 @@ describe("a ticked custodian with no bed (#3817)", () => {
     await expect(
       validate({ bedId: null, isCustodian: true, memberId: "member-2" }),
     ).rejects.toBeInstanceOf(CustodianOverCapacityConfirmationRequiredError);
-    // And a held bed is its own bed, whoever the guest is.
+    // And a held bed is its own bed, whoever the guest is, while bed
+    // allocation is on (the allocators keep the guest row off it)...
     await expect(validate({ bedId: "bed-1", isCustodian: true })).rejects.toBeInstanceOf(
       CustodianOverCapacityConfirmationRequiredError,
     );
+    // ...and is counted like the tick while it is off, when nothing does.
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: false });
+    await expect(validate({ bedId: "bed-1", isCustodian: true })).resolves.toBeUndefined();
+    await expect(
+      validate({ bedId: "bed-1", isCustodian: true, memberId: "member-2" }),
+    ).rejects.toBeInstanceOf(CustodianOverCapacityConfirmationRequiredError);
   });
 
   it("asks nothing of an unticked role-only assignment, however full the lodge", async () => {
