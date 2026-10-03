@@ -43,10 +43,24 @@ export function readAppliedCreditLedgerQueueType(operation: {
  * operation to PENDING instead of creating a durable FAILED dead-end.
  */
 export class XeroAppliedCreditOperationBusyError extends Error {
-  constructor(message: string) {
+  /**
+   * #3791: the fencing deallocation's status, where a fence raised this. A
+   * PENDING or RUNNING one converges by itself; FAILED or PARTIAL waits for an
+   * operator to retry the Xero operation, and a caller telling a person what to
+   * do next has to be able to tell the two apart.
+   */
+  readonly fenceStatus: string | null;
+
+  constructor(message: string, fenceStatus: string | null = null) {
     super(message);
     this.name = "XeroAppliedCreditOperationBusyError";
+    this.fenceStatus = fenceStatus;
   }
+}
+
+/** #3791: a fence only an operator's retry of the Xero operation clears. */
+export function needsOperatorXeroRetry(error: XeroAppliedCreditOperationBusyError): boolean {
+  return error.fenceStatus === "FAILED" || error.fenceStatus === "PARTIAL";
 }
 
 /**
@@ -159,6 +173,7 @@ export async function assertNoAppliedCreditDeallocationFence(
   if (fence) {
     throw new XeroAppliedCreditOperationBusyError(
       `Applied-credit deallocation ${fence.id} is ${fence.status} for payment ${paymentId}; converge it before changing applied credit`,
+      fence.status,
     );
   }
 }
