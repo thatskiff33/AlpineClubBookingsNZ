@@ -76,6 +76,24 @@ export function isEditRefundHandBackTask(task: {
 }
 
 /**
+ * #3827 (`INV-PAY-114`): AN EDIT REFUND HAND-BACK ON A CANCELLED BOOKING IS
+ * SETTLED BY PAYING IT, NEVER BY CHANGING ITS STATE THE OTHER WAY. A paid
+ * cancellation sizes its refund and the club's kept figure from the cash net of
+ * the edit refunds still OPEN (`refundableCashNetOfOpenEditRefunds`): an open
+ * one is money the cancellation counted as going back, a dismissed one money it
+ * counted as never owed. Dismissing the first, or reopening the second, after
+ * the cancel would leave the cancellation's kept figure and ledger lines saying
+ * the opposite of what happened - and let a refund appeal re-promise the same
+ * money. So both are refused once the booking is cancelled; completing an open
+ * one is untouched. One sentence each, for the doors that throw them.
+ */
+export const EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE =
+  "This booking has been cancelled since this edit refund was raised, and the cancellation's refund was worked out on the basis that this money goes back to the member. Send it and mark it paid back. If the club has decided not to pay it, that changes the cancellation's own figures, so take it to the treasurer to correct the cancelled booking rather than dismissing the task here.";
+
+export const EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE =
+  "This booking has been cancelled since this edit refund was dismissed, and the cancellation's refund was worked out without it. Putting it back on the queue would promise the member money the cancellation already accounted for. If more is owed, raise it against the cancelled booking, for example as a refund appeal.";
+
+/**
  * #3827 (`INV-PAY-114`): the same question as a query fragment, for the server
  * readers that select a CANCELLATION's hand-backs by kind and must not count an
  * edit's. Spread into a `ManualRefundTask` where clause beside the kind.
@@ -97,6 +115,25 @@ export const EDIT_REFUND_HAND_BACK_WHERE = {
   kind: "CANCELLED_BOOKING_HAND_BACK" satisfies ManualRefundTaskKind,
   occurrenceKey: { startsWith: EDIT_REFUND_HAND_BACK_KEY_PREFIX },
 } as const;
+
+/**
+ * #3827 (`INV-PAY-114`): the OPEN edit refund hand-backs on a payment, as a
+ * relation fragment for a read that loads the payment anyway (the booking
+ * page, the refund-appeal queue). Paired with `sumOpenEditRefundHandBackCents`
+ * and `getRemainingRefundableCentsNetOf`, it gives a screen the same ceiling
+ * the server's `refundableCashNetOfOpenEditRefunds` enforces.
+ */
+export const OPEN_EDIT_REFUND_HAND_BACKS_SELECT = {
+  where: { status: "OPEN", ...EDIT_REFUND_HAND_BACK_WHERE },
+  select: { amountCents: true },
+} as const;
+
+/** The money those rows promise back, in cents. Unpriced rows count as zero. */
+export function sumOpenEditRefundHandBackCents(
+  tasks: readonly { amountCents: number | null }[] | null | undefined,
+): number {
+  return (tasks ?? []).reduce((sum, task) => sum + (task.amountCents ?? 0), 0);
+}
 
 /**
  * #3827 (`INV-PAY-114`): the snapshot discriminator on the REFUNDED booking

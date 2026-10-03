@@ -1745,9 +1745,13 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     `edit_refund_hand_back_completed` so the narrative never reads it as a
     cancellation's. It queues NO Xero document: the edit's credit note stands.
   - **Promised cash is not refundable twice.** Until it closes, later edits,
-    acceptances and paid cancels size refunds off captured cash less the open
-    tasks (`refundableCashNetOfOpenEditRefunds`), and reopening a dismissed
-    one is refused past that cash; completing one takes `lock(1)`.
+    acceptances, paid cancels and refund appeals (asked and approved) size
+    refunds off captured cash less the open tasks
+    (`refundableCashNetOfOpenEditRefunds`), and reopening a dismissed one is
+    refused past that cash; completing one, or approving an appeal, takes
+    `lock(1)`. A cancel counts an open task as going back and a dismissed one
+    as never owed, so after it the task is neither dismissed nor reopened —
+    only paid.
   - **The member is told the club WILL refund by bank transfer**, never that a
     refund "has been processed" (`bookingModifiedRefundSentence`).
 

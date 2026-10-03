@@ -1,10 +1,13 @@
 import "server-only";
 
-import { ManualRefundTaskStatus } from "@prisma/client";
+import { BookingStatus, ManualRefundTaskStatus } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { refundableCashNetOfOpenEditRefunds } from "@/lib/edit-refund-hand-back";
-import { isEditRefundHandBackTask } from "@/lib/manual-refund-task-settlement-rules";
+import {
+  EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE,
+  isEditRefundHandBackTask,
+} from "@/lib/manual-refund-task-settlement-rules";
 import { recordManualRefundTaskReopenAudit } from "@/lib/manual-refund-task-reopen-audit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import {
@@ -196,7 +199,8 @@ export async function reopenManualRefundTask({
         note: true,
         completedAt: true,
         completedByMemberId: true,
-        booking: { select: { memberId: true, organisation: { select: { name: true, email: true } } } },
+        // #3827: whether a cancellation has since counted this task out.
+        booking: { select: { memberId: true, status: true, organisation: { select: { name: true, email: true } } } },
       },
     });
     if (!task) {
@@ -215,6 +219,11 @@ export async function reopenManualRefundTask({
       );
     }
 
+    // #3827 (`INV-PAY-114`): a cancellation since the dismissal sized its refund
+    // without this task, so reopening it would promise the same money twice.
+    if (isEditRefundHandBackTask(task) && task.booking.status === BookingStatus.CANCELLED) {
+      throw new ManualBookingPaymentError(EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE, 409);
+    }
     // #3827 (`INV-PAY-114`): never promise back more cash than was taken. Read
     // under lock(1), which every edit, acceptance and paid cancel also holds.
     if (

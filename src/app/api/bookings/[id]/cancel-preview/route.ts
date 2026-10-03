@@ -8,7 +8,10 @@ import { loadCancellationPolicy } from "@/lib/cancellation";
 import { calculateCancellationPreview } from "@/lib/policies/booking-route-decisions";
 import { clubTime } from "@/lib/club-time/server";
 import { paymentEligibleForPaidCancelPath } from "@/lib/booking-cancel";
-import { openEditRefundHandBackCents } from "@/lib/edit-refund-hand-back";
+import {
+  OPEN_EDIT_REFUND_HAND_BACKS_SELECT,
+  sumOpenEditRefundHandBackCents,
+} from "@/lib/manual-refund-task-settlement-rules";
 import { memberCancelRefusal } from "@/lib/booking-cancel-eligibility";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
@@ -42,7 +45,14 @@ export async function GET(
 
     const booking = await prisma.booking.findUnique({
       where: { id },
-      include: { payment: true },
+      // #3827 (`INV-PAY-114`): the open edit refunds ride on the SAME read as
+      // the payment rather than a second query after it, so a completion that
+      // moves `refundedAmountCents` and closes its task in one commit is seen
+      // either wholly or not at all - not as money neither refunded nor
+      // promised. Stated limit: Prisma may still issue the relation as a
+      // separate statement under its relation-load strategy. The preview is
+      // advisory; the cancel recomputes both under `lock(1)`.
+      include: { payment: { include: { manualRefundTasks: OPEN_EDIT_REFUND_HAND_BACKS_SELECT } } },
     });
 
     if (!booking) {
@@ -147,7 +157,7 @@ export async function GET(
         ? { ...booking.payment, amountCents: partPayment.paidCents, refundedAmountCents: 0 }
         : booking.payment,
       // #3827 (`INV-PAY-114`): cash an earlier edit already promised back by hand.
-      openEditRefundHandBackCents: await openEditRefundHandBackCents(prisma, booking.payment.id),
+      openEditRefundHandBackCents: sumOpenEditRefundHandBackCents(booking.payment.manualRefundTasks),
       finalPriceCents: booking.finalPriceCents,
       checkIn: booking.checkIn,
       policyRules: policy,

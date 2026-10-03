@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import { OPEN_EDIT_REFUND_HAND_BACKS_SELECT } from "@/lib/manual-refund-task-settlement-rules";
 
 const querySchema = z.object({
   status: z.enum(["PENDING", "APPROVED", "REJECTED", "ALL"]).optional().default("PENDING"),
@@ -49,13 +50,16 @@ export async function GET(req: NextRequest) {
             payment: {
               select: {
                 // #2932: the screen derives its refund ceiling through
-                // `getRemainingRefundableCents`, the same helper the approve
-                // route decides by, and that helper answers 0 unless the
-                // payment actually captured.
+                // `getRemainingRefundableCents`, which answers 0 unless the
+                // payment actually captured. #3827 (`INV-PAY-114`): less the
+                // edit refunds still promised back by bank transfer
+                // (`getRemainingRefundableCentsNetOf`), the figure the approve
+                // route now caps at.
                 status: true,
                 amountCents: true,
                 refundedAmountCents: true,
                 stripePaymentIntentId: true,
+                manualRefundTasks: OPEN_EDIT_REFUND_HAND_BACKS_SELECT,
               },
             },
           },

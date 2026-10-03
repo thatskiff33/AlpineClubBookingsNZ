@@ -7,6 +7,7 @@ import { z } from "zod";
 import { logAudit } from "@/lib/audit";
 import { sendAdminRefundRequestAlert } from "@/lib/email";
 import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
+import { refundableCashNetOfOpenEditRefunds } from "@/lib/edit-refund-hand-back";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { deletedBookingRefusalResponse } from "@/lib/deleted-booking-refusal";
 import { clubFormat } from "@/lib/club-format-server";
@@ -138,10 +139,25 @@ export async function POST(
 
   const { reason, requestedAmountCents } = parsed.data;
 
-  const maxRefundable = getRemainingRefundableCents(booking.payment);
-  if (maxRefundable <= 0) {
+  if (getRemainingRefundableCents(booking.payment) <= 0) {
     return NextResponse.json(
       { error: "No successful payment was captured for this booking" },
+      { status: 400 }
+    );
+  }
+
+  // #3827 (`INV-PAY-114`): what the member may ask for is the refundable cash
+  // NET of the edit refunds the club has already promised back by bank
+  // transfer and not yet sent - the same figure the approval caps at. Advisory
+  // here and read without a lock: an appeal moves no money, and the approval
+  // re-reads both under `lock(1)` before anything is approved.
+  const maxRefundable = await refundableCashNetOfOpenEditRefunds(prisma, booking.payment);
+  if (maxRefundable <= 0) {
+    return NextResponse.json(
+      {
+        error:
+          "Everything still refundable on this booking is already being refunded to you by bank transfer, so there is nothing further to appeal for.",
+      },
       { status: 400 }
     );
   }

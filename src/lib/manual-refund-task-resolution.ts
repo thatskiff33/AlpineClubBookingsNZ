@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   BookingEventType,
+  BookingStatus,
   ManualRefundTaskDirection,
   ManualRefundTaskKind,
   ManualRefundTaskStatus,
@@ -34,6 +35,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 // both read it (`INV-SSOT`).
 import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 import {
+  EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE,
   editRefundHandBackCompletedSnapshot,
   isEditRefundHandBackTask,
   isPartPaymentReviewTask,
@@ -193,6 +195,17 @@ export async function resolveManualRefundTask(
       isPartPaymentReviewTask(task),
     );
     if (refusal) throw new ManualBookingPaymentError(refusal, 400);
+    // #3827 (`INV-PAY-114`): a cancelled booking's edit refund hand-back is
+    // settled by paying it. The cancel counted it as going back; dismissing it
+    // now would leave the cancellation's kept figure wrong. Read under lock(1)
+    // (taken above for this kind), which a paid cancel also holds.
+    if (
+      resolution === "dismissed" &&
+      isEditRefundHandBackTask(task) &&
+      task.booking.status === BookingStatus.CANCELLED
+    ) {
+      throw new ManualBookingPaymentError(EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE, 409);
+    }
 
     const isEditReview = task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW;
 

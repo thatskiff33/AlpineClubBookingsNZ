@@ -158,6 +158,21 @@ export function getRemainingRefundableCents(
 }
 
 /**
+ * #3827 (`INV-PAY-114`): the remaining refundable cash LESS the edit refunds
+ * the club has promised back by bank transfer and not yet sent. The one
+ * arithmetic for the server cap (`refundableCashNetOfOpenEditRefunds`, which
+ * reads the promised sum) and the screens that show that cap from a loaded
+ * row (`sumOpenEditRefundHandBackCents`), so the ceiling a screen offers is
+ * the ceiling the route enforces.
+ */
+export function getRemainingRefundableCentsNetOf(
+  payment: BookingPaymentState | null | undefined,
+  promisedBackCents: number
+): number {
+  return Math.max(0, getRemainingRefundableCents(payment) - promisedBackCents);
+}
+
+/**
  * The base a paid-path cancellation tiers its refund off (#1031, INV-PAY-018) -
  * the one derivation, shared by the executed cancel (`booking-cancel.ts`) and
  * the preview a member sees before confirming (`booking-route-decisions.ts`),

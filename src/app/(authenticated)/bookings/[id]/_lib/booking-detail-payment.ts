@@ -4,9 +4,10 @@ import {
   getPaymentDisplayStatus,
 } from "@/lib/payment-status-display";
 import {
-  getRemainingRefundableCents,
+  getRemainingRefundableCentsNetOf,
   hasCapturedPayment,
 } from "@/lib/booking-payment-state";
+import { sumOpenEditRefundHandBackCents } from "@/lib/manual-refund-task-settlement-rules";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
 import { savedPaymentMethodForBooking } from "@/lib/saved-payment-method";
 import type { BookingDetailRecord } from "./load-booking-detail";
@@ -77,7 +78,12 @@ export function resolveBookingDetailPayment({
       )
     : 0;
   const latestRefundAppeal = booking.refundRequests[0] ?? null;
-  const maxRefundableCents = getRemainingRefundableCents(booking.payment);
+  // #3827 (`INV-PAY-114`): net of the edit refunds still promised back by bank
+  // transfer - the figure the appeal route caps at.
+  const maxRefundableCents = getRemainingRefundableCentsNetOf(
+    booking.payment,
+    sumOpenEditRefundHandBackCents(booking.payment?.manualRefundTasks),
+  );
   // #1967: once the member's own place is settled by Internet Banking there is
   // no card on file for the later guest charge, so keep the guest-payment-link
   // affordance visible AFTER the switch too (the pre-switch warning below only

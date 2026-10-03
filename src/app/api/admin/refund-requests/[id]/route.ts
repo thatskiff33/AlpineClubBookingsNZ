@@ -18,7 +18,7 @@ import {
   composeOptionalEmailLine,
 } from "@/lib/email-message-notes";
 import logger from "@/lib/logger";
-import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
+import { refundableCashNetOfOpenEditRefunds } from "@/lib/edit-refund-hand-back";
 import {
   planStripeRefundAllocation,
   refundPaymentTransactions,
@@ -116,32 +116,53 @@ export async function PUT(
       );
     }
 
-    const maxRefundable = getRemainingRefundableCents(payment);
-    if (approvedAmountCents > maxRefundable) {
+    // #3827 (`INV-PAY-114`): the cap is the refundable cash NET of the edit
+    // refunds the club has already promised back by bank transfer and not yet
+    // sent. Without it a booking paid 200, lowered to 150 by an edit (a 50 task
+    // still OPEN) and cancelled could be approved up to the full remainder,
+    // the 50 included, and queue a Xero credit note for money the edit's own
+    // task still promises: refunded twice. Read under `lock(1)`, which an edit
+    // refund's completion and every edit, acceptance and paid cancel also hold,
+    // so the payment and the open-task sum are one consistent picture; and the
+    // claim is taken inside the same transaction, so the figure it checked is
+    // the figure it approved against. No provider call happens in here.
+    const capped = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      const lockedPayment = await tx.payment.findUnique({
+        where: { id: payment.id },
+        select: { id: true, status: true, amountCents: true, refundedAmountCents: true },
+      });
+      const maxRefundable = await refundableCashNetOfOpenEditRefunds(tx, lockedPayment);
+      if (approvedAmountCents > maxRefundable) {
+        return { kind: "exceeds" as const, maxRefundable };
+      }
+      // Claim the request before moving any money. Winning the PENDING ->
+      // APPROVED transition is what authorises the refund, so two admins
+      // approving the same request concurrently cannot both issue a Stripe
+      // refund — the loser gets a 409 and never calls Stripe (issue #818).
+      const claim = await tx.refundRequest.updateMany({
+        where: { id, status: "PENDING" },
+        data: {
+          status: "APPROVED",
+          adminNotes,
+          approvedAmountCents,
+          reviewedBy: session.user.id,
+          reviewedAt: new Date(),
+        },
+      });
+      return { kind: claim.count === 1 ? ("claimed" as const) : ("lost" as const) };
+    });
+
+    if (capped.kind === "exceeds") {
       return NextResponse.json(
         {
-          error: `Amount exceeds maximum refundable of ${money.cents(maxRefundable)}`,
+          error: `Amount exceeds maximum refundable of ${money.cents(capped.maxRefundable)}`,
         },
         { status: 400 }
       );
     }
 
-    // Claim the request before moving any money. Winning the PENDING ->
-    // APPROVED transition is what authorises the refund, so two admins
-    // approving the same request concurrently cannot both issue a Stripe
-    // refund — the loser gets a 409 and never calls Stripe (issue #818).
-    const claim = await prisma.refundRequest.updateMany({
-      where: { id, status: "PENDING" },
-      data: {
-        status: "APPROVED",
-        adminNotes,
-        approvedAmountCents,
-        reviewedBy: session.user.id,
-        reviewedAt: new Date(),
-      },
-    });
-
-    if (claim.count !== 1) {
+    if (capped.kind === "lost") {
       return NextResponse.json(
         { error: "This refund request has already been reviewed" },
         { status: 409 }

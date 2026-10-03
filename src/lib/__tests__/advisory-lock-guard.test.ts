@@ -261,6 +261,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
       "Switching to Internet Banking with holdBedSlots flips the booking to CONFIRMED — a net-new capacity claim and a money side effect — and re-reads under the locks, because the pre-transaction snapshot was read with no lock at all.",
     invariant: "INV-LOCK-002",
   },
+  {
+    site: "PUT /api/admin/refund-requests/[id]#1",
+    tier: "GLOBAL",
+    reason:
+      "#3827 (INV-PAY-114): a refund appeal's approval caps at the refundable cash NET of the edit refunds still promised back by bank transfer. An edit refund's completion moves the payment's refunded total and closes its task in one commit under this key, and a reopen re-promises one under it, so the cap reads the payment and the open-task sum under the same key and claims the request in the same transaction. Takes the global key alone; the Stripe refund and Xero note run after the commit.",
+    invariant: "INV-LOCK-001",
+  },
 
   // ── Bed allocation: inventory, placement and reconciliation ───────────────
   {

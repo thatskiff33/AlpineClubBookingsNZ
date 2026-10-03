@@ -1,17 +1,17 @@
 import {
   ManualRefundTaskKind,
-  ManualRefundTaskStatus,
   type Prisma,
   type PrismaClient,
 } from "@prisma/client";
 
 import {
   getRemainingRefundableCents,
+  getRemainingRefundableCentsNetOf,
   type BookingPaymentState,
 } from "@/lib/booking-payment-state";
 import {
-  EDIT_REFUND_HAND_BACK_WHERE,
   editRefundHandBackOccurrenceKey,
+  OPEN_EDIT_REFUND_HAND_BACKS_SELECT,
 } from "@/lib/manual-refund-task-settlement-rules";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 
@@ -117,7 +117,7 @@ export async function openEditRefundHandBackCents(
 ): Promise<number> {
   if (!paymentId) return 0;
   const open = await db.manualRefundTask.aggregate({
-    where: { paymentId, status: ManualRefundTaskStatus.OPEN, ...EDIT_REFUND_HAND_BACK_WHERE },
+    where: { paymentId, ...OPEN_EDIT_REFUND_HAND_BACKS_SELECT.where },
     _sum: { amountCents: true },
   });
   return open._sum.amountCents ?? 0;
@@ -136,7 +136,9 @@ export async function refundableCashNetOfOpenEditRefunds(
   db: OpenEditRefundHandBackDb,
   payment: (BookingPaymentState & { id: string }) | null | undefined,
 ): Promise<number> {
-  const remaining = getRemainingRefundableCents(payment);
-  if (remaining === 0 || !payment) return 0;
-  return Math.max(0, remaining - (await openEditRefundHandBackCents(db, payment.id)));
+  if (getRemainingRefundableCents(payment) === 0 || !payment) return 0;
+  return getRemainingRefundableCentsNetOf(
+    payment,
+    await openEditRefundHandBackCents(db, payment.id),
+  );
 }

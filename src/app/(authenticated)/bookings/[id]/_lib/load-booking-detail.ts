@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { OPEN_EDIT_REFUND_HAND_BACKS_SELECT } from "@/lib/manual-refund-task-settlement-rules";
 import { isGroupSettlementBoundToInvoice } from "@/lib/group-settlement-invoice-binding";
 import {
   BOOKING_MONEY_RECONCILIATION_SELECT,
@@ -44,6 +45,9 @@ export async function loadBookingDetail(id: string) {
             orderBy: { createdAt: "desc" },
             take: 1,
           },
+          // #3827 (`INV-PAY-114`): the edit refunds still promised back by
+          // bank transfer, so the appeal ceiling matches the route's.
+          manualRefundTasks: OPEN_EDIT_REFUND_HAND_BACKS_SELECT,
         },
       },
       member: { select: { firstName: true, lastName: true } },

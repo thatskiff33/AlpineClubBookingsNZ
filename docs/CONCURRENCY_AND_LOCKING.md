@@ -3193,7 +3193,10 @@ does too, and both would post. So `resolveManualRefundTask` takes
   acceptance and paid cancel reads those two separately to size a refund net of
   the cash already promised back (`refundableCashNetOfOpenEditRefunds`); under
   `lock(1)` the completion cannot commit between the two reads. A reopen of
-  one already holds `lock(1)` and is refused past that same net cash.
+  one already holds `lock(1)` and is refused past that same net cash, and a
+  refund appeal's approval reads the same net cash under `lock(1)` and claims
+  the request in that transaction, before its Stripe refund and Xero note
+  (`PUT /api/admin/refund-requests/[id]#1`, `INV-LOCK-001`).
 
 Registered in `advisory-lock-guard.test.ts` as `resolveManualRefundTask#1`
 (`INV-LOCK-002`). The four edit doors and the batch path post their own lines
