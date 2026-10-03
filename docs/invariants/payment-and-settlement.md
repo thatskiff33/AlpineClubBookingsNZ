@@ -1725,19 +1725,19 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   money was not captured through Stripe (internet banking, or marked paid in
   cash) and the reduction goes back as money rather than account credit, the
   edit raises a `ManualRefundTask` for that refund inside its own transaction,
-  under its own locks, with no provider call. `raiseEditRefundHandBackIfOwed`
+  under its locks, with no provider call. `raiseEditRefundHandBackIfOwed`
   (`src/lib/edit-refund-hand-back.ts`) is the one writer and
   `editRefundGoesBackByHand` the one test. A guest add never lowers a price, so
   it raises none.
   - **One task per edit**: occurrence key
     `edit-refund-hand-back:<BookingModification id>`, unique, inserted
-    `ON CONFLICT DO NOTHING`, so a replay neither duplicates it nor aborts the
+    `ON CONFLICT DO NOTHING`: a replay neither duplicates it nor aborts the
     edit.
-  - **Kind `CANCELLED_BOOKING_HAND_BACK`, marked by that key**, reused as #3639
-    and #3643 reuse kinds: the previous app version reads it as the hand-back it
-    is. `isEditRefundHandBackTask` and `NOT_EDIT_REFUND_HAND_BACK_WHERE`
-    (`manual-refund-task-settlement-rules.ts`) are the one spelling, and every
-    reader that selects a cancellation's hand-backs by kind spreads the
+  - **Kind `CANCELLED_BOOKING_HAND_BACK`, marked by that key**, reused (as
+    #3639 and #3643 do) so the previous app version reads it as a hand-back.
+    `isEditRefundHandBackTask` and `NOT_EDIT_REFUND_HAND_BACK_WHERE`
+    (`manual-refund-task-settlement-rules.ts`) are the one spelling; every
+    reader selecting a cancellation's hand-backs by kind spreads the
     exclusion (`edit-refund-hand-back-readers-census.test.ts`).
   - **The amount is the edit's refund, fixed at raise.** Completing it is a
     hand-back's completion: the refund allocation on the payment, the
@@ -1745,13 +1745,11 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     `edit_refund_hand_back_completed` so the narrative never reads it as a
     cancellation's. It queues NO Xero document: the edit's credit note stands.
   - **Promised cash is not refundable twice.** Until it closes, later edits,
-    acceptances, paid cancels and refund appeals (asked and approved) size
-    refunds off captured cash less the open tasks
-    (`refundableCashNetOfOpenEditRefunds`), and reopening a dismissed one is
-    refused past that cash; completing one, or approving an appeal, takes
-    `lock(1)`. A cancel counts an open task as going back and a dismissed one
-    as never owed, so after it the task is neither dismissed nor reopened —
-    only paid.
+    acceptances, paid cancels and refund appeals size refunds off captured
+    cash less the open tasks (`refundableCashNetOfOpenEditRefunds`), and a
+    reopen is refused past that cash. Completing one, or approving an appeal,
+    takes `lock(1)`. Once the booking is cancelled it is only paid: the
+    cancel counted it.
   - **The member is told the club WILL refund by bank transfer**, never that a
     refund "has been processed" (`bookingModifiedRefundSentence`).
 

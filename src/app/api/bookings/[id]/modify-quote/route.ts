@@ -2472,13 +2472,7 @@ export async function POST(
   const settlementOptions = await calculateModificationSettlementOptions({
     booking,
     netChargeCents,
-    // Advisory quote: no transaction, no lock held. #3827 stated limit: the
-    // open edit refunds (`INV-PAY-114`) are read here, separately from the
-    // payment loaded above, so a refund task completed between the two reads
-    // can make this quote's refund figure briefly wrong by that task's amount.
-    // Not reshaped into one snapshot because the commit already recomputes
-    // both under `lock(1)` and the quote moves no money.
-    db: prisma,
+    db: prisma, // advisory, unlocked; payment and open edit refunds read apart (#3827 stated limit: commit re-reads both under lock(1))
     todayAtClub,
   });
 

@@ -116,16 +116,10 @@ export async function PUT(
       );
     }
 
-    // #3827 (`INV-PAY-114`): the cap is the refundable cash NET of the edit
-    // refunds the club has already promised back by bank transfer and not yet
-    // sent. Without it a booking paid 200, lowered to 150 by an edit (a 50 task
-    // still OPEN) and cancelled could be approved up to the full remainder,
-    // the 50 included, and queue a Xero credit note for money the edit's own
-    // task still promises: refunded twice. Read under `lock(1)`, which an edit
-    // refund's completion and every edit, acceptance and paid cancel also hold,
-    // so the payment and the open-task sum are one consistent picture; and the
-    // claim is taken inside the same transaction, so the figure it checked is
-    // the figure it approved against. No provider call happens in here.
+    // #3827 (`INV-PAY-114`): cap at the refundable cash NET of edit refunds
+    // still promised back by bank transfer, or an appeal re-promises them (paid
+    // 200, an edit to 150 leaves a 50 task OPEN). Read under `lock(1)`, which
+    // every writer of those figures holds; claimed in the same transaction.
     const capped = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       const lockedPayment = await tx.payment.findUnique({

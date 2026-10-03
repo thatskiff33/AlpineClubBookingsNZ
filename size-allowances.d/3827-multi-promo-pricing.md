@@ -48,3 +48,22 @@ lines: 1768
 reason: the Booking Modified sender takes the required bank-transfer flag and
   composes a split payment's cash and credit halves (D-3813-5/6); the sentence
   itself lives in booking-modified-email-copy.ts.
+
+file: src/app/(admin)/admin/refund-requests/page.tsx
+lines: 884
+reason: the appeal review's ceiling is the approve route's net-of-open-edit-
+  refunds figure (INV-PAY-114); the page carries the loaded rows' type and one
+  shared helper call, the arithmetic lives in manual-refund-task-settlement-rules.ts.
+
+file: src/app/api/admin/refund-requests/[id]/route.ts
+lines: 490
+reason: the approval's cap and its claim must share one transaction under
+  lock(1) (INV-PAY-114) so the figure checked is the figure approved; moving
+  the claim out of the handler would split the #818 single-flight claim from
+  the money it guards.
+
+file: src/app/api/bookings/[id]/refund-request/route.ts
+lines: 276
+reason: the appeal request refuses past the cash net of open edit refunds and
+  says plainly when all of it is already being refunded by bank transfer
+  (INV-PAY-114); both are refusals beside the existing ones they extend.

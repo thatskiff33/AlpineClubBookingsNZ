@@ -1,5 +1,10 @@
 import type { ManualRefundTaskKind } from "@prisma/client";
 
+import {
+  getRemainingRefundableCentsNetOf,
+  type BookingPaymentState,
+} from "@/lib/booking-payment-state";
+
 /**
  * #3213 (epic #2797): WHICH FINANCE-QUEUE ITEMS CAN BE SETTLED AT ALL, and the
  * sentence an officer gets when one cannot.
@@ -133,6 +138,22 @@ export function sumOpenEditRefundHandBackCents(
   tasks: readonly { amountCents: number | null }[] | null | undefined,
 ): number {
   return (tasks ?? []).reduce((sum, task) => sum + (task.amountCents ?? 0), 0);
+}
+
+/**
+ * The refund ceiling a screen shows from a payment loaded with that fragment:
+ * the remaining refundable cash less those rows (`INV-PAY-114`).
+ */
+export function refundCeilingNetOfOpenEditRefunds(
+  payment:
+    | (BookingPaymentState & { manualRefundTasks?: readonly { amountCents: number | null }[] })
+    | null
+    | undefined,
+): number {
+  return getRemainingRefundableCentsNetOf(
+    payment,
+    sumOpenEditRefundHandBackCents(payment?.manualRefundTasks),
+  );
 }
 
 /**
