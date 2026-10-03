@@ -203,16 +203,12 @@ export interface DisplayState {
   /**
    * The custodian(s) in residence today (#2286), or null when there is none.
    *
-   * ONLY a custodian occupancy produces this slot — a hut-leader assignment
-   * holding a bed, ticked "Custodian (lives on site)", or both
-   * (`isCustodianOccupancy`; owner decision on #3820, 3 Oct 2026, "Yes, show
-   * ticked custodians"). A role-only, unticked assignment is not an occupancy
-   * and does not appear. The custodian is not a
+   * ONLY a custodian occupancy — a held bed or the tick, #3818 — produces this
+   * slot; a role-only assignment is not an occupancy. The custodian is not a
    * BookingGuest, so their exclusion from the occupancy counts, the booking
    * rows and the chore roster is structural — there is nothing to filter.
    *
-   * `count` is how many custodians are in residence tonight, one per
-   * assignment, so a ticked custodian who also holds a bed counts once. It is
+   * `count` is custodians in residence tonight, one per assignment. It is
    * a COUNT, not a flag, because a handover night legitimately has two people
    * on two different beds — the previous shape (one `findFirst`) silently named
    * one of them and hid the other, which is the one thing a "who is here" slot
@@ -856,10 +852,7 @@ export async function buildDisplayState(
 
   // Custodian in residence (#2286). Scoped to this lodge and to the window's
   // CURRENT day — the wall answers "who is here now", not "who will be here on
-  // Thursday". `CUSTODIAN_OCCUPANCY_WHERE` is the whole gate — a held bed or
-  // the custodian tick (#3817), the one definition the capacity count reads
-  // (#3818, owner decision on #3820: "Yes, show ticked custodians"): a
-  // role-only, unticked assignment is not an occupancy and never renders a slot.
+  // Thursday". `CUSTODIAN_OCCUPANCY_WHERE` (bed or tick, #3818) is the gate.
   //
   // Gated on the hutLeaders module like every other module-owned read in this
   // builder (`flags.bedAllocation` for rooms, `flags.chores` for the roster): a

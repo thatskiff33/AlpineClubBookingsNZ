@@ -333,33 +333,32 @@ export interface CustodianOccupancy {
  * bedless custodian has no answer to, and every allocation consumer keeps
  * reading it. Only the per-night COUNT reads this.
  */
-export async function findCustodianOccupancies(input: {
-  lodgeId: string;
-  from: Date;
-  toExclusive: Date;
-  db?: CustodianDb;
-}): Promise<CustodianOccupancy[]> {
+export async function findCustodianOccupancies(
+  input: CustodianOccupancyWindow,
+): Promise<CustodianOccupancy[]> {
   const where = custodianOccupancyWindowWhere(input);
   if (!where) return [];
-  const db = input.db ?? prisma;
-  const rows = await db.hutLeaderAssignment.findMany({
+  const rows = await (input.db ?? prisma).hutLeaderAssignment.findMany({
     where,
-    select: { id: true, bedId: true, startDate: true, endDate: true },
+    select: OCCUPANCY_SELECT,
     orderBy: [{ startDate: "asc" }, { id: "asc" }],
   });
   return rows.map(toCustodianOccupancy);
 }
 
-/**
- * The one window filter both occupancy loaders read: a custodian occupancy
- * ({@link CUSTODIAN_OCCUPANCY_WHERE}) at `lodgeId` covering any night of the
- * half-open `[from, toExclusive)`, or null for an empty window.
- */
-function custodianOccupancyWindowWhere(input: {
+type CustodianOccupancyWindow = {
   lodgeId: string;
   from: Date;
   toExclusive: Date;
-}): Prisma.HutLeaderAssignmentWhereInput | null {
+  db?: CustodianDb;
+};
+
+const OCCUPANCY_SELECT = { id: true, bedId: true, startDate: true, endDate: true } as const;
+
+/** Both occupancy loaders' one window filter; null for an empty window. */
+function custodianOccupancyWindowWhere(
+  input: CustodianOccupancyWindow,
+): Prisma.HutLeaderAssignmentWhereInput | null {
   const from = truncateToDateOnly(input.from);
   const toExclusive = truncateToDateOnly(input.toExclusive);
   if (from >= toExclusive) return null;
@@ -372,12 +371,8 @@ function custodianOccupancyWindowWhere(input: {
   };
 }
 
-function toCustodianOccupancy(row: {
-  id: string;
-  bedId: string | null;
-  startDate: Date;
-  endDate: Date;
-}): CustodianOccupancy {
+type OccupancyRow = { id: string; bedId: string | null; startDate: Date; endDate: Date };
+function toCustodianOccupancy(row: OccupancyRow): CustodianOccupancy {
   return {
     assignmentId: row.id,
     bedId: row.bedId,
@@ -390,34 +385,23 @@ function toCustodianOccupancy(row: {
 export interface CustodianOccupant extends CustodianOccupancy {
   memberFirstName: string;
   memberLastName: string;
-  /** Minor-age custodians are never individually named on any shared surface. */
   memberIsMinor: boolean;
 }
 
 /**
- * {@link findCustodianOccupancies} with the member's name parts and minor flag
- * — the same occupancies, for the member lodge roster, which shows ticked
- * custodians as well as bed holders (#3818, orchestrator decision on #3820,
- * 3 Oct 2026). One row per assignment, so a ticked custodian holding a bed is
- * listed once. Kept apart from the count's loader so the capacity hot path
- * never reads a name.
+ * {@link findCustodianOccupancies} with names and the minor flag, for the
+ * member lodge roster (#3818): one row per assignment, so a ticked bed holder
+ * is listed once. Separate so the capacity hot path never reads a name.
  */
-export async function findCustodianOccupants(input: {
-  lodgeId: string;
-  from: Date;
-  toExclusive: Date;
-  db?: CustodianDb;
-}): Promise<CustodianOccupant[]> {
+export async function findCustodianOccupants(
+  input: CustodianOccupancyWindow,
+): Promise<CustodianOccupant[]> {
   const where = custodianOccupancyWindowWhere(input);
   if (!where) return [];
-  const db = input.db ?? prisma;
-  const rows = await db.hutLeaderAssignment.findMany({
+  const rows = await (input.db ?? prisma).hutLeaderAssignment.findMany({
     where,
     select: {
-      id: true,
-      bedId: true,
-      startDate: true,
-      endDate: true,
+      ...OCCUPANCY_SELECT,
       member: { select: { firstName: true, lastName: true, ageTier: true } },
     },
     orderBy: [{ startDate: "asc" }, { id: "asc" }],

@@ -82,21 +82,13 @@ const COVERAGE_FUNCTIONS: ReadonlyArray<{ name: string; mustContain: readonly Re
  * stale entry fails below, so the list only shrinks.
  */
 const NOT_COVERAGE: Readonly<Record<string, string>> = {
-  "src/lib/hut-leader.ts":
-    "isHutLeader is a role check for a member on a date (access, #3817's lane), not whether a night has a leader.",
   "src/lib/lodge-display-state.ts":
-    "the lobby wall names tonight's CUSTODIANS (bedId not null); a bed hold is presence by INV-LIFE-062, which the helper also treats as present.",
-  "src/lib/kiosk-access.ts":
-    "the kiosk's sign-in window for an assigned leader: an access credential, not coverage.",
+    "the lobby wall names tonight's CUSTODIANS (CUSTODIAN_OCCUPANCY_WHERE: a held bed or the tick, #3818); a custodian occupancy is presence, which the helper also treats as present.",
   "src/lib/lodge-auth.ts": "lodge sign-in for an assigned leader: an access window, not coverage.",
-  "src/lib/lodge-pin-session.ts":
-    "a leader's PIN session validity window: an access window, not coverage.",
-  "src/lib/member-dietary.ts":
-    "who may read a party's dietary notes (the assigned leader): an access window, not coverage.",
   "src/lib/hut-leader-overlap-guard.ts":
     "whether a NEW assignment's span overlaps an existing one: a write refusal, deliberately presence-blind (#2887).",
   "src/lib/custodian-occupancy.ts":
-    "a custodian's bed hold as bed occupancy (INV-LIFE-062): which beds are taken, not whether a night has a leader.",
+    "a custodian occupancy (a held bed or the tick, INV-LIFE-062) as capacity and bed occupancy: which beds and spaces are taken, not whether a night has a leader.",
   "src/lib/custodian-assignment.ts":
     "expands a custodian's bed hold into the nights its bed is held (INV-LIFE-062): bed occupancy, not coverage.",
   "src/app/api/admin/hut-leaders/route.ts":

@@ -19,7 +19,7 @@ reason: the stay check has to be asked twice, once cheaply before the lock and
   one locked flow across files without shortening it.
 
 file: src/app/(admin)/admin/hut-leaders/page.tsx
-lines: 1444
+lines: 1427
 reason: the owner's refusal offers "Change last night to …", so the page has to
   carry the corrected end date from the 409 into its error state and own the one
   handler that adopts it while keeping the chosen member (picking new nights
