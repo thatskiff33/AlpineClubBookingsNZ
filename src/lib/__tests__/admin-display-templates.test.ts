@@ -42,7 +42,8 @@ vi.mock("@/lib/public-layout-config", async () => {
   const actual = (await vi.importActual("@/lib/club-identity-settings")) as typeof import("@/lib/club-identity-settings");
   return { getCachedClubIdentity: actual.getClubIdentity };
 });
-vi.mock("@/lib/module-settings", () => ({
+vi.mock("@/lib/module-settings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/module-settings")),
   loadEffectiveModuleFlags: vi
     .fn()
     .mockResolvedValue({ bedAllocation: false, chores: false }),
