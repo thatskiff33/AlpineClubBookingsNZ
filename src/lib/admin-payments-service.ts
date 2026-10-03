@@ -1,8 +1,4 @@
-import type {
-  PaymentStatus,
-  PaymentTransactionKind,
-  Prisma,
-} from "@prisma/client";
+import type { PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
 import { BOOKING_ISSUED_CREDIT_TYPES } from "@/lib/member-credit-booking-rows";
 import { z } from "zod";
 import {
@@ -161,12 +157,7 @@ type PaymentCandidate = {
   additionalAmountCents: number;
   additionalPaymentStatus: string | null;
   updatedAt: Date;
-  transactions: Array<{
-    updatedAt: Date;
-    kind: PaymentTransactionKind;
-    status: PaymentStatus;
-    amountCents: number;
-  }>;
+  transactions: Array<{ updatedAt: Date; kind: PaymentTransactionKind; status: PaymentStatus; amountCents: number }>;
   refunds: Array<{ updatedAt: Date }>;
   booking: {
     id: string;
@@ -497,9 +488,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
             ...netCollectedBookingSelect,
             // Credit ISSUED from the booking only (#3791): a review's give-back
             // of applied credit names the booking as its source too, and is not
-            // a settlement of it. The kept-credit reader loses nothing by it: a
-            // restore is always a `CANCELLATION_REFUND`, and a give-back is
-            // already netted through `creditsApplied`.
+            // a settlement of it. Kept credit loses nothing (`cancelledBookingKeptCreditCents`).
             creditsFromCancellation: {
               where: { type: { in: [...BOOKING_ISSUED_CREDIT_TYPES] } },
               select: {
