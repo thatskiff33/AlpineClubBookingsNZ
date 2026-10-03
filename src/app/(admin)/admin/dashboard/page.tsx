@@ -106,10 +106,6 @@ async function getStats() {
       .getTime() - 1,
   );
   const sevenDaysFromNow = dateOnlyInstantOf(addCalendarDays(todayKey, 7));
-  // #3841: with the bed-allocation module off there are no allocations, so the
-  // count below would report every guest as awaiting a bed and the card would
-  // link to a page the proxy blocks. Skip both, as the stuck-state dashboard
-  // and the bookings bed-state column already do.
   const bedAllocationEnabled = (await loadEffectiveModuleFlags()).bedAllocation;
 
   const [
@@ -263,12 +259,8 @@ async function getStats() {
     // window.
     countRosterDaysNeedingChores({ from: today, to: sevenDaysFromNow }),
     // Bed Allocation officer card (#2091, D-E2): guests in the next 7 days with a
-    // bed-night still awaiting allocation. Window-scoped mirror of the bed
-    // board's own unallocatedGuestNights set (src/lib/bed-allocation-board.ts):
-    // per-guest-night diff with the board's guest-existence rule and whole-lodge
-    // holds excluded (ADR-001), so a partially-allocated booking still counts its
-    // pending guests exactly as the board's buckets do. Cheap: bounded 7-day
-    // window matching the board's landing window.
+    // bed-night awaiting allocation, mirroring the bed board's own
+    // unallocatedGuestNights set (ADR-001). Skipped with the module off (#3841).
     bedAllocationEnabled
       ? countGuestsAwaitingBed({ from: today, to: sevenDaysFromNow })
       : Promise.resolve(0),
@@ -361,8 +353,6 @@ export default async function AdminDashboardPage() {
     permissionMatrix,
     "/admin/roster",
   );
-  // A card is shown only when its page can open: the permission AND the module
-  // (#3841), since the matrix checks permissions alone.
   const canViewBedAllocation =
     stats.bedAllocationEnabled &&
     canViewAdminHrefWithMatrix(permissionMatrix, "/admin/bed-allocation");
