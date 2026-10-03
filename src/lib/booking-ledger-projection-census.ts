@@ -26,6 +26,7 @@ import { bookingLedgerBalance } from "@/lib/booking-ledger-balance";
 import { liveLines } from "@/lib/booking-ledger-modification-posting";
 import {
   agreedAdjustmentKey,
+  agreedGiveBackKey,
   captureKey,
   cancellationFeeKey,
   confirmationNightKey,
@@ -158,6 +159,7 @@ const KEY_NAMESPACE_ANCHORS: ReadonlyMap<string, ReadonlySet<LedgerAnchorKind>> 
     [modificationChangeFeeKey("m"), ["MODIFICATION"]],
     [cancellationFeeKey("b"), ["CANCELLATION"]],
     [agreedAdjustmentKey("t"), ["REVIEW_TASK"]],
+    [agreedGiveBackKey("t"), ["REVIEW_TASK"]],
     [reversalKey("l"), ["MODIFICATION", "CANCELLATION", "REVIEW_TASK", "PAYMENT_TRANSACTION", "PAYMENT_REFUND"]],
     [captureKey("t"), ["PAYMENT_TRANSACTION"]],
     [refundKey("r"), ["PAYMENT_REFUND"]],
