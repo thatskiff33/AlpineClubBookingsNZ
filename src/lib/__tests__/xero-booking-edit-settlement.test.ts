@@ -146,6 +146,7 @@ describe("classifyXeroBookingEditSettlement", () => {
       // `INV-PAY-101`: no method stated and no credit election reads as the
       // card refund every such note was before #3529.
       refundMethod: "card",
+      allocatedGiveBackCents: 0,
       reason: expect.stringContaining("modification credit note"),
     });
   });
@@ -451,6 +452,29 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
       expect.objectContaining({ refundAmountCents: 5000, bookingModificationId: "mod_4", refundMethod: "account-credit" }),
       expect.anything(),
     );
+  });
+
+  it("MUTATION (#3809): a card refund beside applied credit given back queues two allocated notes, one per method, the second under its own key", async () => {
+    await queueXeroBookingEditSettlement({
+      bookingId: "booking_5",
+      bookingModificationId: "mod_5",
+      createdByMemberId: "admin_1",
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -15000,
+      settlementMethod: "card",
+      settlementAmountCents: 10000,
+      refundedThroughStripe: true,
+      appliedCreditGiveBackCents: 5000,
+      datesChanged: false,
+    });
+
+    const calls = mocks.enqueueXeroModificationCreditNoteOperation.mock.calls.map((call) => call[0]);
+    expect(calls).toEqual([
+      expect.objectContaining({ refundAmountCents: 10000, refundMethod: "card" }),
+      expect.objectContaining({ refundAmountCents: 5000, refundMethod: "account-credit", reviewTaskId: "applied-credit-give-back" }),
+    ]);
+    expect(calls[0]).not.toHaveProperty("reviewTaskId");
   });
 
   it("(#3809) applied credit given back with nothing else returned is one allocated note worded as account credit", () => {

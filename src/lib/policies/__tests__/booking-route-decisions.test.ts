@@ -401,6 +401,8 @@ describe("booking route policy decisions", () => {
         // `now: new Date("2026-07-05T00:00:00.000Z")` produced once the
         // container's zone had projected it, so the money below is unchanged.
         todayAtClub: requireCalendarDate("2026-07-05"),
+        // #3809 (`INV-PAY-114`): no edit ran through the give-back, so no cap.
+        capAppliedCredit: false,
       })
     ).toMatchObject({
       refundAmountCents: 3000,
@@ -409,12 +411,12 @@ describe("booking route policy decisions", () => {
       refundPercentage: 50,
       creditRefundAmountCents: 5500,
       creditRefundPercentage: 75,
-      // #1164 / D7: applied credit is tiered by the CARD tier (50%), not
-      // restored at 100%. #3809 (INV-PAY-114): it is tiered on what the same
-      // cap leaves of it - and the 9000 paid already covers price plus change
-      // fee (9000), so the 2000 applied above that is not restored at all, as
-      // paid money above the price is not refunded.
-      creditRestoredCents: 0,
+      // #1164 / D7: applied credit is now tiered by the CARD tier (50%), not
+      // restored at 100%. refundableBase 8000 -> cardGross 4000 absorbs the full
+      // 1000 fixed fee (feeRemainder 0), so the 2000 applied credit restores
+      // 50% = 1000. Uncapped: this booking was not reduced through #3809's
+      // settlement (`INV-PAY-114`).
+      creditRestoredCents: 1000,
       totalPaidCents: 9000,
     });
   });
@@ -442,6 +444,8 @@ describe("booking route policy decisions", () => {
         // `now: new Date("2026-07-05T00:00:00.000Z")` produced once the
         // container's zone had projected it, so the money below is unchanged.
         todayAtClub: requireCalendarDate("2026-07-05"),
+        // #3809 (`INV-PAY-114`): no edit ran through the give-back, so no cap.
+        capAppliedCredit: false,
       })
     ).toMatchObject({
       refundAmountCents: 20000,

@@ -209,6 +209,7 @@ describe("#3809: a credit-paid booking's $50 reduction, tiered like a card refun
       days: 31,
       policy: TIERS["50% with a $20 fee"],
       refundMethod: "card",
+      capAppliedCredit: true,
     });
 
     expect(reduced.appliedCreditGivenBackCents + cancel.creditRestoredCents).toBe(10_500);
@@ -221,6 +222,7 @@ describe("#3809: a credit-paid booking's $50 reduction, tiered like a card refun
       days: 31,
       policy: TIERS["50% with a $20 fee"],
       refundMethod: "card",
+      capAppliedCredit: false,
     });
     expect(5_000 + card.refundAmountCents).toBe(10_500);
   });
@@ -257,12 +259,19 @@ describe("#3809: every other booking settles exactly as before", () => {
     expect(result.appliedCreditGivenBackCents).toBe(0);
   });
 
-  it("MUTATION: a card payment that covers the whole reduction keeps the card path - the member key is never taken", async () => {
+  it("MUTATION: a card payment that covers the whole reduction keeps the card path - the member key is never taken, but the history records the booking's credit", async () => {
     const result = await reduce(creditPaidBooking({ payment: { amountCents: 20_000, source: PaymentSource.STRIPE } }));
 
-    expect(credit.derive).not.toHaveBeenCalled();
     expect(credit.giveBack).not.toHaveBeenCalled();
     expect(result.appliedCreditGivenBackCents).toBe(0);
+    // Owner decision of 4 Oct 2026: a later cancellation caps this booking's
+    // credit, as it caps an all-card booking's paid money (INV-PAY-114).
+    expect(result.appliedCreditGiveBack).toEqual({ basisCents: 0, givenBackCents: 0 });
+  });
+
+  it("a booking with no applied credit records nothing for the cancellation to cap by", async () => {
+    credit.applied = 0;
+    expect((await reduce(creditPaidBooking())).appliedCreditGiveBack).toBeNull();
   });
 
   it("a price increase gives nothing back", async () => {
@@ -319,7 +328,7 @@ describe("#3809: a booking paid by card AND credit gets back what an all-card on
     expect(paymentUpdate).toHaveBeenCalledWith({ where: { id: "payment_1" }, data: { creditAppliedCents: 10_000 - givenBackCents } });
   });
 
-  it("Xero, card election: one invoice-allocated note for the refund and the give-back together", async () => {
+  it("MUTATION: Xero, card election: the card refund's note and an allocated account-credit note of its own - one note names one method", async () => {
     const result = await reduceMixed(TIERS["100%"], "card");
 
     const decision = classifyXeroBookingEditSettlement({
@@ -333,8 +342,9 @@ describe("#3809: a booking paid by card AND credit gets back what an all-card on
 
     expect(decision.financialAction).toEqual(expect.objectContaining({
       type: "modification-credit-note",
-      refundAmountCents: 15_000,
+      refundAmountCents: 10_000,
       refundMethod: "card",
+      allocatedGiveBackCents: 5_000,
     }));
   });
 
@@ -365,7 +375,7 @@ describe("#3809: a booking paid by card AND credit gets back what an all-card on
   the preview the member sees first.
 */
 describe("#3809: a cancellation tiers applied credit capped at what the booking is worth", () => {
-  const cancelCredit = (mirror: number, finalPriceCents: number, policy: CancellationRule[]) =>
+  const cancelCredit = (mirror: number, finalPriceCents: number, policy: CancellationRule[], cap = true) =>
     paidCancellationMoney({
       payment: { amountCents: 0, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: mirror },
       finalPriceCents,
@@ -374,6 +384,7 @@ describe("#3809: a cancellation tiers applied credit capped at what the booking 
       days: 31,
       policy,
       refundMethod: "card",
+      capAppliedCredit: cap,
     });
 
   it("MUTATION: $5 back at 50% less $20, then a cancel at 50% less $20 tiers $150, not the $195 still applied - $60 in all, the card-paid figure", async () => {
@@ -397,6 +408,7 @@ describe("#3809: a cancellation tiers applied credit capped at what the booking 
       days: 31,
       policy: TIERS["50% with a $20 fee"],
       refundMethod: "card",
+      capAppliedCredit: false,
     });
     expect(500 + card.refundAmountCents).toBe(6_000);
   });
@@ -408,6 +420,7 @@ describe("#3809: a cancellation tiers applied credit capped at what the booking 
       checkIn: CHECK_IN,
       policyRules: TIERS["50% with a $20 fee"],
       todayAtClub: TODAY,
+      capAppliedCredit: true,
     });
 
     expect(preview.creditRestoredCents).toBe(cancelCredit(19_500, 15_000, TIERS["50% with a $20 fee"]).creditRestoredCents);
@@ -421,8 +434,25 @@ describe("#3809: a cancellation tiers applied credit capped at what the booking 
 
   it("money paid counts first: $100 paid and $150 applied on a $150 booking tiers $100 of money and $50 of credit", () => {
     expect(
-      cancelAppliedCreditBaseCents({ amountCents: 10_000, refundedAmountCents: 0, finalPriceCents: 15_000, changeFeeCents: 0, creditAppliedCents: 15_000 }),
+      cancelAppliedCreditBaseCents({ amountCents: 10_000, refundedAmountCents: 0, finalPriceCents: 15_000, changeFeeCents: 0, creditAppliedCents: 15_000, capAtWorth: true }),
     ).toBe(5_000);
+  });
+
+  it.each([
+    { tier: "100%" as const, totalCents: 20_000 },
+    { tier: "50% with a $20 fee" as const, totalCents: 8_000 },
+  ])("MUTATION (owner decision, 4 Oct 2026): a booking reduced BEFORE this release is not capped - $200 still applied on a $150 price restores $totalCents cents at $tier, as on main", ({ tier, totalCents }) => {
+    expect(cancelCredit(20_000, 15_000, TIERS[tier], false).creditRestoredCents).toBe(totalCents);
+    expect(
+      calculateCancellationPreview({
+        payment: { amountCents: 0, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: 20_000 },
+        finalPriceCents: 15_000,
+        checkIn: CHECK_IN,
+        policyRules: TIERS[tier],
+        todayAtClub: TODAY,
+        capAppliedCredit: false,
+      }).creditRestoredCents,
+    ).toBe(totalCents);
   });
 });
 

@@ -149,12 +149,15 @@ let observerClient: PrismaClient;
       await prisma.memberCredit.create({
         data: {
           memberId: MEMBER_ID, amountCents: appliedCents, type: "ADMIN_ADJUSTMENT", description: "race 3809 opening balance",
-          ...(shape === "ib-allocated" ? { xeroCreditNoteId: CREDIT_NOTE_ID } : {}),
+          // A spent credit carries a note (#2717); the card path never allocated it (#3836).
+          ...(shape !== "card-invoiced" ? { xeroCreditNoteId: CREDIT_NOTE_ID } : {}),
         },
       });
       await prisma.$transaction((tx) => credit.applyCreditToBooking(MEMBER_ID, appliedCents, BOOKING_ID, tx, CLUB_FORMAT_TEST));
-      if (shape === "ib-allocated") {
+      if (shape !== "card-invoiced") {
         await prisma.memberCredit.updateMany({ where: { appliedToBookingId: BOOKING_ID, type: "BOOKING_APPLIED" }, data: { xeroCreditNoteId: CREDIT_NOTE_ID } });
+      }
+      if (shape === "ib-allocated") {
         const { repairLegacyAppliedCreditNoteAllocationsForBooking } = await import("@/lib/xero-applied-credit-allocation-repair");
         await prisma.$transaction((tx) => repairLegacyAppliedCreditNoteAllocationsForBooking(BOOKING_ID, XERO_INVOICE_ID, tx, CLUB_FORMAT_TEST));
       }
@@ -347,7 +350,7 @@ let observerClient: PrismaClient;
     it.each([
       { tier: "100%", rule: TIERS[0]!.rule, cardCents: 10_000, givenBackCents: 5_000 },
       { tier: "50% with a $20 fee", rule: FIFTY_LESS_TWENTY, cardCents: 3_000, givenBackCents: 2_500 },
-    ])("finding 4: $100 by card and $100 by credit, the 15000-cent guest removed at $tier: $cardCents cents to the card and $givenBackCents cents of credit back, the all-card figure, in one allocated note", async ({ rule, cardCents, givenBackCents }) => {
+    ])("finding 4: $100 by card and $100 by credit, the 15000-cent guest removed at $tier: $cardCents cents to the card and $givenBackCents cents of credit back, the all-card figure, in two allocated notes - one per method", async ({ rule, cardCents, givenBackCents }) => {
       await creditPaidBooking("card-and-credit", rule);
 
       const result = await removeLeavingGuest("card");
@@ -358,9 +361,70 @@ let observerClient: PrismaClient;
       expect(await credit.deriveBookingAppliedCreditCents(BOOKING_ID)).toBe(10_000 - givenBackCents);
       const payment = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { creditAppliedCents: true } });
       expect(payment.creditAppliedCents).toBe(10_000 - givenBackCents);
-      expect(await queuedNotes(result.bookingModificationId)).toEqual([
-        { queueType: "MODIFICATION_CREDIT_NOTE", cents: cardCents + givenBackCents, refundMethod: "card" },
-      ]);
+      // Review low 2: one note names one method (INV-PAY-101), so the credit
+      // given back is an allocated note of its own beside the card refund's.
+      expect(await queuedNotes(result.bookingModificationId)).toEqual(
+        expect.arrayContaining([
+          { queueType: "MODIFICATION_CREDIT_NOTE", cents: cardCents, refundMethod: "card" },
+          { queueType: "MODIFICATION_CREDIT_NOTE", cents: givenBackCents, refundMethod: "account-credit" },
+        ]),
+      );
+      expect(await queuedNotes(result.bookingModificationId)).toHaveLength(2);
+    });
+
+    it.each([
+      { tier: "100%", rule: TIERS[0]!.rule, totalBackCents: 20_000 },
+      { tier: "50% with a $20 fee", rule: FIFTY_LESS_TWENTY, totalBackCents: 8_000 },
+    ])("F1, owner decision of 4 Oct 2026: a booking reduced BEFORE this release (price lowered, no give-back recorded) is not capped - the REAL cancel at $tier restores $totalBackCents cents, as on main", async ({ rule, totalBackCents }) => {
+      await creditPaidBooking("ib-allocated", rule);
+      // The pre-release shape: the price came down by $50 and nothing gave credit back.
+      await prisma.booking.update({ where: { id: BOOKING_ID }, data: { totalPriceCents: 15_000, finalPriceCents: 15_000 } });
+      const { calculateCancellationPreview } = await import("@/lib/policies/booking-route-decisions");
+      const { bookingReducedThroughCreditGiveBack } = await import("@/lib/booking-credit-give-back-marker");
+      const capped = await bookingReducedThroughCreditGiveBack(BOOKING_ID, prisma);
+      expect(capped).toBe(false);
+      const preview = calculateCancellationPreview({
+        payment: { amountCents: 0, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: 20_000 },
+        finalPriceCents: 15_000,
+        checkIn: CHECK_IN,
+        policyRules: [{ daysBeforeStay: 0, ...rule }],
+        todayAtClub: "2026-07-01" as never,
+        capAppliedCredit: capped,
+      });
+
+      await cancelAt(rule);
+
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(totalBackCents);
+      expect(preview.creditRestoredCents).toBe(totalBackCents);
+      const cancelled = await prisma.bookingEvent.findFirstOrThrow({ where: { bookingId: BOOKING_ID, type: "CANCELLED" }, select: { snapshot: true } });
+      expect((cancelled.snapshot as { ledger: { appliedCreditBaseCents: number } }).ledger.appliedCreditBaseCents).toBe(20_000);
+    });
+
+    it.each([
+      { tier: "0%", rule: TIERS[2]!.rule, cancelBackCents: 0 },
+      { tier: "50% with a $20 fee", rule: FIFTY_LESS_TWENTY, cancelBackCents: 500 },
+    ])("F2: 10000 cents by card and 10000 by credit, 15000 removed at 100% (the card refunded whole), then the REAL cancel at $tier: the last 5000 of credit is tiered, not restored whole - the all-card total", async ({ rule, cancelBackCents }) => {
+      await creditPaidBooking("card-and-credit", TIERS[0]!.rule);
+      const removed = await removeLeavingGuest("card");
+      expect(removed.refundAmountCents).toBe(10_000);
+      // The route's Stripe refund, landed: the card is refunded whole.
+      await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: 10_000, status: "REFUNDED" } });
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(5_000);
+      const { refundedPaymentCreditRestore } = await import("@/lib/cancel-refunded-payment-credit");
+      await prisma.cancellationPolicy.updateMany({ where: { lodgeId: LODGE_ID }, data: rule });
+      const booking = await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
+      const previewed = await refundedPaymentCreditRestore(prisma, { bookingId: BOOKING_ID, booking: { ...booking, payment: booking.payment! }, todayAtClub: "2026-07-01" as never });
+
+      await cancelAt(rule);
+
+      const creditBackCents = (await credit.getMemberCreditBalance(MEMBER_ID)) - 5_000;
+      expect(creditBackCents).toBe(cancelBackCents);
+      // The preview's figure (the same helper) is the cancel's.
+      expect(previewed?.creditToRestoreCents).toBe(cancelBackCents);
+      // All-card: $150 refunded at 100%, then the cancel tiers the $50 the booking is worth.
+      const { calculateRefundAmount } = await import("@/lib/cancellation");
+      const allCardCancel = calculateRefundAmount(5_000, 31, [{ daysBeforeStay: 0, ...rule }]).refundAmountCents;
+      expect(10_000 + 5_000 + creditBackCents).toBe(15_000 + allCardCancel);
     });
 
     it("FORCES the lock order: the removal queues on the member's credit-ledger key holding NO lock on the Payment row, and completes once the key is released", async () => {

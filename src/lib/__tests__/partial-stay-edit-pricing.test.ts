@@ -198,6 +198,8 @@ vi.mock("@/lib/bed-allocation-lifecycle", () => ({
 }));
 vi.mock("@/lib/member-credit", () => ({
   createBookingModificationCredit: vi.fn().mockResolvedValue({ id: "credit1" }),
+  // #3809: a paid booking's reduction asks whether credit is applied; none here.
+  deriveBookingAppliedCreditCents: vi.fn().mockResolvedValue(0),
   // #3369: the one home for the account-credit refusal four settlement paths
   // share. Real, not stubbed: the mock must not turn a refusal into a pass.
   requireMemberCreditRecipient: (memberId: string | null) => {

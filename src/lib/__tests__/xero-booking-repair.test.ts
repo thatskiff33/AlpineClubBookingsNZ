@@ -2197,6 +2197,54 @@ describe("runBookingXeroRepair", () => {
     });
   });
 
+  // #3809: a credit-paid booking's reduction settled as applied credit given
+  // back, as the edit's history row records. Its note is the give-back - none
+  // where the tier gave nothing back - so a note whose post-commit queue failed
+  // after the deallocation committed is recovered at that figure, never at the
+  // whole reduction the policy partly kept.
+  function creditPaidReduction(givenBackCents: number) {
+    return makeBooking({
+      // Paid by credit: nothing captured, no card intent.
+      payment: { ...makeBooking().payment, status: "SUCCEEDED", amountCents: 0, stripePaymentIntentId: null, stripePaymentMethodId: null },
+      modifications: [
+        {
+          id: "mod_give_back",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -5000,
+          changeFeeCents: 0,
+          newData: { appliedCreditGiveBack: { basisCents: 5000, givenBackCents } },
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+  }
+
+  it("MUTATION (#3809): queues a lost give-back note at the recorded give-back, worded as account credit", async () => {
+    const deps = createDependencies({ bookings: [creditPaidReduction(500)] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.find((candidate) => candidate.type === "QUEUE_MODIFICATION_CREDIT_NOTE")).toMatchObject({
+      safeToAutoApply: true,
+      payload: { bookingModificationId: "mod_give_back", refundAmountCents: 500, refundMethod: "account-credit" },
+    });
+    expect(bookingReport.findings.find((candidate) => candidate.code === "MISSING_MODIFICATION_CREDIT_NOTE")).toMatchObject({
+      details: { refundAmountSource: "recorded-give-back" },
+    });
+  });
+
+  it("MUTATION (#3809): expects no note where the give-back was nothing", async () => {
+    const deps = createDependencies({ bookings: [creditPaidReduction(0)] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_MODIFICATION_CREDIT_NOTE");
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_MODIFICATION_CREDIT_NOTE");
+  });
+
   // #1427 failure scenario 1: the lost note was enqueued at the
   // policy-limited settlement (5000 of a 10000 reduction). The requeue must
   // replay the STORED amount — abs(net) would over-credit Xero by the
