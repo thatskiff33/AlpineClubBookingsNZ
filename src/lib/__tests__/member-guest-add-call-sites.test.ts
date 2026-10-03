@@ -394,7 +394,8 @@ describe("every widened call site also collapses its refusals", () => {
   // The pairing is the point: a site that widens without marking would answer a
   // stranger's occupancy, subscription status or profile in full detail.
   const WIDENED_SITES = [
-    "src/app/api/bookings/route.ts",
+    // #3770: the create route (and both exception doors) resolve through it.
+    "src/lib/member-guest-family-first.ts",
     "src/app/api/bookings/quote/route.ts",
     "src/app/api/bookings/[id]/guests/route.ts",
     "src/app/api/bookings/[id]/modify-quote/route.ts",

@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
@@ -74,6 +75,7 @@ interface XeroTokenStore {
     select: {
       tenantId: true;
     };
+    orderBy: typeof XERO_TOKEN_ROW_ORDER;
   }) => Promise<{
     tenantId: string | null;
   } | null>;
@@ -107,6 +109,7 @@ async function getActiveTenantId(): Promise<string | null> {
       select: {
         tenantId: true,
       },
+      orderBy: XERO_TOKEN_ROW_ORDER,
     });
 
     return record?.tenantId ?? null;

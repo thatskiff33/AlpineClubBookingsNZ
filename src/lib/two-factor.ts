@@ -11,6 +11,13 @@ import type { TwoFactorMethod } from "@prisma/client";
 import { getClubIdentitySync } from "@/lib/club-identity-settings";
 import { getAuthSecret } from "@/lib/runtime-config";
 import { prisma } from "@/lib/prisma";
+import {
+  assertTwoFactorActorMayAct,
+  recordTwoFactorMutation,
+  TWO_FACTOR_AUDIT_ACTIONS,
+  type TwoFactorActor,
+  type TwoFactorRequestContext,
+} from "@/lib/two-factor-audit";
 
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
@@ -324,18 +331,41 @@ export async function consumeRecoveryCode(memberId: string, code: string) {
   return updated.count === 1;
 }
 
-export async function replaceRecoveryCodes(memberId: string) {
+export async function replaceRecoveryCodes(params: {
+  memberId: string;
+  /** Who replaced them: the member themself on the regenerate route (#3454). */
+  actor: TwoFactorActor;
+  request?: TwoFactorRequestContext;
+}) {
+  const { memberId } = params;
+  assertTwoFactorActorMayAct(
+    TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesReplaced,
+    params.actor,
+    memberId,
+  );
   const recoveryCodes = generateRecoveryCodes();
 
-  await prisma.$transaction([
-    prisma.twoFactorRecoveryCode.deleteMany({ where: { memberId } }),
-    prisma.twoFactorRecoveryCode.createMany({
+  // ONE interactive transaction, so the audit row commits with the new codes
+  // or neither does (#3454): replacing them invalidates every unused code, the
+  // same class of credential change as an enrolment.
+  await prisma.$transaction(async (tx) => {
+    await tx.twoFactorRecoveryCode.deleteMany({ where: { memberId } });
+    await tx.twoFactorRecoveryCode.createMany({
       data: recoveryCodes.map((code) => ({
         memberId,
         codeHash: hashRecoveryCode(code),
       })),
-    }),
-  ]);
+    });
+    await recordTwoFactorMutation(tx, {
+      action: TWO_FACTOR_AUDIT_ACTIONS.recoveryCodesReplaced,
+      actor: params.actor,
+      subjectMemberId: memberId,
+      method: null,
+      authenticatorApp: false,
+      recoveryCodesIssued: recoveryCodes.length,
+      request: params.request,
+    });
+  });
 
   return recoveryCodes;
 }
@@ -344,37 +374,55 @@ export async function enrollTwoFactor(params: {
   memberId: string;
   method: TwoFactorMethod;
   totpSecret?: string | null;
+  /** Who enrolled — the member themself on the enrolment routes (#3454). */
+  actor: TwoFactorActor;
+  request?: TwoFactorRequestContext;
 }) {
+  // A member actor must be the member being enrolled (#3454 review).
+  assertTwoFactorActorMayAct(TWO_FACTOR_AUDIT_ACTIONS.enrolled, params.actor, params.memberId);
   const recoveryCodes = generateRecoveryCodes();
+  const storesTotpSecret = params.method === "TOTP" && Boolean(params.totpSecret);
+  const encryptedTotpSecret =
+    storesTotpSecret && params.totpSecret
+      ? encryptTwoFactorSecret(params.totpSecret)
+      : null;
 
-  await prisma.$transaction([
-    prisma.member.update({
+  // ONE interactive transaction, so the audit row commits with the enrolment
+  // or neither does (#3454). It was an array transaction, which cannot write a
+  // row through `createAuditLog`.
+  await prisma.$transaction(async (tx) => {
+    await tx.member.update({
       where: { id: params.memberId },
       data: {
         twoFactorEnabled: true,
         twoFactorMethod: params.method,
-        totpSecret:
-          params.method === "TOTP" && params.totpSecret
-            ? encryptTwoFactorSecret(params.totpSecret)
-            : null,
+        totpSecret: encryptedTotpSecret,
         twoFactorEnrolledAt: new Date(),
         twoFactorFailedAttempts: 0,
         twoFactorLockedUntil: null,
       },
-    }),
-    prisma.twoFactorRecoveryCode.deleteMany({
+    });
+    await tx.twoFactorRecoveryCode.deleteMany({
       where: { memberId: params.memberId },
-    }),
-    prisma.twoFactorRecoveryCode.createMany({
+    });
+    await tx.twoFactorRecoveryCode.createMany({
       data: recoveryCodes.map((code) => ({
         memberId: params.memberId,
         codeHash: hashRecoveryCode(code),
       })),
-    }),
-    prisma.twoFactorEmailCode.deleteMany({
+    });
+    await tx.twoFactorEmailCode.deleteMany({
       where: { memberId: params.memberId },
-    }),
-  ]);
+    });
+    await recordTwoFactorMutation(tx, {
+      action: TWO_FACTOR_AUDIT_ACTIONS.enrolled,
+      actor: params.actor,
+      subjectMemberId: params.memberId,
+      method: params.method,
+      authenticatorApp: storesTotpSecret,
+      request: params.request,
+    });
+  });
 
   return recoveryCodes;
 }
