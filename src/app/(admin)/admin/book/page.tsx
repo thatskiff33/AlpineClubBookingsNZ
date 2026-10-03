@@ -24,7 +24,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { LodgeSelect, useLodgeOptions } from "@/components/lodge-select";
 import { LodgeOptionsUnavailableNotice } from "@/components/admin/lodge-options-status";
-import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
+import { type PromoResult } from "@/components/promo-code-input";
+import { BookingPromoCodes } from "@/components/booking-promo-codes";
+import {
+  appliedPromosFinalPriceCents,
+  createRequestPromoFields,
+} from "@/components/promo-code-list-client";
 import { TimePicker } from "@/components/time-picker";
 import { MemberPicker } from "@/components/admin/member-picker";
 import {
@@ -222,7 +227,8 @@ export default function AdminBookPage() {
   /** Derived once, so the three add-guest affordances cannot disagree. */
   const atPartySizeCeiling =
     partySizeCeiling !== null && guests.length >= partySizeCeiling;
-  const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
+  // #3492: every code on the booking, in the booker's order.
+  const [appliedPromos, setAppliedPromos] = useState<PromoResult[]>([]);
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [useCredit, setUseCredit] = useState(false);
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
@@ -369,7 +375,7 @@ export default function AdminBookPage() {
     setGuests([]);
     setNotes("");
     setPriceQuote(null);
-    setAppliedPromo(null);
+    setAppliedPromos([]);
     setExpectedArrivalTime(null);
     setUseCredit(false);
     setError("");
@@ -403,7 +409,7 @@ export default function AdminBookPage() {
     setGuests([]);
     setNotes("");
     setPriceQuote(null);
-    setAppliedPromo(null);
+    setAppliedPromos([]);
     setExpectedArrivalTime(null);
     setUseCredit(false);
     setError("");
@@ -453,7 +459,7 @@ export default function AdminBookPage() {
     // invalidates for.
     onPartyRepriced: () => {
       setPriceQuote(null);
-      setAppliedPromo(null);
+      setAppliedPromos([]);
       setUseCredit(false);
     },
     reloadFamily: loadEligibleFamily,
@@ -484,7 +490,7 @@ export default function AdminBookPage() {
     setCheckIn(null);
     setCheckOut(null);
     setPriceQuote(null);
-    setAppliedPromo(null);
+    setAppliedPromos([]);
     setUseCredit(false);
     setError("");
     setAllowPastDates(false);
@@ -704,8 +710,7 @@ export default function AdminBookPage() {
         checkOut: checkOutStr,
         guests,
         notes: notes || undefined,
-        promoCode: appliedPromo?.code || undefined,
-        promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
+        ...createRequestPromoFields(appliedPromos),
         expectedArrivalTime: expectedArrivalTime || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         lodgeId,
@@ -793,8 +798,7 @@ export default function AdminBookPage() {
         checkOut: checkOutStr,
         guests,
         notes: notes || undefined,
-        promoCode: appliedPromo?.code || undefined,
-        promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
+        ...createRequestPromoFields(appliedPromos),
         expectedArrivalTime: expectedArrivalTime || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         lodgeId,
@@ -848,7 +852,7 @@ export default function AdminBookPage() {
 
   const availableCreditCents = priceQuote?.availableCreditCents ?? 0;
   const finalPriceBeforeCredit = priceQuote
-    ? (appliedPromo?.finalPriceCents ?? priceQuote.totalPriceCents)
+    ? appliedPromosFinalPriceCents(priceQuote.totalPriceCents, appliedPromos)
     : 0;
   const appliedCreditCents = useCredit
     ? Math.min(availableCreditCents, finalPriceBeforeCredit)
@@ -1266,16 +1270,20 @@ export default function AdminBookPage() {
                 ))}
               </div>
 
-              {appliedPromo && appliedPromo.promoAdjustmentCents !== 0 ? (
+              {appliedPromos.some((promo) => promo.promoAdjustmentCents !== 0) ? (
                 <>
                   <div className="border-t pt-4 flex justify-between text-sm">
                     <span>Subtotal</span>
                     <span>{formatCents(priceQuote.totalPriceCents, format)}</span>
                   </div>
-                  <div className={`flex justify-between text-sm ${appliedPromo.promoAdjustmentCents > 0 ? "text-warning-11" : "text-success-11"}`}>
-                    <span>Promo adjustment ({appliedPromo.code})</span>
-                    <span>{formatSignedCents(appliedPromo.promoAdjustmentCents, format)}</span>
-                  </div>
+                  {appliedPromos
+                    .filter((promo) => promo.promoAdjustmentCents !== 0)
+                    .map((promo) => (
+                      <div key={promo.code} className={`flex justify-between text-sm ${promo.promoAdjustmentCents > 0 ? "text-warning-11" : "text-success-11"}`}>
+                        <span>Promo adjustment ({promo.code})</span>
+                        <span>{formatSignedCents(promo.promoAdjustmentCents, format)}</span>
+                      </div>
+                    ))}
                   {appliedCreditCents > 0 && (
                     <div className="flex justify-between text-sm text-success-11">
                       <span>Account credit</span>
@@ -1381,14 +1389,15 @@ export default function AdminBookPage() {
                   onChange={setExpectedArrivalTime}
                 />
               </div>
-              <PromoCodeInput
+              <BookingPromoCodes
                 checkIn={checkIn!}
                 checkOut={checkOut!}
                 guests={guests}
-                onPromoApplied={setAppliedPromo}
-                appliedPromo={appliedPromo}
+                applied={appliedPromos}
+                onChange={setAppliedPromos}
                 forMemberId={selectedMember.id}
                 lodgeId={lodgeId}
+                ownCodes={[]}
               />
             </CardContent>
           </Card>
