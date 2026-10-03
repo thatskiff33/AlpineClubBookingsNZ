@@ -55,6 +55,7 @@ import {
 import { clubTime } from "@/lib/club-time/server";
 import { countRosterDaysNeedingChores } from "@/lib/roster-status";
 import { countGuestsAwaitingBed } from "@/lib/bed-allocation-board";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   coverageLodgeLabel,
   coverageNeedsLodgeContext,
@@ -105,6 +106,11 @@ async function getStats() {
       .getTime() - 1,
   );
   const sevenDaysFromNow = dateOnlyInstantOf(addCalendarDays(todayKey, 7));
+  // #3841: with the bed-allocation module off there are no allocations, so the
+  // count below would report every guest as awaiting a bed and the card would
+  // link to a page the proxy blocks. Skip both, as the stuck-state dashboard
+  // and the bookings bed-state column already do.
+  const bedAllocationEnabled = (await loadEffectiveModuleFlags()).bedAllocation;
 
   const [
     totalMembers,
@@ -263,7 +269,9 @@ async function getStats() {
     // holds excluded (ADR-001), so a partially-allocated booking still counts its
     // pending guests exactly as the board's buckets do. Cheap: bounded 7-day
     // window matching the board's landing window.
-    countGuestsAwaitingBed({ from: today, to: sevenDaysFromNow }),
+    bedAllocationEnabled
+      ? countGuestsAwaitingBed({ from: today, to: sevenDaysFromNow })
+      : Promise.resolve(0),
   ]);
 
   const revenueThisMonth = revenueResult._sum.amountCents ?? 0;
@@ -308,6 +316,7 @@ async function getStats() {
       pendingMembershipCancellations + pendingMemberArchives,
     rosterDaysNeedingChores,
     bedGuestsAwaiting,
+    bedAllocationEnabled,
   };
 }
 
@@ -352,10 +361,11 @@ export default async function AdminDashboardPage() {
     permissionMatrix,
     "/admin/roster",
   );
-  const canViewBedAllocation = canViewAdminHrefWithMatrix(
-    permissionMatrix,
-    "/admin/bed-allocation",
-  );
+  // A card is shown only when its page can open: the permission AND the module
+  // (#3841), since the matrix checks permissions alone.
+  const canViewBedAllocation =
+    stats.bedAllocationEnabled &&
+    canViewAdminHrefWithMatrix(permissionMatrix, "/admin/bed-allocation");
   const canViewMembers = canViewAdminHrefWithMatrix(
     permissionMatrix,
     "/admin/members",
