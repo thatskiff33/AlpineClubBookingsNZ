@@ -547,6 +547,7 @@ import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
   bookingModificationRefundReasonForKeyPrefix,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
+  isOrganiserChildRefundKey,
   stripeIdempotencyKeyForAskAmount,
 } from "./payment-recovery-keys";
 export {
@@ -2033,6 +2034,14 @@ async function processBookingModificationRefundOperation(
   operation: PaymentRecoveryOperation,
   format: ClubFormat,
 ) {
+  // #3653: an organiser child's refund out of the group's combined card payment.
+  // Before anything reads the child's transactions, of which it has none; the
+  // executor closes the row in the transaction that records the refund.
+  if (isOrganiserChildRefundKey(operation.idempotencyKey)) {
+    const { processOrganiserChildRefundOperation } = await import("@/lib/organiser-child-refund-executor");
+    await processOrganiserChildRefundOperation(operation, format);
+    return;
+  }
   // Group settlement refund replay (F3, #1351): dispatch on the key prefix
   // BEFORE any payment lookup — these operations anchor paymentId to the
   // organiser's own payment purely for the schema FK, and deriving a refund

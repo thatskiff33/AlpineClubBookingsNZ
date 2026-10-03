@@ -249,6 +249,20 @@ export async function listRefundsForCharge(chargeId: string): Promise<Stripe.Ref
 }
 
 /**
+ * #3653: every refund on one PaymentIntent - the provider evidence an organiser
+ * child's refund replay reads before it asks Stripe again, because Stripe keeps
+ * an idempotency key for only 24 hours.
+ */
+export async function listRefundsForPaymentIntent(paymentIntentId: string): Promise<Stripe.Refund[]> {
+  const stripe = await getStripe();
+  const refunds: Stripe.Refund[] = [];
+  for await (const refund of stripe.refunds.list({ payment_intent: paymentIntentId, limit: 100 })) {
+    refunds.push(refund);
+  }
+  return refunds;
+}
+
+/**
  * Retrieve a PaymentIntent by ID.
  */
 export async function getPaymentIntent(
