@@ -486,10 +486,10 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/switch-to-internet-banking/route.ts:118",
   "src/lib/adult-member-hosting-review.ts:3256",
   "src/lib/booking-batch-modification-service.ts:1004",
-  "src/lib/booking-cancel.ts:512",
+  "src/lib/booking-cancel.ts:513",
   "src/lib/booking-date-modification-service.ts:393",
-  "src/lib/booking-delete.ts:124",
-  "src/lib/booking-delete.ts:73",
+  "src/lib/booking-delete.ts:119",
+  "src/lib/booking-delete.ts:68",
   "src/lib/booking-email-authority.ts:115",
   "src/lib/booking-guest-removal-service.ts:456",
   "src/lib/booking-guest-removal-service.ts:792",
@@ -520,8 +520,8 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1226",
-  "src/lib/payment-recovery.ts:2624",
-  "src/lib/payment-recovery.ts:2676",
+  "src/lib/payment-recovery.ts:2619",
+  "src/lib/payment-recovery.ts:2671",
   "src/lib/xero-admin-health.ts:372",
 ];
 
@@ -796,7 +796,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // build. The walk cannot root it only because the literal names no delegate.
   "src/lib/member-lodge-roster.ts:111",
   "src/lib/payment-link.ts:81",
-  "src/lib/payment-reconciliation.ts:90",
+  "src/lib/payment-reconciliation.ts:91",
   "src/lib/stuck-state-dashboard.ts:616",
   "src/lib/xero-booking-repair-types.ts:190",
   "src/lib/xero-inbound/settlement-conflicts.ts:153",

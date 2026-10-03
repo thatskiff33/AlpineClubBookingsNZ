@@ -1420,7 +1420,7 @@ describe("cancelBooking credit refunds", () => {
     expect(mocks.paymentTransactionFindFirst).toHaveBeenCalledWith({
       where: {
         paymentId: "payment_fold",
-        status: { in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"] },
+        status: { in: ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"] },
       },
       select: { id: true },
     });

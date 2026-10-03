@@ -50,6 +50,7 @@ import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants"
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
 import { formatCents } from "@/lib/utils";
+import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { finishApprovedLateCaptureRefundAfterReplay } from "@/lib/late-capture-refund-credit-note";
 import { holdSupersededLateCaptureIfRequired } from "@/lib/late-capture-refund-hold";
 
@@ -71,12 +72,6 @@ if (RETRY_BACKOFF_MINUTES.length !== MAX_PAYMENT_RECOVERY_ATTEMPTS) {
     "RETRY_BACKOFF_MINUTES must have exactly MAX_PAYMENT_RECOVERY_ATTEMPTS entries",
   );
 }
-
-const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>([
-  PaymentStatus.SUCCEEDED,
-  PaymentStatus.PARTIALLY_REFUNDED,
-  PaymentStatus.REFUNDED,
-]);
 
 /**
  * THE THREE STATUS SETS THIS MODULE READS, EACH SPELLED ONCE (#3220,
@@ -258,7 +253,7 @@ async function enqueueLedgerRefundRecovery({
     (transaction) =>
       transaction.source === PaymentSource.STRIPE &&
       Boolean(transaction.stripePaymentIntentId) &&
-      CAPTURED_TRANSACTION_STATUSES.has(transaction.status),
+      isCapturedTransactionStatus(transaction.status),
   );
   const representativePaymentIntentId =
     capturedTransaction?.stripePaymentIntentId ??
@@ -1472,7 +1467,7 @@ async function cancelStrandedAdditionalIntentForDeadRecovery(
      * also saves a provider round trip on the one case where getting it wrong
      * would take money back off a member who paid.
      */
-    if (CAPTURED_TRANSACTION_STATUSES.has(request.status)) {
+    if (isCapturedTransactionStatus(request.status)) {
       logger.info(
         {
           operationId: operation.id,
@@ -1914,7 +1909,7 @@ async function processRefundSupersededPaymentOperation(
     throw new Error("Payment transaction not found for refund recovery");
   }
 
-  if (!CAPTURED_TRANSACTION_STATUSES.has(transaction.status)) {
+  if (!isCapturedTransactionStatus(transaction.status)) {
     await markSupersededTransactionSucceeded({
       operation,
       amountCents: Math.max(transaction.amountCents, operation.amountCents),
@@ -2091,7 +2086,7 @@ async function processBookingModificationRefundOperation(
   if (!plan) {
     const refundableTransactions = payment.transactions
       .filter((transaction) =>
-        CAPTURED_TRANSACTION_STATUSES.has(transaction.status),
+        isCapturedTransactionStatus(transaction.status),
       )
       .filter(
         (transaction) =>

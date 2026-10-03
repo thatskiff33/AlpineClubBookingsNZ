@@ -74,6 +74,7 @@ import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment
 import { bookingStayHasStarted } from "@/lib/booking-edit-policy";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 // #3497: the cancellable sets live in `booking-cancel-eligibility.ts`, a leaf
 // module the member-facing doors also read — one home, no copy.
@@ -1514,7 +1515,7 @@ async function performBookingCancellation(
         where: {
           paymentId: payment.id,
           status: {
-            in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"],
+            in: [...CAPTURED_TRANSACTION_STATUS_LIST],
           },
         },
         orderBy: { createdAt: "asc" },
@@ -2460,7 +2461,7 @@ export async function paymentEligibleForPaidCancelPath(
     where: {
       paymentId: payment.id,
       status: {
-        in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"],
+        in: [...CAPTURED_TRANSACTION_STATUS_LIST],
       },
     },
     select: { id: true },
@@ -2491,7 +2492,7 @@ async function paymentHasCaptureEvidence(
     where: {
       paymentId: payment.id,
       status: {
-        in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"],
+        in: [...CAPTURED_TRANSACTION_STATUS_LIST],
       },
     },
     select: { id: true },
