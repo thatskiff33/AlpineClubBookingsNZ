@@ -680,29 +680,19 @@ async function prepareManualSettlement(
   //     the absence of Xero evidence as WHERE clauses, so a concurrent writer
   //     that moved any of them yields count 0 -> 409 instead of a write whose
   //     third term is stale. That is the real runtime net.
-  //  3. AFTER THE FACT, AND ONLY NARROWLY. `auditIbAppliedCreditStrands`
-  //     (src/lib/ib-hold-clearing-audit.ts) recomputes
-  //     `amountCents + creditAppliedCents - finalPriceCents` over COMMITTED
-  //     data and now reports the uncollected addition beside it, so where it
-  //     DOES report, a residual that is not exactly the uncollected delta is
-  //     visible to an operator. It is the only one of the three that can fire
-  //     at all, because it is not reading back its own writes.
-  //
-  //     It is NOT a general after-the-fact net for this settle, and nothing
-  //     later should be built on the assumption that it is. Its enumeration is
-  //     narrow on three counts:
-  //       * it reports a payment only when that booking still carries
-  //         UN-ALLOCATED applied credit — `deriveIbAppliedCreditStrandFinding`
-  //         returns null on `ledgerAppliedCents <= 0`, and the ledger sum counts
-  //         BOOKING_APPLIED rows with `xeroCreditNoteId: null` only. An ordinary
-  //         "not covered" cash settlement on a booking with no applied credit
-  //         therefore produces NO finding, and its residual is never printed;
-  //       * it scans INTERNET_BANKING payments only; and
-  //       * it is an operator-run script (scripts/audit-ib-hold-clearing.ts),
-  //         not a scheduled job or an alert — nothing fires unless somebody runs
-  //         it and reads the output.
-  //     So (1) and (2) are what actually keep this settle honest; (3) is a
-  //     reading aid for the credit-strand population it already enumerates.
+  //  3. AFTER THE FACT. The booking-ledger census (#3583, `INV-MONEY-037`,
+  //     `pnpm run booking-ledger:census`) reads COMMITTED data and checks what
+  //     this settle wrote against the lines it posted, for every booking:
+  //     `amountCents` against the captures (the CASH_RECORDED line is this
+  //     settled figure), `creditAppliedCents` against the applied credit, and
+  //     the uncollected addition against `max(0, owed(b))` while its ask is
+  //     live. A booking whose figures disagree is listed with both. It is the
+  //     only one of the three that can fire at all, because it is not reading
+  //     back its own writes — and it is an operator-run command, not a
+  //     scheduled job or an alert, so (1) and (2) are what keep this settle
+  //     honest at the moment it runs. It replaced #1620's
+  //     `ib-hold-clearing-audit.ts` strand scan, which reported this residual
+  //     only for internet-banking payments still carrying unallocated credit.
 
   return {
     /** `finalPriceCents - credit`: everything the booking still owes. */

@@ -2,9 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   auditCardAppliedCreditDoublePays,
   deriveCardAppliedCreditDoublePayFinding,
-  deriveIbAppliedCreditStrandFinding,
   type CardAppliedCreditDoublePayRow,
-  type IbAppliedCreditStrandRow,
 } from "@/lib/ib-hold-clearing-audit";
 import {
   auditIbHoldClearingUnderclears,
@@ -450,107 +448,6 @@ describe("auditIbHoldClearingUnderclears (#3535 scan)", () => {
         ],
       },
     });
-  });
-});
-
-function makeStrandRow(
-  overrides: Partial<IbAppliedCreditStrandRow> = {},
-): IbAppliedCreditStrandRow {
-  return {
-    paymentId: "pay_1",
-    bookingId: "booking_1",
-    bookingStatus: "PAYMENT_PENDING",
-    paymentStatus: "PENDING",
-    amountCents: 10000,
-    creditAppliedCents: 3000,
-    finalPriceCents: 10000,
-    ledgerAppliedCents: 3000,
-    // #2397: no upward-modification delta on this payment — the ordinary shape,
-    // where a mirror residual has no legitimate cause and IS drift.
-    additionalAmountCents: 0,
-    additionalPaymentStatus: null,
-    ...overrides,
-  };
-}
-
-describe("deriveIbAppliedCreditStrandFinding (#1620 enumeration)", () => {
-  it("returns null when the booking carries no applied credit", () => {
-    expect(
-      deriveIbAppliedCreditStrandFinding(
-        makeStrandRow({ ledgerAppliedCents: 0, creditAppliedCents: 0 }),
-      ),
-    ).toBeNull();
-  });
-
-  it("flags a not-yet-paid IB booking as a PENDING (unrealized) strand", () => {
-    const finding = deriveIbAppliedCreditStrandFinding(makeStrandRow());
-    expect(finding).not.toBeNull();
-    expect(finding?.realized).toBe(false);
-    expect(finding?.strandExposureCents).toBe(3000);
-  });
-
-  it("flags a paid IB booking as a REALIZED double-pay", () => {
-    const finding = deriveIbAppliedCreditStrandFinding(
-      makeStrandRow({ paymentStatus: "SUCCEEDED", bookingStatus: "PAID" }),
-    );
-    expect(finding?.realized).toBe(true);
-    expect(finding?.strandExposureCents).toBe(3000);
-  });
-
-  it("surfaces the stale mirror on a switched (card-origin) payment", () => {
-    // Switch overwrote amountCents → finalPrice and never set creditAppliedCents,
-    // yet the BOOKING_APPLIED ledger consumed 3000. Mirror is stale by 3000; the
-    // internal payment invariant (amount + credit − final) still nets to 0.
-    const finding = deriveIbAppliedCreditStrandFinding(
-      makeStrandRow({
-        creditAppliedCents: 0,
-        amountCents: 10000,
-        ledgerAppliedCents: 3000,
-      }),
-    );
-    expect(finding?.mirrorLedgerMismatchCents).toBe(3000);
-    expect(finding?.mirrorInvariantDeltaCents).toBe(0);
-    expect(finding?.strandExposureCents).toBe(3000);
-  });
-
-  it("shows a consistent mirror on a create-time IB booking", () => {
-    // amountCents = effective (7000), creditApplied mirror = ledger = 3000.
-    const finding = deriveIbAppliedCreditStrandFinding(
-      makeStrandRow({ amountCents: 7000, creditAppliedCents: 3000 }),
-    );
-    expect(finding?.mirrorLedgerMismatchCents).toBe(0);
-    expect(finding?.mirrorInvariantDeltaCents).toBe(0);
-  });
-
-  it("names the uncollected addition that legitimately explains a negative residual (#2397)", () => {
-    // A cash settlement the admin said did NOT cover a $21.00 addition: the
-    // club recorded $79.00 against a $100.00 booking with $0 credit, so the
-    // residual is −$21.00 and the generalised mirror
-    // (amount + credit + uncollected = price) holds exactly. Without the extra
-    // reported beside it, an operator reads −$21.00 with nothing naming its
-    // cause and treats correct books as drift.
-    const finding = deriveIbAppliedCreditStrandFinding(
-      makeStrandRow({
-        amountCents: 7900,
-        creditAppliedCents: 0,
-        finalPriceCents: 10000,
-        ledgerAppliedCents: 3000,
-        additionalAmountCents: 2100,
-        additionalPaymentStatus: "PENDING",
-      }),
-    );
-    expect(finding?.mirrorInvariantDeltaCents).toBe(-2100);
-    expect(finding?.uncollectedAdditionalCents).toBe(2100);
-  });
-
-  it("reports a COLLECTED addition as no residual cause at all (#2397)", () => {
-    const finding = deriveIbAppliedCreditStrandFinding(
-      makeStrandRow({
-        additionalAmountCents: 2100,
-        additionalPaymentStatus: "SUCCEEDED",
-      }),
-    );
-    expect(finding?.uncollectedAdditionalCents).toBe(0);
   });
 });
 
