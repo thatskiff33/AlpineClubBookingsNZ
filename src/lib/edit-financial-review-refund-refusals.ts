@@ -81,3 +81,15 @@ export const REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE =
  */
 export const REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE =
   "That is more than this booking's card payment can give back - check the amount against the booking's payment history, or hand the money back another way and dismiss this task with a note saying what was done.";
+
+/**
+ * #3791 (owner decision 2): a review completed after the booking was cancelled
+ * nets its share against the credit the cancellation already restored, which
+ * means re-running the cancellation's tier on what would have been applied had
+ * the share come back first. That is only honest where the policy in force
+ * still reproduces the restore actually made. When it does not - the policy was
+ * edited since, or the restore was made under some other rule - no figure here
+ * can be shown to be right, so the task stays OPEN rather than guessing.
+ */
+export const REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE =
+  "This booking was cancelled and its account credit restored under terms the current cancellation policy no longer reproduces, so the share cannot be netted against that restore automatically. Work out what is still owed, hand it back another way, then dismiss this task with a note saying what was done.";

@@ -1967,7 +1967,8 @@ describe("processQueuedXeroOutboxOperations", () => {
           status: "PENDING",
           startedAt: null,
           lastErrorCode: null,
-          lastErrorMessage: null,
+          // #3791: the busy reason stays on the requeued row.
+          lastErrorMessage: expect.stringMatching(/\S/),
         },
       });
     }
@@ -2008,7 +2009,7 @@ describe("processQueuedXeroOutboxOperations", () => {
         status: "PENDING",
         startedAt: null,
         lastErrorCode: null,
-        lastErrorMessage: null,
+        lastErrorMessage: expect.stringMatching(/\S/),
       },
     });
 
