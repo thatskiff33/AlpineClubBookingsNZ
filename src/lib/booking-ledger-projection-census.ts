@@ -4,7 +4,7 @@
  *
  * Until the reads move (#3584), `Booking.finalPriceCents` and the five
  * `Payment` money columns are PROJECTIONS of the booking ledger. This module
- * states the six identities that say so and judges one booking against them,
+ * states the seven identities that say so and judges one booking against them,
  * from a snapshot row it is handed. It reads nothing and writes nothing; the
  * one-snapshot read is `booking-ledger-projection-census-store.ts`, the
  * operator command `scripts/booking-ledger-census.ts`.
@@ -62,7 +62,9 @@ import {
   refundedComponents,
   retainedChargeShareCents,
   sumKinds,
+  unallocatedAppliedCreditCents,
   unpostedCredits,
+  unpostedSettlements,
   type BookingLedgerCensusClass,
   type BookingLedgerCensusRow,
   type BookingLedgerCoverageKind,
@@ -236,7 +238,7 @@ function unpostedEdits(row: BookingLedgerCensusRow): { priceCents: number; chang
   return { priceCents, changeFeeCents };
 }
 
-/** Judge one booking. Pure: the snapshot row in, the six results, coverage and integrity out. */
+/** Judge one booking. Pure: the snapshot row in, the seven results, coverage and integrity out. */
 export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): BookingLedgerEvaluation {
   const { booking, payment, lines } = row;
   const coverage = new Set<BookingLedgerCoverageKind>();
@@ -253,6 +255,7 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
     const money = hasMoneyColumns(row);
     const offLedger = money && isGroupSettlementOffLedger(row);
     if (money && !offLedger) coverage.add("NO_LINES");
+    if (unpostedCredits(row).length > 0) coverage.add("UNPOSTED_CREDIT");
     return {
       ...base,
       identities: BOOKING_LEDGER_IDENTITIES.map(notApplicable),
@@ -373,6 +376,7 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
   }
 
   if (unpostedCredits(row).length > 0) coverage.add("UNPOSTED_CREDIT");
+  if (unpostedSettlements(row).count > 0) coverage.add("UNPOSTED_SETTLEMENT");
   for (const identity of identities) {
     for (const component of identity.explainedBy) if (isCoverageName(component.name)) coverage.add(component.name);
   }
@@ -392,12 +396,7 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
 /** #1620's figure, kept as information under the credit identity (orchestrator decision C). */
 function ibUnallocatedApplied(row: BookingLedgerCensusRow): BookingLedgerEvaluation["info"]["ibUnallocatedAppliedCredit"] {
   if (row.payment?.source !== "INTERNET_BANKING" || row.booking.status === "CANCELLED") return null;
-  const cents = Math.max(
-    0,
-    -row.credits
-      .filter((credit) => credit.type === "BOOKING_APPLIED" && credit.appliedToBookingId === row.booking.id && credit.xeroCreditNoteId === null)
-      .reduce((sum, credit) => sum + credit.amountCents, 0),
-  );
+  const cents = unallocatedAppliedCreditCents(row);
   return cents > 0 ? { realized: isCapturedTransactionStatus(row.payment.status), cents } : null;
 }
 

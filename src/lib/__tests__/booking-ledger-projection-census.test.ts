@@ -460,13 +460,15 @@ describe("the review's two gate escapes are closed (fix round of #3583)", () => 
     const posted = evaluateBookingLedgerIdentities(reductionCredited(true));
     expect(posted.identities.find((result) => result.identity === "OWED")?.status).toBe("AGREE");
     expect(posted.identities.find((result) => result.identity === "REFUNDED")?.explainedBy).toEqual([{ name: "REFUND_MIRROR_CREDIT_ALLOCATION", cents: 5_000 }]);
-    expect(report([reductionCredited(true)]).verdict).toBe("GATE_OPEN");
+    // The class instance is the owner's to acknowledge (design §6); once it is, nothing holds the gate.
+    expect(report([reductionCredited(true)], [{ bookingId: B, class: "REFUND_MIRROR_CREDIT_ALLOCATION", cents: 5_000, reference: "x" }]).verdict).toBe("GATE_OPEN");
   });
 
-  it("S2: #1641's double pay is KNOWN_DEFECT_HISTORY and holds the gate, on CREDIT_APPLIED and on OWED", () => {
+  it("S2: #1641's double-pay shape is KNOWN_DEFECT_HISTORY and holds the gate, on CREDIT_APPLIED and on OWED", () => {
     const evaluation = evaluateBookingLedgerIdentities(probeDoublePay());
-    expect(evaluation.identities.find((result) => result.identity === "CREDIT_APPLIED")?.explainedBy).toEqual([{ name: "KNOWN_DEFECT_HISTORY", cents: -4_000, detail: "#1641" }]);
-    expect(evaluation.identities.find((result) => result.identity === "OWED")).toMatchObject({ status: "CLASSIFIED", columnCents: 0, ledgerCents: -4_000, explainedBy: [{ name: "KNOWN_DEFECT_HISTORY", cents: 4_000, detail: "#1641" }] });
+    const detail = expect.stringContaining("#1641 shape");
+    expect(evaluation.identities.find((result) => result.identity === "CREDIT_APPLIED")?.explainedBy).toEqual([{ name: "KNOWN_DEFECT_HISTORY", cents: -4_000, detail }]);
+    expect(evaluation.identities.find((result) => result.identity === "OWED")).toMatchObject({ status: "CLASSIFIED", columnCents: 0, ledgerCents: -4_000, explainedBy: [{ name: "KNOWN_DEFECT_HISTORY", cents: 4_000, detail }] });
     const summary = report([probeDoublePay()]);
     expect(summary.verdict).toBe("GATE_CLOSED");
     expect(summary.gateClosedBecause).toEqual(["1 booking(s) in KNOWN_DEFECT_HISTORY, which holds the gate"]);
@@ -480,6 +482,135 @@ describe("the review's two gate escapes are closed (fix round of #3583)", () => 
     const rogue = { ...subject, lines: ledger.lines, tasks: [{ id: "task-x", kind: "CANCELLED_BOOKING_HAND_BACK" as const, status: "COMPLETED" as const, amountCents: 1_000, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null }] };
     expect(identity(rogue, "REFUNDED").status).toBe("AGREE");
     expect(identity(rogue, "OWED")).toMatchObject({ status: "DISAGREE", deltaCents: -1_000 });
+  });
+});
+
+/** The second review's H1 probe: $190 by card; refund r1 $45 FAILED, its retry r2 $45 SUCCEEDED, r2's CARD_REFUND line missing. */
+function retriedRefundUnposted(): BookingLedgerCensusRow {
+  const subject = cardPaid();
+  return {
+    ...subject,
+    transactions: [txn("t1", 19_000, { status: "PARTIALLY_REFUNDED", refundedAmountCents: 4_500 })],
+    refunds: [
+      { id: "r1", status: "failed", amountCents: 4_500, paymentTransactionId: "t1" },
+      { id: "r2", status: "succeeded", amountCents: 4_500, paymentTransactionId: "t1" },
+    ],
+    payment: payment({ status: "PARTIALLY_REFUNDED", refundedAmountCents: 4_500 }),
+  };
+}
+
+const groupChild = (overrides: Partial<Omit<BookingLedgerCensusRow, "lines">>) =>
+  row({ lines: [], booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: true, finalPriceCents: 19_000 }, ...overrides });
+
+describe("the second review's gate escapes are closed (fix round 2 of #3583)", () => {
+  it("H1: a failed refund with no line of its own explains nothing, and the retry's missing line is UNPOSTED_SETTLEMENT", () => {
+    const evaluation = evaluateBookingLedgerIdentities(retriedRefundUnposted());
+    expect(evaluation.coverage).toContain("UNPOSTED_SETTLEMENT");
+    expect(evaluation.identities.find((result) => result.identity === "REFUNDED")).toMatchObject({
+      status: "COVERAGE",
+      deltaCents: 4_500,
+      explainedBy: [{ name: "UNPOSTED_SETTLEMENT", cents: 4_500 }],
+    });
+    expect(evaluation.identities.find((result) => result.identity === "OWED")).toMatchObject({
+      status: "COVERAGE",
+      deltaCents: 4_500,
+      explainedBy: [{ name: "UNPOSTED_SETTLEMENT", cents: 4_500 }],
+    });
+    const summary = report([retriedRefundUnposted()]);
+    expect(summary.classes.REFUND_MIRROR_FAILED_REFUND.instances).toEqual([]);
+    expect(summary.verdict).toBe("GATE_CLOSED");
+    expect(summary.gateClosedBecause).toContain("1 booking(s) with coverage gap UNPOSTED_SETTLEMENT");
+    // Without the retry's row the column's $45 is unexplained: the failed refund alone is a disagreement, not a class.
+    const alone = { ...retriedRefundUnposted(), refunds: [{ id: "r1", status: "failed", amountCents: 4_500, paymentTransactionId: "t1" }] };
+    expect(identity(alone, "REFUNDED")).toMatchObject({ status: "DISAGREE", deltaCents: 4_500 });
+    // With r2's line posted by the real planner, every identity agrees.
+    const ledger = new Ledger();
+    ledger.lines = [...(retriedRefundUnposted().lines as Line[])];
+    settle(ledger, retriedRefundUnposted(), false, LATER);
+    const posted = evaluateBookingLedgerIdentities({ ...retriedRefundUnposted(), lines: ledger.lines });
+    expect(posted.identities.filter((result) => result.status !== "AGREE" && result.status !== "NOT_APPLICABLE")).toEqual([]);
+    expect(posted.coverage).toEqual([]);
+  });
+
+  it("H1: a captured transaction with no capture line is UNPOSTED_SETTLEMENT on CAPTURED and OWED", () => {
+    const subject = cardPaid();
+    const uncaptured = { ...subject, lines: subject.lines.filter((line) => line.kind !== "CARD_CAPTURE") };
+    const evaluation = evaluateBookingLedgerIdentities(uncaptured);
+    expect(evaluation.coverage).toEqual(["UNPOSTED_SETTLEMENT"]);
+    expect(evaluation.identities.find((result) => result.identity === "CAPTURED")).toMatchObject({ status: "COVERAGE", explainedBy: [{ name: "UNPOSTED_SETTLEMENT", cents: 19_000 }] });
+    expect(evaluation.identities.find((result) => result.identity === "OWED")).toMatchObject({ status: "COVERAGE", explainedBy: [{ name: "UNPOSTED_SETTLEMENT", cents: -19_000 }] });
+    expect(report([uncaptured]).verdict).toBe("GATE_CLOSED");
+  });
+
+  it("M2: a group child with a credit row of its own is not GROUP_SETTLEMENT_OFF_LEDGER — it is NO_LINES and UNPOSTED_CREDIT", () => {
+    const cancelled = groupChild({
+      booking: { id: B, status: "CANCELLED", deletedAt: null, organiserSettled: true, finalPriceCents: 19_000 },
+      payment: null,
+      credits: [credit("c-cancel", "CANCELLATION_REFUND", 5_000, { description: cancellationCreditDescription(B) })],
+    });
+    const applied = groupChild({ payment: payment({ creditAppliedCents: 4_000 }), credits: [credit("c-applied", "BOOKING_APPLIED", -4_000)] });
+    for (const child of [cancelled, applied]) {
+      const evaluation = evaluateBookingLedgerIdentities(child);
+      expect(evaluation.bookingClass).toBeNull();
+      expect(evaluation.coverage.sort()).toEqual(["NO_LINES", "UNPOSTED_CREDIT"]);
+      const summary = report([child]);
+      expect(summary.classes.GROUP_SETTLEMENT_OFF_LEDGER.bookings).toBe(0);
+      expect(summary.verdict).toBe("GATE_CLOSED");
+    }
+  });
+
+  it("M2: a group child whose payment carries a credit, refund or change-fee figure of its own is not off-ledger either", () => {
+    for (const column of ["creditAppliedCents", "refundedAmountCents", "changeFeeCents"] as const) {
+      const evaluation = evaluateBookingLedgerIdentities(groupChild({ payment: payment({ [column]: 1_000 }) }));
+      expect(evaluation, column).toMatchObject({ bookingClass: null, coverage: ["NO_LINES"] });
+    }
+  });
+
+  it("M3: a PAID booking whose payment SUCCEEDED beside a still-pending primary is a disagreement, not NOTHING_CAPTURED", () => {
+    const subject = row({ lines: confirmedLedger().lines, transactions: [txn("t1", 19_000, { status: "PENDING" })] });
+    const evaluation = evaluateBookingLedgerIdentities(subject);
+    expect(evaluation.identities.find((result) => result.identity === "CAPTURED")).toMatchObject({ status: "DISAGREE", deltaCents: 19_000, explainedBy: [] });
+    expect(evaluation.identities.find((result) => result.identity === "OWED")).toMatchObject({ status: "DISAGREE", deltaCents: -19_000, explainedBy: [] });
+    const summary = report([subject]);
+    expect(summary.classes.NOTHING_CAPTURED.instances).toEqual([]);
+    expect(summary.verdict).toBe("GATE_CLOSED");
+    // Not paid, the payment not captured either: the same rows are NOTHING_CAPTURED.
+    const unpaid = { ...subject, booking: { ...subject.booking, status: "PAYMENT_PENDING" as const }, payment: payment({ status: "PENDING" }) };
+    expect(identity(unpaid, "CAPTURED")).toMatchObject({ status: "CLASSIFIED", explainedBy: [{ name: "NOTHING_CAPTURED", cents: 19_000 }] });
+    // Paid-like, or the payment's own status captured, and it is not.
+    expect(identity({ ...unpaid, payment: payment({ status: "SUCCEEDED" }) }, "CAPTURED").status).toBe("DISAGREE");
+    expect(identity({ ...unpaid, booking: { ...unpaid.booking, status: "PAID" as const } }, "CAPTURED").status).toBe("DISAGREE");
+  });
+
+  it("M4: on OWED a legacy refund no line records is coverage (UNPOSTED_LEGACY_REFUND), not a class; on REFUNDED it stays the mirror class", () => {
+    const evaluation = evaluateBookingLedgerIdentities(legacySeed());
+    expect(evaluation.identities.find((result) => result.identity === "OWED")).toMatchObject({
+      status: "COVERAGE",
+      deltaCents: 2_000,
+      explainedBy: [{ name: "UNPOSTED_LEGACY_REFUND", cents: 2_000 }],
+    });
+    expect(evaluation.identities.find((result) => result.identity === "REFUNDED")).toMatchObject({ status: "CLASSIFIED", explainedBy: [{ name: "REFUND_MIRROR_LEGACY_SEED", cents: 2_000 }] });
+    expect(evaluation.coverage).toEqual(["UNPOSTED_LEGACY_REFUND"]);
+    const summary = report([legacySeed()], [{ bookingId: B, class: "REFUND_MIRROR_LEGACY_SEED", cents: 2_000, reference: "x" }]);
+    expect(summary.verdict).toBe("GATE_CLOSED");
+    expect(summary.gateClosedBecause).toEqual(["1 booking(s) with coverage gap UNPOSTED_LEGACY_REFUND"]);
+    // A cent either way, or the legacy evidence removed, and OWED disagrees.
+    for (const by of [1, -1] as const) expect(identity(bumpPayment(legacySeed(), "refundedAmountCents", by), "OWED").status).toBe("DISAGREE");
+    expect(identity({ ...legacySeed(), transactions: legacySeed().transactions.map((t) => ({ ...t, reason: null })) }, "OWED").status).toBe("DISAGREE");
+  });
+
+  it("L5: an instance of a class the owner has not decided holds the gate until acknowledged to the cent, and the count prints beside the verdict", () => {
+    const open = report([cashCancelled("OPEN")]);
+    expect(open.verdict).toBe("GATE_CLOSED");
+    expect(open.unacknowledgedClassInstances).toBe(1);
+    expect(open.classes.IN_FLIGHT_HAND_BACK).toMatchObject({ gateRule: "ACKNOWLEDGE", holdsGate: true, unacknowledged: 1 });
+    expect(open.gateClosedBecause).toEqual(["1 unacknowledged instance(s) of IN_FLIGHT_HAND_BACK on 1 booking(s): the owner acknowledges each on #3583"]);
+    const signed = report([cashCancelled("OPEN")], [{ bookingId: B, class: "IN_FLIGHT_HAND_BACK", cents: 9_500, reference: "hand-back in progress" }]);
+    expect(signed).toMatchObject({ verdict: "GATE_OPEN", unacknowledgedClassInstances: 0 });
+    // An in-flight figure that moves after sign-off is stale and holds again: it cannot sit in flight forever unseen.
+    const moved = report([cashCancelled("OPEN")], [{ bookingId: B, class: "IN_FLIGHT_HAND_BACK", cents: 9_000, reference: "hand-back in progress" }]);
+    expect(moved.verdict).toBe("GATE_CLOSED");
+    expect(moved.acknowledged.stale).toHaveLength(1);
   });
 });
 
@@ -676,6 +807,7 @@ const withTasks = (status: "OPEN" | "COMPLETED" | "DISMISSED") => (s: BookingLed
 const unstamped = (s: BookingLedgerCensusRow) => ({ ...s, credits: s.credits.map((c) => ({ ...c, xeroCreditNoteId: null })) });
 const stamped = (s: BookingLedgerCensusRow) => ({ ...s, credits: s.credits.map((c) => ({ ...c, xeroCreditNoteId: "cn-allocated" })) });
 const onCard = (s: BookingLedgerCensusRow) => ({ ...s, payment: { ...s.payment!, source: "STRIPE" as const } });
+const withoutRefundLines = (s: BookingLedgerCensusRow) => ({ ...s, lines: s.lines.filter((line) => line.anchorKind !== "PAYMENT_REFUND") });
 
 describe("every named class lands in its class; a cent either way, or its evidence removed, is a generic disagreement", () => {
   const cases: Array<[string, BookingLedgerIdentity, () => BookingLedgerCensusRow, Mutate, (s: BookingLedgerCensusRow) => BookingLedgerCensusRow, string?]> = [
@@ -693,10 +825,10 @@ describe("every named class lands in its class; a cent either way, or its eviden
       (s, by) => bumpPayment(s, "refundedAmountCents", by),
       (s) => ({ ...s, credits: s.credits.map((c) => ({ ...c, description: `Internet Banking payment credit for booking ${B}` })) }),
     ],
-    ["REFUND_MIRROR_FAILED_REFUND", "REFUNDED", failedRefund, (s, by) => bumpPayment(s, "refundedAmountCents", by), (s) => ({ ...s, refunds: s.refunds.map((r) => ({ ...r, status: "succeeded" })) })],
-    ["REFUND_MIRROR_FAILED_REFUND", "OWED", failedRefund, (s, by) => bumpPayment(s, "refundedAmountCents", by), (s) => ({ ...s, refunds: s.refunds.map((r) => ({ ...r, status: "succeeded" })) })],
+    // Its evidence is the refund's own line, posted and then reversed: without it, the failure explains nothing.
+    ["REFUND_MIRROR_FAILED_REFUND", "REFUNDED", failedRefund, (s, by) => bumpPayment(s, "refundedAmountCents", by), withoutRefundLines],
+    ["REFUND_MIRROR_FAILED_REFUND", "OWED", failedRefund, (s, by) => bumpPayment(s, "refundedAmountCents", by), withoutRefundLines],
     ["REFUND_MIRROR_LEGACY_SEED", "REFUNDED", legacySeed, (s, by) => bumpPayment(s, "refundedAmountCents", by), (s) => ({ ...s, transactions: s.transactions.map((t) => ({ ...t, reason: null })) })],
-    ["REFUND_MIRROR_LEGACY_SEED", "OWED", legacySeed, (s, by) => bumpPayment(s, "refundedAmountCents", by), (s) => ({ ...s, transactions: s.transactions.map((t) => ({ ...t, reason: null })) })],
     ["V3_LEGACY_HAND_BACK", "REFUNDED", v3, (s, by) => bumpPayment(s, "refundedAmountCents", by), (s) => ({ ...s, booking: { ...s.booking, deletedAt: null } })],
     [
       "CHANGE_FEE_REVERSED_BY_CANCELLATION",
@@ -731,7 +863,7 @@ describe("every named class lands in its class; a cent either way, or its eviden
     const classified = identity(build(), which);
     expect(classified.status).toBe("CLASSIFIED");
     expect(classified.explainedBy.map((component) => component.name)).toEqual([name]);
-    if (detail) expect(classified.explainedBy[0]?.detail).toBe(detail);
+    if (detail) expect(classified.explainedBy[0]?.detail).toContain(detail);
     expect(classified.explainedBy.reduce((sum, component) => sum + component.cents, 0)).toBe(classified.deltaCents);
     for (const by of [1, -1] as const) {
       const generic = identity(plusCent(build(), by), which);
@@ -976,8 +1108,17 @@ describe("the owner's acknowledgements", () => {
 });
 
 describe("the verdict", () => {
-  it("GATE_OPEN on agreement and on classes that do not hold the gate", () => {
-    expect(report([cardPaid(), raisedWithAsk(), cashCancelled("OPEN"), retainedShare(false)]).verdict).toBe("GATE_OPEN");
+  it("GATE_OPEN on agreement, and on class instances the owner has acknowledged to the cent", () => {
+    expect(report([cardPaid(), raisedWithAsk()]).verdict).toBe("GATE_OPEN");
+    const acknowledged = report(
+      [cardPaid(), raisedWithAsk(), cashCancelled("OPEN"), retainedShare(false)],
+      [
+        { bookingId: B, class: "IN_FLIGHT_HAND_BACK", cents: 9_500, reference: "hand-back in progress" },
+        { bookingId: B, class: "RETAINED_REVIEW_SHARE", cents: 2_500, reference: "share agreed, ask outstanding" },
+      ],
+    );
+    expect(acknowledged.unacknowledgedClassInstances).toBe(0);
+    expect(acknowledged.verdict).toBe("GATE_OPEN");
   });
 
   it("closes on a disagreement, a coverage gap, an integrity finding, or a class the policy says holds it", () => {
@@ -990,11 +1131,12 @@ describe("the verdict", () => {
     expect(defect.gateClosedBecause).toEqual(["1 booking(s) in KNOWN_DEFECT_HISTORY, which holds the gate"]);
   });
 
-  it("the two pending owner decisions are their recommended defaults", () => {
+  it("the owner's two decisions on #3583 (both A) are the policy: KNOWN_DEFECT_HISTORY holds, GROUP_SETTLEMENT_OFF_LEDGER is listed only", () => {
     expect(BOOKING_LEDGER_CENSUS_GATE_POLICY).toEqual({ knownDefectHistoryHoldsGate: true, groupSettlementOffLedgerHoldsGate: false });
     const child = row({ lines: [], booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: true, finalPriceCents: 19_000 } });
     const summary = report([child]);
-    expect(summary.classes.GROUP_SETTLEMENT_OFF_LEDGER).toMatchObject({ holdsGate: false, bookings: 1 });
+    expect(summary.classes.GROUP_SETTLEMENT_OFF_LEDGER).toMatchObject({ gateRule: "OPEN", holdsGate: false, bookings: 1, unacknowledged: 0 });
+    expect(summary.unacknowledgedClassInstances).toBe(0);
     expect(summary.verdict).toBe("GATE_OPEN");
   });
 

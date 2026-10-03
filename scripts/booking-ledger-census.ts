@@ -112,10 +112,11 @@ function summary(report: BookingLedgerCensusReport, format: ClubFormat): string 
   const stats = report.integrity.info.tableStatistics;
   out.push(`  information: ${report.integrity.info.unkeyedLines} line(s) posted before keys existed; table statistics ${stats ? `inserted ${stats.inserts}, updated ${stats.updates}, deleted ${stats.deletes}` : "unavailable"}`);
   out.push("");
-  out.push("Named classes (each list is for the owner to acknowledge):");
+  out.push("Named classes (each instance holds the gate until acknowledged, save a class marked LISTED ONLY):");
   for (const [name, entry] of Object.entries(report.classes)) {
     if (entry.bookings === 0) continue;
-    out.push(`  ${name.padEnd(36)} ${entry.bookings}${entry.holdsGate ? "  HOLDS THE GATE" : ""}${examples([...new Set(entry.instances.map((instance) => instance.bookingId))])}`);
+    const gate = entry.holdsGate ? `  ${entry.unacknowledged} unacknowledged` : "  LISTED ONLY";
+    out.push(`  ${name.padEnd(36)} ${entry.bookings}${gate}${examples([...new Set(entry.instances.map((instance) => instance.bookingId))])}`);
   }
   out.push(`  information: RETAINED_COLLECTED ${report.info.retainedCollected.bookings} (${money(report.info.retainedCollected.cents)})`);
   out.push("");
@@ -133,7 +134,7 @@ function summary(report: BookingLedgerCensusReport, format: ClubFormat): string 
   }
   if (report.disagreements.length > EXAMPLES * 2) out.push("  … (--json for all)");
   out.push("");
-  out.push(`VERDICT: ${report.verdict}`);
+  out.push(`VERDICT: ${report.verdict}   (unacknowledged class instances: ${report.unacknowledgedClassInstances})`);
   for (const reason of report.gateClosedBecause) out.push(`  - ${reason}`);
   return out.join("\n");
 }

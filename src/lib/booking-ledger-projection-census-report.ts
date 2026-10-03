@@ -24,9 +24,10 @@ import {
 import {
   BOOKING_LEDGER_CENSUS_CLASSES,
   BOOKING_LEDGER_COVERAGE_KINDS,
-  classHoldsGate,
+  classGateRule,
   isCoverageName,
   type BookingLedgerCensusClass,
+  type BookingLedgerClassGateRule,
   type BookingLedgerCoverageKind,
 } from "@/lib/booking-ledger-projection-census-classes";
 
@@ -54,7 +55,14 @@ export type BookingLedgerCensusReport = {
     findings: BookingLedgerIntegrityFinding[];
     info: { unkeyedLines: number; tableStatistics: LedgerTableStatistics };
   };
-  classes: Record<BookingLedgerCensusClass, { holdsGate: boolean; bookings: number; instances: Instance[] }>;
+  /**
+   * `holdsGate`: an unacknowledged instance closes the gate (`HOLDS` and
+   * `ACKNOWLEDGE` alike); `unacknowledged` counts those instances.
+   */
+  classes: Record<
+    BookingLedgerCensusClass,
+    { gateRule: BookingLedgerClassGateRule; holdsGate: boolean; bookings: number; instances: Instance[]; unacknowledged: number }
+  >;
   acknowledged: {
     matched: Array<BookingLedgerAcknowledgement & { matched: "DISAGREEMENT" | "CLASS" }>;
     stale: Array<BookingLedgerAcknowledgement & { foundCents: number[] }>;
@@ -68,6 +76,8 @@ export type BookingLedgerCensusReport = {
   disagreements: Array<{ bookingId: string; identity: BookingLedgerIdentity; columnCents: number; ledgerCents: number; deltaCents: number }>;
   verdict: "GATE_OPEN" | "GATE_CLOSED";
   gateClosedBecause: string[];
+  /** Class instances the owner has not acknowledged, of every class that needs it: printed beside the verdict. */
+  unacknowledgedClassInstances: number;
 };
 
 function zeroed<K extends string, V>(keys: readonly K[], make: () => V): Record<K, V> {
@@ -75,10 +85,12 @@ function zeroed<K extends string, V>(keys: readonly K[], make: () => V): Record<
 }
 
 /**
- * THE GATE (owner decision D-3532-1, the plan comment on #3583): zero
- * unclassified, unacknowledged disagreements, zero coverage gaps, zero
- * integrity findings, and no unacknowledged instance of a class the policy
- * says holds it. Every other class is a list the owner acknowledges.
+ * THE GATE (owner decision D-3532-1, the plan comment on #3583, design §6):
+ * zero unclassified, unacknowledged disagreements, zero coverage gaps, zero
+ * integrity findings, no unacknowledged booking in a class that holds it, and
+ * every other class acknowledged by the owner — instance by instance, to the
+ * cent — save `GROUP_SETTLEMENT_OFF_LEDGER`, which the owner decided is listed
+ * only (`classGateRule`).
  */
 export function summarizeBookingLedgerCensus(
   evaluations: readonly BookingLedgerEvaluation[],
@@ -88,8 +100,17 @@ export function summarizeBookingLedgerCensus(
   const identities = zeroed(BOOKING_LEDGER_IDENTITIES, () => ({ applicable: 0, agree: 0, disagree: 0, classified: 0, coverage: 0 }));
   const coverage = zeroed(BOOKING_LEDGER_COVERAGE_KINDS, () => [] as string[]);
   const counts = zeroed(BOOKING_LEDGER_INTEGRITY_KINDS, () => 0);
-  const classes = zeroed(BOOKING_LEDGER_CENSUS_CLASSES, () => ({ holdsGate: false, bookings: 0, instances: [] as Instance[] }));
-  for (const name of BOOKING_LEDGER_CENSUS_CLASSES) classes[name].holdsGate = classHoldsGate(name);
+  const classes = zeroed(BOOKING_LEDGER_CENSUS_CLASSES, () => ({
+    gateRule: "ACKNOWLEDGE" as BookingLedgerClassGateRule,
+    holdsGate: true,
+    bookings: 0,
+    instances: [] as Instance[],
+    unacknowledged: 0,
+  }));
+  for (const name of BOOKING_LEDGER_CENSUS_CLASSES) {
+    classes[name].gateRule = classGateRule(name);
+    classes[name].holdsGate = classes[name].gateRule !== "OPEN";
+  }
   const findings: BookingLedgerIntegrityFinding[] = [];
   let disagreements: BookingLedgerCensusReport["disagreements"] = [];
   const strand = (): Strand => ({ bookings: 0, cents: 0, items: [] });
@@ -181,8 +202,12 @@ export function summarizeBookingLedgerCensus(
     }
   }
 
+  let unacknowledgedClassInstances = 0;
   for (const name of BOOKING_LEDGER_CENSUS_CLASSES) {
     classes[name].bookings = new Set(classes[name].instances.map((instance) => instance.bookingId)).size;
+    if (!classes[name].holdsGate) continue;
+    classes[name].unacknowledged = classes[name].instances.filter((instance) => !acknowledgedInstances.has(instance)).length;
+    unacknowledgedClassInstances += classes[name].unacknowledged;
   }
   const gateClosedBecause: string[] = [];
   if (disagreements.length > 0) gateClosedBecause.push(`${disagreements.length} unclassified disagreement(s)`);
@@ -192,8 +217,14 @@ export function summarizeBookingLedgerCensus(
   if (findings.length > 0) gateClosedBecause.push(`${findings.length} integrity finding(s)`);
   for (const name of BOOKING_LEDGER_CENSUS_CLASSES) {
     if (!classes[name].holdsGate) continue;
-    const holding = new Set(classes[name].instances.filter((instance) => !acknowledgedInstances.has(instance)).map((instance) => instance.bookingId));
-    if (holding.size > 0) gateClosedBecause.push(`${holding.size} booking(s) in ${name}, which holds the gate`);
+    const pending = classes[name].instances.filter((instance) => !acknowledgedInstances.has(instance));
+    if (pending.length === 0) continue;
+    const bookings = new Set(pending.map((instance) => instance.bookingId)).size;
+    gateClosedBecause.push(
+      classes[name].gateRule === "HOLDS"
+        ? `${bookings} booking(s) in ${name}, which holds the gate`
+        : `${pending.length} unacknowledged instance(s) of ${name} on ${bookings} booking(s): the owner acknowledges each on #3583`,
+    );
   }
   if (acknowledged.stale.length > 0) gateClosedBecause.push(`${acknowledged.stale.length} stale acknowledgement(s): the figure moved since it was signed off`);
 
@@ -208,5 +239,6 @@ export function summarizeBookingLedgerCensus(
     disagreements,
     verdict: gateClosedBecause.length === 0 ? "GATE_OPEN" : "GATE_CLOSED",
     gateClosedBecause,
+    unacknowledgedClassInstances,
   };
 }
