@@ -45,7 +45,7 @@ reason: the guest removal's Xero dispatch tells the classifier the organiser
   child refund raises the one credit note - a flag at the call it governs.
 
 file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1725
+lines: 1722
 reason: the guest add sizes its own ask (the fifth ask door), so the refusal of
   an ask on a booking the organiser paid for by card sits where it is sized.
 

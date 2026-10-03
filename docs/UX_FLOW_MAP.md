@@ -352,9 +352,12 @@ page to choose and could then move neither booking.
 A booking the group organiser paid for by card shows no **Return method** choice
 at all (#3653): the price summary says the reduction goes back to the
 organiser's card, and the edit refuses an account-credit request. A change that
-would raise its price is refused with a message to contact the club. The cancel
-dialog likewise offers only the refund to the organiser's card. A child the
-organiser settled by Internet Banking keeps the ordinary choices.
+would raise its price is refused with a message to contact the club; the quote
+shows that message in the price summary and Save stays off, and an officer
+completing a parked edit's review cannot charge the joiner for it either. The
+cancel dialog likewise offers only the refund to the organiser's card, including
+after an earlier reduction was refunded. A child the organiser settled by
+Internet Banking keeps the ordinary choices.
 
 Picking one and saving again applies it. Both bookings move together or neither
 does. Choosing account credit can produce a different figure from the card

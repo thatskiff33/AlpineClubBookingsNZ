@@ -1288,26 +1288,29 @@ Internet Banking path) and **`INV-PAY-103`** (the one card-refund writer).
   the ordinary options.
   - **The debt is written first**, under `lock(1)`: one
     `PaymentRecoveryOperation` per refund, keyed `organiser_child_refund_*`,
-    amount frozen, counted with refunds recorded against the child's payment
-    and the combined capture. An edit over it is refused; a cancellation
+    amount frozen, counted against the child's payment and the combined
+    capture. An edit over it is refused; a cancellation
     clamps.
   - **One disposition, the organiser's card**: no account credit for an edit,
-    a joiner's own cancel or a consent lapse. A price increase is refused.
+    a joiner's own cancel or a consent lapse. Every edit door, quote and
+    review charge refuses a price increase.
   - **The record waits for Stripe.** The `PaymentRefund` (no transaction),
     mirror, Xero refund note, settlement status and close commit in one
     `lock(1)` transaction; the edit door raises no modification note. A replay
-    first looks for Stripe's refund under the key.
+    first finds Stripe's refund by key.
   - **What has gone back** is the larger of the mirror and the child's
     refund rows (`organiserChildRefundedCents`), since a reconcile or Xero
     repair can lower the mirror. A cancellation, organiser's or joiner's,
     tiers what remains less refunds owed through `cancelRefundableBaseCents`
-    ([INV-PAY-018]); the organiser's freezes `{ perChildRefunds }`. A
+    ([INV-PAY-018]); the organiser's freezes `{ perChildRefunds }`. A joiner's
+    cancel after a reduction takes the paid path; behind the group's it refunds
+    nothing more; its frozen figures follow the final amount. A
     pre-#3653 `{childId: cents}` plan and an Internet Banking settlement keep
     `INV-PAY-034`-`037`.
-  - **Only Stripe evidence raises a child's mirror**: the Xero inbound
+  - **Only Stripe evidence raises a child's mirror**: the Xero
     credit-note repair never takes it past the child's recorded refunds.
   - **A pending refund that fails** is taken back out by the payments cron
-    and its debt reopened.
+    and its debt reopened, due after Stripe's 24-hour key window.
   - `pnpm run payments:audit-organiser-child-refunds` lists unbacked mirrors,
     read-only. Home: `organiser-child-refund.ts` and its executor; proven by
     `organiser-child-refund.realdb.test.ts`.

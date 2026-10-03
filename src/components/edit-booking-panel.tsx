@@ -2014,9 +2014,7 @@ export function EditBookingPanel({
                 saving ||
                 quoteLoading ||
                 !quote ||
-                !capacityOk ||
-                // #3653: an increase the save refuses (the organiser paid by card).
-                Boolean(quote.chargeRefusal) ||
+                !capacityOk || Boolean(quote.chargeRefusal) /* #3653 */ ||
                 (settlementRequired && !settlementMethod) ||
                 (linkedMoveSettlementRequired &&
                   linkedMoveChoice === "MOVE_BOTH" &&
