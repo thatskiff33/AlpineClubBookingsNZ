@@ -10,13 +10,17 @@ import { requireAdmin } from "@/lib/session-guards";
 import {
   INTEGRATION_CREDENTIAL_VALUE_MAX_LENGTH,
   setIntegrationCredential,
+  setIntegrationCredentialInTransaction,
 } from "@/lib/integration-credentials";
 import type {
   CredentialActor,
   CredentialRequestContext,
 } from "@/lib/integration-credential-actor";
 import { WeakAuthSecretError } from "@/lib/integration-crypto";
-import { deleteXeroTokens } from "@/lib/xero-token-store";
+import {
+  credentialWriteResetsXeroTokens,
+  withXeroVerifyReset,
+} from "@/lib/xero-verify-reset";
 import { XERO_CREDENTIAL_KEYS, XERO_PROVIDER } from "@/lib/xero-config";
 import {
   STRIPE_PROVIDER,
@@ -163,11 +167,14 @@ async function requireFullAdmin() {
 
 /**
  * Verify-reset (epic decision 6): a credential write clears the provider's
- * verified/connected state and re-arms verification. For Xero, changing the
- * client id/secret invalidates the OAuth app the stored tokens belong to, so
- * the tokens are dropped and the operator must reconnect. Changing only the
- * webhook key does NOT drop tokens (that surfaces as a webhook amber badge in a
- * later lane).
+ * verified/connected state and re-arms verification.
+ *
+ * THE XERO HALF IS NOT HERE ANY MORE (#3454). Destroying the Xero tokens is a
+ * pure database write, so it now commits in the SAME transaction as the
+ * credential write that causes it (`withXeroVerifyReset`, in the POST below):
+ * a crash can no longer leave a saved client secret beside tokens for the old
+ * app, and the token row's audit entry names the credential that caused it.
+ * The Stripe and Google markers below still clear after the write commits.
  *
  * THE ACTOR TRAVELS WITH IT (#2723). A verify-reset is part of the
  * administrator's Save, not a background job, so the marker deletions are
@@ -177,18 +184,10 @@ async function requireFullAdmin() {
  */
 async function applyVerifyReset(
   provider: string,
-  key: string,
   memberId: string,
   request: CredentialRequestContext | undefined,
 ): Promise<void> {
   const actor: CredentialActor = { kind: "admin", memberId };
-  if (
-    provider === XERO_PROVIDER &&
-    (key === XERO_CREDENTIAL_KEYS.clientId ||
-      key === XERO_CREDENTIAL_KEYS.clientSecret)
-  ) {
-    await deleteXeroTokens();
-  }
   // Stripe (epic decision 6): writing ANY Stripe credential — secret,
   // publishable, or the signing secret — drops the webhook-verified marker so a
   // green webhook badge can never survive a credential swap. The connection
@@ -259,16 +258,35 @@ export async function POST(request: Request) {
     // secret (#2723) — this route used to write it two awaits later, so a crash
     // in between left a rewritten credential with no evidence of who did it.
     // The request context travels in so the row keeps its id, IP and user agent.
-    result = await setIntegrationCredential({
-      provider,
-      key,
-      value,
-      actor: { kind: "admin", memberId: guard.memberId },
-      // The form posts the value it wants stored; there is no read-modify-write
-      // here for a second Full Admin to make stale.
-      expect: { expect: "any" },
-      request: requestContext,
-    });
+    // The form posts the value it wants stored; there is no read-modify-write
+    // here for a second Full Admin to make stale, so both writes expect `any`.
+    result = credentialWriteResetsXeroTokens(provider, key)
+      ? await withXeroVerifyReset(
+          {
+            actor: { kind: "admin", memberId: guard.memberId },
+            request: requestContext,
+            causedByCredential: `${provider}:${key}`,
+            providers: [provider],
+          },
+          (tx) =>
+            setIntegrationCredentialInTransaction({
+              tx,
+              provider,
+              key,
+              value,
+              actor: { kind: "admin", memberId: guard.memberId },
+              expect: { expect: "any" },
+              request: requestContext,
+            }),
+        )
+      : await setIntegrationCredential({
+          provider,
+          key,
+          value,
+          actor: { kind: "admin", memberId: guard.memberId },
+          expect: { expect: "any" },
+          request: requestContext,
+        });
   } catch (error) {
     if (error instanceof WeakAuthSecretError) {
       // Plain-English capture-time gate message; safe to surface (no secret).
@@ -285,7 +303,7 @@ export async function POST(request: Request) {
     );
   }
 
-  await applyVerifyReset(provider, key, guard.memberId, requestContext);
+  await applyVerifyReset(provider, guard.memberId, requestContext);
 
   // Response confirms metadata only — the value is never returned.
   return NextResponse.json({
