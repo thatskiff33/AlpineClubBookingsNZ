@@ -2295,6 +2295,19 @@ describe("runBookingXeroRepair", () => {
     });
   });
 
+  it("MUTATION (#3809 M1): applying the re-queue keeps the give-back's own scope and wording", async () => {
+    const deps = createDependencies({
+      bookings: [cardAndCreditReduction()],
+      operations: [editNote({ id: "op_card", xeroObjectId: "cn_card", requestPayload: { queueType: "MODIFICATION_CREDIT_NOTE", bookingModificationId: "mod_mixed", refundAmountCents: 10000, refundMethod: "card" } })],
+    });
+
+    await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+
+    expect(deps.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingModificationId: "mod_mixed", refundAmountCents: 5000, refundMethod: "account-credit", ...giveBackScoped }),
+    );
+  });
+
   it("MUTATION (#3809 M1): retries a FAILED give-back note rather than queueing a second", async () => {
     const deps = createDependencies({
       bookings: [cardAndCreditReduction()],

@@ -485,6 +485,23 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
     expect(new Date().toISOString()).toBe(frozenTestNow().toISOString());
   });
 
+  it("MUTATION (#3809 H1): deallocates a CARD booking's allocated credit too (#1641) - the slices decide, not the payment's source", async () => {
+    h.bookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      payment: { id: "payment-1", source: "STRIPE", xeroInvoiceId: "inv-1" },
+    });
+    h.linkFindMany.mockResolvedValue([regularAllocationLink()]);
+    h.getCreditNote
+      .mockResolvedValueOnce(providerNote(4000))
+      .mockResolvedValueOnce(providerNote(2500, "alloc-new"));
+
+    await deallocateExcessAppliedCreditForBooking("booking-1", { syncOperationId: "op-1" });
+
+    expect(h.deleteCreditNoteAllocations).toHaveBeenCalled();
+    expect(h.createCreditNoteAllocation).toHaveBeenCalled();
+  });
+
   it("scopes the recreate idempotency key to the operation so distinct operations never collide, while a retried operation reuses its key (#1887)", async () => {
     h.linkFindMany.mockResolvedValue([regularAllocationLink()]);
 
