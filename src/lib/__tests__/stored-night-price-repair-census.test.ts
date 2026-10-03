@@ -24,13 +24,14 @@ import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments"
  *
  * So this file asks three questions of the tree itself:
  *
- *  1. **Who may turn an existing `BookingGuestNight` row's price into a
- *     number?** Exactly one module. Every other production writer of that table
- *     creates rows wholesale from a priced breakdown - `syncGuestNights` and its
- *     siblings, governed by `nightPriceCentsToWrite` and `required-price-cents.ts`
- *     - and an in-place `update` of a price is a different act with a different
- *     rule. Measured from the source, so a second one fails here with its own
- *     file name.
+ *  1. **Who may fill an existing `BookingGuestNight` row's NULL price?** Only
+ *     the repair writer, with the officer's figures (`INV-MOD-036`). That rule
+ *     also admits #3794's bounded accepted SCHOOL naming reconciliation: proved,
+ *     already-priced held-night IDs only, NULL refusal and exact-count rollback.
+ *     Every other production writer creates rows wholesale from a priced
+ *     breakdown - `syncGuestNights` and its siblings, governed by
+ *     `nightPriceCentsToWrite` and `required-price-cents.ts`. An unproved in-place
+ *     writer fails here with its own file name.
  *  2. **Does this feature contain any arithmetic that could produce an amount?**
  *     A division, a rounding, a split helper, an averaging pass. It should not:
  *     the officer's figures are added up and compared, never derived. A `?? 0` is
@@ -89,7 +90,7 @@ import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments"
  *
  * WHAT IT STILL DOES NOT COVER, stated rather than left to be found: a fill on a
  * path that is not this dialog. That is what the scans below are for, and why
- * neither instrument can be dropped - this file catches a SECOND WRITER
+ * neither instrument can be dropped - this file catches an UNPROVED WRITER
  * appearing anywhere in the tree, and a reference to the target figure from
  * outside this feature, neither of which any behaviour test can see.
  *
