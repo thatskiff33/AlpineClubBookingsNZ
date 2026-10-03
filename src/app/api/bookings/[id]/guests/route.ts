@@ -105,7 +105,10 @@ import {
   handleMemberGuestAddRefusal,
   startMemberGuestRefusalClock,
 } from "@/lib/member-guest-probe-guard";
-import type { MemberGuestAddActor } from "@/lib/member-guest-consent";
+import {
+  guestConsentStatus,
+  type MemberGuestAddActor,
+} from "@/lib/member-guest-consent";
 import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
 import {
@@ -639,7 +642,16 @@ export async function POST(
         })),
         ...newGuestInputs,
       ];
-      const requiresAdminReview = requiresAdultSupervisionReview(allGuestsForPricing);
+      // The rows themselves, not the pricing view: they carry each guest's
+      // consent (stored, or planned for an added row), and only an agreed adult
+      // counts (#3770, owner decision).
+      const requiresAdminReview = requiresAdultSupervisionReview([
+        ...booking.guests,
+        ...normalizedNewGuests.map((guest) => ({
+          ageTier: guest.ageTier,
+          consentStatus: guestConsentStatus(guest),
+        })),
+      ]);
       const adminReviewReason = requiresAdminReview
         ? ADULT_SUPERVISION_REVIEW_REASON
         : null;

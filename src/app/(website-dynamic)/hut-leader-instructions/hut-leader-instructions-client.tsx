@@ -196,6 +196,8 @@ export function HutLeaderInstructionsClient({
             */}
             <SecretInput
               id="hut-leader-pin"
+              revealable
+              secretNoun="PIN"
               inputMode="numeric"
               autoComplete="one-time-code"
               maxLength={HUT_LEADER_PIN_LENGTH}

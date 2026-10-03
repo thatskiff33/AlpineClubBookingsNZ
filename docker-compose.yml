@@ -453,6 +453,9 @@ services:
         # AID-3 (#2372): mirror the app image's bundle build metadata.
         GIT_COMMIT_SHA: ${GIT_COMMIT_SHA:-}
         KNOWLEDGE_BUNDLE_OBSERVED_AT: ${KNOWLEDGE_BUNDLE_OBSERVED_AT:-}
+        # The builder stage runs `next build` here too, so the BUILD-only Node
+        # flags must reach it exactly as they reach the app build above (#3824).
+        NODE_OPTIONS: ${NODE_BUILD_OPTIONS:-}
     profiles: ["migrate"]
     depends_on:
       postgres:
