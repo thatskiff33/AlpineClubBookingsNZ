@@ -12,8 +12,10 @@
   $130) and $50 at 0%, whichever came first and whichever way it was paid. The
   card refund or hand-back, the booking event, the booking ledger and the Xero
   leg all follow the netted figure; a share the cancellation had already
-  returned completes with nothing sent, and the officer is told so. On a
-  bank-transfer hand-back the officer is told the netted amount to hand back.
+  returned completes with nothing sent, and the officer is told so. Before
+  completing, the settle dialog shows what is still owed - "Only $25.00 of the
+  $50.00 share is still owed after the booking's cancellation - hand back
+  $25.00" - so a bank transfer is made for the right amount.
   Where the current cancellation policy no longer reproduces what the
   cancellation returned, the review is refused and stays open for the officer
   to settle by hand. This applies the rule #3791 introduced for credit-paid
