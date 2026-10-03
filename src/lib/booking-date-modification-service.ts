@@ -521,9 +521,10 @@ export async function modifyBookingDates({
         bookingLodgeId,
         newCheckIn,
         newCheckOut,
-        booking.guests.map(() => ({
+        booking.guests.map((guest) => ({
           stayStart: newCheckIn,
           stayEnd: newCheckOut,
+          memberId: guest.memberId,
         })),
         bookingId,
         tx,
@@ -550,6 +551,7 @@ export async function modifyBookingDates({
         booking.guests.length,
         bookingId,
         tx,
+        booking.guests.map((guest) => guest.memberId),
       );
 
       if (!capacity.available) {

@@ -1560,7 +1560,7 @@ export async function resolvePartnerSharedCapacity(params: {
     stayStart?: Date | null;
     stayEnd?: Date | null;
     nights?: Date[];
-    memberId?: string | null;
+    memberId: string | null;
   }>;
   partnerSharedGuests: Array<{ memberId: string; partnerMemberId: string }>;
   excludeBookingId: string;

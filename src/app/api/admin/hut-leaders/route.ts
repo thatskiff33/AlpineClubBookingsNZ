@@ -32,7 +32,6 @@ import {
   hutLeaderStayRefusalBody,
   HutLeaderNightsNotStayedError,
   isHutLeaderStayCheckExempt,
-  custodianBookedAsGuestWarning,
 } from "@/lib/hut-leader-stayed-nights";
 
 const createSchema = z.object({
@@ -314,6 +313,7 @@ export async function POST(req: NextRequest) {
         amendments = await validateCustodianBedHoldAndHoldAmendment(tx, {
           bedId,
           isCustodian,
+          memberId: parsed.data.memberId,
           lodgeId: lockedLodgeId,
           startDate: newStart,
           endDate: newEnd,
@@ -368,19 +368,6 @@ export async function POST(req: NextRequest) {
       return { assignment, member: lockedMember, amendments };
     });
     const { assignment } = created;
-    // #3817 stated limit: a ticked custodian with no bed who is ALSO a guest on
-    // a booking here takes two spaces on those nights (custodian + guest), so
-    // the officer is told rather than left to find a lodge full one bed early.
-    // Advisory, after commit: a failed read must not turn the create into a 500.
-    const custodianBookedWarning = await custodianBookedAsGuestWarning(prisma, {
-      memberId: member.id,
-      lodgeId,
-      startDate: newStart,
-      endDate: newEnd,
-      bedId,
-      isCustodian,
-    });
-
     let emailSent = true;
     try {
       await sendHutLeaderAssignmentEmail({
@@ -416,7 +403,6 @@ export async function POST(req: NextRequest) {
           isCustodianOccupancy({ bedId, isCustodian }) && isMinorAgeTier(created.member.ageTier)
             ? "This member is a minor, so the lodge screen will show the custodian role only and never their name."
             : null,
-        custodianBookedWarning,
       },
       { status: 201 }
     );

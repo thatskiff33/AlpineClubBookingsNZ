@@ -248,6 +248,9 @@ export function getCapacityGuestRanges(
     // Pass the explicit night set through so capacity counts a non-contiguous
     // guest only on the nights they actually stay (issue #713).
     nights: guest.nights ?? undefined,
+    // Who the guest is, as the row will store it: a ticked custodian is one
+    // space, not two (#3817).
+    memberId: guest.memberId || null,
   }));
 }
 

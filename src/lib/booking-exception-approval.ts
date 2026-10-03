@@ -4,7 +4,10 @@ import type { CalendarDate } from "@/lib/club-time";
 
 import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import {
+  checkCapacityForGuestRanges,
+  type CapacityProposedGuest,
+} from "@/lib/capacity";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { resolveHostingCoverageIncidents } from "@/lib/adult-member-hosting-coverage-incidents";
@@ -43,7 +46,6 @@ import {
   DEFAULT_BOOKING_PAYMENT_METHOD,
   type BookingPaymentMethod,
 } from "@/lib/booking-payment-methods";
-import type { GuestStayRange } from "@/lib/booking-guest-stay-ranges";
 import type { PrismaTransactionClient } from "@/lib/db-transaction";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify-validation";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
@@ -187,8 +189,11 @@ function approvalDependantIdentityRefusal(
 const BOOKABLE_AGE_TIERS = new Set<string>(BOOKABLE_AGE_TIER_VALUES);
 
 /** The proposed party as capacity-engine guest ranges (explicit night sets). */
-function proposedGuestRanges(party: ProposalParty): GuestStayRange[] {
-  return party.guests.map((guest) => ({ nights: [...guest.nights] }));
+function proposedGuestRanges(party: ProposalParty): CapacityProposedGuest[] {
+  return party.guests.map((guest) => ({
+    nights: [...guest.nights],
+    memberId: guest.memberId,
+  }));
 }
 
 /**

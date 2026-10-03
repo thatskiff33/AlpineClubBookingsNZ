@@ -569,10 +569,7 @@ export default function HutLeadersPage() {
       // parsed must not turn a successful assignment into an error.
       const created = await res.json().catch(() => null);
       if (activeLodgeIdRef.current !== requestedLodgeId) return;
-      // #3817: the booked-as-a-guest-too note shares the advisory slot.
-      const notes = [created?.minorCustodianWarning, created?.custodianBookedWarning]
-        .filter((note): note is string => typeof note === "string" && note.length > 0);
-      setMinorCustodianNote(notes.length > 0 ? notes.join(" ") : null);
+      setMinorCustodianNote(created?.minorCustodianWarning ?? null);
       setSelection({ startDate: "", endDate: "" });
       setTarget(null);
       setSelectedBedId(null);
@@ -677,16 +674,6 @@ export default function HutLeadersPage() {
         });
         return;
       }
-      // #3817: the same advisory slot as the create — ticking an existing hut
-      // leader who is also a guest here makes them two spaces. A body that
-      // cannot be parsed must not turn a saved edit into an error.
-      const saved = await res.json().catch(() => null);
-      if (activeLodgeIdRef.current !== requestedLodgeId) return;
-      setMinorCustodianNote(
-        typeof saved?.custodianBookedWarning === "string" && saved.custodianBookedWarning
-          ? saved.custodianBookedWarning
-          : null,
-      );
       setBedEditAssignmentId(null);
       setOverCapacity(null);
       setHoldAmendment(null);

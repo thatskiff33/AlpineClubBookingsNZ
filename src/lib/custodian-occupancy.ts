@@ -312,6 +312,8 @@ export async function findCustodianBedHolds(input: {
  */
 export interface CustodianOccupancy {
   assignmentId: string;
+  /** The custodian, so a tick can be matched to the same member's guest row. */
+  memberId: string;
   /** The held bed, or null for a ticked custodian with no bed. */
   bedId: string | null;
   /** Inclusive first night, `YYYY-MM-DD`. */
@@ -352,11 +354,12 @@ export async function findCustodianOccupancies(input: {
       endDate: { gte: from },
       ...lodgeNullTolerantScope(input.lodgeId),
     },
-    select: { id: true, bedId: true, startDate: true, endDate: true },
+    select: { id: true, memberId: true, bedId: true, startDate: true, endDate: true },
     orderBy: [{ startDate: "asc" }, { id: "asc" }],
   });
   return rows.map((row) => ({
     assignmentId: row.id,
+    memberId: row.memberId,
     bedId: row.bedId,
     startDate: formatDateOnly(row.startDate),
     endDate: formatDateOnly(row.endDate),
@@ -388,11 +391,34 @@ export function buildCustodianNightIndex(
 }
 
 /**
- * The custodian head count on one night for a lodge, as a ready-to-use
- * `(night) => number` closure. The four admission/availability engines and the
- * capacity-warnings cron all add this to `occupiedBeds`. It counts every
- * custodian OCCUPANCY — a held bed or the custodian tick, once per assignment
- * ({@link findCustodianOccupancies}, #3817).
+ * Does this custodian occupancy take its OWN space on a night? THE rule for
+ * "one person is one space" (owner decision on #3820, 3 Oct 2026): a held bed
+ * always does — it is a physical bed kept out of the pool, and a guest row for
+ * the same member needs a different one — and a bedless custodian tick does
+ * only when that member is not already counted on the night as a guest at the
+ * lodge. `guestMemberIds` is every member counted that night: existing guest
+ * rows (the occupancy count's own population, never a second definition) plus
+ * the party being admitted. The counter below, the admission engines through
+ * it, and the custodian writer's over-capacity warning all ask it here
+ * (`INV-SSOT`).
+ */
+export function custodianOccupancyTakesSpace(
+  occupancy: { bedId: string | null | undefined; memberId: string },
+  guestMemberIds: ReadonlySet<string>,
+): boolean {
+  return Boolean(occupancy.bedId) || !guestMemberIds.has(occupancy.memberId);
+}
+
+/**
+ * The custodian space count on one night for a lodge, as a ready-to-use
+ * `(night, guestMemberIds) => number` closure. The four admission/availability
+ * engines and the capacity-warnings cron all add this to `occupiedBeds`
+ * through `computeNightOccupancy`. It counts every custodian OCCUPANCY — a held
+ * bed or the custodian tick, once per assignment
+ * ({@link findCustodianOccupancies}, #3817) — less a bedless tick whose member
+ * is in `guestMemberIds`: the guests counted that night plus the party being
+ * admitted, so the custodian is never counted twice on a create or an edit
+ * ({@link custodianOccupancyTakesSpace}).
  *
  * Counted as an OCCUPANT rather than as a reduction of `lodgeCapacity`: the
  * arithmetic for `availableBeds` is identical, but it preserves
@@ -406,7 +432,6 @@ export async function buildLodgeCustodianNightCounter(input: {
   lodgeId: string;
   from: Date;
   toExclusive: Date;
-  nights: readonly Date[];
   db?: CustodianDb;
   /**
    * Ignore one assignment's own hold — used when the caller is evaluating what
@@ -416,19 +441,30 @@ export async function buildLodgeCustodianNightCounter(input: {
    * caller concern, not part of the "which beds are held" query.
    */
   excludeAssignmentId?: string;
-}): Promise<(night: Date) => number> {
+}): Promise<(night: Date, guestMemberIds: ReadonlySet<string>) => number> {
   const loaded = await findCustodianOccupancies({
     lodgeId: input.lodgeId,
     from: input.from,
     toExclusive: input.toExclusive,
     db: input.db,
   });
-  const holds = input.excludeAssignmentId
+  const occupancies = input.excludeAssignmentId
     ? loaded.filter((hold) => hold.assignmentId !== input.excludeAssignmentId)
     : loaded;
-  const index = buildCustodianNightIndex(holds, input.nights);
-  if (index.size === 0) return () => 0;
-  return (night: Date) => index.get(formatDateOnly(night)) ?? 0;
+  if (occupancies.length === 0) return () => 0;
+  return (night, guestMemberIds) => {
+    const key = formatDateOnly(night);
+    let count = 0;
+    for (const occupancy of occupancies) {
+      if (
+        holdCoversNight(occupancy, key) &&
+        custodianOccupancyTakesSpace(occupancy, guestMemberIds)
+      ) {
+        count += 1;
+      }
+    }
+    return count;
+  };
 }
 
 /**

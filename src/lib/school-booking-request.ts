@@ -1220,9 +1220,10 @@ export async function approveSchoolBookingRequest(input: {
           bookingLodgeId,
           request.checkIn,
           request.checkOut,
-          guests.map(() => ({
+          guests.map((_guest, index) => ({
             stayStart: request.checkIn,
             stayEnd: request.checkOut,
+            memberId: linkedMembers.get(index) ?? null,
           })),
           held.id,
           tx
@@ -1276,9 +1277,10 @@ export async function approveSchoolBookingRequest(input: {
         });
         schoolMember = { id: ownerId };
       } else {
-        const capacityRanges = guests.map(() => ({
+        const capacityRanges = guests.map((_guest, index) => ({
           stayStart: request.checkIn,
           stayEnd: request.checkOut,
+          memberId: linkedMembers.get(index) ?? null,
         }));
         const capacity = await checkCapacityForGuestRanges(
           bookingLodgeId,
@@ -2466,6 +2468,8 @@ export async function approveMemberWholeLodgeRequest(input: {
         guests.map(() => ({
           stayStart: request.checkIn,
           stayEnd: request.checkOut,
+          // This conversion links no members (its guest creates pass none).
+          memberId: null,
         })),
         undefined,
         tx

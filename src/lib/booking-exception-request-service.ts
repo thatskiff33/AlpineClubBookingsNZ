@@ -19,7 +19,11 @@ import type { AgeTierSettingsReader } from "@/lib/subscription-lockout-facts";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import { computeMemberGuestBoundary } from "@/lib/booking-guests";
 import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
-import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
+import {
+  acquireLodgeCapacityLock,
+  checkCapacityForGuestRanges,
+  type CapacityProposedGuest,
+} from "@/lib/capacity";
 import {
   ACTIVE_BOOKING_STATUSES,
   bookingHoldsCapacity,
@@ -28,7 +32,6 @@ import {
   releasePolicyExceptionReservation,
   reservePolicyExceptionCapacity,
 } from "@/lib/booking-exception-reservations";
-import type { GuestStayRange } from "@/lib/booking-guest-stay-ranges";
 import { resolveModificationStayRanges } from "@/lib/booking-modification-stay-ranges";
 import {
   assertLinkedBookingMembersCanBeBooked,
@@ -1619,8 +1622,8 @@ export async function createModificationExceptionRequest(
   const proposedParty = (frozen.snapshot as ModificationProposalSnapshot).proposed;
   const proposedCheckIn = parseDateOnly(proposedParty.checkIn);
   const proposedCheckOut = parseDateOnly(proposedParty.checkOut);
-  const proposedGuestRanges: GuestStayRange[] = proposedParty.guests.map(
-    (guest) => ({ nights: guest.nights }),
+  const proposedGuestRanges: CapacityProposedGuest[] = proposedParty.guests.map(
+    (guest) => ({ nights: guest.nights, memberId: guest.memberId }),
   );
 
   try {

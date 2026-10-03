@@ -7,6 +7,7 @@ import {
 } from "@/lib/capacity";
 import {
   custodianHeldNightsForBed,
+  custodianOccupancyTakesSpace,
   findCustodianBedHolds,
   isCustodianHeldBedNight,
   isCustodianOccupancy,
@@ -197,6 +198,11 @@ export async function validateCustodianBedHold(input: {
    * refusals below still apply only to a bed.
    */
   isCustodian?: boolean;
+  /**
+   * The custodian. A bedless tick adds no space on a night they are counted as
+   * a guest at the lodge (#3817, "one person is one space").
+   */
+  memberId: string;
   db: CustodianAssignmentDb;
 }): Promise<void> {
   const { bedId, lodgeId, startDate, endDate, db } = input;
@@ -323,8 +329,19 @@ export async function validateCustodianBedHold(input: {
 
   const overCapacity: CustodianOverCapacityNight[] = [];
   for (const night of nights) {
-    // + 1 for the hold being created/edited.
-    const occupiedBeds = occupancy(night).occupiedBeds + 1;
+    // + 1 for the hold being created/edited, by the counter's own rule: a
+    // bedless tick on a night its member is already a counted guest adds no
+    // space (#3817), so that night is not this assignment's to warn about.
+    const reading = occupancy(night);
+    if (
+      !custodianOccupancyTakesSpace(
+        { bedId, memberId: input.memberId },
+        reading.guestMemberIds,
+      )
+    ) {
+      continue;
+    }
+    const occupiedBeds = reading.occupiedBeds + 1;
     if (occupiedBeds > capacity) {
       overCapacity.push({ date: formatDateOnly(night), occupiedBeds, capacity });
     }
@@ -411,6 +428,11 @@ export async function findWholeLodgeHoldAmendments(input: {
    * those nights does not re-ask about a narrowing already accepted.
    */
   previouslyCounted?: { startDate: Date; endDate: Date } | null;
+  /**
+   * The custodian. A bedless tick takes no space out of the hold on a night
+   * they are a counted guest there (#3817), so it narrows nothing that night.
+   */
+  memberId: string;
   db: CustodianAssignmentDb;
 }): Promise<WholeLodgeHoldAmendment[]> {
   const nights = custodianAssignmentNights(input.startDate, input.endDate);
@@ -440,12 +462,33 @@ export async function findWholeLodgeHoldAmendments(input: {
       ).filter((hold) => hold.assignmentId === input.assignmentId)
     : [];
 
+  // A bedless tick asks the counter's own question (#3817): on a night its
+  // member is a counted guest, it takes no space and narrows no hold.
+  const occupancy = input.bedId
+    ? null
+    : await computeNightOccupancy({
+        lodgeId: input.lodgeId,
+        from: input.startDate,
+        toExclusive,
+        nights,
+        db: input.db,
+      });
+
   const amendments: WholeLodgeHoldAmendment[] = [];
   for (const hold of holds) {
     const affected: string[] = [];
     for (const night of nights) {
       const nightKey = formatDateOnly(night);
       if (!wholeLodgeHoldCoversNight(hold, nightKey)) continue;
+      if (
+        occupancy &&
+        !custodianOccupancyTakesSpace(
+          { bedId: null, memberId: input.memberId },
+          occupancy(night).guestMemberIds,
+        )
+      ) {
+        continue;
+      }
       // Already outside this hold's set, so nothing changes tonight.
       if (input.bedId && isCustodianHeldBedNight(ownHolds, input.bedId, nightKey)) continue;
       if (

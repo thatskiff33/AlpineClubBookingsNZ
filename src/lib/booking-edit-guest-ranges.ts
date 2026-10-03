@@ -271,8 +271,9 @@ export interface BookingEditGuestRangePlan {
     // and for every added guest.
     nights: Date[];
     // Carried so the partner-shared admission check (#1746) can tell a
-    // flagged sharer's range from the ordinary ones; null for non-members.
-    memberId?: string | null;
+    // flagged sharer's range from the ordinary ones, and so a ticked custodian
+    // is one space (#3817); null for non-members.
+    memberId: string | null;
   }>;
   // #2029: the earliest night the capacity check must cover for this edit —
   // never later than editableFrom. The capacity call sites use this (not

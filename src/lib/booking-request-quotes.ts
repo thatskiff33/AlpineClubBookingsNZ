@@ -1931,9 +1931,10 @@ export async function holdBookingRequestSlots(input: {
         throw new BookingRequestError("This booking request cannot be held", 409);
       }
 
-      const capacityRanges = guests.map(() => ({
+      const capacityRanges = guests.map((_guest, index) => ({
         stayStart: request.checkIn,
         stayEnd: request.checkOut,
+        memberId: linkedMembers.get(index) ?? null,
       }));
       const capacity = await checkCapacityForGuestRanges(
         bookingLodgeId,

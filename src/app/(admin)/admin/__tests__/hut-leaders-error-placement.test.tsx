@@ -417,21 +417,6 @@ describe("custodian bed hold controls (#2286)", () => {
     expect(screen.queryByRole("button", { name: /accept and hold the bed/i })).not.toBeInTheDocument();
   });
 
-  it("shows the two-spaces advisory a row edit returns, as the create does (#3817)", async () => {
-    const WARNING =
-      "This custodian is also a guest on a booking at this lodge on some of these nights, so they take two spaces on those nights.";
-    stubWithAssignment({ ok: true, body: { success: true, custodianBookedWarning: WARNING } });
-    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
-      .default;
-    render(<HutLeadersPage />);
-
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Custodian (lives on site)" }),
-    );
-
-    expect(await screen.findByText(WARNING)).toBeInTheDocument();
-  });
-
   it("replaces the over-capacity card rather than stacking a second alert on it", async () => {
     // #2698 review L1-F4. The server checks capacity BEFORE the ordering
     // question, so the only way to reach the amendment card is through the
