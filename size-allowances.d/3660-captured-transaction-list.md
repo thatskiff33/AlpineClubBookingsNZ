@@ -7,8 +7,8 @@ removing a duplicate (`INV-SSOT`), not new logic. Splitting either module is a
 far larger change than this refactor, and there is no seam here to split along.
 
 file: src/lib/booking-cancel.ts
-lines: 2601
-reason: the one added line is the import that replaces three hand-typed captured-status arrays with the shared list.
+lines: 2690
+reason: the one added line is the import that replaces three hand-typed captured-status arrays with the shared list. Re-measured in place for #3653 on the same branch: a joiner's own cancel of a booking the group organiser paid for by card writes its organiser child refund debt inside the paid-cancel claim and runs it after commit, which has to sit in the claim it commits with.
 
 file: src/lib/payment-reconciliation.ts
 lines: 3068
