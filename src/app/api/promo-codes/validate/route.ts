@@ -25,9 +25,8 @@ import {
   handleMemberGuestAddRefusal,
   startMemberGuestRefusalClock,
 } from "@/lib/member-guest-probe-guard";
-import {
-  validateAndCalculatePromoDiscount,
-} from "@/lib/promo";
+import { applyBookingPromotions, type PromotionGuest } from "@/lib/booking-promotions";
+import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import { clubTime } from "@/lib/club-time/server";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { parseJsonRequestBody } from "@/lib/api-json";
@@ -64,11 +63,28 @@ const validateSchema = z
           memberId: z.string().min(1).optional(),
           stayStart: z.string().optional(),
           stayEnd: z.string().optional(),
+          // #3827 (D-3813-4): a cross-family member guest the booker is adding,
+          // whose place stays PENDING until they accept. Their nights take no
+          // code, so the preview leaves them out exactly as the save will.
+          awaitingAcceptance: z.boolean().optional(),
         })
       )
       .min(1),
     forMemberId: z.string().optional(),
     promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
+    // #3827: several codes, in the booker's order (D-3813-2), each with its own
+    // guest choice. Combines with a working bee (D-3813-3). The response then
+    // answers per code plus the booking's totals.
+    codes: z
+      .array(
+        z.object({
+          code: z.string().min(1).max(50),
+          promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
+        }),
+      )
+      .min(1)
+      .max(20)
+      .optional(),
     // Lodge the booking under quote is for (multi-lodge phase 8): promo
     // lodge restrictions and season pricing validate against this lodge.
     // Omitted resolves to the default lodge, so single-lodge clients keep
@@ -89,9 +105,15 @@ const validateSchema = z
     // there, not here (#1095).
     forBookingEdit: z.boolean().optional(),
   })
-  .refine((data) => Boolean(data.code) !== Boolean(data.workPartyEventId), {
-    message: "Provide either a promo code or a working bee event, not both",
-  })
+  .refine(
+    (data) =>
+      data.codes
+        ? !data.code
+        : Boolean(data.code) !== Boolean(data.workPartyEventId),
+    {
+      message: "Provide either a promo code or a working bee event, not both",
+    },
+  )
   .refine((data) => !data.workPartyEventId || Boolean(data.lodgeId), {
     message: "lodgeId is required for a working bee event",
     path: ["lodgeId"],
@@ -198,7 +220,7 @@ export async function POST(req: NextRequest) {
       name: event.name,
       discountPercent: event.discountPercent,
     };
-  } else if (code) {
+  } else if (code && !parsed.data.codes) {
     const normalizedCode = code.toUpperCase().trim();
     const found = await prisma.promoCode.findUnique({
       where: { code: normalizedCode },
@@ -299,30 +321,61 @@ export async function POST(req: NextRequest) {
         // Dates the positional rates so internal work-party promos restrict
         // the discount to the event's night window.
         firstNight: guest.stayStart ?? checkIn,
+        consentStatus: guest.awaitingAcceptance ? ("PENDING" as const) : null,
       };
     });
 
-    const application = await validateAndCalculatePromoDiscount(
-      promoCode,
-      {
-        memberId: effectiveMemberId,
-        bookingCheckIn: checkIn,
-        totalPriceCents: price.totalPriceCents,
-        guests: promoGuests,
-      },
-      assignedMemberIds,
-      {
-        db: prisma,
-        selectedGuestIndexes: parsed.data.promoGuestIndexes,
-        lodgeId: quoteLodgeId,
-        // #3123 — the CLUB's day, from its persisted zone (`INV-CONFIG-002`),
-        // and what the promotion's validity window is judged against. No
-        // transaction is open on this route, and it is not reachable from a CLI
-        // or from instrumentation, so the request-scoped `server-only` binding
-        // is the right reader.
-        todayAtClub: (await clubTime()).today(),
-      }
-    );
+    if (parsed.data.codes) {
+      return NextResponse.json(
+        await validateSeveralPromoCodes({
+          codes: parsed.data.codes,
+          workPartyPromo: workPartyEvent ? promoCode : null,
+          workPartyEvent,
+          memberId: effectiveMemberId,
+          checkIn,
+          totalPriceCents: price.totalPriceCents,
+          guests: promoGuests,
+          lodgeId: quoteLodgeId,
+        }),
+      );
+    }
+
+    // #3827: through the one orchestrator, so the preview of a single code is
+    // priced exactly as the save prices it — a guest awaiting acceptance
+    // included (D-3813-4). One code in, the engine's own answer out.
+    const [outcome] = (
+      await applyBookingPromotions(
+        promoCode
+          ? [
+              {
+                code: promoCode.code,
+                promoCode,
+                assignedMemberIds,
+                selectedGuestIndexes: parsed.data.promoGuestIndexes,
+                capOverflow: "reject" as const,
+              },
+            ]
+          : [],
+        {
+          memberId: effectiveMemberId,
+          bookingCheckIn: checkIn,
+          totalPriceCents: price.totalPriceCents,
+          guests: promoGuests,
+          db: prisma,
+          lodgeId: quoteLodgeId,
+          // #3123 — the CLUB's day, from its persisted zone (`INV-CONFIG-002`),
+          // and what the promotion's validity window is judged against. No
+          // transaction is open on this route, and it is not reachable from a
+          // CLI or from instrumentation, so the request-scoped `server-only`
+          // binding is the right reader.
+          todayAtClub: (await clubTime()).today(),
+        },
+      )
+    ).outcomes;
+    const application = outcome?.result ?? {
+      error: "Promo code not found",
+      beneficiaryMemberIds: [],
+    };
     if (application.requiresGuestSelection) {
       return NextResponse.json({
         valid: false,
@@ -392,4 +445,128 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
+}
+
+/**
+ * The several-code preview (#3827): the working bee first, then each code in
+ * the booker's order, each over the nights no earlier one claimed — the
+ * orchestrator the save runs, unlocked and read-only. Per code it answers what
+ * the single-code preview answers; the totals are the booking's.
+ */
+async function validateSeveralPromoCodes(params: {
+  codes: Array<{ code: string; promoGuestIndexes?: number[] }>;
+  workPartyPromo:
+    | (NonNullable<Awaited<ReturnType<typeof prisma.promoCode.findUnique>>> & {
+        assignments: { memberId: string }[];
+        lodges: { lodgeId: string }[];
+      })
+    | null;
+  workPartyEvent: { id: string; name: string; discountPercent: number } | null;
+  memberId: string;
+  checkIn: Date;
+  totalPriceCents: number;
+  guests: PromotionGuest[];
+  lodgeId: string;
+}) {
+  const typed = params.codes.map((entry) => entry.code.toUpperCase().trim());
+  const sources = (params.workPartyPromo ? 1 : 0) + typed.length;
+  const refusal =
+    new Set(typed).size !== typed.length
+      ? "The same promo code was entered more than once."
+      : sources > 1 && !(await multiPromoCodesEnabled(prisma))
+        ? "Only one promo code can be used on a booking."
+        : null;
+  const finalPrice = (promoAdjustmentCents: number) =>
+    bookingFinalPriceCents({ totalPriceCents: params.totalPriceCents, promoAdjustmentCents });
+  if (refusal) {
+    return {
+      valid: false,
+      error: refusal,
+      codes: [],
+      discountCents: 0,
+      promoAdjustmentCents: 0,
+      totalPriceCents: params.totalPriceCents,
+      finalPriceCents: finalPrice(0),
+    };
+  }
+  const rows = await prisma.promoCode.findMany({
+    where: { code: { in: typed } },
+    include: {
+      assignments: { select: { memberId: true } },
+      lodges: { select: { lodgeId: true } },
+    },
+  });
+  type Row = (typeof rows)[number];
+  const toApplication = (promoCode: Row, selectedGuestIndexes?: number[]) => ({
+    code: promoCode.code,
+    promoCode,
+    assignedMemberIds: promoCode.assignments.length
+      ? promoCode.assignments.map((assignment) => assignment.memberId)
+      : null,
+    selectedGuestIndexes,
+    capOverflow: "reject" as const,
+  });
+  const notFound: string[] = [];
+  const applications = [];
+  if (params.workPartyPromo) applications.push(toApplication(params.workPartyPromo));
+  params.codes.forEach((entry, index) => {
+    // Internal promos (work party events) are system-applied only; a typed one
+    // behaves like a nonexistent code.
+    const row = rows.find((candidate) => candidate.code === typed[index] && !candidate.internal);
+    if (row) applications.push(toApplication(row, entry.promoGuestIndexes));
+    else notFound.push(typed[index]!);
+  });
+  const priced = await applyBookingPromotions(applications, {
+    memberId: params.memberId,
+    bookingCheckIn: params.checkIn,
+    totalPriceCents: params.totalPriceCents,
+    guests: params.guests,
+    db: prisma,
+    lodgeId: params.lodgeId,
+    todayAtClub: (await clubTime()).today(),
+  });
+  const perCode = [
+    ...priced.outcomes
+      .filter(({ application }) => !application.promoCode.internal)
+      .map(({ application, result }) =>
+        result.error || !result.discount
+          ? {
+              code: application.code,
+              valid: false,
+              error: result.error ?? "Promo code could not be applied",
+              ...(result.requiresGuestSelection
+                ? {
+                    requiresGuestSelection: true,
+                    selectableGuestIndexes: result.selectableGuestIndexes ?? [],
+                  }
+                : {}),
+            }
+          : {
+              code: application.code,
+              valid: true,
+              description: application.promoCode.description,
+              type: application.promoCode.type,
+              discountCents: result.discount.discountCents,
+              promoAdjustmentCents: result.discount.priceAdjustmentCents,
+              freeNightsUsed: result.discount.freeNightsUsed,
+              eligibleGuestCount: result.discount.eligibleGuestCount,
+              remainingFreeNights: result.remainingFreeNights,
+              selectedGuestIndexes: result.selectedGuestIndexes,
+            },
+      ),
+    ...notFound.map((code) => ({ code, valid: false, error: "Promo code not found" })),
+  ];
+  const workParty = priced.outcomes.find(({ application }) => application.promoCode.internal);
+  return {
+    valid:
+      perCode.every((entry) => entry.valid) &&
+      (!workParty || (!workParty.result.error && Boolean(workParty.result.discount))),
+    ...(workParty?.result.error ? { error: workParty.result.error } : {}),
+    workPartyEvent: params.workPartyEvent,
+    codes: perCode,
+    discountCents: priced.discountCents,
+    promoAdjustmentCents: priced.priceAdjustmentCents,
+    totalPriceCents: params.totalPriceCents,
+    finalPriceCents: finalPrice(priced.priceAdjustmentCents),
+  };
 }
