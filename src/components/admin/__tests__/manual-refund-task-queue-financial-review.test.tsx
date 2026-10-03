@@ -441,6 +441,31 @@ describe("what completing or dismissing means, per kind (#3033)", () => {
     );
   });
 
+  it("MUTATION: on a cancelled booking, says what is still owed BEFORE the officer completes (#3835)", async () => {
+    const priced = { ...REVIEW_TASK, id: "task-review-owed", amountCents: null };
+    await openDialog(priced, "Record the adjustment");
+    // The server's answer, by the completion's own rule (`previewEditReviewStillOwed`).
+    vi.mocked(fetch).mockImplementation((async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () =>
+        url.includes("/still-owed?")
+          ? { preview: { shareCents: Number(new URL(url, "http://x").searchParams.get("shareCents")), stillOwedCents: 2500, route: "hand-back" } }
+          : { tasks: [priced] },
+    })) as never);
+
+    fireEvent.click(screen.getByLabelText(/The club owes the member/));
+    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "50.00" } });
+
+    expect(await screen.findByTestId("manual-refund-task-still-owed")).toHaveTextContent(
+      "Only $25.00 of the $50.00 share is still owed after the booking's cancellation - hand back $25.00, not the full share.",
+    );
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith("/api/admin/payments/manual-refund-tasks/task-review-owed/still-owed?shareCents=5000");
+    // Nothing is asked for a charge: the notice is about money going back.
+    fireEvent.click(screen.getByLabelText(/The member owes the club/));
+    await waitFor(() => expect(screen.queryByTestId("manual-refund-task-still-owed")).not.toBeInTheDocument());
+  });
+
   it("posts a positive magnitude and an explicit direction (#3170)", async () => {
     const priced = { ...REVIEW_TASK, id: "task-review-post", amountCents: null };
     await openDialog(priced, "Record the adjustment");

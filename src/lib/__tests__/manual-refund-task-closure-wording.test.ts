@@ -31,7 +31,7 @@ vi.mock("@/lib/audit", () => ({
 }));
 
 import { recordManualRefundTaskClosureAudit } from "@/lib/manual-refund-task-audit";
-import { completionMessage, dismissalMessage } from "@/lib/manual-refund-task-copy";
+import { completionMessage, dismissalMessage, stillOwedNoticeText } from "@/lib/manual-refund-task-copy";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const WITHHELD_SHARE = "UNCOLLECTED_EDIT_REVIEW_SHARE";
@@ -240,5 +240,27 @@ describe("#3213 fix round: the durable summary names the money's direction", () 
       expect(summary.toLowerCase()).not.toContain("sent");
       expect(summary.toLowerCase()).not.toContain("received");
     }
+  });
+});
+
+describe("#3835: the settle dialog's still-owed sentence", () => {
+  const say = (stillOwedCents: number, route: "card" | "hand-back" | "account-credit") =>
+    stillOwedNoticeText({ shareCents: 5_000, stillOwedCents, route }, CLUB_FORMAT_TEST);
+
+  it("MUTATION: names the netted figure and what happens to it, route by route", () => {
+    expect(say(2_500, "hand-back")).toBe("Only $25.00 of the $50.00 share is still owed after the booking's cancellation - hand back $25.00, not the full share.");
+    expect(say(2_500, "card")).toBe("Only $25.00 of the $50.00 share is still owed after the booking's cancellation - $25.00 will be refunded to the card.");
+    expect(say(2_500, "account-credit")).toBe("Only $25.00 of the $50.00 share is still owed after the booking's cancellation - $25.00 will be credited.");
+  });
+
+  it("MUTATION: at nothing owed, says so - and on a hand-back, not to hand anything back", () => {
+    expect(say(0, "hand-back")).toBe("Nothing of this share is still owed: the booking's cancellation already returned it. Do not hand anything back. Completing records no refund.");
+    expect(say(0, "card")).toBe("Nothing of this share is still owed: the booking's cancellation already returned it. Completing records no refund.");
+  });
+
+  it("says nothing where the whole share is owed, or there is nothing to preview; a refusal is passed on", () => {
+    expect(say(5_000, "hand-back")).toBeNull();
+    expect(stillOwedNoticeText(null, CLUB_FORMAT_TEST)).toBeNull();
+    expect(stillOwedNoticeText({ shareCents: 5_000, refusal: "Refused." }, CLUB_FORMAT_TEST)).toBe("Refused.");
   });
 });

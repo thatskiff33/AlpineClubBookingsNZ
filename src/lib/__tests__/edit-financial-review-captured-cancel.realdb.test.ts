@@ -95,6 +95,16 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let raiseEditFinancialReviewTask: (typeof import("@/lib/edit-financial-review"))["raiseEditFinancialReviewTask"];
 let resolveManualRefundTask: (typeof import("@/lib/manual-refund-task-resolution"))["resolveManualRefundTask"];
 let credit: typeof import("@/lib/member-credit");
+let previewEditReviewStillOwed: (typeof import("@/lib/edit-financial-review-still-owed"))["previewEditReviewStillOwed"];
+
+/**
+ * What the settle dialog shows before completing, through the dialog's own
+ * server read - which must be the figure the completion then settles.
+ */
+async function dialogSays(taskId: string, shareCents = 5_000) {
+  const { readClubTimeZoneOutsideRequest } = await import("@/lib/club-time-zone-runtime");
+  return previewEditReviewStillOwed({ taskId, shareCents, clubZone: await readClubTimeZoneOutsideRequest() });
+}
 
 (RUN ? describe : describe.skip)(
   "a review completed after the REAL cancel of a captured payment nets its share - real PostgreSQL (#3835)",
@@ -224,6 +234,7 @@ let credit: typeof import("@/lib/member-credit");
       ({ raiseEditFinancialReviewTask } = await import("@/lib/edit-financial-review"));
       ({ resolveManualRefundTask } = await import("@/lib/manual-refund-task-resolution"));
       credit = await import("@/lib/member-credit");
+      ({ previewEditReviewStillOwed } = await import("@/lib/edit-financial-review-still-owed"));
 
       await deleteFixtures();
       await prisma.member.create({
@@ -257,11 +268,15 @@ let credit: typeof import("@/lib/member-credit");
         const raised = await raise("2026-08-01");
         await cancelAt(rule);
         const backAfterCancelCents = await totalBackCents();
+        const shown = await dialogSays(raised.taskId);
+        expect(shown).toEqual({ shareCents: 5_000, stillOwedCents: owedCents, route: "card" });
 
         const result = await completeShare(raised.taskId);
 
         expect(result.status).toBe("COMPLETED");
         expect(result.amountCents).toBe(5_000);
+        // The dialog's figure is the one the completion settled.
+        expect(result.settlementAmountCents).toBe(owedCents);
         expect((await totalBackCents()) - backAfterCancelCents).toBe(owedCents);
         expect(await totalBackCents()).toBe(expectedBackCents);
         // The card refund this review froze is the netted figure, or none.
@@ -286,8 +301,12 @@ let credit: typeof import("@/lib/member-credit");
         const backAfterCancelCents = await totalBackCents();
         // The cancellation sent nothing by card: it credited the member.
         expect(await cardDebts()).toEqual([]);
+        // The settle dialog says what to hand back BEFORE the officer transfers it.
+        const shown = await dialogSays(raised.taskId);
+        expect(shown).toEqual({ shareCents: 5_000, stillOwedCents: owedCents, route: "hand-back" });
 
         const result = await completeShare(raised.taskId);
+        expect(result.settlementAmountCents).toBe(owedCents);
 
         expect(result.status).toBe("COMPLETED");
         expect((await totalBackCents()) - backAfterCancelCents).toBe(owedCents);
@@ -308,6 +327,8 @@ let credit: typeof import("@/lib/member-credit");
       expect(await totalBackCents()).toBe(8_000);
 
       await completeShare(first.taskId, 2_000);
+      // The second's dialog already counts the first's hand-back.
+      expect(await dialogSays(second.taskId, 2_000)).toMatchObject({ stillOwedCents: 1_000 });
       await completeShare(second.taskId, 2_000);
 
       expect((await handBacks()).map((line) => line.unitCents)).toEqual([1_000, 1_000]);
@@ -319,6 +340,7 @@ let credit: typeof import("@/lib/member-credit");
       const raised = await raise("2026-08-01", null);
       await cancelAt(TIERS[1]!.rule);
       const backAfterCancelCents = await totalBackCents();
+      expect(await dialogSays(raised.taskId)).toEqual({ shareCents: 5_000, stillOwedCents: 2_500, route: "account-credit" });
 
       await completeShare(raised.taskId);
 
