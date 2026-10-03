@@ -1,10 +1,14 @@
 import { HutLeaderAssignmentSource, type Prisma } from "@prisma/client";
-import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import {
   isGuestActiveOnNight,
   type GuestStayRange,
 } from "@/lib/booking-guest-stay-ranges";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
+import { isCustodianOccupancy } from "@/lib/custodian-occupancy";
+import {
+  hutLeaderStayBookingWhere,
+  isHutLeaderStayCheckExempt,
+} from "@/lib/hut-leader-stayed-nights";
 import { memberName } from "@/lib/member-serialization";
 import {
   deriveHutLeaderDayHalves,
@@ -29,10 +33,13 @@ import {
  *
  * Presence is decided per row, by what the row is:
  *
- *  - **A custodian (bed-holding) assignment** is present on every night it
- *    covers, inclusive. Its bed hold IS its occupancy (`INV-LIFE-062`); a
- *    custodian has no `BookingGuest`, so asking for a stay would discard every
- *    custodian.
+ *  - **A custodian occupancy** — an assignment holding a bed, ticked
+ *    "Custodian (lives on site)", or both ({@link isCustodianOccupancy},
+ *    #3817) — is present on every night it covers, inclusive, whether bed
+ *    allocation is on or off. A held bed IS its occupancy (`INV-LIFE-062`) and
+ *    the tick says the member lives on site (owner decision on #3820, 3 Oct
+ *    2026); a custodian has no `BookingGuest`, so asking for a stay would
+ *    discard every custodian.
  *  - **A school-booking teacher row** (`source = SCHOOL_BOOKING`) is present on
  *    its OWN dates, `startDate` through `endDate − 1`. The school writer stamps
  *    the booking's stay onto the row, but nothing links the row back to the
@@ -40,10 +47,14 @@ import {
  *    school booking's teacher rows still cover until an officer deletes them.
  *    That is a stated limit #3819 (lane C) inherits. See
  *    {@link isSchoolRowPresentOnNight}.
- *  - **Every other row** needs its member on an operational stay at the SAME
- *    lodge that night: a `BookingGuest` row for that member, on a non-deleted
- *    booking in `OPERATIONAL_STAY_BOOKING_STATUSES` (the same set that decides a
- *    night needs a leader at all), operationally consented, and active on the
+ *  - **Every other row** — a role-only assignment, not ticked, with no bed —
+ *    needs its member on an operational stay at the SAME lodge that night: a
+ *    `BookingGuest` row for that member (owning a booking one is not a guest on
+ *    does not count), on a booking matching THE hut-leader stay definition
+ *    `hutLeaderStayBookingWhere` (#3817: non-deleted, an operational-stay
+ *    status — the same set that decides a night needs a leader at all — the
+ *    one rule the writers and suggestions read too), operationally consented,
+ *    and active on the
  *    night by `isGuestActiveOnNight` — the frozen night-model predicate, reused,
  *    never restated (`INV-DATE-003`/`INV-DATE-005`). A cancelled, bumped or
  *    archived stay is simply not loaded, so it covers nothing.
@@ -64,6 +75,8 @@ export type HutLeaderShift = {
   endDate: Date;
   source: HutLeaderAssignmentSource | `${HutLeaderAssignmentSource}`;
   bedId: string | null;
+  /** The "Custodian (lives on site)" tick (#3817). */
+  isCustodian: boolean;
   member?: { firstName: string | null; lastName: string | null } | null;
   lodge?: { name: string; active?: boolean } | null;
 };
@@ -141,7 +154,7 @@ function isShiftPresentOnNight(
   night: Date,
   staysByMember: ReadonlyMap<string, readonly HutLeaderStay[]>,
 ): boolean {
-  if (shift.bedId) return true;
+  if (isCustodianOccupancy(shift)) return true;
   if (shift.source === HutLeaderAssignmentSource.SCHOOL_BOOKING) {
     return isSchoolRowPresentOnNight(shift, night);
   }
@@ -154,9 +167,14 @@ function isShiftPresentOnNight(
   );
 }
 
-/** Does this row need a member stay to be present? (Custodians and teachers do not.) */
+/**
+ * Does this row need a member stay to be present? Custodians and teachers do
+ * not: the writers' stay-check exemption, asked rather than restated, so the
+ * rows a writer lets stand without a stay are exactly the rows present here
+ * without one (`INV-SSOT`).
+ */
 function needsMemberStay(shift: HutLeaderShift): boolean {
-  return !shift.bedId && shift.source !== HutLeaderAssignmentSource.SCHOOL_BOOKING;
+  return !isHutLeaderStayCheckExempt(shift);
 }
 
 /**
@@ -200,6 +218,7 @@ const SHIFT_COVER_SELECT = {
   endDate: true,
   source: true,
   bedId: true,
+  isCustodian: true,
 } as const;
 
 /**
@@ -259,13 +278,11 @@ export async function loadHutLeaderNightCover(
   const stays = await db.bookingGuest.findMany({
     where: {
       memberId: { in: memberIds },
-      booking: {
-        lodgeId: { in: lodgeIds },
-        status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
-        deletedAt: null,
-        checkIn: { lte: input.to },
-        checkOut: { gt: input.from },
-      },
+      booking: hutLeaderStayBookingWhere({
+        lodgeId: lodgeIds,
+        rangeStart: input.from,
+        rangeEnd: input.to,
+      }),
       ...OPERATIONALLY_PRESENT_GUEST_WHERE,
     },
     select: {

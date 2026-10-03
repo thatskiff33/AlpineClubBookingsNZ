@@ -213,11 +213,11 @@ covered?": many rows were stamped through the leader's check-out day.
   already-covered probe all read it; `hut-leader-night-cover-census.test.ts`
   fails a reader that reads assignment dates as coverage itself.
 - **Presence, per row.** An ordinary member is present on a night of their own
-  stay at the same lodge — a non-deleted booking in
-  `OPERATIONAL_STAY_BOOKING_STATUSES`, consent operationally present, judged by
-  `isGuestActiveOnNight` (`INV-DATE-005`), never a restated range. A
-  bed-holding custodian is present on every night the assignment covers
-  (`INV-LIFE-062`). A school teacher row is present on its OWN dates,
+  stay at the same lodge, as a guest — a booking matching the writers'
+  `hutLeaderStayBookingWhere` (`INV-DATE-030`), consent operationally present,
+  judged by `isGuestActiveOnNight` (`INV-DATE-005`), never a restated range. A
+  custodian — holding a bed or ticked, `isCustodianOccupancy` — is present on
+  every night the assignment covers (`INV-LIFE-062`). A school teacher row is present on its OWN dates,
   `startDate` to `endDate − 1`: the school writer stamps the booking's stay,
   check-out day included, and the census pins that stamp. The row has no
   booking key, so a school booking cancelled or re-dated afterwards still

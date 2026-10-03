@@ -26,6 +26,7 @@ function shift(overrides: Partial<HutLeaderShift> & { startDate: Date; endDate: 
     lodgeId: "lodge-a",
     source: "MANUAL",
     bedId: null,
+    isCustodian: false,
     member: { firstName: "Ann", lastName: "Smith" },
     lodge: { name: "Alpine Lodge", active: true },
     ...overrides,
@@ -102,6 +103,25 @@ describe("buildHutLeaderNightCover", () => {
     );
     expect(cover.isCovered("lodge-a", d("2026-08-12"))).toBe(true);
     expect(cover.isCovered("lodge-a", d("2026-08-13"))).toBe(false);
+  });
+
+  it("a ticked custodian with no bed and no stay is present on every night it covers (#3817 tick)", () => {
+    const cover = buildHutLeaderNightCover(
+      [shift({ isCustodian: true, startDate: d("2026-08-10"), endDate: d("2026-08-12") })],
+      [],
+    );
+    expect(cover.isCovered("lodge-a", d("2026-08-10"))).toBe(true);
+    expect(cover.isCovered("lodge-a", d("2026-08-12"))).toBe(true);
+    expect(cover.isCovered("lodge-a", d("2026-08-13"))).toBe(false);
+  });
+
+  it("a role-only row that is not ticked, with no bed and no stay, never covers", () => {
+    const cover = buildHutLeaderNightCover(
+      [shift({ startDate: d("2026-08-10"), endDate: d("2026-08-12") })],
+      [],
+    );
+    expect(cover.isCovered("lodge-a", d("2026-08-10"))).toBe(false);
+    expect(cover.isCovered("lodge-a", d("2026-08-11"))).toBe(false);
   });
 });
 
@@ -180,6 +200,20 @@ describe("loadHutLeaderNightCover", () => {
       to: d("2026-08-31"),
     });
     expect(db.bookingGuest.findMany).not.toHaveBeenCalled();
+  });
+
+  it("skips the stay read for a ticked custodian with no bed", async () => {
+    const db = buildDb(
+      [shift({ isCustodian: true, startDate: d("2026-08-03"), endDate: d("2026-08-05") })],
+      [],
+    );
+    const cover = await loadHutLeaderNightCover(db, {
+      scope: { kind: "lodge", lodgeId: "lodge-a" },
+      from: d("2026-08-01"),
+      to: d("2026-08-31"),
+    });
+    expect(db.bookingGuest.findMany).not.toHaveBeenCalled();
+    expect(cover.isCovered("lodge-a", d("2026-08-04"))).toBe(true);
   });
 
   it("isHutLeaderNightCovered answers one lodge night", async () => {
