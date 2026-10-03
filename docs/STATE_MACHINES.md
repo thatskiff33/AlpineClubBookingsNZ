@@ -465,6 +465,17 @@ written but no credit-note operation queued — durable for every source,
 including Internet-Banking children the #1354 self-heal cannot recover. Only the
 outbox worker kick stays best-effort and post-commit.
 
+Since #3653 (`INV-PAY-113`) that single-refund plan is the path for a plan frozen
+before #3653 and for an Internet Banking settlement only. A card settlement
+freezes `{ perChildRefunds }` instead, with one `organiser_child_refund_*`
+recovery operation per paid child (`PENDING -> PROCESSING -> SUCCEEDED`, or
+`FAILED` and retried, alerting on exhaustion). Each operation is one Stripe
+refund against the combined intent; its child's refund row, mirror, Xero note,
+the settlement's `SUCCEEDED -> PARTIALLY_REFUNDED -> REFUNDED` move and the
+operation's close commit together, after Stripe answered. A joiner's reduction
+uses the same operation, so a live group's settlement can now read
+`PARTIALLY_REFUNDED` - still paid (`organiserHasPaidSettlement`).
+
 Internet Banking settlement initiation writes `GroupBookingSettlement.PENDING`
 and its Xero invoice outbox operation in the same transaction. The worker checks
 the group fence under `lock(1)` before calling Xero. If cancellation is already

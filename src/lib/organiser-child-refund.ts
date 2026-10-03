@@ -1,5 +1,5 @@
 /**
- * #3653 (`INV-PAY-111`): an organiser-settled child's refund out of the
+ * #3653 (`INV-PAY-113`): an organiser-settled child's refund out of the
  * organiser's COMBINED card payment.
  *
  * An organiser-pays group is settled by ONE Stripe PaymentIntent for the whole

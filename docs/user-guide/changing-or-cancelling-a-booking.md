@@ -209,6 +209,7 @@ guide.
 | --- | --- |
 | Change costs more | You settle the extra (delta) before the change is complete |
 | Change costs less | A refund or account credit for the difference |
+| Change costs less on a booking your group organiser paid for | The difference goes back to the organiser's card, because they paid it; there is no account-credit choice |
 | The club cannot tell what those nights were sold for | Your change still saves. The amount is worked out by a person and confirmed with you; nothing is refunded or charged until then, and no figure is shown in the meantime |
 | Nights are locked (near check-in) | The change may need club review before it applies |
 | Cancel a paid booking | Refund to card or account credit, per the cancellation schedule |

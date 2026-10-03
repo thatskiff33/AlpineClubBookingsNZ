@@ -406,7 +406,7 @@ export async function repairRefundedPaymentBusinessState(input: {
       });
       effectiveRefundedTotalCents = payment.refundedAmountCents;
     }
-    // #3653 (`INV-PAY-111`): an organiser-settled child's cash comes back only
+    // #3653 (`INV-PAY-113`): an organiser-settled child's cash comes back only
     // through a refund of the group's combined payment, recorded against the
     // child by Stripe's own refund id. A Xero note is not that evidence, so it
     // may not raise the child's mirror past what Stripe has recorded - a raised

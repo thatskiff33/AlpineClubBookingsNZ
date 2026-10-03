@@ -321,6 +321,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-035` | Organiser cancellation is a durable settlement fence, written under `lock(1)` first |
 | `INV-PAY-036` | Each group-cancel child's refund credit-note enqueue commits inside that child's cancel transaction |
 | `INV-PAY-037` | Failed settlement refunds stay durably owed; no child mirror applies twice |
+| `INV-PAY-113` | An organiser child's refund: one recorded Stripe refund from the combined payment |
 | `INV-PAY-105` | Group settlements stay bound to their emailed invoice until paid or voided |
 | `INV-PAY-109` | Joiners a paid organiser bill does not cover pay for themselves |
 

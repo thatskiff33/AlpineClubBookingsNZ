@@ -1689,6 +1689,24 @@ internet-banking cash that became credit on an already-cancelled booking. Only
 the first is the #3640 repair question. The arithmetic and its caveats are in
 `src/lib/refunded-total-shortfall-audit.ts`.
 
+### Audit organiser-settled children's refunded mirrors (#3653)
+
+Before #3653 a joiner's reduction of a booking the group organiser paid for could
+hand the joiner account credit, or leave recovery that refunded nothing, and the
+joiner's `Payment` mirror then read as partly refunded with no Stripe refund
+behind it (`INV-PAY-113` stops new cases). A later group cancellation sizes from
+that mirror, so the organiser can be under-refunded.
+`scripts/audit-organiser-child-refunds.ts` lists each organiser-settled child
+whose mirror Stripe does not fully back, classed `legacy-group-cancel` (a
+pre-#3653 one-refund cancellation; legitimate), `joiner-account-credit` (value
+went to the joiner; an officer decides) or `unbacked` (nothing explains it). It
+is READ-ONLY and repairs nothing: a cash mirror moves only on Stripe evidence.
+
+```bash
+DATABASE_URL=<non-prod copy> pnpm run payments:audit-organiser-child-refunds
+DATABASE_URL=<non-prod copy> pnpm run payments:audit-organiser-child-refunds --json
+```
+
 ### Audit IB hold-expiry invoice under-clears (#1597)
 
 `scripts/audit-ib-hold-clearing.ts` is a READ-ONLY audit — it never writes and

@@ -349,6 +349,10 @@ booking's money and is only drawn when this booking's own total falls; without
 this the member was told to choose a refund or account credit with nothing on the
 page to choose and could then move neither booking.
 
+A booking the group organiser paid for shows no **Return method** choice at all
+(#3653): the price summary says the reduction goes back to the organiser's card,
+and the edit refuses an account-credit request.
+
 Picking one and saving again applies it. Both bookings move together or neither
 does. Choosing account credit can produce a different figure from the card
 option, so the offer is shown once more with the true numbers before it commits —
