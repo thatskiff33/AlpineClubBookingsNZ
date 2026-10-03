@@ -4,6 +4,7 @@
 import type {
   BookingModificationRecord,
   BookingRepairRecord,
+  XeroObjectLinkRecord,
   XeroOperationRecord,
 } from "./xero-booking-repair-types";
 import {
@@ -11,9 +12,14 @@ import {
   readJsonArray,
   readJsonRecord,
   readJsonString,
+  readStoredXeroAmountCents,
 } from "./xero-booking-repair-utils";
 import { bookingOwner } from "@/lib/booking-owner";
-import { isRefundRequestNoteOperation } from "@/lib/refund-request-credit-note";
+import {
+  readRefundRequestIdFromOperation,
+  readRefundRequestIdFromPayload,
+  REFUND_REQUEST_CREDIT_NOTE_ROLE,
+} from "@/lib/refund-request-credit-note";
 import { getCancellationCreditCents } from "@/lib/cancellation-settled-money";
 import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
 
@@ -194,21 +200,59 @@ export function getUnpaidCancellationClearingAmountCents(
 }
 
 /**
+ * #3827 review (`INV-PAY-116`): what the payment's refund requests' own notes
+ * took out of its refunded total - one amount per request, from its row's
+ * payload or its link's `amountCents`. Null when any request's amount cannot
+ * be recovered, so the caller cannot size around it.
+ */
+function getRefundRequestNotesTotalCents(
+  paymentOperations: XeroOperationRecord[],
+  paymentLinks: XeroObjectLinkRecord[]
+): number | null {
+  const requestLinks = paymentLinks.filter(
+    (link) => link.xeroObjectType === "CREDIT_NOTE" && link.role === REFUND_REQUEST_CREDIT_NOTE_ROLE
+  );
+  const amounts = new Map<string, number | null>();
+  const record = (requestId: string, amountCents: number | null) => {
+    if (amounts.get(requestId) == null) amounts.set(requestId, amountCents);
+  };
+  for (const operation of paymentOperations) {
+    if (operation.entityType !== "CREDIT_NOTE" || operation.operationType !== "CREATE") continue;
+    const requestId = readRefundRequestIdFromOperation(operation);
+    if (requestId === null) continue;
+    const link = requestLinks.find(
+      (candidate) =>
+        readRefundRequestIdFromPayload(candidate.metadata) === requestId ||
+        (operation.xeroObjectId !== null && candidate.xeroObjectId === operation.xeroObjectId)
+    );
+    record(requestId, readStoredXeroAmountCents(operation.requestPayload) ?? readStoredXeroAmountCents(link?.metadata));
+  }
+  for (const link of requestLinks) {
+    record(readRefundRequestIdFromPayload(link.metadata) ?? link.xeroObjectId, readStoredXeroAmountCents(link.metadata));
+  }
+  let total = 0;
+  for (const amountCents of amounts.values()) {
+    if (amountCents === null || amountCents < 0) return null;
+    total += amountCents;
+  }
+  return total;
+}
+
+/**
  * The cash a cancellation's refund note should answer, from the refunded
- * total, or null when that total holds refunds the tool cannot separate out
- * (an edit's, or - #3827, `INV-PAY-116` - a refund request's, whose own note is
- * a separate document). Null sends the arm to manual review, never a
- * wrong-sized auto-applied note. `paymentOperations` is required so no caller
- * can size the note without asking.
+ * total net of an edit's refunds and (#3827, `INV-PAY-116`) each refund
+ * request's own note. Zero when nothing is left for it - an appeal-only refund
+ * raises no finding. Null when a remainder sits beside those refunds, or a
+ * request's amount cannot be recovered: manual review, never a wrong-sized
+ * auto-applied note. The operations and links are required so no caller can
+ * size the note without asking.
  */
 export function getCashCancellationRefundCandidateCents(
   booking: BookingRepairRecord,
-  paymentOperations: XeroOperationRecord[]
+  paymentOperations: XeroOperationRecord[],
+  paymentLinks: XeroObjectLinkRecord[]
 ) {
   if (!booking.payment) {
-    return null;
-  }
-  if (paymentOperations.some(isRefundRequestNoteOperation)) {
     return null;
   }
 
@@ -216,13 +260,18 @@ export function getCashCancellationRefundCandidateCents(
     return null;
   }
 
+  const refundRequestNotesCents = getRefundRequestNotesTotalCents(paymentOperations, paymentLinks);
+  if (refundRequestNotesCents === null) {
+    return null;
+  }
   const knownModificationRefundCents = getKnownModificationRefundTotalCents(booking);
-  const candidate = booking.payment.refundedAmountCents - knownModificationRefundCents;
+  const candidate =
+    booking.payment.refundedAmountCents - knownModificationRefundCents - refundRequestNotesCents;
   if (candidate <= 0) {
     return 0;
   }
 
-  if (knownModificationRefundCents > 0) {
+  if (knownModificationRefundCents > 0 || refundRequestNotesCents > 0) {
     return null;
   }
 

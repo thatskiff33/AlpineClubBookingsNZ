@@ -38,13 +38,29 @@ export function readRefundRequestIdFromPayload(payload: unknown): string | null 
  * the failed-operations heuristic - leaves these rows out, so a request's note
  * is never taken for the cancellation's and its failure is never hidden.
  */
-export function isRefundRequestNoteOperation(operation: {
+export function isRefundRequestNoteOperation(operation: RefundRequestNoteRow): boolean {
+  return readRefundRequestIdFromOperation(operation) !== null;
+}
+
+type RefundRequestNoteRow = {
   requestPayload: unknown;
   correlationKey?: string | null;
   idempotencyKey?: string | null;
-}): boolean {
-  if (readRefundRequestIdFromPayload(operation.requestPayload) !== null) return true;
-  return [operation.correlationKey, operation.idempotencyKey].some(
-    (key) => typeof key === "string" && key.split(":").includes("refund-request-credit-note")
-  );
+};
+
+/**
+ * The refund request a request-note row answers for: its payload's id, else
+ * the segment after `refund-request-credit-note` in its key, else the whole key
+ * (one request's row either way). Null when the row is no request's note.
+ */
+export function readRefundRequestIdFromOperation(operation: RefundRequestNoteRow): string | null {
+  const fromPayload = readRefundRequestIdFromPayload(operation.requestPayload);
+  if (fromPayload !== null) return fromPayload;
+  for (const key of [operation.correlationKey, operation.idempotencyKey]) {
+    if (typeof key !== "string") continue;
+    const parts = key.split(":");
+    const at = parts.indexOf("refund-request-credit-note");
+    if (at >= 0) return parts[at + 1] || key;
+  }
+  return null;
 }

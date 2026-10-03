@@ -21,6 +21,9 @@ import {
   toIsoDate,
 } from "./xero-booking-repair-utils";
 import { unsettledRefundNoteRows } from "@/lib/xero-refund-note-unsettled";
+import { isRefundRequestNoteOperation } from "@/lib/refund-request-credit-note";
+import { isResolvedInXero } from "@/lib/xero-operation-resolution";
+import { toRetryableOperationMatch } from "./xero-booking-repair-object-resolution";
 
 export function addAction(
   actionMap: Map<string, BookingXeroRepairAction>,
@@ -138,6 +141,31 @@ export function addUnsettledRefundCreditNoteFindings(
       safeToAutoApply: false,
       details: { ...row },
       actionKeys: [action.key],
+    });
+  }
+  // #3827 review (`INV-PAY-116`): a refund request's own note answers no other
+  // arm, so its failed or partial create is reported here, with its Retry.
+  for (const operation of paymentOperations) {
+    if (
+      operation.entityType !== "CREDIT_NOTE" ||
+      operation.operationType !== "CREATE" ||
+      !["FAILED", "PARTIAL"].includes(operation.status) ||
+      isResolvedInXero(operation) ||
+      !isRefundRequestNoteOperation(operation)
+    ) {
+      continue;
+    }
+    const match = toRetryableOperationMatch(operation);
+    const actionKeys = match ? [addAction(actionMap, buildRetryAction(bookingId, match)).key] : [];
+    addFinding(findings, {
+      code: "BLOCKED_BY_XERO_OPERATION",
+      severity: "warning",
+      summary: match
+        ? "A refund request's Xero refund credit note failed or did not finish. Retry it to raise the note for the amount paid back."
+        : "A refund request's Xero refund credit note failed or did not finish, and cannot be retried here. Raise it by hand in Xero.",
+      safeToAutoApply: Boolean(match),
+      details: { operationId: operation.id, operationStatus: operation.status },
+      actionKeys,
     });
   }
 }
