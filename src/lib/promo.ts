@@ -2026,9 +2026,9 @@ export async function deletePromoRedemptionAndAdjustCount(
 /**
  * Release EVERY promo redemption a booking carries (#3826): each row deleted and
  * its code's counter given back, as `deletePromoRedemptionAndAdjustCount` does
- * for one. Read inside the caller's transaction; released in promo-code-id
- * order (as `lockPromoCodeRowsForUpdate` sorts), so two releases of overlapping
- * codes cannot deadlock. Returns how many were released.
+ * for one. Read inside the caller's transaction and released through
+ * `releasePromoRedemptions`, whose ordering note applies. Returns how many were
+ * released.
  */
 export async function releaseBookingPromoRedemptions(
   tx: PrismaTx,
@@ -2042,7 +2042,18 @@ export async function releaseBookingPromoRedemptions(
   return redemptions.length;
 }
 
-/** The same release, over redemptions the caller already loaded under its locks. */
+/**
+ * The same release, over redemptions the caller already loaded under its locks.
+ *
+ * ORDER: each release updates its code's row, so the rows are taken in
+ * promo-code-id order (as `lockPromoCodeRowsForUpdate` sorts). That ordering
+ * holds WITHIN ONE CALL only: two calls in one transaction each sort their own
+ * set, so a caller releasing several bookings' redemptions must pass them all
+ * in a single call (as `deleteDraftBookingDependents` does) or it takes code
+ * rows out of order and can deadlock against another writer holding the same
+ * codes. Concurrent releases of one booking are otherwise excluded by the
+ * caller's own locks.
+ */
 export async function releasePromoRedemptions(
   tx: PrismaTx,
   redemptions: ReadonlyArray<{ id: string; promoCodeId: string }>,

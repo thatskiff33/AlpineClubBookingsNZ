@@ -28,7 +28,7 @@ const mocks = vi.hoisted(() => ({
   paymentUpdate: vi.fn(),
   bookingUpdate: vi.fn(),
   bookingUpdateMany: vi.fn(),
-  promoRedemptionFindMany: vi.fn(),
+  promoRedemptionFindFirst: vi.fn(),
   prismaTransaction: vi.fn(),
   // #3639: the paid path writes its CANCELLED event inside the claim.
   txBookingEventCreate: vi.fn().mockResolvedValue({}),
@@ -74,7 +74,7 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: vi.fn().mockResolvedValue(null),
     },
     promoRedemption: {
-      findMany: mocks.promoRedemptionFindMany,
+      findFirst: mocks.promoRedemptionFindFirst,
     },
     promoCode: {
       update: vi.fn(),
@@ -335,7 +335,7 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
     mocks.paymentUpdate.mockResolvedValue({});
     mocks.bookingUpdate.mockResolvedValue({});
     mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
-    mocks.promoRedemptionFindMany.mockResolvedValue([]);
+    mocks.promoRedemptionFindFirst.mockResolvedValue(null);
     mocks.loadCancellationPolicy.mockResolvedValue(POLICY);
     mocks.restoreCreditFromBooking.mockResolvedValue(0);
     mocks.createCancellationCredit.mockResolvedValue(undefined);

@@ -33,15 +33,24 @@ import { MEMBER_MERGE_RELATION_SPECS } from "../member-merge-relations";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("booking promo redemption readers (#3826)", () => {
-  it("orders by the booker's applicationOrder and keeps database order on ties", () => {
+  it("orders by the booker's applicationOrder, then id — the writer's own orderBy", () => {
     const booking = {
       promoRedemptions: [
-        { id: "b", applicationOrder: 1 },
-        { id: "a", applicationOrder: 0 },
         { id: "c", applicationOrder: 1 },
+        { id: "a", applicationOrder: 0 },
+        { id: "b", applicationOrder: 1 },
       ],
     };
+    // "c" arrives before "b" at the same order; the writer
+    // (night-adjustment-write.ts) reads b first, so the helper must too.
     expect(bookingPromoRedemptions(booking).map((r) => r.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("keeps the database's order when a select loaded neither applicationOrder nor id", () => {
+    const booking = {
+      promoRedemptions: [{ code: "Z" }, { code: "A" }],
+    };
+    expect(bookingPromoRedemptions(booking).map((r) => r.code)).toEqual(["Z", "A"]);
   });
 
   it("reads a booking with no promotion, or no loaded relation, as an empty list", () => {

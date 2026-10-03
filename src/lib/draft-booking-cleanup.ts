@@ -32,12 +32,15 @@ export async function deleteDraftBookingDependents(
     };
   }
 
-  let promoRedemptions = 0;
-  for (const draft of drafts) {
-    const redemptions = bookingPromoRedemptions(draft);
-    await releasePromoRedemptions(tx, redemptions);
-    promoRedemptions += redemptions.length;
-  }
+  // ONE release over every draft's redemptions, not one per draft: the release
+  // sorts by promo code id, and only a single sorted pass over the whole set
+  // keeps this batch's code-row locks in the same order as every other release
+  // and redemption. Per-draft passes would take code B (draft 1) before code A
+  // (draft 2), and the expiry cron holds only lodge locks, so it could deadlock
+  // against a modify that takes A then B.
+  const redemptions = drafts.flatMap((draft) => bookingPromoRedemptions(draft));
+  await releasePromoRedemptions(tx, redemptions);
+  const promoRedemptions = redemptions.length;
 
   const changeRequestResult = await tx.bookingChangeRequest.deleteMany({
     where: { bookingId: { in: bookingIds } },

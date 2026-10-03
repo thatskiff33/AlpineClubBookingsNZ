@@ -10,16 +10,20 @@
  *
  * Pure and dependency-free on purpose: it is imported by route handlers, email
  * composition and test doubles alike, and must not drag Prisma onto any of
- * their module graphs.
+ * their module graphs. (`ordinal-order` is the one import, and it imports
+ * nothing.)
  *
  * WHILE THE `multiPromoCodes` MODULE SWITCH IS OFF a booking holds at most one
  * redemption (`redeemPromoCode` refuses a second), so every function here
  * returns exactly what the former one-to-one relation did.
  */
 
+import { compareOrdinal } from "@/lib/ordinal-order";
+
 /** The fields this module may order by, when a reader selected them. */
 interface OrderableRedemption {
   applicationOrder?: number | null;
+  id?: string | null;
 }
 
 /** Anything that carries a booking's redemptions, as Prisma loads them. */
@@ -29,20 +33,29 @@ export interface PromoRedemptionCarrier<T> {
 
 /**
  * The booking's redemptions in the order they apply: the booker's
- * `applicationOrder` (D-3813-2), ties keeping the order the database returned.
- * A booking with no promotion — or a select that did not load the relation —
- * is an empty list, never null.
+ * `applicationOrder` (D-3813-2), then `id` — the same order the night-adjustment
+ * writer reads them in (`orderBy: [{ applicationOrder }, { id }]`,
+ * `night-adjustment-write.ts`), so a reader and the writer never disagree about
+ * which of two equal-order codes came first. A select that loaded neither
+ * field keeps the database's order. A booking with no promotion — or a select
+ * that did not load the relation — is an empty list, never null.
  */
 export function bookingPromoRedemptions<T>(
   booking: PromoRedemptionCarrier<T> | null | undefined,
 ): T[] {
   const rows = booking?.promoRedemptions ?? [];
   // A select that did not ask for `applicationOrder` sorts as 0 throughout,
-  // which keeps the database's order.
+  // and one without `id` falls through to the database's order.
   const orderOf = (row: T) => (row as OrderableRedemption).applicationOrder ?? 0;
+  const idOf = (row: T) => (row as OrderableRedemption).id ?? "";
   return rows
     .map((row, index) => ({ row, index }))
-    .sort((a, b) => orderOf(a.row) - orderOf(b.row) || a.index - b.index)
+    .sort(
+      (a, b) =>
+        orderOf(a.row) - orderOf(b.row) ||
+        compareOrdinal(idOf(a.row), idOf(b.row)) ||
+        a.index - b.index,
+    )
     .map(({ row }) => row);
 }
 

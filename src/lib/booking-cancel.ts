@@ -51,7 +51,7 @@ import {
   markBookingCancellationRefundRecoverySucceeded,
   recordBookingCancellationRefundRecoveryInlineError,
 } from "@/lib/payment-recovery";
-import { releasePromoRedemptions } from "@/lib/promo";
+import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import {
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
@@ -2586,16 +2586,18 @@ async function cancelOutstandingPaymentIntents({
 }
 
 /**
- * Release every promo redemption the booking carries (#3826: one per code).
+ * Release every promo redemption the booking carries (#3826: one per code),
+ * through the one booking-level release in `promo.ts`, which reads the rows
+ * inside its own transaction. The probe outside it only spares a booking with
+ * no code — almost every booking — an empty transaction.
  */
 async function cleanupPromoRedemption(bookingId: string) {
-  const redemptions = await prisma.promoRedemption.findMany({
+  const anyRedemption = await prisma.promoRedemption.findFirst({
     where: { bookingId },
-    select: { id: true, promoCodeId: true },
+    select: { id: true },
   });
-  if (redemptions.length > 0) {
-    await prisma.$transaction(async (tx) => {
-      await releasePromoRedemptions(tx, redemptions);
-    });
-  }
+  if (!anyRedemption) return;
+  await prisma.$transaction(async (tx) => {
+    await releaseBookingPromoRedemptions(tx, bookingId);
+  });
 }
