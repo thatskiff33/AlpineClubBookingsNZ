@@ -12,7 +12,9 @@ appears under **Needs Attention** while requests are pending.
 
 Refunds & Credits is a **finance** permission area: finance view to read the
 queue, finance **edit** to approve, reject, or process. Amounts are integer cents;
-a refund is capped at the remaining refundable amount on the payment.
+a refund is capped at the remaining refundable amount on the payment, less any
+refund the club has already promised back by bank transfer for an earlier booking
+change and not yet sent ([Payments](payments.md)).
 
 ## When you'd use it
 
@@ -90,7 +92,7 @@ governed by the [cancellation policy](../CANCELLATIONS.md#refund-policy).
 | --- | --- | --- |
 | Everything is read-only ("… can view refund appeals and credit approvals but cannot approve, reject, or process them") | Your finance role is view-only | Ask a finance-edit admin |
 | A credit approval is disabled for me | You raised it — the two-person rule needs a different reviewer | Ask another admin to review it |
-| The refund amount won't go above a certain figure | It is capped at the remaining refundable amount (paid minus already refunded) | Refund up to that cap; the rest may already be refunded |
+| The refund amount won't go above a certain figure | It is capped at the remaining refundable amount (paid minus already refunded, minus any booking-change refund still waiting to be sent by bank transfer) | Refund up to that cap; the rest may already be refunded or promised back |
 | The queue is empty | The status filter excludes the request | Switch to **All** to see approved/rejected items |
 
 ## Related links

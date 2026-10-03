@@ -203,9 +203,15 @@ none.
 
 While such a task is open, its amount counts as already promised back. A later
 change or a cancellation of the same booking refunds only what is left of the
-money paid, never that amount a second time. For the same reason a dismissed one
+money paid, never that amount a second time, and a refund appeal can ask for
+and be approved only up to what is left. For the same reason a dismissed one
 cannot be put back on the queue once that money has been refunded or promised
-back another way.
+back another way. Once the booking is cancelled, the cancellation has already
+counted an open task as money going back and a dismissed one as never owed, so
+from then on an open task can only be marked paid back (Dismiss is refused) and
+a dismissed one cannot be reopened. If the club decides not to pay an open one
+after all, that changes the cancellation's own figures: take it to the
+treasurer rather than dismissing it.
 
 The card holds several kinds of row and says which is which: a cash hand-back
 (above), a part payment settled in Xero (next), a booking change to price

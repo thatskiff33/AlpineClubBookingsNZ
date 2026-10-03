@@ -32,7 +32,11 @@
   on the Payments page for the refund amount (one per change), the member's
   email says the club **will** refund them by bank transfer, and marking the
   task paid back records the refund. The Xero credit note is unchanged. Card
-  refunds are unaffected.
+  refunds are unaffected. While such a task is open its amount counts as
+  already promised back: a later change, a cancellation or a refund appeal
+  (asked or approved) can return only what is left. Once the booking is
+  cancelled the task can only be marked paid back — it cannot be dismissed,
+  and a dismissed one cannot be reopened.
 
   **Deploy note:** do not mark these refund tasks paid back until cutover
   completes. The previous version would also queue a second Xero refund
