@@ -324,7 +324,10 @@ export async function createXeroInvoiceForGroupSettlement(
   // and a later attempt is never answered with this one's invoice.
   const invoiceIdempotencyKey = groupSettlementInvoiceCreateKey(settlementId, attempt);
   let operationId = options?.syncOperationId ?? null;
-  const requestPayload = { invoices: [buildInvoice(contactId)] };
+  // #3828: a several-code joiner's promotion split is recorded beside the
+  // invoice; a group with no such joiner records exactly what it always did.
+  const promoLinesRecord = lines.promoLines.length > 0 ? { promoLines: lines.promoLines } : {};
+  const requestPayload = { invoices: [buildInvoice(contactId)], ...promoLinesRecord };
 
   if (operationId) {
     await prisma.xeroSyncOperation.update({
@@ -356,6 +359,7 @@ export async function createXeroInvoiceForGroupSettlement(
       createdByMemberId: options?.createdByMemberId,
       buildRequestPayload: (resolvedContactId) => ({
         invoices: [buildInvoice(resolvedContactId)],
+        ...promoLinesRecord,
       }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(
