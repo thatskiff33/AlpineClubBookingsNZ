@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   readHoldPaymentEvidence: vi.fn(),
   hasAdminAccess: vi.fn(),
   checkRateLimit: vi.fn(),
+  manualRefundTaskAggregate: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -32,7 +33,7 @@ vi.mock("@/lib/prisma", () => ({
     memberCredit: { aggregate: mocks.memberCreditAggregate },
     clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique },
     // #3827 (`INV-PAY-114`): no open edit refund hand-back on file.
-    manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
+    manualRefundTask: { aggregate: mocks.manualRefundTaskAggregate },
   },
 }));
 vi.mock("@/lib/cancellation", () => ({
@@ -131,6 +132,7 @@ beforeEach(() => {
     updatedAt: new Date("2026-01-01T00:00:00.000Z"),
   });
   mocks.readHoldPaymentEvidence.mockResolvedValue(PART_PAID);
+  mocks.manualRefundTaskAggregate.mockResolvedValue({ _sum: { amountCents: null } });
 });
 
 describe("cancel preview for a part-paid internet banking booking (#3643)", () => {
@@ -149,6 +151,19 @@ describe("cancel preview for a part-paid internet banking booking (#3643)", () =
     });
     expect(mocks.readHoldPaymentEvidence).toHaveBeenCalledWith(
       expect.objectContaining({ id: "payment-ib", xeroInvoiceId: "inv-ib" }),
+    );
+  });
+
+  it("#3827 (INV-PAY-114): quotes only the cash not already promised back on an open edit refund hand-back", async () => {
+    // $150 recorded, $50 of it already owed back on an earlier edit's task.
+    mocks.manualRefundTaskAggregate.mockResolvedValue({ _sum: { amountCents: 5_000 } });
+
+    const { status, body } = await preview();
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ totalPaidCents: 10_000, creditRefundAmountCents: 5_000 });
+    expect(mocks.manualRefundTaskAggregate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ paymentId: "payment-ib", status: "OPEN" }) }),
     );
   });
 
