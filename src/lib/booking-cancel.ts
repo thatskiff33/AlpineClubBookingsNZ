@@ -2422,9 +2422,7 @@ async function performBookingCancellation(
   // #3653 (F4): the group's cancellation already owes this child's refund to
   // the organiser's card; this cancel adds none of its own, and says whose it is.
   const groupRefundNote =
-    groupCancellationRefundCents > 0
-      ? groupCancellationRefundNote(groupCancellationRefundCents, format)
-      : null;
+    groupCancellationRefundCents > 0 ? groupCancellationRefundNote(groupCancellationRefundCents, format) : null;
   logBookingCancellationAudit({
     booking: fresh,
     bookingId,

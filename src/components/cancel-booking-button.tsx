@@ -53,11 +53,7 @@ interface CancelPreview {
    * settles that payment by hand.
    */
   paymentSettledByHand?: boolean;
-  /**
-   * #3653: the group organiser's cancellation already owes this booking's
-   * refund to the organiser's card, so this cancel returns nothing of its own.
-   * The sentence the cancel itself reports, from the same home.
-   */
+  /** #3653: the organiser's cancellation of the group already refunds this booking; the cancel's own sentence. */
   groupCancellationRefundNote?: string;
 }
 
