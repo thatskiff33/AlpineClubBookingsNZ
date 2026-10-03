@@ -37,13 +37,6 @@ reason: the removal's Booking Modified email says whether its refund is a bank
   transfer the club still has to send (D-3813-6); one import and one field
   beside the refund amount it qualifies.
 
-file: src/components/admin/manual-refund-task-queue.tsx
-lines: 2169
-reason: an edit's refund hand-back, and an approved appeal's (D-3813-7), is a
-  hand-back row that needs its own explaining paragraph, kept out of the
-  cancelled-booking one (D-3813-6); each sits beside the other kinds'
-  predicates and paragraphs it is chosen among.
-
 file: src/lib/email/booking.ts
 lines: 1768
 reason: the Booking Modified sender takes the required bank-transfer flag and
@@ -91,7 +84,7 @@ reason: a required token needs its plain-English guidance in the one table the
   two already there rather than living in a second table.
 
 file: src/lib/xero-credit-notes.ts
-lines: 1201
+lines: 1239
 reason: owner decision D-3813-8 (INV-PAY-116) - the refund-note builder raises
   a refund request's own note: keyed by the request, linked under its own role,
   never per-delta and never the payment's pointer. Those are branches inside
@@ -99,15 +92,9 @@ reason: owner decision D-3813-8 (INV-PAY-116) - the refund-note builder raises
   recording, settlement and completion), so a second builder would fork that.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 3247
+lines: 3275
 reason: the refund-note dispatch passes the request id through (D-3813-8); the
   enqueue itself lives in xero-refund-request-credit-note-outbox.ts.
-
-file: src/lib/xero-operation-retry.ts
-lines: 1844
-reason: the retry and repair legs keep a refund request's note its own role,
-  never re-enter it as per-delta, and never move the payment's pointer to it
-  (D-3813-8) - conditions on the existing legs, not a new leg.
 
 file: src/lib/xero-sync.ts
 lines: 1008

@@ -92,6 +92,17 @@ export function editReviewXeroDocumentAsk({
   return { bookingModificationId, amountCents: xeroAmountCents };
 }
 
+/**
+ * The hand-back facts the completion carries through to this leg untouched:
+ * `cancellationHandBackInvoiceId` (`INV-PAY-101`, #3529), and #3827's
+ * `nonCancellationHandBack` (`INV-PAY-115`) and `refundRequestId` (D-3813-8,
+ * `INV-PAY-116`). Typed once here, beside the parameters that document them.
+ */
+export type EditReviewHandBackXeroFacts = Pick<
+  Parameters<typeof dispatchEditReviewXeroSettlement>[0],
+  "cancellationHandBackInvoiceId" | "nonCancellationHandBack" | "refundRequestId"
+>;
+
 /** The same answer as a yes/no, derived from it rather than restated. */
 export function editReviewSettlementIssuesXeroDocument(
   input: Parameters<typeof editReviewXeroDocumentAsk>[0],

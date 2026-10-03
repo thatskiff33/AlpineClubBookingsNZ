@@ -140,20 +140,19 @@ export async function GET() {
         bookingId: true,
         amountCents: true,
         /*
-          #3033. `kind` decides which SENTENCE the card prints beside a row: the
-          queue's standing paragraph says every row "was paid in cash or by a
-          bank transfer that never reached Xero", which is simply untrue of an
-          EDIT_FINANCIAL_REVIEW row. `raisedAmountCents` is what the task was
-          raised with, so a row whose amount an admin has since amended says so
-          on its face rather than only in the audit log. `reviewContext` is owner
-          decision D3's evidence — projected below, never sent raw.
+          #3033/#3827. `kind` - with `occurrenceKey`, which marks an edit's or an
+          appeal's hand-back (`INV-PAY-115`, `INV-PAY-116`) - decides the SENTENCE
+          the card prints: the standing "paid in cash or by a bank transfer that
+          never reached Xero" is untrue of those and of an EDIT_FINANCIAL_REVIEW
+          row. `raisedAmountCents` shows an amended amount on its face, not only
+          in the audit log; `reviewContext` is D3's evidence, never sent raw.
         */
         kind: true,
+        occurrenceKey: true,
         // #3639: marks a late capture held for a treasurer's approval.
         lateCaptureApprovalIntentId: true,
         // #3643: marks a part-payment review, settled in Xero.
         partPaymentReviewPaymentId: true,
-        occurrenceKey: true, // #3827 (`INV-PAY-115`): an edit's refund hand-back
         // #3643 (`INV-PAY-108`): the sync's note that Xero reported it paid.
         partPaymentReviewXeroPaidAt: true,
         partPaymentReviewXeroPaidCents: true,

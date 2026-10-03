@@ -35,7 +35,7 @@ import {
   refundPaymentTransactions,
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
-import { dispatchEditReviewXeroSettlement } from "@/lib/edit-financial-review-xero-leg";
+import { dispatchEditReviewXeroSettlement, type EditReviewHandBackXeroFacts } from "@/lib/edit-financial-review-xero-leg";
 import {
   finishEditReviewAccountCredit,
   type EditReviewAccountCreditOutcome,
@@ -526,10 +526,8 @@ export async function executeEditReviewSettlement({
   hasIssuedXeroInvoice,
   bookingPaymentStatus,
   bookingXeroInvoiceId = null,
-  cancellationHandBackInvoiceId,
-  nonCancellationHandBack,
-  refundRequestId = null,
   format,
+  ...handBackXero
 }: {
   bookingId: string;
   taskId: string;
@@ -542,15 +540,9 @@ export async function executeEditReviewSettlement({
   bookingXeroInvoiceId?: string | null;
   hasIssuedXeroInvoice: boolean;
   bookingPaymentStatus: string | null;
-  /** `INV-PAY-101` (#3529): see `dispatchEditReviewXeroSettlement`. */
-  cancellationHandBackInvoiceId: string | null;
-  /** #3827 (`INV-PAY-115`): see `dispatchEditReviewXeroSettlement`. */
-  nonCancellationHandBack: boolean;
-  /** #3827 (D-3813-8): see `dispatchEditReviewXeroSettlement`. */
-  refundRequestId?: string | null;
   /** The club's format (#3565), resolved once by the caller, before its transaction. */
   format: ClubFormat;
-}): Promise<{
+} & EditReviewHandBackXeroFacts): Promise<{
   stripeRefundId: string | null;
   additionalPaymentIntentId: string | null;
 }> {
@@ -697,9 +689,7 @@ export async function executeEditReviewSettlement({
     chargeTotalCents,
     hasIssuedXeroInvoice,
     bookingPaymentStatus,
-    cancellationHandBackInvoiceId,
-    nonCancellationHandBack,
-    refundRequestId,
+    ...handBackXero,
     additionalPaymentIntentId,
   });
 
