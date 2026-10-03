@@ -16,7 +16,8 @@ const h = vi.hoisted(() => ({
   persistRepricedPromotions: vi.fn(),
   applyLifecycleTransitions: vi.fn(),
   deriveBookingAppliedCreditCents: vi.fn(),
-  createBookingModificationCredit: vi.fn(),
+  clampAppliedCreditToBookingPrice: vi.fn(),
+  lockMemberCreditLedger: vi.fn(),
   loadCancellationPolicy: vi.fn(),
   executeBookingModificationRefund: vi.fn(),
   queueXeroBookingEditSettlement: vi.fn(),
@@ -54,7 +55,8 @@ vi.mock("@/lib/booking-modification-pricing", () => ({
 vi.mock("@/lib/member-credit", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-credit")),
   deriveBookingAppliedCreditCents: h.deriveBookingAppliedCreditCents,
-  createBookingModificationCredit: h.createBookingModificationCredit,
+  clampAppliedCreditToBookingPrice: h.clampAppliedCreditToBookingPrice,
+  lockMemberCreditLedger: h.lockMemberCreditLedger,
 }));
 vi.mock("@/lib/booking-modification-settlement", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/booking-modification-settlement")),
@@ -185,7 +187,7 @@ describe("the full reduction goes back the way it was paid (D-3813-5)", () => {
       hasSucceededPayment: true,
     });
     expect(h.loadCancellationPolicy).not.toHaveBeenCalled();
-    expect(h.createBookingModificationCredit).not.toHaveBeenCalled();
+    expect(h.clampAppliedCreditToBookingPrice).not.toHaveBeenCalled();
   });
 
   it("internet banking: the whole $60 goes back by the bank-transfer refund, not to a card", async () => {
@@ -205,26 +207,35 @@ describe("the full reduction goes back the way it was paid (D-3813-5)", () => {
     });
   });
 
-  it("account credit: the whole $60 goes back as credit", async () => {
+  it("account credit: the whole $60 goes back as credit, the applied credit netted down", async () => {
     h.deriveBookingAppliedCreditCents.mockResolvedValue(32000);
-    const result = await accept(
-      booking({ payment: { ...booking().payment, amountCents: 0, creditAppliedCents: 32000 } }),
-    );
+    h.clampAppliedCreditToBookingPrice.mockResolvedValue({ appliedCreditCents: 26000, refundedExcessCents: 6000 });
+    const loaded = booking({ payment: { ...booking().payment, amountCents: 0, creditAppliedCents: 32000 } });
+    const client = tx(loaded);
+    const result = await repriceBookingAfterGuestAcceptance(client as never, {
+      bookingId: "booking-1",
+      acceptedGuestId: "g-cara",
+      actorMemberId: "cara",
+      todayAtClub: TODAY,
+      format: CLUB_FORMAT_TEST,
+    });
     expect(result).toMatchObject({
       repriced: true,
       refundAmountCents: 0,
       accountCreditAmountCents: 6000,
-      settlementMethod: "credit",
+      creditReturnedAsApplied: true,
     });
-    expect(h.createBookingModificationCredit).toHaveBeenCalledWith(
-      "ann",
-      6000,
-      "booking-1",
-      "mod-1",
-      undefined,
+    // Read under the member's ledger lock, then returned by the edit's own clamp.
+    expect(h.lockMemberCreditLedger).toHaveBeenCalledWith("ann", expect.anything());
+    expect(h.clampAppliedCreditToBookingPrice).toHaveBeenCalledWith(
+      expect.objectContaining({ memberId: "ann", bookingId: "booking-1", newFinalPriceCents: 26000 }),
       expect.anything(),
-      "pay-1",
     );
+    // The payment's mirror follows the ledger (INV-PAY-024).
+    expect(client.payment.update).toHaveBeenCalledWith({
+      where: { id: "pay-1" },
+      data: { creditAppliedCents: 26000 },
+    });
   });
 
   it("an organisation is refunded the way it paid, never refused for having no credit account", async () => {
@@ -255,7 +266,7 @@ describe("free nights are used only for what is returned", () => {
     expect(h.persistRepricedPromotions).not.toHaveBeenCalled();
   });
 
-  it("a credit-paid booking whose reduction exceeds its applied credit is not re-priced", async () => {
+  it("a booking with no captured cash not paid wholly with credit is not re-priced", async () => {
     h.deriveBookingAppliedCreditCents.mockResolvedValue(2000);
     const result = await accept(
       booking({ payment: { ...booking().payment, amountCents: 0, creditAppliedCents: 2000 } }),
@@ -332,6 +343,31 @@ describe("after commit: the card refund, the Xero correction, the email and the 
         entityId: "mod-1",
         subjectMemberId: "ann",
       }),
+    );
+  });
+});
+
+describe("a credit return is worded as account credit in Xero", () => {
+  it("never as a bank refund", async () => {
+    h.deriveBookingAppliedCreditCents.mockResolvedValue(32000);
+    h.clampAppliedCreditToBookingPrice.mockResolvedValue({ appliedCreditCents: 26000, refundedExcessCents: 6000 });
+    const reprice = await accept(
+      booking({ payment: { ...booking().payment, amountCents: 0, creditAppliedCents: 32000, xeroInvoiceId: "inv-1" } }),
+    );
+    if (!reprice.repriced) throw new Error("expected a re-price");
+    h.sendBookingModifiedEmail.mockResolvedValue(undefined);
+    await settleGuestAcceptanceRepriceAfterCommit({
+      bookingId: "booking-1",
+      actorMemberId: "cara",
+      reprice,
+      format: CLUB_FORMAT_TEST,
+    });
+    expect(h.queueXeroBookingEditSettlement).toHaveBeenCalledWith(
+      expect.objectContaining({ refundMethod: "account-credit", settlementAmountCents: 6000 }),
+    );
+    expect(h.sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 0, accountCreditAmountCents: 6000 }),
+      CLUB_FORMAT_TEST,
     );
   });
 });

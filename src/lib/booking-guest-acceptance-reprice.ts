@@ -48,9 +48,9 @@ import { sendBookingModifiedEmail } from "@/lib/email/booking";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import logger from "@/lib/logger";
 import {
-  createBookingModificationCredit,
+  clampAppliedCreditToBookingPrice,
   deriveBookingAppliedCreditCents,
-  requireMemberCreditRecipient,
+  lockMemberCreditLedger,
 } from "@/lib/member-credit";
 import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
 import { prisma } from "@/lib/prisma";
@@ -74,8 +74,9 @@ import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settleme
  *   through the ordinary edit's "money back" arm (`applyPaymentAdjustments` with
  *   `calculateFullReductionSettlementOptions`) — a Stripe refund after commit,
  *   or the bank-transfer refund credit note an internet-banking edit raises;
- * - a booking paid with account credit gets it back as account credit
- *   (`createBookingModificationCredit`, the ordinary edit's credit arm);
+ * - a booking paid wholly with account credit gets it back as account credit,
+ *   the way an edit returns over-applied credit (`clampAppliedCreditToBookingPrice`,
+ *   INV-MOD-012);
  * - a booking not yet paid simply costs less (`applyLifecycleTransitions`
  *   returns any over-applied credit and settles a $0 booking, as an edit does).
  * The ledger posting, the history row, the Xero correction (queued after commit
@@ -85,8 +86,8 @@ import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settleme
  * FREE NIGHTS ARE USED ONLY FOR WHAT IS RETURNED. The re-price is decided under
  * the locks and WRITTEN only once the settlement above is known to return the
  * whole reduction; where it cannot — the captured payment has less left to give
- * back than the reduction, or a reduction on a credit-paid booking exceeds the
- * credit applied to it (a split payment, or a slice an earlier edit kept) — the
+ * back than the reduction, or a booking with no captured cash was not paid
+ * wholly with credit (a split payment, or a slice an earlier edit kept) — the
  * re-price is not written at all, so no code's allocation moves.
  *
  * WHEN IT DOES NOT RE-PRICE, and the booking keeps the figures it had, to be
@@ -133,6 +134,12 @@ export type GuestAcceptanceReprice =
       xeroRefundAmountCents: number;
       xeroAdditionalAmountCents: number;
       settlementMethod: "card" | "credit" | null;
+      /**
+       * The reduction went back as the account credit the booking was paid
+       * with (its applied credit netted down), not as a refund — the Xero
+       * correction is then worded as account credit, never as a bank refund.
+       */
+      creditReturnedAsApplied: boolean;
       hasIssuedXeroInvoice: boolean;
       hasSucceededPayment: boolean;
       paymentStatus: string | null;
@@ -312,6 +319,7 @@ export async function repriceBookingAfterGuestAcceptance(
       xeroRefundAmountCents: 0,
       xeroAdditionalAmountCents: 0,
       settlementMethod: null,
+      creditReturnedAsApplied: false,
       hasIssuedXeroInvoice: hasIssuedPrimaryXeroInvoice(loaded),
       hasSucceededPayment: false,
       paymentStatus: booking.payment?.status ?? null,
@@ -332,18 +340,33 @@ export async function repriceBookingAfterGuestAcceptance(
       ? { settlementOptions: returnRoute.settlementOptions, settlementMethod: "card" as const }
       : {}),
   });
-  // A credit-paid booking captured no cash, so the ordinary arm above returns
-  // nothing; its reduction goes back as the credit it was paid with, through
-  // the edit's credit arm — the same figures an edit electing credit records.
-  const paymentImpact =
-    returnRoute.kind === "account-credit"
-      ? {
-          ...adjusted,
-          accountCreditAmountCents: returnRoute.amountCents,
-          settlementMethod: "credit" as const,
-          xeroRefundAmountCents: adjusted.hasIssuedXeroInvoice ? returnRoute.amountCents : 0,
-        }
-      : adjusted;
+  // A credit-paid booking captured no cash, so the arm above returns nothing
+  // and corrects an issued invoice for the full reduction, as it does for any
+  // booking with no captured payment. Its credit goes back the way an edit
+  // returns over-applied credit (INV-MOD-012): the applied credit is netted
+  // down to the new price, the member's balance regains the reduction, and an
+  // Internet-Banking invoice's credit allocation is reduced to match.
+  let paymentImpact: typeof adjusted = adjusted;
+  if (returnRoute.kind === "account-credit") {
+    const clamp = await clampAppliedCreditToBookingPrice(
+      { memberId: returnRoute.memberId, bookingId, newFinalPriceCents, format },
+      tx,
+    );
+    if (clamp.refundedExcessCents !== returnRoute.amountCents) {
+      throw new Error(
+        `INV-MONEY-037 (D-3813-5): a guest's acceptance would return ${clamp.refundedExcessCents} cents of credit for a ${returnRoute.amountCents}-cent reduction on booking ${bookingId} (#3827).`,
+      );
+    }
+    if (booking.payment) {
+      // The mirror beside the ledger: cash net of refunds plus credit applied is
+      // the price again (INV-PAY-024).
+      await tx.payment.update({
+        where: { id: booking.payment.id },
+        data: { creditAppliedCents: clamp.appliedCreditCents },
+      });
+    }
+    paymentImpact = { ...adjusted, accountCreditAmountCents: clamp.refundedExcessCents };
+  }
   const lifecycle = await applyLifecycleTransitions(tx, {
     booking: loaded,
     bookingId,
@@ -425,19 +448,6 @@ export async function repriceBookingAfterGuestAcceptance(
     sides,
     site: "guest-acceptance",
   });
-  if (paymentImpact.accountCreditAmountCents > 0) {
-    // Only the credit route reaches here, and it is chosen only for a member's
-    // booking (an organisation holds no credit, so it never paid with any).
-    await createBookingModificationCredit(
-      requireMemberCreditRecipient(owner.memberId),
-      paymentImpact.accountCreditAmountCents,
-      bookingId,
-      bookingModification.id,
-      undefined,
-      tx,
-      booking.payment?.id,
-    );
-  }
 
   return {
     repriced: true,
@@ -449,6 +459,7 @@ export async function repriceBookingAfterGuestAcceptance(
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,
     xeroAdditionalAmountCents: paymentImpact.xeroAdditionalAmountCents,
     settlementMethod: paymentImpact.settlementMethod,
+    creditReturnedAsApplied: returnRoute.kind === "account-credit",
     hasIssuedXeroInvoice: paymentImpact.hasIssuedXeroInvoice,
     hasSucceededPayment: paymentImpact.hasSucceededPayment,
     paymentStatus: booking.payment?.status ?? null,
@@ -463,7 +474,7 @@ export async function repriceBookingAfterGuestAcceptance(
 type FullReductionReturnRoute =
   | { kind: "none" }
   | { kind: "money-back"; settlementOptions: BookingModificationSettlementOptions }
-  | { kind: "account-credit"; amountCents: number };
+  | { kind: "account-credit"; amountCents: number; memberId: string };
 
 /**
  * D-3813-5: the one way the whole of a reduction can go back, or null when it
@@ -473,7 +484,12 @@ type FullReductionReturnRoute =
  */
 async function fullReductionReturnRoute(
   tx: Prisma.TransactionClient,
-  booking: { id: string; status: string; payment: LoadedBookingForModify["payment"] },
+  booking: {
+    id: string;
+    status: string;
+    finalPriceCents: number;
+    payment: LoadedBookingForModify["payment"];
+  },
   loaded: LoadedBookingForModify,
   priceDiffCents: number,
   todayAtClub: CalendarDate,
@@ -493,14 +509,18 @@ async function fullReductionReturnRoute(
       : null;
   }
   if (!isPaidLikeBookingStatus(booking.status)) return { kind: "none" };
-  // Paid with no captured cash: paid with account credit (or at $0). It goes
-  // back as credit, never more than the credit the booking was paid with.
+  // Paid with no captured cash: paid wholly with account credit. It goes back
+  // as credit, by returning the over-applied slice exactly as an edit returns
+  // it (`clampAppliedCreditToBookingPrice`) — which gives back precisely the
+  // reduction only when the credit applied IS the price. Read under the
+  // member's ledger lock, which the return then re-takes, so the two agree.
   // An organisation holds no credit, so it never paid with any.
   const creditHolder = bookingOwner(loaded).memberId;
   if (creditHolder === null) return null;
+  await lockMemberCreditLedger(creditHolder, tx);
   const appliedCreditCents = await deriveBookingAppliedCreditCents(booking.id, tx);
-  return appliedCreditCents >= reductionCents
-    ? { kind: "account-credit", amountCents: reductionCents }
+  return appliedCreditCents === booking.finalPriceCents
+    ? { kind: "account-credit", amountCents: reductionCents, memberId: creditHolder }
     : null;
 }
 
@@ -563,6 +583,7 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       settlementAmountCents: reprice.xeroRefundAmountCents,
       settlementMethod: reprice.settlementMethod,
       refundedThroughStripe: reprice.hasSucceededPayment,
+      ...(reprice.creditReturnedAsApplied ? { refundMethod: "account-credit" as const } : {}),
       // An acceptance never raises a settled booking's price (see
       // `repriceBookingAfterGuestAcceptance`), so there is no Stripe ask to wait on.
       requiresAdditionalStripePayment: false,
