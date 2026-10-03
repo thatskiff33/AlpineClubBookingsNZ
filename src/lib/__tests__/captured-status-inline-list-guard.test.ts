@@ -9,15 +9,14 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
  * asks it of the aggregate `Payment`; `isCapturedTransactionStatus`
  * (`payment-transaction-status.ts`) asks it of one `PaymentTransaction` row.
  *
- * The concurrent #3606 guard (`payment-transaction-status-list-guard.test.ts`,
- * wave #3503) matches a hand-written triple in a Prisma `status.in`, a `Set`
- * or a named array. It cannot see a membership test on an ANONYMOUS array —
+ * Written when the concurrent #3606 guard (`payment-transaction-status-list-guard.test.ts`,
+ * wave #3503) could not see a membership test on an ANONYMOUS array —
  * `[SUCCEEDED, REFUNDED, PARTIALLY_REFUNDED].includes(row.status)` — which is
  * the copy #3643 wrote into the part-payment cancel claim. This guard covers
  * exactly that receiver — bare, or parenthesised with a cast as TypeScript
- * usually spells it (`([...] as const).includes(`) — and nothing the #3606
- * guard covers, so the two compose rather than overlap; fold it into that
- * guard once both are on `main`. Comments are stripped first with the one
+ * usually spells it (`([...] as const).includes(`). Since #3632 that guard reads
+ * every bracketed list holding exactly the three, this shape included, so the
+ * two now OVERLAP; fold this one into it once both are on `main`. Comments are stripped first with the one
  * `stripComments` (`INV-SSOT-004`), so a comment recording the removed copy
  * does not trip it.
  */

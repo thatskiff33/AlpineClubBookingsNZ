@@ -363,6 +363,10 @@ export async function settleGroupBookingOnOrganiserCancel(
     // booking = one lodge, ADR-001), so the first child's lodge is the group's.
     const policy = await loadCancellationPolicy(checkIn, firstChild.lodgeId);
     for (const child of children) {
+      // #3632: SUCCEEDED-only on purpose, not `isCapturedPaymentStatus`. The
+      // plan sizes from `finalPriceCents` (no refunded mirror) and is replayed
+      // verbatim, so admitting a part-refunded organiser-settled child would
+      // refund it twice. #3653 owns that child's remaining-value plan.
       const isPaid =
         child.status === BookingStatus.PAID &&
         child.payment?.status === PaymentStatus.SUCCEEDED;

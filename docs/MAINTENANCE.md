@@ -1761,6 +1761,14 @@ The late payment retired the pending note and credited the member, so a credit
 note now would credit an invoice the member paid: take no action on those rows
 (a part payment is kept, not released — see below).
 
+Its applied-credit strand section reports an already-realized loss only when the
+current Internet-Banking `PRIMARY` transaction is captured and linked to the
+payment's current Xero invoice, or when the payment has its manual-settlement
+stamp. The aggregate payment status is a mutable mirror and any historical Stripe
+or `ADDITIONAL` capture is not evidence that this IB invoice was paid. Rows without
+that evidence are reported as **UNVERIFIED**, never as definitely unpaid: check the
+current Xero invoice or the manual settlement record before changing credit.
+
 ```bash
 DATABASE_URL=<non-prod copy> pnpm run payments:audit-ib-hold-clearing
 DATABASE_URL=<non-prod copy> pnpm run payments:audit-ib-hold-clearing --json
@@ -1894,15 +1902,18 @@ The same script also prints a second, separate **#1620 applied-credit strand
 enumeration** (also read-only): every non-cancelled Internet-Banking payment
 whose booking still carries UN-allocated applied credit (a `BOOKING_APPLIED`
 ledger row not yet stamped with an allocated Xero note), split into REALIZED
-(payment captured — the member already double-paid the full invoice) and PENDING
-(not yet paid). CANCELLED bookings are excluded (the #1547 restore domain).
+(a current IB receipt or manual settlement proves the member already double-paid)
+and UNVERIFIED (local history cannot prove whether the current invoice was paid).
+CANCELLED bookings are excluded (the #1547 restore domain). Each row prints its
+`settlement evidence` (`xero-primary-receipt`, `manual-settlement` or
+`unverified`). Since #3632 the `--json` output names the second list `unverified`
+and its total `unverifiedExposureCents`; they were `pending` and
+`pendingExposureCents`, so update anything that parses the old keys.
 Repair guidance under the #1620 allocate-existing mechanism:
 
-- **PENDING** rows are fixed forward automatically: the applied-credit allocation
-  op reduces their already-raised invoice to the effective amount. If a legacy
-  PENDING row predates the fix and never got an allocation op, re-running the
-  raise path (or re-enqueuing `enqueueXeroAppliedCreditAllocationOperation`)
-  allocates it.
+- **UNVERIFIED** rows need an operator to check the current Xero invoice or the
+  manual settlement record before choosing a remedy. Do not restore credit or
+  allocate a note solely from the audit row.
 - **REALIZED** rows already paid the full invoice in cash, so allocating a credit
   note now would over-pay the invoice. The repair is a LOCAL credit restore for
   the strand amount (a Xero credit note does not refund cash already sent);
