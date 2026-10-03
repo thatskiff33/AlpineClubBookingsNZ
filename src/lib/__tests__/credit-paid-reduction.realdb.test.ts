@@ -1,0 +1,370 @@
+/**
+ * Real-PostgreSQL proof for #3809: a price reduction on a booking paid ENTIRELY
+ * with account credit gives back what a card-paid booking's would - `min(
+ * reduction, applied credit)` tiered by the card tier - through the one
+ * give-back (`giveBackAppliedCredit`), its Xero deallocation step included.
+ *
+ * Through the REAL guest removal (`removeBookingGuestInTransaction`, the
+ * reduction door every removal takes) and the REAL `cancelBooking`, on real
+ * rows: the member-credit ledger, the booking ledger, the queued Xero
+ * documents. The lock-order case is FORCED, not raced: a third connection holds
+ * the member's credit-ledger key, PostgreSQL reports the removal queued behind
+ * it, and only then is the Payment row probed with `NOWAIT`.
+ *
+ * Envelope: identical to `concurrency-lock-races.realdb.test.ts`, which imports
+ * this file; the describe runs ONLY when `RUN_CONCURRENCY_RACE_TESTS=1`, against
+ * a loopback database on port 55442+ named with `concurrency_race_1881`.
+ *
+ *   RUN_CONCURRENCY_RACE_TESTS=1 \
+ *   CONCURRENCY_RACE_DATABASE_URL=postgresql://user:pass@127.0.0.1:55442/concurrency_race_1881 \
+ *   pnpm exec vitest run src/lib/__tests__/credit-paid-reduction.realdb.test.ts
+ */
+import type { PrismaClient } from "@prisma/client";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+
+const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
+const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
+
+const MEMBER_ID = "race-3809-member";
+const LODGE_ID = "race-3809-lodge";
+const BOOKING_ID = "race-3809-booking";
+const STAYING_GUEST_ID = "race-3809-guest-stays";
+const LEAVING_GUEST_ID = "race-3809-guest-leaves";
+const PAYMENT_ID = "race-3809-payment";
+const XERO_INVOICE_ID = "race-3809-xero-invoice";
+const CREDIT_NOTE_ID = "race-3809-credit-note";
+
+/** The frozen test clock's day; the stay is permanently in the future. */
+const TODAY = new Date("2026-07-01T00:00:00.000Z");
+const NIGHTS = [new Date("2026-08-01T00:00:00.000Z"), new Date("2026-08-02T00:00:00.000Z")];
+const CHECK_IN = NIGHTS[0]!;
+const CHECK_OUT = new Date("2026-08-03T00:00:00.000Z");
+/** $150 stays, $50 leaves: removing the second guest is a $50 reduction on a $200 booking. */
+const GUESTS = [
+  { id: STAYING_GUEST_ID, firstName: "Staying", nightCents: 7_500 },
+  { id: LEAVING_GUEST_ID, firstName: "Leaving", nightCents: 2_500 },
+];
+
+const TIERS = [
+  { tier: "100%", rule: { refundPercentage: 100, fixedFeeCents: 0 }, givenBackCents: 5_000 },
+  { tier: "50% with a $20 fee", rule: { refundPercentage: 50, fixedFeeCents: 2_000 }, givenBackCents: 500 },
+  { tier: "0%", rule: { refundPercentage: 0, fixedFeeCents: 0 }, givenBackCents: 0 },
+];
+const FIFTY_LESS_TWENTY = TIERS[1]!.rule;
+
+const LOCK_POLL_TIMEOUT_MS = 2_000;
+
+/** The sibling harness's envelope, re-declared so running this file alone registers no other suite. */
+function assertSafeRaceDbUrl(url: string): void {
+  const parsed = new URL(url);
+  const port = Number.parseInt(parsed.port, 10);
+  if (!Number.isFinite(port) || port === 5432 || port < 55442) throw new Error(`Refusing port ${parsed.port || "(none)"}: use a throwaway Postgres on 55442+.`);
+  if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname.toLowerCase())) throw new Error("The race DB must be loopback-only.");
+  if (!decodeURIComponent(parsed.pathname).includes("concurrency_race_1881")) throw new Error("The race DB name must carry 'concurrency_race_1881'.");
+}
+
+let prisma: (typeof import("@/lib/prisma"))["prisma"];
+let credit: typeof import("@/lib/member-credit");
+let ledger: typeof import("@/lib/booking-ledger-balance");
+let lockHolderClient: PrismaClient;
+let observerClient: PrismaClient;
+
+(RUN ? describe : describe.skip)(
+  "#3809: a credit-paid booking's price reduction gives back like a card refund - real PostgreSQL",
+  { timeout: 60_000 },
+  () => {
+    async function deleteFixtures() {
+      const modifications = await prisma.bookingModification.findMany({ where: { bookingId: BOOKING_ID }, select: { id: true } });
+      await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [PAYMENT_ID, BOOKING_ID, ...modifications.map((row) => row.id)] } } });
+      const slices = await prisma.memberCreditNoteAllocation.findMany({ where: { appliedToBookingId: BOOKING_ID }, select: { id: true } });
+      await prisma.xeroObjectLink.deleteMany({ where: { localModel: "MemberCreditNoteAllocation", localId: { in: slices.map((slice) => slice.id) } } });
+      await prisma.memberCreditNoteAllocation.deleteMany({ where: { appliedToBookingId: BOOKING_ID } });
+      await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
+      await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
+      await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
+      await prisma.auditLog.deleteMany({ where: { OR: [{ memberId: MEMBER_ID }, { actorMemberId: MEMBER_ID }, { targetId: BOOKING_ID }] } });
+      await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
+      await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
+      await prisma.bookingModification.deleteMany({ where: { bookingId: BOOKING_ID } });
+      await prisma.payment.deleteMany({ where: { bookingId: BOOKING_ID } });
+      await prisma.bookingGuestNight.deleteMany({ where: { bookingGuest: { bookingId: BOOKING_ID } } });
+      await prisma.bookingGuest.deleteMany({ where: { bookingId: BOOKING_ID } });
+      await prisma.booking.deleteMany({ where: { id: BOOKING_ID } });
+      await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE_ID } });
+      await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
+      await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
+    }
+
+    /**
+     * A $200 PAID booking, confirmed on the ledger, paid entirely by $200 of
+     * account credit: nothing captured. `ib-allocated` is a bank-transfer
+     * booking whose credit is allocated against its Xero invoice;
+     * `card-invoiced` is the card path's, whose credit never was (#3836).
+     */
+    async function creditPaidBooking(shape: "ib-allocated" | "card-invoiced", rule: (typeof TIERS)[number]["rule"]) {
+      await deleteFixtures();
+      await prisma.member.create({
+        data: { id: MEMBER_ID, email: "race-3809@example.invalid", passwordHash: "x", firstName: "Credit", lastName: "Payer", role: "USER", ageTier: "ADULT" },
+      });
+      await prisma.lodge.create({ data: { id: LODGE_ID, name: "Race 3809 Lodge", slug: "race-3809" } });
+      await prisma.cancellationPolicy.create({ data: { lodgeId: LODGE_ID, daysBeforeStay: 0, ...rule } });
+      await prisma.booking.create({
+        data: { id: BOOKING_ID, memberId: MEMBER_ID, lodgeId: LODGE_ID, checkIn: CHECK_IN, checkOut: CHECK_OUT, status: "PAID", totalPriceCents: 20_000, finalPriceCents: 20_000 },
+      });
+      for (const guest of GUESTS) {
+        await prisma.bookingGuest.create({
+          data: {
+            id: guest.id, bookingId: BOOKING_ID, firstName: guest.firstName, lastName: "Guest", ageTier: "ADULT",
+            stayStart: CHECK_IN, stayEnd: CHECK_OUT, priceCents: guest.nightCents * 2,
+          },
+        });
+        await prisma.bookingGuestNight.createMany({
+          data: NIGHTS.map((stayDate) => ({ bookingGuestId: guest.id, stayDate, priceCents: guest.nightCents, priceSource: "SOLD" as const })),
+        });
+        for (const [index, night] of NIGHTS.entries()) {
+          await prisma.bookingLedgerLine.create({ data: {
+            bookingId: BOOKING_ID, side: "CHARGE", kind: "GUEST_NIGHT", sign: 1, quantity: 1, unitCents: guest.nightCents, amountCents: guest.nightCents,
+            bookingGuestId: guest.id, nightStart: night, nightEndExclusive: NIGHTS[index + 1] ?? CHECK_OUT, ageTier: "ADULT",
+            guestNames: [`${guest.firstName} Guest`], anchorKind: "CONFIRMATION", anchorId: BOOKING_ID, narration: "race 3809 confirmation",
+            lodgeId: LODGE_ID, postingKey: `race-3809-confirm-${guest.id}-${index}`,
+          } });
+        }
+      }
+      await prisma.payment.create({
+        data: {
+          id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: 0, status: "SUCCEEDED", creditAppliedCents: 20_000,
+          source: shape === "ib-allocated" ? "INTERNET_BANKING" : "STRIPE", xeroInvoiceId: XERO_INVOICE_ID,
+        },
+      });
+      await prisma.memberCredit.create({
+        data: {
+          memberId: MEMBER_ID, amountCents: 20_000, type: "ADMIN_ADJUSTMENT", description: "race 3809 opening balance",
+          ...(shape === "ib-allocated" ? { xeroCreditNoteId: CREDIT_NOTE_ID } : {}),
+        },
+      });
+      await prisma.$transaction((tx) => credit.applyCreditToBooking(MEMBER_ID, 20_000, BOOKING_ID, tx, CLUB_FORMAT_TEST));
+      if (shape === "ib-allocated") {
+        await prisma.memberCredit.updateMany({ where: { appliedToBookingId: BOOKING_ID, type: "BOOKING_APPLIED" }, data: { xeroCreditNoteId: CREDIT_NOTE_ID } });
+        const { repairLegacyAppliedCreditNoteAllocationsForBooking } = await import("@/lib/xero-applied-credit-allocation-repair");
+        await prisma.$transaction((tx) => repairLegacyAppliedCreditNoteAllocationsForBooking(BOOKING_ID, XERO_INVOICE_ID, tx, CLUB_FORMAT_TEST));
+      }
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(0);
+      expect(await owed()).toBe(0);
+    }
+
+    const ledgerLines = () => prisma.bookingLedgerLine.findMany({ where: { bookingId: BOOKING_ID } });
+    const owed = async () => ledger.bookingLedgerBalance(await ledgerLines()).owedCents;
+
+    /** The REAL removal of the $50 guest, then the Xero leg exactly as the DELETE route queues it. */
+    async function removeLeavingGuest() {
+      const { removeBookingGuestInTransaction } = await import("@/lib/booking-guest-removal-service");
+      const result = await prisma.$transaction(
+        (tx) => removeBookingGuestInTransaction({
+          tx, bookingId: BOOKING_ID, guestId: LEAVING_GUEST_ID, actorMemberId: MEMBER_ID, actorRole: "ADMIN", today: TODAY, format: CLUB_FORMAT_TEST,
+        }),
+        { maxWait: 10_000, timeout: 20_000 },
+      );
+      const { queueXeroBookingEditSettlement } = await import("@/lib/xero-booking-edit-settlement");
+      await queueXeroBookingEditSettlement({
+        bookingId: BOOKING_ID,
+        bookingModificationId: result.bookingModificationId,
+        createdByMemberId: MEMBER_ID,
+        hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
+        originalPaymentStatus: result.paymentStatus,
+        priceDiffCents: result.priceDiffCents,
+        changeFeeCents: 0,
+        datesChanged: false,
+        settlementAmountCents: result.xeroRefundAmountCents,
+        settlementMethod: result.settlementMethod,
+        refundedThroughStripe: result.hasSucceededPayment,
+        refundMethod: result.xeroRefundMethod,
+        requiresAdditionalStripePayment: false,
+        additionalPaymentIntentId: null,
+        createPrimaryInvoiceWhenMissing: false,
+      });
+      return result;
+    }
+
+    async function queuedNotes(bookingModificationId: string) {
+      const operations = await prisma.xeroSyncOperation.findMany({
+        where: { localModel: "BookingModification", localId: bookingModificationId, entityType: "CREDIT_NOTE" },
+        select: { queueType: true, requestPayload: true },
+      });
+      return operations.map((operation) => {
+        const payload = operation.requestPayload as { refundAmountCents: number; refundMethod?: string };
+        return { queueType: operation.queueType, cents: payload.refundAmountCents, refundMethod: payload.refundMethod ?? null };
+      });
+    }
+
+    async function deallocationTarget(): Promise<number | null> {
+      const deallocation = await prisma.xeroSyncOperation.findFirst({
+        where: { localModel: "Payment", localId: PAYMENT_ID, queueType: "APPLIED_CREDIT_DEALLOCATION" },
+        select: { correlationKey: true },
+      });
+      return deallocation ? Number(deallocation.correlationKey?.split(":").at(-2)) : null;
+    }
+
+    /** The worker's deallocation, landed: the slices at its target, the row COMPLETED. */
+    async function deallocationConverges() {
+      const target = await deallocationTarget();
+      if (target === null) return;
+      await prisma.memberCreditNoteAllocation.updateMany({ where: { appliedToBookingId: BOOKING_ID }, data: { amountCents: target } });
+      await prisma.xeroSyncOperation.updateMany({
+        where: { localModel: "Payment", localId: PAYMENT_ID, queueType: "APPLIED_CREDIT_DEALLOCATION" },
+        data: { status: "COMPLETED" },
+      });
+    }
+
+    async function cancelAt(rule: (typeof TIERS)[number]["rule"]) {
+      await prisma.cancellationPolicy.updateMany({ where: { lodgeId: LODGE_ID }, data: rule });
+      const { cancelBooking } = await import("@/lib/booking-cancel");
+      const result = await cancelBooking(BOOKING_ID, MEMBER_ID, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+      expect(result.status).toBe(200);
+    }
+
+    async function waitForBlockedBy(blockerPid: number) {
+      const startedAt = process.hrtime.bigint();
+      while (realElapsedMs(startedAt) < LOCK_POLL_TIMEOUT_MS) {
+        const rows = await observerClient.$queryRaw<Array<{ count: number }>>`
+          SELECT COUNT(*)::int AS "count" FROM pg_stat_activity
+          WHERE datname = current_database() AND ${blockerPid}::int = ANY(pg_blocking_pids(pid))
+        `;
+        if ((rows[0]?.count ?? 0) >= 1) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(`Timed out waiting for the removal to queue behind the member-credit key held by pid ${blockerPid}.`);
+    }
+
+    beforeAll(async () => {
+      assertSafeRaceDbUrl(RACE_DB_URL);
+      process.env.DATABASE_URL = RACE_DB_URL;
+      ({ prisma } = await import("@/lib/prisma"));
+      credit = await import("@/lib/member-credit");
+      ledger = await import("@/lib/booking-ledger-balance");
+      const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
+        import("@prisma/client"),
+        import("@/lib/prisma-adapter"),
+      ]);
+      const separate = (applicationName: string) => {
+        const url = new URL(RACE_DB_URL);
+        url.searchParams.set("connection_limit", "1");
+        url.searchParams.set("application_name", applicationName);
+        return new SeparatePrismaClient({ adapter: createPrismaPgAdapter(url.toString()) });
+      };
+      lockHolderClient = separate("race-3809-lock-holder");
+      observerClient = separate("race-3809-observer");
+      await Promise.all([lockHolderClient.$connect(), observerClient.$connect()]);
+    }, 60_000);
+
+    afterAll(async () => {
+      await Promise.all([lockHolderClient, observerClient].map((client) => (client ? client.$disconnect().catch(() => {}) : Promise.resolve())));
+      if (typeof prisma !== "undefined") {
+        // Not swallowed: a leaked fixture is a false result in another suite of this shared database.
+        try {
+          await deleteFixtures();
+        } finally {
+          await prisma.$disconnect().catch(() => {});
+        }
+      }
+    });
+
+    it.each(TIERS)("bank transfer, the 5000-cent guest removed at $tier: $givenBackCents cents back as applied credit, the mirror and the ledger follow, and Xero agrees on what is due and on the member's credit", async ({ rule, givenBackCents }) => {
+      await creditPaidBooking("ib-allocated", rule);
+
+      const result = await removeLeavingGuest();
+
+      expect(result.priceDiffCents).toBe(-5_000);
+      expect(result.refundAmountCents).toBe(0);
+      expect(result.accountCreditAmountCents).toBe(0);
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(givenBackCents);
+      expect(await credit.deriveBookingAppliedCreditCents(BOOKING_ID)).toBe(20_000 - givenBackCents);
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { creditAppliedCents: true, amountCents: true } });
+      expect(payment).toEqual({ creditAppliedCents: 20_000 - givenBackCents, amountCents: 0 });
+      // Nothing minted beside the give-back.
+      expect(await prisma.memberCredit.count({ where: { memberId: MEMBER_ID, type: "BOOKING_MODIFICATION_REFUND" } })).toBe(0);
+
+      // The booking ledger: the reduction's night reversals and the give-back's
+      // credit line. At 100% the club owes nothing; below it, what the policy
+      // kept is the club's, exactly as a card reduction's retained slice is.
+      expect(await owed()).toBe(givenBackCents - 5_000);
+
+      // Xero, once its queue drains: the deallocation reopens the invoice by
+      // the give-back and the invoice-allocated note closes it again.
+      const notes = await queuedNotes(result.bookingModificationId);
+      const target = await deallocationTarget();
+      if (givenBackCents > 0) {
+        expect(notes).toEqual([{ queueType: "MODIFICATION_CREDIT_NOTE", cents: givenBackCents, refundMethod: "account-credit" }]);
+        expect(target).toBe(20_000 - givenBackCents);
+      } else {
+        expect(notes).toEqual([]);
+        expect(target).toBeNull();
+      }
+      const allocatedCents = target ?? 20_000;
+      const noteCents = notes.reduce((sum, note) => sum + note.cents, 0);
+      expect(20_000 - noteCents - allocatedCents, "Xero's amount due = the app's owed").toBe(0);
+      expect(20_000 - allocatedCents, "the member's Xero credit = the app's").toBe(await credit.getMemberCreditBalance(MEMBER_ID));
+    });
+
+    it("the issue's worked example on the REAL cancel: $50 back at 100%, then a cancel at 50% less $20 restores $55 - $105 in all, what a card-paid member gets", async () => {
+      await creditPaidBooking("ib-allocated", TIERS[0]!.rule);
+      await removeLeavingGuest();
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(5_000);
+      await deallocationConverges();
+
+      await cancelAt(FIFTY_LESS_TWENTY);
+
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(10_500);
+      expect(await owed()).toBe(0);
+    });
+
+    it("the card path, its credit never allocated against the invoice (#3836): no deallocation, the give-back's allocated note, and the member's app credit", async () => {
+      await creditPaidBooking("card-invoiced", TIERS[0]!.rule);
+
+      const result = await removeLeavingGuest();
+
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(5_000);
+      expect(await deallocationTarget()).toBeNull();
+      expect(await queuedNotes(result.bookingModificationId)).toEqual([
+        { queueType: "MODIFICATION_CREDIT_NOTE", cents: 5_000, refundMethod: "account-credit" },
+      ]);
+      expect(await owed()).toBe(0);
+    });
+
+    it("FORCES the lock order: the removal queues on the member's credit-ledger key holding NO lock on the Payment row, and completes once the key is released", async () => {
+      await creditPaidBooking("ib-allocated", TIERS[0]!.rule);
+      const release = deferred();
+      const holderPid = deferred<number>();
+      const holder = lockHolderClient.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('member-credit-ledger'), hashtext(${MEMBER_ID}))`;
+        const rows = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+        holderPid.resolve(rows[0]!.pid);
+        await release.promise;
+      }, { timeout: 20_000 });
+
+      const removal = removeLeavingGuest();
+      await waitForBlockedBy(await holderPid.promise);
+
+      // The removal is parked on the member key. Had it touched the Payment
+      // row first, this NOWAIT would fail with "could not obtain lock".
+      await expect(observerClient.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${PAYMENT_ID} FOR UPDATE NOWAIT`;
+      })).resolves.toBeUndefined();
+
+      release.resolve();
+      await holder;
+      await removal;
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(5_000);
+    });
+  },
+);
+
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
