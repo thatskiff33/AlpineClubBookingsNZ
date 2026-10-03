@@ -3187,7 +3187,8 @@ does too, and both would post. So `resolveManualRefundTask` takes
   `updateMany` still fences on `OPEN` for every kind, pinned with the lock
   mocked in `manual-refund-task.test.ts`. Legacy hand-back kinds take no key,
   exactly as before — **except an edit refund hand-back** (#3827,
-  `INV-PAY-114`), which takes the same key first, decided from its immutable
+  `INV-PAY-114`) and an approved refund appeal's (`INV-PAY-115`), which take
+  the same key first, decided from its immutable
   `kind` and `occurrenceKey`. Its completion moves the payment's
   `refundedAmountCents` and closes the task in one commit, and every edit,
   acceptance and paid cancel reads those two separately to size a refund net of
@@ -3195,8 +3196,12 @@ does too, and both would post. So `resolveManualRefundTask` takes
   `lock(1)` the completion cannot commit between the two reads. A reopen of
   one already holds `lock(1)` and is refused past that same net cash, and a
   refund appeal's approval reads the same net cash under `lock(1)` and claims
-  the request in that transaction, before its Stripe refund and Xero note
-  (`PUT /api/admin/refund-requests/[id]#1`, `INV-LOCK-001`).
+  the request in that transaction, planning the card refund and raising the
+  bank-transfer task for the rest there too, before its Stripe refund and Xero
+  note (`PUT /api/admin/refund-requests/[id]#1`, `INV-LOCK-001`). A released
+  approval (Stripe and its recovery enqueue both failed) returns the request
+  to PENDING and deletes that OPEN task in one transaction under the same key
+  (`PUT /api/admin/refund-requests/[id]#2`, `INV-LOCK-001`).
 
 Registered in `advisory-lock-guard.test.ts` as `resolveManualRefundTask#1`
 (`INV-LOCK-002`). The four edit doors and the batch path post their own lines
