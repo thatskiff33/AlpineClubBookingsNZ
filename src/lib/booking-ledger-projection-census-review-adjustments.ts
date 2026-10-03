@@ -17,7 +17,10 @@
  * beside them, and each closure's re-price (its `PRICE_REBASE` row). So a line
  * is borne out only when those rows make it, each row used once, and a
  * give-back row no line accounts for on a live booking is evidence of a line
- * that is missing. Pure: the snapshot row in, the judgement out.
+ * that is missing. Where a row could instead be absorbed by another task's
+ * re-price, or two rows sit beside give-back lines, nothing says which task a
+ * row is: that live booking fails closed as `AMBIGUOUS_REVIEW_GIVE_BACK`
+ * (#3583's delta review). Pure: the snapshot row in, the judgement out.
  */
 import { liveLines } from "@/lib/booking-ledger-modification-posting";
 import { isAgreedGiveBackKey } from "@/lib/booking-ledger-posting-keys";
@@ -32,9 +35,16 @@ export type ReviewAdjustmentEvidence = {
   /**
    * What the give-back rows say those lines come to (≤ 0, a live booking's):
    * the lines the rows bear out, plus any give-back no line or re-price
-   * accounts for — the line that should have recorded it is missing.
+   * accounts for — the line that should have recorded it is missing. Exact
+   * only where no row could be absorbed elsewhere; the class below says when.
    */
   agreedGiveBackEvidenceCents: number;
+  /**
+   * A live booking whose give-back rows cannot be attributed to its tasks
+   * (`AMBIGUOUS_REVIEW_GIVE_BACK`), with the figures the owner signs off, all
+   * as positive cents; null where every row is attributed exactly.
+   */
+  ambiguous: { giveBackLineCents: number; giveBackRowCents: number; repricedWithoutLineCents: number } | null;
 };
 
 function isReviewAdjustment(line: CensusLedgerLine): boolean {
@@ -91,6 +101,8 @@ export function reviewAdjustmentEvidence(row: BookingLedgerCensusRow): ReviewAdj
     .filter((credit) => credit.type === "BOOKING_MODIFICATION_REFUND" && credit.sourceBookingId === bookingId && credit.amountCents > 0)
     .map((credit) => credit.amountCents);
 
+  const giveBackRowCount = giveBacks.length;
+  const giveBackRowCents = giveBacks.reduce((sum, cents) => sum + cents, 0);
   const lines = liveLines(row.lines).filter(isReviewAdjustment);
   let agreedGiveBackLineCents = 0;
   let borneOutCents = 0;
@@ -132,6 +144,16 @@ export function reviewAdjustmentEvidence(row: BookingLedgerCensusRow): ReviewAdj
   );
   const unaccountedCents = Math.max(0, giveBacks.reduce((sum, cents) => sum + cents, 0) - repricedWithoutLineCents);
   const cancelled = row.booking.status === "CANCELLED";
+  // Rows are matched to lines by amount, and no row names its task. That is
+  // exact only while nothing else could absorb a row: a re-price drop on a
+  // task with no give-back line (a dismissed review's included) can hide a
+  // missing, forged or overstated line, and so, conservatively, can a second
+  // row beside a give-back line. Such a live booking fails closed, as a class
+  // the owner acknowledges to the cent, never as agreement.
+  const ambiguous =
+    !cancelled && giveBackRowCents > 0 && (repricedWithoutLineCents > 0 || (giveBackRowCount > 1 && agreedGiveBackLineCents !== 0))
+      ? { giveBackLineCents: -agreedGiveBackLineCents || 0, giveBackRowCents, repricedWithoutLineCents }
+      : null;
 
   // After a cancellation (which reverses every stand-in it found live), an
   // account-credit share credits what is still owed: up to the share, made of
@@ -161,5 +183,6 @@ export function reviewAdjustmentEvidence(row: BookingLedgerCensusRow): ReviewAdj
     drift,
     agreedGiveBackLineCents,
     agreedGiveBackEvidenceCents: cancelled ? 0 : borneOutCents - unaccountedCents,
+    ambiguous,
   };
 }

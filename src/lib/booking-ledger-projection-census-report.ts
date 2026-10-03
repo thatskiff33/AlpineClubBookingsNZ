@@ -133,6 +133,16 @@ export function summarizeBookingLedgerCensus(
     if (evaluation.bookingClass) {
       classes[evaluation.bookingClass].instances.push({ bookingId: evaluation.bookingId, identity: null, cents: 0, acknowledged: false });
     }
+    for (const component of evaluation.bookingInstances) {
+      if (isCoverageName(component.name)) continue;
+      classes[component.name].instances.push({
+        bookingId: evaluation.bookingId,
+        identity: null,
+        cents: component.cents,
+        ...(component.detail ? { detail: component.detail } : {}),
+        acknowledged: false,
+      });
+    }
     for (const identity of evaluation.identities) {
       if (identity.status === "NOT_APPLICABLE") continue;
       const tally = identities[identity.identity];

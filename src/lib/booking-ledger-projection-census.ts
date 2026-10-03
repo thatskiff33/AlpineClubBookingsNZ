@@ -129,6 +129,12 @@ export type BookingLedgerEvaluation = {
   coverage: BookingLedgerCoverageKind[];
   /** A booking-level class (today only `GROUP_SETTLEMENT_OFF_LEDGER`). */
   bookingClass: BookingLedgerCensusClass | null;
+  /**
+   * Booking-level class instances that carry figures, each acknowledged to the
+   * cent: today only `AMBIGUOUS_REVIEW_GIVE_BACK` (#3791's give-back rows the
+   * census cannot attribute to their tasks).
+   */
+  bookingInstances: ResidualComponent[];
   integrity: BookingLedgerIntegrityFinding[];
   /** Informational figures that are not identities and never decide the gate. */
   info: {
@@ -263,6 +269,7 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
       identities: BOOKING_LEDGER_IDENTITIES.map(notApplicable),
       coverage: [...coverage],
       bookingClass: offLedger ? "GROUP_SETTLEMENT_OFF_LEDGER" : null,
+      bookingInstances: [],
     };
   }
 
@@ -397,7 +404,18 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
     identities,
     coverage: [...coverage],
     bookingClass: null,
+    bookingInstances: ambiguousReviewGiveBack(reviewAdjustments),
   };
+}
+
+/** One instance per figure, so the acknowledgement goes stale if any of them moves. */
+function ambiguousReviewGiveBack({ ambiguous }: ReviewAdjustmentEvidence): ResidualComponent[] {
+  if (!ambiguous) return [];
+  return [
+    { name: "AMBIGUOUS_REVIEW_GIVE_BACK", cents: ambiguous.giveBackLineCents, detail: "agreed give-back lines" },
+    { name: "AMBIGUOUS_REVIEW_GIVE_BACK", cents: ambiguous.giveBackRowCents, detail: "review give-back rows" },
+    { name: "AMBIGUOUS_REVIEW_GIVE_BACK", cents: ambiguous.repricedWithoutLineCents, detail: "re-price drops on reviews with no give-back line" },
+  ];
 }
 
 /** #1620's figure, kept as information under the credit identity (orchestrator decision C). */

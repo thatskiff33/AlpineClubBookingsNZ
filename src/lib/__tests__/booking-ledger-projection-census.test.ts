@@ -681,6 +681,110 @@ describe("#3791's review closures: a line is judged by what the member was credi
   });
 });
 
+describe("AMBIGUOUS_REVIEW_GIVE_BACK: a live booking whose give-back rows no task can be told from fails closed (#3583 delta review)", () => {
+  const K = "task-k";
+  const completed = (id: string, amountCents: number) =>
+    ({ id, kind: "EDIT_FINANCIAL_REVIEW" as const, status: "COMPLETED" as const, amountCents, settlementDirection: "REFUND_TO_MEMBER" as const, paymentId: null, lateCaptureApprovalIntentId: null });
+  const dismissed = (id: string) => ({ ...completed(id, 0), status: "DISMISSED" as const, amountCents: null, settlementDirection: null });
+  const giveBack = (id: string, cents: number) => credit(id, "BOOKING_APPLIED", cents, { sourceBookingId: B });
+  const giveBackLine = (taskId: string, cents: number) => ({
+    ...planAgreedAdjustmentLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: taskId, direction: "REFUND_TO_MEMBER", amountCents: cents, note: "agreed", officerMemberId: "officer" }),
+    postingKey: agreedGiveBackKey(taskId),
+  });
+  const rebased = (id: string, taskId: string, movementCents: number) =>
+    ({ id, modificationType: "PRICE_REBASE", priceDiffCents: 0, changeFeeCents: 0, createdAt: LATER, reviewRebase: { taskId, movementCents } });
+  const figures = (subject: BookingLedgerCensusRow) =>
+    Object.fromEntries(evaluateBookingLedgerIdentities(subject).bookingInstances.map((instance) => [instance.detail, instance.cents]));
+  const acknowledge = (subject: BookingLedgerCensusRow) =>
+    evaluateBookingLedgerIdentities(subject).bookingInstances.map((instance) => ({ bookingId: B, class: "AMBIGUOUS_REVIEW_GIVE_BACK" as const, cents: instance.cents, reference: "owner, #3583" }));
+
+  /**
+   * P1: K's $50 share given back on a covered $190 booking, its line −$50,
+   * beside a DISMISSED review D whose re-price took $50 off (real planner
+   * lines). Every identity agrees; only the class can say the line is there.
+   */
+  function p1(kLine: boolean): BookingLedgerCensusRow {
+    const ledger = confirmedLedger();
+    const creditRows = [credit("c-applied", "BOOKING_APPLIED", -19_000), giveBack("c-k", 5_000)];
+    credits(ledger, creditRows);
+    const nights = (d2: number) => [guestSide("g1", [[D1, 5_000], [D2, d2]]), guestSide("g2", [[D1, 5_000], [D2, d2]])];
+    const plan = planModificationChargeLines({
+      bookingId: B,
+      lodgeId: LODGE,
+      bookingModificationId: "m-d",
+      before: { guests: nights(5_000), promoAdjustmentCents: -1_000 },
+      after: { guests: nights(2_500), promoAdjustmentCents: -1_000 },
+      changeFeeCents: 0,
+      expectedCents: -5_000,
+      postedLines: ledger.reversible() as never,
+    });
+    if (plan.kind !== "lines") throw new Error(plan.reason);
+    ledger.post(plan.postings, LATER);
+    if (kLine) ledger.post([giveBackLine(K, 5_000)], LATER);
+    return row({
+      lines: ledger.lines,
+      credits: creditRows,
+      tasks: [completed(K, 5_000), dismissed("task-d")],
+      modifications: [rebased("m-d", "task-d", -5_000)],
+      booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: false, finalPriceCents: 14_000 },
+      payment: payment({ amountCents: 0, creditAppliedCents: 14_000 }),
+    });
+  }
+
+  it("P1: the correct shape is the class, not agreement; acknowledged to the cent it opens, and deleting K's line makes the acknowledgement stale", () => {
+    const correct = p1(true);
+    expect(evaluateBookingLedgerIdentities(correct).identities.filter((result) => !["AGREE", "NOT_APPLICABLE"].includes(result.status))).toEqual([]);
+    expect(figures(correct)).toEqual({ "agreed give-back lines": 5_000, "review give-back rows": 5_000, "re-price drops on reviews with no give-back line": 5_000 });
+    expect(report([correct]).verdict).toBe("GATE_CLOSED");
+    expect(draftBookingLedgerAcknowledgements(report([correct])).entries.map((entry) => entry.class)).toEqual(Array(3).fill("AMBIGUOUS_REVIEW_GIVE_BACK"));
+    expect(report([correct], acknowledge(correct)).verdict).toBe("GATE_OPEN");
+
+    const deleted = p1(false);
+    expect(evaluateBookingLedgerIdentities(deleted).identities.filter((result) => !["AGREE", "NOT_APPLICABLE"].includes(result.status))).toEqual([]);
+    const after = report([deleted], acknowledge(correct));
+    expect(after.verdict).toBe("GATE_CLOSED");
+    expect(after.acknowledged.stale.map((entry) => entry.foundCents)).toEqual([[0]]);
+  });
+
+  /** P2/P3 as the reviewer built them: the figures move, so the sign-off does not carry over. */
+  const live = (tasks: BookingLedgerCensusRow["tasks"], rows: BookingLedgerCensusRow["credits"], lines: BookingLedgerPosting[], modifications: BookingLedgerCensusRow["modifications"]) =>
+    row({ lines: confirmedLedger().post(lines, LATER).lines, credits: rows, tasks, modifications, payment: payment({ amountCents: 0, creditAppliedCents: 19_000 }) });
+
+  it("P2: an unpaid-route give-back with no line beside a dismissed re-price; a forged K line moves the class, it does not agree", () => {
+    const shape = (lines: BookingLedgerPosting[]) => live([completed(K, 4_000), dismissed("task-d")], [giveBack("c-k", 4_000)], lines, [rebased("m-d", "task-d", -5_000)]);
+    const correct = shape([]);
+    const forged = shape([giveBackLine(K, 4_000)]);
+    expect(Object.values(figures(correct))).toEqual([0, 4_000, 5_000]);
+    expect(Object.values(figures(forged))).toEqual([4_000, 4_000, 5_000]);
+    expect(evaluateBookingLedgerIdentities(forged).integrity).toEqual([]);
+    const after = report([forged], acknowledge(correct));
+    expect(after.verdict).toBe("GATE_CLOSED");
+    expect(after.acknowledged.stale).toHaveLength(1);
+  });
+
+  it("P3: an overstated line that borrows a sibling's row is caught by the moved figure", () => {
+    const A = "task-a";
+    const shape = (aLineCents: number) =>
+      live([completed(A, 7_000), completed("task-b", 6_000)], [giveBack("c-a", 4_000), giveBack("c-b", 6_000)], [giveBackLine(A, aLineCents)], [rebased("m-b", "task-b", -6_000)]);
+    expect(evaluateBookingLedgerIdentities(shape(6_000)).integrity).toEqual([]);
+    const after = report([shape(6_000)], acknowledge(shape(4_000)));
+    expect(after.verdict).toBe("GATE_CLOSED");
+    expect(after.acknowledged.stale.map((entry) => entry.cents)).toEqual([4_000]);
+  });
+
+  it("P4: a forged line with no sibling drop is not ambiguous: it is source drift, as before", () => {
+    const forged = live([completed(K, 5_000), completed("task-x", 5_000)], [giveBack("c-k", 5_000)], [giveBackLine(K, 5_000), giveBackLine("task-x", 5_000)], []);
+    const evaluation = evaluateBookingLedgerIdentities(forged);
+    expect(evaluation.bookingInstances).toEqual([]);
+    expect(evaluation.integrity.map((finding) => finding.kind)).toEqual(["SOURCE_DRIFT"]);
+  });
+
+  it("a cancelled booking is never ambiguous: its owed(b) == 0 checks the total exactly", () => {
+    const cancelled = live([completed(K, 4_000), dismissed("task-d")], [giveBack("c-k", 4_000)], [], [rebased("m-d", "task-d", -5_000)]);
+    expect(evaluateBookingLedgerIdentities({ ...cancelled, booking: { ...cancelled.booking, status: "CANCELLED" } }).bookingInstances).toEqual([]);
+  });
+});
+
 describe("a one-cent mutation either way, of a line or a column, is a disagreement naming the booking, both figures and the delta", () => {
   const cases: Array<[BookingLedgerIdentity, () => BookingLedgerCensusRow, CensusLedgerLine["kind"], Parameters<typeof bumpPayment>[1] | "finalPriceCents"]> = [
     ["PRICE", cardPaid, "GUEST_NIGHT", "finalPriceCents"],

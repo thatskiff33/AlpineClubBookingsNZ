@@ -11,7 +11,11 @@
  * is built by the real writers — the confirmation planner, the real credit
  * apply and credit-covered settle, the real review raise and completion, the
  * real `cancelBooking` — and the census must find nothing to say about it.
- * Then one line is corrupted, or deleted, and the census must name it.
+ * Then one line is corrupted, or deleted, and the census must name it. Where
+ * a sibling's re-price, or a second give-back row, leaves the census unable to
+ * tell which task a give-back row belongs to, it must fail closed as
+ * `AMBIGUOUS_REVIEW_GIVE_BACK`, and a deleted line must make the owner's
+ * sign-off stale.
  *
  * Skipped unless `RUN_CONCURRENCY_RACE_TESTS=1`; it reuses the guarded,
  * disposable loopback PostgreSQL of `booking-ledger-projection-census.realdb.test.ts`,
@@ -199,6 +203,26 @@ async function completeShare(taskId: string, confirmedAmountCents: number): Prom
   );
 }
 
+/** A review dismissed: the closure still re-bases the booking from its strands. */
+async function dismiss(taskId: string): Promise<void> {
+  const { resolveManualRefundTask } = await import("@/lib/manual-refund-task-resolution");
+  await resolveManualRefundTask(
+    { taskId, resolution: "dismissed", note: "Settled with the member another way.", actingMemberId: OFFICER_ID, recordedNightPrices: null },
+    CLUB_FORMAT_TEST,
+  );
+}
+
+/** The parked edit's strand, priced again: $100 and $50, so a closure's re-base takes $50 off. */
+async function repriceStrand(bookingId: string): Promise<void> {
+  await prisma.bookingGuest.update({
+    where: { id: guestOf(bookingId) },
+    data: {
+      priceCents: 15_000,
+      nights: { create: [{ stayDate: D1, priceCents: 10_000, priceSource: "SOLD" }, { stayDate: D2, priceCents: 5_000, priceSource: "SOLD" }] },
+    },
+  });
+}
+
 async function cancelAt(bookingId: string, rule: (typeof TIERS)[keyof typeof TIERS]): Promise<void> {
   await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE_ID } });
   await prisma.cancellationPolicy.create({ data: { lodgeId: LODGE_ID, daysBeforeStay: 0, ...rule } });
@@ -300,7 +324,9 @@ async function reviewLines(bookingId: string) {
       for (const task of tasks["sib-rf"]) await completeShare(task, 2_000);
       built["sib-rf"] = id;
       expect((await reviewLines(id)).map((line) => line.amountCents)).toEqual([-2_000, -2_000]);
-      expect(about(await census(), id)).toEqual(NOTHING);
+      // Two give-back rows beside give-back lines: matched by amount alone, so
+      // the booking fails closed as the class the owner signs off.
+      expect(about(await census(), id)).toEqual({ ...NOTHING, classes: Array(3).fill("AMBIGUOUS_REVIEW_GIVE_BACK:null") });
     }
     {
       const id = await creditPaidBooking("sib-cf", "card");
@@ -369,5 +395,39 @@ async function reviewLines(bookingId: string) {
     expect(drifted(report, built["cf-full"]!)).toEqual([rogue!.id]);
     expect(disagreeing(report, built["cf-full"]!)).toEqual([["PRICE", 2_500]]);
     expect(report.verdict).toBe("GATE_CLOSED");
+  }, 120_000);
+  it("a dismissed sibling's re-price makes a give-back unattributable: the class until acknowledged to the cent, stale once the line goes", async () => {
+    // K's $50 share given back on the covered booking, then its sibling D
+    // dismissed after the strand was priced again, its re-base taking $50 off.
+    const id = await creditPaidBooking("amb", "card");
+    const dismissedTask = await raiseReview(id);
+    const shareTask = await raiseReview(id, "2027-08-02" as CalendarDate);
+    await completeShare(shareTask, 5_000);
+    await repriceStrand(id);
+    await dismiss(dismissedTask);
+    expect((await reviewLines(id)).map((line) => line.amountCents)).toEqual([-5_000]);
+    const AMBIGUOUS = "AMBIGUOUS_REVIEW_GIVE_BACK" as const;
+    const instances = (report: BookingLedgerCensusReport) =>
+      report.classes[AMBIGUOUS].instances.filter((instance) => instance.bookingId === id);
+    const first = await census();
+    expect(about(first, id)).toEqual({ ...NOTHING, classes: Array(3).fill(`${AMBIGUOUS}:null`) });
+    expect(instances(first).map((instance) => [instance.detail, instance.cents, instance.acknowledged])).toEqual([
+      ["agreed give-back lines", 5_000, false],
+      ["review give-back rows", 5_000, false],
+      ["re-price drops on reviews with no give-back line", 5_000, false],
+    ]);
+
+    const acknowledgements = instances(first).map((instance) => ({ bookingId: id, class: AMBIGUOUS, cents: instance.cents, reference: "owner, #3583" }));
+    const signed = await censusStore.censusBookingLedgerProjection(prisma, { acknowledgements });
+    expect(instances(signed).every((instance) => instance.acknowledged)).toBe(true);
+    expect(signed.acknowledged.stale).toEqual([]);
+
+    // Deleting K's line: every identity still agrees, so only the class can
+    // say it, and the owner's sign-off no longer matches.
+    await prisma.bookingLedgerLine.delete({ where: { id: (await reviewLines(id))[0]!.id } });
+    const corrupted = await censusStore.censusBookingLedgerProjection(prisma, { acknowledgements });
+    expect(about(corrupted, id).disagreements).toEqual([]);
+    expect(corrupted.acknowledged.stale.filter((entry) => entry.bookingId === id).map((entry) => entry.foundCents)).toEqual([[0]]);
+    expect(corrupted.verdict).toBe("GATE_CLOSED");
   }, 120_000);
 });
