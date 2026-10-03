@@ -249,6 +249,8 @@ export interface SettlementOptions {
   accountCreditPercentage: number;
   daysUntilCheckIn: number;
   requiresSettlementMethod: boolean;
+  /** #3653: paid for by the group organiser; the reduction goes back to their card. */
+  returnsToOrganiser: boolean;
 }
 
 export interface QuoteResult {

@@ -47,6 +47,11 @@ import {
   deriveBookingAppliedCreditCents,
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
+import { ApiError } from "@/lib/api-error";
+import {
+  planOrganiserChildModificationRefund,
+  type CombinedCardSettlement,
+} from "@/lib/organiser-child-refund";
 
 export type BookingModificationSettlementOptions = {
   basisAmountCents: number;
@@ -56,6 +61,12 @@ export type BookingModificationSettlementOptions = {
   accountCreditPercentage: number;
   daysUntilCheckIn: number;
   requiresSettlementMethod: boolean;
+  /**
+   * #3653: the booking was paid for by its group organiser, so the reduction
+   * goes back to the organiser's card and there is no choice to make - the
+   * joiner paid nothing and is never handed account credit for it.
+   */
+  returnsToOrganiser: boolean;
 };
 
 export type PaymentAdjustmentResult = {
@@ -80,6 +91,13 @@ export type PaymentAdjustmentResult = {
   xeroAdditionalAmountCents: number;
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
+  /**
+   * #3653: the refund an organiser-settled child's reduction returns from the
+   * group's combined card payment, decided under this transaction's locks. The
+   * door writes its debt with `reserveOrganiserChildRefund` once its
+   * `BookingModification` row exists; null for every other booking.
+   */
+  organiserChildRefund: { settlement: CombinedCardSettlement; amountCents: number } | null;
 };
 
 // isSettledBookingStatus moved to booking-payment-state (#1729) so the Xero
@@ -104,7 +122,7 @@ export async function calculateModificationSettlementOptions({
   db,
   todayAtClub,
 }: {
-  booking: Pick<LoadedBookingForModify, "checkIn" | "status" | "payment" | "lodgeId">;
+  booking: Pick<LoadedBookingForModify, "checkIn" | "status" | "payment" | "lodgeId" | "organiserSettled">;
   netChargeCents: number;
   db: CancellationPolicyDb;
   /**
@@ -137,6 +155,19 @@ export async function calculateModificationSettlementOptions({
     creditRefundPercentage,
   } = calculateDualRefundAmounts(basisAmountCents, daysUntilCheckIn, policy);
 
+  if (booking.organiserSettled) {
+    // #3653: one disposition, the organiser's card, so nothing to choose.
+    return {
+      basisAmountCents,
+      cardRefundAmountCents,
+      cardRefundPercentage,
+      accountCreditAmountCents: 0,
+      accountCreditPercentage: 0,
+      daysUntilCheckIn,
+      requiresSettlementMethod: false,
+      returnsToOrganiser: true,
+    };
+  }
   return {
     basisAmountCents,
     cardRefundAmountCents,
@@ -146,6 +177,7 @@ export async function calculateModificationSettlementOptions({
     daysUntilCheckIn,
     requiresSettlementMethod:
       cardRefundAmountCents > 0 || creditRefundAmountCents > 0,
+    returnsToOrganiser: false,
   };
 }
 
@@ -167,6 +199,21 @@ function resolveSelectedSettlementAmount({
       settlementMethod: null,
       amountCents: 0,
       policyRetainedAmountCents: 0,
+    };
+  }
+
+  if (settlementOptions.returnsToOrganiser) {
+    if (settlementMethod === "credit") {
+      throw new ApiError(
+        "This booking was paid for by the group organiser, so a reduction goes back to the organiser's card and cannot be held as account credit.",
+        400,
+      );
+    }
+    const amountCents = settlementOptions.cardRefundAmountCents;
+    return {
+      settlementMethod: amountCents > 0 ? ("card" as const) : null,
+      amountCents,
+      policyRetainedAmountCents: Math.max(0, settlementOptions.basisAmountCents - amountCents),
     };
   }
 
@@ -319,6 +366,14 @@ export async function applyPaymentAdjustments(
     additionalAmountCents = xeroAdditionalAmountCents;
   }
 
+  // #3653: refused here, before the edit commits, when the organiser's combined
+  // payment cannot return it.
+  const organiserChildRefund = await planOrganiserChildModificationRefund(
+    tx,
+    booking,
+    pendingRefundAmountCents,
+  );
+
   return {
     refundAmountCents,
     accountCreditAmountCents,
@@ -331,6 +386,7 @@ export async function applyPaymentAdjustments(
     xeroAdditionalAmountCents,
     settlementMethod: selectedSettlement.settlementMethod,
     policyRetainedAmountCents: selectedSettlement.policyRetainedAmountCents,
+    organiserChildRefund,
   };
 }
 

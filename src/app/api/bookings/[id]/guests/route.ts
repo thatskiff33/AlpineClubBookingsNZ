@@ -1421,7 +1421,7 @@ export async function POST(
         bookingId,
         // Guest adds never decrease the price, so the shared settlement
         // context's refund side is always zero here.
-        result: { ...result, pendingRefundAmountCents: 0 },
+        result: { ...result, pendingRefundAmountCents: 0, organiserChildRefund: null },
         reason: "guest_add_price_increase",
         idempotencyKey: `mod_guest_${bookingId}_${result.bookingModificationId}`,
         failureMessage:
