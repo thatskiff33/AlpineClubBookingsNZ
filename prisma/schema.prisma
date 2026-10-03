@@ -3375,7 +3375,11 @@ model PromoRedemption {
   // below keeps the same code from landing twice. While the
   // `multiPromoCodes` module switch is off, `redeemPromoCode` refuses a second
   // redemption on any booking, so the deployed old release (which reads this
-  // as one-to-one) never meets a booking it cannot represent.
+  // as one-to-one) never meets a booking it cannot represent. That refusal is
+  // an unlocked read-then-write, sound only because every caller created the
+  // booking in the same transaction or holds pg_advisory_xact_lock(1)
+  // (`promo-redemption-slot.ts`; call sites pinned by
+  // `redeem-promo-code-call-sites.test.ts`).
   bookingId            String
   // The booker's order (D-3813-2): where two codes could cover the same night
   // the lower order claims it and a later code covers only nights no earlier

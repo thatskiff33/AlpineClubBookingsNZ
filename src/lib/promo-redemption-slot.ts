@@ -1,10 +1,8 @@
 import type { Prisma } from "@prisma/client";
 
-import {
-  DEFAULT_MODULE_SETTINGS,
-  readClubModuleSettingsRecord,
-} from "@/config/modules";
+import { readClubModuleSettingsRecord } from "@/config/modules";
 import { ApiError } from "@/lib/api-error";
+import { normalizeClubModuleSettings } from "@/lib/module-settings";
 
 /** The refusal `redeemPromoCode` gives a second code while `multiPromoCodes` is off. */
 export const SECOND_PROMO_CODE_REFUSED_MESSAGE =
@@ -21,8 +19,24 @@ export const SECOND_PROMO_CODE_REFUSED_MESSAGE =
  * while `multiPromoCodes` is off — which is what keeps the previously deployed
  * release, that reads the redemption as one-to-one, correct through a
  * blue-green cut-over and a rollback. Before #3826 the database itself refused
- * the second row (PromoRedemption_bookingId_key); this refusal stands in for
- * that unique while the switch is off.
+ * the second row (PromoRedemption_bookingId_key); this refusal replaces that
+ * unique while the switch is off — but ONLY UNDER THE PRECONDITION BELOW.
+ *
+ * PRECONDITION — THE CALLER SERIALISES WRITERS TO THIS BOOKING. This is an
+ * unlocked read-then-write: two transactions that each probe an empty booking
+ * would both see "no redemption" and both write order 0, and the database no
+ * longer refuses the second row (the new unique is per booking AND code, so two
+ * DIFFERENT codes both land). It is safe only because every `redeemPromoCode`
+ * caller either created the booking in the same transaction, so no other
+ * transaction can see it yet (`booking-create.ts`), or holds the global
+ * lifecycle lock `pg_advisory_xact_lock(1)` (the modify plan,
+ * `booking-modify-plan.ts`, run under it by
+ * `booking-batch-modification-service.ts`). The one other caller is the offline
+ * demo seed (`prisma/demo-seed.ts`), a single writer on a booking it just made.
+ * `redeem-promo-code-call-sites.test.ts`
+ * enumerates those call sites and fails on a new one, so a writer added later
+ * (C2 of epic #3813) has to establish the same precondition and extend that
+ * allowlist on purpose.
  *
  * The switch is read only when the booking already holds a redemption, so a
  * single-code booking — every booking today — costs one indexed probe and
@@ -39,9 +53,11 @@ export async function nextPromoApplicationOrder(
     select: { applicationOrder: true },
   });
   if (!last) return 0;
-  const settings = await readClubModuleSettingsRecord(tx);
-  const multiPromoCodes =
-    settings?.multiPromoCodes ?? DEFAULT_MODULE_SETTINGS.multiPromoCodes;
+  // Normalised by the one module-settings normaliser: a club that has never
+  // saved the Modules page reads the default, which is OFF — fail-closed.
+  const { multiPromoCodes } = normalizeClubModuleSettings(
+    await readClubModuleSettingsRecord(tx),
+  );
   if (!multiPromoCodes) {
     throw new ApiError(SECOND_PROMO_CODE_REFUSED_MESSAGE, 409);
   }
