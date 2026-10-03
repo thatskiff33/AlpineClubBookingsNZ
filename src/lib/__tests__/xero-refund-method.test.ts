@@ -7,6 +7,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { stripComments } from "./support/strip-comments";
 import { PaymentSource } from "@prisma/client";
 import {
   buildRefundDocumentDescription,
@@ -251,8 +252,10 @@ describe("nobody else spells the wording (INV-SSOT)", () => {
       // Any quoting counts: no lint rule pins double quotes, so a copy in
       // single quotes or a template literal is still a copy.
       const spelled = new RegExp(`['"\`]${wording}['"\`]`);
+      // #3536: comments stripped structurally first, so a sentence QUOTING a
+      // wording in a docblock is neither a false copy nor hides a real one.
       const homes = files
-        .filter((file) => spelled.test(readFileSync(file, "utf8")))
+        .filter((file) => spelled.test(stripComments(readFileSync(file, "utf8"))))
         .map((file) => relative(root, file));
       expect(homes, `"${wording}" is spelled outside its home`).toEqual([
         "xero-refund-method.ts",
