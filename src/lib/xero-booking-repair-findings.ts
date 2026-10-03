@@ -275,6 +275,13 @@ export function recoverStoredXeroAmountCents(params: {
 }): {
   amountCents: number;
   source: "operation-request" | "link" | "operation-response";
+  /**
+   * #3536: the request payload the amount was read from, on an
+   * `operation-request` answer, so a repair that re-queues the document can
+   * carry the rest of what that attempt said - the note's wording - from the
+   * same record rather than re-deciding it.
+   */
+  requestPayload?: unknown;
 } | null {
   const operations = params.operations
     .filter(
@@ -307,7 +314,7 @@ export function recoverStoredXeroAmountCents(params: {
   for (const operation of operations) {
     const amountCents = readStoredXeroAmountCents(operation.requestPayload);
     if (amountCents !== null) {
-      return { amountCents, source: "operation-request" };
+      return { amountCents, source: "operation-request", requestPayload: operation.requestPayload };
     }
   }
 
