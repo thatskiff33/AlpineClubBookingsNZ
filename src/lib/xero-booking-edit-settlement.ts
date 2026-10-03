@@ -107,6 +107,15 @@ export interface ClassifyXeroBookingEditSettlementInput {
    * when `refundMethod` is omitted.
    */
   refundedThroughStripe?: boolean | null;
+  /**
+   * #3653 (`INV-PAY-113`): the reduction is an organiser-settled child's,
+   * returned to the organiser's card out of the group's combined payment. Its
+   * refund credit note is raised by `processOrganiserChildRefundOperation` in
+   * the transaction that records the refund Stripe made - AFTER the money moved
+   * - so this dispatcher raises no modification note of its own for it. Two
+   * notes would credit the joiner's invoice twice for one refund.
+   */
+  organiserChildRefundOwnsCreditNote?: boolean;
 }
 
 export interface QueueXeroBookingEditSettlementInput
@@ -164,6 +173,12 @@ export function classifyXeroBookingEditSettlement(
       financialAction = {
         type: "none",
         reason: "Booking edit reduction has no policy-returnable settlement amount.",
+      };
+    } else if (input.organiserChildRefundOwnsCreditNote) {
+      financialAction = {
+        type: "none",
+        reason:
+          "The reduction is refunded to the group organiser's card; its refund credit note is raised once Stripe has made the refund.",
       };
     } else if (input.settlementMethod === "credit") {
       financialAction = {
