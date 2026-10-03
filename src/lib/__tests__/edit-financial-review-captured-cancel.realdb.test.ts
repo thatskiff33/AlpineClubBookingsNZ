@@ -81,8 +81,13 @@ const TIERS = [
   { tier: "0%", rule: { refundPercentage: 0, fixedFeeCents: 0 }, owedCents: 5_000, totalBackCents: 5_000 },
 ];
 const PAYMENTS = [
-  { paid: "card", cardCents: 20_000, appliedCents: 0 },
-  { paid: "credit plus card", cardCents: 10_000, appliedCents: 10_000 },
+  { paid: "card", cardCents: 20_000, appliedCents: 0, source: "STRIPE" as const },
+  { paid: "credit plus card", cardCents: 10_000, appliedCents: 10_000, source: "STRIPE" as const },
+];
+/** Paid by bank transfer: the cancellation returns account credit (#3527 D2), the review hands back by hand. */
+const BANK_PAYMENTS = [
+  { paid: "internet banking", cardCents: 20_000, appliedCents: 0, source: "INTERNET_BANKING" as const },
+  { paid: "credit plus internet banking", cardCents: 10_000, appliedCents: 10_000, source: "INTERNET_BANKING" as const },
 ];
 type Tier = (typeof TIERS)[number];
 
@@ -122,7 +127,8 @@ let credit: typeof import("@/lib/member-credit");
     }
 
     /** A $200 booking, paid: the card capture, and any credit applied through the real writer. */
-    async function paid({ cardCents, appliedCents }: (typeof PAYMENTS)[number]) {
+    async function paid({ cardCents, appliedCents, source }: (typeof PAYMENTS | typeof BANK_PAYMENTS)[number]) {
+      const intentId = source === "STRIPE" ? INTENT_ID : null;
       await clearRun();
       await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAID", totalPriceCents: 20_000, finalPriceCents: 20_000 } });
       await prisma.payment.create({
@@ -131,11 +137,11 @@ let credit: typeof import("@/lib/member-credit");
           bookingId: BOOKING_ID,
           amountCents: cardCents,
           creditAppliedCents: appliedCents,
-          source: "STRIPE",
+          source,
           status: "SUCCEEDED",
-          stripePaymentIntentId: INTENT_ID,
+          stripePaymentIntentId: intentId,
           transactions: {
-            create: { id: TRANSACTION_ID, kind: "PRIMARY", source: "STRIPE", stripePaymentIntentId: INTENT_ID, amountCents: cardCents, status: "SUCCEEDED" },
+            create: { id: TRANSACTION_ID, kind: "PRIMARY", source, stripePaymentIntentId: intentId, amountCents: cardCents, status: "SUCCEEDED" },
           },
         },
       });
@@ -202,9 +208,14 @@ let credit: typeof import("@/lib/member-credit");
     /** The card refund each completed step froze for Stripe, in order. */
     const cardDebts = async () =>
       (await prisma.paymentRecoveryOperation.findMany({ where: { bookingId: BOOKING_ID }, orderBy: { createdAt: "asc" }, select: { amountCents: true, idempotencyKey: true } }));
-    /** Everything the member has back: card refunds owed to the card, and credit. */
+    /** What reviews handed back by bank transfer, as their `BANK_REFUND` lines record it. */
+    const handBacks = () =>
+      prisma.bookingLedgerLine.findMany({ where: { bookingId: BOOKING_ID, kind: "BANK_REFUND", anchorKind: "REVIEW_TASK" }, select: { unitCents: true, anchorId: true } });
+    /** Everything the member has back: card refunds owed to the card, hand-backs, and credit. */
     const totalBackCents = async () =>
-      (await cardDebts()).reduce((sum, debt) => sum + debt.amountCents, 0) + (await credit.getMemberCreditBalance(MEMBER_ID));
+      (await cardDebts()).reduce((sum, debt) => sum + debt.amountCents, 0) +
+      (await handBacks()).reduce((sum, line) => sum + line.unitCents, 0) +
+      (await credit.getMemberCreditBalance(MEMBER_ID));
 
     beforeAll(async () => {
       assertSafeCapturedCancelRaceDbUrl(RACE_DB_URL);
@@ -266,6 +277,42 @@ let credit: typeof import("@/lib/member-credit");
         expect(await prisma.xeroSyncOperation.count({ where: { localId: { in: [MODIFICATION_ID, BOOKING_ID] }, entityType: "CREDIT_NOTE" } })).toBe(0);
       });
     }
+
+    for (const payment of BANK_PAYMENTS) {
+      it.each(TIERS)(`${payment.paid}, the REAL cancel at $tier returns credit, then the review hands back by bank transfer: $owedCents cents of the $50 share, $totalBackCents in all`, async ({ rule, owedCents, totalBackCents: expectedBackCents }) => {
+        await paid(payment);
+        const raised = await raise("2026-08-01");
+        await cancelAt(rule);
+        const backAfterCancelCents = await totalBackCents();
+        // The cancellation sent nothing by card: it credited the member.
+        expect(await cardDebts()).toEqual([]);
+
+        const result = await completeShare(raised.taskId);
+
+        expect(result.status).toBe("COMPLETED");
+        expect((await totalBackCents()) - backAfterCancelCents).toBe(owedCents);
+        expect(await totalBackCents()).toBe(expectedBackCents);
+        // The hand-back, its line and its event are the netted figure, or none.
+        expect((await handBacks()).map((line) => line.unitCents)).toEqual(owedCents > 0 ? [owedCents] : []);
+        const refunded = await prisma.bookingEvent.findMany({ where: { bookingId: BOOKING_ID, type: "REFUNDED", reason: "manual_refund_completed" }, select: { amountCents: true } });
+        expect(refunded.map((event) => event.amountCents)).toEqual(owedCents > 0 ? [owedCents] : []);
+        expect(await prisma.xeroSyncOperation.count({ where: { localId: { in: [MODIFICATION_ID, BOOKING_ID] }, entityType: "CREDIT_NOTE" } })).toBe(0);
+      });
+    }
+
+    it("two $20 reviews after the REAL bank-transfer cancel at 50% less $20 net cumulatively: $10 handed back each", async () => {
+      await paid(BANK_PAYMENTS[0]!);
+      const first = await raise("2026-08-01");
+      const second = await raise("2026-08-02");
+      await cancelAt(TIERS[1]!.rule);
+      expect(await totalBackCents()).toBe(8_000);
+
+      await completeShare(first.taskId, 2_000);
+      await completeShare(second.taskId, 2_000);
+
+      expect((await handBacks()).map((line) => line.unitCents)).toEqual([1_000, 1_000]);
+      expect(await totalBackCents()).toBe(10_000);
+    });
 
     it("credit plus card at 50% less $20, a review raised before the card was paid takes the account-credit route and mints only the $25 still owed", async () => {
       await paid(PAYMENTS[1]!);

@@ -46,14 +46,22 @@ const TIERS = [
   { tier: "50% with a $20 fee", rule: { daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 2_000 }, owedCents: 2_500, totalBackCents: 10_500 },
   { tier: "0%", rule: { daysBeforeStay: 0, refundPercentage: 0, fixedFeeCents: 0 }, owedCents: 5_000, totalBackCents: 5_000 },
 ];
+/**
+ * By card the cancellation refunds to the card; by internet banking it returns
+ * account credit (programme #3527 decision D2), and the share is then handed
+ * back by bank transfer - the third captured route.
+ */
 const PAYMENTS = [
-  { paid: "card", cardCents: 20_000, appliedCents: 0 },
-  { paid: "credit plus card", cardCents: 10_000, appliedCents: 10_000 },
+  { paid: "card", cardCents: 20_000, appliedCents: 0, method: "card" as const },
+  { paid: "credit plus card", cardCents: 10_000, appliedCents: 10_000, method: "card" as const },
+  { paid: "internet banking", cardCents: 20_000, appliedCents: 0, method: "credit" as const },
+  { paid: "credit plus internet banking", cardCents: 10_000, appliedCents: 10_000, method: "credit" as const },
 ];
-type Rule = (typeof TIERS)[number]["rule"];
+type Rule = { daysBeforeStay: number; refundPercentage: number; fixedFeeCents: number; creditRefundPercentage?: number };
+type Method = "card" | "credit";
 
-/** The cancel path's money on a booking of `priceCents` with that card and credit behind it. */
-const cancelMoney = (cardCents: number, appliedCents: number, priceCents: number, rule: Rule) =>
+/** The cancel path's money on a booking of `priceCents` with that capture and credit behind it. */
+const cancelMoney = (cardCents: number, appliedCents: number, priceCents: number, rule: Rule, method: Method = "card") =>
   paidCancellationMoney({
     payment: { amountCents: cardCents, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: appliedCents },
     finalPriceCents: priceCents,
@@ -61,7 +69,7 @@ const cancelMoney = (cardCents: number, appliedCents: number, priceCents: number
     restoresToMemberLedger: true,
     days: DAYS,
     policy: [rule],
-    refundMethod: "card",
+    refundMethod: method,
   });
 
 const rows = {
@@ -69,21 +77,23 @@ const rows = {
   siblings: [] as Array<{ id: string; amountCents: number }>,
   refundedBySiblingsCents: 0,
   mintedBySiblingsCents: 0,
+  handedBackBySiblingsCents: 0,
 };
 const store = {
   bookingEvent: { findFirst: vi.fn(async () => rows.cancelled) },
   manualRefundTask: { findMany: vi.fn(async () => rows.siblings) },
   paymentRecoveryOperation: { aggregate: vi.fn(async () => ({ _sum: { amountCents: rows.refundedBySiblingsCents || null } })) },
   memberCredit: { aggregate: vi.fn(async () => ({ _sum: { amountCents: rows.mintedBySiblingsCents || null } })) },
+  bookingLedgerLine: { aggregate: vi.fn(async () => ({ _sum: { unitCents: rows.handedBackBySiblingsCents || null } })) },
 };
 
 /** The CANCELLED event `writePaidCancellationEvent` writes for that cancellation. */
-function cancelledAt(cardCents: number, appliedCents: number, rule: Rule) {
-  const money = cancelMoney(cardCents, appliedCents, 20_000, rule);
+function cancelledAt(cardCents: number, appliedCents: number, rule: Rule, method: Method = "card") {
+  const money = cancelMoney(cardCents, appliedCents, 20_000, rule, method);
   rows.cancelled = {
     occurredAt: CANCELLED_AT,
     snapshot: {
-      refundMethod: "card",
+      refundMethod: method,
       paidAmountCents: money.paidAmountCents,
       settledAmountCents: money.refundAmountCents,
       changeFeeCents: 0,
@@ -106,13 +116,13 @@ const owed = (shareCents = 5_000, taskId = "task-2") =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  Object.assign(rows, { cancelled: null, siblings: [], refundedBySiblingsCents: 0, mintedBySiblingsCents: 0 });
+  Object.assign(rows, { cancelled: null, siblings: [], refundedBySiblingsCents: 0, mintedBySiblingsCents: 0, handedBackBySiblingsCents: 0 });
 });
 
 describe("the worked example: $200 paid, a $50 share, the booking cancelled first", () => {
   for (const payment of PAYMENTS) {
     it.each(TIERS)(`MUTATION: ${payment.paid}, at $tier: $owedCents cents still owed, $totalBackCents in all - what the review first then the cancel returns`, async ({ rule, owedCents, totalBackCents }) => {
-      const returnedCents = cancelledAt(payment.cardCents, payment.appliedCents, rule);
+      const returnedCents = cancelledAt(payment.cardCents, payment.appliedCents, rule, payment.method);
 
       const stillOwedCents = await owed();
 
@@ -120,7 +130,7 @@ describe("the worked example: $200 paid, a $50 share, the booking cancelled firs
       expect(returnedCents + stillOwedCents).toBe(totalBackCents);
       // Review first: the share refunded off the card, then the $150 booking
       // cancelled - the same total either way.
-      const reviewFirst = cancelMoney(payment.cardCents - 5_000, payment.appliedCents, 15_000, rule);
+      const reviewFirst = cancelMoney(payment.cardCents - 5_000, payment.appliedCents, 15_000, rule, payment.method);
       expect(5_000 + reviewFirst.refundAmountCents + reviewFirst.creditRestoredCents).toBe(totalBackCents);
     });
   }
@@ -151,6 +161,22 @@ describe("sibling reviews of one cancelled booking", () => {
       where: { idempotencyKey: { in: [buildEditFinancialReviewRefundRecoveryIdempotencyKey("task-1")] } },
       _sum: { amountCents: true },
     });
+  });
+
+  it("MUTATION: a sibling's bank-transfer hand-back counts as returned", async () => {
+    cancelledAt(20_000, 0, TIERS[1]!.rule, "credit");
+    rows.siblings = [{ id: "task-1", amountCents: 2_000 }];
+    rows.handedBackBySiblingsCents = 1_000;
+
+    expect(await owed(2_000)).toBe(1_000);
+  });
+
+  it("MUTATION: an internet-banking cancellation is re-tiered by its CREDIT tier", async () => {
+    // 50% to a card, 60% as credit, $20 fee: $100 credited; the $150 left would credit $70.
+    const returnedCents = cancelledAt(20_000, 0, { daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 2_000, creditRefundPercentage: 60 }, "credit");
+    expect(returnedCents).toBe(10_000);
+
+    expect(await owed()).toBe(2_000);
   });
 
   it("MUTATION: a sibling's minted credit counts as returned, as its card refund does", async () => {

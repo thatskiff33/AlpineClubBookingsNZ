@@ -32,6 +32,7 @@ vi.mock("@/lib/audit", () => ({
 
 import { recordManualRefundTaskClosureAudit } from "@/lib/manual-refund-task-audit";
 import { completionMessage, dismissalMessage } from "@/lib/manual-refund-task-copy";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const WITHHELD_SHARE = "UNCOLLECTED_EDIT_REVIEW_SHARE";
 
@@ -212,7 +213,7 @@ describe("#3213 fix round: the durable summary names the money's direction", () 
         settlementRoute: route,
         stripeRefundId: "re_1",
         additionalPaymentIntentId: "pi_1",
-      });
+      }, CLUB_FORMAT_TEST);
       const asksTheMember = (sentence: string) =>
         /asked to pay|to pay|owed by the member/i.test(sentence) &&
         !/refund|paid back|credit issued/i.test(sentence);
@@ -222,7 +223,7 @@ describe("#3213 fix round: the durable summary names the money's direction", () 
 
   it("MUTATION: #3791 - a share the cancellation had already returned is not receipted as credit issued", () => {
     const toast = (accountCredit: { givenBackCents: number; mintedCents: number }) =>
-      completionMessage({ amountAmended: false, settlementRoute: CREDIT, stripeRefundId: null, additionalPaymentIntentId: null, accountCredit });
+      completionMessage({ amountAmended: false, settlementRoute: CREDIT, stripeRefundId: null, additionalPaymentIntentId: null, accountCredit }, CLUB_FORMAT_TEST);
 
     expect(toast({ givenBackCents: 0, mintedCents: 0 })).toMatch(/^Nothing further was credited/);
     expect(toast({ givenBackCents: 2_500, mintedCents: 0 })).toBe("Account credit issued to the member.");

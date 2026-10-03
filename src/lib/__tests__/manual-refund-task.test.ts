@@ -3974,7 +3974,57 @@ describe("#3835 - a review completed after a card-paid booking was cancelled", (
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
     expect(vi.mocked(postReviewClosureLedgerLines)).toHaveBeenCalledWith(expect.objectContaining({ settlement: null }));
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
-    expect(completionMessage(result)).toMatch(/^Nothing further was credited or refunded/);
+    expect(completionMessage(result, CLUB_FORMAT_TEST)).toMatch(/^Nothing further was credited or refunded/);
+  });
+
+  /** The same booking paid by internet banking: its cancellation returned account credit (#3527 D2). */
+  const cancelledBankTransferTask = () =>
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({
+        payment: { source: PaymentSource.INTERNET_BANKING },
+        booking: {
+          memberId: "member-1",
+          status: "CANCELLED",
+          checkIn: new Date("2026-08-01T00:00:00.000Z"),
+          lodgeId: "lodge-1",
+          payment: { id: "payment-1", status: "PARTIALLY_REFUNDED", amountCents: 20_000, refundedAmountCents: 8_000, source: PaymentSource.INTERNET_BANKING, stripeCustomerId: null, xeroInvoiceId: "inv-1" },
+        },
+      }),
+    );
+  const creditedCancellation = (settledAmountCents: number) => {
+    const frozen = frozenCardCancellation({ settledAmountCents });
+    return { ...frozen, snapshot: { ...frozen.snapshot, refundMethod: "credit" } };
+  };
+
+  it("MUTATION: bank transfer, cancelled at 50% less $20 ($80 credited): the hand-back, its line and its event are the $25 still owed, and the officer is told that figure", async () => {
+    cancelledBankTransferTask();
+    mocks.bookingEventFindFirst.mockResolvedValue(creditedCancellation(8_000));
+    vi.mocked(loadCancellationPolicy).mockResolvedValueOnce([{ daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 2_000 }]);
+
+    const result = await complete();
+
+    expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(expect.objectContaining({ paymentId: "payment-1", amountCents: 2_500 }));
+    expect(vi.mocked(postHandBackLedgerLine)).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 2_500 }));
+    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "REFUNDED", amountCents: 2_500 }));
+    expect(vi.mocked(postReviewClosureLedgerLines)).toHaveBeenCalledWith(
+      expect.objectContaining({ settlement: { direction: "REFUND_TO_MEMBER", amountCents: 2_500 } }),
+    );
+    expect(result.settlementAmountCents).toBe(2_500);
+    expect(completionMessage(result, CLUB_FORMAT_TEST)).toMatch(/^Only \$25\.00 of the \$50\.00 share was still owed/);
+  });
+
+  it("MUTATION: bank transfer, cancelled at 100%: completes with no hand-back, no line, no event and nothing for Xero", async () => {
+    cancelledBankTransferTask();
+    mocks.bookingEventFindFirst.mockResolvedValue(creditedCancellation(20_000));
+
+    const result = await complete();
+
+    expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    expect(vi.mocked(postHandBackLedgerLine)).not.toHaveBeenCalled();
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
+    expect(completionMessage(result, CLUB_FORMAT_TEST)).toMatch(/^Nothing further was credited or refunded/);
   });
 
   it("MUTATION: refuses with the task OPEN where the cancellation's refund cannot be reproduced", async () => {
