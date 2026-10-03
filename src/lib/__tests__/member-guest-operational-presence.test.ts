@@ -84,7 +84,10 @@ vi.mock("@/lib/lodge-auth", () => ({
 
 // The hut-leader cron is a no-op unless its module flag is on, and it reads the
 // club's lookahead. Neither is what these tests are about.
-vi.mock("@/lib/module-settings", () => ({
+// Partial: `admin-modules` (reached through the capacity counter since the
+// #3817 one-space rule) reads `normalizeClubModuleSettings` at import time.
+vi.mock("@/lib/module-settings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/module-settings")>()),
   loadEffectiveModuleFlags: () => mockFlags(),
 }));
 vi.mock("@/lib/lodge-settings", () => ({

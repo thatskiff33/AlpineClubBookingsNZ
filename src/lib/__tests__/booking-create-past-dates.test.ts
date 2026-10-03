@@ -54,7 +54,10 @@ vi.mock("@/lib/capacity", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/module-settings", () => ({
+// Partial: `admin-modules` (reached through the capacity counter since the
+// #3817 one-space rule) reads `normalizeClubModuleSettings` at import time.
+vi.mock("@/lib/module-settings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/module-settings")>()),
   loadEffectiveModuleFlags: vi.fn().mockResolvedValue({ xeroIntegration: false }),
 }));
 
