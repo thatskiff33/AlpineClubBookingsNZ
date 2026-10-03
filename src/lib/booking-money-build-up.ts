@@ -1,5 +1,6 @@
 import type { BookingGuestNightPriceSource, Prisma } from "@prisma/client";
 
+import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import type { EditFinancialReviewCause } from "@/lib/edit-financial-review-context";
 import {
   deriveNightAdjustmentState,
@@ -291,7 +292,7 @@ export function bookingMoneyBuildUpFromProjection(
       args.bookingGuestId,
     ),
     rows,
-    redemption: combinedPromoRedemptionEvidence(booking.promoRedemptions),
+    redemption: combinedPromoRedemptionEvidence(bookingPromoRedemptions(booking)),
   };
 }
 

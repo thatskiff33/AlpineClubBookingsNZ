@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 
+import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { releasePromoRedemptions } from "@/lib/promo";
 
 export type DraftBookingForCleanup = {
@@ -33,8 +34,9 @@ export async function deleteDraftBookingDependents(
 
   let promoRedemptions = 0;
   for (const draft of drafts) {
-    await releasePromoRedemptions(tx, draft.promoRedemptions);
-    promoRedemptions += draft.promoRedemptions.length;
+    const redemptions = bookingPromoRedemptions(draft);
+    await releasePromoRedemptions(tx, redemptions);
+    promoRedemptions += redemptions.length;
   }
 
   const changeRequestResult = await tx.bookingChangeRequest.deleteMany({

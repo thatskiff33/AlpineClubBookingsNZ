@@ -1,5 +1,6 @@
 import type { BookingGuestNightPriceSource } from "@prisma/client";
 
+import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import {
   deriveNightAdjustmentState,
@@ -148,7 +149,7 @@ export function reconcileBookingMoney(
 
   const adjustmentState = deriveNightAdjustmentState({
     rows: booking.nightAdjustments,
-    redemption: combinedPromoRedemptionEvidence(booking.promoRedemptions),
+    redemption: combinedPromoRedemptionEvidence(bookingPromoRedemptions(booking)),
   });
   if (adjustmentState === "NOT_KNOWN") {
     found.add("PROMO_BUILD_UP_NOT_KNOWN");
