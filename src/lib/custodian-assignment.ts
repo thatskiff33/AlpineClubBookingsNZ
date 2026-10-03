@@ -9,6 +9,7 @@ import {
   custodianHeldNightsForBed,
   findCustodianBedHolds,
   isCustodianHeldBedNight,
+  isCustodianOccupancy,
 } from "@/lib/custodian-occupancy";
 import {
   findBlockingWholeLodgeHolds,
@@ -201,7 +202,7 @@ export async function validateCustodianBedHold(input: {
   const { bedId, lodgeId, startDate, endDate, db } = input;
   // No bed and no custodian tick = role only = exactly the behaviour that
   // existed before #2286. Every row the auto-assign cron creates lands here.
-  if (!bedId && !input.isCustodian) return;
+  if (!isCustodianOccupancy({ bedId, isCustodian: input.isCustodian })) return;
 
   const nights = custodianAssignmentNights(startDate, endDate);
   if (nights.length === 0) return;

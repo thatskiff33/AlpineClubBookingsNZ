@@ -169,6 +169,8 @@ export default function HutLeadersPage() {
       guestCount: number;
       status: string;
     }>;
+    /** #3817: false when only the custodian tick is in play (no bed). */
+    holdsBed: boolean;
     confirm: () => void;
   } | null>(null);
   // Set when the server answered CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD (#2698).
@@ -189,6 +191,8 @@ export default function HutLeadersPage() {
   const [holdAmendment, setHoldAmendment] = useState<{
     nights: string[];
     amendments: Array<{ bookingId: string; nights: string[] }>;
+    /** #3817: false when only the custodian tick is in play (no bed). */
+    holdsBed: boolean;
     accept: () => void;
   } | null>(null);
   // Which assignment's bed is being changed inline in the table (#2286 review
@@ -528,6 +532,7 @@ export default function HutLeadersPage() {
             bookings: Array.isArray(data.nonHoldingBookings)
               ? data.nonHoldingBookings
               : [],
+            holdsBed: selectedBedId !== null,
             confirm: () => void handleConfirm(true, amendOverlappingHolds),
           });
           return;
@@ -542,6 +547,7 @@ export default function HutLeadersPage() {
           setHoldAmendment({
             nights: data.nights ?? [],
             amendments: Array.isArray(data.amendments) ? data.amendments : [],
+            holdsBed: selectedBedId !== null,
             accept: () => void handleConfirm(confirmOverCapacity, true),
           });
           return;
@@ -602,6 +608,8 @@ export default function HutLeadersPage() {
   ) {
     if (!scopedLodgeId) return;
     const requestedLodgeId = scopedLodgeId;
+    // Is a bed in play once this edit lands? Words the confirm cards (#3817).
+    const holdsBed = "bedId" in patch ? patch.bedId !== null : Boolean(assignment.bedId);
     setError(null);
     setSavingBedForId(assignment.id);
     try {
@@ -633,6 +641,7 @@ export default function HutLeadersPage() {
             bookings: Array.isArray(data.nonHoldingBookings)
               ? data.nonHoldingBookings
               : [],
+            holdsBed,
             confirm: () =>
               void handleSaveRow(
                 assignment,
@@ -651,6 +660,7 @@ export default function HutLeadersPage() {
           setHoldAmendment({
             nights: data.nights ?? [],
             amendments: Array.isArray(data.amendments) ? data.amendments : [],
+            holdsBed,
             accept: () =>
               void handleSaveRow(
                 assignment,
@@ -667,6 +677,16 @@ export default function HutLeadersPage() {
         });
         return;
       }
+      // #3817: the same advisory slot as the create — ticking an existing hut
+      // leader who is also a guest here makes them two spaces. A body that
+      // cannot be parsed must not turn a saved edit into an error.
+      const saved = await res.json().catch(() => null);
+      if (activeLodgeIdRef.current !== requestedLodgeId) return;
+      setMinorCustodianNote(
+        typeof saved?.custodianBookedWarning === "string" && saved.custodianBookedWarning
+          ? saved.custodianBookedWarning
+          : null,
+      );
       setBedEditAssignmentId(null);
       setOverCapacity(null);
       setHoldAmendment(null);
@@ -1042,7 +1062,9 @@ export default function HutLeadersPage() {
         >
           <CardContent className="space-y-3 p-4">
             <p className="text-sm font-medium text-warning">
-              Holding that bed puts the lodge over capacity
+              {overCapacity.holdsBed
+                ? "Holding that bed puts the lodge over capacity"
+                : "Counting this custodian puts the lodge over capacity"}
             </p>
             <ul className="space-y-1 text-sm text-foreground">
               {overCapacity.nights.map((night) => (
@@ -1136,9 +1158,11 @@ export default function HutLeadersPage() {
             </p>
             <p className="text-sm text-foreground">
               Another booking has the whole lodge to itself on the nights below.
-              Holding this bed for the {hutLeaderLabel.toLowerCase()} takes that
-              one bed out of their sole occupancy on those nights — every other
-              bed, their dates and what they pay stay exactly as they are.
+              {holdAmendment.holdsBed
+                ? ` Holding this bed for the ${hutLeaderLabel.toLowerCase()} takes that one bed out of their sole occupancy on those nights`
+                : ` Counting the ${hutLeaderLabel.toLowerCase()} as a custodian (lives on site) takes one space out of their sole occupancy on those nights`}
+              {" "}— every other bed, their dates and what they pay stay exactly
+              as they are.
             </p>
             <ul className="space-y-1 text-sm text-foreground">
               {holdAmendment.nights.map((night) => (
@@ -1166,7 +1190,9 @@ export default function HutLeadersPage() {
               >
                 {creating || savingBedForId
                   ? "Saving..."
-                  : "Accept and hold the bed"}
+                  : holdAmendment.holdsBed
+                    ? "Accept and hold the bed"
+                    : "Accept and save"}
               </ViewOnlyActionButton>
               <Button
                 type="button"

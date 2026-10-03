@@ -310,7 +310,7 @@ owner decisions on #3820):
 - A ticked custodian takes one space off the lodge's capacity on each covered
   night, as a held bed does, counted once if it also holds a bed. **Stated
   limit:** a ticked custodian with no bed who is also a guest on a booking there
-  takes two spaces those nights; the create warns.
+  takes two spaces those nights; the create and the edit warn.
 - Sign-in, kiosk access and the dietary grant run from the day before the first
   night to the day after the last, `[startDate - 1, endDate + 1]`, judged on the
   club's calendar day (`INV-CONFIG-002`); the instructions reader and nav link

@@ -351,8 +351,10 @@ wrong direction silently:
   custodian with no bed who also books takes two spaces on those nights. The
   counter does not de-duplicate them: the admission engines add the requested
   party on top of the count, so a de-duplication inside the counter would not
-  reach the booking being admitted. The create returns a
-  `custodianBookedWarning` the page shows instead.
+  reach the booking being admitted. The create and the edit (the row's
+  Custodian toggle included) return a `custodianBookedWarning` the page shows
+  instead — one string and one failure-tolerant post-commit read
+  (`custodianBookedAsGuestWarning`), so the two cannot drift.
 
 **Night semantics.** The hold covers `startDate <= night <= endDate`,
 **inclusive** — matching the existing hut-leader coverage semantics. This is

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { hutLeaderStayGuestRow } from "@/lib/__tests__/helpers/hut-leader-stay";
+import { CUSTODIAN_BOOKED_AS_GUEST_WARNING } from "@/lib/hut-leader-stayed-nights";
 
 /**
  * Custodian bed hold — the hut-leaders write routes (#2286).
@@ -1060,7 +1061,12 @@ describe("#3817 — a role-only assignment may claim only nights the member stay
     const res = await PUT(putRequest({ isCustodian: false }), { params });
 
     expect(res.status).toBe(409);
-    await expect(res.json()).resolves.toMatchObject({ code: "HUT_LEADER_NIGHTS_NOT_STAYED" });
+    const body = await res.json();
+    expect(body).toMatchObject({ code: "HUT_LEADER_NIGHTS_NOT_STAYED" });
+    // The officer has just UNmarked them: the way out is to keep them marked,
+    // never "mark them Custodian first" (#3817 review D3).
+    expect(body.error).toContain("keep them marked Custodian (lives on site)");
+    expect(body.error).not.toContain("first");
     expect(mocks.txAssignmentUpdate).not.toHaveBeenCalled();
   });
 
@@ -1109,7 +1115,7 @@ describe("#3817 — a role-only assignment may claim only nights the member stay
     expect(res.status).toBe(409);
     const body = await res.json();
     expect(body).toMatchObject({ code: "HUT_LEADER_NIGHTS_NOT_STAYED" });
-    expect(body.error).toContain("mark them Custodian (lives on site)");
+    expect(body.error).toContain("mark them Custodian (lives on site) before releasing the bed");
     expect(mocks.txAssignmentUpdate).not.toHaveBeenCalled();
   });
 
@@ -1118,7 +1124,8 @@ describe("#3817 — a role-only assignment may claim only nights the member stay
     const res = await PUT(putRequest({ bedId: null, isCustodian: true }), { params });
 
     expect(res.status).toBe(200);
-    expect(mocks.bookingGuestFindMany).not.toHaveBeenCalled();
+    // Never the stay CHECK: the one read is the post-commit two-spaces advisory.
+    expect(mocks.bookingGuestFindMany).toHaveBeenCalledTimes(1);
     expect(mocks.txAssignmentUpdate.mock.calls[0][0].data).toMatchObject({
       bedId: null,
       isCustodian: true,
@@ -1130,6 +1137,96 @@ describe("#3817 — a role-only assignment may claim only nights the member stay
     mocks.isEffectiveModuleEnabled.mockResolvedValue(false);
     const res = await PUT(putRequest({ isCustodian: true }), { params });
     expect(res.status).toBe(200);
+  });
+
+  it("PUT refuses moving the nights of a bed row while bed allocation is OFF (#3817 review D4)", async () => {
+    legacyBedRowWithNoStay();
+    mocks.isEffectiveModuleEnabled.mockResolvedValue(false);
+    const res = await PUT(putRequest({ endDate: "2026-07-04" }), { params });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body).toMatchObject({ code: "MODULE_DISABLED" });
+    expect(body.error).toMatch(/Release the bed first, or turn bed allocation on/);
+    expect(mocks.txAssignmentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("PUT refuses moving a bed row to another lodge while bed allocation is OFF", async () => {
+    mocks.isEffectiveModuleEnabled.mockResolvedValue(false);
+    mocks.lodgeFindUnique.mockResolvedValue({ id: "lodge-b", active: true });
+    mocks.assignmentFindUnique.mockResolvedValue({
+      id: "a1", memberId: "member-1", lodgeId: LODGE, bedId: "bed-1", isCustodian: true,
+      source: "MANUAL",
+      startDate: new Date("2026-07-01T00:00:00.000Z"),
+      endDate: new Date("2026-07-05T00:00:00.000Z"),
+    });
+    // The locked row is still at lodge-a, so this edit moves it — and carries
+    // its bed with it — which the module-off officer cannot do.
+    mocks.txAssignmentFindUnique.mockResolvedValue({
+      id: "a1", memberId: "member-1", lodgeId: LODGE, bedId: "bed-1", isCustodian: true,
+      source: "MANUAL",
+      startDate: new Date("2026-07-01T00:00:00.000Z"),
+      endDate: new Date("2026-07-05T00:00:00.000Z"),
+    });
+    const res = await PUT(putRequest({ lodgeId: "lodge-b" }), { params });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ code: "MODULE_DISABLED" });
+    expect(mocks.txAssignmentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("PUT moves the nights when the same request releases the bed, module OFF", async () => {
+    // A stayed member (the default stay covers these nights), so the release
+    // passes the stay check too: nothing is stranded with the module off.
+    mocks.isEffectiveModuleEnabled.mockResolvedValue(false);
+    mocks.txAssignmentFindUnique.mockResolvedValue({
+      id: "a1", memberId: "member-1", lodgeId: LODGE, bedId: "bed-1", isCustodian: false,
+      source: "MANUAL",
+      startDate: new Date("2026-07-01T00:00:00.000Z"),
+      endDate: new Date("2026-07-05T00:00:00.000Z"),
+    });
+    const res = await PUT(putRequest({ endDate: "2026-07-04", bedId: null }), { params });
+
+    expect(res.status).toBe(200);
+    expect(mocks.txAssignmentUpdate.mock.calls[0][0].data).toMatchObject({ bedId: null });
+  });
+
+  it("PUT warns when ticking an existing hut leader who is also a guest here (#3817 review D2)", async () => {
+    // A role-only row assigned under the stay rule: they ARE a guest (the
+    // default stay), so the tick makes them two spaces on those nights.
+    mocks.txAssignmentFindUnique.mockResolvedValue({
+      id: "a1", memberId: "member-1", lodgeId: LODGE, bedId: null, isCustodian: false,
+      source: "MANUAL",
+      startDate: new Date("2026-07-01T00:00:00.000Z"),
+      endDate: new Date("2026-07-05T00:00:00.000Z"),
+    });
+    const res = await PUT(putRequest({ isCustodian: true }), { params });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ success: true });
+    expect(body.custodianBookedWarning).toBe(CUSTODIAN_BOOKED_AS_GUEST_WARNING);
+    // Read AFTER the commit, never inside the transaction.
+    expect(callOrder.indexOf("update")).toBeGreaterThan(-1);
+    expect(mocks.bookingGuestFindMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("PUT gives no warning when the ticked custodian is not a guest here, or the read fails", async () => {
+    mocks.txAssignmentFindUnique.mockResolvedValue({
+      id: "a1", memberId: "member-1", lodgeId: LODGE, bedId: null, isCustodian: false,
+      source: "MANUAL",
+      startDate: new Date("2026-07-01T00:00:00.000Z"),
+      endDate: new Date("2026-07-05T00:00:00.000Z"),
+    });
+    mocks.bookingGuestFindMany.mockResolvedValueOnce([]);
+    const quiet = await PUT(putRequest({ isCustodian: true }), { params });
+    await expect(quiet.json()).resolves.toMatchObject({ custodianBookedWarning: null });
+
+    // Failure-tolerant: the edit committed, so a failed advisory read is not a 500.
+    mocks.bookingGuestFindMany.mockRejectedValueOnce(new Error("db blip"));
+    const failed = await PUT(putRequest({ isCustodian: true }), { params });
+    expect(failed.status).toBe(200);
+    await expect(failed.json()).resolves.toMatchObject({ custodianBookedWarning: null });
   });
 
   it("PUT leaves changing one bed for another alone (the row stays a custodian occupancy)", async () => {

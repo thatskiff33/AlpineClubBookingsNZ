@@ -163,15 +163,16 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
     // #3817 (owner decision on #3820, 3 Oct 2026): a ticked custodian takes a
     // space out of a hold's set exactly as a bed does, so "an occupant is
     // involved" is now a bed OR the custodian tick. A role-only, unticked
-    // assignment still cannot take the club-wide key.
+    // assignment still cannot take the club-wide key. Both ask the one
+    // definition, `isCustodianOccupancy` (INV-SSOT, #3817 review D5).
     for (const [route, gate] of [
       [
         "src/app/api/admin/hut-leaders/route.ts",
-        "parsed.data.amendOverlappingHolds === true && (bedId !== null || isCustodian);",
+        "parsed.data.amendOverlappingHolds === true && isCustodianOccupancy({ bedId, isCustodian });",
       ],
       [
         "src/app/api/admin/hut-leaders/[id]/route.ts",
-        "const amendRequested = parsed.data.amendOverlappingHolds === true && (Boolean(requestedBedId) || (parsed.data.isCustodian ?? existing.isCustodian));",
+        "const amendRequested = parsed.data.amendOverlappingHolds === true && isCustodianOccupancy({ bedId: requestedBedId, isCustodian: parsed.data.isCustodian ?? existing.isCustodian, });",
       ],
     ] as const) {
       // Whitespace-normalised, so a line break inside the expression cannot
@@ -341,7 +342,7 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
       "const lockedLodgeId = await resolveOptionalActiveLodgeId(",
       "const lockedMember = await tx.member.findUnique(",
       "await findHutLeaderOverlapRefusal(tx, {",
-      "if (bedId || isCustodian) {",
+      "if (isCustodianOccupancy({ bedId, isCustodian })) {",
       "await validateCustodianBedHoldAndHoldAmendment(tx, {",
       "const assignment = await tx.hutLeaderAssignment.create(",
     ]);

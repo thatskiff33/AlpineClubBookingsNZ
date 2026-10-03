@@ -32,7 +32,7 @@ import {
   hutLeaderStayRefusalBody,
   HutLeaderNightsNotStayedError,
   isHutLeaderStayCheckExempt,
-  loadHutLeaderStayedNightKeys,
+  custodianBookedAsGuestWarning,
 } from "@/lib/hut-leader-stayed-nights";
 
 const createSchema = z.object({
@@ -242,7 +242,7 @@ export async function POST(req: NextRequest) {
   // #3817: a ticked custodian takes a space out of a hold's set just as a bed
   // does, so it may be the involved occupant instead of a bed.
   const amendRequested =
-    parsed.data.amendOverlappingHolds === true && (bedId !== null || isCustodian);
+    parsed.data.amendOverlappingHolds === true && isCustodianOccupancy({ bedId, isCustodian });
 
   try {
     const pin = generateHutLeaderPin();
@@ -310,7 +310,7 @@ export async function POST(req: NextRequest) {
       // throws, which rolls this whole transaction back: "no partial durable
       // state" is the transaction, not a cleanup path.
       let amendments: WholeLodgeHoldAmendment[] = [];
-      if (bedId || isCustodian) {
+      if (isCustodianOccupancy({ bedId, isCustodian })) {
         amendments = await validateCustodianBedHoldAndHoldAmendment(tx, {
           bedId,
           isCustodian,
@@ -372,15 +372,14 @@ export async function POST(req: NextRequest) {
     // a booking here takes two spaces on those nights (custodian + guest), so
     // the officer is told rather than left to find a lodge full one bed early.
     // Advisory, after commit: a failed read must not turn the create into a 500.
-    const bookedNights = isCustodian && !bedId
-      ? await loadHutLeaderStayedNightKeys(prisma, {
-          memberId: member.id,
-          lodgeId,
-          rangeStart: newStart,
-          rangeEnd: newEnd,
-        }).catch(() => [])
-      : [];
-    const bookedAsGuestToo = bookedNights.length > 0;
+    const custodianBookedWarning = await custodianBookedAsGuestWarning(prisma, {
+      memberId: member.id,
+      lodgeId,
+      startDate: newStart,
+      endDate: newEnd,
+      bedId,
+      isCustodian,
+    });
 
     let emailSent = true;
     try {
@@ -417,9 +416,7 @@ export async function POST(req: NextRequest) {
           isCustodianOccupancy({ bedId, isCustodian }) && isMinorAgeTier(created.member.ageTier)
             ? "This member is a minor, so the lodge screen will show the custodian role only and never their name."
             : null,
-        custodianBookedWarning: bookedAsGuestToo
-          ? "This custodian is also a guest on a booking at this lodge on some of these nights, so they take two spaces on those nights. Remove them from the booking if they sleep in their own quarters."
-          : null,
+        custodianBookedWarning,
       },
       { status: 201 }
     );

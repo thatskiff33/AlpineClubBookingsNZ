@@ -6,6 +6,7 @@ import {
   wholeLodgeHoldAmendmentNights,
   type WholeLodgeHoldAmendment,
 } from "@/lib/custodian-assignment";
+import { MODULE_DISABLED_ERROR_CODE } from "@/lib/api-error-message";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { isCustodianOccupancy } from "@/lib/custodian-occupancy";
 import { findHutLeaderOverlapRefusal } from "@/lib/hut-leader-overlap-guard";
@@ -61,8 +62,27 @@ export interface HutLeaderAssignmentRefusal {
    * `firstNightNotStayed`, `lastNightStayed`), rendered into the response body
    * beside `error` so the form can offer the corrected last night.
    */
-  details?: Omit<ReturnType<typeof hutLeaderStayRefusalBody>, "error">;
+  details?:
+    | Omit<ReturnType<typeof hutLeaderStayRefusalBody>, "error">
+    | { code: typeof MODULE_DISABLED_ERROR_CODE };
 }
+
+/**
+ * The assignment as a successful edit left it — what the route needs for the
+ * post-commit advisory (`custodianBookedAsGuestWarning`, #3817).
+ */
+export interface HutLeaderAssignmentAppliedEdit {
+  memberId: string;
+  lodgeId: string;
+  startDate: Date;
+  endDate: Date;
+  bedId: string | null;
+  isCustodian: boolean;
+}
+
+export type HutLeaderAssignmentEditOutcome =
+  | { refusal: HutLeaderAssignmentRefusal; applied?: never }
+  | { refusal: null; applied: HutLeaderAssignmentAppliedEdit };
 
 /** Request provenance for the audit rows; absent when it cannot be read. */
 export interface HutLeaderAuditRequest {
@@ -75,7 +95,7 @@ export interface HutLeaderAuditRequest {
  * Apply an officer's edit under the lodge capacity key, re-reading the row,
  * the overlap set and the whole-lodge holds beneath it.
  *
- * Returns a refusal to be rendered as a response, or `null` on success. Hard
+ * Returns a refusal to be rendered as a response, or the row as applied. Hard
  * custodian refusals and the #2698 ordering case are THROWN, not returned, so
  * the transaction rolls back and the route maps them through
  * `custodianBedHoldErrorResponse` exactly as it did before this moved.
@@ -98,10 +118,16 @@ export async function applyHutLeaderAssignmentEditUnderLocks(input: {
   confirmOverCapacity?: boolean;
   /** #2698: the officer has explicitly accepted narrowing an existing hold. */
   amendAccepted: boolean;
+  /**
+   * Is the `bedAllocation` module on? Only read by the caller when the edit
+   * moves nights or lodge; `true` otherwise, since nothing here then asks.
+   */
+  bedAllocationEnabled: boolean;
   actorMemberId: string;
   auditRequest?: HutLeaderAuditRequest | null;
-}): Promise<HutLeaderAssignmentRefusal | null> {
+}): Promise<HutLeaderAssignmentEditOutcome> {
   const { assignmentId: id, updateData } = input;
+  const refuse = (refusal: HutLeaderAssignmentRefusal): HutLeaderAssignmentEditOutcome => ({ refusal });
 
   return prisma.$transaction(async (tx) => {
     if (input.amendAccepted) {
@@ -111,25 +137,43 @@ export async function applyHutLeaderAssignmentEditUnderLocks(input: {
 
     // The authoritative row. Every fact the decision rests on comes from HERE.
     const locked = await tx.hutLeaderAssignment.findUnique({ where: { id } });
-    if (!locked) return { status: 404, error: "Assignment not found" };
+    if (!locked) return refuse({ status: 404, error: "Assignment not found" });
 
     const finalLodgeId = updateData.lodgeId ?? locked.lodgeId;
     if (finalLodgeId !== input.intendedLodgeId) {
       // The row moved lodges between the two reads, so the key we hold is not
       // the key that governs it. Refuse rather than validate one lodge's roster
       // and write to another's.
-      return {
+      return refuse({
         status: 409,
         error:
           "This assignment moved to a different lodge while you were editing it. Reload and try again.",
-      };
+      });
     }
     const finalStart = updateData.startDate ?? locked.startDate;
     const finalEnd = updateData.endDate ?? locked.endDate;
     if (finalStart > finalEnd) {
-      return { status: 400, error: "startDate must be before or equal to endDate" };
+      return refuse({ status: 400, error: "startDate must be before or equal to endDate" });
     }
     const nextBedId = input.bedIdProvided ? input.requestedBedId : locked.bedId;
+    const nightsOrLodgeMove =
+      finalStart.getTime() !== locked.startDate.getTime() ||
+      finalEnd.getTime() !== locked.endDate.getTime() ||
+      finalLodgeId !== locked.lodgeId;
+
+    // #3817: with bed allocation off an officer cannot pick or see beds, so a
+    // held bed may not be carried onto other nights or another lodge either —
+    // that would be a new hold the module-off create refuses. Releasing the
+    // bed (in this request or before it) and the custodian tick still work,
+    // so nothing is stranded. Judged against the LOCKED row's bed.
+    if (!input.bedAllocationEnabled && nextBedId && nightsOrLodgeMove) {
+      return refuse({
+        status: 400,
+        error:
+          "Bed allocation is turned off for this club, so this assignment's held bed cannot move to other nights or another lodge. Release the bed first, or turn bed allocation on.",
+        details: { code: MODULE_DISABLED_ERROR_CODE },
+      });
+    }
 
     const overlap = await findHutLeaderOverlapRefusal(tx, {
       lodgeId: finalLodgeId,
@@ -139,7 +183,7 @@ export async function applyHutLeaderAssignmentEditUnderLocks(input: {
       // #2926: a DELIBERATE officer action, so the teacher carve-out applies.
       allowOverlappingSchoolRows: true,
     });
-    if (overlap) return { status: 409, error: overlap.error };
+    if (overlap) return refuse({ status: 409, error: overlap.error });
 
     // #3817 (owner decision "Block it outright"): an edit that moves the nights
     // or the lodge, or takes away what made the row present without a stay —
@@ -148,25 +192,26 @@ export async function applyHutLeaderAssignmentEditUnderLocks(input: {
     // there. Asked only when the claim moves, so changing one bed for another
     // keeps working on any row. Not asked of a row that stays exempt
     // (`isHutLeaderStayCheckExempt`: a custodian occupancy, or a school
-    // teacher's row). The refusal tells the officer to mark the member
-    // Custodian first, which the same PUT can do.
+    // teacher's row). The refusal's way out is worded for what the edit took
+    // away: the tick (keep them Custodian) or the bed (mark them first).
     const finalIsCustodian = updateData.isCustodian ?? locked.isCustodian;
     const finalRow = { bedId: nextBedId, isCustodian: finalIsCustodian, source: locked.source };
-    const claimMoves =
-      finalStart.getTime() !== locked.startDate.getTime() ||
-      finalEnd.getTime() !== locked.endDate.getTime() ||
-      finalLodgeId !== locked.lodgeId ||
-      isHutLeaderStayCheckExempt(locked);
-    if (claimMoves && !isHutLeaderStayCheckExempt(finalRow)) {
+    const lostExemption = isHutLeaderStayCheckExempt(locked);
+    if ((nightsOrLodgeMove || lostExemption) && !isHutLeaderStayCheckExempt(finalRow)) {
       const stayRefusal = await findHutLeaderStayRefusal(tx, {
         memberId: locked.memberId,
         lodgeId: finalLodgeId,
         startDate: finalStart,
         endDate: finalEnd,
+        exemptionRemoved: !lostExemption
+          ? undefined
+          : locked.isCustodian && !finalIsCustodian
+            ? "custodian"
+            : "bed",
       });
       if (stayRefusal) {
         const { error, ...details } = hutLeaderStayRefusalBody(stayRefusal);
-        return { status: 409, error, details };
+        return refuse({ status: 409, error, details });
       }
     }
 
@@ -226,7 +271,18 @@ export async function applyHutLeaderAssignmentEditUnderLocks(input: {
         userAgent: input.auditRequest?.userAgent,
       });
     }
-    return null;
+    const outcome: HutLeaderAssignmentEditOutcome = {
+      refusal: null,
+      applied: {
+        memberId: locked.memberId,
+        lodgeId: finalLodgeId,
+        startDate: finalStart,
+        endDate: finalEnd,
+        bedId: nextBedId ?? null,
+        isCustodian: finalIsCustodian,
+      },
+    };
+    return outcome;
   });
 }
 

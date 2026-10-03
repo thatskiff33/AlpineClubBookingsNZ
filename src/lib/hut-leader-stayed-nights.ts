@@ -143,12 +143,26 @@ export async function loadHutLeaderStayedNightKeys(
 export const HUT_LEADER_NIGHTS_NOT_STAYED = "HUT_LEADER_NIGHTS_NOT_STAYED";
 
 /**
- * The way out the refusal names: a member who lives on site is marked
- * custodian (the form's tick on a new assignment, the row's Custodian control
- * on an existing one) and is then present without a stay.
+ * The way out the refusal names, worded for what the officer just did (#3817):
+ * a member who lives on site is marked custodian (the form's tick on a new
+ * assignment, the row's Custodian control on an existing one) and is then
+ * present without a stay. An officer who has just UNmarked them is not told to
+ * mark them again as if they had not; one releasing a bed is told to mark them
+ * before releasing it.
  */
-const HUT_LEADER_CUSTODIAN_HINT =
-  "If they live on site, mark them Custodian (lives on site) first.";
+const HUT_LEADER_CUSTODIAN_HINTS = {
+  default: "If they live on site, mark them Custodian (lives on site) first.",
+  custodian:
+    "They can only be hut leader for these nights as a custodian, so keep them marked Custodian (lives on site), or shorten or delete the assignment instead.",
+  bed: "If they live on site, mark them Custodian (lives on site) before releasing the bed; otherwise shorten or delete the assignment instead.",
+} as const;
+
+/**
+ * What an edit took away that had exempted the row from the stay check, when
+ * it took something away: the custodian tick or the held bed. Picks the
+ * refusal's wording ({@link HUT_LEADER_CUSTODIAN_HINTS}).
+ */
+export type HutLeaderStayExemptionRemoved = "custodian" | "bed";
 
 export type HutLeaderStayRefusal = {
   code: typeof HUT_LEADER_NIGHTS_NOT_STAYED;
@@ -190,7 +204,14 @@ export function isHutLeaderStayCheckExempt(assignment: {
  */
 export async function findHutLeaderStayRefusal(
   db: StayDb,
-  input: { memberId: string; lodgeId: string; startDate: Date; endDate: Date },
+  input: {
+    memberId: string;
+    lodgeId: string;
+    startDate: Date;
+    endDate: Date;
+    /** Set by an edit that removed the row's exemption; picks the wording. */
+    exemptionRemoved?: HutLeaderStayExemptionRemoved;
+  },
 ): Promise<HutLeaderStayRefusal | null> {
   const stayed = await loadHutLeaderStayedNightKeys(db, {
     memberId: input.memberId,
@@ -213,9 +234,10 @@ export async function findHutLeaderStayRefusal(
   const run = stayedNightRunContaining(stayed, startKey);
   const lastNightStayed = run?.last ?? null;
   const reason = `The member is not staying at this lodge on the night of ${firstNightNotStayed}, so they cannot be hut leader for it.`;
+  const hint = HUT_LEADER_CUSTODIAN_HINTS[input.exemptionRemoved ?? "default"];
   const error = lastNightStayed
-    ? `${reason} Their last night stayed from the start date is ${lastNightStayed}. ${HUT_LEADER_CUSTODIAN_HINT}`
-    : `${reason} A hut leader must be staying every night they cover. ${HUT_LEADER_CUSTODIAN_HINT}`;
+    ? `${reason} Their last night stayed from the start date is ${lastNightStayed}. ${hint}`
+    : `${reason} A hut leader must be staying every night they cover. ${hint}`;
   return {
     code: HUT_LEADER_NIGHTS_NOT_STAYED,
     error,
@@ -257,4 +279,40 @@ export async function assertHutLeaderNightsStayed(
 ): Promise<void> {
   const refusal = await findHutLeaderStayRefusal(db, input);
   if (refusal) throw new HutLeaderNightsNotStayedError(refusal);
+}
+
+/**
+ * The advisory a ticked custodian with no bed gets when they are ALSO a guest
+ * on a booking at the lodge on some covered nights (#3817 stated limit,
+ * `INV-DATE-030`): they then take two spaces on those nights, custodian plus
+ * guest. One string for the create and the edit, so the two cannot drift.
+ */
+export const CUSTODIAN_BOOKED_AS_GUEST_WARNING =
+  "This custodian is also a guest on a booking at this lodge on some of these nights, so they take two spaces on those nights. Remove them from the booking if they sleep in their own quarters.";
+
+/**
+ * {@link CUSTODIAN_BOOKED_AS_GUEST_WARNING} for an assignment as it stands
+ * AFTER a committed create or edit, or null. Advisory and failure-tolerant: a
+ * failed read answers null, so it can never turn a committed write into an
+ * error. Call it after the transaction, never inside it.
+ */
+export async function custodianBookedAsGuestWarning(
+  db: StayDb,
+  assignment: {
+    memberId: string;
+    lodgeId: string;
+    startDate: Date;
+    endDate: Date;
+    bedId: string | null | undefined;
+    isCustodian: boolean | null | undefined;
+  },
+): Promise<string | null> {
+  if (assignment.isCustodian !== true || assignment.bedId) return null;
+  const nights = await loadHutLeaderStayedNightKeys(db, {
+    memberId: assignment.memberId,
+    lodgeId: assignment.lodgeId,
+    rangeStart: assignment.startDate,
+    rangeEnd: assignment.endDate,
+  }).catch(() => []);
+  return nights.length > 0 ? CUSTODIAN_BOOKED_AS_GUEST_WARNING : null;
 }
