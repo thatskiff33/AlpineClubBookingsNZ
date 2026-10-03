@@ -1040,7 +1040,9 @@ describe("package manager contract (#3673)", () => {
     );
     expect(builder).toMatch(/^COPY --from=deps \/app\/patches \.\/patches\/$/m);
     expect(builder.indexOf("COPY . .")).toBeLessThan(builder.indexOf("COPY --from=deps /app/patches"));
-    expect(builder.indexOf("COPY --from=deps /app/patches")).toBeLessThan(builder.indexOf("RUN pnpm run"));
+    const firstPnpm = builder.search(/^RUN pnpm\b/m);
+    expect(firstPnpm).toBeGreaterThan(-1);
+    expect(builder.indexOf("COPY --from=deps /app/patches")).toBeLessThan(firstPnpm);
     expect(dockerfile).not.toMatch(/\bnpm ci\b|package-lock\.json/);
     // npm is used once, to install pnpm, and then removed in the SAME layer, so
     // the builder and migrate images carry pnpm and no npm/npx.
