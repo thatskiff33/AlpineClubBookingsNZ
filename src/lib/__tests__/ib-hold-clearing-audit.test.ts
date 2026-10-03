@@ -549,6 +549,19 @@ describe("deriveIbAppliedCreditStrandFinding (#1620 enumeration)", () => {
     expect(finding?.settlementEvidence).toBe("unverified");
   });
 
+  it("does not match an invoice-less receipt to a payment with no current invoice", () => {
+    // null === null would otherwise read this as a receipt for "the current
+    // invoice": a captured IB PRIMARY naming no invoice, no manual stamp, and
+    // no invoice on the payment proves nothing about any invoice.
+    const finding = deriveIbAppliedCreditStrandFinding(makeStrandRow({
+      xeroInvoiceId: null,
+      manuallyMarkedPaidAt: null,
+      transactions: [{ status: "SUCCEEDED", source: "INTERNET_BANKING", kind: "PRIMARY", xeroInvoiceId: null }],
+    }));
+    expect(finding?.realized).toBe(false);
+    expect(finding?.settlementEvidence).toBe("unverified");
+  });
+
   it("keeps an IB row unverified when a credit-note repair changed only its mirror", () => {
     const finding = deriveIbAppliedCreditStrandFinding(
       makeStrandRow({ paymentStatus: "REFUNDED", bookingStatus: "PAID" }),

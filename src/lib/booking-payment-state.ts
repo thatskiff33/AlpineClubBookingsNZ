@@ -5,8 +5,13 @@
  *
  * THE ONE HOME for this list (`INV-SSOT-001`, #3340, #3503). Every reader of an
  * aggregate `Payment.status` asks `isCapturedPaymentStatus` or spreads
- * `CAPTURED_PAYMENT_STATUS_LIST`; `payment-transaction-status-list-guard.test.ts`
- * refuses a hand-written copy and registers each importer. #3340 once routed
+ * `CAPTURED_PAYMENT_STATUS_LIST`. `payment-transaction-status-list-guard.test.ts`
+ * holds that by TEXT over `src/`, `scripts/` and `prisma/` (not migrations): it
+ * refuses a list, comparison chain, fall-through `switch`, `true`-keyed map or
+ * SQL `IN (…)` naming exactly these three, outside its named exceptions, and
+ * pins the set of modules that import this one. It cannot see a copy built
+ * indirectly (a filter over the enum, a list assembled at runtime) or a superset
+ * of these three. #3340 once routed
  * `additional-ledger-gap.ts` here, but that module reads `PaymentTransaction`
  * rows, so #3632 moved it to the transaction leaf. This file is a pure leaf — no
  * client, no logger, no `server-only` — so a census, a route and a page can all
