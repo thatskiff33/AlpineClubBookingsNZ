@@ -176,7 +176,10 @@ describe("cancel preview for a part-paid internet banking booking (#3643)", () =
                 where: {
                   status: "OPEN",
                   kind: "CANCELLED_BOOKING_HAND_BACK",
-                  occurrenceKey: { startsWith: "edit-refund-hand-back:" },
+                  OR: [
+                    { occurrenceKey: { startsWith: "edit-refund-hand-back:" } },
+                    { occurrenceKey: { startsWith: "refund-request-hand-back:" } },
+                  ],
                 },
                 select: { amountCents: true },
               },

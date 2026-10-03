@@ -352,3 +352,33 @@ describe("reopening a dismissed EDIT refund hand-back (#3827, INV-PAY-114)", () 
     await expect(reopen()).resolves.toMatchObject({ status: ManualRefundTaskStatus.OPEN });
   });
 });
+
+describe("reopening a dismissed refund APPEAL hand-back (#3827, D-3813-7, INV-PAY-115)", () => {
+  /** A $100 appeal task on a cancelled $200 internet-banking payment, dismissed. */
+  function dismissedAppeal(payment: { amountCents: number; refundedAmountCents: number }) {
+    return {
+      ...DISMISSED_BY_OFFICER,
+      kind: "CANCELLED_BOOKING_HAND_BACK",
+      occurrenceKey: "refund-request-hand-back:req-1",
+      amountCents: 10000,
+      raisedAmountCents: 10000,
+      payment: { id: "pay-1", status: "PARTIALLY_REFUNDED", ...payment },
+      booking: { memberId: "member-1", status: "CANCELLED", organisation: null },
+    };
+  }
+
+  it("reopens on its cancelled booking while the cash is still there", async () => {
+    mocks.findUnique.mockResolvedValue(dismissedAppeal({ amountCents: 20000, refundedAmountCents: 10000 }));
+    mocks.aggregate.mockResolvedValue({ _sum: { amountCents: null } });
+
+    await expect(reopen()).resolves.toMatchObject({ status: ManualRefundTaskStatus.OPEN });
+  });
+
+  it("refuses once a later appeal has promised that cash back", async () => {
+    mocks.findUnique.mockResolvedValue(dismissedAppeal({ amountCents: 20000, refundedAmountCents: 10000 }));
+    mocks.aggregate.mockResolvedValue({ _sum: { amountCents: 10000 } });
+
+    await expect(reopen()).rejects.toMatchObject({ message: REOPEN_EDIT_REFUND_EXCEEDS_CASH_MESSAGE });
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+});

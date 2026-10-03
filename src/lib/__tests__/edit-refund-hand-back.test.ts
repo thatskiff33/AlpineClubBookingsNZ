@@ -91,11 +91,16 @@ describe("telling an edit refund hand-back from a cancellation's (INV-PAY-114)",
     expect(isEditRefundHandBackTask({ kind: "EDIT_FINANCIAL_REVIEW", occurrenceKey: "edit-review:x" })).toBe(false);
   });
 
-  it("the query fragment keeps a cancellation's (no key) and drops an edit's", () => {
+  it("the query fragment keeps a cancellation's (no key) and drops an edit's and an appeal's", () => {
     expect(NOT_NON_CANCELLATION_HAND_BACK_WHERE).toEqual({
       OR: [
         { occurrenceKey: null },
-        { NOT: { occurrenceKey: { startsWith: EDIT_REFUND_HAND_BACK_KEY_PREFIX } } },
+        {
+          AND: [
+            { NOT: { occurrenceKey: { startsWith: EDIT_REFUND_HAND_BACK_KEY_PREFIX } } },
+            { NOT: { occurrenceKey: { startsWith: "refund-request-hand-back:" } } },
+          ],
+        },
       ],
     });
   });

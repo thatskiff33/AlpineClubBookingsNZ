@@ -1798,6 +1798,87 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     });
   });
 
+  // #3827 (owner decision D-3813-7, `INV-PAY-115`): an approved refund
+  // appeal's bank-transfer task. Always on a CANCELLED booking (appeals exist
+  // only after the cancel), with the paid invoice the cancellation hand-back
+  // leg would otherwise write a refund note against.
+  describe("an approved refund appeal's hand-back (D-3813-7)", () => {
+    function appealTask() {
+      mocks.manualRefundTaskFindUnique.mockResolvedValue({
+        id: "task-7",
+        bookingId: "booking-1",
+        paymentId: "payment-1",
+        amountCents: 10000,
+        raisedAmountCents: 10000,
+        kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+        occurrenceKey: "refund-request-hand-back:req-1",
+        status: ManualRefundTaskStatus.OPEN,
+        booking: {
+          memberId: "member-1",
+          lodgeId: "lodge-1",
+          status: "CANCELLED",
+          payment: { id: "payment-1", status: "PARTIALLY_REFUNDED", xeroInvoiceId: "inv-1" },
+        },
+      });
+    }
+
+    it("completes under lock(1): records the refund, marks its event, and sends Xero nothing", async () => {
+      appealTask();
+
+      await resolveManualRefundTask({
+        taskId: "task-7",
+        resolution: "completed",
+        note: null,
+        actingMemberId: "admin-1",
+        confirmedAmountCents: null,
+        direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: null,
+      }, CLUB_FORMAT_TEST);
+
+      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({
+        paymentId: "payment-1",
+        amountCents: 10000,
+        store: tx,
+      });
+      expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: BookingEventType.REFUNDED,
+          amountCents: 10000,
+          reason: "manual_refund_completed",
+          snapshot: { kind: "refund_request_hand_back_completed", manualRefundTaskId: "task-7" },
+        })
+      );
+      // The approval queued the appeal's refund credit note; no second one.
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+      expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
+      expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+      expect(String((mocks.executeRaw.mock.calls[0]![0] as TemplateStringsArray).join(""))).toContain(
+        "pg_advisory_xact_lock(1)",
+      );
+      expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("may be dismissed on its cancelled booking: the cancel came first and never counted it", async () => {
+      appealTask();
+
+      await resolveManualRefundTask({
+        taskId: "task-7",
+        resolution: "dismissed",
+        note: "paid in person",
+        actingMemberId: "admin-1",
+        recordedNightPrices: null,
+      }, CLUB_FORMAT_TEST);
+
+      expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+      expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: ManualRefundTaskStatus.DISMISSED }) }),
+      );
+      expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    });
+  });
+
   it("MUTATION: a DISMISSED hand-back raises no refund note even with an issued invoice", async () => {
     mocks.manualRefundTaskFindUnique.mockResolvedValue({
       id: "task-1",

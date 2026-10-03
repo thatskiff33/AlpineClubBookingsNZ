@@ -73,7 +73,10 @@ describe("the money already promised back by hand", () => {
         paymentId: "pay-1",
         status: "OPEN",
         kind: "CANCELLED_BOOKING_HAND_BACK",
-        occurrenceKey: { startsWith: "edit-refund-hand-back:" },
+        OR: [
+          { occurrenceKey: { startsWith: "edit-refund-hand-back:" } },
+          { occurrenceKey: { startsWith: "refund-request-hand-back:" } },
+        ],
       },
       _sum: { amountCents: true },
     });

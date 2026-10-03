@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   paymentUpdate: vi.fn(),
   executeRaw: vi.fn(),
   manualRefundTaskAggregate: vi.fn(),
+  manualRefundTaskCreateMany: vi.fn(),
+  manualRefundTaskDeleteMany: vi.fn(),
   transaction: vi.fn(),
   processRefund: vi.fn(),
   refundPaymentTransactions: vi.fn(),
@@ -152,11 +154,17 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     });
     mocks.executeRaw.mockResolvedValue(1);
     mocks.manualRefundTaskAggregate.mockResolvedValue({ _sum: { amountCents: null } });
+    mocks.manualRefundTaskCreateMany.mockResolvedValue({ count: 1 });
+    mocks.manualRefundTaskDeleteMany.mockResolvedValue({ count: 1 });
     mocks.paymentUpdate.mockResolvedValue({});
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
         $executeRaw: mocks.executeRaw,
-        manualRefundTask: { aggregate: mocks.manualRefundTaskAggregate },
+        manualRefundTask: {
+          aggregate: mocks.manualRefundTaskAggregate,
+          createMany: mocks.manualRefundTaskCreateMany,
+          deleteMany: mocks.manualRefundTaskDeleteMany,
+        },
         refundRequest: {
           updateMany: mocks.refundRequestUpdateMany,
         },
@@ -341,7 +349,11 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
           paymentId: "payment_1",
           status: "OPEN",
           kind: "CANCELLED_BOOKING_HAND_BACK",
-          occurrenceKey: { startsWith: "edit-refund-hand-back:" },
+          // D-3813-7: an approved appeal's open task is netted too.
+          OR: [
+            { occurrenceKey: { startsWith: "edit-refund-hand-back:" } },
+            { occurrenceKey: { startsWith: "refund-request-hand-back:" } },
+          ],
         },
         _sum: { amountCents: true },
       });
@@ -372,6 +384,180 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
         mocks.planStripeRefundAllocation.mock.invocationCallOrder[0],
       );
       expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // #3827 (owner decision D-3813-7, `INV-PAY-115`): what no card refund can
+  // carry goes back by bank transfer, as ONE officer task raised inside the
+  // approval's locked transaction, and the member is told so.
+  describe("an approval the card cannot carry raises a bank-transfer task (D-3813-7)", () => {
+    function approveFor(approvedAmountCents: number) {
+      return new NextRequest("http://localhost/api/admin/refund-requests/refund_1", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "x-forwarded-for": "127.0.0.1" },
+        body: JSON.stringify({ status: "APPROVED", approvedAmountCents }),
+      });
+    }
+    function stripePlans(plannedAmountCents: number) {
+      mocks.planStripeRefundAllocation.mockResolvedValue({
+        slices: plannedAmountCents > 0 ? [{ paymentTransactionId: "txn_1", amountCents: plannedAmountCents }] : [],
+        plannedAmountCents,
+        totalRefundableCents: plannedAmountCents,
+      });
+    }
+    function sentTemplateData() {
+      const [args] = mocks.sendEmail.mock.calls[0] as [{ templateData: Record<string, string> }];
+      return args.templateData;
+    }
+
+    it("internet banking: the whole amount becomes one task, under the lock, after the claim", async () => {
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+      stripePlans(0);
+
+      const response = await PUT(approveFor(2500), { params: Promise.resolve({ id: "refund_1" }) });
+
+      expect(response.status).toBe(200);
+      expect(mocks.manualRefundTaskCreateMany).toHaveBeenCalledTimes(1);
+      expect(mocks.manualRefundTaskCreateMany).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({
+            bookingId: "booking_1",
+            paymentId: "payment_1",
+            amountCents: 2500,
+            raisedAmountCents: 2500,
+            kind: "CANCELLED_BOOKING_HAND_BACK",
+            occurrenceKey: "refund-request-hand-back:refund_1",
+          }),
+        ],
+        skipDuplicates: true,
+      });
+      // Inside the one locked transaction, after the claim and the plan.
+      expect(mocks.transaction).toHaveBeenCalledTimes(1);
+      expect(mocks.planStripeRefundAllocation).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentId: "payment_1", amountCents: 2500, store: expect.anything() }),
+      );
+      expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.manualRefundTaskCreateMany.mock.invocationCallOrder[0],
+      );
+      expect(mocks.refundRequestUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.manualRefundTaskCreateMany.mock.invocationCallOrder[0],
+      );
+      // Nothing for the card to do; the payment mirror is not touched here.
+      expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(
+        expect.objectContaining({ amountCents: 0, allocation: [] }),
+      );
+      expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+      // The Xero credit note still covers the whole approved amount.
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+        "payment_1",
+        2500,
+        expect.anything(),
+      );
+      expect(mocks.refundRequestApprovedTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({ amountCents: 2500, bankTransferCents: 2500 }),
+        expect.anything(),
+      );
+      expect(sentTemplateData().refundSentence).toBe(
+        "The club will refund $25.00 to you by bank transfer.",
+      );
+      expect(mocks.createAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({ approvedAmountCents: 2500, bankTransferCents: 2500 }),
+        }),
+      );
+    });
+
+    it("a payment partly by card: the card takes its part, the task the rest", async () => {
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+      stripePlans(1000);
+
+      const response = await PUT(approveFor(2500), { params: Promise.resolve({ id: "refund_1" }) });
+
+      expect(response.status).toBe(200);
+      expect(mocks.manualRefundTaskCreateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: [expect.objectContaining({ amountCents: 1500, occurrenceKey: "refund-request-hand-back:refund_1" })],
+        }),
+      );
+      expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(
+        expect.objectContaining({ amountCents: 1000 }),
+      );
+      expect(sentTemplateData().refundSentence).toBe(
+        "A refund of $10.00 will be processed to your original payment method, and the club will refund the remaining $15.00 to you by bank transfer.",
+      );
+    });
+
+    it("a card payment the card fully carries raises no task and keeps its wording", async () => {
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+      stripePlans(2500);
+
+      const response = await PUT(approveFor(2500), { params: Promise.resolve({ id: "refund_1" }) });
+
+      expect(response.status).toBe(200);
+      expect(mocks.manualRefundTaskCreateMany).not.toHaveBeenCalled();
+      expect(sentTemplateData().refundSentence).toBe(
+        "A refund of $25.00 will be processed to your original payment method.",
+      );
+      expect(sentTemplateData().amount).toBe("$25.00");
+    });
+
+    it("a second appeal is capped by the first one's open task", async () => {
+      // $200 by internet banking; the cancel credited back $100; the first
+      // appeal's $100 task is still OPEN. Nothing is left to approve.
+      mocks.paymentFindUnique.mockResolvedValue({
+        id: "payment_1",
+        status: "PARTIALLY_REFUNDED",
+        amountCents: 20000,
+        refundedAmountCents: 10000,
+      });
+      mocks.manualRefundTaskAggregate.mockResolvedValue({ _sum: { amountCents: 10000 } });
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+
+      const response = await PUT(approveFor(10000), { params: Promise.resolve({ id: "refund_1" }) });
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: "Amount exceeds maximum refundable of $0.00",
+      });
+      expect(mocks.refundRequestUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.manualRefundTaskCreateMany).not.toHaveBeenCalled();
+    });
+
+    it("releasing the claim deletes its OPEN task in the same locked transaction", async () => {
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+      stripePlans(1000);
+      mocks.refundPaymentTransactions.mockRejectedValue(new Error("stripe down"));
+      mocks.enqueueRefundRequestRefundRecovery.mockRejectedValue(new Error("db unavailable"));
+
+      const response = await PUT(approveFor(2500), { params: Promise.resolve({ id: "refund_1" }) });
+
+      expect(response.status).toBe(500);
+      expect(mocks.transaction).toHaveBeenCalledTimes(2);
+      expect(mocks.manualRefundTaskDeleteMany).toHaveBeenCalledWith({
+        where: { occurrenceKey: "refund-request-hand-back:refund_1", status: "OPEN" },
+      });
+      const releaseLock = mocks.executeRaw.mock.invocationCallOrder[1];
+      expect((mocks.executeRaw.mock.calls[1]?.[0] as TemplateStringsArray).join("?")).toContain(
+        "pg_advisory_xact_lock(1)",
+      );
+      expect(releaseLock).toBeLessThan(mocks.refundRequestUpdateMany.mock.invocationCallOrder[1]);
+      expect(mocks.refundRequestUpdateMany.mock.invocationCallOrder[1]).toBeLessThan(
+        mocks.manualRefundTaskDeleteMany.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("a release that lost the request to someone else deletes nothing", async () => {
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+      stripePlans(1000);
+      mocks.refundRequestUpdateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+      mocks.refundPaymentTransactions.mockRejectedValue(new Error("stripe down"));
+      mocks.enqueueRefundRequestRefundRecovery.mockRejectedValue(new Error("db unavailable"));
+
+      await PUT(approveFor(2500), { params: Promise.resolve({ id: "refund_1" }) });
+
+      expect(mocks.manualRefundTaskDeleteMany).not.toHaveBeenCalled();
     });
   });
 
