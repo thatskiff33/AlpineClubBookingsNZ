@@ -106,7 +106,7 @@ export async function GET(
     if (
       booking.status === "PENDING" ||
       !booking.payment ||
-      (!partPayment && !(await paymentEligibleForPaidCancelPath(booking.payment)))
+      (!partPayment && !(await paymentEligibleForPaidCancelPath(booking)))
     ) {
       // #1547: the no-refund / never-captured executed path restores applied
       // credit at 100% (ledger truth, no override) — so the preview must show

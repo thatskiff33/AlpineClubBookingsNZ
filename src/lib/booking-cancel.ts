@@ -1012,7 +1012,7 @@ async function performBookingCancellation(
   const partPayment = partPaymentRead?.kind === "recognise" ? partPaymentRead : null;
   const paidRefundPathEligible =
     partPayment !== null ||
-    (await paymentEligibleForPaidCancelPath(booking.payment));
+    (await paymentEligibleForPaidCancelPath(booking));
 
   // Handle PAYMENT_PENDING/CONFIRMED/PAID bookings without a payment the
   // paid refund path can claim: never-captured payments (including the
@@ -1071,7 +1071,7 @@ async function performBookingCancellation(
       // A capture landed between the outer read and this lock: refuse with the
       // standard 409 so a retry routes into the paid path and gets the tiered
       // refund (never flatten a now-captured payment here).
-      if (await paymentEligibleForPaidCancelPath(fresh.payment, tx)) {
+      if (await paymentEligibleForPaidCancelPath(fresh, tx)) {
         return { claimed: false as const };
       }
       if (fresh.lodgeId) await acquireLodgeCapacityLock(tx, fresh.lodgeId);
@@ -1493,7 +1493,7 @@ async function performBookingCancellation(
     // if racing writes degrade the payment between the reads, refusing the
     // claim (409) is the safe outcome.
     const freshPaidPathEligible = await paymentEligibleForPaidCancelPath(
-      lockedPayment,
+      { ...fresh, payment: lockedPayment },
       tx
     );
     if (!freshPaidPathEligible) {
@@ -1583,8 +1583,9 @@ async function performBookingCancellation(
       policy,
       refundMethod,
     });
-    const { paidAmountCents, refundableBaseCents, refundPercentage } = money;
+    const { paidAmountCents, refundableBaseCents } = money;
     let refundAmountCents = money.refundAmountCents;
+    let refundPercentage = money.refundPercentage;
 
     // Idempotent-by-claim credit restore: only reached once per claim. The
     // applied-credit slice is now tiered by the SAME card tier as the card
@@ -1743,20 +1744,59 @@ async function performBookingCancellation(
     // #3653: the organiser child's debt, written with the claim, clamped to
     // what the combined payment and the child still hold. Nothing is returned
     // when that payment no longer holds money, and the cancel says so.
+    //
+    // The debt shares its key with the organiser's own cancellation of the
+    // group. A debt already under that key was written by the group's
+    // cancellation, which tiered and owes this child's refund; the joiner's
+    // cancel landing behind it refunds nothing more of its own (the base above
+    // already nets that debt out) and reports the group's refund as the
+    // group's.
     let organiserChildDebtId: string | null = null;
-    if (organiserCard && refundAmountCents > 0) {
-      const debt = organiserCard.settlement
-        ? await reserveOrganiserChildRefund(tx, {
-            key: buildOrganiserChildCancellationRefundKey(organiserCard.settlement.id, bookingId),
-            settlement: organiserCard.settlement,
-            childBookingId: bookingId,
-            childPayment: payment,
-            amountCents: refundAmountCents,
-            overCap: "clamp",
+    let groupCancellationRefundCents = 0;
+    let retainedAmountCents = money.retainedAmountCents;
+    if (organiserCard) {
+      const key = organiserCard.settlement
+        ? buildOrganiserChildCancellationRefundKey(organiserCard.settlement.id, bookingId)
+        : null;
+      const groupDebt = key
+        ? await tx.paymentRecoveryOperation.findUnique({
+            where: { idempotencyKey: key },
+            select: { id: true, amountCents: true },
           })
         : null;
-      refundAmountCents = debt?.amountCents ?? 0;
-      organiserChildDebtId = debt?.id ?? null;
+      if (groupDebt) {
+        groupCancellationRefundCents = groupDebt.amountCents;
+        refundAmountCents = 0;
+      } else if (key && organiserCard.settlement && refundAmountCents > 0) {
+        const debt = await reserveOrganiserChildRefund(tx, {
+          key,
+          settlement: organiserCard.settlement,
+          childBookingId: bookingId,
+          childPayment: payment,
+          amountCents: refundAmountCents,
+          overCap: "clamp",
+        });
+        refundAmountCents = debt?.amountCents ?? 0;
+        organiserChildDebtId = debt?.id ?? null;
+      } else {
+        refundAmountCents = 0;
+      }
+      // F4 (review of #3870): a clamp, a payment that holds nothing, or the
+      // group's debt changes what this cancel returns, so every figure frozen
+      // from it - the event's retained and percentage, the ledger's kept - is
+      // re-derived from the FINAL amount, never the policy's first answer.
+      if (refundAmountCents !== money.refundAmountCents) {
+        retainedAmountCents = Math.max(paidAmountCents - refundAmountCents, 0);
+        refundPercentage =
+          refundableBaseCents > 0
+            ? Math.min(100, Math.round((refundAmountCents * 100) / refundableBaseCents))
+            : 0;
+        ledgerKeptCents = cancellationKeptCents({
+          retainedAmountCents,
+          appliedCreditCents,
+          creditRestoredCents,
+        });
+      }
     }
     const manualDisposition = !organiserCard && Boolean(payment.manuallyMarkedPaidAt);
     const branch = paidCancellationBranch({
@@ -1891,7 +1931,7 @@ async function performBookingCancellation(
       refundAmountCents,
       paidAmountCents,
       changeFeeCents: payment.changeFeeCents,
-      retainedAmountCents: money.retainedAmountCents,
+      retainedAmountCents,
       ledger: {
         keptCents: ledgerKeptCents,
         policyKeptCents: money.policyKeptCents,
@@ -1917,6 +1957,7 @@ async function performBookingCancellation(
       clearingOperationId,
       branch,
       organiserChildDebtId,
+      groupCancellationRefundCents,
     };
   }).catch((err: unknown) => {
     if (err instanceof PartPaymentChangedError) return { claimed: false as const };
@@ -1948,6 +1989,7 @@ async function performBookingCancellation(
     clearingOperationId,
     branch,
     organiserChildDebtId,
+    groupCancellationRefundCents,
   } = claim;
   const paymentId = payment.id;
 
@@ -2375,16 +2417,27 @@ async function performBookingCancellation(
   // tx1, so there is no money movement left here — only the narrative work.
   await cleanupPromoRedemption(bookingId);
 
+  // #3653 (F4): the group's cancellation already owes this child's refund to
+  // the organiser's card; this cancel adds none of its own, and says whose it is.
+  const groupRefundNote =
+    groupCancellationRefundCents > 0
+      ? `The group organiser's cancellation is already refunding ${formatCents(groupCancellationRefundCents, format)} for this booking to the organiser's card.`
+      : null;
   logBookingCancellationAudit({
     booking: fresh,
     bookingId,
     sessionUserId,
-    details: "No refund per cancellation policy",
+    details: groupRefundNote
+      ? `No refund of its own: ${groupRefundNote}`
+      : "No refund per cancellation policy",
     ipAddress,
     metadata: {
       refundAmountCents: 0,
       refundPercentage,
       refundMethod: "card",
+      ...(groupRefundNote
+        ? { refundTo: "organiser", groupCancellationRefundCents }
+        : {}),
       creditRestoredCents,
       failedOutstandingAdditionalPayment: shouldFailAdditionalPayment,
       ...notifyAuditFields,
@@ -2418,8 +2471,9 @@ async function performBookingCancellation(
       refundPercentage: 0,
       refundMethod: "card",
       creditRestoredCents: creditRestoredCents || undefined,
-      message:
-        "Booking cancelled. No refund applicable per cancellation policy.",
+      message: groupRefundNote
+        ? `Booking cancelled. ${groupRefundNote}`
+        : "Booking cancelled. No refund applicable per cancellation policy.",
     },
   };
 }
@@ -2533,10 +2587,25 @@ function logBookingCancellationAudit({
 // path's refund executors allocate against ledger rows: a mirror-only legacy
 // payment would claim and then throw (credit method) or plan zero slices
 // (card method). Mirror-only rows stay in the preserve branch (#1473).
+//
+// #3653 (`INV-PAY-114`): it takes the BOOKING, not the payment, because one
+// population's captured value lives in no transaction row. A joiner's booking
+// the organiser paid for by card has a mirror the settle path wrote from the
+// group's combined payment, and the organiser child refund executor writes its
+// refunds straight onto that mirror. After a reduction it is
+// PARTIALLY_REFUNDED with no ledger row at all, and the remaining money is
+// real: it sits in the organiser's payment. Such a child is captured for this
+// gate; the paid path then refunds through `organiserChildCancelBasis`, which
+// sizes from the organiser's payment and plans nothing when it holds nothing.
 export async function paymentEligibleForPaidCancelPath(
-  payment: { id: string; status: string } | null | undefined,
+  booking: {
+    organiserSettled: boolean;
+    parentBookingId: string | null;
+    payment: { id: string; status: string; source: string } | null | undefined;
+  },
   db: Prisma.TransactionClient | typeof prisma = prisma
 ) {
+  const payment = booking.payment;
   if (!payment) {
     return false;
   }
@@ -2545,6 +2614,9 @@ export async function paymentEligibleForPaidCancelPath(
   }
   if (payment.status !== "PARTIALLY_REFUNDED") {
     return false;
+  }
+  if (paidByOrganiserCard({ ...booking, payment })) {
+    return true;
   }
   const capturedTransaction = await db.paymentTransaction.findFirst({
     where: {
