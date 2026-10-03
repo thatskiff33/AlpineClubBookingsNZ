@@ -219,10 +219,13 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
     // suppressed valid auto-assignments at other lodges and raced the routes.
     // #3818: the booking read names the lodge here; the already-covered probe
     // and its locked re-ask moved to the shared presence-aware helper, which
-    // takes the lodge as a required argument — the cheap ask on `prisma`, the
-    // authoritative one on `tx` under the key.
+    // takes the lodge as a required argument — the cheap ask on `prisma` (one
+    // window read per lodge since the #3818 review), the authoritative one on
+    // `tx` under the key.
     expect(cron.match(/lodgeNullTolerantScope\(lodge\.id\)/g) ?? []).toHaveLength(1);
-    expect(cron).toMatch(/isHutLeaderNightCovered\(prisma,\s*\{\s*lodgeId:\s*lodge\.id,/);
+    expect(cron).toMatch(
+      /loadHutLeaderNightCover\(prisma,\s*\{\s*scope:\s*\{\s*kind:\s*"lodge",\s*lodgeId:\s*lodge\.id\s*\}/,
+    );
     expect(cron).toMatch(/isHutLeaderNightCovered\(tx,\s*\{\s*lodgeId:\s*lodge\.id,/);
     const lockAt = cron.indexOf("await acquireLodgeCapacityLock(tx, lodge.id);");
     expect(lockAt).toBeGreaterThan(-1);

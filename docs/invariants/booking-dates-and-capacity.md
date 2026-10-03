@@ -659,7 +659,7 @@ covered?": many rows were stamped through the leader's check-out day.
   through the host's clock face — `getFullYear`/`getMonth`/`getDate` and their
   `set*` counterparts, plain and computed — and ban importing `date-fns`, which
   performs the identical read inside `node_modules`. The host-clock arm ships
-  with NO exemption; `date-fns` keeps a seven-file ratchet, each entry naming
+  with NO exemption; `date-fns` keeps a five-file ratchet, each entry naming
   what it uses and what blocks it. `club-time-boundary-guard.test.ts` proves
   both arms twice — that they RESOLVE at every production path, and that they
   REPORT a violation there — with a clean control at each path so the ban is
