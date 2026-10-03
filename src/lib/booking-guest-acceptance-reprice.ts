@@ -35,7 +35,7 @@ import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
  * #3827 (D-3813-4): A GUEST'S ACCEPTANCE RE-PRICES THE BOOKING'S CODES.
  *
  * A cross-family guest awaiting acceptance is shown to no promo code, so their
- * nights carry none (INV-MONEY-038). When they accept, the owner's decision is
+ * nights carry none (INV-MONEY-037). When they accept, the owner's decision is
  * that the booking is re-priced "under the ordinary edit rules": every code
  * the booking already carries runs again — in its stored order, over the
  * nights now present — exactly as a guest edit would run it. Nothing is

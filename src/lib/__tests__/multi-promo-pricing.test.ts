@@ -257,7 +257,7 @@ describe("one code, everyone staying: the engine's own answer (byte-identical)",
   });
 });
 
-describe("a per-guest fixed amount after a partial claim (INV-MONEY-039)", () => {
+describe("a per-guest fixed amount after a partial claim (INV-MONEY-038)", () => {
   it("takes min(value, the guest's unclaimed total) and claims the guest's remaining nights", async () => {
     const fixed = subject("promo-fixed", {
       type: "FIXED_AMOUNT",

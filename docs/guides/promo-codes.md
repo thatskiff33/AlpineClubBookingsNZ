@@ -175,6 +175,41 @@ Two consequences to expect:
   it, the edit removes the code from the booking rather than pretending it still
   applies. Nobody loses anything, because nobody had anything.
 
+### Several codes on one booking
+
+Once the **Several promo codes on one booking** module is switched on, a booking
+can carry more than one code — for example two members sharing a group booking,
+each using their own free nights. The booker chooses every code; nothing is
+added for them. The rules (`INV-MONEY-037`, `INV-MONEY-038`):
+
+- **A night is discounted once.** Each code covers only the nights no earlier
+  code has already discounted. A member's own free-night code covers only that
+  member's nights.
+- **The booker's order decides.** Where two codes could cover the same night,
+  the code earlier in the booker's list wins. The order is saved with the
+  booking and can be changed by editing the booking. A code that would be left
+  with no night to discount is refused with "Already covered by" the code that
+  holds them.
+- **A working-bee discount goes first.** It takes its working-bee nights before
+  any code, and the codes cover the rest.
+- **Each code keeps its own limits.** Uses, unique members and free-night
+  budgets are counted per code, exactly as for a single code.
+- **Removing a guest removes only their code.** When a re-price leaves a code
+  nothing to discount — its holder left, or another code now covers its nights
+  — that code alone is removed and the member is told which one and why. The
+  other codes stay.
+
+**A guest who has not yet accepted their place gets no discount.** A member
+added from outside the booker's family waits as *pending* until they accept.
+Until then no code — not even one typed at booking — discounts their nights.
+When they accept, the booking's codes are applied again over their nights, and
+any change is settled the way an ordinary edit settles it: on a paid booking a
+lower price is returned to the booking owner as **account credit**, and an
+issued invoice is corrected in Xero. A decline uses up nothing. Two cases keep
+the price unchanged until the booking is next edited: a booking already paid or
+invoiced whose price would *rise*, and a booking with an edit still under
+financial review.
+
 ## Settings reference
 
 | Setting | What it controls | Default | Notes / constraints |
@@ -222,6 +257,9 @@ That is the intended correction, not a fault.
 | A member says one guest on their booking got the discount and another did not | The code ran out of uses partway through their edit; everyone who already had it keeps it and new people are priced normally | Nothing to do — see [What happens when a booking is edited and the code has run out](#what-happens-when-a-booking-is-edited-and-the-code-has-run-out); the redemptions report shows who benefited |
 | **Benefits given** sits above the limit after you lowered it | Members who already had the discount keep it; the club does not bill back a promise already made | Nothing to do — it comes back under the limit as those bookings pass, and no new member is given the code meanwhile |
 | No promo codes appear | None have been created (the demo seed ships none) | Click **Add Promo Code** to create one |
+| A second code is refused with "Already covered by …" | Every night it could discount already carries an earlier code in the booker's list | Move it earlier in the booking's list, or leave it off — see [Several codes on one booking](#several-codes-on-one-booking) |
+| A code gave a guest's nights nothing | The guest is still pending acceptance; no code discounts their nights until they accept | Nothing to do — the codes are applied again when they accept |
+| "Only one promo code can be used on a booking" | The **Several promo codes on one booking** module is off | Turn it on (Admin → Modules) once the upgrade that added it has fully cut over |
 
 ## Related links
 

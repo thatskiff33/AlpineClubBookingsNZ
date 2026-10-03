@@ -1429,7 +1429,7 @@ money genuinely did not move, NOT because 0 was chosen as the adjustment.
 
 **"No promotion is recalculated" includes one the member asked for in the same
 request, and they are told so** (#3179). A parked edit re-runs no promotion, so a
-`promoCode` or `removePromoCode` carried alongside the structural change is
+`promoCode`, `promoCodes` or `removePromoCode` carried alongside the structural change is
 dropped and the booking's stored discount figures are written back untouched.
 The edit still
 saves: the owner's decision on #3179 was to save what can be honoured and warn
