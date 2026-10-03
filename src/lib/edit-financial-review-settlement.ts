@@ -20,8 +20,10 @@ import { REVIEW_CHARGE_WRONG_KIND_MESSAGE } from "@/lib/edit-financial-review-ch
 import {
   REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE,
   REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE,
+  REVIEW_REFUND_EXCEEDS_UNPROMISED_CASH_MESSAGE,
   REVIEW_SETTLEMENT_ANCHOR_MISSING_MESSAGE,
 } from "@/lib/edit-financial-review-refund-refusals";
+import { refundableCashNetOfOpenHandBacks } from "@/lib/edit-refund-hand-back";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -456,7 +458,19 @@ export async function chooseEditReviewSettlementRoute({
     // does. The cap lives inside `applyLocalRefundAllocation`, which runs INSIDE
     // the caller's transaction - so its refusal rolls the claim back and leaves
     // the task OPEN, which is the guarantee the pre-claim card cap above has to
-    // buy by hand.
+    // buy by hand. #3827 (`INV-PAY-115`): that cap counts only what was already
+    // refunded, so it is first measured net of the refunds still promised back
+    // by hand, under the lock(1) the caller holds.
+    const unpromisedCashCents = await refundableCashNetOfOpenHandBacks(
+      store,
+      await store.payment.findUnique({
+        where: { id: settlementPaymentId },
+        select: { id: true, status: true, amountCents: true, refundedAmountCents: true },
+      }),
+    );
+    if (amountCents > unpromisedCashCents) {
+      throw new ManualBookingPaymentError(REVIEW_REFUND_EXCEEDS_UNPROMISED_CASH_MESSAGE, 400);
+    }
     return {
       kind: "local-allocation",
       paymentId: settlementPaymentId,

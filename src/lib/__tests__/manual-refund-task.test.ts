@@ -70,6 +70,10 @@ const mocks = vi.hoisted(() => ({
   paymentTransactionFindUnique: vi.fn(),
   paymentTransactionFindMany: vi.fn(),
   paymentFindUnique: vi.fn(),
+  // #3827 (`INV-PAY-115`): the by-hand review route's pre-claim cap reads the
+  // payment and the open hand-backs on the completion's own transaction.
+  txPaymentFindUnique: vi.fn(),
+  manualRefundTaskAggregate: vi.fn(),
   enqueueLateCaptureApprovalRefundRecovery: vi.fn(),
   markLateCaptureApprovalRefundRecoverySucceeded: vi.fn(),
   queueLateCaptureRefundCreditNote: vi.fn(),
@@ -242,6 +246,7 @@ import { requireCalendarDate } from "@/lib/club-time";
 import { buildEditFinancialReviewRefundStripeKeyPrefix } from "@/lib/payment-recovery-keys";
 import { deletedBookingModificationRefundReason } from "@/lib/deleted-booking-modification-payment";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { REVIEW_REFUND_EXCEEDS_UNPROMISED_CASH_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
 
 const tx = {
   // #3582: an edit review's completion takes lock(1) first, before its claim.
@@ -255,7 +260,7 @@ const tx = {
   manualRefundTask: {
     findUnique: (...a: unknown[]) => mocks.manualRefundTaskFindUnique(...a),
     updateMany: (...a: unknown[]) => mocks.manualRefundTaskUpdateMany(...a),
-    aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }),
+    aggregate: (...a: unknown[]) => mocks.manualRefundTaskAggregate(...a),
   },
   // #3032: the anchor-taken check (owner decision D-3032-1) reads this inside
   // the same transaction, before the claim.
@@ -290,7 +295,10 @@ const tx = {
     updateMany: (...a: unknown[]) => mocks.bookingUpdateMany(...a),
   },
   // #3791: the mirror a give-back lowers.
-  payment: { update: (...a: unknown[]) => mocks.paymentUpdate(...a) },
+  payment: {
+    update: (...a: unknown[]) => mocks.paymentUpdate(...a),
+    findUnique: (...a: unknown[]) => mocks.txPaymentFindUnique(...a),
+  },
   // #3219: the booking's OWN history, which is where a re-base has to be
   // readable from - D1 lets a later cancellation refund less than the member
   // paid, so "why did I only get $120 back?" is answered here.
@@ -429,6 +437,14 @@ beforeEach(() => {
     lodgeId: "lodge-1",
   });
   mocks.paymentUpdate.mockResolvedValue({});
+  // #3827: plenty of unpromised cash unless a test says otherwise.
+  mocks.txPaymentFindUnique.mockResolvedValue({
+    id: "payment-1",
+    status: "SUCCEEDED",
+    amountCents: 50000,
+    refundedAmountCents: 0,
+  });
+  mocks.manualRefundTaskAggregate.mockResolvedValue({ _sum: { amountCents: null } });
   mocks.bookingEventFindFirst.mockResolvedValue(null);
   mocks.planKeptLateCaptureXeroRecord.mockResolvedValue({ kind: "none" });
   mocks.finishKeptLateCaptureXeroRecord.mockResolvedValue(undefined);
@@ -1265,6 +1281,14 @@ describe("#3030 - pricing an unknown amount at completion", () => {
     // monitoring recorded a server fault for working code. The cap itself is
     // untouched: the allocation still refuses and the transaction still rolls back.
     mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+    // #3827: past the pre-claim net-of-promises cap, so the allocation's own
+    // refusal is the one under test here.
+    mocks.txPaymentFindUnique.mockResolvedValue({
+      id: "payment-1",
+      status: "SUCCEEDED",
+      amountCents: 100000,
+      refundedAmountCents: 0,
+    });
     mocks.applyLocalRefundAllocation.mockRejectedValueOnce(
       new Error("Refund amount exceeds captured payments")
     );
@@ -3527,6 +3551,68 @@ describe("#3194 - a review raised before the member paid still refunds to their 
     });
     expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+  });
+
+  // #3827 review F3 (`INV-PAY-115`): $300 taken by bank transfer, an edit's
+  // $100 refund still promised back by hand, and a review confirming $250. The
+  // ledger cap (captured less refunded, $300) would take it; net of the open
+  // promise only $200 is left, so it is refused with the task left OPEN.
+  it.each([
+    [25000, "refused"],
+    [20000, "settled"],
+  ] as const)("caps a by-hand review refund of %i cents net of open hand-backs: %s", async (confirmed, outcome) => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({
+        paymentId: "payment-9",
+        payment: { source: PaymentSource.INTERNET_BANKING },
+        booking: paidBooking({
+          payment: {
+            id: "payment-9",
+            status: "SUCCEEDED",
+            amountCents: 30000,
+            refundedAmountCents: 0,
+            source: PaymentSource.INTERNET_BANKING,
+            stripeCustomerId: null,
+          },
+        }),
+      })
+    );
+    mocks.txPaymentFindUnique.mockResolvedValue({
+      id: "payment-9",
+      status: "SUCCEEDED",
+      amountCents: 30000,
+      refundedAmountCents: 0,
+    });
+    mocks.manualRefundTaskAggregate.mockResolvedValue({ _sum: { amountCents: 10000 } });
+
+    const settle = resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Refunded by bank transfer.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: confirmed,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+
+    if (outcome === "refused") {
+      await expect(settle).rejects.toMatchObject({
+        status: 400,
+        message: REVIEW_REFUND_EXCEEDS_UNPROMISED_CASH_MESSAGE,
+      });
+      expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    } else {
+      await settle;
+      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({
+        paymentId: "payment-9",
+        amountCents: 20000,
+        store: tx,
+      });
+    }
+    expect(mocks.txPaymentFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "payment-9" } })
+    );
   });
 
   it("CONTROL: a booking that still has no payment at all becomes account credit, exactly as before", async () => {

@@ -83,6 +83,15 @@ export const REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE =
   "That is more than this booking's card payment can give back - check the amount against the booking's payment history, or hand the money back another way and dismiss this task with a note saying what was done.";
 
 /**
+ * #3827 (`INV-PAY-115`): the by-hand route's pre-claim cap. Refunds already
+ * promised back by hand on the payment - an edit's, or an approved refund
+ * request's - are not yet in its refunded total, so the ledger cap alone
+ * would let this review promise the same cash a second time.
+ */
+export const REVIEW_REFUND_EXCEEDS_UNPROMISED_CASH_MESSAGE =
+  "That is more than this booking's payment still holds once the refunds already promised back by hand are counted - settle or dismiss those refund tasks first, or confirm a smaller amount.";
+
+/**
  * #3791 (owner decision 2): a review completed after the booking was cancelled
  * nets its share against the credit the cancellation already restored, which
  * means re-running the cancellation's tier on what would have been applied had

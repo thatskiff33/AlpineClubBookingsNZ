@@ -1812,8 +1812,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     `edit_refund_hand_back_completed` so the narrative never reads it as a
     cancellation's. It queues NO Xero document: the edit's credit note stands.
   - **Promised cash is not refundable twice.** Until it closes, later edits,
-    acceptances and paid cancels size refunds off captured cash less open
-    tasks, `INV-PAY-116`'s too
+    acceptances, paid cancels and an edit review refunded by hand size
+    refunds off captured cash less open tasks, `INV-PAY-116`'s too
     (`refundableCashNetOfOpenHandBacks`); a reopen is refused past that cash. Completing one, or approving an appeal,
     takes `lock(1)`. Once the booking is cancelled it is only paid: the
     cancel counted it.
