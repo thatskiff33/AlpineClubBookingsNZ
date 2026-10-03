@@ -76,6 +76,7 @@ import {
   requestChangesPromoCodes,
   requestedPromoCodeChange,
   keptStoredPromoRedemption,
+  promoRequestReadsMultiPromoSwitch,
   requestedPromoCodeListFor,
   splitRequestedPromoCodes,
 } from "@/lib/booking-modify-promo-request";
@@ -2288,14 +2289,11 @@ export async function POST(
     // means no promo change: every code the booking carries is re-priced.
     // #3826: the switch decides what the request means; the save reads it
     // the same way (`applyPromoCodeChanges`).
-    const multiPromoCodes = requestChangesPromoCodes(promoRequest)
+    const storedCodes = promoRedemptions.map((redemption) => redemption.promoCode);
+    const multiPromoCodes = promoRequestReadsMultiPromoSwitch(promoRequest, storedCodes)
       ? await multiPromoCodesEnabled(prisma)
-      : false;
-    const requested = requestedPromoCodeListFor(
-      promoRequest,
-      promoRedemptions.map((redemption) => redemption.promoCode),
-      multiPromoCodes,
-    );
+      : true;
+    const requested = requestedPromoCodeListFor(promoRequest, storedCodes, multiPromoCodes);
     const quoteGuestNightRates = getGuestNightRates();
     const existingByCode = new Map(
       promoRedemptions.map((redemption) => [redemption.promoCode.code, redemption]),

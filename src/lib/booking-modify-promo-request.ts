@@ -86,6 +86,21 @@ export function requestedPromoCodeListFor(
 }
 
 /**
+ * Can the club's `multiPromoCodes` switch change what this request means
+ * (#3826)? Only when it asks for several codes (the switch may refuse them) or
+ * the booking carries a working-bee code (the switch decides whether it is
+ * carried). Otherwise either answer reads the request the same way, so a
+ * caller skips the read and passes `true`.
+ */
+export function promoRequestReadsMultiPromoSwitch(
+  input: PromoCodeRequestFields,
+  stored: ReadonlyArray<{ internal: boolean }>,
+): boolean {
+  const requested = requestedPromoCodeList(input);
+  return requested !== null && (requested.length > 1 || stored.some((code) => code.internal));
+}
+
+/**
  * The stored redemption an entry KEEPS — re-priced in place, never released and
  * re-applied — or undefined when the entry applies its code fresh. One answer
  * for the save and the preview (#3827).

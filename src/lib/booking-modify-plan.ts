@@ -9,7 +9,7 @@ import { applyBookingPromotions, repriceBookingPromotions } from "@/lib/booking-
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import {
   keptStoredPromoRedemption,
-  requestChangesPromoCodes,
+  promoRequestReadsMultiPromoSwitch,
   requestedPromoCodeListFor,
   splitRequestedPromoCodes,
 } from "@/lib/booking-modify-promo-request";
@@ -2375,16 +2375,13 @@ export async function applyPromoCodeChanges(
   const existing = stored.filter((redemption) => redemption.promoCode);
   const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
   // #3826: the switch decides what the request MEANS (a working-bee discount
-  // is carried only while it is on), so it is read whenever codes are asked
-  // for, and the same answer gates the list's refusal below.
-  const multiPromoCodes = requestChangesPromoCodes(input)
+  // is carried only while it is on), so it is read whenever it can matter,
+  // and the same answer gates the list's refusal below.
+  const storedCodes = existing.map((redemption) => redemption.promoCode);
+  const multiPromoCodes = promoRequestReadsMultiPromoSwitch(input, storedCodes)
     ? await multiPromoCodesEnabled(tx)
-    : false;
-  const requested = requestedPromoCodeListFor(
-    input,
-    existing.map((redemption) => redemption.promoCode),
-    multiPromoCodes,
-  );
+    : true;
+  const requested = requestedPromoCodeListFor(input, storedCodes, multiPromoCodes);
 
   if (requested === null) {
     // No promo change asked for: re-price every code the booking carries
