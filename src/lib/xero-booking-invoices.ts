@@ -92,11 +92,6 @@ import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
 import { asRecord } from "@/lib/xero-json";
 import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 
-// #1765 — the aggregate Payment statuses that prove cash was captured at some
-// point. Settlement gating must pair one of these with a positive NET capture
-// (amountCents − refundedAmountCents); `status === "SUCCEEDED"` alone
-// misclassifies a repay-after-refund payment, whose aggregate sits in
-// PARTIALLY_REFUNDED even though its repay capture settles the invoice.
 export interface CreateXeroBookingInvoiceOptions
   extends FindOrCreateXeroContactOptions {
   syncOperationId?: string;

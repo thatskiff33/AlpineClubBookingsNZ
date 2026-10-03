@@ -12,8 +12,12 @@
  *   marks or mints the Internet-Banking PRIMARY transaction SUCCEEDED and stamps
  *   it with the invoice it paid; and
  * - the manual cash / off-Xero settlement stamps `manuallyMarkedPaidAt`
- *   (`INV-PAY-001`, whose provenance predicate is that column alone) and mints a
- *   PRIMARY transaction that names no invoice.
+ *   (`INV-PAY-001`, whose provenance predicate is that column alone). Its
+ *   transaction is not the evidence: it first flips an existing
+ *   Internet-Banking PRIMARY row (any status but REFUNDED, PARTIALLY_REFUNDED or
+ *   FAILED) to SUCCEEDED in place, leaving whatever invoice that row already
+ *   named, and only mints a fresh, invoice-less PRIMARY row when none matched
+ *   (`payment-reconciliation.ts`). The stamp alone answers.
  *
  * A captured Stripe PRIMARY (a card-origin payment later switched to bank
  * transfer) or a captured ADDITIONAL row proves money moved for something else,
