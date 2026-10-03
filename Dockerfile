@@ -22,6 +22,11 @@ RUN npm install -g "$(node -p "require('/tmp/package-manager/package.json').pack
 FROM base AS deps
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# The reviewed runtime patches pnpm applies at install (`patchedDependencies` in
+# pnpm-workspace.yaml, #3843). The lockfile records each patch's hash, so the
+# frozen install below fails without them. `patches/.gitkeep` keeps the
+# directory, and so this COPY, valid when no patch is registered.
+COPY patches ./patches/
 COPY prisma ./prisma/
 COPY prisma.config.ts ./
 # The store lives on a BuildKit cache mount, so repeat builds reuse downloaded
@@ -37,6 +42,14 @@ FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# Restore patches/ from the deps layer that installed them (#3843). pnpm's
+# pre-run check (`verifyDepsBeforeRun`) compares each patch file's DATE with
+# the install's timestamp, not its contents: when the deps layer is reused from
+# the build cache, `COPY . .` above brings a patch dated at this checkout, newer
+# than the cached install, and every `pnpm run` below refuses with "Patches were
+# modified". The deps layer's copy is byte-identical (it is part of its cache
+# key) and older than its own install, so this keeps the check meaningful.
+COPY --from=deps /app/patches ./patches/
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
