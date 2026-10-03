@@ -1584,8 +1584,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     clamp's mechanism, the share's and, since #3809, a credit-paid booking's
     price reduction's (`INV-MOD-011`): the credit-ledger lock, the
     deallocation fence, a positive `BOOKING_APPLIED` row (a review's names the
-    booking in `sourceBookingId`) and the deallocation of an internet-banking
-    invoice's excess credit. The share lowers the mirror a cancellation tiers.
+    booking in `sourceBookingId`) and the deallocation of an invoice's excess
+    allocated credit (bank transfer or card, #3809). The share lowers the mirror a cancellation tiers.
   - **Xero agrees with the app**, for an issued invoice: invoice less its
     reduction notes is the booking's price, Xero's due is the app's owed, and
     the member's Xero credit, counting noteless rows minted when spent, is the

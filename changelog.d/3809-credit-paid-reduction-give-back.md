@@ -40,7 +40,11 @@
   credit note for it, so the amount due and the member's credit agree with the
   app. Where a card refund and returned credit come from one change, each has
   its own credit note naming how that money went back. If queueing a note
-  fails, the Xero repair pass re-queues it at the credit actually returned.
+  fails, the Xero repair pass re-queues it at the credit actually returned. On
+  a card booking whose credit Xero had allocated against the invoice, the
+  returned credit is released there too, so the next Xero sync no longer takes
+  it back; and a note for returned credit is no longer counted as a cash refund
+  on a bank-transfer payment.
 
   **Deploy note:** a booking edit's Xero credit note now waits for the
   booking's applied-credit deallocation, which the previous release does not
