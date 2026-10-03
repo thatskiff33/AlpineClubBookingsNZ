@@ -1,6 +1,6 @@
 /**
  * ONE PROMOTION-DELTA LINE PER CODE ON AN EDIT'S STORED LINES (#3828, epic
- * #3813 C3; `INV-MONEY-030`).
+ * #3813 C3; `INV-MONEY-039`).
  *
  * A booking may carry several promo codes (#3492). An edit that moves more than
  * one of them stores one `PROMO_DELTA` line per code whose adjustment changed,

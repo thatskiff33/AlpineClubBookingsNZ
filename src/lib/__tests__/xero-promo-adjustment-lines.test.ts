@@ -1,5 +1,5 @@
 /**
- * #3828 (`INV-MONEY-030`): the promotion lines of a booking invoice — one per
+ * #3828 (`INV-MONEY-039`): the promotion lines of a booking invoice — one per
  * code, or the one aggregate line when a split cannot be trusted. The invoice
  * and group suites pin the wired paths; these pin the planner's edges.
  */

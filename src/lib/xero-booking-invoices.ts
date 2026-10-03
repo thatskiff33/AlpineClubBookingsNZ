@@ -613,7 +613,7 @@ export async function createXeroInvoiceForBooking(
 
   // Add signed promo adjustment lines if applicable. Negative values behave
   // like discounts; positive values are extra revenue. One line per code
-  // (#3828, `INV-MONEY-030`); a booking with one code keeps its one line, and a
+  // (#3828, `INV-MONEY-039`); a booking with one code keeps its one line, and a
   // several-code split that cannot be trusted falls back to the aggregate line
   // and is recorded on the operation below.
   const promoLinePlan = planPromoAdjustmentLines({
