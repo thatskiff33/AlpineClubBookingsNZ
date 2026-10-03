@@ -103,7 +103,7 @@ const RECORD_SHAPE = {
   ownerDecisions: "url-list",
   expires: "string",
   patch: { path: "string", sha256: "string" },
-  reviewedInputs: { "pnpm-workspace.yaml": "string", "pnpm-lock.yaml": "string" },
+  reviewedInputs: Object.fromEntries(REVIEWED_INPUTS.map((name) => [name, "string"])),
   scope: "string",
   knownUncoveredCopies: "copy-list",
 };
@@ -298,8 +298,9 @@ function inputProblems({ record, root, fsImpl }) {
   if (patch === undefined) problems.push(`the patch ${record.patch.path} is missing.`);
   else if (sha256(patch) !== record.patch.sha256) problems.push(`the patch ${record.patch.path} is not the reviewed one (SHA256 ${sha256(patch)}).`);
 
-  const workspace = read("pnpm-workspace.yaml");
-  const lock = read("pnpm-lock.yaml");
+  const inputs = Object.fromEntries(REVIEWED_INPUTS.map((name) => [name, read(name)]));
+  const workspace = inputs["pnpm-workspace.yaml"];
+  const lock = inputs["pnpm-lock.yaml"];
   if (workspace === undefined || lock === undefined) {
     return [...problems, "pnpm-workspace.yaml or pnpm-lock.yaml is missing."];
   }
@@ -309,7 +310,7 @@ function inputProblems({ record, root, fsImpl }) {
   if (!yamlBlock(lock.toString("utf8"), "patchedDependencies").includes(`${target}: ${record.patch.sha256}`)) {
     problems.push(`pnpm-lock.yaml does not record the reviewed patch hash for ${target}.`);
   }
-  for (const [name, bytes] of [["pnpm-workspace.yaml", workspace], ["pnpm-lock.yaml", lock]]) {
+  for (const [name, bytes] of Object.entries(inputs)) {
     if (sha256(bytes) !== record.reviewedInputs[name]) {
       problems.push(`${name} has changed since the mitigation was reviewed (SHA256 ${sha256(bytes)}); a dependency change needs a fresh review.`);
     }
