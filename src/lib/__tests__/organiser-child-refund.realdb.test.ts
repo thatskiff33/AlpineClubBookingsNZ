@@ -277,7 +277,10 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
     /** The joiner cancels their own booking, as the member cancel route does. */
     async function joinerCancels(bookingId: string) {
       const { cancelBooking } = await import("@/lib/booking-cancel");
-      return cancelBooking(bookingId, MEMBER_ID, "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+      const result = await cancelBooking(bookingId, MEMBER_ID, "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+      if (!("data" in result)) throw new Error(`The cancel was refused: ${JSON.stringify(result)}`);
+      expect(result.status).toBe(200);
+      return result.data as { refundAmountCents: number; refundPercentage: number; refundMethod: string; message: string };
     }
 
     async function cancelledSnapshot(bookingId: string) {
@@ -595,8 +598,7 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
       expect(await prisma.paymentTransaction.count({ where: { paymentId: D.payment } })).toBe(0);
 
       const result = await joinerCancels(D.child);
-      expect(result.status).toBe(200);
-      expect(result.data).toMatchObject({ refundAmountCents: 6_000, refundPercentage: 100, refundMethod: "card" });
+      expect(result).toMatchObject({ refundAmountCents: 6_000, refundPercentage: 100, refundMethod: "card" });
       expect((await prisma.booking.findUniqueOrThrow({ where: { id: D.child } })).status).toBe("CANCELLED");
 
       // Owed under the cancellation key; the inline attempt had no Stripe here,
@@ -626,9 +628,8 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
 
       // The joiner cancels before the group's cancel reaches this child.
       const result = await joinerCancels(E.child);
-      expect(result.status).toBe(200);
-      expect(result.data).toMatchObject({ refundAmountCents: 0, refundPercentage: 0 });
-      expect(String((result.data as { message: string }).message)).toContain("group organiser's cancellation is already refunding");
+      expect(result).toMatchObject({ refundAmountCents: 0, refundPercentage: 0 });
+      expect(result.message).toContain("group organiser's cancellation is already refunding");
       expect(await prisma.paymentRecoveryOperation.count({ where: { bookingId: E.child } })).toBe(1);
 
       const snapshot = await cancelledSnapshot(E.child);
@@ -640,9 +641,8 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
 
     it("records a clamped cancel refund from the final amount, not the policy's first answer (fix round 2, F4)", async () => {
       const result = await joinerCancels(F.child);
-      expect(result.status).toBe(200);
       // 100% of 5000 asked; the combined payment holds 3000.
-      expect(result.data).toMatchObject({ refundAmountCents: 3_000, refundPercentage: 60 });
+      expect(result).toMatchObject({ refundAmountCents: 3_000, refundPercentage: 60 });
       const snapshot = await cancelledSnapshot(F.child);
       expect(snapshot).toMatchObject({ paidAmountCents: 5_000, settledAmountCents: 3_000, retainedAmountCents: 2_000, refundPercentage: 60 });
       expect(snapshot.ledger.keptCents).toBe(2_000);
