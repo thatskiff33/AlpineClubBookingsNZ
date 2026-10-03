@@ -159,14 +159,19 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
     // asserting a flag. Both conjuncts are pinned as the literal expression,
     // because dropping either one is a one-token edit that changes no test
     // outcome anywhere else.
+    //
+    // #3817 (owner decision on #3820, 3 Oct 2026): a ticked custodian takes a
+    // space out of a hold's set exactly as a bed does, so "an occupant is
+    // involved" is now a bed OR the custodian tick. A role-only, unticked
+    // assignment still cannot take the club-wide key.
     for (const [route, gate] of [
       [
         "src/app/api/admin/hut-leaders/route.ts",
-        "parsed.data.amendOverlappingHolds === true && bedId !== null;",
+        "parsed.data.amendOverlappingHolds === true && (bedId !== null || isCustodian);",
       ],
       [
         "src/app/api/admin/hut-leaders/[id]/route.ts",
-        "parsed.data.amendOverlappingHolds === true && Boolean(requestedBedId);",
+        "(Boolean(requestedBedId) || (parsed.data.isCustodian ?? existing.isCustodian));",
       ],
     ] as const) {
       expect(
@@ -331,7 +336,7 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
       "const lockedLodgeId = await resolveOptionalActiveLodgeId(",
       "const lockedMember = await tx.member.findUnique(",
       "await findHutLeaderOverlapRefusal(tx, {",
-      "if (bedId) {",
+      "if (bedId || isCustodian) {",
       "await validateCustodianBedHoldAndHoldAmendment(tx, {",
       "const assignment = await tx.hutLeaderAssignment.create(",
     ]);

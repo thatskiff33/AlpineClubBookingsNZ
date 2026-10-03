@@ -299,9 +299,11 @@ owner decisions on #3820):
   and a split stay gets one row per run.
 - The manual create and edit refuse a role-only assignment that claims a night
   the member does not stay at that lodge (a PAID or COMPLETED booking, as a
-  consented guest or the owner), with no override. A bed-holding assignment is
-  exempt, because the held bed is the stay (`INV-LIFE-062`), and so is a school
-  teacher's row.
+  consented guest or the owner, never a soft-deleted booking), with no
+  override. An assignment holding a bed (`INV-LIFE-062`) or ticked "Custodian
+  (lives on site)" is exempt, and so is a school teacher's row.
+- A ticked custodian takes one space off the lodge's capacity on each covered
+  night, as a held bed does, counted once if it also holds a bed.
 - Sign-in, kiosk access and the instructions reader run from the day before the
   first night to the day after the last, `[startDate - 1, endDate + 1]`, judged
   on the club's calendar day (`INV-CONFIG-002`). The one definition is

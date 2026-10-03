@@ -25,8 +25,7 @@ const updateSchema = z.object({
   // all — without it there would be no way to undo a hold except deleting the
   // whole assignment.
   bedId: z.string().min(1).nullable().optional(),
-  // #3817: the "Custodian (lives on site)" tick. Absent leaves it as it is.
-  isCustodian: z.boolean().optional(),
+  isCustodian: z.boolean().optional(), // #3817 custodian tick; absent = unchanged
   // #1668-style explicit override of the over-capacity warning.
   confirmOverCapacity: z.boolean().optional(),
   // #2698 ordering case: the officer's EXPLICIT acceptance that holding this
@@ -137,9 +136,7 @@ export async function PUT(
   // JSON has no `undefined`, so zod's three parsed values map one-to-one onto
   // the three intents: undefined = key absent, null = explicit clear, string =
   // set. No separate "was the key present" probe is needed or wanted.
-  if (parsed.data.isCustodian !== undefined) {
-    updateData.isCustodian = parsed.data.isCustodian;
-  }
+  if (parsed.data.isCustodian !== undefined) updateData.isCustodian = parsed.data.isCustodian;
   const bedIdProvided = parsed.data.bedId !== undefined;
   if (bedIdProvided) {
     updateData.bedId = parsed.data.bedId ?? null;
@@ -167,10 +164,8 @@ export async function PUT(
   // pre-lock view: a stale null costs the officer a retry and nothing more,
   // because the locked ordering check then THROWS with nothing written.
   // #3817: a ticked custodian is an occupant too, so it may stand in for a bed.
-  const requestedCustodian = parsed.data.isCustodian ?? existing.isCustodian;
-  const amendRequested =
-    parsed.data.amendOverlappingHolds === true &&
-    (Boolean(requestedBedId) || requestedCustodian);
+  const amendRequested = parsed.data.amendOverlappingHolds === true &&
+    (Boolean(requestedBedId) || (parsed.data.isCustodian ?? existing.isCustodian));
 
   try {
     // Everything from here runs under the lodge capacity key, and the #2698

@@ -317,7 +317,23 @@ is a **custodian bed hold**: for the night of every covered date that bed is out
 of the bookable pool and out of the allocatable pool, with **no `Booking` and no
 `BedAllocation` row anywhere**. Without one — including every row the
 `hut-leader-auto-assign` cron creates — the assignment is a role only and has
-**zero** capacity effect.
+**zero** capacity effect, **unless it is ticked "Custodian (lives on site)"**.
+
+**The custodian tick (#3817, owner decision on #3820, 3 Oct 2026).**
+`HutLeaderAssignment.isCustodian` marks a custodian who lives on site. A ticked
+assignment takes **one space** off the lodge on every covered night exactly as a
+held bed does — with or without a bed, and whether or not the `bedAllocation`
+module is on. A custodian who also holds a bed is one assignment and counts
+**once**. The count's one source is `findCustodianOccupancies`
+(`src/lib/custodian-occupancy.ts`, bed **or** tick), which feeds the single
+per-night counter every engine reads; `findCustodianBedHolds` stays bed-only,
+because the allocation consumers ask which *bed* is held and a bedless custodian
+has none. Turning the tick on runs the bed path's own checks under the same
+lodge capacity lock: the over-capacity warn-and-confirm when the lodge is
+already full on those nights, and the whole-lodge hold question (`INV-CAP-038`)
+before narrowing another booking's sole occupancy, taking the global cohort key
+first only when the officer accepts it. Only the officer's manual create and edit
+set the tick; the cron and the school writer never do.
 
 **Night semantics.** The hold covers `startDate <= night <= endDate`,
 **inclusive** — matching the existing hut-leader coverage semantics. This is
