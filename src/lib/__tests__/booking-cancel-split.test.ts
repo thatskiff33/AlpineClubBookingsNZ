@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   txExecuteRaw: vi.fn(),
   acquireLodgeCapacityLock: vi.fn(),
   prismaTransaction: vi.fn(),
-  promoRedemptionFindUnique: vi.fn(),
+  promoRedemptionFindFirst: vi.fn(),
   sendBookingCancelledEmail: vi.fn(),
   logAudit: vi.fn(),
   processWaitlistForDates: vi.fn(),
@@ -41,7 +41,7 @@ vi.mock("@/lib/prisma", () => ({
       update: mocks.bookingUpdate,
       updateMany: mocks.bookingUpdateMany,
     },
-    promoRedemption: { findUnique: mocks.promoRedemptionFindUnique },
+    promoRedemption: { findFirst: mocks.promoRedemptionFindFirst },
     promoCode: { update: vi.fn() },
     $transaction: mocks.prismaTransaction,
   },
@@ -147,7 +147,7 @@ describe("cancelBooking split cascade (#738)", () => {
     mocks.acquireLodgeCapacityLock.mockResolvedValue(undefined);
     mocks.restoreCreditFromBooking.mockResolvedValue(0);
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
-    mocks.promoRedemptionFindUnique.mockResolvedValue(null);
+    mocks.promoRedemptionFindFirst.mockResolvedValue(null);
     mocks.revokePaymentLinksForBooking.mockResolvedValue(0);
     mocks.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
     mocks.processWaitlistForDates.mockResolvedValue(undefined);

@@ -4,6 +4,7 @@
 // gate contract test compares string indexes across this pipeline in one
 // file. Code moved verbatim; import via the "@/lib/booking-modify" barrel.
 
+import { soleBookingPromoRedemption } from "@/lib/booking-promo-redemptions";
 import {
   AdminReviewStatus,
   BookingStatus,
@@ -2341,6 +2342,10 @@ export async function applyPromoCodeChanges(
   let promoChanged = false;
   let promoCoverage: PromoCoverageNotice | null = null;
   let adjustmentTargets: PromoAdjustmentTarget[] = [];
+
+  // #3826: a booking may carry several promo codes; this edit path prices
+  // one, so it refuses a booking carrying more (epic #3813 C2 widens it).
+  const promoRedemption = soleBookingPromoRedemption(booking);
   const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
 
   // Row-lock every promo code whose usage caps this transaction may charge or
@@ -2362,18 +2367,18 @@ export async function applyPromoCodeChanges(
         )?.id
       : undefined;
   await lockPromoCodeRowsForUpdate(tx, [
-    booking.promoRedemption?.promoCodeId,
+    promoRedemption?.promoCodeId,
     incomingPromoCodeId,
   ]);
 
-  if (input.removePromoCode && booking.promoRedemption) {
-    await deletePromoRedemptionAndAdjustCount(tx, booking.promoRedemption);
+  if (input.removePromoCode && promoRedemption) {
+    await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
     promoRemoved = true;
   }
 
   if (input.promoCode && !input.removePromoCode) {
-    if (booking.promoRedemption && !promoRemoved) {
-      await deletePromoRedemptionAndAdjustCount(tx, booking.promoRedemption);
+    if (promoRedemption && !promoRemoved) {
+      await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
       promoRemoved = true;
     }
 
@@ -2452,7 +2457,7 @@ export async function applyPromoCodeChanges(
   } else if (
     !input.removePromoCode &&
     !promoRemoved &&
-    booking.promoRedemption?.promoCode
+    promoRedemption?.promoCode
   ) {
     // The lock is already held (taken above for both codes of a possible swap),
     // but this snapshot was loaded with the booking, BEFORE it — so re-read the
@@ -2460,10 +2465,10 @@ export async function applyPromoCodeChanges(
     // read outside the lock would leave the race open (#2299).
     const promo = await lockAndRefreshPromoCodeUsage(
       tx,
-      booking.promoRedemption.promoCode
+      promoRedemption.promoCode
     );
     const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
-      booking.promoRedemption,
+      promoRedemption,
       guestNightRates
     );
     const application = await validateAndCalculatePromoDiscount(
@@ -2494,7 +2499,7 @@ export async function applyPromoCodeChanges(
     );
 
     if (application.error || !application.discount) {
-      await deletePromoRedemptionAndAdjustCount(tx, booking.promoRedemption);
+      await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
       promoRemoved = true;
     } else {
       const promoResult = application.discount;
@@ -2508,7 +2513,7 @@ export async function applyPromoCodeChanges(
 
       await replacePromoRedemptionAllocations(
         tx,
-        booking.promoRedemption,
+        promoRedemption,
         newDiscountCents,
         newPromoAdjustmentCents,
         promoResult.freeNightsUsed,

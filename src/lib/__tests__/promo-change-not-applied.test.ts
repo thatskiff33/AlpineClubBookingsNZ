@@ -90,6 +90,8 @@ const promoMocks = vi.hoisted(() => ({
   validateAndCalculatePromoDiscount: vi.fn(),
   redeemPromoCode: vi.fn(),
   deletePromoRedemptionAndAdjustCount: vi.fn(),
+  releaseBookingPromoRedemptions: vi.fn().mockResolvedValue(0),
+  releasePromoRedemptions: vi.fn().mockResolvedValue(undefined),
   replacePromoRedemptionAllocations: vi.fn(),
   shouldPersistPromoRedemption: vi.fn().mockReturnValue(false),
   lockAndRefreshPromoCodeUsage: vi.fn(),

@@ -65,7 +65,7 @@ export async function loadBookingDetail(id: string) {
       requestedRoom: {
         select: { id: true, name: true, active: true },
       },
-      promoRedemption: {
+      promoRedemptions: {
         include: {
           allocations: {
             select: { memberId: true, priceAdjustmentCents: true },

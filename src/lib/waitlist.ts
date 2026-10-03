@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { BookingStatus, type AgeTier, type Prisma } from "@prisma/client";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "./capacity";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -123,7 +124,7 @@ export async function getWaitlistForDates(
 type WaitlistCandidateForReprice = Prisma.BookingGetPayload<{
   include: {
     guests: { include: { nights: true } };
-    promoRedemption: {
+    promoRedemptions: {
       include: {
         guestTargets: { select: { bookingGuestId: true } };
         promoCode: { include: { assignments: { select: { memberId: true } } } };
@@ -502,7 +503,7 @@ export async function processWaitlistForDates(freedDates: {
           waitlistAlternateLodges: { select: { lodgeId: true } },
           // Full promo shape for the offer-time reprice (upstream #1035);
           // the cross-lodge quote only needs its existence.
-          promoRedemption: {
+          promoRedemptions: {
             include: {
               guestTargets: { select: { bookingGuestId: true } },
               promoCode: {
@@ -593,7 +594,7 @@ export async function processWaitlistForDates(freedDates: {
               checkIn: candidate.checkIn,
               checkOut: candidate.checkOut,
               guests: candidate.guests,
-              hasPromoRedemption: Boolean(candidate.promoRedemption),
+              hasPromoRedemption: bookingPromoRedemptions(candidate).length > 0,
             },
             offerLodgeId,
           );

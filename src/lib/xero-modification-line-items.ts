@@ -33,6 +33,7 @@
  * refund as a give-back. Never a guest-night line invented from the figure:
  * the adjustment is named for what it is (owner direction on #3527).
  */
+import { soleBookingPromoRedemption } from "@/lib/booking-promo-redemptions";
 import type { LineItem } from "xero-node";
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
@@ -105,7 +106,7 @@ export async function loadModificationDocumentCodingContext(
     select: {
       checkIn: true,
       lodgeId: true,
-      promoRedemption: {
+      promoRedemptions: {
         select: { promoCode: { select: { xeroItemCode: true, xeroAccountCode: true } } },
       },
       guests: { select: { ageTier: true, isMember: true, rateMembershipTypeId: true } },
@@ -125,7 +126,8 @@ export async function loadModificationDocumentCodingContext(
     refundMapping,
     itemCodeResolver,
     seasonType,
-    promo: booking.promoRedemption?.promoCode ?? null,
+    // #3826: per-code coding is epic #3813 C3; one code until then.
+    promo: soleBookingPromoRedemption(booking)?.promoCode ?? null,
     firstGuest: booking.guests[0] ?? null,
   };
 }

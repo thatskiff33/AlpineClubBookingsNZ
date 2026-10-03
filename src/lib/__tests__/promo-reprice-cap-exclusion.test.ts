@@ -404,7 +404,7 @@ describe("path 1 — batch modification reprice (booking-modify-plan)", () => {
       booking: {
         memberId: "member-1",
         lodgeId: "lodge-1",
-        promoRedemption,
+        promoRedemptions: promoRedemption ? [promoRedemption] : [],
       } as unknown as ApplyArgs[1]["booking"],
       bookingId: "booking-1",
       input: {} as unknown as ApplyArgs[1]["input"],
@@ -482,7 +482,7 @@ describe("path 4 — guest removal reprice (booking-guest-removal-service)", () 
         memberId: "member-1",
         lodgeId: "lodge-1",
         checkIn: new Date("2026-08-01T00:00:00Z"),
-        promoRedemption,
+        promoRedemptions: promoRedemption ? [promoRedemption] : [],
       } as unknown as RemovalArgs["booking"],
       newTotalPriceCents: 10000,
       guestNightRates: GUEST_NIGHT_RATES,

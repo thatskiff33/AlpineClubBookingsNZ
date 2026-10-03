@@ -5,6 +5,7 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { createAuditLog, logAudit } from "@/lib/audit";
 import { deleteDraftBookingDependents } from "@/lib/draft-booking-cleanup";
 import logger from "@/lib/logger";
@@ -433,10 +434,11 @@ async function loadBookingForDelete(db: BookingDeleteDb, bookingId: string) {
   return db.booking.findUnique({
     where: { id: bookingId },
     include: {
-      promoRedemption: {
+      promoRedemptions: {
         select: {
           id: true,
           promoCodeId: true,
+          applicationOrder: true,
           discountCents: true,
           freeNightsUsed: true,
           eligibleGuestCount: true,
@@ -704,6 +706,26 @@ function hasXeroPaymentReference(payment: BookingForDelete["payment"]): boolean 
   );
 }
 
+/**
+ * The audit snapshot's promo fields (#3826). A booking with at most one code
+ * keeps exactly the `promoRedemption` field it always had; one carrying several
+ * records them all under `promoRedemptions` instead.
+ */
+function promoRedemptionSnapshot(
+  redemptions: BookingForDelete["promoRedemptions"],
+) {
+  const snapshots = redemptions.map((redemption) => ({
+    id: redemption.id,
+    promoCodeId: redemption.promoCodeId,
+    discountCents: redemption.discountCents,
+    freeNightsUsed: redemption.freeNightsUsed,
+    eligibleGuestCount: redemption.eligibleGuestCount,
+  }));
+  return snapshots.length > 1
+    ? { promoRedemptions: snapshots }
+    : { promoRedemption: snapshots[0] ?? null };
+}
+
 function buildBookingSnapshot(booking: BookingForDelete) {
   return {
     id: booking.id,
@@ -723,15 +745,7 @@ function buildBookingSnapshot(booking: BookingForDelete) {
     refundRequestCount: booking._count.refundRequests,
     paymentRecoveryOperationCount: booking._count.paymentRecoveryOperations,
     paymentId: booking.payment?.id ?? null,
-    promoRedemption: booking.promoRedemption
-      ? {
-          id: booking.promoRedemption.id,
-          promoCodeId: booking.promoRedemption.promoCodeId,
-          discountCents: booking.promoRedemption.discountCents,
-          freeNightsUsed: booking.promoRedemption.freeNightsUsed,
-          eligibleGuestCount: booking.promoRedemption.eligibleGuestCount,
-        }
-      : null,
+    ...promoRedemptionSnapshot(bookingPromoRedemptions(booking)),
     createdAt: booking.createdAt.toISOString(),
     updatedAt: booking.updatedAt.toISOString(),
   };

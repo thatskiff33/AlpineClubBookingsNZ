@@ -191,6 +191,7 @@ Two consequences to expect:
 | Xero Item Code / Account Code | Post the discount line to a specific Xero item/account | none | Item's mapped account wins over the account code |
 | Restrict to Lodges | Limit redemption to chosen lodges | all lodges | Multi-lodge only |
 | Assign to Specific Members | Limit use to named members, with a scope choice | none | Own-nights-only or whole booking |
+| Several promo codes on one booking (Admin → Modules) | Whether one booking may carry more than one code | off | A rollout switch (#3826): while off, a second code on a booking is refused. Turn it on only after the upgrade that added it has fully cut over |
 
 ## After upgrading to this release
 

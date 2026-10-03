@@ -1,3 +1,4 @@
+import { soleBookingPromoRedemption } from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import type { auth } from "@/lib/auth";
@@ -232,15 +233,17 @@ export async function buildBookingDetailEditorData({
     discountCents: booking.discountCents,
     promoAdjustmentCents: booking.promoAdjustmentCents,
     finalPriceCents: booking.finalPriceCents,
-    promo: booking.promoRedemption?.promoCode
-      ? {
-          code: booking.promoRedemption.promoCode.code,
-          type: booking.promoRedemption.promoCode.type,
-          description: booking.promoRedemption.promoCode.description,
-          workPartyEventName:
-            booking.promoRedemption.promoCode.workPartyEvent?.name ?? null,
-        }
-      : null,
+    // #3826: the editor shows and edits one code; a booking carrying several
+    // is refused here until epic #3813's chips child widens the panel.
+    promo: ((promoCode) =>
+      promoCode
+        ? {
+            code: promoCode.code,
+            type: promoCode.type,
+            description: promoCode.description,
+            workPartyEventName: promoCode.workPartyEvent?.name ?? null,
+          }
+        : null)(soleBookingPromoRedemption(booking)?.promoCode),
     hasNonMembers: booking.hasNonMembers,
     nonMemberHoldUntil: booking.nonMemberHoldUntil?.toISOString() ?? null,
     canEditNonMemberGuestNames,

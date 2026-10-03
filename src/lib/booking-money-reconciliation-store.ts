@@ -39,7 +39,7 @@ export const BOOKING_MONEY_RECONCILIATION_SELECT = {
       },
     },
   },
-  promoRedemption: {
+  promoRedemptions: {
     select: {
       priceAdjustmentCents: true,
       allocations: {

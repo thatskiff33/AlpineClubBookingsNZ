@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { bookingOwner, bookingOwnerAgeTier } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { auth } from "@/lib/auth";
@@ -85,7 +86,7 @@ export async function POST(
   const booking = await prisma.booking.findUnique({
     where: { id },
     // #3369: the owner may be an Organisation; bookingOwner() reads both.
-    include: { guests: true, member: true, organisation: { select: { name: true, email: true } }, promoRedemption: { include: { promoCode: true } } },
+    include: { guests: true, member: true, organisation: { select: { name: true, email: true } }, promoRedemptions: { include: { promoCode: true } } },
   });
 
   if (!booking) {
@@ -373,13 +374,7 @@ export async function POST(
     format,
     {
       lodgeId: booking.lodgeId,
-      ...(booking.promoRedemption?.promoCode
-        ? {
-            discountCents: booking.discountCents,
-            promoAdjustmentCents: booking.promoAdjustmentCents,
-            promoCode: booking.promoRedemption.promoCode.code,
-          }
-        : {}),
+      ...bookingPromoEmailFields(booking),
     }
   ).catch((err) => logger.error({ err, bookingId: id }, "Failed to send confirmation email for confirmed draft"));
 

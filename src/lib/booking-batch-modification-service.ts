@@ -7,6 +7,7 @@ import {
   type Role,
 } from "@prisma/client";
 
+import { bookingPromoCodeLabel } from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
 import { logAudit } from "@/lib/audit";
 import { ApiError } from "@/lib/api-error";
@@ -970,7 +971,7 @@ export async function modifyBookingBatch({
         member: true,
         // #3369: the owner may be an Organisation; bookingOwner() reads both.
         organisation: { select: { name: true, email: true } },
-        promoRedemption: {
+        promoRedemptions: {
           include: {
             promoCode: {
               include: {
@@ -1485,7 +1486,7 @@ export async function modifyBookingBatch({
       : describePromoChangeNotApplied({
           requestedPromoCode: input.promoCode,
           removePromoCodeRequested: Boolean(input.removePromoCode),
-          currentPromoCode: booking.promoRedemption?.promoCode?.code,
+          currentPromoCode: bookingPromoCodeLabel(booking),
           // The RESOLVED removals, not `input.removeGuestIds`: a resent code's
           // sentence claims who it covers has not changed, and a removed guest
           // takes their `PromoRedemptionGuestTarget` row with them (cascade)
@@ -1788,7 +1789,7 @@ export async function modifyBookingBatch({
                   nights: { select: { stayDate: true, priceCents: true } },
                 },
               });
-              const existingPromoCode = booking.promoRedemption?.promoCode?.code ?? null;
+              const existingPromoCode = bookingPromoCodeLabel(booking);
               return {
                 before: pricingSideFromStoredGuests(booking.guests, {
                   promoAdjustmentCents: booking.promoAdjustmentCents,

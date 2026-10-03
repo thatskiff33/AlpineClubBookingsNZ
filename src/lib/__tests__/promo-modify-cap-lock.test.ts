@@ -52,6 +52,7 @@ function makeTx(promoRows: Record<string, Record<string, unknown>>) {
     },
     promoCodeLodge: { findMany: vi.fn(async () => []) },
     promoRedemption: {
+      findFirst: vi.fn(async () => null),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
         calls.push({ op: "promoRedemption.create" });
         return { id: "redemption-new", ...data };
@@ -121,12 +122,12 @@ function runSwap(tx: ReturnType<typeof makeTx>["tx"]) {
       lodgeId: "lodge-1",
       // Outgoing code sorts AFTER the incoming one, so a naive
       // "lock what you are about to use" would take them out of order.
-      promoRedemption: {
+      promoRedemptions: [{
         id: "redemption-old",
         promoCodeId: "promo-z",
         bookingId: "booking-1",
         memberId: "member-1",
-      },
+      }],
     } as unknown as ApplyArgs[1]["booking"],
     bookingId: "booking-1",
     input: { promoCode: "newcode" } as unknown as ApplyArgs[1]["input"],
@@ -190,12 +191,12 @@ describe("applyPromoCodeChanges promo row locking (#2299)", () => {
       booking: {
         memberId: "member-1",
         lodgeId: "lodge-1",
-        promoRedemption: {
+        promoRedemptions: [{
           id: "redemption-old",
           promoCodeId: "promo-z",
           bookingId: "booking-1",
           memberId: "member-1",
-        },
+        }],
       } as unknown as ApplyArgs[1]["booking"],
       bookingId: "booking-1",
       input: { removePromoCode: true } as unknown as ApplyArgs[1]["input"],
