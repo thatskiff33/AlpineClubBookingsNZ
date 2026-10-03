@@ -785,8 +785,9 @@ membership subscription invoice, and kept late-capture invoice (#3635).
 
 **An applied-credit deallocation has one producer**: `giveBackAppliedCredit`
 (`member-credit.ts`), the give-back of applied credit that the pre-payment
-clamp and a credit-paid booking's financial-review share both go through
-(#3791, `INV-PAY-113`). Where an internet-banking booking's credit is allocated
+clamp, a credit-paid booking's financial-review share (#3791, `INV-PAY-113`)
+and a credit-paid booking's ordinary price reduction (#3809, `INV-MOD-011`) all
+go through. Where an internet-banking booking's credit is allocated
 against its invoice beyond the new applied figure, it queues the deallocation in
 the same transaction as the ledger row, and the PENDING row fences the inbound
 applied-credit repair until it converges, so an inbound sync cannot pull the
@@ -806,7 +807,14 @@ Each note's correlation and Xero idempotency keys carry the review task
 review's allocated note waits, returned to PENDING with the reason kept in
 `lastErrorMessage`, while the payment's deallocation is PENDING or RUNNING. A
 FAILED or PARTIAL deallocation only moves on an operator retry, so the note
-fails instead, naming it: retry the deallocation, then the note.
+fails instead, naming it: retry the deallocation, then the note. Since #3809 an
+edit's own modification note waits the same way: a credit-paid booking's price
+reduction gives back through the same deallocation, and its invoice-allocated
+note is the give-back (as a card reduction's is the refund), worded as account
+credit, so the invoice reopened by the deallocation is closed again and no
+unallocated account note is raised. A card-path booking paid by credit has no
+allocation to release (#3836); there the note alone takes the give-back off
+the invoice.
 
 **Deploy note (blue/green, #3791).** A review's note carries `reviewTaskId` in
 its outbox payload, which the previous release ignores: it would raise the note

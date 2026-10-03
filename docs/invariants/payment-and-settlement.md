@@ -1581,7 +1581,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   credit coming back, once** (#3791, owner decisions of 2 October 2026; Xero
   per the orchestrator's reading of decision 1).
   - **One give-back.** `giveBackAppliedCredit` (`member-credit.ts`) is the
-    clamp's mechanism and the share's: the credit-ledger lock, the
+    clamp's mechanism, the share's and, since #3809, a credit-paid booking's
+    price reduction's (`INV-MOD-011`): the credit-ledger lock, the
     deallocation fence, a positive `BOOKING_APPLIED` row (a review's names the
     booking in `sourceBookingId`) and the deallocation of an internet-banking
     invoice's excess credit. The share lowers the mirror a cancellation tiers.

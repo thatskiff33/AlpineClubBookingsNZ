@@ -523,6 +523,17 @@ that omits the settlement election is rejected rather than defaulted, so a
 body-less self-removal cannot silently settle the booking owner's money; the
 owner or an admin makes the election through the batch edit flow.
 
+A booking paid entirely with account credit - PAID or COMPLETED, nothing
+captured - is held to the same tier (#3809, owner decision A): `min(reduction,
+applied credit)`, tiered by the card tier as a cancellation tiers applied credit
+(`calculateAppliedCreditRestore`), comes back as applied credit through
+`giveBackAppliedCredit` (`INV-PAY-113`), with no election, since there is no
+card. The member's credit-ledger key is taken before any `Payment` row write,
+and the applied-credit mirror then falls to the ledger's figure. The edit's
+invoice-allocated Xero note is the give-back, worded as account credit, and
+waits for the deallocation. A booking still owing (CONFIRMED or
+PAYMENT_PENDING) gives nothing back: its reduction lowers what it owes.
+
 ## INV-MOD-012
 
 A pre-payment reduction can drop `finalPriceCents` BELOW the account credit

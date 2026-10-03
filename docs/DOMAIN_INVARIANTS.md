@@ -390,7 +390,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-008` | An unpaid member repriced under `NON_MEMBER_PRICING` is `NON_MEMBER_DEFAULT`, not forced |
 | `INV-MOD-009` | Membership, not the subscription, gates member-only promotions; a repriced member stays eligible |
 | `INV-MOD-010` | Priced guests store a rate-type snapshot; kept locked nights stay stale |
-| `INV-MOD-011` | Reductions refund within the cancellation tier; captured payments need settlement elections |
+| `INV-MOD-011` | Reductions settle within the cancellation tier, credit-paid ones as applied credit |
 | `INV-MOD-012` | Pre-payment reduction below applied credit refunds the over-consumed slice under lock |
 | `INV-MOD-013` | A modification parked to AWAITING_REVIEW refunds no credit, auto-pays nothing until released |
 | `INV-MOD-014` | Xero deallocation commits the clamp offset and outbox op together, member-credit-locked |
