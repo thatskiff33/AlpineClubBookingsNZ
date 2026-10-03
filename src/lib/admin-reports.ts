@@ -274,7 +274,7 @@ export function summarizeNetCollectedCash(
   let refundedCents = 0;
   for (const payment of payments) {
     if (!payment) continue;
-    if (isCapturedPaymentStatus(payment.status)) {
+    if (payment.status !== null && isCapturedPaymentStatus(payment.status)) {
       capturedGrossCents += payment.amountCents;
     }
     refundedCents += payment.refundedAmountCents;
