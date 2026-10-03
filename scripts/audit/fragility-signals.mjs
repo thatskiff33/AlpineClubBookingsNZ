@@ -25,7 +25,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   AUDIT_CUTOFF,
@@ -38,7 +38,8 @@ import {
   revertedCommit,
 } from "./fragility-lib.mjs";
 
-const OUT_DIR = path.resolve("tmp/fragility");
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const OUT_DIR = path.join(ROOT, "tmp/fragility");
 
 /**
  * Build the repeat entries.
@@ -162,7 +163,7 @@ function issueRef(issue, date, number) {
 }
 
 function readRevertCommits() {
-  const raw = execFileSync("git", ["log", "main", "--grep=This reverts commit", "--format=%x1e%H%x1f%aI%x1f%s%x1f%b"], { encoding: "utf8" });
+  const raw = execFileSync("git", ["log", "main", "--grep=This reverts commit", "--format=%x1e%H%x1f%aI%x1f%s%x1f%b"], { cwd: ROOT, encoding: "utf8" });
   return raw
     .split("\x1e")
     .slice(1)

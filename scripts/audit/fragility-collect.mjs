@@ -26,6 +26,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import {
@@ -46,13 +47,15 @@ import {
 } from "./fragility-lib.mjs";
 
 const execFileAsync = promisify(execFile);
-const OUT_DIR = path.resolve("tmp/fragility");
+// Anchored to the checkout, not the caller's cwd, so git and the output agree wherever it is run from.
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const OUT_DIR = path.join(ROOT, "tmp/fragility");
 const MAIN = "main";
 const BLAME_CONCURRENCY = 3;
 const GIT_BUFFER = 512 * 1024 * 1024;
 
 function git(args) {
-  return execFileSync("git", args, { encoding: "utf8", maxBuffer: GIT_BUFFER });
+  return execFileSync("git", args, { cwd: ROOT, encoding: "utf8", maxBuffer: GIT_BUFFER });
 }
 
 function write(name, data) {
@@ -78,7 +81,7 @@ async function collectGithub(token) {
     let page = 0;
     while (url) {
       const response = await fetch(url, { headers });
-      if (response.status === 403 || response.status === 429) {
+      if (isRateLimited(response)) {
         await waitForReset(response);
         continue;
       }
@@ -126,6 +129,12 @@ async function collectGithub(token) {
   const highest = Math.max(...issues.map((issue) => issue.number));
   console.error(`GitHub: ${issues.length} issues/PRs (highest #${highest}), ${comments.length} comments, ${reopened.length} reopens`);
   return { collectedAt: new Date().toISOString(), highestNumber: highest, issues, comments, reopened };
+}
+
+/** A 403 is only a rate limit when GitHub says so; any other 403 (bad token, no access) must stop the run, not retry forever. */
+function isRateLimited(response) {
+  if (response.status === 429) return true;
+  return response.status === 403 && (response.headers.get("x-ratelimit-remaining") === "0" || response.headers.has("retry-after"));
 }
 
 async function waitForReset(response) {
@@ -189,6 +198,7 @@ function buildFixUnits(commits) {
   for (const pr of prMerges) {
     if (!isFixPr(pr)) continue;
     const own = pr.members.filter((sha) => prOfCommit.get(sha) === pr.pr);
+    if (own.length === 0) continue; // an epic wrapper whose fixes are all inner PRs: counting it again would fake a refix
     const messages = [pr.title, pr.commit.body, ...own.map((sha) => `${commits.get(sha)?.subject}\n${commits.get(sha)?.body}`)];
     const subjects = [pr.title, ...own.map((sha) => commits.get(sha)?.subject ?? "")];
     units.push(
@@ -268,7 +278,7 @@ async function findCodeRepeats(units, commits) {
         for (const [start, end] of ranges) args.push("-L", `${start},${end}`);
         let counts;
         try {
-          const { stdout } = await execFileAsync("git", [...args, later.base, "--", file], { maxBuffer: GIT_BUFFER });
+          const { stdout } = await execFileAsync("git", [...args, later.base, "--", file], { cwd: ROOT, maxBuffer: GIT_BUFFER });
           counts = blameCommitCounts(stdout);
         } catch {
           continue; // file absent at base under this name (rename edge cases)
