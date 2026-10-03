@@ -523,9 +523,10 @@ describe("deriveIbAppliedCreditStrandFinding (#1620 enumeration)", () => {
     expect(finding?.settlementEvidence).toBe("manual-settlement");
   });
 
-  it("does not treat a refunded old Stripe PRIMARY as the current IB receipt", () => {
+  it("does not treat a card-origin Stripe PRIMARY as the current IB receipt", () => {
+    // Same invoice, captured: only the source says this was not a bank receipt.
     const finding = deriveIbAppliedCreditStrandFinding(makeStrandRow({
-      transactions: [{ status: "REFUNDED", source: "STRIPE", kind: "PRIMARY", xeroInvoiceId: null }],
+      transactions: [{ status: "REFUNDED", source: "STRIPE", kind: "PRIMARY", xeroInvoiceId: "inv_1" }],
     }));
     expect(finding?.realized).toBe(false);
     expect(finding?.settlementEvidence).toBe("unverified");
