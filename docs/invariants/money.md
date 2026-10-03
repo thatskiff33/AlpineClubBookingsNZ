@@ -321,12 +321,12 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   precedes its first write, so a refusal rolls the edit back; the waitlist
   reprice, whose own catch degrades to the stored snapshot instead of rolling
   back, therefore calls the recorder outside that catch, where a refusal fails
-  the sweep like any other error. `amountCents = NULL` means NOT KNOWN and is
+  the sweep. `amountCents = NULL` means NOT KNOWN and is
   written only where the engine genuinely has no per-target figure — the
   per-member safety-cap rescale; unknown rows are excluded from the sums, and
   `?? 0` on the column is prohibited exactly as it is on
   `BookingGuestNight.priceCents`. **A reader asks `deriveNightAdjustmentState`
-  — the one home — and runs the same sum:** a booking with no redemption had
+  — the one home — and runs the same sum over every redemption (#3826):** a booking with no redemption had
   nothing taken off (`NO_PROMOTION`); rows that reconcile are `KNOWN`; anything
   else — rows missing, rows that do not sum, a NULL amount — is `NOT_KNOWN`.
   No column stores that answer: a flag can be left asserting what a draining
