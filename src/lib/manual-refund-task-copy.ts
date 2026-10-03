@@ -32,6 +32,7 @@ import type { ManualRefundTaskKind } from "@prisma/client";
 import type { ClubFormat } from "@/lib/club-format";
 import { manualRefundTaskKindAllowsSettlement } from "@/lib/manual-refund-task-settlement-rules";
 import { formatCents } from "@/lib/utils";
+import type { EditReviewStillOwedPreview } from "@/lib/edit-financial-review-still-owed";
 
 /**
  * A completion at zero stays refused, and the refusal names the way out.
@@ -295,4 +296,23 @@ export function dismissalMessage(
   }
   if (manualRefundTaskKindAllowsSettlement(kind, false)) return "Refund task dismissed.";
   return "Item closed. It moved no money and raised no invoice — your note is the only record of what the booking's Xero invoices showed and what you billed by hand.";
+}
+
+/**
+ * #3835: what the settle dialog tells the officer, BEFORE completing, about a
+ * share on a cancelled booking - the figure the completion will actually
+ * settle (`previewEditReviewStillOwed`), so money handed back by hand is the
+ * netted amount, not the typed share. Null where there is nothing to add.
+ */
+export function stillOwedNoticeText(preview: EditReviewStillOwedPreview | null, format: ClubFormat): string | null {
+  if (preview === null) return null;
+  if ("refusal" in preview) return preview.refusal;
+  const { shareCents, stillOwedCents, route } = preview;
+  if (stillOwedCents >= shareCents) return null;
+  const owed = formatCents(stillOwedCents, format);
+  if (stillOwedCents === 0) {
+    return `Nothing of this share is still owed: the booking's cancellation already returned it.${route === "hand-back" ? " Do not hand anything back." : ""} Completing records no refund.`;
+  }
+  const then = { "hand-back": `hand back ${owed}, not the full share`, card: `${owed} will be refunded to the card`, "account-credit": `${owed} will be credited` }[route];
+  return `Only ${owed} of the ${formatCents(shareCents, format)} share is still owed after the booking's cancellation - ${then}.`;
 }
