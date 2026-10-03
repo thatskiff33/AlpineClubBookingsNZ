@@ -114,6 +114,12 @@ export interface QueueXeroBookingEditSettlementInput
   bookingId: string;
   bookingModificationId: string;
   createdByMemberId?: string;
+  /**
+   * #3791: the review task whose share this settles, which scopes the credit
+   * note it raises to that task, so a sibling review of the same edit raises
+   * its own. Absent on every edit's own settlement.
+   */
+  reviewTaskId?: string;
 }
 
 // test seam
@@ -279,6 +285,7 @@ export async function queueXeroBookingEditSettlement(
         refundAmountCents: decision.financialAction.refundAmountCents,
         bookingModificationId: input.bookingModificationId,
         refundMethod: decision.financialAction.refundMethod,
+        ...(input.reviewTaskId ? { reviewTaskId: input.reviewTaskId } : {}),
       },
       {
         createdByMemberId: input.createdByMemberId,
@@ -291,6 +298,7 @@ export async function queueXeroBookingEditSettlement(
         bookingId: input.bookingId,
         refundAmountCents: decision.financialAction.refundAmountCents,
         bookingModificationId: input.bookingModificationId,
+        ...(input.reviewTaskId ? { reviewTaskId: input.reviewTaskId } : {}),
       },
       {
         createdByMemberId: input.createdByMemberId,
