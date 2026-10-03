@@ -19,6 +19,7 @@ import {
   loadMitigationRecords,
   MAX_EXPIRY_AHEAD_MS,
   MITIGATIONS_DIR,
+  workflowCommand,
 } from "./dependency-mitigation.mjs";
 
 /*
@@ -186,6 +187,12 @@ describe("MITIGATED is reported, and is never CLEAN", () => {
     ]);
     expect(report.lines.join("\n")).not.toContain("::warning");
     expect(report.exitCode).toBe(0);
+  });
+
+  it("escapes the annotation as the runner's parser requires", () => {
+    expect(workflowCommand("warning", "a: b, c", "100% done\r\n::error::x")).toBe(
+      "::warning title=a%3A b%2C c::100%25 done%0D%0A::error::x",
+    );
   });
 
   it("goes through main with exit 0 only while every condition holds", async () => {

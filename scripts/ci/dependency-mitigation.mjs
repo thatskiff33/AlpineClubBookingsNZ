@@ -372,7 +372,7 @@ export function applyMitigation(result, { now, root = process.cwd(), fsImpl = fs
  * One GitHub Actions workflow command. The message escapes `%`, CR and LF, and
  * a property additionally `:` and `,`, as the runner's parser requires.
  */
-function workflowCommand(command, title, message) {
+export function workflowCommand(command, title, message) {
   const data = (text) => text.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
   const property = (text) => data(text).replace(/:/g, "%3A").replace(/,/g, "%2C");
   return `::${command} title=${property(title)}::${data(message)}`;
