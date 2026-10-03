@@ -1,5 +1,5 @@
 /**
- * #3827 (`INV-PAY-113`): an edit's refund hand-back is a
+ * #3827 (`INV-PAY-114`): an edit's refund hand-back is a
  * `CANCELLED_BOOKING_HAND_BACK` marked by its occurrence key, so a reader that
  * selects a CANCELLATION's hand-backs by kind alone would count an edit's as
  * one (the repair tool's late-cash evidence, the organisation hand-back's
@@ -39,7 +39,7 @@ function readCalls(source: string): string[] {
   return calls;
 }
 
-describe("INV-PAY-113: a cancellation hand-back reader excludes an edit's refund hand-back", () => {
+describe("INV-PAY-114: a cancellation hand-back reader excludes an edit's refund hand-back", () => {
   const offenders: string[] = [];
   let readersByKind = 0;
   for (const file of sourceFiles(path.join(ROOT, "src"))) {
@@ -58,6 +58,6 @@ describe("INV-PAY-113: a cancellation hand-back reader excludes an edit's refund
   });
 
   it("every one spreads the exclusion", () => {
-    expect(offenders, "INV-PAY-113: spread NOT_EDIT_REFUND_HAND_BACK_WHERE beside the kind").toEqual([]);
+    expect(offenders, "INV-PAY-114: spread NOT_EDIT_REFUND_HAND_BACK_WHERE beside the kind").toEqual([]);
   });
 });

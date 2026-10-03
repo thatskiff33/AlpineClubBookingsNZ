@@ -4,7 +4,7 @@ import { editRefundHandBackOccurrenceKey } from "@/lib/manual-refund-task-settle
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 
 /**
- * #3827 (owner decision D-3813-6, `INV-PAY-113`): AN EDIT'S REFUND THAT THE
+ * #3827 (owner decision D-3813-6, `INV-PAY-114`): AN EDIT'S REFUND THAT THE
  * CLUB SENDS BACK BY HAND.
  *
  * A price reduction on a booking paid by card is refunded through Stripe after

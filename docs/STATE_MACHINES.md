@@ -1908,7 +1908,7 @@ raises the task OPEN, inside the edit's transaction, keyed one per
 `BookingModification`; it is completed or dismissed exactly as a cancellation's
 hand-back, except that its completion queues no Xero document, because the
 edit's own credit note already corrects the invoice. See
-[`INV-PAY-113`](invariants/payment-and-settlement.md#inv-pay-113).
+[`INV-PAY-114`](invariants/payment-and-settlement.md#inv-pay-114).
 
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED
 row can be put back OPEN by an officer, which is the arm above; a COMPLETED row

@@ -1199,7 +1199,7 @@ export async function removeBookingGuestInTransaction({
     site: "guest-removal",
   });
 
-  // D-3813-6 (`INV-PAY-113`): a reduction on a booking paid by internet
+  // D-3813-6 (`INV-PAY-114`): a reduction on a booking paid by internet
   // banking or by hand asks the treasurer to send it back.
   await raiseEditRefundHandBackIfOwed(tx, {
     bookingId,

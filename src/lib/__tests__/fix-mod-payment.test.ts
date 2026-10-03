@@ -977,7 +977,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     expect(data.additionalPaymentClientSecret).toBeNull();
     expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
     expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
-    // #3827 (D-3813-6, `INV-PAY-113`): the treasurer is asked to send the
+    // #3827 (D-3813-6, `INV-PAY-114`): the treasurer is asked to send the
     // $30 back, and the member is told it is coming by bank transfer.
     expect(tx.manualRefundTask.createMany).toHaveBeenCalledWith({
       data: [

@@ -1656,7 +1656,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
   });
 
-  it("completes an EDIT refund hand-back like any hand-back but sends Xero nothing: the edit's credit note already stands (D-3813-6, INV-PAY-113)", async () => {
+  it("completes an EDIT refund hand-back like any hand-back but sends Xero nothing: the edit's credit note already stands (D-3813-6, INV-PAY-114)", async () => {
     // The same paid-invoice shape as the cancellation hand-back above, on a
     // LIVE booking an edit lowered. The edit queued the modification credit
     // note when it saved, so a bank-transfer refund note here would correct

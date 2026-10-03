@@ -235,7 +235,7 @@ function isPartPaymentReview(task: ManualRefundTask): boolean {
 }
 
 /**
- * #3827 (owner decision D-3813-6, `INV-PAY-113`): an edit lowered the price of
+ * #3827 (owner decision D-3813-6, `INV-PAY-114`): an edit lowered the price of
  * a booking paid by internet banking or by hand, so the club owes the
  * difference back by bank transfer. Completed exactly like a cancellation's
  * hand-back; only the sentence explaining where it came from differs, because

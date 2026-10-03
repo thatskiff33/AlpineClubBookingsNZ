@@ -594,7 +594,7 @@ export async function resolveManualRefundTask(
           ? (task.booking.payment?.xeroInvoiceId ?? null)
           : null,
       /**
-       * #3827 (`INV-PAY-113`): the Xero leg owes nothing for an edit refund
+       * #3827 (`INV-PAY-114`): the Xero leg owes nothing for an edit refund
        * hand-back - its edit already queued the credit note that corrects the
        * invoice. The ONE fence: the dispatch returns before reading anything
        * else, the cancellation invoice above included.

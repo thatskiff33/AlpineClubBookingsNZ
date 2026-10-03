@@ -373,7 +373,7 @@ describe("a credit return is worded as account credit in Xero", () => {
   });
 });
 
-describe("an internet-banking reduction asks the treasurer to send it back (D-3813-6, INV-PAY-113)", () => {
+describe("an internet-banking reduction asks the treasurer to send it back (D-3813-6, INV-PAY-114)", () => {
   it("raises exactly one officer refund task for the modification, and the email promises a bank transfer", async () => {
     const loaded = booking({
       payment: { ...booking().payment, source: "INTERNET_BANKING", xeroInvoiceId: "inv-1" },

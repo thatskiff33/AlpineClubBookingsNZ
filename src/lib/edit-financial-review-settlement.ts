@@ -528,7 +528,7 @@ export async function executeEditReviewSettlement({
   bookingPaymentStatus: string | null;
   /** `INV-PAY-101` (#3529): see `dispatchEditReviewXeroSettlement`. */
   cancellationHandBackInvoiceId: string | null;
-  /** #3827 (`INV-PAY-113`): see `dispatchEditReviewXeroSettlement`. */
+  /** #3827 (`INV-PAY-114`): see `dispatchEditReviewXeroSettlement`. */
   editRefundHandBack: boolean;
   /** The club's format (#3565), resolved once by the caller, before its transaction. */
   format: ClubFormat;

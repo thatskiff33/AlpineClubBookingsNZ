@@ -113,7 +113,7 @@ export async function dispatchEditReviewXeroSettlement({
   format,
 }: {
   /**
-   * #3827 (owner decision D-3813-6, `INV-PAY-113`): the task closed is an edit
+   * #3827 (owner decision D-3813-6, `INV-PAY-114`): the task closed is an edit
    * refund hand-back. The edit that raised it already queued the modification
    * credit note correcting the invoice ("the Xero credit note stays"), so its
    * completion sends Xero nothing more - a second note would correct the same

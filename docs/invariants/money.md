@@ -374,7 +374,7 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   machinery; a decline consumed nothing. A lower price on a paid booking goes
   back in full, with no cancellation-policy tier, the way it was paid
   (D-3813-5): refundable cash first — a card refund, or an officer's bank
-  transfer (`INV-PAY-113`) — then account credit for the rest; a re-price
+  transfer (`INV-PAY-114`) — then account credit for the rest; a re-price
   that cannot return the whole reduction is not written, so no code is used
   beyond what is returned. Each code keeps its own caps, its own allocations and its own
   integer cents: `Booking.promoAdjustmentCents` is the sum of the redemptions'

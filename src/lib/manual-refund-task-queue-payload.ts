@@ -52,7 +52,7 @@ export type OpenManualRefundTaskRow = {
   lateCaptureApprovalIntentId: string | null;
   /** #3643: set on a part-payment review, settled in Xero rather than here. */
   partPaymentReviewPaymentId: string | null;
-  /** #3827 (`INV-PAY-113`): an edit refund hand-back's marker (with the kind). */
+  /** #3827 (`INV-PAY-114`): an edit refund hand-back's marker (with the kind). */
   occurrenceKey: string | null;
   /** #3643 (`INV-PAY-108`): the inbound sync's note that Xero reported the invoice paid. */
   partPaymentReviewXeroPaidAt: Date | null;
@@ -122,7 +122,7 @@ export type OpenManualRefundTaskPayload = {
    */
   partPaymentReview: boolean;
   /**
-   * #3827 (owner decision D-3813-6, `INV-PAY-113`): an edit lowered the price
+   * #3827 (owner decision D-3813-6, `INV-PAY-114`): an edit lowered the price
    * of a booking paid by internet banking or by hand, and the club refunds the
    * difference by bank transfer. A hand-back like any other, but of a LIVE
    * booking, so the cancelled-booking sentence does not fit it.

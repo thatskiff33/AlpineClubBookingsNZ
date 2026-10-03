@@ -3544,7 +3544,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
     expect(data.stripeRefundId).toBeNull();
     expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
     expect(mockEnqueueBookingModificationRefundRecovery).not.toHaveBeenCalled();
-    // #3827 (D-3813-6, `INV-PAY-113`): nothing refunds itself, so the
+    // #3827 (D-3813-6, `INV-PAY-114`): nothing refunds itself, so the
     // treasurer is asked to send the $50 back - one task for this edit.
     expect(tx.manualRefundTask.createMany).toHaveBeenCalledTimes(1);
     expect(tx.manualRefundTask.createMany).toHaveBeenCalledWith({

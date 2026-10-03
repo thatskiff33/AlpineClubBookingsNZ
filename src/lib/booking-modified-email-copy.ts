@@ -1,5 +1,5 @@
 /**
- * #3827 (owner decision D-3813-6, `INV-PAY-113`): the refund half of a
+ * #3827 (owner decision D-3813-6, `INV-PAY-114`): the refund half of a
  * "Booking Modified" email's money note, ONE wording for the HTML template and
  * the admin-editable body (`INV-SSOT`). A card refund has already been made by
  * the time the email goes; a bank-transfer refund is an officer task the club

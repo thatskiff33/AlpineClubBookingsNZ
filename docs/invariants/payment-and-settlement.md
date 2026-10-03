@@ -1717,7 +1717,7 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     `edit-financial-review-charge-recovery.ts`; proven against PostgreSQL by
     `edit-financial-review-charge-raise-claim.realdb.test.ts`.
 
-## INV-PAY-113
+## INV-PAY-114
 
 - **A price reduction the club returns by hand raises ONE officer refund
   task** (#3827; owner decision D-3813-6 on #3492). When a batch modify, date
