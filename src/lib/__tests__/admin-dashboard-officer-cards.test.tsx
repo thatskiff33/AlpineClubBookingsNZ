@@ -58,7 +58,9 @@ import { prisma } from "@/lib/prisma";
 import {
   NET_COLLECTED_SCOPE_FIXTURE,
   NET_COLLECTED_SCOPE_PAYMENTS,
+  netCollectedFixtureBooking,
 } from "@/lib/__tests__/helpers/net-collected-scope-fixture";
+import { netCollectedBookingSelect } from "@/lib/additional-ledger-gap";
 
 /*
  * The club's day the fixtures below are built in (#3123). The dashboard takes
@@ -305,7 +307,8 @@ describe("admin dashboard officer key cards", () => {
       status: true,
       amountCents: true,
       refundedAmountCents: true,
-      booking: { select: { deletedAt: true } },
+      // The one shared booking select (#3372, owner decision 3 Oct 2026).
+      booking: { select: netCollectedBookingSelect },
     });
     expect(findManyArgs.where).not.toHaveProperty("status");
     expect(findManyArgs.where).not.toHaveProperty("booking");
@@ -349,18 +352,21 @@ describe("admin dashboard officer key cards", () => {
         status: payment.status,
         amountCents: payment.amountCents,
         refundedAmountCents: payment.refundedAmountCents,
-        booking: { deletedAt: payment.deletedAt },
+        booking: netCollectedFixtureBooking(payment),
       })) as any,
     );
 
     const html = renderToStaticMarkup(await AdminDashboardPage());
 
-    expect(NET_COLLECTED_SCOPE_FIXTURE.expectedNetCollectedCents).toBe(5_000);
-    expect(html).toContain(">$50.00</div>");
-    expect(html).not.toContain(">$120.00</div>");
+    expect(NET_COLLECTED_SCOPE_FIXTURE.expectedNetCollectedCents).toBe(9_500);
+    expect(html).toContain(">$95.00</div>");
     // The breakdown is over the same in-scope payments: the deleted booking's
-    // $70.00 is in neither figure.
-    expect(html).toContain(">$200.00 paid, $150.00 refunded or credited</p>");
+    // $70.00 is in no figure, the never-paid booking's $200.00 and its $30.00
+    // mirror refund in none either, and the line adds up to the headline:
+    // 300 - 150 - 75 + 20 = 95.
+    expect(html).toContain(
+      ">$300.00 paid, $150.00 refunded or credited, $75.00 owed back on cancellation, plus $20.00 account credit kept on cancellation</p>",
+    );
   });
 
   it("hides officer cards whose target page the actor cannot open", async () => {

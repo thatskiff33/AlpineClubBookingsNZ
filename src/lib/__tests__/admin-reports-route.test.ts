@@ -21,7 +21,9 @@ import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import {
   NET_COLLECTED_SCOPE_FIXTURE,
   NET_COLLECTED_SCOPE_PAYMENTS,
+  netCollectedFixtureBooking,
 } from "@/lib/__tests__/helpers/net-collected-scope-fixture";
+import { netCollectedBookingSelect } from "@/lib/additional-ledger-gap";
 
 const EXPECTED_REPORT_STATUS_VALUES = [
   "PENDING",
@@ -291,7 +293,8 @@ describe("admin reports route", () => {
         where: { kind: PaymentTransactionKind.ADDITIONAL },
         select: { kind: true, status: true, amountCents: true },
       },
-      booking: { select: { deletedAt: true } },
+      // The one shared booking select (#3372, owner decision 3 Oct 2026).
+      booking: { select: netCollectedBookingSelect },
     });
   }, 15_000);
 
@@ -505,7 +508,7 @@ describe("admin reports route", () => {
         additionalAmountCents: 0,
         additionalPaymentStatus: null,
         transactions: [],
-        booking: { deletedAt: payment.deletedAt },
+        booking: netCollectedFixtureBooking(payment),
       })),
     );
 

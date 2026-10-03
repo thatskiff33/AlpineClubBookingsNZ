@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
+import { netCollectedBookingSelect } from "@/lib/additional-ledger-gap";
 import {
-  formatPaidRefundedBreakdown,
+  formatNetCollectedBreakdown,
   summarizeCollectedCash,
 } from "@/lib/booking-payment-state";
 import {
@@ -161,7 +162,7 @@ async function getStats() {
         status: true,
         amountCents: true,
         refundedAmountCents: true,
-        booking: { select: { deletedAt: true } },
+        booking: { select: netCollectedBookingSelect },
       },
     }),
     // Bookings officer card headline (#2091): check-ins in the next 7 days.
@@ -365,9 +366,8 @@ export default async function AdminDashboardPage() {
   ]);
   // #3372: exact cents, never `money.dollars`, here and on the headline - a
   // rounded figure can disagree with the line beneath it by a dollar.
-  const netCollectedBreakdown = formatPaidRefundedBreakdown(
-    stats.netCollectedThisMonth.capturedGrossCents,
-    stats.netCollectedThisMonth.refundedCents,
+  const netCollectedBreakdown = formatNetCollectedBreakdown(
+    stats.netCollectedThisMonth,
     money.cents,
   );
 

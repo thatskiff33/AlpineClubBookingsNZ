@@ -16,8 +16,14 @@ import {
   summarizeCollectedCash,
 } from "@/lib/booking-payment-state";
 
-/** A payment on a booking that has not been soft-deleted. */
-const LIVE = { deletedAt: null };
+/** A payment on a live booking that has not been soft-deleted. */
+const LIVE = {
+  deletedAt: null,
+  status: "PAID",
+  creditsApplied: [],
+  creditsFromCancellation: [],
+  manualRefundTasks: [],
+};
 
 const EXPECTED_REPORT_STATUS_VALUES = [
   "PENDING",
@@ -298,6 +304,8 @@ describe("admin reports helpers", () => {
     ).toEqual({
       capturedGrossCents: 20_000,
       refundedCents: 8_500,
+      handBackOwedCents: 0,
+      keptCreditCents: 0,
       netCollectedCents: 11_500,
     });
   });
@@ -305,11 +313,11 @@ describe("admin reports helpers", () => {
   /*
     #3372, owner decision A: the one Net Collected booking scope lives in the
     derivation, so no surface can choose its own. A soft-deleted booking's
-    payment contributes to neither the gross nor the refund; the booking's
-    status is not read at all, so a cancelled booking counts the money it kept out of what was paid.
+    payment contributes to neither the gross nor the refund; the scope does not
+    read the booking's status, so a cancelled booking counts the money it kept out of what was paid.
   */
   it("applies the one Net Collected booking scope: a deleted booking's payment counts for nothing", () => {
-    const deleted = { deletedAt: new Date("2026-04-02T00:00:00.000Z") };
+    const deleted = { ...LIVE, deletedAt: new Date("2026-04-02T00:00:00.000Z") };
     expect(
       summarizeCollectedCash([
         // A cancelled booking's payment that kept a $50.00 fee.
@@ -326,6 +334,8 @@ describe("admin reports helpers", () => {
     ).toEqual({
       capturedGrossCents: 20_000,
       refundedCents: 15_000,
+      handBackOwedCents: 0,
+      keptCreditCents: 0,
       netCollectedCents: 5_000,
     });
     expect(isInNetCollectedBookingScope({ deletedAt: null })).toBe(true);
@@ -346,6 +356,8 @@ describe("admin reports helpers", () => {
     ).toEqual({
       capturedGrossCents: 5_000,
       refundedCents: 1_000,
+      handBackOwedCents: 0,
+      keptCreditCents: 0,
       netCollectedCents: 4_000,
     });
   });

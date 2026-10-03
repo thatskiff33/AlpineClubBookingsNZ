@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import {
   NET_COLLECTED_SCOPE_FIXTURE,
   NET_COLLECTED_SCOPE_PAYMENTS,
+  netCollectedFixtureBooking,
 } from "@/lib/__tests__/helpers/net-collected-scope-fixture";
 
 vi.mock("@/lib/prisma", () => ({
@@ -285,6 +286,8 @@ describe("Admin Payments API", () => {
         checkIn: new Date("2026-04-10"),
         deletedAt: null,
         creditsFromCancellation: [],
+        creditsApplied: [],
+        manualRefundTasks: [],
         member: {
           id: "m1",
           firstName: "Bob",
@@ -481,9 +484,11 @@ describe("Admin Payments API", () => {
             refundedAmountCents: payment.refundedAmountCents,
             booking: {
               ...makePaymentCandidate().booking,
+              ...netCollectedFixtureBooking(payment),
               id: payment.bookingId,
-              status: payment.bookingStatus,
-              deletedAt: payment.deletedAt,
+              creditsFromCancellation: payment.creditsFromCancellation.map(
+                (credit) => ({ ...credit, description: null }),
+              ),
             },
           })
         ) as any
@@ -502,7 +507,7 @@ describe("Admin Payments API", () => {
     // cancelled booking's $30.00 mirror refund included, though the Net
     // Collected tile (owner review on #3811) gives that booking nil.
     expect(body.summary.refundedCents).toBe(18_000);
-    expect(body.summary.count).toBe(3);
+    expect(body.summary.count).toBe(5);
   });
 
   /*

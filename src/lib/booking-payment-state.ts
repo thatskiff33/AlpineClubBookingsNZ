@@ -1,4 +1,13 @@
+import type { BookingStatus } from "@prisma/client";
 import { isBookingShownIn } from "@/lib/booking-delete-visibility";
+import {
+  openCancellationHandBackOwedCents,
+  type CancellationHandBackTaskRow,
+} from "@/lib/manual-refund-task-settlement-rules";
+import {
+  cancelledBookingKeptCreditCents,
+  type BookingCreditAmountRow,
+} from "@/lib/member-credit-booking-rows";
 
 /**
  * The `Payment.status` values that mean MONEY WAS TAKEN — captured, and possibly
@@ -216,6 +225,38 @@ export function formatPaidRefundedBreakdown(
 }
 
 /**
+ * The line beneath a Net Collected headline that sums a set of payments (the
+ * dashboard card): "{paid} paid", then whichever of refunded or credited, owed
+ * back on a cancellation, and account credit a cancellation kept (owner
+ * decision on #3372, 3 Oct 2026) is non-zero, so the headline's arithmetic is
+ * on screen. `null` when there is nothing but the paid figure; the wording of
+ * the first two parts is `formatPaidRefundedBreakdown`'s.
+ */
+export function formatNetCollectedBreakdown(
+  summary: Pick<
+    CollectedCashSummary,
+    "capturedGrossCents" | "refundedCents" | "handBackOwedCents" | "keptCreditCents"
+  >,
+  formatCents: (cents: number) => string,
+): string | null {
+  const extras = [
+    summary.handBackOwedCents > 0
+      ? `${formatCents(summary.handBackOwedCents)} owed back on cancellation`
+      : null,
+    summary.keptCreditCents > 0
+      ? `plus ${formatCents(summary.keptCreditCents)} account credit kept on cancellation`
+      : null,
+  ].filter((part): part is string => part !== null);
+  const paidRefunded = formatPaidRefundedBreakdown(
+    summary.capturedGrossCents,
+    summary.refundedCents,
+    formatCents,
+  );
+  if (extras.length === 0) return paidRefunded;
+  return [paidRefunded ?? `${formatCents(summary.capturedGrossCents)} paid`, ...extras].join(", ");
+}
+
+/**
  * Money collected on a set of payments: what was captured, what has gone back
  * out as a refund or an account credit, and the difference.
  */
@@ -226,18 +267,30 @@ export interface CollectedCashSummary {
    * How much of `capturedGrossCents` has gone back out: each captured
    * payment's `refundedAmountCents` — card refunds and cancellation credit to
    * the member's account alike (`INV-PAY-050`) — capped at what that payment
-   * took. Exactly `capturedGrossCents - netCollectedCents`, so a "paid,
-   * refunded" line beneath the headline always adds up. A refund recorded on a
-   * payment that never took money is not here: nothing came in for it to
-   * reverse.
+   * took. A refund recorded on a payment that never took money is not here:
+   * nothing came in for it to reverse.
    */
   refundedCents: number;
   /**
-   * Money each payment received and has not refunded or credited back,
-   * summed: `getRemainingRefundableCents` per payment, so no payment adds less
-   * than nothing and one that never took money adds nothing. Not "cash the club
-   * holds" — a credit is still owed to the member as a future booking, and it is
-   * subtracted here all the same.
+   * On CANCELLED bookings, refunds the club still owes by hand on an open
+   * hand-back task, taken off straight away (owner decision on #3372, 3 Oct
+   * 2026; `openCancellationHandBackOwedCents`), capped at what is left of the
+   * payment after `refundedCents`.
+   */
+  handBackOwedCents: number;
+  /**
+   * Account credit applied to CANCELLED bookings that the cancellation kept
+   * (owner decision on #3372, 3 Oct 2026; `cancelledBookingKeptCreditCents`).
+   * Zero for a live booking: credit it spent is not money kept.
+   */
+  keptCreditCents: number;
+  /**
+   * `capturedGrossCents - refundedCents - handBackOwedCents +
+   * keptCreditCents`, exactly: per
+   * payment, `getNetCollectedPaymentCents`. No payment adds less than nothing
+   * and one that never took money adds nothing (beyond credit a cancellation
+   * kept). Not "cash the club holds" — a credit is still owed to the member as
+   * a future booking, and it is subtracted here all the same.
    */
   netCollectedCents: number;
 }
@@ -250,18 +303,37 @@ export interface NetCollectedBookingScopeFields {
 }
 
 /**
+ * The booking a payment belongs to, as far as a Net Collected figure needs it:
+ * the scope's `deletedAt`, and for a CANCELLED booking the two facts the owner's
+ * 3 Oct 2026 decision reads. The relation names are Prisma's, so a select hands
+ * them in as loaded (`netCollectedBookingSelect` in `additional-ledger-gap.ts`);
+ * each is required, so a surface cannot leave one out and read a smaller figure.
+ */
+export interface NetCollectedBookingFields extends NetCollectedBookingScopeFields {
+  status: string;
+  creditsApplied: ReadonlyArray<BookingCreditAmountRow>;
+  creditsFromCancellation: ReadonlyArray<
+    BookingCreditAmountRow & { restoredFromBookingId: string | null }
+  >;
+  manualRefundTasks: ReadonlyArray<CancellationHandBackTaskRow>;
+}
+
+const CANCELLED_BOOKING_STATUS = "CANCELLED" satisfies BookingStatus;
+
+/**
  * #3372, owner decision A (29 Sep 2026): THE booking scope of every "Net
  * Collected" figure - the dashboard card, the payments board tile, Reports'
  * Net Collected Cash and the finance dashboard's Net Collected Cash (#3637). A
  * payment counts when its booking has not been
  * soft-deleted, whatever the booking's status.
  *
- * What a CANCELLED booking adds (owner review on PR #3811, 2 Oct 2026) is only
- * money actually received on it and not refunded or credited back - what a
- * cancellation policy kept out of money that was paid. A booking cancelled
- * before anything was paid adds nil, whatever fee its policy would have
- * charged: the figure is never built from a price or a policy, only from what
- * each payment took (`summarizeCollectedCash`).
+ * What a CANCELLED booking adds (owner review on PR #3811, 2 Oct 2026, and the
+ * owner's decision on #3372, 3 Oct 2026) is only what the cancellation KEPT of
+ * what was actually paid: cash not refunded, credited or owed back by hand, and
+ * applied account credit not restored. A booking cancelled before anything was
+ * paid adds nil, whatever fee its policy would have charged: the figure is
+ * never built from a price or a policy, only from what was paid
+ * (`getNetCollectedPaymentParts`).
  *
  * Before the decision each screen chose its own set: Reports a fixed status
  * list, the payments tile everything but cancelled (#773, which kept a refunded
@@ -287,7 +359,62 @@ export interface NetCollectedPaymentRow {
   status: string | null;
   amountCents: number;
   refundedAmountCents: number;
-  booking: NetCollectedBookingScopeFields;
+  booking: NetCollectedBookingFields;
+}
+
+/** One payment's part of a Net Collected figure, in its three pieces. */
+export interface NetCollectedPaymentParts {
+  /** `amountCents` if the payment took money, else 0. */
+  capturedGrossCents: number;
+  /** Money it took and still holds: not refunded, credited or owed back. */
+  heldCashCents: number;
+  /** A cancelled booking's open hand-back, as far as the money it took covers. */
+  handBackOwedCents: number;
+  /** Applied credit a cancellation kept; 0 unless the booking is cancelled. */
+  keptCreditCents: number;
+}
+
+/**
+ * THE one per-payment rule behind every "Net Collected" figure (owner review on
+ * PR #3811 and the owner's decision on #3372, 3 Oct 2026). It does not apply the
+ * booking scope; `summarizeCollectedCash` does, before calling it.
+ *
+ * - Cash: what the payment took and has not refunded or credited back
+ *   (`getRemainingRefundableCents`): 0 if it never took money, never below 0.
+ * - On a CANCELLED booking, two more facts, each from its canonical reader:
+ *   a hand-back refund still owed by hand is treated as gone straight away
+ *   (`openCancellationHandBackOwedCents`), so only what the policy keeps
+ *   counts; and applied account credit the cancellation kept counts
+ *   (`cancelledBookingKeptCreditCents`). A live booking reads neither: its
+ *   credit is spent on a stay, not kept, and it owes no hand-back.
+ */
+export function getNetCollectedPaymentParts(
+  payment: NetCollectedPaymentRow,
+): NetCollectedPaymentParts {
+  const { status, booking } = payment;
+  const captured = status !== null && isCapturedPaymentStatus(status);
+  const remainingCents = captured
+    ? getRemainingRefundableCents({ ...payment, status })
+    : 0;
+  const capturedGrossCents = captured ? payment.amountCents : 0;
+  if (booking.status !== CANCELLED_BOOKING_STATUS) {
+    return {
+      capturedGrossCents,
+      heldCashCents: remainingCents,
+      handBackOwedCents: 0,
+      keptCreditCents: 0,
+    };
+  }
+  const handBackOwedCents = Math.min(
+    openCancellationHandBackOwedCents(booking.manualRefundTasks),
+    remainingCents,
+  );
+  return {
+    capturedGrossCents,
+    heldCashCents: remainingCents - handBackOwedCents,
+    handBackOwedCents,
+    keptCreditCents: cancelledBookingKeptCreditCents(booking),
+  };
 }
 
 /**
@@ -370,12 +497,12 @@ export function sumRefundedAndCreditedCents(
  * then marks it FAILED (`booking-cancel.ts`) - or a refund above its own
  * capture, subtract from OTHER bookings' money.
  *
- * Two consequences of reading only what each payment took, stated so nobody
- * reads them as accidents. Applied account credit is not in `amountCents`
- * (`INV-PAY-047`), so a booking paid with credit adds nothing here, live or
- * cancelled, whether the cancellation restored the credit or kept it. And a
- * cash hand-back the club still owes adds the money until it is paid: only
- * completing the refund task writes `refundedAmountCents`.
+ * A CANCELLED booking adds two more facts (owner decision on #3372, 3 Oct
+ * 2026), both inside `getNetCollectedPaymentParts`: applied account credit the
+ * cancellation KEPT counts (credit restored to the member does not), and a
+ * hand-back refund still owed by hand counts as gone before its task is
+ * completed. A live booking's applied credit is not in `amountCents`
+ * (`INV-PAY-047`) and does not count.
  *
  * Cash is payment-derived and deliberately NOT allocated over stay nights.
  * `Payment.amountCents` already contains captured additions (#2408); rebuilding
@@ -389,17 +516,22 @@ export function summarizeCollectedCash(
   payments: ReadonlyArray<NetCollectedPaymentRow>,
 ): CollectedCashSummary {
   let capturedGrossCents = 0;
-  let netCollectedCents = 0;
+  let heldCashCents = 0;
+  let handBackOwedCents = 0;
+  let keptCreditCents = 0;
   for (const payment of netCollectedScopedPayments(payments)) {
-    const { status } = payment;
-    if (status === null || !isCapturedPaymentStatus(status)) continue;
-    capturedGrossCents += payment.amountCents;
-    netCollectedCents += getRemainingRefundableCents({ ...payment, status });
+    const parts = getNetCollectedPaymentParts(payment);
+    capturedGrossCents += parts.capturedGrossCents;
+    heldCashCents += parts.heldCashCents;
+    handBackOwedCents += parts.handBackOwedCents;
+    keptCreditCents += parts.keptCreditCents;
   }
   return {
     capturedGrossCents,
-    refundedCents: capturedGrossCents - netCollectedCents,
-    netCollectedCents,
+    refundedCents: capturedGrossCents - heldCashCents - handBackOwedCents,
+    handBackOwedCents,
+    keptCreditCents,
+    netCollectedCents: heldCashCents + keptCreditCents,
   };
 }
 

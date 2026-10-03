@@ -1,4 +1,7 @@
 import type {
+  CreditType,
+  ManualRefundTaskKind,
+  ManualRefundTaskStatus,
   PaymentStatus,
   PaymentTransactionKind,
   Prisma,
@@ -19,7 +22,10 @@ import {
   type XeroState,
 } from "@/lib/admin-operational-state";
 import { bookingOwner } from "@/lib/booking-owner";
-import { summarizeNetCollectedWithLedgerGap } from "@/lib/additional-ledger-gap";
+import {
+  netCollectedBookingSelect,
+  summarizeNetCollectedWithLedgerGap,
+} from "@/lib/additional-ledger-gap";
 import {
   getPaymentNetOfRefundsCents,
   sumRefundedAndCreditedCents,
@@ -177,8 +183,19 @@ type PaymentCandidate = {
     // #3369: the owner may be an Organisation; bookingOwner() reads both.
     organisation: { name: string; email: string | null } | null;
     creditsFromCancellation: Array<{
+      type: CreditType;
       amountCents: number;
+      restoredFromBookingId: string | null;
       description: string | null;
+    }>;
+    // #3372, owner decision 3 Oct 2026: a cancelled booking's kept credit and
+    // owed hand-back (`getNetCollectedPaymentParts`).
+    creditsApplied: Array<{ type: CreditType; amountCents: number }>;
+    manualRefundTasks: Array<{
+      status: ManualRefundTaskStatus;
+      kind: ManualRefundTaskKind | null;
+      amountCents: number | null;
+      partPaymentReviewPaymentId: string | null;
     }>;
   };
 };
@@ -487,13 +504,14 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         booking: {
           select: {
             id: true,
-            status: true,
             checkIn: true,
-            // #3372: the Net Collected booking scope reads it.
-            deletedAt: true,
+            // #3372: the Net Collected figure's booking fields, shared with
+            // Reports, Finance and the dashboard; widened by the description
+            // the settlement chip reads.
+            ...netCollectedBookingSelect,
             creditsFromCancellation: {
               select: {
-                amountCents: true,
+                ...netCollectedBookingSelect.creditsFromCancellation.select,
                 description: true,
               },
             },
