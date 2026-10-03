@@ -130,21 +130,23 @@ export async function createXeroCreditNoteForModification(params: {
   const originalInvoiceId = booking.payment.xeroInvoiceId;
 
   // #3791: a review's note follows the give-back's deallocation of the same
-  // payment. Run first, it would meet an invoice the applied credit still
-  // covers and end PARTIAL. While that deallocation is on its way it waits, and
-  // the outbox returns it to PENDING (a busy error is transient). One that
-  // FAILED only an operator's retry moves, so waiting would spin for ever: the
-  // note fails instead, naming the deallocation, and is retried after it.
-  if (reviewTaskId) {
+  // payment, and since #3809 so does an edit's: a credit-paid booking's
+  // reduction gives back through the same give-back. Run first, it would meet an
+  // invoice the applied credit still covers and end PARTIAL. While that
+  // deallocation is on its way it waits, and the outbox returns it to PENDING (a
+  // busy error is transient). One that FAILED only an operator's retry moves, so
+  // waiting would spin for ever: the note fails instead, naming the
+  // deallocation, and is retried after it.
+  if (bookingModificationId) {
     const deallocation = await findUnconvergedAppliedCreditDeallocation(booking.payment.id, prisma);
     if (deallocation) {
       const fence = new XeroAppliedCreditOperationBusyError(
-        `Review credit note waits for applied-credit deallocation ${deallocation.id} (${deallocation.status}) on payment ${booking.payment.id}`,
+        `Modification credit note waits for applied-credit deallocation ${deallocation.id} (${deallocation.status}) on payment ${booking.payment.id}`,
         deallocation.status,
       );
       if (!needsOperatorXeroRetry(fence)) throw fence;
       const failed = new Error(
-        `Review credit note held: applied-credit deallocation ${deallocation.id} is ${deallocation.status}. Retry that Xero operation first, then retry this note.`,
+        `Modification credit note held: applied-credit deallocation ${deallocation.id} is ${deallocation.status}. Retry that Xero operation first, then retry this note.`,
       );
       if (syncOperationId) await failXeroSyncOperation(syncOperationId, failed);
       throw failed;

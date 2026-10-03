@@ -19,6 +19,8 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import type { CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
+import { giveBackCreditPaidReduction } from "@/lib/booking-modify-credit-give-back";
+import type { RefundMethod } from "@/lib/xero-refund-method";
 import {
   calculateDualRefundAmounts,
   daysUntilDate,
@@ -80,6 +82,18 @@ export type PaymentAdjustmentResult = {
   xeroAdditionalAmountCents: number;
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
+  /**
+   * #3809: applied credit a credit-paid booking's reduction gave back, tiered
+   * like a card refund (`giveBackCreditPaidReduction`). Neither a refund nor
+   * minted credit, so it is in neither figure above and nothing mints it again.
+   */
+  appliedCreditGivenBackCents: number;
+  /**
+   * How the Xero note says the reduction went back (`INV-PAY-101`): "account-
+   * credit" for that give-back, whose note is still allocated against the
+   * invoice; null leaves it to the settlement method, as before.
+   */
+  xeroRefundMethod: RefundMethod | null;
 };
 
 // isSettledBookingStatus moved to booking-payment-state (#1729) so the Xero
@@ -206,12 +220,18 @@ export async function applyPaymentAdjustments(
     changeFeeCents,
     settlementOptions,
     settlementMethod,
+    todayAtClub,
+    format,
   }: {
     booking: LoadedBookingForModify;
     priceDiffCents: number;
     changeFeeCents: number;
     settlementOptions?: BookingModificationSettlementOptions | null;
     settlementMethod?: BookingModificationSettlementMethod;
+    /** #3809: the club's day, the tier boundary of a credit-paid booking's give-back. */
+    todayAtClub: CalendarDate;
+    /** #3809: resolved before the transaction, for the give-back's ledger lock. */
+    format: ClubFormat;
   },
 ): Promise<PaymentAdjustmentResult> {
   const inSettledStatus = isSettledBookingStatus(booking.status);
@@ -233,11 +253,20 @@ export async function applyPaymentAdjustments(
   // policy tier applies — nothing was paid — so the invoice must be corrected
   // for the full net delta, otherwise a `settlementOptions` of null leaves
   // xeroRefund at 0 and the outstanding invoice keeps the removed guests.
+  //
+  // #3809: a booking paid ENTIRELY with account credit gives the tiered slice
+  // back as applied credit, before any Payment row write here. Its note is that
+  // give-back, as a card refund's is the refund: the deallocation reopens the
+  // invoice by it and the note closes it again.
+  const creditPaidGiveBack =
+    !hasSettledPayment && netAmountCents < 0
+      ? await giveBackCreditPaidReduction(tx, { booking, reductionCents: -netAmountCents, todayAtClub, format })
+      : null;
   const xeroRefundAmountCents =
     hasIssuedXeroInvoice && netAmountCents < 0
       ? hasSettledPayment
         ? selectedSettlement.amountCents
-        : Math.abs(netAmountCents)
+        : (creditPaidGiveBack?.givenBackCents ?? Math.abs(netAmountCents))
       : 0;
   const xeroAdditionalAmountCents =
     hasIssuedXeroInvoice && netAmountCents > 0 ? netAmountCents : 0;
@@ -330,7 +359,11 @@ export async function applyPaymentAdjustments(
     xeroRefundAmountCents,
     xeroAdditionalAmountCents,
     settlementMethod: selectedSettlement.settlementMethod,
-    policyRetainedAmountCents: selectedSettlement.policyRetainedAmountCents,
+    policyRetainedAmountCents: creditPaidGiveBack
+      ? creditPaidGiveBack.basisCents - creditPaidGiveBack.givenBackCents
+      : selectedSettlement.policyRetainedAmountCents,
+    appliedCreditGivenBackCents: creditPaidGiveBack?.givenBackCents ?? 0,
+    xeroRefundMethod: creditPaidGiveBack ? "account-credit" : null,
   };
 }
 

@@ -74,6 +74,7 @@ import {
   rateSnapshotUpdateForRepricedGuest,
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
+  type PaymentAdjustmentResult,
 } from "@/lib/booking-modify";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { markCrossFamilyGuestsOnBooking } from "@/lib/member-guest-add-policy";
@@ -216,6 +217,7 @@ type DateModificationTransactionResult =
     paymentReference: string | null;
     xeroInvoiceNumber: string | null;
     xeroRefundAmountCents: number;
+    xeroRefundMethod: PaymentAdjustmentResult["xeroRefundMethod"];
     xeroAdditionalAmountCents: number;
     // F20 (#1887): the reprice landed the booking fully credit-covered and it
     // was auto-confirmed at $0, so the primary Xero invoice must be created.
@@ -921,6 +923,8 @@ export async function modifyBookingDates({
       changeFeeCents,
       settlementOptions,
       settlementMethod,
+      todayAtClub,
+      format,
     });
     const {
       refundAmountCents,
@@ -1469,6 +1473,7 @@ export async function modifyBookingDates({
       paymentReference: booking.payment?.reference ?? null,
       xeroInvoiceNumber: booking.payment?.xeroInvoiceNumber ?? null,
       xeroRefundAmountCents,
+      xeroRefundMethod: payments.xeroRefundMethod,
       xeroAdditionalAmountCents,
       zeroDollarAutoPaid,
       paymentId: booking.payment?.id ?? null,
@@ -1650,6 +1655,7 @@ async function dispatchDatePostTransactionSideEffects({
     settlementAmountCents: result.xeroRefundAmountCents,
     settlementMethod: result.settlementMethod,
     refundedThroughStripe: result.hasSucceededPayment,
+    refundMethod: result.xeroRefundMethod,
     // F20 (#1887): a reprice that landed the booking fully credit-covered
     // auto-confirmed it at $0, so create the primary invoice if none was issued
     // (mirrors the batch modify path).

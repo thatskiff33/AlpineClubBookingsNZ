@@ -64,6 +64,7 @@ import {
   rateSnapshotUpdateForRepricedGuest,
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
+  type PaymentAdjustmentResult,
 } from "@/lib/booking-modify";
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
 import {
@@ -139,6 +140,7 @@ export type RemoveBookingGuestResult = {
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   xeroRefundAmountCents: number;
+  xeroRefundMethod: PaymentAdjustmentResult["xeroRefundMethod"];
   xeroAdditionalAmountCents: number;
   hasSucceededPayment: boolean;
   hasIssuedXeroInvoice: boolean;
@@ -1024,6 +1026,8 @@ export async function removeBookingGuestInTransaction({
     changeFeeCents: 0,
     settlementOptions,
     settlementMethod,
+    todayAtClub,
+    format,
   });
 
   // Run the same lifecycle transitions the batch path applies (#1041):
@@ -1317,6 +1321,7 @@ export async function removeBookingGuestInTransaction({
     settlementMethod: paymentImpact.settlementMethod,
     policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,
+    xeroRefundMethod: paymentImpact.xeroRefundMethod,
     xeroAdditionalAmountCents: paymentImpact.xeroAdditionalAmountCents,
     hasSucceededPayment: paymentImpact.hasSucceededPayment,
     hasIssuedXeroInvoice: paymentImpact.hasIssuedXeroInvoice,

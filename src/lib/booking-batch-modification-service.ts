@@ -29,6 +29,7 @@ import {
   type BatchModifyInput,
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
+  type PaymentAdjustmentResult,
   type ResolvedGuestNameUpdate,
   type PricingResult,
   isBookingFullyPaidForGuestNameEdits,
@@ -225,6 +226,7 @@ type BatchModificationTransactionResult =
     supersededPrimaryPaymentIntents: { length: number };
     xeroAdditionalAmountCents: number;
     xeroRefundAmountCents: number;
+    xeroRefundMethod: PaymentAdjustmentResult["xeroRefundMethod"];
     settlementMethod: BookingModificationSettlementMethod | null;
     policyRetainedAmountCents: number;
     guestNameUpdates: ResolvedGuestNameUpdate[];
@@ -1663,6 +1665,8 @@ export async function modifyBookingBatch({
       changeFeeCents,
       settlementOptions,
       settlementMethod: input.settlementMethod,
+      todayAtClub,
+      format,
     });
 
     const lifecycle = await applyLifecycleTransitions(tx, {
@@ -2124,6 +2128,7 @@ export async function modifyBookingBatch({
       supersededPrimaryPaymentIntents: lifecycle.supersededPrimaryPaymentIntents,
       xeroAdditionalAmountCents: payments.xeroAdditionalAmountCents,
       xeroRefundAmountCents: payments.xeroRefundAmountCents,
+      xeroRefundMethod: payments.xeroRefundMethod,
       settlementMethod: payments.settlementMethod,
       policyRetainedAmountCents: payments.policyRetainedAmountCents,
       guestNameUpdates,
@@ -2506,6 +2511,7 @@ async function dispatchBatchPostTransactionSideEffects({
     guestIdentityChanged: result.guestIdentityChanged,
     settlementMethod: result.settlementMethod,
     refundedThroughStripe: result.hasSucceededPayment,
+    refundMethod: result.xeroRefundMethod,
     settlementAmountCents: result.xeroRefundAmountCents,
     createPrimaryInvoiceWhenMissing:
       result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,

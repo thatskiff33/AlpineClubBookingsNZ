@@ -319,6 +319,7 @@ export async function DELETE(
       settlementAmountCents: result.xeroRefundAmountCents,
       settlementMethod: result.settlementMethod,
       refundedThroughStripe: result.hasSucceededPayment,
+      refundMethod: result.xeroRefundMethod,
       // A Stripe-collected increase must not double-bill through Xero: hold
       // the supplementary invoice's payment recording on the Stripe intent,
       // exactly as the batch flow does.
