@@ -1,0 +1,8 @@
+# Synthetic fixture for scripts/ci/dependency-mitigation.test.mjs (#3843),
+# copied in as pnpm-lock.yaml. pnpm never reads this file.
+lockfileVersion: '9.0'
+
+patchedDependencies:
+  braces@3.0.3: efe68ba795beee43343e2ed8d246fef6f0d6715d01d05b178bfada678ff7f937
+
+importers: {}

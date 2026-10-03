@@ -365,6 +365,15 @@ once, elsewhere, and only linked from here:
 - **the code-owner rule itself** — what needs an Approve and how agents treat
   it — is `AGENTS.md` → "Pre-authorisation and attributability".
 
+What is owned is `.github/CODEOWNERS` itself: the money surface (#3341) and,
+since the owner's
+[third decision on #3843](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3843#issuecomment-5967784861),
+the dependency-audit security gate — `dependency-mitigations.d/`, `patches/`,
+`scripts/ci/dependency-mitigation.mjs` and `scripts/ci/audit-dependencies.mjs`
+— because a mitigation record can turn the required `Dependency audit` check
+green. `pnpm-workspace.yaml` is deliberately not owned, so ordinary dependency
+bumps need no Approve.
+
 **Applied by the owner on 2 Oct 2026** (owner decisions of 26 Sep 2026 on
 #3341: code-owner review, option A; stale approvals dismissed on push). Step 4's
 test passed on #3807/#3808, recorded on #3341; the steps stay here so the
@@ -405,6 +414,6 @@ must not make this change; it is a repository setting.
    scope. Record the result on #3341 and bring the trade-off back to the owner
    as a decision instead.
 
-Once it is on, a money pull request **you author yourself** can only merge by
+Once it is on, a code-owned pull request **you author yourself** can only merge by
 admin bypass: GitHub never counts the sole code owner's Approve of their own
 pull request.
