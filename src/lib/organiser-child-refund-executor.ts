@@ -325,7 +325,9 @@ export async function reconcilePendingOrganiserChildRefunds(
         await tx.paymentRecoveryOperation.updateMany({
           where: { idempotencyKey: key, status: PaymentRecoveryOperationStatus.SUCCEEDED },
           data: {
-            status: PaymentRecoveryOperationStatus.FAILED,
+            // PENDING, not FAILED: owed and claimable again, not a terminal
+            // failure (`INV-PAY-056` keeps that one route).
+            status: PaymentRecoveryOperationStatus.PENDING,
             attempts: 1,
             nextRetryAt: new Date(),
             succeededAt: null,

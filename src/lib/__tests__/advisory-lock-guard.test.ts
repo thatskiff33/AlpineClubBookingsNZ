@@ -648,6 +648,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-001",
   },
   {
+    site: "reconcilePendingOrganiserChildRefunds#1",
+    tier: "GLOBAL",
+    reason:
+      "#3653 fix round: taking a failed organiser child refund back out - its refund row, the child's mirror, the settlement status and reopening its debt - is the inverse of the recorder above and commits as one unit on the same key, so a concurrent edit or cancel reading the combined headroom sees the refund either recorded or owed again, never neither. Then the Payment row, the order every refunded-total writer takes. Stripe was read before the transaction opened.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "createGroupSettlementIntent#1",
     tier: "GLOBAL",
     reason:

@@ -477,7 +477,7 @@ and a joiner's own cancellation use the same operation, so a live group's
 settlement can now read `PARTIALLY_REFUNDED` - still paid
 (`organiserHasPaidSettlement`), and the organiser is not asked to pay again. A
 refund Stripe answered `pending` and later failed moves its operation
-`SUCCEEDED -> FAILED` (owed again, retried, alerting on exhaustion), its refund
+`SUCCEEDED -> PENDING` (owed again, retried, alerting on exhaustion), its refund
 row to `failed`, and the settlement back to the status the remaining refunds
 imply (`REFUNDED`/`PARTIALLY_REFUNDED -> PARTIALLY_REFUNDED`/`SUCCEEDED`).
 

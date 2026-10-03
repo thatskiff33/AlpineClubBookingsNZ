@@ -508,7 +508,7 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
       });
       expect((await prisma.groupBookingSettlement.findUniqueOrThrow({ where: { id: C.settlement } })).status).toBe("SUCCEEDED");
       expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: debt!.id } })).toMatchObject({
-        status: "FAILED",
+        status: "PENDING",
         attempts: 1,
         succeededAt: null,
       });
