@@ -473,8 +473,13 @@ recovery operation per paid child (`PENDING -> PROCESSING -> SUCCEEDED`, or
 refund against the combined intent; its child's refund row, mirror, Xero note,
 the settlement's `SUCCEEDED -> PARTIALLY_REFUNDED -> REFUNDED` move and the
 operation's close commit together, after Stripe answered. A joiner's reduction
-uses the same operation, so a live group's settlement can now read
-`PARTIALLY_REFUNDED` - still paid (`organiserHasPaidSettlement`).
+and a joiner's own cancellation use the same operation, so a live group's
+settlement can now read `PARTIALLY_REFUNDED` - still paid
+(`organiserHasPaidSettlement`), and the organiser is not asked to pay again. A
+refund Stripe answered `pending` and later failed moves its operation
+`SUCCEEDED -> FAILED` (owed again, retried, alerting on exhaustion), its refund
+row to `failed`, and the settlement back to the status the remaining refunds
+imply (`REFUNDED`/`PARTIALLY_REFUNDED -> PARTIALLY_REFUNDED`/`SUCCEEDED`).
 
 Internet Banking settlement initiation writes `GroupBookingSettlement.PENDING`
 and its Xero invoice outbox operation in the same transaction. The worker checks

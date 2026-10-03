@@ -10,9 +10,15 @@
   card payment, recorded against that joiner only once Stripe has made it, and
   retried automatically (with an alert if it keeps failing) when Stripe is
   unavailable. A joiner editing their booking sees that any reduction goes back
-  to the organiser's card, with no account-credit option. A group cancellation
+  to the organiser's card, with no account-credit option; a joiner cancelling
+  their own booking is refunded to the organiser's card the same way, and a
+  change that would raise such a booking's price is refused with a message to
+  contact the club. A group cancellation
   refunds each paid joiner from what is left of their payment after earlier
-  refunds, and refunds can never add up to more than the organiser paid.
+  refunds, and refunds can never add up to more than the organiser paid. A
+  refund Stripe accepts as pending and later fails is noticed by the payments
+  cron and owed again. Groups the organiser settled by Internet Banking are
+  unchanged.
   Treasurers can list joiner payments whose refunded figure is not backed by a
   Stripe refund with `pnpm run payments:audit-organiser-child-refunds`; it is
   read-only.
