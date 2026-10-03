@@ -60,16 +60,24 @@ export function requestedPromoCodeList(input: PromoCodeRequestFields): Requested
  * carries (#3827). Every request shape — the plural `promoCodes` and the legacy
  * `promoCode` / `removePromoCode` alike — names the BOOKER's codes, and a
  * working-bee discount is not the booker's code: the system applied it, and the
- * booker cannot type it. So a stored internal code the list leaves out is
- * carried, first, rather than silently dropped (D-3813-3). The legacy fields
- * otherwise keep their meaning: they replace or remove the booker's code.
+ * booker cannot type it.
+ *
+ * WHICH OF THE TWO READINGS DEPENDS ON THE CLUB'S `multiPromoCodes` SWITCH, and
+ * that is the point of passing it (REQUIRED, never defaulted):
+ * - ON (D-3813-3): a stored internal code the list leaves out is carried,
+ *   first, rather than silently dropped — the booker's codes combine with it.
+ * - OFF (#3826): a booking holds one code, as it always has, so the request
+ *   means exactly what it meant before multi-code existed: a code replaces the
+ *   working-bee discount and a removal removes it. Nothing is carried, so a
+ *   single-code club sees no behaviour change while the switch is off.
  */
 export function requestedPromoCodeListFor(
   input: PromoCodeRequestFields,
   stored: ReadonlyArray<{ code: string; internal: boolean }>,
+  multiPromoCodes: boolean,
 ): RequestedPromoCode[] | null {
   const requested = requestedPromoCodeList(input);
-  if (requested === null) return requested;
+  if (requested === null || !multiPromoCodes) return requested;
   const listed = new Set(requested.map((entry) => entry.code));
   const carried = stored
     .filter((code) => code.internal && !listed.has(code.code))

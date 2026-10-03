@@ -9,6 +9,7 @@ import { applyBookingPromotions, repriceBookingPromotions } from "@/lib/booking-
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import {
   keptStoredPromoRedemption,
+  requestChangesPromoCodes,
   requestedPromoCodeListFor,
   splitRequestedPromoCodes,
 } from "@/lib/booking-modify-promo-request";
@@ -2373,9 +2374,16 @@ export async function applyPromoCodeChanges(
   const stored = bookingPromoRedemptions(booking);
   const existing = stored.filter((redemption) => redemption.promoCode);
   const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
+  // #3826: the switch decides what the request MEANS (a working-bee discount
+  // is carried only while it is on), so it is read whenever codes are asked
+  // for, and the same answer gates the list's refusal below.
+  const multiPromoCodes = requestChangesPromoCodes(input)
+    ? await multiPromoCodesEnabled(tx)
+    : false;
   const requested = requestedPromoCodeListFor(
     input,
     existing.map((redemption) => redemption.promoCode),
+    multiPromoCodes,
   );
 
   if (requested === null) {
@@ -2409,8 +2417,7 @@ export async function applyPromoCodeChanges(
   // The booker's new list (D-3813-2: add, remove or reorder in one request).
   const listRefusal = promoCodeListRefusal({
     ...splitRequestedPromoCodes(requested, existing),
-    // Read only when it can matter: one code is never refused by the switch.
-    multiPromoCodes: requested.length > 1 ? await multiPromoCodesEnabled(tx) : true,
+    multiPromoCodes,
   });
   if (listRefusal) throw new ApiError(listRefusal, 400);
   const existingByCode = new Map(existing.map((redemption) => [redemption.promoCode.code, redemption]));

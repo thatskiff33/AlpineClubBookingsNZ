@@ -2286,9 +2286,15 @@ export async function POST(
     // the save's pricing (`applyBookingPromotions`), unlocked and read-only, so
     // the preview and the save cannot tell different stories (#2390). `null`
     // means no promo change: every code the booking carries is re-priced.
+    // #3826: the switch decides what the request means; the save reads it
+    // the same way (`applyPromoCodeChanges`).
+    const multiPromoCodes = requestChangesPromoCodes(promoRequest)
+      ? await multiPromoCodesEnabled(prisma)
+      : false;
     const requested = requestedPromoCodeListFor(
       promoRequest,
       promoRedemptions.map((redemption) => redemption.promoCode),
+      multiPromoCodes,
     );
     const quoteGuestNightRates = getGuestNightRates();
     const existingByCode = new Map(
@@ -2306,7 +2312,7 @@ export async function POST(
     let refusal: string | null = requested
       ? promoCodeListRefusal({
           ...splitRequestedPromoCodes(requested, promoRedemptions),
-          multiPromoCodes: requested.length > 1 ? await multiPromoCodesEnabled(prisma) : true,
+          multiPromoCodes,
         })
       : null;
     const applications: Array<PromotionApplicationInput & { kept: boolean }> = [];
