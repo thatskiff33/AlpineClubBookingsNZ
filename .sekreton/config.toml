@@ -1,0 +1,10 @@
+schema = 1
+
+[setup]
+run = "{ node -v | grep -q '^v24\\.' || { mkdir -p \"$SETUP_TOOL_DIR/bin\" && curl -fsSL https://nodejs.org/dist/v24.15.0/node-v24.15.0-linux-x64.tar.xz | tar -xJ -C \"$SETUP_TOOL_DIR\" && ln -sf \"$SETUP_TOOL_DIR\"/node-v24.15.0-linux-x64/bin/* \"$SETUP_TOOL_DIR/bin/\"; }; } && { command -v pnpm >/dev/null || npm install -g --prefix \"$SETUP_TOOL_DIR\" pnpm@11.27.1; } && pnpm install --frozen-lockfile && env DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tacbookings pnpm run db:generate"
+
+[jobs.lint]
+run = "pnpm run lint"
+
+[jobs.knip]
+run = "env AUTH_SECRET=ci-auth-secret NEXTAUTH_SECRET=ci-auth-secret NEXTAUTH_URL=http://localhost:3000 AUTH_TRUST_HOST=false CRON_SECRET=ci-cron-secret DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tacbookings STRIPE_SECRET_KEY=sk_test_fake NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_fake XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=false XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS=false XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS=false pnpm exec knip"
