@@ -1510,30 +1510,11 @@ export async function respondToBookingRequestQuote(input: {
           409
         );
       }
-      // #2936: THE FOURTH WRITER A CORRECTION RE-OPENS PAST, and the one that is
-      // deliberately NOT lock-fenced. The claim above has the defect shape this
-      // issue named — it excludes only DECLINED and CANCELLED, and a corrected
-      // request is VERIFIED — so a requester pressing "ask for changes" on a
-      // quote link that was live a moment ago still flips a freshly corrected
-      // request to MODIFICATION_REQUESTED/QUERY_PENDING.
-      //
-      // That is allowed to stand, and the reason is what it writes: a status and
-      // the requester's own words. No price, no accepted snapshot, no hold, no
-      // conversion — nothing the accept re-arm had to be fenced for. Refusing it
-      // would throw away a message from the person whose booking it is, and both
-      // statuses it can reach are correctable and swept exactly as VERIFIED is.
-      // If a future version of this branch ever writes a price or converts, it
-      // joins the fenced set and takes the key; until then the honest answer is
-      // this comment rather than a lock. Registered as a deliberate omission in
-      // `docs/CONCURRENCY_AND_LOCKING.md` and `INV-REQ-009`.
-      //
-      // The QUOTE write is narrowed, though, because that part is not cosmetic:
-      // a bare update by id re-stamps a quote the correction already SUPERSEDED
-      // (overwriting the officer's mark with the requester's timestamp) and
-      // would flip a CANCELLED quote to SUPERSEDED. Claiming DRAFT/SENT is what
-      // every other supersede writer in this tree already does — the quote save
-      // above, the withdraw and the decline in `booking-request.ts` — so a
-      // retired quote is simply left as the writer that retired it left it.
+      // #3415 supersedes #2936's deliberately unfenced message writer. The
+      // global lock and loaded-version QUOTE_SENT claim above exclude stale
+      // messages after acceptance, correction, decline or cancellation. Only
+      // the still-SENT quote is superseded; a retired quote keeps its existing
+      // mark. The request and quote writes commit together (INV-REQ-009).
       await tx.bookingRequestQuote.updateMany({
         where: {
           id: quote.id,
@@ -1578,44 +1559,13 @@ export async function respondToBookingRequestQuote(input: {
   // Acceptance is request-then-quote in ONE global-lock transaction. The old
   // two-commit shape exposed accepted request data while its token still named a
   // live SENT quote. Keep this lock with corrections and cancellation (INV-LOCK-002).
-  // status-guarded `updateMany`, NOT a plain `update`, to close the
-  // decline-wins-first resurrection race (#1423): an admin decline (or a
-  // requester quote-cancel) may have finalised this request to DECLINED/CANCELLED
-  // and released its capacity hold AFTER this accept passed the SENT-token check.
-  // A plain overwrite to PRICED would resurrect that finalised request — approve
-  // would see a null convertedBookingId, so its #1232 idempotency replay would
-  // NOT fire and it would mint a brand-new PENDING booking + Payment + PaymentLink
-  // off a declined request (money/capacity correctness bug). We therefore refuse
-  // to re-arm only when the request is already DECLINED/CANCELLED.
-  //
-  // We deliberately use `notIn [DECLINED, CANCELLED]` rather than
-  // `status = QUOTE_SENT`: a request already CONVERTED/APPROVED (the #1232
-  // double-accept case) must STILL re-arm to PRICED so approve's idempotency
-  // replay (booking-request.ts ~900-919 — reads the still-set convertedBookingId
-  // and returns the existing booking) keeps returning the one real booking. Only
-  // a decline/cancel finalisation blocks the re-arm.
-  //
-  // #2936: the request-status guard above cannot see a CORRECTION. Correcting a
-  // request drops it back to VERIFIED — neither DECLINED nor CANCELLED — while
-  // SUPERSEDING every DRAFT/SENT quote in the same transaction. Left as a bare
-  // update this accept would write the RETIRED quote's price and snapshot onto
-  // the corrected envelope and then convert it: a booking for the corrected
-  // dates and party at yesterday's price, resolved to the corrected school's
-  // organisation, with that organisation's invoice queued to Xero. Money and
-  // the provider. So the re-arm now runs in a transaction that takes the global
-  // key the correction holds — as the CANCEL branch above already does — and
-  // re-reads the quote under it. The quote's own status is the exact evidence: a
-  // correction retires it, and nothing else moves a SENT quote out of the live
-  // set beneath a token that loaded it as SENT.
-  //
-  // The MODIFY/QUERY branch takes no key and is not fenced against a correction
-  // at all: see the note there for what it writes and why that is deliberate.
-  // "Every branch is fenced" would be the overclaim — three of the four are.
-  //
-  // The live set is deliberately "not retired" rather than "still SENT": a
-  // double-accept (#1232) finds the quote already ACCEPTED and must STILL
-  // re-arm, so approve's idempotency replay keeps returning the one real
-  // booking. Only SUPERSEDED and CANCELLED block it.
+  // #3415: require SENT, QUOTE_SENT, no accepted/converted pointer and a live
+  // request-owned AWAITING_REVIEW hold. Claim ACCEPTED on request then quote;
+  // either lost claim rolls both writes back. Exact states prevent the old
+  // decline/cancel resurrection (#1423) and retired-price restoration after a
+  // correction (#2936). Acceptance retains the hold and creates no payment or
+  // conversion; those belong to officer approval. A matching accepted retry
+  // returns read-only above, including after approval, without re-arming PRICED.
   const accepted = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const live = await tx.bookingRequestQuote.findUnique({

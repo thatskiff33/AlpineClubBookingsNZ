@@ -1077,13 +1077,13 @@ SENT  -> (link expires; the quote-expiry cron releases the held booking, frees t
 The whole quote lifecycle holds capacity (#1254). Sending a quote reserves the
 beds/guest-nights before the send is finalized, so a quote is never emailed for
 dates it cannot reserve: if the lodge is full the send fails with `409` and no
-quote is marked SENT. The hold spans accept (the held row becomes the converted
-PENDING booking and keeps holding, see the booking-status section above) and is
-released on cancel, expiry, or a capacity-reduction bump (see the #1317 note in
-the booking-status section above).
+quote is marked SENT. Acceptance retains the `AWAITING_REVIEW` hold for officer
+review (#3415); only officer approval converts it. Requester cancel and quote
+expiry can release an unaccepted hold. Officer decline can release an accepted
+hold after retiring the request (see the booking-status section above).
 
 Decline and the hold (#1365, broadened #1423): the admin **decline** route
-declines a request in any of the six held/editor states its status-guarded flip
+declines a request in any of the seven held/editor states its status-guarded flip
 claims — `VERIFIED`, `PRICED`, `QUOTED`, `QUOTE_SENT`, `ACCEPTED`, `QUERY_PENDING`,
 `MODIFICATION_REQUESTED` (`DECLINABLE_BOOKING_REQUEST_STATUSES`). This is the same
 set the admin panel shows the Decline button for, and every one can carry a live
@@ -1101,9 +1101,10 @@ detached. SCHOOL requests use the same function (no type branch).
 
 Correction and the quote (#2936): an officer may **correct** an unconverted
 request — its dates, its party, its catering preference, its school name and its
-contact details — from the same six states decline claims
-(`CORRECTABLE_BOOKING_REQUEST_STATUSES`), and correcting it **re-opens** it. Every
-`DRAFT` and `SENT` quote flips to `SUPERSEDED` in the same transaction as the
+contact details — from the six undecided states in
+`CORRECTABLE_BOOKING_REQUEST_STATUSES` (decline also admits `ACCEPTED`), and
+correcting it **re-opens** it. Every `DRAFT` and `SENT` quote flips to
+`SUPERSEDED` in the same transaction as the
 correction's status-and-version-guarded claim, `priceCents` is cleared and the
 request returns to `VERIFIED`, so no price or quote can outlive the shape it was
 computed from. `SUPERSEDED` again rather than `CANCELLED` — an officer retired
@@ -1112,10 +1113,9 @@ it — and again it is what kills the requester's live link, since
 
 An **accepted** quote blocks the correction outright (`409`), on either
 evidence: a quote row at `ACCEPTED`, or the request's own `acceptedQuoteId`,
-which is set by the accept re-arm before conversion runs and therefore survives a
-conversion that did not finish. Re-opening the agreement is the officer's
-deliberate act — decline it or issue a fresh quote — not a side effect of an
-edit. The claim itself additionally fences on `convertedBookingId: null` and
+which is set atomically with quote acceptance before any officer conversion.
+Declining the agreement is the officer's deliberate act; editing cannot re-open
+it. The claim itself additionally fences on `convertedBookingId: null` and
 `acceptedQuoteId: null`, so the refusal holds under a race as well as at the
 guard.
 
@@ -1144,34 +1144,28 @@ officer's Release button is the only thing that frees them. That is the same rul
 that protects a deliberate re-hold (#1296) rather than a gap in this sweep, and
 it is why the page says "once the window lapses" rather than "are swept".
 
-**What a correction is NOT fenced by, and what it is.** `VERIFIED` is a LIVE
-status, not decline's terminal one, so every writer guarding on "not `DECLINED`,
-not `CANCELLED`" sees a corrected request as ordinary. Three of the four quote
-writers are therefore fenced individually: the quote save claims on the request's
-`version`, the quote send claims the quote row while it is still `DRAFT`/`SENT`,
-and the accept re-arm takes `pg_advisory_xact_lock(1)` and re-reads the quote's
-status under it, refusing only a `SUPERSEDED`/`CANCELLED` one so #1232's
-double-accept replay still works.
+**Correction and response fences (#2936, #3415).** A correction leaves the live
+`VERIFIED` state, so the historical exclusion of only `DECLINED`/`CANCELLED`
+could not protect the corrected envelope. Quote save claims the request's
+`version`; quote send claims the quote while still `DRAFT`/`SENT`. Acceptance
+takes `pg_advisory_xact_lock(1)`, re-reads the `SENT` quote and its request-owned
+`AWAITING_REVIEW` hold, and claims `QUOTE_SENT -> ACCEPTED` with null accepted and
+converted pointers. The quote's `SENT -> ACCEPTED` claim commits in that same
+transaction; a lost claim rolls both writes back. Acceptance creates no payment
+or conversion. A matching already-accepted retry is read-only, including after
+officer approval, and never re-arms `PRICED`.
 
-The fourth — the `MODIFY`/`QUERY` response — is **deliberately left unfenced**,
-so a requester acting on a quote link that was live a moment ago can still move a
-freshly corrected request to `MODIFICATION_REQUESTED`/`QUERY_PENDING`. It writes
-a status and the requester's own message and nothing else: no price, no accepted
-snapshot, no hold, no conversion, and both states it can reach are correctable
-and swept exactly as `VERIFIED` is. Only its quote write was narrowed, to
-`DRAFT`/`SENT`, so it can no longer re-stamp the supersede mark the correction
-made. `docs/CONCURRENCY_AND_LOCKING.md` carries the same split.
+`MODIFY` and `QUERY` also take the global lifecycle lock (#3415, superseding
+#2936's deliberately unfenced message writer). They re-read and claim the
+loaded-version `QUOTE_SENT` request with no accepted pointer, require the quote
+still `SENT`, then supersede that quote. A response that loses to acceptance,
+correction, decline or cancellation returns `409` before changing either record.
+See the [locking guide](CONCURRENCY_AND_LOCKING.md).
 
 Because `QUOTE_SENT` (and other quote-bearing states) DO carry a live `SENT`
 quote a requester could still act on, broadening decline reintroduces a
 decline-vs-requester race. A DECLINED request is made untouchable by every other
 actor:
-
-**#3415 update.** `MODIFY` and `QUERY` now join the global lifecycle lock. They
-re-read and claim the loaded-version `SENT` quote and `QUOTE_SENT` request with
-no accepted pointer. A response that loses to acceptance, correction, decline,
-or cancellation returns `409` before changing either record; its held booking
-therefore remains protected for officer review.
 
 - **Primary — retire the quote atomically with the claim.** The decline flips the
   outstanding `SENT` quote to `SUPERSEDED` in the SAME transaction as the
@@ -1181,21 +1175,21 @@ therefore remains protected for officer review.
   (accept / modify / query / cancel) on a still-live link, and makes the
   pre-expiry reminder cron — which selects only `SENT` quotes — skip the declined
   request instead of nudging it.
-- **accept-wins-first:** the requester accept converts the held booking to a live
-  `PENDING` booking before the decline runs. Decline passes `requireRequestHold:
-  true` to the shared cancel path (#1406), which then refuses (`409`, no side
-  effect) rather than clobber the just-converted booking.
+- **accept-wins-first:** acceptance leaves the request `ACCEPTED` and its hold
+  `AWAITING_REVIEW`. An officer may still decline: the guarded `DECLINED` claim
+  precedes release through the shared cancel path. Generic cancellation refuses
+  an `ACCEPTED` linked request under the global lock; decline's prior retirement
+  makes its release permissible. `requireRequestHold: true` requires the held
+  booking to remain `AWAITING_REVIEW`, rather than detecting quote acceptance.
 - **decline-wins-first (defence-in-depth for a POST already past its token
   load):** the decline claims `DECLINED` and releases the hold first
   (`heldBookingId` detached, `convertedBookingId` still null). The concurrent
-  requester's accept re-arm to `PRICED`, its modify/query re-status to
-  `MODIFICATION_REQUESTED`/`QUERY_PENDING`, and the losing-accept capacity revert
-  to `QUOTE_SENT` are each a **status-guarded** `updateMany` with `status notIn
-  [DECLINED, CANCELLED]`. A late accept or modify/query `409`s (no new booking and
-  no resurrection), and the revert simply does not un-decline the request. The
-  guards deliberately still allow a re-arm from `CONVERTED`/`APPROVED` so approve's
-  `convertedBookingId` idempotency replay (#1232 double-accept) keeps returning the
-  one existing booking.
+  requester's acceptance and modify/query responses require the exact
+  `QUOTE_SENT`/`SENT` pair under the global lock. A late response `409`s without
+  resurrecting the request, changing its accepted terms, or creating a booking.
+- **approval-wins-first:** only officer approval converts the hold. Its version
+  claim prevents a stale decline from retiring the converted request; a hold
+  release also refuses a booking that has left `AWAITING_REVIEW`.
 - **admin re-send (symmetric admin-side backstop, #1504):** the admin quote
   re-send (`sendBookingRequestQuote`) closes the same narrow TOCTOU on the admin
   side. Its flip to `QUOTE_SENT` is a **status-guarded** `updateMany` that claims
