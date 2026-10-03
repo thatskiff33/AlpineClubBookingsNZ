@@ -333,7 +333,26 @@ lodge capacity lock: the over-capacity warn-and-confirm when the lodge is
 already full on those nights, and the whole-lodge hold question (`INV-CAP-038`)
 before narrowing another booking's sole occupancy, taking the global cohort key
 first only when the officer accepts it. Only the officer's manual create and edit
-set the tick; the cron and the school writer never do.
+set the tick (the form, or the row's Custodian button); the cron and the school
+writer never do.
+
+Two stated limits of the tick, neither of which moves an admission number in the
+wrong direction silently:
+
+- *Planner versus count on a whole-lodge-held night.* The count subtracts a
+  bedless ticked custodian from what the hold represents; the bed planner
+  (`wholeLodgeHoldOccupiedBedNightsForPlanner`) has no bed to skip for them, so
+  it still emits every active bed for the hold. A held night is pinned to the
+  full lodge either way (`INV-CAP-038`), and outside held nights admission is
+  capped at capacity less the custodian, so the planner only ever sees one spare
+  bed.
+- *A ticked custodian who is also a guest.* The tick and a guest row on a
+  booking at the same lodge are two occupants to the counter, so a ticked
+  custodian with no bed who also books takes two spaces on those nights. The
+  counter does not de-duplicate them: the admission engines add the requested
+  party on top of the count, so a de-duplication inside the counter would not
+  reach the booking being admitted. The create returns a
+  `custodianBookedWarning` the page shows instead.
 
 **Night semantics.** The hold covers `startDate <= night <= endDate`,
 **inclusive** — matching the existing hut-leader coverage semantics. This is

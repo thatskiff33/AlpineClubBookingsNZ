@@ -47,7 +47,7 @@ no hut-leader request or assignment write until a real lodge returns.
 
    ![Hut Leader Assignments page showing the pick-the-nights calendar with "Needs leader" nights, the choose-the-leader step, and the assignments table](../images/admin/admin-hut-leaders.png)
 
-2. **Pick the nights to cover** — set the **Start Date** and **End Date**, or click
+2. **Pick the nights to cover** — set the **Start Date** and **Last night**, or click
    **Assign** on an upcoming-date card to pre-fill a single night.
 3. **Choose the hut leader** — the page lists members eligible for that range
    (adopting their conflict-free suggested range), or you can pick any member.
@@ -58,9 +58,10 @@ no hut-leader request or assignment write until a real lodge returns.
    lodge — the morning they check out, a night between two of their stays, or a
    stay that has been cancelled — the page refuses it, names the first night
    they are not staying and offers **Change last night to …** with their last
-   night stayed. There is no override. Only paid (or completed) stays count. A
-   custodian is the one exception: tick **Custodian (lives on site)**, or hold a
-   bed for them (see below).
+   night stayed. There is no override. Only paid (or completed) stays count,
+   and only nights the member is a **guest** on: owning a booking they are not
+   on does not count. A custodian is the one exception: tick **Custodian (lives
+   on site)**, or hold a bed for them (see below).
 4. Review the summary — nights covered, red nights it fills, and any conflicts —
    then click to confirm. An assignment overlapping an existing one by more than a
    day is blocked.
@@ -95,6 +96,19 @@ the lodge without ever making a booking.
 
 Without the tick or a bed, an assignment for someone who is not staying is
 refused. **No bed — role only** is only for a leader who is staying on a booking.
+
+A custodian should not also be a guest on a booking at the same lodge for the
+same nights unless they really take a second bed: the tick and the booking each
+take a space. The page tells you after confirming if that is the case.
+
+**Marking an existing assignment as custodian.** Each row in the assignments
+table has a **Custodian (lives on site)** button (the house icon). Press it to
+mark that row a custodian, or press it again to untick. Use it for a custodian
+created before the tick existed, typically one who holds a bed but was never
+ticked: tick them first, then **Release bed** if you want to stop holding the
+bed. Unticking, or releasing the bed of an unticked row, is refused if the
+member has no stay on those nights, and the message says to mark them
+Custodian first.
 
 ### Hold a bed for a custodian
 
@@ -155,15 +169,19 @@ row, so you never have to delete an assignment to change its bed:
   the button every "clear the bed first" message elsewhere in the app is asking
   you to press. It keeps working even if the `bedAllocation` module is later
   turned off — a bed held while it was on is still a real bed with someone in it.
+  The held bed is what let the member lead without a stay, so releasing it from
+  an unticked row whose member is not staying is refused: press **Custodian**
+  on the row first.
 - **Change bed** (the bed icon) opens the same picker in the row, checked against
   that assignment's own dates. It also works on rows the automatic assignment
   created, which never come with a bed.
 
 > **The end date is a night, not a departure.** The hold covers the start date
-> to the end date **inclusive** — the night of the end date included. Every
+> to the end date **inclusive** — the night of the end date included. Every new
 > assignment's end date is the last night its leader sleeps there, and the
-> automatic assignment writes the night before check-out, so adding a bed to any
-> row holds it for exactly the nights covered.
+> automatic assignment writes the night before check-out, so adding a bed holds
+> it for exactly the nights covered. An older row may still end on the check-out
+> day; trim it before adding a bed.
 
 ### Manage assignments and kiosk PINs
 
@@ -208,12 +226,13 @@ away.
 
 | Control | What it does | Notes / constraints |
 | --- | --- | --- |
-| Start Date / End Date | The nights the leader covers | NZ date-only nights; the end date is the last night stayed. Every night must be one the member is staying at this lodge, unless the assignment holds a bed. An >1-day overlap with an existing assignment is blocked, EXCEPT against a school group's teacher assignments, which never block you |
+| Start Date / Last night | The nights the leader covers | NZ date-only nights; the last night is the last night stayed, never the leave day. Every night must be one the member is staying at this lodge as a guest, unless the assignment is ticked **Custodian (lives on site)** or holds a bed. An >1-day overlap with an existing assignment is blocked, EXCEPT against a school group's teacher assignments, which never block you |
 | Eligible members list | Members whose bookings make them a natural fit | Adopts each member's conflict-free suggested range |
 | Pick any member | Assign a member who is not in the suggestions (e.g. a custodian) | Keeps the range you picked. A member with no stay on those nights can be assigned only as a custodian (the tick) or with a held bed |
 | Custodian (lives on site) | Marks the leader as living at the lodge | Counts as staying every covered night with no booking, and takes one space off capacity on each (once, even with a bed). Available with bed allocation on or off. Never set by the automatic assignment or a school booking |
 | Hold a bed (optional) | Holds one bed for every covered night, with no booking | Default is **No bed — role only** (no capacity effect unless ticked custodian). Only offered while the `bedAllocation` module is on. Inclusive of the end date's night. Each choice names the bed type, so a double is obvious before you take it. If a booking already has the whole lodge on any covered night, you are asked to accept narrowing it by that one bed before anything is written |
-| Release bed (undo icon) | Hands the held bed back and keeps the assignment | Available whether or not the `bedAllocation` module is on — a hold made while it was on still occupies a real bed |
+| Custodian (house icon, on a row) | Ticks or unticks **Custodian (lives on site)** on an existing assignment | Same capacity questions as the form. Unticking a row with no bed and no stay is refused. Works with bed allocation on or off |
+| Release bed (undo icon) | Hands the held bed back and keeps the assignment | Available whether or not the `bedAllocation` module is on — a hold made while it was on still occupies a real bed. Refused on an unticked row whose member is not staying: tick Custodian first |
 | Change bed (bed icon) | Opens the bed picker for that row's own dates | Works on automatically created assignments too, which never come with a bed |
 | Reset kiosk PIN (key icon) | Issues a new kiosk PIN for that leader | Shown once; emailed if delivery works; old PIN is revoked |
 | Delete (trash icon) | Removes the assignment | Frees those nights (they may go red again). A held bed goes straight back to the bookable pool, and any booking holding the whole lodge on those nights covers it again |
@@ -229,7 +248,7 @@ away.
 | The dashboard lists an uncovered night at a lodge you have archived, shown as "*Lodge name*, archived" | Archiving a lodge stops new bookings but does not cancel the ones it already had. Those guests still arrive and still need a leader, so the night is still counted and is labelled archived. It will not clear itself: the nightly automatic assignment only ever assigns at active lodges | Decide which of the two you meant. To cover it, make the lodge active again (**Admin → Lodges**), assign a leader here, and archive it again afterwards. To be rid of it, cancel or move the remaining bookings at that lodge — the row goes when the last one does |
 | Hut Leaders is missing from the sidebar / 404s | The `hutLeaders` module is off | Enable it under **Admin → Setup → Modules** — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
 | Everything is read-only ("… can view … but cannot change them") | Your admin role has lodge view but not edit | Ask a full admin for **lodge edit** access |
-| "The member is not staying at this lodge on the night of …" | One of the nights is not one they sleep at this lodge: usually the end date is their check-out day, or a stay has been cancelled | Press **Change last night to …** to end on their last night stayed, or pick a member who is staying. To assign someone who lives on site, tick **Custodian (lives on site)** |
+| "The member is not staying at this lodge on the night of …" | One of the nights is not one they sleep at this lodge: usually the last night is their check-out day, a stay has been cancelled, or they own the booking but are not a guest on it | Press **Change last night to …** to end on their last night stayed, or pick a member who is staying. To assign someone who lives on site, tick **Custodian (lives on site)** (or the row's Custodian button for an existing assignment). Pressing **Release bed** gives this message when the member is not staying: press **Custodian** on the row first |
 | "This custodian assignment puts the lodge over capacity" | A custodian takes a space, and the lodge is already full on those nights | Read the nights listed and confirm if the custodian really is there, or free a night first |
 | "This member overlaps an existing assignment" | The range overlaps another leader's by more than a day. A school group's teacher assignments are excluded and never cause this | Shorten the range or delete the conflicting assignment |
 | The label says "Custodian"/"Warden", not "Hut Leader" | The club renamed the hut-leader label in its identity settings | Expected — this page, the allocation board's band and every refusal message on screen all follow the club's label |
@@ -242,7 +261,7 @@ away.
 | "That bed already has guests allocated on …" | A guest is placed on that bed on one or more of the covered nights | Clear those nights on [Bed Allocation](bed-allocation.md) first, then set the bed here. Nothing is ever displaced automatically |
 | "That bed is already held by another hut-leader assignment on …" | Two assignments want the same bed on the same night | A one-day handover overlap is fine, but only on **different** beds — give the incoming custodian another bed, or trim a date |
 | "Holding that bed puts the lodge over capacity" | The lodge is already full on those nights | This is often correct — the custodian really is sleeping there. The card lists the nights and, separately, any live booking those figures could **not** count (an overridden booking still to settle), so read both before you confirm. Confirm to proceed, or free a night first |
-| The bed is held for one night longer than expected | The end date is inclusive — it is the last night held, not the day the custodian leaves | Set the end date to the last night they sleep there |
+| The bed is held for one night longer than expected | The last night is inclusive — it is the last night held, not the day the custodian leaves. Older assignments, including older automatic ones, may still end on the check-out day | Set the last night to the last night they sleep there |
 | "Cannot deactivate/delete this bed while it is held by a hut-leader assignment" | A live or historic assignment holds that bed | Press **Release bed** on that row (or delete the assignment) first |
 | The board shows a custodian-conflict warning | An allocation row is sitting on a held bed-night — usually written just before a deploy finished rolling out | Remove the allocation on [Bed Allocation](bed-allocation.md), or change the custodian's bed here |
 
