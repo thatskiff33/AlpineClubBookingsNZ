@@ -167,7 +167,9 @@ function recordProblems(record, fileName) {
   for (const digest of [record.patch.sha256, ...Object.values(record.reviewedInputs)]) {
     if (!SHA256.test(digest)) problems.push(`${fileName}: \`${digest}\` is not a lowercase SHA256 digest.`);
   }
-  if (!INSTANT.test(record.expires) || Number.isNaN(Date.parse(record.expires))) {
+  // Round-trip, so an impossible date ("2026-02-30", "T24:00:00Z") is refused
+  // rather than silently rolled forward to a different instant than it prints.
+  if (!INSTANT.test(record.expires) || Number.isNaN(Date.parse(record.expires)) || new Date(Date.parse(record.expires)).toISOString().replace(".000Z", "Z") !== record.expires) {
     problems.push(`${fileName}: \`expires\` must be a UTC instant written YYYY-MM-DDTHH:MM:SSZ.`);
   }
   return problems;

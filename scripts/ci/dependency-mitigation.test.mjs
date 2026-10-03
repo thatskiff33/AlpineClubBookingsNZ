@@ -470,6 +470,8 @@ describe("the record itself must be well-formed and unique", () => {
     ["a critical severity", (r) => (r.advisory.severity = "critical"), "a critical one never can"],
     ["a date-only expiry", (r) => (r.expires = "2026-10-10"), "UTC instant"],
     ["an expiry with an offset", (r) => (r.expires = "2026-10-10T00:00:00+13:00"), "UTC instant"],
+    ["an impossible day that would roll forward", (r) => (r.expires = "2026-09-31T00:00:00Z"), "UTC instant"],
+    ["a 24:00 hour that would roll forward", (r) => (r.expires = "2026-10-09T24:00:00Z"), "UTC instant"],
     ["a short commit", (r) => (r.upstream.commit = "d0d575e5"), "40-character"],
     ["a patch outside patches/", (r) => (r.patch.path = "../braces.patch"), "directly under patches/"],
     ["an upper-case digest", (r) => (r.patch.sha256 = r.patch.sha256.toUpperCase()), "lowercase SHA256"],
