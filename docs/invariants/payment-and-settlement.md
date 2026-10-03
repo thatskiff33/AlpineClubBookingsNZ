@@ -1746,8 +1746,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     cancellation's. It queues NO Xero document: the edit's credit note stands.
   - **Promised cash is not refundable twice.** Until it closes, later edits,
     acceptances, paid cancels and refund appeals size refunds off captured
-    cash less the open tasks, `INV-PAY-115`'s included
-    (`refundableCashNetOfOpenHandBacks`), and a reopen is refused past that cash. Completing one, or approving an appeal,
+    cash less open tasks, `INV-PAY-115`'s too
+    (`refundableCashNetOfOpenHandBacks`); a reopen is refused past that cash. Completing one, or approving an appeal,
     takes `lock(1)`. Once the booking is cancelled it is only paid: the
     cancel counted it.
   - **The member is told the club WILL refund by bank transfer**, never that a
