@@ -44,6 +44,10 @@ const mocks = vi.hoisted(() => ({
   sendAdminInternetBankingHoldStartedStayAlert: vi.fn(),
 }));
 
+// #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
+const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}) }));
+vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     payment: {
@@ -549,6 +553,23 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     );
     const emailCall = mocks.sendBookingCancelledEmail.mock.calls[0];
     expect(emailCall[8]).toBe(2000);
+    // #3792: an expired hold is not the member's cancel, so no policy wording.
+    expect(emailCall[10]).toBe("in-full");
+  });
+
+  it("#3611: posts the released booking's reversals, nothing kept, on the release transaction", async () => {
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result.released).toBe(1);
+    expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledTimes(1);
+    expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+      expect.objectContaining({
+        store: txRef.current,
+        bookingId: "booking_ib_1",
+        keptCents: 0,
+        site: "internet-banking-hold-release",
+      }),
+    );
   });
 
   it("skips the kick when the enqueue deduped to no new operation", async () => {

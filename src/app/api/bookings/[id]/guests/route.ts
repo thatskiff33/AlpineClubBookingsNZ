@@ -105,7 +105,10 @@ import {
   handleMemberGuestAddRefusal,
   startMemberGuestRefusalClock,
 } from "@/lib/member-guest-probe-guard";
-import type { MemberGuestAddActor } from "@/lib/member-guest-consent";
+import {
+  guestConsentStatus,
+  type MemberGuestAddActor,
+} from "@/lib/member-guest-consent";
 import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
 import {
@@ -159,9 +162,9 @@ import {
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
+import { computeModificationPricing } from "@/lib/booking-modification-pricing";
 import {
-  computeModificationPriceLines,
-  diffBookingPricing,
   loadModificationLinesAuditFields,
   pricingSideFromStoredGuests,
   pricingSideFromWrittenGuests,
@@ -639,7 +642,16 @@ export async function POST(
         })),
         ...newGuestInputs,
       ];
-      const requiresAdminReview = requiresAdultSupervisionReview(allGuestsForPricing);
+      // The rows themselves, not the pricing view: they carry each guest's
+      // consent (stored, or planned for an added row), and only an agreed adult
+      // counts (#3770, owner decision).
+      const requiresAdminReview = requiresAdultSupervisionReview([
+        ...booking.guests,
+        ...normalizedNewGuests.map((guest) => ({
+          ageTier: guest.ageTier,
+          consentStatus: guestConsentStatus(guest),
+        })),
+      ]);
       const adminReviewReason = requiresAdminReview
         ? ADULT_SUPERVISION_REVIEW_REASON
         : null;
@@ -1188,9 +1200,9 @@ export async function POST(
        * just WRITTEN, re-read here so the new guests' identity, category, rate
        * and night prices are exactly what landed. A parked add stores none.
        */
-      const priceLines = parked
-        ? null
-        : await computeModificationPriceLines(
+      const { priceLines, sides: pricingSides } = parked
+        ? { priceLines: null, sides: null }
+        : await computeModificationPricing(
             { bookingId, site: "guest-add" },
             async () => {
               // The re-read is narration's own I/O and runs INSIDE the guard:
@@ -1208,18 +1220,18 @@ export async function POST(
                 },
               });
               const promoCode = booking.promoRedemption?.promoCode?.code ?? null;
-              return diffBookingPricing(
-                  pricingSideFromStoredGuests(booking.guests, {
-                    promoAdjustmentCents: booking.promoAdjustmentCents,
-                    promoCode,
-                  }),
-                  pricingSideFromWrittenGuests(writtenGuests, {
-                    promoAdjustmentCents: newPromoAdjustmentCents,
-                    promoCode: promoRemoved ? null : promoCode,
-                  }),
-                  priceDiffCents,
-                );
+              return {
+                before: pricingSideFromStoredGuests(booking.guests, {
+                  promoAdjustmentCents: booking.promoAdjustmentCents,
+                  promoCode,
+                }),
+                after: pricingSideFromWrittenGuests(writtenGuests, {
+                  promoAdjustmentCents: newPromoAdjustmentCents,
+                  promoCode: promoRemoved ? null : promoCode,
+                }),
+              };
             },
+            priceDiffCents,
             logger,
           );
 
@@ -1256,6 +1268,18 @@ export async function POST(
           changeFeeCents: 0,
           ...(priceLines ? { priceLines } : {}),
         },
+      });
+
+      // #3582: the same before and after, per night, on the booking ledger —
+      // under the `lock(1)` this transaction took first. A parked add posts
+      // nothing (`INV-MOD-040`); its review's closure does.
+      await postModificationLedgerLines({
+        store: tx,
+        bookingId,
+        lodgeId: booking.lodgeId,
+        bookingModification,
+        sides: pricingSides,
+        site: "guest-add",
       });
 
       /**

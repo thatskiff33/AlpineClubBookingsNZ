@@ -235,7 +235,12 @@ Three side doors into the finished-unpaid state are closed at the door
 ### INV-ADDPAY-003
 
 A booking left with only non-adults (YOUTH/CHILD/INFANT) requires admin
-approval regardless of how it got there or whether it was already paid: every
+approval whether or not it was already paid, on every write that changes its
+party. An adult counts only while operationally present: a member guest from
+beyond the family still waiting to agree does not (`isGuestOperationallyPresent`,
+the paid-up-adult rule's predicate; owner decision, #3770). A consent that
+lapses without a write (an expired row the sweep could not remove) is not
+re-judged until the booking's next write. Every
 edit path — including single-guest self-removal, which is never blocked for a
 written justification — flags the booking (`adminReviewStatus: PENDING`, with
 an automatic note on the removal path) so it lands in the admin review queue.
@@ -1473,9 +1478,9 @@ withholding the refund must not also lose the record that Stripe holds the money
 
 **WHAT THE FENCE DOES NOT CLOSE, STATED RATHER THAN IMPLIED.** A hand-completion
 that commits after the fence read but during the Stripe refund is not caught by it.
-`resolveManualRefundTask` takes no advisory lock, and closing the window would mean
+`resolveManualRefundTask` takes no advisory lock for this kind, and closing the window would mean
 holding `pg_advisory_xact_lock(1)` across a provider round trip, which
-`docs/CONCURRENCY_AND_LOCKING.md` forbids outright. What the fence does is shrink
+`docs/CONCURRENCY_AND_LOCKING.md` forbids outright. The fence shrinks
 the exposure from "any time in the hours or days the task sits `OPEN`" to "the
 duration of one Stripe refund call". **The residue is DETECTED rather than left
 silent:** the record writer re-reads the row under the lock and returns

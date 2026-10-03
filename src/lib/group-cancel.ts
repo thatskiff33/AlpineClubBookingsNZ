@@ -78,6 +78,7 @@ import {
 } from "./cancellation";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "./bed-allocation-lifecycle";
 import { bookingOwner } from "@/lib/booking-owner";
+import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { formatCents } from "@/lib/utils";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
@@ -613,6 +614,19 @@ export async function settleGroupBookingOnOrganiserCancel(
         // worth per child: `hostingSiblingWhere` is same-member only, so a joiner
         // never drags in the organiser or the other joiners.
         await reconcileHostingReviewForSystemCancellation(child.id, tx);
+        // #3611: the child's stay is taken back under the lock(1) this
+        // transaction took first, and NOTHING is kept on the child: it holds no
+        // settlement line (the organiser paid, through one group intent), so a
+        // fee here would leave owed(child) at the fee. Where the kept money
+        // belongs is #3583's to decide. Posts only for a child confirmed on the
+        // ledger, which today none is — the group settle marks it PAID itself.
+        await postCancellationLedgerLines({
+          store: tx,
+          bookingId: child.id,
+          lodgeId: child.lodgeId,
+          keptCents: 0,
+          site: "group-cancel:organiser-settled-child",
+        });
         return queuedOperationId;
       });
     } catch (err) {

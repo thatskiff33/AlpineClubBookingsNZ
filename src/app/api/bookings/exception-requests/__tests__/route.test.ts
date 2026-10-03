@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   cancelNew: vi.fn(),
   nbFindMany: vi.fn(),
   bcrFindMany: vi.fn(),
+  resolveLodge: vi.fn(),
+  handleRefusal: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -33,7 +35,15 @@ vi.mock("@/lib/email", () => ({
 }));
 vi.mock("@/lib/lodges", () => ({
   getDefaultLodgeId: (...a: unknown[]) => mocks.getDefaultLodgeId(...a),
+  resolveOptionalActiveLodgeId: (...a: unknown[]) => mocks.resolveLodge(...a),
 }));
+// #3770: the collapsed-refusal handling is asserted at its seam; the helper's
+// own throttle, audit and floor have their own suite.
+vi.mock("@/lib/member-guest-probe-guard", () => ({
+  handleMemberGuestAddRefusal: (...a: unknown[]) => mocks.handleRefusal(...a),
+  startMemberGuestRefusalClock: () => 0,
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     newBookingPolicyExceptionRequest: {
@@ -63,6 +73,7 @@ import {
   NoEligiblePolicyExceptionError,
   OpenExceptionRequestConflictError,
 } from "@/lib/booking-exception-request-service";
+import { memberGuestCrossFamilyRefusal } from "@/lib/booking-guests";
 
 const CREATED = {
   id: "req-1",
@@ -94,6 +105,8 @@ beforeEach(() => {
   mocks.checkRateLimit.mockResolvedValue({ success: true, resetAt: Date.now() + 1000 });
   mocks.getClientIp.mockReturnValue("0.0.0.0");
   mocks.getDefaultLodgeId.mockResolvedValue("lodge_1");
+  mocks.resolveLodge.mockImplementation(async (_db: unknown, id?: string) => id ?? "lodge_1");
+  mocks.handleRefusal.mockResolvedValue(undefined);
   mocks.createNew.mockResolvedValue(CREATED);
   mocks.sendAlert.mockResolvedValue(undefined);
 });
@@ -125,6 +138,33 @@ describe("POST /api/bookings/exception-requests", () => {
     mocks.createNew.mockRejectedValue(new OpenExceptionRequestConflictError());
     const res = await POST(postReq(VALID_BODY));
     expect(res.status).toBe(409);
+  });
+
+  // #3770, privacy F7: a bogus lodge id used to reach the request row's foreign
+  // key as an unhandled 500, and only once every named member had resolved.
+  it("refuses a lodge id that names no active lodge, before the service runs", async () => {
+    mocks.resolveLodge.mockResolvedValue(null);
+    const res = await POST(postReq({ ...VALID_BODY, lodgeId: "no-such-lodge" }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Unknown or inactive lodgeId" });
+    expect(mocks.createNew).not.toHaveBeenCalled();
+  });
+
+  // #3770, privacy F8: the door's collapsed refusals owe the add paths' audit
+  // row, throttle unit and timing floor.
+  it("sends a collapsed member-guest refusal through the probe guard", async () => {
+    const refusal = memberGuestCrossFamilyRefusal(["member-x"]);
+    mocks.createNew.mockRejectedValue(refusal);
+    const res = await POST(postReq(VALID_BODY));
+    expect(res.status).toBe(403);
+    expect(mocks.handleRefusal).toHaveBeenCalledTimes(1);
+    expect(mocks.handleRefusal.mock.calls[0]?.[0]).toMatchObject({
+      actorMemberId: "m1",
+      error: refusal,
+      route: "bookings/exception-requests",
+      throttle: "CHARGE_NOW",
+      startedAt: 0,
+    });
   });
 
   it("rejects an unauthenticated caller with 401", async () => {

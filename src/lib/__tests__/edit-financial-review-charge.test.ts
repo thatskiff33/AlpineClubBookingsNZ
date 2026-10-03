@@ -35,6 +35,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
+  executeRaw: vi.fn().mockResolvedValue(0),
   manualRefundTaskFindUnique: vi.fn(),
   manualRefundTaskUpdateMany: vi.fn(),
   manualRefundTaskFindMany: vi.fn(),
@@ -59,6 +60,10 @@ const mocks = vi.hoisted(() => ({
   enqueueEditFinancialReviewRefundRecovery: vi.fn(),
   markEditFinancialReviewRefundRecoverySucceeded: vi.fn(),
   enqueueAdditionalPaymentIntentRecovery: vi.fn(),
+  // #3402: the edit's own recovery row, armed through one helper.
+  enqueueEditFinancialReviewChargeRecovery: vi.fn(),
+  // #3402: the raise writes amounts only, status-fenced, onto the existing row.
+  writeRaisedAdditionalRequestAmount: vi.fn(),
   updatePaymentIntentAmount: vi.fn(),
   // #3341: the minter and the supersede run for REAL (`INV-OPS-015`); these are
   // their leaves - the provider, the ledger read of asks to retire, and the
@@ -77,6 +82,13 @@ const mocks = vi.hoisted(() => ({
 
 // #3599: the credit rows' ledger lines are posted by one sync, proved in its own
 // suites and against Postgres; this suite tests what it always tested.
+// #3582: an edit's and a review closure's ledger lines are posted by one sync,
+// proved in its own suites and against Postgres; this suite tests what it
+// always tested.
+vi.mock("@/lib/booking-ledger-modification-sync", () => ({
+  postModificationLedgerLines: vi.fn().mockResolvedValue(undefined),
+  postReviewClosureLedgerLines: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/booking-ledger-credit-sync", () => ({
   syncBookingLedgerCredits: vi.fn().mockResolvedValue(undefined),
 }));
@@ -131,6 +143,8 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => {
       mocks.refundPaymentTransactions(...a),
     upsertPaymentIntentTransaction: (...a: unknown[]) =>
       mocks.upsertPaymentIntentTransaction(...a),
+    writeRaisedAdditionalRequestAmount: (...a: unknown[]) =>
+      mocks.writeRaisedAdditionalRequestAmount(...a),
   };
 });
 vi.mock("@/lib/stripe", () => ({
@@ -155,9 +169,26 @@ vi.mock("@/lib/payment-recovery", () => ({
     mocks.markEditFinancialReviewRefundRecoverySucceeded(...a),
   enqueueAdditionalPaymentIntentRecovery: (...a: unknown[]) =>
     mocks.enqueueAdditionalPaymentIntentRecovery(...a),
+  enqueueEditFinancialReviewChargeRecovery: (...a: unknown[]) =>
+    mocks.enqueueEditFinancialReviewChargeRecovery(...a),
+  // #3402: the recovery row is live in these cases, so an `already-paid` answer
+  // is not re-checked (the replay traces a deferred share).
+  isEditFinancialReviewChargeRecoveryDead: async () => false,
   enqueuePaymentIntentCancellationRecovery: (...a: unknown[]) =>
     mocks.enqueueCancel(...a),
   runPaymentRecoveryOperationNow: (...a: unknown[]) => mocks.cancelNow(...a),
+}));
+// #3402: the raise claim is proved against PostgreSQL in
+// `edit-financial-review-charge-raise-claim.realdb.test.ts` and its orchestration in
+// `edit-financial-review-charge-claim.test.ts`; here every run wins it, which is
+// the uncontended case these cases have always described.
+vi.mock("@/lib/edit-financial-review-charge-raise-claim", () => ({
+  claimEditReviewChargeRaise: async (bookingModificationId: string) => ({
+    bookingModificationId,
+    token: "claim-token",
+  }),
+  recordEditReviewChargeRaiseIntent: async () => true,
+  releaseEditReviewChargeRaise: async () => true,
 }));
 /*
   THE ONE PLACE A CHARGE IS MINTED RUNS FOR REAL (#3341, `INV-OPS-015`), and so
@@ -231,6 +262,8 @@ import {
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const tx = {
+  // #3582: an edit review's completion takes lock(1) first, before its claim.
+  $executeRaw: (...a: unknown[]) => mocks.executeRaw(...a),
   manualRefundTask: {
     findUnique: (...a: unknown[]) => mocks.manualRefundTaskFindUnique(...a),
     updateMany: (...a: unknown[]) => mocks.manualRefundTaskUpdateMany(...a),
@@ -503,8 +536,14 @@ beforeEach(() => {
   mocks.supersedeRead.mockResolvedValue([]);
   mocks.enqueueCancel.mockResolvedValue({ id: "op-cancel-1" });
   mocks.cancelNow.mockResolvedValue("succeeded");
-  mocks.updatePaymentIntentAmount.mockResolvedValue({ id: "pi_additional_1" });
+  // #3402: Stripe answers with the amount it now holds; the row is written from it.
+  mocks.updatePaymentIntentAmount.mockImplementation(async (id: string, amount: number) => ({
+    id,
+    amount,
+  }));
   mocks.upsertPaymentIntentTransaction.mockResolvedValue(undefined);
+  mocks.writeRaisedAdditionalRequestAmount.mockResolvedValue(true);
+  mocks.enqueueEditFinancialReviewChargeRecovery.mockResolvedValue(undefined);
   mocks.restatePendingSupplementaryInvoiceAmount.mockResolvedValue({
     restated: 0,
     alreadyCovering: 0,
@@ -657,7 +696,7 @@ describe("a completed review that asks the member for money (#3170)", () => {
     // The real guard fired: nothing was minted, and the debt went to the
     // durable recovery row instead of vanishing.
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
-    expect(mocks.enqueueAdditionalPaymentIntentRecovery).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueEditFinancialReviewChargeRecovery).toHaveBeenCalledTimes(1);
   });
 
   it("looks for THIS edit's request, not whatever additional the payment happens to carry", async () => {
@@ -1104,17 +1143,16 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
     // One ADDITIONAL row, at $230, keyed on the intent that already existed. That
     // is what `reconcilePaymentAggregates` reads into
     // `Payment.additionalAmountCents`, which is the figure the member's pay link
-    // and the payment summary both show.
-    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledTimes(1);
-    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        paymentId: "payment-1",
-        kind: PaymentTransactionKind.ADDITIONAL,
-        paymentIntentId: "pi_additional_1",
-        amountCents: 23000,
-        reason: buildEditFinancialReviewChargeReason("mod-1"),
-      }),
-    );
+    // and the payment summary both show. #3402: written as AMOUNTS ONLY onto the
+    // existing row, never through the upsert that would also restate its status.
+    expect(mocks.upsertPaymentIntentTransaction).not.toHaveBeenCalled();
+    expect(mocks.writeRaisedAdditionalRequestAmount).toHaveBeenCalledTimes(1);
+    expect(mocks.writeRaisedAdditionalRequestAmount).toHaveBeenCalledWith({
+      paymentId: "payment-1",
+      paymentIntentId: "pi_additional_1",
+      amountCents: 23000,
+      carriedAskCents: 0,
+    });
   });
 
   it("the supplementary Xero invoice is RESTATED to the total, not queued a second time", async () => {
@@ -1340,17 +1378,13 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
     });
 
     // The debt is durable under the EDIT-scoped recovery key, so the cron replays
-    // this same derivation rather than a frozen figure.
-    expect(mocks.enqueueAdditionalPaymentIntentRecovery).toHaveBeenCalledWith(
+    // this same derivation rather than a frozen figure. #3402: through the one
+    // helper that owns the edit's two keys and re-arms a closed row.
+    expect(mocks.enqueueEditFinancialReviewChargeRecovery).toHaveBeenCalledWith(
       expect.objectContaining({
         bookingId: "booking-1",
         paymentId: "payment-1",
-        idempotencyKey:
-          buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
-            "mod-1",
-          ),
-        stripeIdempotencyKey:
-          buildEditFinancialReviewAdditionalIntentStripeKey("mod-1"),
+        bookingModificationId: "mod-1",
       }),
     );
     // The minter's OWN catch wrote the row first, under the same EDIT-scoped
@@ -1389,9 +1423,7 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
 
     expect(result.outcome).toBe("not-raised");
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
-    expect(mocks.enqueueAdditionalPaymentIntentRecovery).toHaveBeenCalledTimes(
-      1,
-    );
+    expect(mocks.enqueueEditFinancialReviewChargeRecovery).toHaveBeenCalledTimes(1);
   });
 
   /**
@@ -1415,6 +1447,7 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
       carriedCents: 0,
     });
     expect(mocks.enqueueAdditionalPaymentIntentRecovery).not.toHaveBeenCalled();
+    expect(mocks.enqueueEditFinancialReviewChargeRecovery).not.toHaveBeenCalled();
   });
 
   /**
@@ -1498,6 +1531,7 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
     });
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.enqueueAdditionalPaymentIntentRecovery).not.toHaveBeenCalled();
+    expect(mocks.enqueueEditFinancialReviewChargeRecovery).not.toHaveBeenCalled();
   });
 });
 
@@ -2167,7 +2201,7 @@ describe("#3371: a later share joins a request that carried a balance", () => {
       "pi_additional_1",
       30000,
     );
-    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(
+    expect(mocks.writeRaisedAdditionalRequestAmount).toHaveBeenCalledWith(
       expect.objectContaining({
         paymentIntentId: "pi_additional_1",
         amountCents: 30000,

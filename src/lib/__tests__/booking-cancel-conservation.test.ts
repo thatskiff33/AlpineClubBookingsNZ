@@ -52,6 +52,13 @@ const mocks = vi.hoisted(() => ({
   planStripeRefundAllocation: vi.fn(),
 }));
 
+// #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
+const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}) }));
+vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
+
+const appliedCredit = vi.hoisted(() => ({
+  deriveBookingAppliedCreditCents: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 0),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: {
@@ -94,6 +101,8 @@ vi.mock("@/lib/audit", () => ({
 }));
 
 vi.mock("@/lib/member-credit", () => ({
+  // #3611: the applied rows the kept figure reads; 0 unless a case says otherwise.
+  deriveBookingAppliedCreditCents: appliedCredit.deriveBookingAppliedCreditCents,
   createCancellationCredit: mocks.createCancellationCredit,
   lockMemberCreditLedger: mocks.lockMemberCreditLedger,
   restoreCreditFromBooking: mocks.restoreCreditFromBooking,
@@ -172,6 +181,7 @@ import {
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { lockedPaymentReReadDouble } from "./support/locked-payment-reread-double";
 
 const POLICY: CancellationRule[] = [
   {
@@ -298,6 +308,8 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
             },
             payment: {
               update: mocks.paymentUpdate,
+              // #3793: the re-read under the Payment row lock.
+              findUnique: lockedPaymentReReadDouble(mocks.bookingFindUnique),
             },
             // #1547: the never-captured claim reads capture evidence and any
             // Xero-linked applied credit under the lock.

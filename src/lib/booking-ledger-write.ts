@@ -37,6 +37,7 @@ export type BookingLedgerPosting = {
   kind:
     | "GUEST_NIGHT"
     | "CHANGE_FEE"
+    | "CANCELLATION_FEE"
     | "PROMOTION"
     | "GROUP_DISCOUNT"
     | "CARD_CAPTURE"
@@ -86,6 +87,23 @@ export class BookingLedgerPostingError extends Error {
   }
 }
 
+/** The side every kind belongs to (#3611; design §4). */
+const SIDE_OF_KIND: Record<BookingLedgerPosting["kind"], BookingLedgerPosting["side"]> = {
+  GUEST_NIGHT: "CHARGE",
+  CHANGE_FEE: "CHARGE",
+  CANCELLATION_FEE: "CHARGE",
+  PROMOTION: "CHARGE",
+  GROUP_DISCOUNT: "CHARGE",
+  CARD_CAPTURE: "SETTLEMENT",
+  BANK_RECEIPT: "SETTLEMENT",
+  CREDIT_APPLIED: "SETTLEMENT",
+  CASH_RECORDED: "SETTLEMENT",
+  CARD_REFUND: "SETTLEMENT",
+  BANK_REFUND: "SETTLEMENT",
+  CREDIT_ISSUED: "SETTLEMENT",
+  AGREED_ADJUSTMENT: "ADJUSTMENT",
+};
+
 /**
  * The shape rules, refused here as well as in the database.
  *
@@ -96,6 +114,12 @@ export class BookingLedgerPostingError extends Error {
  * the database is right.
  */
 function assertPostable(posting: BookingLedgerPosting): void {
+  // Enforced here only: the database holds no side/kind CHECK (design §4).
+  if (SIDE_OF_KIND[posting.kind] !== posting.side) {
+    throw new BookingLedgerPostingError(
+      `a ${posting.kind} line is a ${SIDE_OF_KIND[posting.kind]} line, not ${posting.side}`,
+    );
+  }
   if (!Number.isSafeInteger(posting.unitCents) || posting.unitCents < 0) {
     throw new BookingLedgerPostingError(
       `unitCents must be a whole number of cents, not negative — the direction is the sign (got ${posting.unitCents})`,

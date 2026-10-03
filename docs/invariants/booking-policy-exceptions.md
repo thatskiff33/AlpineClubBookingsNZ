@@ -183,6 +183,10 @@ hold in addition to every #2365 invariant above:
   re-derives from current policy for the proposed party (minimum stay + adult
   member hosting); a proposal that trips none is refused (nothing to review), and
   a non-allowlisted code can never be stored (`freezePolicyExceptionEvidence`).
+  With a beyond-family member guest named, "nothing to review" is the member
+  lookup's collapsed refusal instead, because what trips reads the named
+  members, so it cannot say whether one exists (#3770). Both doors floor and
+  audit their collapsed refusals as the booking add paths do.
 
 ### INV-EXCEPT-012
 
@@ -207,7 +211,10 @@ hold in addition to every #2365 invariant above:
   supersede are guarded single `updateMany` transitions on `status = REQUESTED`
   (scoped to the owner, and to `POLICY_EXCEPTION` on the shared table); a lost
   claim runs no side effect — no status change, no notification, no replacement
-  request.
+  request. A supersede target that is not the member's open request, and on a
+  modification an occupied slot, are refused by a read-only pre-check before the
+  member lookup, so neither says whether a named member exists; the guarded
+  claim and the unique index stay the arbiters of a race (#3770).
 
 ### INV-EXCEPT-015
 

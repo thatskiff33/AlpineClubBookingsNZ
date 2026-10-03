@@ -100,6 +100,10 @@ description = "A readable fixture idempotency key from the booking ledger's real
 regexes = ['''^k-3595-contrast$''']
 
 [[allowlists]]
+description = "A readable fixture posting key from the booking ledger's real-PostgreSQL proof for #3582 (`booking-ledger-modification.realdb.test.ts`), in a commit this pull request cannot rewrite (b2ce84e2b): `generic-api-key` matched it because the field is called `postingKey`. Not a credential — a test's own label for the second reversal it posts, so that only the unique `reversesLineId` can refuse it. Same class, and same cause, as `k-3595-contrast` above."
+regexes = ['''^race-3582-second-reversal$''']
+
+[[allowlists]]
 description = "Prose, not credentials. `generic-api-key` matches the entropy of a sentence listing what the diagnostics tool returns — an auth outcome, then row, byte and timing counts — written as a slash-separated list. Same sentence in `diagnostics/tools/types.ts`, in the ADR that introduced it, and in the knowledge-bundle doc."
 regexes = ['''^row/byte/timing$''', '''^row/count/byte/timing$''']
 

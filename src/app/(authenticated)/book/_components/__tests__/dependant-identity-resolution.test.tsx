@@ -300,6 +300,9 @@ describe("GuestsStep does not draw two controls for one decision (#2721)", () =>
         memberGuestEnabled={false}
         memberGuestOpenSearchEnabled={false}
         addMemberGuest={vi.fn()}
+        familyMembersLoaded
+        familyMembersLoadFailed={false}
+        retryFamilyMembersLoad={vi.fn()}
         memberGuestAddError={null}
         dependantIdentityCollisions={[]}
         declaredDependantMemberIds={[]}

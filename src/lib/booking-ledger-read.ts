@@ -13,6 +13,8 @@
 import type { Prisma } from "@prisma/client";
 
 import type { PostedCreditLine } from "@/lib/booking-ledger-credit-posting";
+import type { PostedChargeLine, ReversibleChargeLine } from "@/lib/booking-ledger-charge-line";
+import type { PostedAdjustmentLine } from "@/lib/booking-ledger-modification-posting";
 import type { PostedSettlementLine } from "@/lib/booking-ledger-settlement-posting";
 
 export type BookingLedgerReadStore = Pick<Prisma.TransactionClient, "bookingLedgerLine">;
@@ -89,4 +91,77 @@ export async function findPostedCreditLines(
     where: { bookingId, kind: { in: ["CREDIT_APPLIED", "CREDIT_ISSUED"] } },
     select: { postingKey: true, amountCents: true },
   });
+}
+
+/**
+ * The charge lines already posted for one booking — guest-nights and the
+ * promotion — with everything a reversal must copy (#3582). An edit reads
+ * these to find the LIVE line for each night it takes away: never one an
+ * earlier edit already reversed. No figure anyone sees comes from it.
+ */
+export async function findPostedChargeLines(
+  store: BookingLedgerReadStore,
+  bookingId: string,
+): Promise<PostedChargeLine[]> {
+  const rows = await readChargeLines(store, bookingId, ["GUEST_NIGHT", "PROMOTION"]);
+  return rows.map((row) => ({ ...row, kind: row.kind === "PROMOTION" ? "PROMOTION" : "GUEST_NIGHT" }));
+}
+
+/**
+ * Every charge line a cancellation may take back — the nights, the promotion
+ * and the change fees (#3611) — live or not, with what a reversal copies.
+ */
+export async function findPostedCancellableChargeLines(
+  store: BookingLedgerReadStore,
+  bookingId: string,
+): Promise<ReversibleChargeLine[]> {
+  return readChargeLines(store, bookingId, ["GUEST_NIGHT", "PROMOTION", "CHANGE_FEE"]);
+}
+
+async function readChargeLines(
+  store: BookingLedgerReadStore,
+  bookingId: string,
+  kinds: Array<ReversibleChargeLine["kind"]>,
+): Promise<ReversibleChargeLine[]> {
+  const rows = await store.bookingLedgerLine.findMany({
+    where: { bookingId, kind: { in: kinds } },
+    select: {
+      id: true,
+      kind: true,
+      sign: true,
+      quantity: true,
+      unitCents: true,
+      bookingGuestId: true,
+      nightStart: true,
+      nightEndExclusive: true,
+      rateMembershipTypeId: true,
+      ageTier: true,
+      guestNames: true,
+      narration: true,
+      reversesLineId: true,
+    },
+  });
+  // The where clause names the kinds, and the database's CHECK makes any sign
+  // but 1 or -1 unrepresentable; this narrows the types to what both guarantee.
+  return rows.map((row) => ({
+    ...row,
+    kind: row.kind === "PROMOTION" ? "PROMOTION" : row.kind === "CHANGE_FEE" ? "CHANGE_FEE" : "GUEST_NIGHT",
+    sign: row.sign === -1 ? -1 : 1,
+  }));
+}
+
+/**
+ * The agreed adjustments already posted for one booking, live or not (#3582):
+ * a review closure whose re-price now carries the booking's price reverses the
+ * live ones it supersedes (design §5.3). No figure anyone sees comes from it.
+ */
+export async function findPostedAdjustmentLines(
+  store: BookingLedgerReadStore,
+  bookingId: string,
+): Promise<PostedAdjustmentLine[]> {
+  const rows = await store.bookingLedgerLine.findMany({
+    where: { bookingId, kind: { in: ["AGREED_ADJUSTMENT"] } },
+    select: { id: true, sign: true, quantity: true, unitCents: true, narration: true, reversesLineId: true, postingKey: true },
+  });
+  return rows.map((row) => ({ ...row, sign: row.sign === -1 ? -1 : 1 }));
 }

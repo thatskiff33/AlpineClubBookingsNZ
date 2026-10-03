@@ -59,6 +59,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { normalizePersonFullName } from "@/lib/person-name-normalization";
+import { normalizeMemberIds } from "@/lib/member-id-normalization";
 
 /**
  * The minimum a caller needs from Prisma to answer "who are this member's
@@ -221,8 +222,9 @@ export async function loadBookerDependants(
  * server's entry point. The wizard may call it directly: the only member ids it
  * can put on a row are ones it was handed from the booker's own family list.
  * Every server caller goes through {@link checkOwnDependantIdentity}, which is
- * handed the ids that actually resolved and therefore cannot be fooled by a
- * forged one.
+ * told which ids are member-linked — the ids that resolved, or the claimed ids
+ * ahead of a lookup that refuses any that do not — and therefore cannot be
+ * fooled by a forged one.
  *
  * A row missing either name part mints no key (see `normalizePersonFullName`)
  * and therefore collides with nothing.
@@ -383,22 +385,26 @@ export const DEPENDANT_IDENTITY_UNANSWERABLE_MESSAGE =
  * used to be settled by a PRECONDITION — callers had to hand in a party that had
  * already been through `normalizeBookingGuestInputs`, which strips a `memberId`
  * that resolved to nobody — and a precondition spelled out in a comment is one a
- * future edit compiles straight past: hoisting this call above the
- * normalisation, or passing the raw parsed guests because they are in scope and
- * read the same, restored the original defect with the guard present, every test
- * green (`INV-SSOT`, "prefer unrepresentable over policed").
+ * future edit compiles straight past: while the guard read member links off the
+ * rows themselves, hoisting it above the normalisation, or passing the raw
+ * parsed guests, restored the original defect with the guard present, every
+ * test green (`INV-SSOT`, "prefer unrepresentable over policed"). The rows
+ * carry no answer now, so the raw party is safe to pass with the right set.
  *
- * So the caller passes the ids that ACTUALLY resolved to a bookable member —
- * the keys of the linked-member map every server create path already builds —
- * and a row is treated as member-linked only if its id is in that set. The guard
- * no longer depends on anything having happened to the party first. It is a
- * required argument rather than an optional one for the same reason: there is no
- * value it can silently default to that is safe.
+ * So the caller passes the member-linked set explicitly, and a row is treated
+ * as member-linked only if its id is in it. Two sets are sound: the keys of the
+ * linked-member map, after the lookup (the approval); or
+ * {@link claimedMemberPathIds}, before a lookup that refuses every id that does
+ * not resolve (every other door — see there for why that order is required).
+ * The raw party with no set is the one shape that is not, which is why the
+ * argument is required: there is no value it can silently default to that is
+ * safe.
  */
 export function checkOwnDependantIdentity(params: {
   party: ReadonlyArray<DependantIdentityPartyMember>;
   /**
-   * The member ids on this party that resolved to a real, bookable member.
+   * The member ids treated as member-linked: those that resolved, or the
+   * claimed ones ahead of a lookup that refuses any that do not (see above).
    * Anything else on a row is not a member link, whatever the row claims.
    */
   memberPathMemberIds: ReadonlySet<string>;
@@ -456,12 +462,8 @@ export function checkOwnDependantIdentity(params: {
 export function claimedMemberPathIds(
   party: ReadonlyArray<{ memberId?: string | null }>,
 ): Set<string> {
-  return new Set(
-    party.flatMap((guest) => {
-      const id = guest.memberId?.trim();
-      return id ? [id] : [];
-    }),
-  );
+  // The lookup's own normaliser, so the claimed set is the set it resolves.
+  return new Set(normalizeMemberIds(party.map((guest) => guest.memberId)));
 }
 
 /**
@@ -491,8 +493,10 @@ export class OwnDependantIdentityRefusedError extends Error {
  * and the read cannot drift between them.
  *
  * `memberPathMemberIds` is the set that RESOLVED when the call follows the
- * member lookup (create, approval), or {@link claimedMemberPathIds} when it
- * precedes one that refuses every unresolved id (the edit doors) — see there.
+ * member lookup (the approval only), or {@link claimedMemberPathIds} when it
+ * precedes one that refuses every unresolved id: the create route, both
+ * exception-request doors, `modify-quote`, `modify` and the add-guest route
+ * (#3451, #3770) — see there.
  *
  * The dependant read is skipped entirely for a party that is all member-linked
  * and carries no declaration — the common family booking — so the ordinary path

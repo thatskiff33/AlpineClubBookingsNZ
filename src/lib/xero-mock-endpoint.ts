@@ -18,6 +18,7 @@
 
 import {
   saveXeroTokens,
+  type XeroTokenWriteContext,
 } from "@/lib/xero-token-store";
 import { readEnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
 import { getOperationalXeroRedirectUri } from "@/lib/xero-config";
@@ -211,6 +212,7 @@ export function buildMockXeroConsentUrl(origin: string, state?: string): string 
 export async function handleMockXeroCallback(
   origin: string,
   callbackUrl: string,
+  context: XeroTokenWriteContext,
 ): Promise<void> {
   const code = new URL(callbackUrl).searchParams.get("code") ?? "mock-code";
 
@@ -243,7 +245,7 @@ export async function handleMockXeroCallback(
     refreshToken: tokenSet.refresh_token,
     expiresAt: new Date(Date.now() + (tokenSet.expires_in ?? 1800) * 1000),
     tenantId,
-  });
+  }, context);
 }
 
 // Fixture chart of accounts + items the gated mock endpoints return, shared with

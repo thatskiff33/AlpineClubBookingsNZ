@@ -493,7 +493,8 @@ At the successful end of a meaningful piece of work:
    up-to-date branches serialises the queue behind full re-runs),
    `required_approving_review_count: 0` (a pull request is required, a human
    approval is not — #2713/#2948), `enforce_admins: false`. Code-owner review
-   is decided (#3341), NOT yet applied: see the CODEOWNERS bullet below.
+   and stale-approval dismissal are applied (2 Oct 2026, #3341): see the
+   CODEOWNERS bullet below.
 
    **Advisory, and deliberately NOT required** — a finding is investigated, but
    it cannot block a merge: `CodeQL`, `Analyze (javascript-typescript)` and
@@ -529,9 +530,9 @@ At the successful end of a meaningful piece of work:
      agent workflow, admin or public UI copy, labels, and help text, and other
      Low/Medium-risk work that does not touch money movement, booking capacity,
      membership or family lifecycle, schema or migrations, auth/security/privacy,
-     or live-provider (Xero/Stripe/SES/Sentry) behavior. Once code-owner review
-     is applied, a PR touching a `.github/CODEOWNERS` path — docs and tests
-     included — also needs the owner's Approve.
+     or live-provider (Xero/Stripe/SES/Sentry) behavior. A PR touching a
+     `.github/CODEOWNERS` path — docs and tests included — also needs the
+     owner's Approve.
    - Requires an explicit owner approval comment on the PR before merge: every
      Critical or High-risk change, including security/auth/privacy,
      payments/refunds/credits, booking/capacity, membership/family lifecycle,
@@ -631,11 +632,12 @@ At the successful end of a meaningful piece of work:
   appears under an agent login at all.
 - **The code-owner rule — its one home.** Review is required only through
   CODEOWNERS (owner decisions, 26 Sep 2026, #3341, narrowing 18 Aug's "no
-  review"). **Decided, not yet applied.** Once the owner applies it, a PR
-  touching a `.github/CODEOWNERS` path needs the owner's GitHub Approve, and a
-  push after it dismisses it; others merge as before. The Approve is the lock;
-  the comment stays the gate agents check, so a money PR's ready comment asks
-  for both. Until then, separate logins are the control. Owner checklist:
+  review"; widened 3 Oct 2026 to the dependency-audit gate, #3843).
+  **Applied 2 Oct 2026**, tested on #3807/#3808: a PR touching
+  a `.github/CODEOWNERS` path needs the owner's GitHub Approve, and a push after
+  it dismisses it; others merge as before. The Approve is the lock; the comment
+  stays the gate agents check, so a code-owned PR's ready comment asks for both.
+  Owner checklist:
   `CONTRIBUTING.md` → "Branch protection".
 
 ## Wave Orchestration Playbook

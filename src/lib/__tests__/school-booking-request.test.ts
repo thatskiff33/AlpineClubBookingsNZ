@@ -511,7 +511,7 @@ describe("adult supervision rule with a teacher (issue #709 requirement 7)", () 
       teachers: [{ firstName: "Tana", lastName: "Teacher" }],
       childCounts: { CHILD: 5 },
     });
-    expect(requiresAdultSupervisionReview(guests)).toBe(false);
+    expect(requiresAdultSupervisionReview(guests.map((g) => ({ ...g, consentStatus: null })))).toBe(false);
   });
 
   it("still flags a children-only group with no adult", () => {
@@ -519,7 +519,7 @@ describe("adult supervision rule with a teacher (issue #709 requirement 7)", () 
       teachers: [],
       childCounts: { CHILD: 5 },
     });
-    expect(requiresAdultSupervisionReview(guests)).toBe(true);
+    expect(requiresAdultSupervisionReview(guests.map((g) => ({ ...g, consentStatus: null })))).toBe(true);
   });
 });
 

@@ -18,6 +18,7 @@ import { PUT as refundPut } from "@/app/api/admin/refund-requests/[id]/route";
 import { POST as retryAllPost } from "@/app/api/admin/xero/operations/retry-all/route";
 import { POST as resetStalePost } from "@/app/api/admin/xero/operations/reset-stale-running/route";
 import { POST as markNonReplayablePost } from "@/app/api/admin/xero/operations/[id]/mark-non-replayable/route";
+import { POST as markFailedPost } from "@/app/api/admin/xero/operations/[id]/mark-failed/route";
 import { POST as resolvePost } from "@/app/api/admin/xero/operations/[id]/resolve/route";
 import { POST as generateInvoicePost } from "@/app/api/admin/payments/[id]/generate-invoice/route";
 import {
@@ -87,6 +88,14 @@ describe("finance/support/comms action route guards (#1997)", () => {
 
   it("xero mark-non-replayable POST requires finance:edit", async () => {
     const res = await markNonReplayablePost(req("POST"), idParams);
+    expect(res.status).toBe(403);
+    expect(mocks.requireAdmin).toHaveBeenCalledWith({
+      permission: FINANCE_EDIT,
+    });
+  });
+
+  it("xero mark-failed POST requires finance:edit (#3462)", async () => {
+    const res = await markFailedPost(req("POST"), idParams);
     expect(res.status).toBe(403);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({
       permission: FINANCE_EDIT,

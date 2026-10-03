@@ -496,6 +496,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/xero/missing-contacts": "finance",
   "/api/admin/xero/missing-invoices": "finance",
   "/api/admin/xero/operations": "finance",
+  "/api/admin/xero/operations/[id]/mark-failed": "finance",
   "/api/admin/xero/operations/[id]/mark-non-replayable": "finance",
   "/api/admin/xero/operations/[id]/requeue": "finance",
   "/api/admin/xero/operations/[id]/resolve": "finance",

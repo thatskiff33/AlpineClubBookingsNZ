@@ -415,3 +415,114 @@ describe("the module-off refusal is not shown to a member in the server's words 
     expect(result.current.memberGuestAddError).toBeNull();
   });
 });
+
+/*
+  #3770, owner decision "only agreed adults count". The wizard asks for the
+  written reason with the SERVER's adult-supervision rule: an outsider adult
+  still waiting to agree is not the adult, so children plus one need the reason
+  the create route would otherwise refuse without — and at a notify-only club,
+  where the outsider is written CONFIRMED, they count and nothing is asked.
+*/
+describe("the adult-supervision reason follows the server's rule (#3770)", () => {
+  const KID_ROW = {
+    firstName: "Mia",
+    lastName: "Member",
+    ageTier: "CHILD",
+    isMember: true,
+    memberId: SIBLING.id,
+  };
+
+  async function childrenPlusOutsider(approvalRequired: boolean) {
+    const result = await mountedWizard({
+      memberGuestConfig: {
+        enabled: true,
+        openSearchEnabled: false,
+        approvalRequired,
+        pendingHoldExpiryDays: 7,
+      },
+    });
+    act(() => {
+      result.current.handleGuestsChange([KID_ROW] as never);
+    });
+    act(() => {
+      result.current.addMemberGuest(STRANGER);
+    });
+    return result;
+  }
+
+  function createBody() {
+    const call = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.find(
+        (entry) =>
+          String(entry[0]).endsWith("/api/bookings") &&
+          (entry[1] as RequestInit | undefined)?.method === "POST",
+      );
+    return call ? JSON.parse(String((call[1] as RequestInit).body)) : null;
+  }
+
+  it("asks for the reason, and sends it, when the only adult has not agreed yet", async () => {
+    const result = await childrenPlusOutsider(true);
+    expect(result.current.guests.at(-1)?.memberGuestConsentPreview).toBe("PENDING");
+    expect(result.current.requiresAdminReviewLocal).toBe(true);
+
+    act(() => result.current.setMemberReviewJustification("Grandad is coming"));
+    await act(async () => {
+      await result.current.handleSubmit();
+    });
+
+    expect(createBody()?.memberReviewJustification).toBe("Grandad is coming");
+  });
+
+  it("asks nothing at a notify-only club, where the outsider counts", async () => {
+    const result = await childrenPlusOutsider(false);
+    expect(result.current.guests.at(-1)?.memberGuestConsentPreview).toBe("NOTIFY_ONLY");
+    expect(result.current.requiresAdminReviewLocal).toBe(false);
+
+    await act(async () => {
+      await result.current.handleSubmit();
+    });
+
+    expect(createBody()).not.toBeNull();
+    expect(createBody()?.memberReviewJustification).toBeUndefined();
+  });
+});
+
+/*
+  #3770: no outsider is added before the family list has answered — a row added
+  blind would carry no consent prediction and the reason field would never show.
+  A failed load blocks the add; a retry that succeeds unblocks it.
+*/
+describe("addMemberGuest waits for the family list (#3770)", () => {
+  it("blocks the add after a failed family load, and allows it after a retry", async () => {
+    const options: Parameters<typeof stubFetch>[0] = { familyOk: false };
+    // Mounted directly: `mountedWizard` waits for the booker's own seeded row,
+    // which needs the family list this case withholds.
+    stubFetch(options);
+    const { result } = renderHook(() => useBookingWizard());
+    await waitFor(() => expect(result.current.memberGuestConfig.enabled).toBe(true));
+    await waitFor(() => expect(result.current.familyMembersLoadFailed).toBe(true));
+    expect(result.current.familyMembersLoaded).toBe(false);
+
+    act(() => {
+      result.current.handleGuestsChange([] as never);
+    });
+    act(() => {
+      result.current.addMemberGuest(STRANGER);
+    });
+    expect(result.current.guests).toHaveLength(0);
+
+    options.familyOk = true;
+    act(() => {
+      result.current.retryFamilyMembersLoad();
+    });
+    await waitFor(() => expect(result.current.familyMembersLoaded).toBe(true));
+    expect(result.current.familyMembersLoadFailed).toBe(false);
+
+    act(() => {
+      result.current.addMemberGuest(STRANGER);
+    });
+    const added = result.current.guests.find((guest) => guest.memberId === STRANGER.memberId);
+    expect(added?.memberGuestConsentPreview).toBe("PENDING");
+  });
+});
