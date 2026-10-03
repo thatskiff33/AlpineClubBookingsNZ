@@ -105,7 +105,10 @@ export type BookingCreditAmountRow = {
  * Applied is the SIGNED net of the booking's `BOOKING_APPLIED` rows, computed
  * by `calculateRestoredCreditAmount` - the net `restoreCreditFromBooking`
  * restores from - so a clamp's positive give-back is netted, not double
- * counted. Restored is the cancellation's restore row, told apart by
+ * counted; so is a financial review's give-back (#3791, `INV-PAY-113`), which
+ * also names the booking in `sourceBookingId` and so may sit in
+ * `creditsFromCancellation` too, where it is no restore and is not read again.
+ * Restored is the cancellation's restore row, told apart by
  * `isCancellationCreditRestoreRow`, the same test the booking ledger uses, so a
  * restore written before the marker existed (8 Jul 2026, #1636) is still a
  * restore. The paid slice refunded AS credit is not a restore, and that money

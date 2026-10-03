@@ -37,6 +37,12 @@ vi.mock("@/lib/hut-leader-coverage", async (importOriginal) => ({
   getUnassignedHutLeaderDates: vi.fn(),
 }));
 
+// The Bed Allocation card needs the module on as well as the permission (#3841).
+vi.mock("@/lib/module-settings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/module-settings")),
+  loadEffectiveModuleFlags: vi.fn(async () => ({ bedAllocation: true })),
+}));
+
 import AdminDashboardPage from "@/app/(admin)/admin/dashboard/page";
 import { auth } from "@/lib/auth";
 import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle";

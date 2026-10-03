@@ -49,7 +49,15 @@ vi.mock("@/lib/hut-leader-coverage", async (importOriginal) => ({
   getUnassignedHutLeaderDates: vi.fn(),
 }));
 
+// The Bed Allocation card needs the module on as well as the permission
+// (#3841). On by default here; the module-off test turns it off.
+vi.mock("@/lib/module-settings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/module-settings")),
+  loadEffectiveModuleFlags: vi.fn(),
+}));
+
 import AdminDashboardPage from "@/app/(admin)/admin/dashboard/page";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import { auth } from "@/lib/auth";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
@@ -226,7 +234,32 @@ describe("admin dashboard officer key cards", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue(null);
+    vi.mocked(loadEffectiveModuleFlags).mockResolvedValue({
+      bedAllocation: true,
+    } as Awaited<ReturnType<typeof loadEffectiveModuleFlags>>);
     mockStats();
+  });
+
+  it("hides the Bed Allocation card and skips its count when the module is off (#3841)", async () => {
+    vi.mocked(loadEffectiveModuleFlags).mockResolvedValue({
+      bedAllocation: false,
+    } as Awaited<ReturnType<typeof loadEffectiveModuleFlags>>);
+    mockActorMatrix({
+      overview: "edit",
+      bookings: "edit",
+      membership: "edit",
+      finance: "edit",
+      lodge: "edit",
+    });
+
+    const html = renderToStaticMarkup(await AdminDashboardPage());
+
+    expect(html).not.toContain('href="/admin/bed-allocation"');
+    expect(html).not.toContain("awaiting a bed");
+    // The count's own read never runs, so no guest is reported as awaiting.
+    expect(prisma.bedAllocation.findMany).not.toHaveBeenCalled();
+    // The other officer cards are unaffected.
+    expect(html).toContain('href="/admin/roster"');
   });
 
   it("renders all four officer cards with actionable counts for a full admin", async () => {

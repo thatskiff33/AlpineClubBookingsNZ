@@ -245,6 +245,71 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
       ).toBe(2_000);
     });
 
+    describe("with a financial review's give-back of applied credit (#3791, INV-PAY-113)", () => {
+      // The give-back is ONE positive `BOOKING_APPLIED` row that names the
+      // booking twice: `appliedToBookingId` (so it is in `creditsApplied`) and
+      // `sourceBookingId` (so an unfiltered `creditsFromCancellation` loads it
+      // too - the dashboard, Reports and Finance select; the payments board
+      // filters it out to `BOOKING_ISSUED_CREDIT_TYPES`). It must be netted
+      // once, through the applied sum, and never read as a restore.
+      const reviewGiveBack = (cents: number) => ({
+        type: "BOOKING_APPLIED",
+        amountCents: cents,
+        description: `Applied credit returned after booking b-cancel financial review`,
+        restoredFromBookingId: null,
+      });
+      const withGiveBack = (appliedCents: number, givenBackCents: number, restoredCents: number) => ({
+        creditsApplied: [applied(appliedCents), reviewGiveBack(givenBackCents)],
+        restore: restored(restoredCents),
+        giveBack: reviewGiveBack(givenBackCents),
+      });
+
+      it("reviewed then cancelled: kept is applied less the give-back less the restore, filtered or not", () => {
+        // $200.00 applied; a review gives $50.00 back ($150.00 applied); a 50%
+        // tier restores $75.00 of it. Kept: $75.00.
+        const rows = withGiveBack(20_000, 5_000, 7_500);
+        const unfiltered = netWith(creditPaid, {
+          creditsApplied: rows.creditsApplied,
+          creditsFromCancellation: [rows.giveBack, rows.restore],
+        });
+        const issuedOnly = netWith(creditPaid, {
+          creditsApplied: rows.creditsApplied,
+          creditsFromCancellation: [rows.restore],
+        });
+        expect(unfiltered.keptCreditCents).toBe(7_500);
+        expect(issuedOnly).toEqual(unfiltered);
+        expect(unfiltered.netCollectedCents).toBe(17_500);
+      });
+
+      it("cancelled then reviewed: a later give-back comes off the credit the cancellation kept", () => {
+        // $200.00 applied; a 50% tier restores $100.00; the review then gives
+        // $30.00 more back. Kept: $70.00 - the give-back counts once.
+        const rows = withGiveBack(20_000, 3_000, 10_000);
+        expect(
+          netWith(creditPaid, {
+            creditsApplied: rows.creditsApplied,
+            creditsFromCancellation: [rows.restore, rows.giveBack],
+          }).keptCreditCents,
+        ).toBe(7_000);
+      });
+
+      it("adds nil once the restore and the give-back return everything applied", () => {
+        const rows = withGiveBack(20_000, 5_000, 15_000);
+        expect(
+          netWith(creditPaid, {
+            creditsApplied: rows.creditsApplied,
+            creditsFromCancellation: [rows.giveBack, rows.restore],
+          }),
+        ).toEqual({
+          capturedGrossCents: 10_000,
+          refundedCents: 0,
+          handBackOwedCents: 0,
+          keptCreditCents: 0,
+          netCollectedCents: 10_000,
+        });
+      });
+    });
+
     it("adds nil for a booking cancelled before 8 Jul whose restore row carries no marker", () => {
       // #1636 added `restoredFromBookingId` on 8 Jul 2026 with no backfill, so
       // an older restore is told apart by its type and its writer's text

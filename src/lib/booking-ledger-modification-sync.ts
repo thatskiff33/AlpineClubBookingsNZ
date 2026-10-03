@@ -114,6 +114,7 @@ export async function postReviewClosureLedgerLines({
   settlement,
   note,
   officerMemberId,
+  agreedGiveBackCents = null,
 }: {
   store: Pick<Prisma.TransactionClient, "bookingLedgerLine" | "bookingGuest">;
   bookingId: string;
@@ -127,6 +128,8 @@ export async function postReviewClosureLedgerLines({
   settlement: { direction: ManualRefundTaskDirection; amountCents: number } | null;
   note: string | null;
   officerMemberId: string;
+  /** #3791: see `planReviewClosureShareLines`. */
+  agreedGiveBackCents?: number | null;
 }): Promise<void> {
   if (!(await bookingHasConfirmationLines(store, bookingId))) return;
 
@@ -200,6 +203,7 @@ export async function postReviewClosureLedgerLines({
           rebasedPriceMovementCents(rebase) !== 0 &&
           repricePostings.length > 0,
         postedAdjustmentLines,
+        agreedGiveBackCents,
       }),
     );
   } catch (error) {

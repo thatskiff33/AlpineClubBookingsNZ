@@ -527,7 +527,7 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
 
 /** Measured, not counted by hand. Re-measure by running this test. */
 const MEMBER_KEYED_HELPER_SITES: readonly string[] = [
-  "src/lib/diagnostics/tools/packs/finance-evidence.ts:558",
+  "src/lib/diagnostics/tools/packs/finance-evidence.ts:555",
 ];
 
 /* -------------------------------------------------------------------------- */
