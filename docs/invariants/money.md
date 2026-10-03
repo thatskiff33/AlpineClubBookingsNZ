@@ -568,8 +568,9 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   while an ask is live; and a live booking's `owed(b)` is what its columns say
   is owed (`INV-PAY-047`'s residual plus the ask, less evidenced give-backs),
   so no line can be wrong while every column agrees. A review line must match
-  what its closure credited, read from credit rows (§6). A disagreement names
-  the booking, both figures and the delta.
+  what its closure credited, read from credit rows; rows it cannot attribute
+  fail closed (`AMBIGUOUS_REVIEW_GIVE_BACK`, §6). A disagreement names the
+  booking, both figures and the delta.
 
   **A class explains an exact amount, from evidence the delta does not
   hold.** It is classified only where components computed from the booking's
@@ -582,8 +583,8 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   fee, credit row, capture or refund no live line records. Every class holds
   the gate until the owner's `--acknowledged` file, kept outside the
   repository, names its instance to the cent — `KNOWN_DEFECT_HISTORY` too —
-  except `GROUP_SETTLEMENT_OFF_LEDGER`, listed only (the owner's decisions on
-  #3583; its poster is #3854). A moved figure is stale and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
+  except `GROUP_SETTLEMENT_OFF_LEDGER`, listed only (owner decisions,
+  #3583; poster #3854). A moved figure is stale and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
   on bookings the real writers built.
 
 ## INV-MONEY-006

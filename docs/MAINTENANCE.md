@@ -1661,8 +1661,15 @@ owed — against the ledger lines that project them, and prints:
   booking's own rows (in-flight refunds and hand-backs, a review share kept by
   the club, the refunded total's credit and hand-back allocations, and so on).
   Each instance holds the gate until the owner acknowledges it to the cent,
-  except `GROUP_SETTLEMENT_OFF_LEDGER`, which is listed only; the summary
-  prints how many are still unacknowledged, per class and beside the verdict;
+  except `GROUP_SETTLEMENT_OFF_LEDGER`, which is listed only. One class is the
+  census failing closed rather than an expected difference:
+  `AMBIGUOUS_REVIEW_GIVE_BACK`, a live booking whose #3791 review give-back
+  rows it cannot attribute to their reviews (a sibling review's price drop, a
+  dismissed one's included, or two rows beside a give-back line). It prints
+  three figures — the give-back lines, the rows and the unmatched drops — so
+  check the booking's reviews by hand before signing off all three. The
+  summary prints how many are still unacknowledged, per class and beside the
+  verdict;
 - every unclassified disagreement: booking, identity, column figure, ledger
   figure and delta;
 - under the credit identity, #1620's internet-banking applied credit no Xero

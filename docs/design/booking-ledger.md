@@ -506,9 +506,18 @@ one share credit, or both. Any other stand-in is the share as typed. On a live
 booking, a give-back row no line records and no re-price of a task without
 one could absorb is counted on `owed(b)`'s column side, so a missing give-back
 line is a disagreement. What the rows cannot say is which sibling a row
-belongs to; equal amounts are interchangeable, so that loses nothing a sum
-would catch, and a cancelled booking's `owed(b) == 0` still checks the total
-exactly.
+belongs to. That is harmless only while no row could be absorbed elsewhere:
+a re-price drop on a review with no give-back line — a dismissed review's
+included — can soak up a row, so a missing, forged or overstated give-back
+line can leave every identity agreeing (#3583's delta review). So a live
+booking holding a review give-back row and either such a drop, or more than
+one row beside a give-back line, **fails closed** as `AMBIGUOUS_REVIEW_GIVE_BACK`:
+three booking-level instances — the give-back lines, the rows and the
+unmatched drops — each acknowledged to the cent, so the owner's sign-off goes
+stale if any moves. The exact checks still run beside it. A cancelled
+booking is never ambiguous: its `owed(b) == 0` checks the total exactly.
+Stamping the task on each give-back row would remove the ambiguity; it needs
+a column, so it is left to a later change.
 
 `pnpm run booking-ledger:census` (#3583, `INV-MONEY-037`; read-only, one
 `RepeatableRead`, `READ ONLY` snapshot — the `censusBookingMoneyReconciliation`
@@ -538,6 +547,8 @@ two on the refunded column only, since on `owed(b)` they are money the ledger
 is missing; `CHANGE_FEE_REVERSED_BY_CANCELLATION`;
 `RETAINED_REVIEW_SHARE` (§5.3); and a cancelled booking's `IN_FLIGHT_HAND_BACK`,
 `IN_FLIGHT_REFUND`, `V5_PLANNED_REFUND_SHORT` and `D2_DISMISSED_HAND_BACK`.
+`AMBIGUOUS_REVIEW_GIVE_BACK` is a live booking whose review give-back rows
+the census cannot attribute to their tasks (below the review-line paragraph).
 `KNOWN_DEFECT_HISTORY` finds bookings #3791, #3792 or #1641's shape damaged,
 where the ledger is right, and `GROUP_SETTLEMENT_OFF_LEDGER` the group-settled
 children no poster reaches — a child with no transaction, refund or credit row
