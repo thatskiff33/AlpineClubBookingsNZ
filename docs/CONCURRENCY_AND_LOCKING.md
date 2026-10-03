@@ -124,6 +124,37 @@ transaction participant; provider delivery remains outside a database
 transaction. New booking rows keep `htmlBody` null and retain retry HTML only in
 `bookingRetryHtmlBody`, which the old worker cannot select after rollback.
 
+### The Xero token refresh uses a row lease, shared across colours (#3454)
+
+`xero-token-store.ts` composes no booking, capacity, membership or money
+mutation and takes **no advisory lock**. One rotating refresh token may be
+spent only once, so a refresh first claims `XeroToken.refreshInProgressUntil`
+with a status-guarded `updateMany` (`NULL` or expired → this lease). PostgreSQL
+re-evaluates that predicate after the row lock, so of two simultaneous claimants
+exactly one wins. The losers wait out the lease and re-read. The Xero call runs
+outside any transaction (`INV-INT-003`).
+
+**The claim takes the lease first and reads the tokens second, in the same
+transaction.** The winning `updateMany` holds the `XeroToken` row lock until the
+claim commits, and every writer of either copy (a connect, a refresh save, a
+disconnect, a verify-reset, of either colour) takes that row first. So the two
+copies the claim then reads are a consistent pair. Reading first and claiming
+second let a reconnect commit between the reads, and the refresh then overwrote
+it (#3454 review).
+
+**Before the Xero call, the refresh proves its save can succeed**
+(`assertXeroTokensCanBeStored`: the auth-secret capture gate and the wrapped
+token key). Otherwise it refuses without spending the refresh token.
+
+Since #3454 the save is one short transaction with two fences. The first is the
+lease-guarded `XeroToken` update, so a reconnect or an expired lease matches
+nothing. The second is a compare-and-set on the credential-store copy, against
+the version the claim read under its lock. Losing either rolls back both copies. The lease
+stays on `XeroToken` because a deployed older colour claims exactly that column.
+Moving it would let one old and one new process spend the same token.
+`xero-token-credential-store.realdb.test.ts` proves both fences against real row
+locks, including against the old colour's own claim statement.
+
 ## The lock families
 
 All keys below are the argument(s) to `pg_advisory_xact_lock`. Two-argument keys
@@ -137,7 +168,7 @@ are the literal `1`.
 | **Per-member night footprint** | `hashtext("booking-member-night"), hashtext(<memberId>)` | `lockBookingMemberNights(tx, guests)` (`booking-member-night-conflicts.ts`) | cross-lodge | Serialises the person-night guard ACROSS lodges (see below). |
 | **Per-trip hosting coverage** | `hashtext("hosting-coverage-group"), hashtext(<GroupBooking.id>)` | `lockHostingCoverageGroup` / `lockHostingCoverageGroups`, with `tryLockHostingCoverageGroup(s)` tried first (`adult-member-hosting-coverage-lock.ts`) | cross-account | Serialises `SAME_GROUP_TRIP` coverage (#3039, epic #2943). The owner key cannot do this job: it is `Booking.memberId`, the DEPENDENT's own account, while every Group Trip source belongs to somebody else — so two writers changing two bookings in one trip hold two DIFFERENT owner keys and are not serialised at all. Not the lodge key either: one lodge holds many unrelated trips. Taken immediately BEFORE the sorted owner keys, because the trip's membership is what decides which owners the reconciliation fan-out will name. Several trips are taken in sorted order, and EVERY acquisition is tried with `pg_try_advisory_xact_lock` before the blocking form — one transaction can discover two trip keys (a booking in one trip whose same-owner dependent sits in another), so sorting within a call cannot order keys discovered in two, and a conflict rolls the whole outer transaction back with the stable `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409 rather than waiting inside a booking transaction. Taken only where the lodge has `SAME_GROUP_TRIP` enabled AND the booking is in a trip. |
 | **Per-owner hosting coverage** | `hashtext("hosting-coverage-owner"), hashtext(<Booking.memberId>)` | `lockHostingCoverageOwner` / `lockHostingCoverageOwners` (`adult-member-hosting-coverage-lock.ts`) | cross-booking | Serialises `SAME_BOOKING_OWNER` coverage (#2576 §9): one booking's compliance depends on another booking of the SAME owner, so the key remains authoritative even though #2600 made allocation-participating confirmation and cancellation compose global → lodge. Taken LAST among the application lock families a caller composes, EXCEPT that since #3039 the per-TRIP hosting coverage key above sits immediately before it — so it is the second of the last two rather than the last. Roster-aware modification paths take global → lodge → roster-date → any applicable member keys → sorted queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-group → coverage-owner; queued incident reconciliation takes hosting policy-set → sorted claimed member-lifecycle keys → sorted claimed `Member FOR KEY SHARE` rows → coverage-group (only where the reconciled booking is in a Group Trip at a lodge with `SAME_GROUP_TRIP` on; the evaluator takes it fail-fast before it reads a sibling as cover) → coverage-owner. Paths that do not use roster or member keys omit those tiers. Ordinary producers try sorted owner keys before re-entering the blocking helper, while merge takes its sorted owner keys only after its one sorted participant `FOR UPDATE` statement. The key is taken only when the lodge actually has the scope enabled. |
-| **Per-member credit ledger** | `hashtext("member-credit-ledger"), hashtext(<memberId>)` | `lockMemberCreditLedger(memberId, tx)` (`member-credit.ts`) | — | A member's credit-ledger balance operations (spend, negative-adjustment validation, orphan-restore repair, the Xero inbound applied-credit repair, and the F20 pre-payment-reduction applied-credit clamp `clampAppliedCreditToBookingPrice`, taken inside the modification transaction only when the booking carries applied credit, and the #2265 stored-election consumption `consumeStoredCreditElection`, taken inside the `create-payment-intent` pay transaction and the Internet Banking switch transaction only when the booking carries an outstanding election). |
+| **Per-member credit ledger** | `hashtext("member-credit-ledger"), hashtext(<memberId>)` | `lockMemberCreditLedger(memberId, tx)` (`member-credit.ts`) | — | A member's credit-ledger balance operations (spend, negative-adjustment validation, orphan-restore repair, the Xero inbound applied-credit repair, and the F20 pre-payment-reduction applied-credit clamp `clampAppliedCreditToBookingPrice`, taken inside the modification transaction only when the booking carries applied credit, through its give-back `giveBackAppliedCredit`, which a credit-paid booking's review share also goes through (#3791), taken inside an `EDIT_FINANCIAL_REVIEW` completion after its `lock(1)`, its claim and its re-price, only on the account-credit route with no captured payment, and the #2265 stored-election consumption `consumeStoredCreditElection`, taken inside the `create-payment-intent` pay transaction and the Internet Banking switch transaction only when the booking carries an outstanding election). |
 | **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`, `app/api/admin/deletion-requests/[id]/route.ts`, `nomination.ts` approval mapping, `admin-family-group-requests-service.ts`, `member-merge.ts`, `adult-member-hosting-coverage-drain.ts`) | — | Archive/delete of one member; account-deletion approval (the #1756 partner-share prefix — global cohort `lock(1)` + every affected lodge, sorted — and only then member lifecycle → shared standing-subject `Member FOR UPDATE NOWAIT` → exact queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-owner before deactivation and guest unlink); overwrite of one member by application-approval mapping (E10, #1936); linking/removing one member into/from a family group on admin request review; **member merge** (dual-lock on master + loser, E11 #1937, see below — merge takes the merge-only partner-share prefix, so every affected lodge key is held BEFORE this tier while the global cohort key is deliberately NOT taken at all, and the two `member-partner-link:` keys immediately AFTER it, #2595); and the queue-drain handshake that prevents a claimed hosting item from using identities while merge re-points them. |
 | **Membership application** | `hashtext(<application key>)` | `membershipApplicationLockKey` (`nomination.ts`) | — | State transitions of one membership application. |
 | **Membership applicant** | `hashtext(<applicant-email key>)` | `membershipApplicationApplicantLockKey` (`nomination.ts`) | — | Per-email applicant dedup at submit time. |
@@ -3142,6 +3173,24 @@ does too, and both would post. So `resolveManualRefundTask` takes
   mocked in `manual-refund-task.test.ts`. Legacy hand-back kinds take no key,
   exactly as before.
 
+**#3791 adds the per-member credit-ledger lock to that completion, after
+`lock(1)`, the claim and the closure's re-price**, on the account-credit route
+only where nothing was captured: the share goes back through
+`giveBackAppliedCredit`, the clamp's own give-back, which takes
+`lockMemberCreditLedger` itself. Global, then member-credit is the order every
+edit door already takes them in, so it closes no cycle. Everything the amount
+depends on is read after that key: the applied credit and the `Payment` mirror,
+the deallocation fence (a PENDING deallocation refuses with the task OPEN, the
+claim rolled back), the booking's status, the earlier reviews' re-prices and
+settled shares (written under the same `lock(1)`), and on a cancelled booking
+its restore row and frozen applied figure. The restore row is written under
+`lock(1)` by every cancel and under the member key alone by the orphan-restore
+backfill, so holding both keys excludes every writer of it. Its Xero
+deallocation and credit notes are outbox rows committed with the ledger write
+or queued after the commit; the worker calls Xero later, so no provider call
+runs under either key (`edit-financial-review-races.realdb.test.ts` forces the
+ledger-key interleaving).
+
 Registered in `advisory-lock-guard.test.ts` as `resolveManualRefundTask#1`
 (`INV-LOCK-002`). The four edit doors and the batch path post their own lines
 under the `lock(1)` they already take first; no other writer changes.
@@ -3403,9 +3452,15 @@ booking-ledger lines. No provider call runs inside it.
 transaction rows.** Every writer that holds more than one of them takes the
 `Payment` row first through `lockPaymentForRefundedTotal`: the card-refund
 writer, `applyLocalRefundAllocation` (joining the caller's transaction), and the
-paid-path cancel claim, right after its post-lock re-read and before the #1491
-fold (earlier still when #3643's part-payment recognition writes the receipt:
-`recordPartPaymentInClaim` takes it before that transaction-row write). The first version of this writer took the transaction row and then the
+paid-path cancel claim, right after its lodge capacity lock and before #3643's
+part-payment recognition, its eligibility re-check and the #1491 fold. The claim
+then re-reads the `Payment` row under that lock (#3793): the card-refund writers
+take no advisory lock, so the payment read with the booking under `lock(1)` can
+already miss a dashboard refund, so that read takes only the payment's id;
+every figure the refund is tiered off, and the refund method an internet
+banking payment forces, comes from the re-read. Proved by
+`paid-cancel-refunded-total-race.realdb.test.ts`. The first version of this
+writer took the transaction row and then the
 `Payment` row (its aggregate), while a cancel with an unpaid top-up takes the
 `Payment` row (failing the top-up) and then the transaction row (its credit
 allocation): a deadlock, proved and closed by

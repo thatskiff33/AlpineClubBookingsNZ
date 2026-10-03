@@ -266,6 +266,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-096` | A share mid-send for its invoice becomes a dismiss-only queue item |
 | `INV-PAY-097` | One withheld share is one item; a credit-only completion records no refund |
 | `INV-PAY-061` | Confirmed amounts settle through an existing path, chosen at completion |
+| `INV-PAY-113` | A credit-paid share is applied credit given back, once |
 | `INV-PAY-069` | Completions record their direction; charging re-enters the additional-payment path |
 | `INV-PAY-062` | One booking edit raises one charge request, derived from settled shares |
 | `INV-PAY-098` | A replacement ask carries the unpaid balance it retires, and records it |
@@ -355,6 +356,7 @@ Prefix `INV-GUEST`.
 | `INV-GUEST-017` | Exactly eight column shapes are legal, and the table lists them |
 | `INV-GUEST-018` | That table is generated from the code table by a test |
 | `INV-GUEST-019` | Own dependants leave the guest split at create, edit and exception doors |
+| `INV-GUEST-020` | Family is judged before any beyond-family member is resolved |
 
 ## Booking Modifications
 

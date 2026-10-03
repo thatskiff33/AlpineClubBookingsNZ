@@ -354,7 +354,50 @@ describe("planReviewClosureShareLines — booking grain (#3582, §5.3)", () => {
     settlement: { direction: "REFUND_TO_MEMBER" as const, amountCents: 3_000 },
   };
   const charges = (cents: number) => [{ sign: 1 as const, unitCents: cents, quantity: 1 }];
-  const standIn = { id: "adj-1", sign: -1 as const, quantity: 1, unitCents: 3_000, narration: "Adjustment agreed with member: A", reversesLineId: null };
+  const standIn = { id: "adj-1", sign: -1 as const, quantity: 1, unitCents: 3_000, narration: "Adjustment agreed with member: A", reversesLineId: null, postingKey: "agreed-adjustment:t1" };
+  /** #3791: an earlier review's agreed give-back on a covered booking. */
+  const giveBack = { ...standIn, id: "adj-gb", postingKey: "agreed-give-back:t1" };
+
+  it("MUTATION: #3791 F3 - a re-price that carries the price leaves an earlier review's agreed give-back live", () => {
+    const lines = planReviewClosureShareLines({
+      ...base,
+      rebasedFinalPriceCents: 8_000,
+      chargeLinesAfter: charges(8_000),
+      repriceRecordsMovement: true,
+      postedAdjustmentLines: [giveBack, standIn],
+    });
+    expect(lines.map((line) => line.reversesLineId)).toEqual(["adj-1"]);
+  });
+
+  it("MUTATION: #3791 F3 - a covered booking's give-back beyond its re-price posts as an agreed give-back, whatever the charges carry, and replaces the share's stand-in", () => {
+    const carried = planReviewClosureShareLines({
+      ...base,
+      rebasedFinalPriceCents: 8_000,
+      chargeLinesAfter: charges(8_000),
+      repriceRecordsMovement: true,
+      postedAdjustmentLines: [],
+      agreedGiveBackCents: 1_000,
+    });
+    expect(carried.map((line) => [line.postingKey, ledgerLineAmountCents(line)])).toEqual([["agreed-give-back:t2", -1_000]]);
+    const declined = planReviewClosureShareLines({
+      ...base,
+      rebasedFinalPriceCents: null,
+      chargeLinesAfter: charges(10_000),
+      repriceRecordsMovement: false,
+      postedAdjustmentLines: [],
+      agreedGiveBackCents: 3_000,
+    });
+    expect(declined.map((line) => [line.postingKey, ledgerLineAmountCents(line)])).toEqual([["agreed-give-back:t2", -3_000]]);
+    // A give-back the re-price wholly explains posts nothing of its own.
+    expect(planReviewClosureShareLines({
+      ...base,
+      rebasedFinalPriceCents: 7_000,
+      chargeLinesAfter: charges(7_000),
+      repriceRecordsMovement: true,
+      postedAdjustmentLines: [],
+      agreedGiveBackCents: 0,
+    })).toEqual([]);
+  });
 
   it("charges carry the re-based price: reverses every live stand-in by its line id and posts no share", () => {
     const lines = planReviewClosureShareLines({

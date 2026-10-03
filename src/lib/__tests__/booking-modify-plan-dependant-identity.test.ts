@@ -410,3 +410,45 @@ describe("#3451: the modify save refuses an added guest named as the owner's dep
     expect(h.memberFindMany).not.toHaveBeenCalled();
   });
 });
+
+/*
+  #3770 — owner decision "only agreed adults count", on the modify plan. A
+  booking whose only adult is a member guest from beyond the family who has NOT
+  agreed yet is minors-only for the adult-supervision rule, as children alone
+  would be; the same plan with that adult agreed is not. Read through the plan's
+  own stored/planned consent facts, the ones its paid-up-adult check uses.
+*/
+describe("#3770: the modify plan does not count a pending outsider adult", () => {
+  function outsiderAdult(consentStatus: "PENDING" | "CONFIRMED") {
+    return {
+      ...existingGuest("g2", "Grace", "Hopper"),
+      isMember: true,
+      memberId: "member-x",
+      consentStatus,
+    };
+  }
+  function minorsPlusOutsider(consentStatus: "PENDING" | "CONFIRMED") {
+    return booking([
+      { ...existingGuest("g1", "Kid", "Owner"), ageTier: "CHILD", consentStatus: null },
+      outsiderAdult(consentStatus),
+    ] as never);
+  }
+
+  it("flags the booking for review when the only adult has not agreed yet", async () => {
+    const result = await plan(
+      { memberReviewJustification: "Grandad is coming" },
+      { role: "MEMBER", id: OWNER },
+      minorsPlusOutsider("PENDING"),
+    );
+    expect((result as { requiresAdminReview: boolean }).requiresAdminReview).toBe(true);
+  });
+
+  it("CONTROL: an outsider adult who has agreed still counts", async () => {
+    const result = await plan(
+      { memberReviewJustification: "Grandad is coming" },
+      { role: "MEMBER", id: OWNER },
+      minorsPlusOutsider("CONFIRMED"),
+    );
+    expect((result as { requiresAdminReview: boolean }).requiresAdminReview).toBe(false);
+  });
+});

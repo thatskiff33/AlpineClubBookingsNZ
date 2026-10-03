@@ -57,6 +57,7 @@ import {
 import { clubTime } from "@/lib/club-time/server";
 import { countRosterDaysNeedingChores } from "@/lib/roster-status";
 import { countGuestsAwaitingBed } from "@/lib/bed-allocation-board";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   coverageNeedsLodgeContext,
   getHutLeaderDashboardCoverage,
@@ -108,6 +109,7 @@ async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
       .getTime() - 1,
   );
   const sevenDaysFromNow = dateOnlyInstantOf(addCalendarDays(todayKey, 7));
+  const bedAllocationEnabled = (await loadEffectiveModuleFlags()).bedAllocation;
 
   const [
     totalMembers,
@@ -273,13 +275,11 @@ async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
     // window.
     countRosterDaysNeedingChores({ from: today, to: sevenDaysFromNow }),
     // Bed Allocation officer card (#2091, D-E2): guests in the next 7 days with a
-    // bed-night still awaiting allocation. Window-scoped mirror of the bed
-    // board's own unallocatedGuestNights set (src/lib/bed-allocation-board.ts):
-    // per-guest-night diff with the board's guest-existence rule and whole-lodge
-    // holds excluded (ADR-001), so a partially-allocated booking still counts its
-    // pending guests exactly as the board's buckets do. Cheap: bounded 7-day
-    // window matching the board's landing window.
-    countGuestsAwaitingBed({ from: today, to: sevenDaysFromNow }),
+    // bed-night awaiting allocation, mirroring the bed board's own
+    // unallocatedGuestNights set (ADR-001). Skipped with the module off (#3841).
+    bedAllocationEnabled
+      ? countGuestsAwaitingBed({ from: today, to: sevenDaysFromNow })
+      : Promise.resolve(0),
   ]);
 
   const revenueThisMonth = revenueResult._sum.amountCents ?? 0;
@@ -323,6 +323,7 @@ async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
       pendingMembershipCancellations + pendingMemberArchives,
     rosterDaysNeedingChores,
     bedGuestsAwaiting,
+    bedAllocationEnabled,
   };
 }
 
@@ -375,10 +376,9 @@ export default async function AdminDashboardPage() {
     permissionMatrix,
     "/admin/roster",
   );
-  const canViewBedAllocation = canViewAdminHrefWithMatrix(
-    permissionMatrix,
-    "/admin/bed-allocation",
-  );
+  const canViewBedAllocation =
+    stats.bedAllocationEnabled &&
+    canViewAdminHrefWithMatrix(permissionMatrix, "/admin/bed-allocation");
   const canViewMembers = canViewAdminHrefWithMatrix(
     permissionMatrix,
     "/admin/members",
