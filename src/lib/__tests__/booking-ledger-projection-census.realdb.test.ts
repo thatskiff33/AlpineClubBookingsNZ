@@ -31,6 +31,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { BookingLedgerCensusReport } from "@/lib/booking-ledger-projection-census-report";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
+// #3791's review closures, proved on the same database; imported so CI reaches it.
+import "./booking-ledger-projection-census-reviews.realdb.test";
+
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 

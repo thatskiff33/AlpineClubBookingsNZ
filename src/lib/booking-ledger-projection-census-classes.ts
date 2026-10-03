@@ -154,6 +154,12 @@ export type BookingLedgerCensusRow = {
     priceDiffCents: number;
     changeFeeCents: number;
     createdAt: Date;
+    /**
+     * A review closure's `PRICE_REBASE` row: the task it re-priced for and the
+     * signed movement of the final price it recorded (`newData`). Null on any
+     * other row.
+     */
+    reviewRebase: { taskId: string; movementCents: number } | null;
   }>;
   recoveryOperations: ReadonlyArray<{
     type: PaymentRecoveryOperationType;

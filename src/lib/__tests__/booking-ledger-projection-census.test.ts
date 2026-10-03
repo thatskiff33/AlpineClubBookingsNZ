@@ -16,6 +16,7 @@ import { planCancellationChargeLines } from "@/lib/booking-ledger-cancellation-p
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
 import { planCreditLines, planHandBackLine } from "@/lib/booking-ledger-credit-posting";
 import { planAgreedAdjustmentLine, planModificationChargeLines } from "@/lib/booking-ledger-modification-posting";
+import { agreedGiveBackKey } from "@/lib/booking-ledger-posting-keys";
 import { evaluateBookingLedgerIdentities, type BookingLedgerIdentity } from "@/lib/booking-ledger-projection-census";
 import {
   BOOKING_LEDGER_ACKNOWLEDGEMENT_FILE,
@@ -235,7 +236,7 @@ function reducedAndRefunded(): BookingLedgerCensusRow {
     booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: false, finalPriceCents: 14_000 },
     transactions: [txn("t1", 19_000, { status: "PARTIALLY_REFUNDED", refundedAmountCents: 4_500 })],
     refunds: [{ id: "r1", status: "succeeded", amountCents: 4_500, paymentTransactionId: "t1" }],
-    modifications: [{ id: "m1", modificationType: "BATCH_MODIFY", priceDiffCents: -5_000, changeFeeCents: 500, createdAt: LATER }],
+    modifications: [{ id: "m1", modificationType: "BATCH_MODIFY", priceDiffCents: -5_000, changeFeeCents: 500, createdAt: LATER, reviewRebase: null }],
     payment: payment({ refundedAmountCents: 4_500, changeFeeCents: 500, status: "PARTIALLY_REFUNDED" }),
   });
   settle(ledger, subject, false, LATER);
@@ -262,7 +263,7 @@ function raisedWithAsk(): BookingLedgerCensusRow {
     lines: ledger.lines,
     booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: false, finalPriceCents: 21_500 },
     transactions: [txn("t1", 19_000), txn("a1", 2_500, { kind: "ADDITIONAL", status: "PENDING", createdAt: LATER })],
-    modifications: [{ id: "m2", modificationType: "BATCH_MODIFY", priceDiffCents: 2_500, changeFeeCents: 0, createdAt: LATER }],
+    modifications: [{ id: "m2", modificationType: "BATCH_MODIFY", priceDiffCents: 2_500, changeFeeCents: 0, createdAt: LATER, reviewRebase: null }],
     payment: payment({ additionalAmountCents: 2_500, additionalPaymentStatus: "PENDING" }),
   });
 }
@@ -356,7 +357,7 @@ function reductionCredited(withLine: boolean): BookingLedgerCensusRow {
     booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: false, finalPriceCents: 15_000 },
     transactions: [txn("t1", 20_000, { refundedAmountCents: 5_000 })],
     credits: rows,
-    modifications: [{ id: "m1", modificationType: "BATCH_MODIFY", priceDiffCents: -5_000, changeFeeCents: 0, createdAt: LATER }],
+    modifications: [{ id: "m1", modificationType: "BATCH_MODIFY", priceDiffCents: -5_000, changeFeeCents: 0, createdAt: LATER, reviewRebase: null }],
     payment: payment({ amountCents: 20_000, refundedAmountCents: 5_000 }),
   });
 }
@@ -615,6 +616,71 @@ describe("the second review's gate escapes are closed (fix round 2 of #3583)", (
     const moved = report([cashCancelled("OPEN")], [{ bookingId: B, class: "IN_FLIGHT_HAND_BACK", cents: 9_000, reference: "hand-back in progress" }]);
     expect(moved.verdict).toBe("GATE_CLOSED");
     expect(moved.acknowledged.stale).toHaveLength(1);
+  });
+});
+
+describe("#3791's review closures: a line is judged by what the member was credited (#3583)", () => {
+  const TASK = "task-3791";
+  const task = { id: TASK, kind: "EDIT_FINANCIAL_REVIEW" as const, status: "COMPLETED" as const, amountCents: 5_000, settlementDirection: "REFUND_TO_MEMBER" as const, paymentId: null, lateCaptureApprovalIntentId: null };
+  const giveBack = (cents: number, id = "c-give") => credit(id, "BOOKING_APPLIED", cents, { sourceBookingId: B });
+  const share = (cents: number, key?: string) => ({
+    ...planAgreedAdjustmentLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: TASK, direction: "REFUND_TO_MEMBER", amountCents: cents, note: "agreed", officerMemberId: "officer" }),
+    ...(key ? { postingKey: key } : {}),
+  });
+  const rebase = (movementCents: number) => ({ id: "m-rebase", modificationType: "PRICE_REBASE", priceDiffCents: 0, changeFeeCents: 0, createdAt: LATER, reviewRebase: { taskId: TASK, movementCents } });
+  const findings = (subject: BookingLedgerCensusRow) => evaluateBookingLedgerIdentities(subject).integrity.map((finding) => `${finding.kind}:${finding.lineId}`);
+
+  /** A $190 booking its credit covered; a $50 share given back, posted as the agreed give-back. */
+  function covered(giveBackLineCents: number | null = 5_000, rows = [giveBack(5_000)]): BookingLedgerCensusRow {
+    const ledger = confirmedLedger();
+    const creditRows = [credit("c-applied", "BOOKING_APPLIED", -19_000), ...rows];
+    credits(ledger, creditRows);
+    if (giveBackLineCents !== null) ledger.post([share(giveBackLineCents, agreedGiveBackKey(TASK))], LATER);
+    return row({ lines: ledger.lines, credits: creditRows, tasks: [task], payment: payment({ amountCents: 0, creditAppliedCents: 14_000 }) });
+  }
+  const unsettled = (subject: BookingLedgerCensusRow) =>
+    evaluateBookingLedgerIdentities(subject).identities.filter((result) => result.status !== "AGREE" && result.status !== "NOT_APPLICABLE");
+
+  it("a covered booking's agreed give-back agrees: the price column never carries it, and owed(b) is what the columns say less it", () => {
+    expect(unsettled(covered())).toEqual([]);
+    expect(findings(covered())).toEqual([]);
+  });
+
+  it("a give-back line a cent either way, or with no give-back row behind it, is source drift and an owed(b) disagreement", () => {
+    for (const cents of [4_999, 5_001]) {
+      const subject = covered(cents);
+      expect(findings(subject)).toHaveLength(1);
+      expect(unsettled(subject).map((result) => [result.identity, result.deltaCents])).toEqual([["OWED", cents - 5_000]]);
+    }
+    expect(findings(covered(5_000, []))).toHaveLength(1);
+  });
+
+  it("a missing give-back line is an owed(b) disagreement by the give-back no line records", () => {
+    expect(unsettled(covered(null)).map((result) => [result.identity, result.deltaCents])).toEqual([["OWED", -5_000]]);
+    expect(findings(covered(null))).toEqual([]);
+  });
+
+  it("the give-back the line records is net of the closure's own re-price, read from its PRICE_REBASE row", () => {
+    const subject = covered(3_000);
+    expect(findings(subject)).toHaveLength(1);
+    expect(findings({ ...subject, modifications: [rebase(-2_000)] })).toEqual([]);
+    expect(findings({ ...subject, modifications: [rebase(-1_000)] })).toHaveLength(1);
+  });
+
+  it("after a cancellation a netted stand-in must be made of the give-back and share credit; the typed share still stands", () => {
+    const cancelled = (lineCents: number, rows: BookingLedgerCensusRow["credits"]) =>
+      row({ lines: new Ledger().post([share(lineCents)], LATER).lines, credits: rows, tasks: [task], booking: { id: B, status: "CANCELLED", deletedAt: null, organiserSettled: false, finalPriceCents: 19_000 } });
+    expect(findings(cancelled(2_500, [giveBack(2_500)]))).toEqual([]);
+    expect(findings(cancelled(3_000, [giveBack(2_500), credit("c-mint", "BOOKING_MODIFICATION_REFUND", 500)]))).toEqual([]);
+    expect(findings(cancelled(5_000, []))).toEqual([]);
+    for (const [cents, rows] of [[2_500, []], [2_400, [giveBack(2_500)]], [2_600, [giveBack(2_500)]], [5_100, []]] as const) {
+      expect(findings(cancelled(cents, [...rows])), `${cents}`).toEqual([`SOURCE_DRIFT:line-1`]);
+    }
+  });
+
+  it("before a cancellation the stand-in is the typed share, whatever rows the booking holds", () => {
+    const live = row({ lines: new Ledger().post([share(2_500)], LATER).lines, credits: [giveBack(2_500)], tasks: [task] });
+    expect(findings(live)).toEqual(["SOURCE_DRIFT:line-1"]);
   });
 });
 
@@ -917,7 +983,7 @@ describe("every named class lands in its class; a cent either way, or its eviden
       lines: ledger.lines,
       transactions,
       booking: { ...shared.booking, finalPriceCents: 21_500 },
-      modifications: [{ id: "m-rebase", modificationType: "PRICE_REBASE", priceDiffCents: 0, changeFeeCents: 0, createdAt: LATER }],
+      modifications: [{ id: "m-rebase", modificationType: "PRICE_REBASE", priceDiffCents: 0, changeFeeCents: 0, createdAt: LATER, reviewRebase: null }],
       payment: payment({ amountCents: 21_500, additionalAmountCents: 2_500, additionalPaymentStatus: "PENDING" }),
     };
     expect(identity(stale, "ADDITIONAL")).toMatchObject({ status: "DISAGREE", columnCents: 2_500, ledgerCents: 0 });
@@ -946,7 +1012,7 @@ describe("coverage: the gap before the back-post, named and holding the gate", (
   });
 
   it("UNPOSTED_EDIT: an edit after confirmation that posted nothing, to the cent; a cent either way, or the edit made before confirmation, is a disagreement", () => {
-    const subject = { ...cardPaid(), booking: { id: B, status: "PAID" as const, deletedAt: null, organiserSettled: false, finalPriceCents: 21_500 }, modifications: [{ id: "m9", modificationType: "BATCH_MODIFY", priceDiffCents: 2_500, changeFeeCents: 0, createdAt: LATER }] };
+    const subject = { ...cardPaid(), booking: { id: B, status: "PAID" as const, deletedAt: null, organiserSettled: false, finalPriceCents: 21_500 }, modifications: [{ id: "m9", modificationType: "BATCH_MODIFY", priceDiffCents: 2_500, changeFeeCents: 0, createdAt: LATER, reviewRebase: null }] };
     expect(identity(subject, "PRICE")).toMatchObject({ status: "COVERAGE", deltaCents: 2_500 });
     expect(evaluateBookingLedgerIdentities(subject).coverage).toEqual(["UNPOSTED_EDIT"]);
     for (const by of [1, -1]) expect(identity({ ...subject, booking: { ...subject.booking, finalPriceCents: 21_500 + by } }, "PRICE").status).toBe("DISAGREE");
@@ -954,7 +1020,7 @@ describe("coverage: the gap before the back-post, named and holding the gate", (
   });
 
   it("UNPOSTED_CHANGE_FEE: a fee charged before confirmation has no line (#3611 V4)", () => {
-    const subject = { ...cardPaid(), payment: payment({ changeFeeCents: 500 }), modifications: [{ id: "m0", modificationType: "BATCH_MODIFY", priceDiffCents: 0, changeFeeCents: 500, createdAt: EARLIER }] };
+    const subject = { ...cardPaid(), payment: payment({ changeFeeCents: 500 }), modifications: [{ id: "m0", modificationType: "BATCH_MODIFY", priceDiffCents: 0, changeFeeCents: 500, createdAt: EARLIER, reviewRebase: null }] };
     expect(identity(subject, "CHANGE_FEE")).toMatchObject({ status: "COVERAGE", deltaCents: 500 });
     for (const by of [1, -1] as const) expect(identity(bumpPayment(subject, "changeFeeCents", by), "CHANGE_FEE").status).toBe("DISAGREE");
     expect(identity({ ...subject, modifications: [] }, "CHANGE_FEE").status).toBe("DISAGREE");

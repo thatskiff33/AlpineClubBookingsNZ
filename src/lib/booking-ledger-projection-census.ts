@@ -42,7 +42,6 @@ import {
 import { bookingLedgerResidualCents, outstandingAdditionalAskCents } from "@/lib/additional-payment-ask";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
-import { editReviewSettlementSign } from "@/lib/edit-financial-review-charge-shape";
 import {
   isCapturedTransactionStatus,
   isRecordedRefundStatus,
@@ -72,6 +71,7 @@ import {
   type CensusLedgerLine,
   type ResidualComponent,
 } from "@/lib/booking-ledger-projection-census-classes";
+import { reviewAdjustmentEvidence, type ReviewAdjustmentEvidence } from "@/lib/booking-ledger-projection-census-review-adjustments";
 
 /**
  * The six identities of design §6, identity 1 in its corrected §5.3 form, and
@@ -244,7 +244,8 @@ function unpostedEdits(row: BookingLedgerCensusRow): { priceCents: number; chang
 export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): BookingLedgerEvaluation {
   const { booking, payment, lines } = row;
   const coverage = new Set<BookingLedgerCoverageKind>();
-  const integrity = integrityFindings(row);
+  const reviewAdjustments = reviewAdjustmentEvidence(row);
+  const integrity = integrityFindings(row, reviewAdjustments);
   const ibUnallocatedAppliedCredit = ibUnallocatedApplied(row);
   const base = {
     bookingId: booking.id,
@@ -273,8 +274,10 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
   const identities: BookingLedgerIdentityResult[] = [];
 
   // 1. PRICE. Live: finalPriceCents == Σ GUEST_NIGHT + PROMOTION + GROUP_DISCOUNT
-  // + adjusted(b) (design §5.3; a change fee is not in the price). Cancelled:
-  // owed(b) == 0 once its refunds have posted (design §6, #3611).
+  // + adjusted(b) (design §5.3; a change fee is not in the price), less the
+  // agreed give-backs: a price below the strands', which finalPriceCents —
+  // re-based from the strands — never carries (#3791). Cancelled: owed(b) == 0
+  // once its refunds have posted (design §6, #3611).
   if (cancelled) {
     if (!confirmed && row.cancellation !== null) {
       coverage.add("NOT_CONFIRMED_ON_LEDGER");
@@ -291,7 +294,7 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
     }
   } else {
     identities.push(
-      result("PRICE", booking.finalPriceCents, sumKinds(lines, CHARGE_PRICE_KINDS) + balance.adjustedCents, [
+      result("PRICE", booking.finalPriceCents, sumKinds(lines, CHARGE_PRICE_KINDS) + balance.adjustedCents - reviewAdjustments.agreedGiveBackLineCents, [
         [{ name: "UNPOSTED_EDIT", cents: edits.priceCents }],
       ]),
     );
@@ -356,7 +359,9 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
 
   // 7. OWED (live, confirmed on the ledger): owed(b) == what the columns say
   // is owed — `INV-PAY-047`'s residual plus the uncollected ask — plus issued
-  // credit the refunded column never counted. Every line the ledger holds,
+  // credit the refunded column never counted, less the agreed give-backs the
+  // review give-back rows evidence (the residual counts a give-back as owed,
+  // the price never having come down by it). Every line the ledger holds,
   // CREDIT_ISSUED and BANK_REFUND included, moves owed(b), so no line can be
   // missing or wrong here while the six above agree.
   if (!cancelled && confirmed) {
@@ -371,7 +376,8 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
         additionalPaymentStatus: payment?.additionalPaymentStatus ?? null,
       }) +
       outstandingAdditionalAskCents(payment) +
-      nonAllocatingIssuedCents(row);
+      nonAllocatingIssuedCents(row) +
+      reviewAdjustments.agreedGiveBackEvidenceCents;
     identities.push(result("OWED", columnOwed, balance.owedCents, liveOwedComponents(row, edits)));
   } else {
     identities.push(notApplicable("OWED"));
@@ -410,7 +416,7 @@ function sameInstant(a: Date | null, b: Date | null): boolean {
   return (a?.getTime() ?? null) === (b?.getTime() ?? null);
 }
 
-function integrityFindings(row: BookingLedgerCensusRow): BookingLedgerIntegrityFinding[] {
+function integrityFindings(row: BookingLedgerCensusRow, reviewAdjustments: ReviewAdjustmentEvidence): BookingLedgerIntegrityFinding[] {
   const bookingId = row.booking.id;
   const findings: BookingLedgerIntegrityFinding[] = [];
   const byId = new Map(row.lines.map((line) => [line.id, line]));
@@ -454,7 +460,7 @@ function integrityFindings(row: BookingLedgerCensusRow): BookingLedgerIntegrityF
   }
 
   for (const line of live) {
-    const drift = sourceDrift(row, line);
+    const drift = sourceDrift(row, line, reviewAdjustments);
     if (drift) add(line, "SOURCE_DRIFT", drift);
   }
   return findings;
@@ -465,7 +471,7 @@ function integrityFindings(row: BookingLedgerCensusRow): BookingLedgerIntegrityF
  * line whose source is gone, no longer holds, or holds a different amount is
  * drift (`amountDrift` in the posters, "for C4 to count").
  */
-function sourceDrift(row: BookingLedgerCensusRow, line: CensusLedgerLine): string | null {
+function sourceDrift(row: BookingLedgerCensusRow, line: CensusLedgerLine, reviewAdjustments: ReviewAdjustmentEvidence): string | null {
   const bookingId = row.booking.id;
   switch (line.anchorKind) {
     case "CONFIRMATION":
@@ -512,10 +518,8 @@ function sourceDrift(row: BookingLedgerCensusRow, line: CensusLedgerLine): strin
       if (task.status !== "COMPLETED") return `task ${task.id} is ${task.status}`;
       const amount = task.amountCents ?? 0;
       if (line.kind === "BANK_REFUND") return line.amountCents === -amount ? null : `task holds ${amount}, line ${line.amountCents}`;
-      if (line.kind === "AGREED_ADJUSTMENT" && task.settlementDirection !== null) {
-        const expected = editReviewSettlementSign(task.settlementDirection) * amount;
-        return line.amountCents === expected ? null : `task share is ${expected}, line ${line.amountCents}`;
-      }
+      // What the closure credited, borne out by the booking's rows (#3791).
+      if (line.kind === "AGREED_ADJUSTMENT") return reviewAdjustments.drift.get(line.id) ?? null;
       return null;
     }
   }

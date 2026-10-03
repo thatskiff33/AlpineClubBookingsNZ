@@ -72,7 +72,10 @@ const CENSUS_SELECT = {
       lateCaptureApprovalIntentId: true,
     },
   },
-  modifications: { orderBy: ASC, select: { id: true, modificationType: true, priceDiffCents: true, changeFeeCents: true, createdAt: true } },
+  modifications: {
+    orderBy: ASC,
+    select: { id: true, modificationType: true, priceDiffCents: true, changeFeeCents: true, createdAt: true, newData: true },
+  },
   paymentRecoveryOperations: {
     orderBy: ASC,
     select: { type: true, status: true, amountCents: true, idempotencyKey: true },
@@ -128,6 +131,20 @@ function cancellationOf(booking: StoredCensusBooking): BookingLedgerCensusRow["c
   };
 }
 
+/** What the census reads of a review closure's `PRICE_REBASE` row (`recordBookingPriceRebaseHistory`). */
+const REVIEW_REBASE_DATA = z.object({
+  financialReviewTaskId: z.string(),
+  rebasedPriceMovementCents: z.number().int(),
+});
+
+function reviewRebaseOf(
+  modification: StoredCensusBooking["modifications"][number],
+): BookingLedgerCensusRow["modifications"][number]["reviewRebase"] {
+  if (modification.modificationType !== "PRICE_REBASE") return null;
+  const parsed = REVIEW_REBASE_DATA.safeParse(modification.newData);
+  return parsed.success ? { taskId: parsed.data.financialReviewTaskId, movementCents: parsed.data.rebasedPriceMovementCents } : null;
+}
+
 const CREDIT_SELECT = {
   id: true,
   type: true,
@@ -170,7 +187,14 @@ export function toCensusRow(
     refunds: payment?.refunds ?? [],
     credits,
     tasks: booking.manualRefundTasks,
-    modifications: booking.modifications,
+    modifications: booking.modifications.map((modification) => ({
+      id: modification.id,
+      modificationType: modification.modificationType,
+      priceDiffCents: modification.priceDiffCents,
+      changeFeeCents: modification.changeFeeCents,
+      createdAt: modification.createdAt,
+      reviewRebase: reviewRebaseOf(modification),
+    })),
     recoveryOperations: booking.paymentRecoveryOperations,
     cancellation: cancellationOf(booking),
     lines: booking.ledgerLines,
