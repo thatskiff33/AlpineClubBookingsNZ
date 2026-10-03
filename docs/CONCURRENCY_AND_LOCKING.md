@@ -3194,10 +3194,15 @@ claims, their refund debts, `BANK_REFUND` lines and minted credit - read under
 the completion's own `lock(1)`: before the claim on the card and hand-back
 routes, which plan, cap and record the netted figure there, and after the
 re-price on the minted-credit route. The applied-credit part of that figure
-goes back through `giveBackAppliedCredit` on every one of those routes, so it
-takes the per-member credit-ledger lock after `lock(1)` and the claim - the
-order #3791's give-back already uses. The card cap also counts the
-cancellation's and earlier reviews' card refunds not yet made. The Stripe call stays after the commit
+goes back through `giveBackAppliedCredit` on every one of those routes, FIRST:
+the full order is `lock(1)`, the claim, the per-member credit-ledger key, then
+the `Payment` row (`applyLocalRefundAllocation`'s row lock on the hand-back,
+the minted credit's allocation, the give-back's own mirror update). That is the
+order the Xero inbound applied-credit repair takes the member key and the
+`Payment` row in, so the two cannot deadlock; a review with no credit part
+takes no member key at all. The card cap also counts the cancellation's and
+earlier reviews' card refunds not yet made, leaving out one that FAILED for
+good (a person settles it, and a hand refund already lowers the headroom). The Stripe call stays after the commit
 (`edit-financial-review-captured-cancel.realdb.test.ts`).
 
 Registered in `advisory-lock-guard.test.ts` as `resolveManualRefundTask#1`
