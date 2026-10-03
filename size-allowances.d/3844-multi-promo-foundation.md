@@ -26,11 +26,13 @@ reason: one import of bookingPromoCodeLabel for the plural promo read (#3826); t
   #3827 reads the request's code list through its own reader.
 
 file: src/lib/booking-cancel.ts
-lines: 2603
+lines: 2607
 reason: the cancel release now gives back every promo code a booking carries
   (#3826), through the one booking-level release in promo.ts; the existing
   cleanup helper keeps a cheap probe so a booking with no code opens no
-  transaction, and its docblock says so.
+  transaction, and its docblock says so. #3827 then hands the paid cancel's
+  money calculation the open edit refund hand-backs it must not refund twice
+  (`INV-PAY-114`): one import and one argument read under the claim's lock.
 
 file: src/lib/booking-delete.ts
 lines: 752
