@@ -220,6 +220,67 @@ describe("diffBookingPricing", () => {
     );
   });
 
+  it("a several-code booking stores one PROMO_DELTA per code that moved, summing to the change (#3828)", () => {
+    const keep = [{ ...guest("a"), nights: afterNights("2026-08-14", [8000, 8000]) }];
+    const before = {
+      ...side([guest("a")], -5000, "SUMMER25, GUESTFREE"),
+      promoByCode: [
+        { code: "SUMMER25", amountCents: -3000 },
+        { code: "GUESTFREE", amountCents: -2000 },
+      ],
+    };
+    // SUMMER25 moves, GUESTFREE stays, LATE is newly added; nothing else moved.
+    const after = {
+      ...side(keep, -6500, "SUMMER25, GUESTFREE, LATE"),
+      promoByCode: [
+        { code: "SUMMER25", amountCents: -4000 },
+        { code: "GUESTFREE", amountCents: -2000 },
+        { code: "LATE", amountCents: -500 },
+      ],
+    };
+
+    const lines = linesOf(diffBookingPricing(before, after, -1500));
+
+    // The stored shape is unchanged, so an old reader takes both lines.
+    expect(lines).toEqual([
+      { v: 1, kind: "PROMO_DELTA", sign: -1, promoCode: "SUMMER25", amountCents: -1000 },
+      { v: 1, kind: "PROMO_DELTA", sign: -1, promoCode: "LATE", amountCents: -500 },
+    ]);
+    expect(parseModificationLines(lines)).toEqual(lines);
+  });
+
+  it("a code the edit released is its own line, and per-code figures that do not explain the change fall back to the one line (#3828)", () => {
+    const keep = [{ ...guest("a"), nights: afterNights("2026-08-14", [8000, 8000]) }];
+    const before = {
+      ...side([guest("a")], -5000, "SUMMER25, GUESTFREE"),
+      promoByCode: [
+        { code: "SUMMER25", amountCents: -3000 },
+        { code: "GUESTFREE", amountCents: -2000 },
+      ],
+    };
+    const released = linesOf(
+      diffBookingPricing(
+        before,
+        { ...side(keep, -3000, "SUMMER25"), promoByCode: [{ code: "SUMMER25", amountCents: -3000 }] },
+        2000,
+      ),
+    );
+    expect(released).toEqual([
+      { v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: "GUESTFREE", amountCents: 2000 },
+    ]);
+
+    const disagreeing = linesOf(
+      diffBookingPricing(
+        before,
+        { ...side(keep, -3000, "SUMMER25"), promoByCode: [{ code: "SUMMER25", amountCents: -2500 }] },
+        2000,
+      ),
+    );
+    expect(disagreeing).toEqual([
+      { v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: "SUMMER25", amountCents: 2000 },
+    ]);
+  });
+
   it("INV-MOD-028: any unpriced night on either side yields no lines", () => {
     const beforeNull = side([guest("a", { nights: [{ stayDate: day("2026-08-14"), priceCents: null, priceSource: "UNKNOWN" }] })]);
     expect(diffBookingPricing(beforeNull, side([]), -0)).toEqual({ kind: "none", reason: "UNPRICED_NIGHT" });

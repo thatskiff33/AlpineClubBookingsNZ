@@ -71,18 +71,36 @@ export function promoAdjustmentSummaryRows(
   promoAdjustmentCents: number,
   format: ClubFormat,
   promoCode?: string,
+  /**
+   * #3828: each code's own adjustment, in application order, for a booking
+   * carrying several codes. Used — one row per code that took something off,
+   * naming it — only when there are several and they add up to
+   * `promoAdjustmentCents`; otherwise the one row above, as always.
+   */
+  promoLines?: ReadonlyArray<PromoCodeAdjustment>,
 ): Array<{ label: string; value: string }> {
-  if (promoAdjustmentCents === 0) return [];
+  const perCode = promoLines && promoLines.length > 1 ? promoLines : null;
+  const perCodeRows =
+    perCode &&
+    perCode.reduce((sum, line) => sum + line.amountCents, 0) === promoAdjustmentCents
+      ? perCode.filter((line) => line.amountCents !== 0)
+      : null;
+  if (promoAdjustmentCents === 0 && !perCodeRows?.length) return [];
   const subtotalCents = totalCents - promoAdjustmentCents;
-  const adjustmentPrefix = promoAdjustmentCents > 0 ? "+" : "-";
+  const adjustmentRow = (code: string | undefined, cents: number) => ({
+    label: code ? `Promo adjustment (${code})` : "Promo adjustment",
+    value: `${cents > 0 ? "+" : "-"}${formatMoneyCents(Math.abs(cents), format)}`,
+  });
   return [
     { label: "Subtotal", value: formatMoneyCents(subtotalCents, format) },
-    {
-      label: promoCode ? `Promo adjustment (${promoCode})` : "Promo adjustment",
-      value: `${adjustmentPrefix}${formatMoneyCents(Math.abs(promoAdjustmentCents), format)}`,
-    },
+    ...(perCodeRows
+      ? perCodeRows.map((line) => adjustmentRow(line.code, line.amountCents))
+      : [adjustmentRow(promoCode, promoAdjustmentCents)]),
   ];
 }
+
+/** One promo code's own signed adjustment on a booking (#3828). */
+export type PromoCodeAdjustment = { code: string; amountCents: number };
 
 /**
  * #2328: how the money that was NOT taken from the member's card was settled.

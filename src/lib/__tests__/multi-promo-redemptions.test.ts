@@ -16,10 +16,8 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import {
-  MultiplePromoRedemptionsError,
   bookingPromoCodeLabel,
   bookingPromoRedemptions,
-  soleBookingPromoRedemption,
 } from "../booking-promo-redemptions";
 import { bookingPromoEmailOptions } from "../booking-promo-email-options";
 import { redeemPromoCode, releaseBookingPromoRedemptions } from "../promo";
@@ -58,14 +56,12 @@ describe("booking promo redemption readers (#3826)", () => {
     expect(bookingPromoRedemptions({ promoRedemptions: [] })).toEqual([]);
     expect(bookingPromoRedemptions({})).toEqual([]);
     expect(bookingPromoRedemptions(null)).toEqual([]);
-    expect(soleBookingPromoRedemption({ promoRedemptions: [] })).toBeNull();
     expect(bookingPromoCodeLabel({ promoRedemptions: [] })).toBeNull();
   });
 
   it("answers a single-code booking exactly as the one-to-one relation did", () => {
-    const only = { id: "r1", promoCode: { code: "FREE3" } };
+    const only = { id: "r1", priceAdjustmentCents: -4500, promoCode: { code: "FREE3" } };
     const booking = { promoRedemptions: [only] };
-    expect(soleBookingPromoRedemption(booking)).toBe(only);
     expect(bookingPromoCodeLabel(booking)).toBe("FREE3");
     expect(
       bookingPromoEmailOptions({
@@ -82,15 +78,31 @@ describe("booking promo redemption readers (#3826)", () => {
     });
   });
 
-  it("refuses a single-code reader a booking carrying several codes rather than answering with the first", () => {
+  it("hands a several-code booking's confirmation one line per code, in the booker's order (#3828)", () => {
     const booking = {
       promoRedemptions: [
-        { id: "r1", applicationOrder: 0, promoCode: { code: "A" } },
-        { id: "r2", applicationOrder: 1, promoCode: { code: "B" } },
+        { id: "r2", applicationOrder: 1, priceAdjustmentCents: -2000, promoCode: { code: "B" } },
+        { id: "r1", applicationOrder: 0, priceAdjustmentCents: -3000, promoCode: { code: "A" } },
       ],
     };
-    expect(() => soleBookingPromoRedemption(booking)).toThrow(MultiplePromoRedemptionsError);
     expect(bookingPromoCodeLabel(booking)).toBe("A, B");
+    expect(
+      bookingPromoEmailOptions({
+        lodgeId: "lodge-1",
+        discountCents: 5000,
+        promoAdjustmentCents: -5000,
+        ...booking,
+      }),
+    ).toEqual({
+      lodgeId: "lodge-1",
+      discountCents: 5000,
+      promoAdjustmentCents: -5000,
+      promoCode: "A, B",
+      promoLines: [
+        { code: "A", amountCents: -3000 },
+        { code: "B", amountCents: -2000 },
+      ],
+    });
   });
 });
 

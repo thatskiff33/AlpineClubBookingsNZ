@@ -1902,8 +1902,8 @@ of them reads the same rows** (#3530, programme #3527; owner direction, 20 Sep
 2026).
 
 `BookingModification.priceLines` holds the signed lines behind
-`priceDiffCents` — per guest category × rate × unit price × nights, plus one
-promotion delta — computed at edit time by `diffBookingPricing` in
+`priceDiffCents` — per guest category × rate × unit price × nights, plus
+promotion deltas — computed at edit time by `diffBookingPricing` in
 `booking-modification-lines.ts`, the one home for their shape, sum rule, parser
 and sentence. The audit row, the booking's history and the Xero supplementary
 invoice and credit notes read those rows; none derives its own. The member word
@@ -1913,7 +1913,7 @@ The lines are **narration**: `priceDiffCents` stays the figure settlement
 reads; no idempotency key or outbox payload carries a line; the row is
 immutable.
 
-Rules: night prices are gross; the promotion is one signed `PROMO_DELTA` line;
+Rules: night prices are gross; the promotion is a signed `PROMO_DELTA` line per code;
 a kept night at the same price and category cancels; a repriced night is one
 removed and one added, never netted; runs are cut by `splitNightsIntoPriceRuns`,
 as on the invoice. An unpriced night, or a line-leaving before-night whose stored price is

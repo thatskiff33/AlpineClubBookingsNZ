@@ -4,9 +4,9 @@
  * A booking may carry several promo codes — one `PromoRedemption` per code,
  * owner decision on #3492 — so `Booking.promoRedemptions` is a list. Every
  * reader goes through this module rather than indexing the relation itself, so
- * the order the codes apply in (the booker's order, D-3813-2) and the answer to
- * "what does a reader that can only handle one code do with two" each live in
- * exactly one place (INV-SSOT-001).
+ * the order the codes apply in (the booker's order, D-3813-2) lives in exactly
+ * one place (INV-SSOT-001). Since #3828 every reader states every code, so the
+ * former one-code-only reader and its refusal are gone.
  *
  * Pure and dependency-free on purpose: it is imported by route handlers, email
  * composition and test doubles alike, and must not drag Prisma onto any of
@@ -57,35 +57,6 @@ export function bookingPromoRedemptions<T>(
         a.index - b.index,
     )
     .map(({ row }) => row);
-}
-
-/**
- * Raised when a reader that can state only ONE promotion meets a booking that
- * carries several. Such a reader is a pricing, edit or invoice path that a
- * later child of epic #3813 widens (C2 pricing, C3 Xero and edit lines); until
- * then it refuses rather than silently pricing or invoicing the first code
- * alone. Unreachable while the `multiPromoCodes` switch is off.
- */
-export class MultiplePromoRedemptionsError extends Error {
-  constructor(readonly count: number) {
-    super(
-      `This booking carries ${count} promo codes, and this step can only handle one (epic #3813).`,
-    );
-    this.name = "MultiplePromoRedemptionsError";
-  }
-}
-
-/**
- * The booking's one redemption, or null — for the readers that can state only
- * one. Refuses (`MultiplePromoRedemptionsError`) when the booking carries
- * several, because answering with the first would under-state the discount.
- */
-export function soleBookingPromoRedemption<T>(
-  booking: PromoRedemptionCarrier<T> | null | undefined,
-): T | null {
-  const rows = bookingPromoRedemptions(booking);
-  if (rows.length > 1) throw new MultiplePromoRedemptionsError(rows.length);
-  return rows[0] ?? null;
 }
 
 /**

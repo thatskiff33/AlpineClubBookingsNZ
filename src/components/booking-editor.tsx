@@ -106,6 +106,11 @@ export interface BookingEditorData {
   promoAdjustmentCents: number;
   finalPriceCents: number;
   promo: PromoInfo | null;
+  /**
+   * #3828: a booking carrying several codes — one money row per code, each
+   * with its own signed adjustment. Absent for one code or none.
+   */
+  promoLines?: Array<PromoInfo & { amountCents: number }>;
   hasNonMembers: boolean;
   nonMemberHoldUntil: string | null;
   canEditNonMemberGuestNames: boolean;
@@ -170,6 +175,43 @@ export interface BookingEditorData {
   otherLodgeRateEligibleGuestIds?: string[];
 }
 
+
+/**
+ * One promotion money row: the booking's single adjustment, or (#3828) one
+ * code's own adjustment on a booking carrying several.
+ */
+function PromoAdjustmentRow({
+  promo,
+  amountCents,
+  format,
+}: {
+  promo: PromoInfo | null;
+  amountCents: number;
+  format: ReturnType<typeof useClubFormat>;
+}) {
+  return (
+    <div className={`flex justify-between ${amountCents > 0 ? "text-warning-11" : "text-success-11"}`}>
+      <span>
+        {promo?.workPartyEventName
+          ? "Working bee discount"
+          : "Promo adjustment"}
+        {promo?.workPartyEventName ? (
+          <span className="ml-1 text-xs">
+            ({promo.workPartyEventName})
+          </span>
+        ) : (
+          promo?.code && (
+            <span className="ml-1 text-xs">({promo.code})</span>
+          )
+        )}
+      </span>
+      <span>
+        {amountCents > 0 ? "+" : "-"}
+        {formatCents(Math.abs(amountCents), format)}
+      </span>
+    </div>
+  );
+}
 
 export function BookingEditor({
   booking,
@@ -374,28 +416,24 @@ export function BookingEditor({
             <span>Subtotal</span>
             <span>{formatCents(booking.totalPriceCents, format)}</span>
           </div>
-          {booking.promoAdjustmentCents !== 0 && (
-            <div className={`flex justify-between ${booking.promoAdjustmentCents > 0 ? "text-warning-11" : "text-success-11"}`}>
-              <span>
-                {booking.promo?.workPartyEventName
-                  ? "Working bee discount"
-                  : "Promo adjustment"}
-                {booking.promo?.workPartyEventName ? (
-                  <span className="ml-1 text-xs">
-                    ({booking.promo.workPartyEventName})
-                  </span>
-                ) : (
-                  booking.promo?.code && (
-                    <span className="ml-1 text-xs">({booking.promo.code})</span>
-                  )
-                )}
-              </span>
-              <span>
-                {booking.promoAdjustmentCents > 0 ? "+" : "-"}
-                {formatCents(Math.abs(booking.promoAdjustmentCents), format)}
-              </span>
-            </div>
-          )}
+          {booking.promoLines && booking.promoLines.length > 1
+            ? booking.promoLines
+                .filter((line) => line.amountCents !== 0)
+                .map((line) => (
+                  <PromoAdjustmentRow
+                    key={line.code}
+                    promo={line}
+                    amountCents={line.amountCents}
+                    format={format}
+                  />
+                ))
+            : booking.promoAdjustmentCents !== 0 && (
+                <PromoAdjustmentRow
+                  promo={booking.promo}
+                  amountCents={booking.promoAdjustmentCents}
+                  format={format}
+                />
+              )}
           <div className="flex justify-between border-t pt-2 font-bold">
             <span>Total</span>
             <span>{formatCents(booking.finalPriceCents, format)}</span>
