@@ -62,6 +62,14 @@ import path from "node:path";
 /** Where the records live, relative to the repository root. */
 export const MITIGATIONS_DIR = "dependency-mitigations.d";
 
+/**
+ * The furthest ahead of `now` a record's expiry may sit (#3843, third owner
+ * decision). An approval is for days, not months: a record written with a
+ * distant expiry is refused outright rather than trusted for longer, so
+ * re-sealing a record cannot quietly buy a long-lived exception.
+ */
+export const MAX_EXPIRY_AHEAD_MS = 14 * 24 * 60 * 60 * 1000;
+
 /** The dependency inputs whose exact bytes an acceptance is bound to. */
 const REVIEWED_INPUTS = ["pnpm-workspace.yaml", "pnpm-lock.yaml"];
 
@@ -350,11 +358,24 @@ export function applyMitigation(result, { now, root = process.cwd(), fsImpl = fs
     ...reportProblems({ report, stdout: result.stdout, exitCode: result.exitCode, record }),
     ...inputProblems({ record, root, fsImpl }),
   ];
-  if (now.getTime() >= Date.parse(record.expires)) {
+  const expiresAt = Date.parse(record.expires);
+  if (now.getTime() >= expiresAt) {
     reasons.push(`the approval expired at ${record.expires}; extending it needs a new reviewed change and the owner's approval.`);
+  } else if (expiresAt - now.getTime() > MAX_EXPIRY_AHEAD_MS) {
+    reasons.push(`the expiry ${record.expires} is more than 14 days away; a record may run for at most 14 days from now.`);
   }
   if (reasons.length > 0) return refuse(reasons.map((reason) => `${file}: ${reason}`));
   return { ...result, outcome: "mitigated", mitigation: { file, record } };
+}
+
+/**
+ * One GitHub Actions workflow command. The message escapes `%`, CR and LF, and
+ * a property additionally `:` and `,`, as the runner's parser requires.
+ */
+function workflowCommand(command, title, message) {
+  const data = (text) => text.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+  const property = (text) => data(text).replace(/:/g, "%3A").replace(/,/g, "%2C");
+  return `::${command} title=${property(title)}::${data(message)}`;
 }
 
 /**
@@ -369,6 +390,16 @@ export function formatMitigatedReport(result) {
   const counts = result.report.metadata.vulnerabilities;
   return {
     exitCode: 0,
+    // A GitHub Actions warning annotation, so a MITIGATED pass shows on the
+    // pull request itself and never reads as a plain green tick. The verdict
+    // and exit code are unchanged by it.
+    annotations: [
+      workflowCommand(
+        "warning",
+        "Dependency audit MITIGATED (NOT CLEAN)",
+        `${advisory.github_advisory_id} ${advisory.module_name}@${record.covers.version}, expires ${record.expires}`,
+      ),
+    ],
     lines: [
       "Dependency audit: MITIGATED — NOT CLEAN. One reviewed high-severity advisory is still " +
         "reported; an owner-approved patch covers the one copy the audit can see.",

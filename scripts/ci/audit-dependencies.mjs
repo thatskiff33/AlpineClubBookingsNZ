@@ -681,6 +681,13 @@ export function formatReport(result) {
             `${advisory.fixAvailable ? " — a fix is available" : " — no fix published yet"}`,
         ),
         ...(result.mitigationRefused ?? []).map((why) => `  Mitigation record NOT applied: ${why}`),
+        ...(result.mitigationRefused?.length
+          ? [
+              "",
+              "  A mitigation record exists but no longer applies. Extend it (a new reviewed",
+              "  change with the owner's approval) or retire it: dependency-mitigations.d/README.md.",
+            ]
+          : []),
         "",
         "  Upgrade the dependency, or record a deliberate override with its reasoning",
         "  in docs/MAINTENANCE.md. Do not re-run this check hoping it goes green.",
@@ -751,9 +758,11 @@ export async function main({ run, sleep, now = new Date(), root = process.cwd() 
 
   const result = applyMitigation(audited, { now, root });
   const format = result.outcome === "mitigated" ? formatMitigatedReport : formatReport;
-  const { exitCode, lines } = format(result);
+  const { exitCode, lines, annotations = [] } = format(result);
   const write = exitCode === 0 ? console.log : console.error;
   for (const line of lines) write(line);
+  // Workflow commands are read from stdout; they are not part of the summary.
+  for (const annotation of annotations) console.log(annotation);
   writeStepSummary(lines);
   process.exitCode = exitCode;
 }

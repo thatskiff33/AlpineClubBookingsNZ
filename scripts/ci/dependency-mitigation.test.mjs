@@ -4,7 +4,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -18,23 +17,33 @@ import {
   applyMitigation,
   formatMitigatedReport,
   loadMitigationRecords,
+  MAX_EXPIRY_AHEAD_MS,
   MITIGATIONS_DIR,
 } from "./dependency-mitigation.mjs";
 
 /*
-  #3843: the accept/reject matrix for MITIGATED. Every case starts from the
-  committed record, the committed patch and the committed dependency inputs,
-  copied into a scratch root, and from the report `pnpm audit --json` really
-  printed for this branch (pnpm 11.27.1, 3 Oct 2026). Each reject case changes
-  exactly one thing, so a passing reject proves THAT condition is load-bearing.
+  #3843: the accept/reject matrix for MITIGATED. Every case starts from a
+  SYNTHETIC fixture — a record, a patch and stand-ins for pnpm-workspace.yaml and
+  pnpm-lock.yaml under scripts/ci/fixtures/dependency-mitigation/, the record
+  binding their digests — copied into a scratch root, and from the report
+  `pnpm audit --json` really printed for this branch (pnpm 11.27.1, 3 Oct 2026).
+  Each reject case changes exactly one thing, so a passing reject proves THAT
+  condition is load-bearing.
+
+  Nothing here reads the live record, patch or lockfile for its digests: a
+  dependency change is the audit gate's to refuse, not this suite's, and the
+  suite must keep passing once the live record is retired.
 
   The clock is always passed in. No case reads the real date.
 */
 
 const REPO = path.resolve(import.meta.dirname, "..", "..");
+const FIXTURE = path.join(import.meta.dirname, "fixtures", "dependency-mitigation");
 const RECORD_NAME = "3843-braces-ghsa-vfj7-8cjw-p6xm.json";
+const PATCH = "patches/braces@3.0.3.patch";
 const BEFORE_EXPIRY = new Date("2026-10-05T00:00:00Z");
 const EXPIRY = new Date("2026-10-10T00:00:00Z");
+const DAY_MS = 24 * 60 * 60 * 1000;
 const TEMP_ROOTS = new Set();
 
 afterEach(() => {
@@ -84,20 +93,19 @@ const pretty = (value) => `${JSON.stringify(value, null, 2)}\n`;
 const advisoryOf = (report) => report.advisories["1240992"];
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
-/** A scratch repository root holding copies of every file the gate reads. */
+/** A scratch repository root laid out from the synthetic fixture. */
 function scratchRoot() {
   const root = mkdtempSync(path.join(tmpdir(), "dep-mitigation-"));
   TEMP_ROOTS.add(root);
   mkdirSync(path.join(root, MITIGATIONS_DIR));
   mkdirSync(path.join(root, "patches"));
-  for (const file of [
-    "pnpm-workspace.yaml",
-    "pnpm-lock.yaml",
-    "patches/braces@3.0.3.patch",
-    `${MITIGATIONS_DIR}/README.md`,
-    `${MITIGATIONS_DIR}/${RECORD_NAME}`,
+  for (const [from, to] of [
+    ["workspace.yaml", "pnpm-workspace.yaml"],
+    ["lock.yaml", "pnpm-lock.yaml"],
+    ["braces@3.0.3.patch", PATCH],
+    ["record.json", `${MITIGATIONS_DIR}/${RECORD_NAME}`],
   ]) {
-    copyFileSync(path.join(REPO, file), path.join(root, file));
+    copyFileSync(path.join(FIXTURE, from), path.join(root, to));
   }
   return root;
 }
@@ -123,34 +131,36 @@ function judge({
 function expectRefused(result, fragment) {
   expect(result.outcome).toBe("vulnerable");
   expect(result.mitigationRefused?.join("\n")).toContain(fragment);
-  expect(formatReport(result).exitCode).toBe(1);
+  const { exitCode, lines } = formatReport(result);
+  expect(exitCode).toBe(1);
+  // A refused record points at how to extend or retire it, not only at "upgrade".
+  expect(lines.join("\n")).toContain("Extend it (a new reviewed");
+  expect(lines.join("\n")).toContain("dependency-mitigations.d/README.md");
 }
 
-describe("the committed record", () => {
-  it("accepts the measured report against the committed patch and inputs", () => {
-    const result = judge({ root: REPO });
-    expect(result.outcome).toBe("mitigated");
-    expect(result.mitigation.file).toBe(`${MITIGATIONS_DIR}/${RECORD_NAME}`);
+describe("the fixture", () => {
+  it("is accepted as it stands, so every reject case below changes one thing from a pass", () => {
+    expect(judge().outcome).toBe("mitigated");
   });
 
-  it("is the only record, and binds the digests of the files really committed", () => {
+  it("binds the digests of its own synthetic inputs", () => {
+    const record = JSON.parse(readFileSync(path.join(FIXTURE, "record.json"), "utf8"));
+    expect(record.patch.sha256).toBe(sha256(readFileSync(path.join(FIXTURE, "braces@3.0.3.patch"))));
+    expect(record.reviewedInputs["pnpm-workspace.yaml"]).toBe(sha256(readFileSync(path.join(FIXTURE, "workspace.yaml"))));
+    expect(record.reviewedInputs["pnpm-lock.yaml"]).toBe(sha256(readFileSync(path.join(FIXTURE, "lock.yaml"))));
+  });
+});
+
+describe("the committed directory", () => {
+  // Deliberately NOT checked here: the live record's lock and workspace
+  // digests. A dependency change already turns the required audit red; it must
+  // not also redden this suite. Zero records (after retirement) passes.
+  it("holds only well-formed records, each naming a patch whose bytes it binds", () => {
     const { records, problems } = loadMitigationRecords({ root: REPO });
     expect(problems).toEqual([]);
-    expect(records).toHaveLength(1);
-    const { record } = records[0];
-    expect(record.patch.sha256).toBe(sha256(readFileSync(path.join(REPO, record.patch.path))));
-    for (const [name, digest] of Object.entries(record.reviewedInputs)) {
-      expect(digest, name).toBe(sha256(readFileSync(path.join(REPO, name))));
+    for (const { file, record } of records) {
+      expect(sha256(readFileSync(path.join(REPO, record.patch.path))), file).toBe(record.patch.sha256);
     }
-    expect(record.expires).toBe("2026-10-10T00:00:00Z");
-    expect(record.ownerDecisions).toHaveLength(2);
-  });
-
-  it("names every bundled copy it does not cover", () => {
-    const { record } = loadMitigationRecords({ root: REPO }).records[0];
-    const files = record.knownUncoveredCopies.flatMap((copy) => copy.files);
-    expect(files).toHaveLength(9);
-    expect(record.scope).toContain("ONLY");
   });
 });
 
@@ -169,6 +179,15 @@ describe("MITIGATED is reported, and is never CLEAN", () => {
     expect(text).toContain("Expires: 2026-10-10T00:00:00Z");
   });
 
+  it("raises a warning annotation naming the advisory, and changes nothing else", () => {
+    const report = formatMitigatedReport(judge());
+    expect(report.annotations).toEqual([
+      "::warning title=Dependency audit MITIGATED (NOT CLEAN)::GHSA-vfj7-8cjw-p6xm braces@3.0.3, expires 2026-10-10T00:00:00Z",
+    ]);
+    expect(report.lines.join("\n")).not.toContain("::warning");
+    expect(report.exitCode).toBe(0);
+  });
+
   it("goes through main with exit 0 only while every condition holds", async () => {
     const out = [];
     vi.spyOn(console, "log").mockImplementation((line) => out.push(String(line)));
@@ -180,6 +199,9 @@ describe("MITIGATED is reported, and is never CLEAN", () => {
       await main({ run, sleep: () => Promise.resolve(), now: BEFORE_EXPIRY, root: scratchRoot() });
       expect(process.exitCode).toBe(0);
       expect(out[0]).toContain("MITIGATED — NOT CLEAN");
+      expect(out).toContain(
+        "::warning title=Dependency audit MITIGATED (NOT CLEAN)::GHSA-vfj7-8cjw-p6xm braces@3.0.3, expires 2026-10-10T00:00:00Z",
+      );
 
       process.exitCode = undefined;
       out.length = 0;
@@ -187,6 +209,8 @@ describe("MITIGATED is reported, and is never CLEAN", () => {
       expect(process.exitCode).toBe(1);
       expect(out[0]).toContain("VULNERABILITY FOUND");
       expect(out.join("\n")).toContain("Mitigation record NOT applied");
+      expect(out.join("\n")).toContain("dependency-mitigations.d/README.md");
+      expect(out.join("\n")).not.toContain("::warning");
     } finally {
       process.exitCode = previous;
     }
@@ -216,10 +240,11 @@ describe("outcomes other than a vulnerability are never touched", () => {
     const result = judge({ root });
     expect(result.outcome).toBe("vulnerable");
     expect(result.mitigationRefused).toBeUndefined();
+    expect(formatReport(result).lines.join("\n")).not.toContain("dependency-mitigations.d/README.md");
   });
 });
 
-describe("the approval expires", () => {
+describe("the approval expires, and is short-lived", () => {
   it("accepts up to the last millisecond before expiry", () => {
     expect(judge({ now: new Date(EXPIRY.getTime() - 1) }).outcome).toBe("mitigated");
   });
@@ -228,18 +253,30 @@ describe("the approval expires", () => {
     expectRefused(judge({ now: EXPIRY }), "the approval expired at 2026-10-10T00:00:00Z");
     expectRefused(judge({ now: new Date("2027-01-01T00:00:00Z") }), "expired");
   });
+
+  it("accepts an expiry exactly 14 days ahead", () => {
+    expect(MAX_EXPIRY_AHEAD_MS).toBe(14 * DAY_MS);
+    expect(judge({ now: new Date(EXPIRY.getTime() - 14 * DAY_MS) }).outcome).toBe("mitigated");
+  });
+
+  it("refuses an expiry more than 14 days ahead, by a millisecond or by months", () => {
+    expectRefused(judge({ now: new Date(EXPIRY.getTime() - 14 * DAY_MS - 1) }), "more than 14 days away");
+    const root = scratchRoot();
+    editRecord(root, (r) => (r.expires = "2027-10-10T00:00:00Z"));
+    expectRefused(judge({ root }), "more than 14 days away");
+  });
 });
 
 describe("the patch must be the reviewed, registered patch", () => {
   it("refuses a missing patch", () => {
     const root = scratchRoot();
-    rmSync(path.join(root, "patches/braces@3.0.3.patch"));
+    rmSync(path.join(root, PATCH));
     expectRefused(judge({ root }), "patches/braces@3.0.3.patch is missing");
   });
 
   it("refuses an altered patch", () => {
     const root = scratchRoot();
-    const file = path.join(root, "patches/braces@3.0.3.patch");
+    const file = path.join(root, PATCH);
     writeFileSync(file, `${readFileSync(file, "utf8")}\n`);
     expectRefused(judge({ root }), "is not the reviewed one");
   });
@@ -254,7 +291,7 @@ describe("the patch must be the reviewed, registered patch", () => {
   it("refuses a lockfile that records a different patch hash", () => {
     const root = scratchRoot();
     const file = path.join(root, "pnpm-lock.yaml");
-    writeFileSync(file, readFileSync(file, "utf8").replace("  braces@3.0.3: 37f95f7d", "  braces@3.0.3: 47f95f7d"));
+    writeFileSync(file, readFileSync(file, "utf8").replace("  braces@3.0.3: efe68ba7", "  braces@3.0.3: 0fe68ba7"));
     expectRefused(judge({ root }), "pnpm-lock.yaml does not record the reviewed patch hash");
   });
 });
@@ -463,7 +500,8 @@ describe("the record itself must be well-formed and unique", () => {
   );
 
   it("keeps the README out of the record set", () => {
-    const names = readdirSync(path.join(REPO, MITIGATIONS_DIR)).sort();
-    expect(names).toEqual(["README.md", RECORD_NAME].sort());
+    const root = scratchRoot();
+    writeFileSync(path.join(root, MITIGATIONS_DIR, "README.md"), "# not a record\n");
+    expect(judge({ root }).outcome).toBe("mitigated");
   });
 });
