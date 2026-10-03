@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => {
   bookingUpdate: vi.fn(),
   bookingUpdateMany: vi.fn(),
   bookingRequestUpdateMany: vi.fn(),
-  promoRedemptionFindUnique: vi.fn(),
+  promoRedemptionFindFirst: vi.fn(),
   // #3123: the club's day is resolved once, before the claim transaction opens.
   // The delegate is NOT optional on this mock: `getClubTimeZone` is fail-soft on
   // a missing one and degrades silently to the environment, so leaving it off
@@ -80,7 +80,7 @@ const mocks = vi.hoisted(() => {
   revokePaymentLinksForBooking: vi.fn(),
   // #1547: promo cleanup, so a credit-carrying cancel can prove restore does
   // not disturb the promo lifecycle.
-  deletePromoRedemptionAndAdjustCount: vi.fn(),
+  releaseBookingPromoRedemptions: vi.fn(),
   // The tx client handed to the paid-path claim callback, captured so tests
   // can prove the #1349 recovery enqueue ran INSIDE the claim transaction.
   lastTx: null as unknown,
@@ -126,7 +126,7 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: mocks.paymentTransactionFindFirst,
     },
     promoRedemption: {
-      findUnique: mocks.promoRedemptionFindUnique,
+      findFirst: mocks.promoRedemptionFindFirst,
     },
     promoCode: {
       update: vi.fn(),
@@ -248,7 +248,7 @@ vi.mock("@/lib/payment-link", () => ({
 }));
 
 vi.mock("@/lib/promo", () => ({
-  deletePromoRedemptionAndAdjustCount: mocks.deletePromoRedemptionAndAdjustCount,
+  releaseBookingPromoRedemptions: mocks.releaseBookingPromoRedemptions,
 }));
 
 vi.mock("@/lib/xero-applied-credit-operation-serialization", () => ({
@@ -395,7 +395,7 @@ describe("cancelBooking credit refunds", () => {
     mocks.foldIntoTransactionRefundedAmount.mockImplementation(
       async ({ amountCents }: { amountCents: number }) => amountCents,
     );
-    mocks.promoRedemptionFindUnique.mockResolvedValue(null);
+    mocks.promoRedemptionFindFirst.mockResolvedValue(null);
     mocks.daysUntilDate.mockReturnValue(30);
     mocks.loadCancellationPolicy.mockResolvedValue({
       fullRefundDays: 60,
@@ -3263,8 +3263,7 @@ describe("cancelBooking credit refunds", () => {
       mocks.txPaymentTransactionFindFirst.mockResolvedValueOnce(null);
       mocks.restoreCreditFromBooking.mockResolvedValue(2000);
       // A promo redemption exists for this booking.
-      const redemption = { id: "redemption_nc", bookingId: "bk_nc" };
-      mocks.promoRedemptionFindUnique.mockResolvedValue(redemption);
+      mocks.promoRedemptionFindFirst.mockResolvedValue({ id: "redemption_nc" });
 
       const result = await cancelBooking(
         "bk_nc",
@@ -3278,12 +3277,36 @@ describe("cancelBooking credit refunds", () => {
       expect(result.status).toBe(200);
       // The promo cleanup fires exactly once — credit restore never disturbs the
       // promo lifecycle.
-      expect(mocks.promoRedemptionFindUnique).toHaveBeenCalledTimes(1);
-      expect(mocks.deletePromoRedemptionAndAdjustCount).toHaveBeenCalledTimes(1);
-      expect(mocks.deletePromoRedemptionAndAdjustCount).toHaveBeenCalledWith(
+      expect(mocks.promoRedemptionFindFirst).toHaveBeenCalledTimes(1);
+      expect(mocks.releaseBookingPromoRedemptions).toHaveBeenCalledTimes(1);
+      // #3826: the one booking-level release, which reads and releases every
+      // redemption the booking carries inside its own transaction (its
+      // two-code behaviour is pinned in multi-promo-redemptions.test.ts).
+      expect(mocks.releaseBookingPromoRedemptions).toHaveBeenCalledWith(
         expect.anything(),
-        redemption
+        "bk_nc"
       );
+    });
+
+    it("opens no promo transaction for a booking that carries no code (#3826)", async () => {
+      const booking = neverCapturedBooking();
+      mocks.bookingFindUnique.mockResolvedValueOnce(booking);
+      mocks.txBookingFindUnique.mockResolvedValueOnce(booking);
+      mocks.txPaymentTransactionFindFirst.mockResolvedValueOnce(null);
+      mocks.restoreCreditFromBooking.mockResolvedValue(2000);
+      mocks.promoRedemptionFindFirst.mockResolvedValue(null);
+
+      const result = await cancelBooking(
+        "bk_nc",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        CLUB_FORMAT_TEST,
+        "card"
+      );
+
+      expect(result.status).toBe(200);
+      expect(mocks.releaseBookingPromoRedemptions).not.toHaveBeenCalled();
     });
   });
 
@@ -3752,7 +3775,7 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
     mocks.bookingUpdate.mockResolvedValue({});
     mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
     mocks.bookingRequestUpdateMany.mockResolvedValue({ count: 1 });
-    mocks.promoRedemptionFindUnique.mockResolvedValue(null);
+    mocks.promoRedemptionFindFirst.mockResolvedValue(null);
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
     mocks.processWaitlistForDates.mockResolvedValue(undefined);
     // #1547: no-payment branches call restoreCreditFromBooking (no-op here);
@@ -3912,7 +3935,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
     mocks.bookingUpdate.mockResolvedValue({});
     mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
     mocks.bookingRequestUpdateMany.mockResolvedValue({ count: 1 });
-    mocks.promoRedemptionFindUnique.mockResolvedValue(null);
+    mocks.promoRedemptionFindFirst.mockResolvedValue(null);
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
     mocks.processWaitlistForDates.mockResolvedValue(undefined);
     // #1547: no-payment branches call restoreCreditFromBooking (no-op here).
@@ -4207,7 +4230,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
     mocks.bookingUpdate.mockResolvedValue({});
     mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
     mocks.bookingRequestUpdateMany.mockResolvedValue({ count: 1 });
-    mocks.promoRedemptionFindUnique.mockResolvedValue(null);
+    mocks.promoRedemptionFindFirst.mockResolvedValue(null);
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
     mocks.processWaitlistForDates.mockResolvedValue(undefined);
     mocks.revokePaymentLinksForBooking.mockResolvedValue(undefined);

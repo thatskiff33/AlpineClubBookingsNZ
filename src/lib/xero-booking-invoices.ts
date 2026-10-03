@@ -7,6 +7,7 @@
  * non-zero amount.
  */
 
+import { soleBookingPromoRedemption } from "@/lib/booking-promo-redemptions";
 import {
   Invoice,
   Invoices,
@@ -376,7 +377,7 @@ export async function createXeroInvoiceForBooking(
       // item per contiguous run.
       guests: { include: { nights: true } },
       payment: true,
-      promoRedemption: { include: { promoCode: true, allocations: true } },
+      promoRedemptions: { include: { promoCode: true, allocations: true } },
       nightAdjustments: true,
       // #2258: recipient for the withheld-send audit row when the booking's
       // "No emails" switch stops Xero emailing the invoice.
@@ -610,7 +611,9 @@ export async function createXeroInvoiceForBooking(
   // Add signed promo adjustment line if applicable. Negative values behave
   // like discounts; positive values are extra revenue.
   if (xeroPromoAdjustmentCents !== 0) {
-    const promo = booking.promoRedemption?.promoCode ?? null;
+    // #3826: one promo line per code is epic #3813 C3; until then a booking
+    // carrying several codes is refused rather than invoiced under the first.
+    const promo = soleBookingPromoRedemption(booking)?.promoCode ?? null;
     const firstGuest = booking.guests[0];
 
     // The promo line's codes (#1930, E4) - shared with the promotion-delta line

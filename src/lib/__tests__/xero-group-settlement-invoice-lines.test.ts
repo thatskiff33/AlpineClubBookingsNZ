@@ -41,7 +41,7 @@ function child(overrides: Record<string, unknown>) {
     checkIn: new Date("2026-07-01T00:00:00.000Z"),
     checkOut: new Date("2026-07-02T00:00:00.000Z"),
     promoAdjustmentCents: 0,
-    promoRedemption: null,
+    promoRedemptions: [],
     guests: [
       {
         firstName: "Jo",
@@ -68,7 +68,7 @@ describe("buildGroupSettlementInvoiceLines (#3642)", () => {
         id: "discounted",
         finalPriceCents: 4500,
         promoAdjustmentCents: -500,
-        promoRedemption: { promoCode: { code: "SAVE5", xeroItemCode: null, xeroAccountCode: null } },
+        promoRedemptions: [{ promoCode: { code: "SAVE5", xeroItemCode: null, xeroAccountCode: null } }],
       }),
       child({ id: "full-price", finalPriceCents: 5000 }),
     ]);

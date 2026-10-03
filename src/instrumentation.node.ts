@@ -1125,7 +1125,7 @@ export async function register() {
             select: {
               id: true,
               lodgeId: true,
-              promoRedemption: { select: { id: true, promoCodeId: true } },
+              promoRedemptions: { select: { id: true, promoCodeId: true } },
             },
           });
 
@@ -1148,7 +1148,7 @@ export async function register() {
             select: {
               id: true,
               lodgeId: true,
-              promoRedemption: { select: { id: true, promoCodeId: true } },
+              promoRedemptions: { select: { id: true, promoCodeId: true } },
             },
           });
 

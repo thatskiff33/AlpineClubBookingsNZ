@@ -77,7 +77,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     bookingModification: { create: mockCreate },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
-    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), delete: mockDelete },
+    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null), delete: mockDelete },
     promoCode: { update: mockUpdate },
     choreAssignment: { findMany: mockFindMany, delete: mockDelete, deleteMany: mockDeleteMany },
     season: { findMany: mockFindMany },
@@ -132,6 +132,8 @@ vi.mock("@/lib/promo", () => ({
     async (_tx: unknown, promoCode: unknown) => promoCode
   ),
   deletePromoRedemptionAndAdjustCount: vi.fn(),
+  releaseBookingPromoRedemptions: vi.fn().mockResolvedValue(0),
+  releasePromoRedemptions: vi.fn().mockResolvedValue(undefined),
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 vi.mock("@/lib/stripe", () => ({
@@ -411,7 +413,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     ],
     payment: { id: "p1", bookingId: "bk1", amountCents: 10000, source: "STRIPE", status: "SUCCEEDED", stripePaymentIntentId: "pi_123", xeroInvoiceId: "inv_primary", refundedAmountCents: 0, changeFeeCents: 0 },
     member: { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
-    promoRedemption: null,
+    promoRedemptions: [],
     nightAdjustments: [],
     ...overrides,
   };
@@ -565,6 +567,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     },
     promoRedemption: {
       findUnique: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      findFirst: vi.fn().mockResolvedValue(null),
       delete: vi.fn().mockResolvedValue({}),
       update: vi.fn().mockResolvedValue({}),
     },
@@ -1081,11 +1085,11 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     const booking = makeBooking({
       discountCents: 1000,
       finalPriceCents: 9000,
-      promoRedemption: {
+      promoRedemptions: [{
         id: "pr1",
         promoCodeId: "pc1",
         promoCode: { id: "pc1", active: false, validFrom: null, validUntil: null, maxRedemptions: null, currentRedemptions: 1, membersOnly: false, singleUse: false, type: "PERCENTAGE", percentOff: 10, assignments: [] },
-      },
+      }],
     });
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
@@ -2724,14 +2728,14 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
         refundedAmountCents: 0,
         changeFeeCents: 0,
       },
-      promoRedemption: {
+      promoRedemptions: [{
         id: "pr1",
         promoCodeId: "promo1",
         priceAdjustmentCents: 0,
         allocations: [],
         guestTargets: [],
         promoCode: { id: "promo1", assignments: [] },
-      },
+      }],
       ...paymentOverrides,
     });
   }
@@ -2963,14 +2967,14 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
         refundedAmountCents: 0,
         changeFeeCents: 0,
       },
-      promoRedemption: {
+      promoRedemptions: [{
         id: "pr1",
         promoCodeId: "promo1",
         priceAdjustmentCents: -2000,
         allocations: [{ memberId: "m1", priceAdjustmentCents: -2000 }],
         guestTargets: [],
         promoCode: { id: "promo1", assignments: [] },
-      },
+      }],
       nightAdjustments: [
         {
           bookingGuestId: "g1",

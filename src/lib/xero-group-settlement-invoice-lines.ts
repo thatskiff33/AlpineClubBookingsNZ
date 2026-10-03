@@ -11,6 +11,7 @@
  * settlement's before it asks Xero for anything, so an invoice whose total is
  * not the settlement's is never raised.
  */
+import { soleBookingPromoRedemption } from "@/lib/booking-promo-redemptions";
 import type { LineItem } from "xero-node";
 import { BookingStatus } from "@prisma/client";
 import { prisma } from "./prisma";
@@ -60,7 +61,7 @@ export async function buildGroupSettlementInvoiceLines(
     },
     include: {
       guests: { include: { nights: true } },
-      promoRedemption: { include: { promoCode: true } },
+      promoRedemptions: { include: { promoCode: true } },
     },
   });
 
@@ -107,7 +108,9 @@ export async function buildGroupSettlementInvoiceLines(
     );
     const promoAdjustmentCents = child.promoAdjustmentCents ?? 0;
     if (promoAdjustmentCents !== 0) {
-      const promo = child.promoRedemption?.promoCode ?? null;
+      // #3826: one promo line per code is epic #3813 C3; until then a child
+      // carrying several codes is refused rather than invoiced under the first.
+      const promo = soleBookingPromoRedemption(child)?.promoCode ?? null;
       lineItems.push(
         applyHutFeeLineCodes(
           {

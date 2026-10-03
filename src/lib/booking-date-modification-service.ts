@@ -8,6 +8,7 @@ import {
   type Role,
 } from "@prisma/client";
 
+import { soleBookingPromoRedemption } from "@/lib/booking-promo-redemptions";
 import type { BookingGuestNightPriceSource } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { ApiError } from "@/lib/api-error";
@@ -372,7 +373,7 @@ export async function modifyBookingDates({
         member: true,
         // #3369: the owner may be an Organisation; bookingOwner() reads both.
         organisation: { select: { name: true, email: true } },
-        promoRedemption: {
+        promoRedemptions: {
           include: {
             guestTargets: { select: { bookingGuestId: true } },
             promoCode: {
@@ -389,6 +390,10 @@ export async function modifyBookingDates({
     if (!booking) {
       throw new ApiError("Booking not found", 404);
     }
+
+    // #3826: a booking may carry several promo codes; this edit path prices
+    // one, so it refuses a booking carrying more (epic #3813 C2 widens it).
+    const promoRedemption = soleBookingPromoRedemption(booking);
 
     if (bookingOwner(booking).memberId !== actor.id && actor.role !== "ADMIN") {
       throw new ApiError("Forbidden", 403);
@@ -782,7 +787,7 @@ export async function modifyBookingDates({
       // a function of a price nobody has worked out yet.
       newDiscountCents = booking.discountCents;
       newPromoAdjustmentCents = booking.promoAdjustmentCents;
-    } else if (booking.promoRedemption?.promoCode) {
+    } else if (promoRedemption?.promoCode) {
       // Row-lock the promo code and re-read its usage counter before the caps
       // are checked (#2299). This reprice can release a total-redemptions slot
       // (the new dates leave the promo with no benefit) or re-take one, so
@@ -791,10 +796,10 @@ export async function modifyBookingDates({
       // lodge -> promo row.
       const promo = await lockAndRefreshPromoCodeUsage(
         tx,
-        booking.promoRedemption.promoCode
+        promoRedemption.promoCode
       );
       const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
-        booking.promoRedemption,
+        promoRedemption,
         guestNightRates
       );
       const application = await validateAndCalculatePromoDiscount(
@@ -823,7 +828,7 @@ export async function modifyBookingDates({
 
       if (application.error || !application.discount) {
         promoRemoved = true;
-        await deletePromoRedemptionAndAdjustCount(tx, booking.promoRedemption);
+        await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
       } else {
         const promoResult = application.discount;
         newDiscountCents = promoResult.discountCents;
@@ -836,7 +841,7 @@ export async function modifyBookingDates({
 
         await replacePromoRedemptionAllocations(
           tx,
-          booking.promoRedemption,
+          promoRedemption,
           newDiscountCents,
           newPromoAdjustmentCents,
           promoResult.freeNightsUsed,
@@ -1289,7 +1294,7 @@ export async function modifyBookingDates({
           () => ({
             before: pricingSideFromStoredGuests(booking.guests, {
               promoAdjustmentCents: booking.promoAdjustmentCents,
-              promoCode: booking.promoRedemption?.promoCode.code ?? null,
+              promoCode: promoRedemption?.promoCode.code ?? null,
             }),
             after: pricingSideFromPriceBreakdown(
                 booking.guests.map((g) => ({
@@ -1301,7 +1306,7 @@ export async function modifyBookingDates({
                   promoAdjustmentCents: newPromoAdjustmentCents,
                   promoCode: promoRemoved
                     ? null
-                    : (booking.promoRedemption?.promoCode.code ?? null),
+                    : (promoRedemption?.promoCode.code ?? null),
                 },
               ),
           }),

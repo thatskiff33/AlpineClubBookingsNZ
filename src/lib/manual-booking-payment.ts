@@ -1,5 +1,6 @@
 import "server-only";
 
+import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
@@ -251,7 +252,7 @@ export async function applyManualBookingPayment(
           member: { select: { email: true, firstName: true } },
           // #3369: the owner may be an Organisation; bookingOwner() reads both.
           organisation: { select: { name: true, email: true } },
-          promoRedemption: { select: { promoCode: { select: { code: true } } } },
+          promoRedemptions: { select: { promoCode: { select: { code: true } } } },
           _count: { select: { guests: true } },
         },
       })
@@ -324,13 +325,7 @@ export async function applyManualBookingPayment(
                   },
                 }
               : {}),
-            ...(recipient.promoRedemption?.promoCode
-              ? {
-                  discountCents: recipient.discountCents,
-                  promoAdjustmentCents: recipient.promoAdjustmentCents,
-                  promoCode: recipient.promoRedemption.promoCode.code,
-                }
-              : {}),
+            ...bookingPromoEmailFields(recipient),
           }
         );
         // "sent" means the mailer accepted and dispatched it. Anything else —

@@ -272,7 +272,7 @@ export function rebaseChangedTheBooking(rebase: BookingPriceRebase): boolean {
 }
 
 const REBASE_BOOKING_INCLUDE = {
-  promoRedemption: {
+  promoRedemptions: {
     include: {
       guestTargets: { select: { bookingGuestId: true } },
       promoCode: {

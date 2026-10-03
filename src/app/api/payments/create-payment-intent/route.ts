@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import {
   bookingOwner,
   bookingOwnerProviderMetadata,
@@ -443,7 +444,8 @@ export async function POST(request: NextRequest) {
         ),
       );
 
-      const promoRedemption = await prisma.promoRedemption.findUnique({
+      // #3826: every code the booking carries (one per code).
+      const promoRedemptions = await prisma.promoRedemption.findMany({
         where: { bookingId: booking.id },
         include: { promoCode: true },
       });
@@ -458,13 +460,11 @@ export async function POST(request: NextRequest) {
         format,
         {
           lodgeId: booking.lodgeId,
-          ...(promoRedemption?.promoCode
-            ? {
-                discountCents: booking.discountCents,
-                promoAdjustmentCents: booking.promoAdjustmentCents,
-                promoCode: promoRedemption.promoCode.code,
-              }
-            : {}),
+          ...bookingPromoEmailFields({
+            discountCents: booking.discountCents,
+            promoAdjustmentCents: booking.promoAdjustmentCents,
+            promoRedemptions,
+          }),
         },
       ).catch((err) =>
         logger.error(

@@ -226,7 +226,8 @@ export type LoadedBookingForModify = Booking & {
   >;
   payment: Payment | null;
   member: Member;
-  promoRedemption: LoadedPromoRedemption | null;
+  // #3826: one redemption per promo code; read through booking-promo-redemptions.ts.
+  promoRedemptions: LoadedPromoRedemption[];
 };
 
 type BookingGuestNameEditPayment = Pick<

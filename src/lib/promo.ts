@@ -20,6 +20,8 @@ import {
   inWindowNightIndexes,
 } from "@/lib/work-party";
 import { ApiError } from "@/lib/api-error";
+import { compareOrdinal } from "@/lib/ordinal-order";
+import { nextPromoApplicationOrder } from "@/lib/promo-redemption-slot";
 import {
   assignmentRequiresAssignedBooker,
   assignmentRequiresGuestSelection,
@@ -1823,10 +1825,14 @@ export async function redeemPromoCode(
   lodgeId?: string | null
 ): Promise<void> {
   await assertPromoRedeemableAtLodge(tx, promoCodeId, lodgeId);
+  const applicationOrder = await nextPromoApplicationOrder(tx, bookingId);
   const redemption = await tx.promoRedemption.create({
     data: {
       promoCodeId,
       bookingId,
+      // Omitted at 0 (the column default) so a single-code booking's write is
+      // exactly the one it was before #3826.
+      ...(applicationOrder > 0 ? { applicationOrder } : {}),
       memberId,
       discountCents,
       priceAdjustmentCents,
@@ -2014,5 +2020,46 @@ export async function deletePromoRedemptionAndAdjustCount(
       where: { id: redemption.promoCodeId },
       data: { currentRedemptions: { decrement: allocationCount } },
     });
+  }
+}
+
+/**
+ * Release EVERY promo redemption a booking carries (#3826): each row deleted and
+ * its code's counter given back, as `deletePromoRedemptionAndAdjustCount` does
+ * for one. Read inside the caller's transaction and released through
+ * `releasePromoRedemptions`, whose ordering note applies. Returns how many were
+ * released.
+ */
+export async function releaseBookingPromoRedemptions(
+  tx: PrismaTx,
+  bookingId: string,
+): Promise<number> {
+  const redemptions = await tx.promoRedemption.findMany({
+    where: { bookingId },
+    select: { id: true, promoCodeId: true },
+  });
+  await releasePromoRedemptions(tx, redemptions);
+  return redemptions.length;
+}
+
+/**
+ * The same release, over redemptions the caller already loaded under its locks.
+ *
+ * ORDER: each release updates its code's row, so the rows are taken in
+ * promo-code-id order (as `lockPromoCodeRowsForUpdate` sorts). That ordering
+ * holds WITHIN ONE CALL only: two calls in one transaction each sort their own
+ * set, so a caller releasing several bookings' redemptions must pass them all
+ * in a single call (as `deleteDraftBookingDependents` does) or it takes code
+ * rows out of order and can deadlock against another writer holding the same
+ * codes. Concurrent releases of one booking are otherwise excluded by the
+ * caller's own locks.
+ */
+export async function releasePromoRedemptions(
+  tx: PrismaTx,
+  redemptions: ReadonlyArray<{ id: string; promoCodeId: string }>,
+): Promise<void> {
+  const ordered = [...redemptions].sort((a, b) => compareOrdinal(a.promoCodeId, b.promoCodeId));
+  for (const redemption of ordered) {
+    await deletePromoRedemptionAndAdjustCount(tx, redemption);
   }
 }

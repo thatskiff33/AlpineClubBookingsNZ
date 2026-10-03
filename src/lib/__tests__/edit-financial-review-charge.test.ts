@@ -309,7 +309,7 @@ const tx = {
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     createMany: vi.fn().mockResolvedValue({ count: 0 }),
   },
-  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
   bookingGuestNight: {
     findMany: vi.fn().mockResolvedValue([]),
     updateMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -478,7 +478,7 @@ beforeEach(() => {
     discountCents: 0,
     promoAdjustmentCents: 0,
     finalPriceCents: 15_000,
-    promoRedemption: null,
+    promoRedemptions: [],
     nightAdjustments: [],
     guests: [
       {

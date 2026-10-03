@@ -3,6 +3,7 @@ import {
   type AgeTier,
   type Prisma,
 } from "@prisma/client";
+import { bookingPromoCodeLabel, soleBookingPromoRedemption } from "@/lib/booking-promo-redemptions";
 import {
   type SeasonRateData,
 } from "@/lib/pricing";
@@ -416,7 +417,7 @@ export async function removeBookingGuestInTransaction({
       member: true,
       // #3369: the owner may be an Organisation; bookingOwner() reads both.
       organisation: { select: { name: true, email: true } },
-        promoRedemption: {
+        promoRedemptions: {
           include: {
             guestTargets: { select: { bookingGuestId: true } },
             promoCode: {
@@ -1131,7 +1132,7 @@ export async function removeBookingGuestInTransaction({
       : await computeModificationPricing(
           { bookingId, site: "guest-removal" },
           () => {
-            const promoCode = booking.promoRedemption?.promoCode.code ?? null;
+            const promoCode = bookingPromoCodeLabel(booking);
             return {
               before: pricingSideFromStoredGuests(booking.guests, {
                 promoAdjustmentCents: booking.promoAdjustmentCents,
@@ -1404,7 +1405,7 @@ export async function recalculateBookingPromo({
   bookingId: string;
   booking: Prisma.BookingGetPayload<{
     include: {
-          promoRedemption: {
+          promoRedemptions: {
             include: {
               guestTargets: { select: { bookingGuestId: true } };
               promoCode: {
@@ -1444,7 +1445,11 @@ export async function recalculateBookingPromo({
   let promoCoverage: PromoCoverageNotice | null = null;
   let adjustmentTargets: PromoAdjustmentTarget[] = [];
 
-  if (booking.promoRedemption?.promoCode) {
+  // #3826: a booking may carry several promo codes; this edit path prices
+  // one, so it refuses a booking carrying more (epic #3813 C2 widens it).
+  const promoRedemption = soleBookingPromoRedemption(booking);
+
+  if (promoRedemption?.promoCode) {
     // Row-lock the promo code and re-read its usage counter before the caps are
     // checked (#2299). Removing guests can drop the booking's benefit to
     // nothing and RELEASE a total-redemptions slot, so this transaction is a
@@ -1452,10 +1457,10 @@ export async function recalculateBookingPromo({
     // capacity lock is already held, so the order stays lodge -> promo row.
     const promo = await lockAndRefreshPromoCodeUsage(
       tx,
-      booking.promoRedemption.promoCode
+      promoRedemption.promoCode
     );
     const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
-      booking.promoRedemption,
+      promoRedemption,
       guestNightRates
     );
     const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
@@ -1485,7 +1490,7 @@ export async function recalculateBookingPromo({
 
     if (application.error || !application.discount) {
       promoRemoved = true;
-      await deletePromoRedemptionAndAdjustCount(tx, booking.promoRedemption);
+      await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
     } else {
       const discount = application.discount;
       newDiscountCents = discount.discountCents;
@@ -1498,7 +1503,7 @@ export async function recalculateBookingPromo({
 
       await replacePromoRedemptionAllocations(
         tx,
-        booking.promoRedemption,
+        promoRedemption,
         newDiscountCents,
         newPromoAdjustmentCents,
         discount.freeNightsUsed,

@@ -1,4 +1,5 @@
 import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
+import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { prisma } from "@/lib/prisma";
 import { listRefundsForCharge, processRefund } from "@/lib/stripe";
 import { markBookingPaymentSucceeded, markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
@@ -609,7 +610,7 @@ async function handlePaymentIntentSucceeded(
       const booking = await prisma.booking.findUnique({
         where: { id: bookingId },
         // #3369: the owner may be an Organisation; bookingOwner() reads both.
-        include: { member: true, organisation: { select: { name: true, email: true } }, guests: true, promoRedemption: { include: { promoCode: true } } },
+        include: { member: true, organisation: { select: { name: true, email: true } }, guests: true, promoRedemptions: { include: { promoCode: true } } },
       });
       if (booking) {
         // Split-booking parent (#738): describe the provisional non-member
@@ -630,13 +631,7 @@ async function handlePaymentIntentSucceeded(
           {
             lodgeId: booking.lodgeId,
             ...(provisionalGuests ? { provisionalGuests } : {}),
-            ...(booking.promoRedemption?.promoCode
-              ? {
-                  discountCents: booking.discountCents,
-                  promoAdjustmentCents: booking.promoAdjustmentCents,
-                  promoCode: booking.promoRedemption.promoCode.code,
-                }
-              : {}),
+            ...bookingPromoEmailFields(booking),
           }
         );
       }

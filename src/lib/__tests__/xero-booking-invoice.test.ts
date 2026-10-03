@@ -345,12 +345,15 @@ function withMoneyBuildUpProjection<T extends XeroBookingFixture>(booking: T) {
       booking.totalPriceCents ?? guests.reduce((sum, guest) => sum + guest.priceCents, 0),
     promoAdjustmentCents: booking.promoAdjustmentCents ?? 0,
     guests,
-    promoRedemption: booking.promoRedemption
-      ? {
-          ...booking.promoRedemption,
-          allocations: booking.promoRedemption.allocations ?? [],
-        }
-      : null,
+    // #3826: the fixture names its one redemption; the booking carries a list.
+    promoRedemptions: booking.promoRedemption
+      ? [
+          {
+            ...booking.promoRedemption,
+            allocations: booking.promoRedemption.allocations ?? [],
+          },
+        ]
+      : [],
     nightAdjustments: booking.nightAdjustments ?? [],
   };
 }

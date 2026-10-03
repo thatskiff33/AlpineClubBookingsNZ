@@ -134,7 +134,7 @@ describe("#3277 canonical stored-money reader census", () => {
     before(xero, "const booking = await prisma.booking.findUnique", "bookingMoneyBuildUpFromProjection(booking");
     before(xero, "bookingMoneyBuildUpFromProjection(booking", "getAuthenticatedXeroClient()");
     expect(xero).toMatch(
-      /promoRedemption:\s*\{\s*include:\s*\{\s*promoCode:\s*true,\s*allocations:\s*true\s*\}\s*\}[\s\S]{0,80}nightAdjustments:\s*true/,
+      /promoRedemptions:\s*\{\s*include:\s*\{\s*promoCode:\s*true,\s*allocations:\s*true\s*\}\s*\}[\s\S]{0,80}nightAdjustments:\s*true/,
     );
     expect(xero).not.toContain("readBookingMoneyBuildUp(prisma");
     expect(xero).toMatch(
