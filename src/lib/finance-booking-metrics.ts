@@ -122,7 +122,7 @@ type BookingMetricsRecord = Prisma.BookingGetPayload<{
 }>;
 
 /**
- * #3637 (#3372 decision A): Net collected cash reads its own payments - every
+ * #3637 (#3372 decision A): Net Collected reads its own payments - every
  * booking staying in the window, ANY status - through the shared Net Collected
  * select, widened by the stay dates the window test reads.
  * `summarizeNetCollectedWithLedgerGap` drops soft-deleted bookings and runs the
@@ -765,7 +765,7 @@ function summarizePayments(
         additionalLedgerGapCents: summary.additionalLedgerGapCents,
         netCollectedCents: summary.netCollectedCents,
       },
-      "Finance metrics: payments record a collected additional payment with no captured ADDITIONAL PaymentTransaction behind it. Net collected cash may understate by additionalLedgerGapCents. Reconcile those payments' ledgers (reconcilePaymentAggregates) before trusting the collected figure."
+      "Finance metrics: payments record a collected additional payment with no captured ADDITIONAL PaymentTransaction behind it. Net Collected may understate by additionalLedgerGapCents. Reconcile those payments' ledgers (reconcilePaymentAggregates) before trusting the collected figure."
     );
   }
 

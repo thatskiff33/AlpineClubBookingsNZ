@@ -95,8 +95,10 @@ explicit current statuses Pending, Payment Pending, Confirmed, Paid, Awaiting
 Review, and Completed; drafts, waitlist placeholders, bumped, and cancelled
 bookings do not silently become revenue.
 
-**Net Collected** is different: it is captured `Payment.amountCents` less
-refunds and credits for the overlapping bookings and is not allocated to individual nights.
+**Net Collected** is different: it is the money the club kept on the
+overlapping bookings — captured `Payment.amountCents` less refunds and
+credits, plus account credit a cancellation kept, less refunds still owed back
+on cancelled bookings — and it is not allocated to individual nights.
 It does not use the status list above. It counts every overlapping booking in
 the chosen lodge whatever its status, so a cancelled booking counts what the
 club kept of what was paid on it: money not refunded, credited or owed back by
@@ -116,7 +118,7 @@ dollar values such as `$135.00`.
 Reports also preserves the Finance dashboard's #2408 consistency guard. When a
 positive `additionalAmountCents` is marked `SUCCEEDED` but no captured
 `ADDITIONAL` payment transaction supports it, the cash arithmetic does not
-change: **Net Collected** remains `Payment.amountCents` less refunds and credits. The
+change: **Net Collected** is worked out exactly as above. The
 page, CSV, PDF, and server log instead flag the aggregate possible shortfall so
 an operator does not silently reconcile against a figure the ledger cannot
 prove. The API returns only the aggregate cents and booking count; affected
@@ -141,7 +143,7 @@ long ranges readable.
 | A chart says "No … data for this period" | There is no matching data in the range | Widen the range or change the Deleted / Lodge filter |
 | Occupancy shows 0% | No bed-nights were occupied in the range, or capacity is unset | Check the range and the lodge's capacity setup |
 | Booked Revenue looks lower than the booking's full price | Only the booking's price allocation for selected stay nights is included | Expand the range to the booking's complete stay |
-| Booked Revenue and Net Collected differ | They measure different things: selected stay-night price versus booking-level captured cash less refunds and credits | Use the [Payments](payments.md) ledger for the transaction detail |
+| Booked Revenue and Net Collected differ | They measure different things: selected stay-night price versus the money kept on each booking (captured cash less refunds and credits, plus credit a cancellation kept, less refunds owed back) | Use the [Payments](payments.md) ledger for the transaction detail |
 | Outstanding Additions is non-zero | A price increase is still owing on an overlapping booking | Chase it from [Bookings](bookings.md#chase-money-still-owed-after-a-booking-change) |
 | "Net Collected needs reconciliation" appears | One or more payments say an addition was collected without a matching captured additional-payment record | Ask a developer to reconcile the affected payment ledgers before trusting Net Collected; the warning states the possible understatement and booking count |
 | "Booked Revenue needs reconciliation" appears | One or more stored booking headlines have missing or disagreeing recorded parts | Open the affected bookings from the booking list's **Money review** chips; do not reprice unknown history or treat the warning as an automatic correction |

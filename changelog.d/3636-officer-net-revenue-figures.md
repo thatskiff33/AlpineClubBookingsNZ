@@ -41,8 +41,9 @@
   Collected"**, like the Payments and Finance dashboard cards, because the
   figure now includes account credit a cancellation kept as well as cash
   ([owner decision](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3372#issuecomment-5967932154)).
-  The breakdown line beneath the Payments and dashboard cards (paid, refunded
-  or credited, owed back, credit kept) is unchanged. The Finance card's small
+  Only the dashboard card has a breakdown line beneath it; besides the amount
+  paid and the amount refunded or credited, it now also shows any money owed
+  back and any account credit kept on a cancellation. The Finance card's small
   print now says the figure is worked out from this app's own payment, account
   credit and refund records, not from Xero revenue.
 

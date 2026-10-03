@@ -134,9 +134,9 @@ const HAND_BACK_KIND = "CANCELLED_BOOKING_HAND_BACK" satisfies ManualRefundTaskK
  *   added on 19 Aug 2026 with no backfill, and on a cancelled booking the only
  *   task raised before then was the cancellation's hand-back (the late-capture
  *   kinds are raised on DELETED bookings, which the scope leaves out).
- * - Every OPEN task of the hand-back kind counts, whatever raised it. Another
- *   epic is to raise booking-edit refund tasks of this same kind; they are not
- *   filtered out here, and that epic decides whether they should be.
+ * - Every OPEN task of the hand-back kind counts, whatever raised it. A booking
+ *   edit's or an appeal's hand-back on a CANCELLED booking is counted on
+ *   purpose: it is money the club owes back, so it is not money kept.
  */
 export function openCancellationHandBackOwedCents(
   tasks: ReadonlyArray<CancellationHandBackTaskRow>,

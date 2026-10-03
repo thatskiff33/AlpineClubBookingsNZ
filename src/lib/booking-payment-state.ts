@@ -361,7 +361,7 @@ export interface NetCollectedPaymentRow {
   booking: NetCollectedBookingFields;
 }
 
-/** One payment's part of a Net Collected figure, in its three pieces. */
+/** One payment's part of a Net Collected figure, in its four pieces. */
 export interface NetCollectedPaymentParts {
   /** `amountCents` if the payment took money, else 0. */
   capturedGrossCents: number;

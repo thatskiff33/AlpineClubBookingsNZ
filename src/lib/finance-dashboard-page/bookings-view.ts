@@ -93,7 +93,7 @@ export async function buildBookingsDashboard(
     );
   }
 
-  // #2408. Net collected cash is the gross captured figure from the payment
+  // #2408. Net Collected starts from the captured figure on the payment
   // rows, which contains a collected price increase because the payment ledger
   // put it there. A payment that says its increase was collected without a
   // ledger row to prove it is the one shape where that is not true, so the card
