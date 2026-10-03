@@ -1162,7 +1162,7 @@ export async function POST(
       const { priceLines, sides: pricingSides } = parked
         ? { priceLines: null, sides: null }
         : await computeModificationPricing(
-            { bookingId, site: "guest-add" },
+            { bookingId, site: "guest-add", promoCodes: { store: tx, before: booking } },
             async () => {
               // The re-read is narration's own I/O and runs INSIDE the guard:
               // a failure here stores no lines and fails no edit.

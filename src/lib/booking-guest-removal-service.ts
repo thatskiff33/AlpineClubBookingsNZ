@@ -1120,7 +1120,7 @@ export async function removeBookingGuestInTransaction({
     priceBreakdown === null
       ? { priceLines: null, sides: null }
       : await computeModificationPricing(
-          { bookingId, site: "guest-removal" },
+          { bookingId, site: "guest-removal", promoCodes: { store: tx, before: booking } },
           () => {
             const promoCode = bookingPromoCodeLabel(booking);
             return {

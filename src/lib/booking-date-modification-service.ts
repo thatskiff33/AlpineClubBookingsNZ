@@ -1241,7 +1241,7 @@ export async function modifyBookingDates({
     const { priceLines, sides: pricingSides } = parked
       ? { priceLines: null, sides: null }
       : await computeModificationPricing(
-          { bookingId, site: "date-change" },
+          { bookingId, site: "date-change", promoCodes: { store: tx, before: booking } },
           () => ({
             before: pricingSideFromStoredGuests(booking.guests, {
               promoAdjustmentCents: booking.promoAdjustmentCents,

@@ -276,7 +276,7 @@ export async function repriceBookingAfterGuestAcceptance(
 
   const promoCodeBefore = bookingPromoCodeLabel(booking);
   const { priceLines, sides } = await computeModificationPricing(
-    { bookingId, site: "guest-acceptance" },
+    { bookingId, site: "guest-acceptance", promoCodes: { store: tx, before: booking } },
     () => ({
       before: pricingSideFromStoredGuests(booking.guests, {
         promoAdjustmentCents: booking.promoAdjustmentCents,
