@@ -353,6 +353,9 @@ export async function createXeroCreditNoteForModification(params: {
       xeroObjectId: createdCreditNoteId,
       xeroObjectNumber: created.creditNoteNumber ?? null,
       role: "MODIFICATION_CREDIT_NOTE",
+      // #3809: the scope travels to the links, so the repair pass can tell a
+      // give-back note beside the edit's own from the edit's own.
+      ...(reviewTaskId ? { metadata: { reviewTaskId } } : {}),
     };
     const allocated: ClearingAllocationTarget[] = [];
     const allocationResponses: unknown[] = [];
@@ -415,6 +418,7 @@ export async function createXeroCreditNoteForModification(params: {
         creditNoteId: createdCreditNoteId,
         invoiceId: target.invoiceId,
         amountCents: target.amountCents,
+        ...(reviewTaskId ? { reviewTaskId } : {}),
       },
     }));
     const allocationBody =

@@ -1,4 +1,3 @@
-import { PaymentSource } from "@prisma/client";
 import { prisma } from "./prisma";
 import {
   deriveBookingAppliedCreditCents,
@@ -641,13 +640,12 @@ export async function deallocateExcessAppliedCreditForBooking(
     where: { id: bookingId },
     include: { payment: true },
   });
-  if (
-    !booking?.payment ||
-    booking.payment.source !== PaymentSource.INTERNET_BANKING ||
-    !booking.payment.xeroInvoiceId
-  ) {
+  // #3809: any booking whose applied credit is allocated against its invoice -
+  // bank transfer, or card since #1641 - not internet banking alone. The
+  // give-back queues this only where the allocation slices exceed the target.
+  if (!booking?.payment || !booking.payment.xeroInvoiceId) {
     await completeXeroSyncOperation(options.syncOperationId, {
-      responsePayload: { skipped: true, reason: "No allocated Internet-Banking invoice." },
+      responsePayload: { skipped: true, reason: "No allocated booking invoice." },
     });
     return;
   }

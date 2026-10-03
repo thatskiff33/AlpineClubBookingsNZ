@@ -17,7 +17,7 @@ import {
   recordSkippedXeroBookingInvoiceUpdateOperation,
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
-import { APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE } from "@/lib/xero-review-task-key";
+import { giveBackNoteScope } from "@/lib/xero-review-task-key";
 import {
   refundMethodForSettlementMethod,
   type RefundMethod,
@@ -274,7 +274,9 @@ async function queueGiveBackNote(input: QueueXeroBookingEditSettlementInput, cen
       refundAmountCents: cents,
       bookingModificationId: input.bookingModificationId,
       refundMethod: "account-credit",
-      reviewTaskId: input.reviewTaskId ?? APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE,
+      // Always distinct from the caller's own scope, so a review task's note and
+      // a give-back beside it can never share a key and dedupe one away.
+      reviewTaskId: giveBackNoteScope(input.reviewTaskId),
     },
     { createdByMemberId: input.createdByMemberId }
   );

@@ -16,6 +16,16 @@ import { asRecord, readString } from "@/lib/xero-json";
  */
 export const APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE = "applied-credit-give-back";
 
+/** The give-back note's scope, nested under a caller's own where it has one. */
+export function giveBackNoteScope(reviewTaskId: string | null | undefined): string {
+  return reviewTaskId ? `${reviewTaskId}:${APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE}` : APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE;
+}
+
+/** Whether a scope is a give-back note's (`giveBackNoteScope`). */
+export function isGiveBackNoteScope(scope: string | null | undefined): boolean {
+  return scope === APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE || Boolean(scope?.endsWith(`:${APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE}`));
+}
+
 export function reviewTaskKeyParts(reviewTaskId: string | null | undefined): string[] {
   return reviewTaskId ? ["review-task", reviewTaskId] : [];
 }

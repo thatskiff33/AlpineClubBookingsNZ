@@ -14,6 +14,7 @@ import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-a
 import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { formatCents } from "@/lib/utils";
+import { accountCreditModificationNoteIds } from "./account-credit-modification-notes";
 
 const APPLIED_CREDIT_ALLOCATION_ROLES = [
   "APPLIED_CREDIT_ALLOCATION",
@@ -256,8 +257,13 @@ export async function repairRefundedPaymentBusinessState(input: {
       },
     });
 
+    // #3809 (review M2): a note that gave credit back moved no cash.
+    const accountCreditNoteIds = await accountCreditModificationNoteIds(existingModificationCreditNoteIds);
     for (const link of modificationCreditNotes) {
-      if (isIncludedRefundCreditNoteStatus(getJsonRecord(link.metadata)?.status)) {
+      if (
+        isIncludedRefundCreditNoteStatus(getJsonRecord(link.metadata)?.status) &&
+        !accountCreditNoteIds.has(link.xeroObjectId)
+      ) {
         validModificationCreditNoteIds.add(link.xeroObjectId);
       }
     }
