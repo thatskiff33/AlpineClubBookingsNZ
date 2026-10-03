@@ -492,7 +492,7 @@ and the data download rather than every page that happens to quote an entry.
 
 `Category` is optional in the database, and **82 of the platform's places that
 record an audit entry used not to set one**. As of this release **none do**: all
-496 now record a category, measured on every build rather than estimated.
+497 now record a category, measured on every build rather than estimated.
 
 **And a new one can no longer forget.** Recording an entry without a category is
 now refused three separate ways. Giving the 82 places a category and stopping the
@@ -514,7 +514,7 @@ that order and both landing in this release; this is the second:
    maintenance script outside the normal path.
 
 The practical effect for you: an entry recorded the ordinary way — through the
-platform’s own recording step, which is how every one of the 496 places does it —
+platform’s own recording step, which is how every one of the 497 places does it —
 cannot be born without a category any more. **It is not a mathematical
 guarantee**, and it is worth saying so rather than overclaiming: someone writing
 directly to the database table in a migration, or building a query by hand, is
@@ -796,6 +796,20 @@ person to look at and never acted on automatically: a member trying five
 different weekends to find one that suits a friend produces exactly the same
 pattern as somebody probing, and only a human who knows both people can tell
 them apart. Treat it as a conversation to have if it keeps happening.
+
+### Guest promo-code lookups (#3492)
+
+When a booker reaches the review step with member guests on the booking, the
+app looks up which of those guests' assigned promo codes it may offer as chips.
+Each lookup writes one `promo_code.guest_lookup` entry, category `privacy`.
+
+| Action | Written when | What it contains |
+| --- | --- | --- |
+| `promo_code.guest_lookup` | Each lookup that reads a booking's guests or names at least one member guest, from the booking wizard, the booking edit panel or Book on Behalf | Who asked, the booking (when it exists), how many guests were looked at, **which members' codes were shown**, and how many codes. An officer booking on behalf is recorded as the member they booked for. Kept for two years (`sensitive_access`) |
+
+Only family guests, or guests who have already accepted the guest link, are
+ever looked up, and the booker sees only each code and its benefit. The
+booker's own activity history shows the entry's title and nothing else.
 
 ### Issue-report screenshot entries (#2703)
 

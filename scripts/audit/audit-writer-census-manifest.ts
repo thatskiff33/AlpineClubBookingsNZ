@@ -595,7 +595,11 @@ export const AUDIT_CENSUS_TOTALS = {
   // guest's acceptance writes when it re-prices the booking's promo codes and
   // moves money, `booking` at the site like the guest-removal edit it mirrors.
   // RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 496,
+  // 496 -> 497 (#3492): `promo_code.guest_lookup`, the record every guest
+  // promo-code chip lookup writes (`src/lib/promo-guest-codes.ts`), one awaited
+  // `createStructuredAuditLog`, categorised `privacy` at the site like the
+  // member-guest finder's lookups. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 497,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -781,7 +785,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // `sanitizeAuditMetadata`. Again the row COUNT is unchanged and only the
     // FORM moved, which is what this per-sink pin exists to surface.
     // 9 -> 10 (#2822): the email-inheritance effective-source change event.
-    createStructuredAuditLog: { total: 10, uncategorised: 0 },
+    // 10 -> 11 (#3492): the guest promo-code lookup, above.
+    createStructuredAuditLog: { total: 11, uncategorised: 0 },
     // 71 -> 72 (#2352 MC-03D): the page-content deletion, above.
     // 72 -> 70 (#2581 child 2): the two dependants writes, above.
     // 70 -> 69 (#2581 child 2 review): the age-up handoff write, above. No
@@ -1211,7 +1216,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // not: Admin > Audit Log is a support-area screen with no per-category
     // filter, so they read it there in full. What the category picks is the AI
     // Diagnostics correlation entry, which for `privacy` needs membership too.
-    privacy: 20,
+    // 20 -> 21 (#3492): the guest promo-code lookup, above.
+    privacy: 21,
     // UNCHANGED by #2581 child 2. `system` is for genuine platform events with
     // no narrower business domain, and none of the 82 was one.
     system: 4,
