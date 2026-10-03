@@ -183,6 +183,25 @@ export function cancelRefundableBaseCents(input: {
 }
 
 /**
+ * #3809: the applied-credit slice a paid cancellation tiers, capped exactly as
+ * the card slice is - money paid and credit applied together count no further
+ * than the booking is now worth, money first. Without the cap, credit left
+ * applied above a reduced price (a reduction's policy-kept share) came back at
+ * the cancellation, so a credit-paid member got more than a card-paid one.
+ * The difference of two `cancelRefundableBaseCents`, so there is one base rule.
+ */
+export function cancelAppliedCreditBaseCents(input: {
+  amountCents: number;
+  refundedAmountCents: number;
+  finalPriceCents: number;
+  changeFeeCents: number;
+  creditAppliedCents: number;
+}): number {
+  const withCredit = cancelRefundableBaseCents({ ...input, amountCents: input.amountCents + input.creditAppliedCents });
+  return Math.max(0, Math.min(input.creditAppliedCents, withCredit - cancelRefundableBaseCents(input)));
+}
+
+/**
  * The payment shape the two accessors below need, spelled out so a caller cannot
  * hand them a payment row loaded without its id.
  */

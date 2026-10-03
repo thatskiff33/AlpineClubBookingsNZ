@@ -46,6 +46,12 @@ type XeroBookingEditFinancialAction =
   | {
       type: "modification-account-credit-note";
       refundAmountCents: number;
+      /**
+       * #3809: applied credit the same edit gave back, which the deallocation
+       * reopened the invoice by: an invoice-ALLOCATED note of its own beside
+       * the unallocated one for the minted credit.
+       */
+      allocatedGiveBackCents: number;
       reason: string;
     };
 
@@ -107,6 +113,14 @@ export interface ClassifyXeroBookingEditSettlementInput {
    * when `refundMethod` is omitted.
    */
   refundedThroughStripe?: boolean | null;
+  /**
+   * #3809: applied credit a paid booking's reduction gave back
+   * (`appliedCreditGivenBackCents`). Its deallocation reopens the invoice by
+   * this much, so an invoice-allocated note takes it off again, as for a card
+   * refund: folded into the edit's allocated note, worded as account credit
+   * where it is the whole of it, or raised beside an unallocated account note.
+   */
+  appliedCreditGiveBackCents?: number;
 }
 
 export interface QueueXeroBookingEditSettlementInput
@@ -165,25 +179,29 @@ export function classifyXeroBookingEditSettlement(
         : "Positive booking-edit delta needs an unpaid supplementary invoice; no confirmed additional Stripe payment exists.",
     };
   } else if (xeroNetAmountCents < 0) {
-    const refundAmountCents = input.settlementAmountCents ?? Math.abs(xeroNetAmountCents);
-    if (refundAmountCents <= 0) {
+    const refundAmountCents = Math.max(0, input.settlementAmountCents ?? Math.abs(xeroNetAmountCents));
+    const giveBackCents = Math.max(0, input.appliedCreditGiveBackCents ?? 0);
+    if (refundAmountCents <= 0 && giveBackCents <= 0) {
       financialAction = {
         type: "none",
         reason: "Booking edit reduction has no policy-returnable settlement amount.",
       };
-    } else if (input.settlementMethod === "credit") {
+    } else if (input.settlementMethod === "credit" && refundAmountCents > 0) {
       financialAction = {
         type: "modification-account-credit-note",
         refundAmountCents,
+        allocatedGiveBackCents: giveBackCents,
         reason: "Negative booking-edit delta held as account credit needs an unapplied modification credit note.",
       };
     } else {
       financialAction = {
         type: "modification-credit-note",
-        refundAmountCents,
+        refundAmountCents: refundAmountCents + giveBackCents,
         refundMethod:
-          input.refundMethod ??
-          refundMethodForSettlementMethod(input.settlementMethod, input.refundedThroughStripe),
+          refundAmountCents <= 0
+            ? "account-credit"
+            : (input.refundMethod ??
+              refundMethodForSettlementMethod(input.settlementMethod, input.refundedThroughStripe)),
         reason: "Negative booking-edit delta needs a modification credit note instead of mutating the original invoice.",
       };
     }
@@ -305,6 +323,19 @@ export async function queueXeroBookingEditSettlement(
       }
     );
     await kickQueuedXeroOperation(queued);
+    if (decision.financialAction.allocatedGiveBackCents > 0) {
+      const allocated = await enqueueXeroModificationCreditNoteOperation(
+        {
+          bookingId: input.bookingId,
+          refundAmountCents: decision.financialAction.allocatedGiveBackCents,
+          bookingModificationId: input.bookingModificationId,
+          refundMethod: "account-credit",
+          ...(input.reviewTaskId ? { reviewTaskId: input.reviewTaskId } : {}),
+        },
+        { createdByMemberId: input.createdByMemberId }
+      );
+      await kickQueuedXeroOperation(allocated);
+    }
   }
 
   if (decision.primaryInvoiceUpdateAction.type === "queue") {

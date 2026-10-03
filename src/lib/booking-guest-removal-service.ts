@@ -64,7 +64,6 @@ import {
   rateSnapshotUpdateForRepricedGuest,
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
-  type PaymentAdjustmentResult,
 } from "@/lib/booking-modify";
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
 import {
@@ -140,7 +139,7 @@ export type RemoveBookingGuestResult = {
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   xeroRefundAmountCents: number;
-  xeroRefundMethod: PaymentAdjustmentResult["xeroRefundMethod"];
+  appliedCreditGivenBackCents: number;
   xeroAdditionalAmountCents: number;
   hasSucceededPayment: boolean;
   hasIssuedXeroInvoice: boolean;
@@ -1321,7 +1320,7 @@ export async function removeBookingGuestInTransaction({
     settlementMethod: paymentImpact.settlementMethod,
     policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,
-    xeroRefundMethod: paymentImpact.xeroRefundMethod,
+    appliedCreditGivenBackCents: paymentImpact.appliedCreditGivenBackCents,
     xeroAdditionalAmountCents: paymentImpact.xeroAdditionalAmountCents,
     hasSucceededPayment: paymentImpact.hasSucceededPayment,
     hasIssuedXeroInvoice: paymentImpact.hasIssuedXeroInvoice,

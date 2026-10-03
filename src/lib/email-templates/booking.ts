@@ -23,6 +23,7 @@ import {
   unpaidMoneySummaryRows,
 } from "@/lib/booking-money-lines";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
+import { appliedCreditGiveBackNote } from "@/lib/booking-credit-give-back-copy";
 import { escapeHtml } from "./escape";
 import {
   type BookingCalendarLinks,
@@ -446,6 +447,13 @@ export function bookingModifiedTemplate(params: {
   changeFeeCents: number;
   refundAmountCents: number;
   accountCreditAmountCents?: number;
+  /**
+   * #3809: applied credit this change gave back - the booking was paid with
+   * account credit, and the reduction returned it, tiered like a card refund.
+   * REQUIRED for the reason `financialReviewPending` is: a default answers the
+   * question wrongly for every caller that has a figure. 0 where none was.
+   */
+  appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
   additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING";
   paymentReference?: string | null;
@@ -492,6 +500,7 @@ export function bookingModifiedTemplate(params: {
     changeFeeCents,
     refundAmountCents,
     accountCreditAmountCents = 0,
+    appliedCreditGivenBackCents,
     additionalAmountCents,
     additionalPaymentMethod,
     paymentReference,
@@ -549,7 +558,7 @@ export function bookingModifiedTemplate(params: {
           // processed" in one email about one change. The additional-payment
           // arms are compatible and leave the sentence in place.
           moneyAlreadyMoved:
-            refundAmountCents > 0 || accountCreditAmountCents > 0,
+            refundAmountCents > 0 || accountCreditAmountCents > 0 || appliedCreditGivenBackCents > 0,
         }),
         "info",
       )
@@ -586,7 +595,11 @@ export function bookingModifiedTemplate(params: {
     }
   }
 
-  const paymentNote = `${reviewNote}${settlementNote}`;
+  // #3809: composed with the settlement note - both are true on a booking paid
+  // by card and credit - and worded once, in `appliedCreditGiveBackNote`.
+  const giveBackSentence = appliedCreditGiveBackNote(appliedCreditGivenBackCents, format);
+  const giveBackNote = giveBackSentence ? alertBox(giveBackSentence, "success") : "";
+  const paymentNote = `${reviewNote}${settlementNote}${giveBackNote}`;
 
   return layout(`
     ${heading("Booking Modified")}

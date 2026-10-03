@@ -1637,6 +1637,7 @@ async function performBookingCancellation(
           policyKeptCents: money.policyKeptCents,
           paidAboveRefundableCents: money.paidAboveRefundableCents,
           appliedCreditBeyondMirrorCents: money.appliedCreditBeyondMirrorCents,
+          appliedCreditAboveRefundableCents: money.appliedCreditAboveRefundableCents,
         },
         "Booking ledger: a cancellation keeps money beyond what its policy keeps; the retained line says so (#3611)",
       );
@@ -1864,6 +1865,7 @@ async function performBookingCancellation(
         keptBeyondPolicyCents: ledgerKeptCents - money.policyKeptCents,
         appliedCreditCents,
         creditRestoredCents,
+        appliedCreditBaseCents: money.appliedCreditBaseCents,
       },
     });
 

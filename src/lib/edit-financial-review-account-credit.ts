@@ -328,7 +328,7 @@ async function creditSliceStillOwedAfterCancellation({
     return { sliceCents, owedCents: sliceCents };
   }
 
-  const appliedAtCancelCents = await frozenAppliedAtCancellationCents({ bookingId, restoredAt: restore.createdAt, store });
+  const { appliedAtCancelCents, appliedBaseCapCents } = await frozenAppliedAtCancellationCents({ bookingId, restoredAt: restore.createdAt, store });
   if (appliedAtCancelCents === null || appliedAtCancelCents <= 0) {
     throw new ManualBookingPaymentError(REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE, 409);
   }
@@ -339,8 +339,10 @@ async function creditSliceStillOwedAfterCancellation({
 
   const days = daysUntilDate(booking.checkIn, clubCalendarDateOf(restore.createdAt, clubZone));
   const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, store);
+  // The cancellation tiered the credit capped at what the booking was worth
+  // (#3809); the tier is re-run on the same cap, or none where it froze none.
   const restoreOf = (appliedCents: number) =>
-    calculateAppliedCreditRestore(appliedCents, 0, days, policy).creditRestoredCents;
+    calculateAppliedCreditRestore(Math.min(appliedCents, appliedBaseCapCents), 0, days, policy).creditRestoredCents;
   if (restoreOf(appliedAtCancelCents) !== restoredCents) {
     throw new ManualBookingPaymentError(REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE, 409);
   }
@@ -356,6 +358,8 @@ async function creditSliceStillOwedAfterCancellation({
  * The applied credit the cancellation tiered, as frozen then: the CANCELLED
  * event's `snapshot.ledger.appliedCreditCents` (#3611) where it has one, else
  * the booking's applied rows as they stood when the restore row was written.
+ * With it, the cap the cancellation's tier was applied under (#3809), or no
+ * cap where the event froze none: such a cancellation tiered all of it.
  */
 async function frozenAppliedAtCancellationCents({
   bookingId,
@@ -365,19 +369,23 @@ async function frozenAppliedAtCancellationCents({
   bookingId: string;
   restoredAt: Date;
   store: Prisma.TransactionClient;
-}): Promise<number | null> {
+}): Promise<{ appliedAtCancelCents: number | null; appliedBaseCapCents: number }> {
   const cancelled = await store.bookingEvent.findFirst({
     where: { bookingId, type: BookingEventType.CANCELLED },
     orderBy: { occurredAt: "desc" },
     select: { snapshot: true },
   });
-  const frozen = jsonRecord(jsonRecord(cancelled?.snapshot)?.ledger)?.appliedCreditCents;
-  if (typeof frozen === "number" && Number.isInteger(frozen)) return frozen;
+  const ledger = jsonRecord(jsonRecord(cancelled?.snapshot)?.ledger);
+  const cap = ledger?.appliedCreditBaseCents;
+  const appliedBaseCapCents = typeof cap === "number" && Number.isInteger(cap) ? cap : Number.POSITIVE_INFINITY;
+  const frozen = ledger?.appliedCreditCents;
+  if (typeof frozen === "number" && Number.isInteger(frozen)) return { appliedAtCancelCents: frozen, appliedBaseCapCents };
   const asRestored = await store.memberCredit.aggregate({
     where: { appliedToBookingId: bookingId, type: CreditType.BOOKING_APPLIED, createdAt: { lte: restoredAt } },
     _sum: { amountCents: true },
   });
-  return asRestored._sum.amountCents === null ? null : Math.max(0, -asRestored._sum.amountCents);
+  const appliedAtCancelCents = asRestored._sum.amountCents === null ? null : Math.max(0, -asRestored._sum.amountCents);
+  return { appliedAtCancelCents, appliedBaseCapCents };
 }
 
 /**

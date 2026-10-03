@@ -158,6 +158,7 @@ import {
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
 import { getMemberCreditBalance } from "@/lib/member-credit";
+import { previewPaidReductionCreditGiveBackCents } from "@/lib/booking-modify-credit-give-back";
 import logger from "@/lib/logger";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -2387,6 +2388,16 @@ export async function POST(
     db: prisma, // advisory quote: no transaction, no lock held
     todayAtClub,
   });
+  // #3809: what saving would give back of the booking's applied credit - all of
+  // a credit-paid booking's tiered reduction, or what the card basis leaves.
+  const appliedCreditGiveBackCents = await previewPaidReductionCreditGiveBackCents({
+    booking,
+    ownerMemberId: bookingOwner(booking).memberId,
+    reductionCents: Math.max(0, -netChargeCents),
+    cardBasisCents: settlementOptions?.basisAmountCents ?? 0,
+    todayAtClub,
+    db: prisma,
+  });
 
   return NextResponse.json({
     newTotalPriceCents,
@@ -2397,6 +2408,7 @@ export async function POST(
     changeFeeCents,
     netChargeCents,
     settlementOptions,
+    appliedCreditGiveBackCents,
     // #2266: create-flow parity (api/bookings/quote/route.ts) — the member's
     // live balance so the edit panel can offer credit against the new price.
     availableCreditCents,

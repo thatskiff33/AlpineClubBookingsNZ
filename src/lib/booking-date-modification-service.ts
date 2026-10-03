@@ -74,7 +74,6 @@ import {
   rateSnapshotUpdateForRepricedGuest,
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
-  type PaymentAdjustmentResult,
 } from "@/lib/booking-modify";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { markCrossFamilyGuestsOnBooking } from "@/lib/member-guest-add-policy";
@@ -217,7 +216,7 @@ type DateModificationTransactionResult =
     paymentReference: string | null;
     xeroInvoiceNumber: string | null;
     xeroRefundAmountCents: number;
-    xeroRefundMethod: PaymentAdjustmentResult["xeroRefundMethod"];
+    appliedCreditGivenBackCents: number;
     xeroAdditionalAmountCents: number;
     // F20 (#1887): the reprice landed the booking fully credit-covered and it
     // was auto-confirmed at $0, so the primary Xero invoice must be created.
@@ -230,6 +229,8 @@ export type DateModificationResponse = {
   changeFeeCents: number;
   refundAmountCents: number;
   accountCreditAmountCents: number;
+  /** #3809: applied credit the reduction gave back, as account credit. */
+  appliedCreditGivenBackCents: number;
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   additionalAmountCents: number;
@@ -1473,7 +1474,7 @@ export async function modifyBookingDates({
       paymentReference: booking.payment?.reference ?? null,
       xeroInvoiceNumber: booking.payment?.xeroInvoiceNumber ?? null,
       xeroRefundAmountCents,
-      xeroRefundMethod: payments.xeroRefundMethod,
+      appliedCreditGivenBackCents: payments.appliedCreditGivenBackCents,
       xeroAdditionalAmountCents,
       zeroDollarAutoPaid,
       paymentId: booking.payment?.id ?? null,
@@ -1541,6 +1542,7 @@ export async function modifyBookingDates({
     changeFeeCents: result.changeFeeCents,
     refundAmountCents: result.refundAmountCents,
     accountCreditAmountCents: result.accountCreditAmountCents,
+    appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
     settlementMethod: result.settlementMethod,
     policyRetainedAmountCents: result.policyRetainedAmountCents,
     additionalAmountCents: result.additionalAmountCents,
@@ -1655,7 +1657,7 @@ async function dispatchDatePostTransactionSideEffects({
     settlementAmountCents: result.xeroRefundAmountCents,
     settlementMethod: result.settlementMethod,
     refundedThroughStripe: result.hasSucceededPayment,
-    refundMethod: result.xeroRefundMethod,
+    appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     // F20 (#1887): a reprice that landed the booking fully credit-covered
     // auto-confirmed it at $0, so create the primary invoice if none was issued
     // (mirrors the batch modify path).
@@ -1729,6 +1731,7 @@ async function dispatchDatePostTransactionSideEffects({
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
       accountCreditAmountCents: result.accountCreditAmountCents,
+      appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
       additionalAmountCents: result.additionalAmountCents,
       additionalPaymentMethod:
         result.additionalAmountCents > 0 &&
@@ -2299,6 +2302,7 @@ export async function adminShiftBookingDates({
       changeFeeCents: 0,
       refundAmountCents: 0,
       accountCreditAmountCents: 0,
+      appliedCreditGivenBackCents: 0,
       additionalAmountCents: 0,
       additionalPaymentMethod: undefined,
       paymentReference: result.paymentReference,
@@ -2331,6 +2335,7 @@ export async function adminShiftBookingDates({
     changeFeeCents: 0,
     refundAmountCents: 0,
     accountCreditAmountCents: 0,
+    appliedCreditGivenBackCents: 0,
     settlementMethod: null,
     policyRetainedAmountCents: 0,
     additionalAmountCents: 0,

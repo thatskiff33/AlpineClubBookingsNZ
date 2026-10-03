@@ -29,7 +29,6 @@ import {
   type BatchModifyInput,
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
-  type PaymentAdjustmentResult,
   type ResolvedGuestNameUpdate,
   type PricingResult,
   isBookingFullyPaidForGuestNameEdits,
@@ -226,7 +225,7 @@ type BatchModificationTransactionResult =
     supersededPrimaryPaymentIntents: { length: number };
     xeroAdditionalAmountCents: number;
     xeroRefundAmountCents: number;
-    xeroRefundMethod: PaymentAdjustmentResult["xeroRefundMethod"];
+    appliedCreditGivenBackCents: number;
     settlementMethod: BookingModificationSettlementMethod | null;
     policyRetainedAmountCents: number;
     guestNameUpdates: ResolvedGuestNameUpdate[];
@@ -258,6 +257,8 @@ export type BatchModificationResponse = {
   changeFeeCents: number;
   refundAmountCents: number;
   accountCreditAmountCents: number;
+  /** #3809: applied credit the reduction gave back, as account credit. */
+  appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
   settlementMethod: BookingModificationSettlementMethod | null;
   /**
@@ -2128,7 +2129,7 @@ export async function modifyBookingBatch({
       supersededPrimaryPaymentIntents: lifecycle.supersededPrimaryPaymentIntents,
       xeroAdditionalAmountCents: payments.xeroAdditionalAmountCents,
       xeroRefundAmountCents: payments.xeroRefundAmountCents,
-      xeroRefundMethod: payments.xeroRefundMethod,
+      appliedCreditGivenBackCents: payments.appliedCreditGivenBackCents,
       settlementMethod: payments.settlementMethod,
       policyRetainedAmountCents: payments.policyRetainedAmountCents,
       guestNameUpdates,
@@ -2335,6 +2336,7 @@ export async function modifyBookingBatch({
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
       accountCreditAmountCents: result.accountCreditAmountCents,
+      appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
       additionalAmountCents: result.additionalAmountCents,
       settlementMethod: result.settlementMethod,
       requiresSettlementMethod: result.requiresSettlementMethod,
@@ -2378,6 +2380,7 @@ export async function modifyBookingBatch({
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
       accountCreditAmountCents: result.accountCreditAmountCents,
+      appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
       additionalAmountCents: result.additionalAmountCents,
       settlementMethod: result.settlementMethod,
       requiresSettlementMethod: result.requiresSettlementMethod,
@@ -2511,7 +2514,7 @@ async function dispatchBatchPostTransactionSideEffects({
     guestIdentityChanged: result.guestIdentityChanged,
     settlementMethod: result.settlementMethod,
     refundedThroughStripe: result.hasSucceededPayment,
-    refundMethod: result.xeroRefundMethod,
+    appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     settlementAmountCents: result.xeroRefundAmountCents,
     createPrimaryInvoiceWhenMissing:
       result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,
@@ -2611,6 +2614,7 @@ async function dispatchBatchPostTransactionSideEffects({
     changeFeeCents: result.changeFeeCents,
     refundAmountCents: result.refundAmountCents,
     accountCreditAmountCents: result.accountCreditAmountCents,
+    appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
     additionalAmountCents: result.additionalAmountCents,
     additionalPaymentMethod:
       result.additionalAmountCents > 0 &&

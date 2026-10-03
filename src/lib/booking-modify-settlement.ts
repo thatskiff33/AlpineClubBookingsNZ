@@ -19,8 +19,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import type { CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
-import { giveBackCreditPaidReduction } from "@/lib/booking-modify-credit-give-back";
-import type { RefundMethod } from "@/lib/xero-refund-method";
+import { giveBackPaidReductionCredit } from "@/lib/booking-modify-credit-give-back";
 import {
   calculateDualRefundAmounts,
   daysUntilDate,
@@ -83,17 +82,14 @@ export type PaymentAdjustmentResult = {
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   /**
-   * #3809: applied credit a credit-paid booking's reduction gave back, tiered
-   * like a card refund (`giveBackCreditPaidReduction`). Neither a refund nor
-   * minted credit, so it is in neither figure above and nothing mints it again.
+   * #3809: applied credit a paid booking's reduction gave back - the part the
+   * card basis could not return, tiered like a card refund
+   * (`giveBackPaidReductionCredit`). Neither a refund nor minted credit, so it
+   * is in neither figure above and nothing mints it again. The Xero leg takes
+   * it as an invoice-allocated note worded as account credit
+   * (`appliedCreditGiveBackCents` on `queueXeroBookingEditSettlement`).
    */
   appliedCreditGivenBackCents: number;
-  /**
-   * How the Xero note says the reduction went back (`INV-PAY-101`): "account-
-   * credit" for that give-back, whose note is still allocated against the
-   * invoice; null leaves it to the settlement method, as before.
-   */
-  xeroRefundMethod: RefundMethod | null;
 };
 
 // isSettledBookingStatus moved to booking-payment-state (#1729) so the Xero
@@ -254,19 +250,28 @@ export async function applyPaymentAdjustments(
   // for the full net delta, otherwise a `settlementOptions` of null leaves
   // xeroRefund at 0 and the outstanding invoice keeps the removed guests.
   //
-  // #3809: a booking paid ENTIRELY with account credit gives the tiered slice
-  // back as applied credit, before any Payment row write here. Its note is that
-  // give-back, as a card refund's is the refund: the deallocation reopens the
-  // invoice by it and the note closes it again.
-  const creditPaidGiveBack =
-    !hasSettledPayment && netAmountCents < 0
-      ? await giveBackCreditPaidReduction(tx, { booking, reductionCents: -netAmountCents, todayAtClub, format })
+  // #3809: a PAID booking gives back, as applied credit, the part of the
+  // reduction the captured money's basis cannot return - all of it where
+  // nothing was captured - tiered like a card refund, before any Payment row
+  // write here. Its Xero note is that give-back, as a card refund's is the
+  // refund; with nothing captured there is then no other note to raise.
+  const creditGiveBack =
+    netAmountCents < 0
+      ? await giveBackPaidReductionCredit(tx, {
+          booking,
+          reductionCents: -netAmountCents,
+          cardBasisCents: hasSettledPayment ? Math.min(-netAmountCents, remainingRefundableCents) : 0,
+          todayAtClub,
+          format,
+        })
       : null;
   const xeroRefundAmountCents =
     hasIssuedXeroInvoice && netAmountCents < 0
       ? hasSettledPayment
         ? selectedSettlement.amountCents
-        : (creditPaidGiveBack?.givenBackCents ?? Math.abs(netAmountCents))
+        : creditGiveBack
+          ? 0
+          : Math.abs(netAmountCents)
       : 0;
   const xeroAdditionalAmountCents =
     hasIssuedXeroInvoice && netAmountCents > 0 ? netAmountCents : 0;
@@ -359,11 +364,10 @@ export async function applyPaymentAdjustments(
     xeroRefundAmountCents,
     xeroAdditionalAmountCents,
     settlementMethod: selectedSettlement.settlementMethod,
-    policyRetainedAmountCents: creditPaidGiveBack
-      ? creditPaidGiveBack.basisCents - creditPaidGiveBack.givenBackCents
-      : selectedSettlement.policyRetainedAmountCents,
-    appliedCreditGivenBackCents: creditPaidGiveBack?.givenBackCents ?? 0,
-    xeroRefundMethod: creditPaidGiveBack ? "account-credit" : null,
+    policyRetainedAmountCents:
+      selectedSettlement.policyRetainedAmountCents +
+      (creditGiveBack ? creditGiveBack.basisCents - creditGiveBack.givenBackCents : 0),
+    appliedCreditGivenBackCents: creditGiveBack?.givenBackCents ?? 0,
   };
 }
 

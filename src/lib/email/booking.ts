@@ -50,6 +50,7 @@ import {
 import { CLUB_NAME } from "@/config/club-identity";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
+import { appliedCreditGiveBackNote } from "@/lib/booking-credit-give-back-copy";
 import { supersededPaymentRefundedTemplate } from "@/lib/email-templates/refunds";
 import { supersededRefundOwingSentence } from "@/lib/superseded-additional-refund-event";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
@@ -1363,6 +1364,13 @@ export async function sendBookingModifiedEmail(params: {
   changeFeeCents: number;
   refundAmountCents: number;
   accountCreditAmountCents?: number;
+  /**
+   * #3809: applied credit this change gave back - the booking was paid with
+   * account credit, and the reduction returned it, tiered like a card refund.
+   * REQUIRED for the reason `financialReviewPending` is: a default answers the
+   * question wrongly for every caller that has a figure. 0 where none was.
+   */
+  appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
   additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING";
   paymentReference?: string | null;
@@ -1451,7 +1459,7 @@ export async function sendBookingModifiedEmail(params: {
         // or charged for it yet" cannot stand beside "a refund has been
         // processed" in one email about one change.
         moneyAlreadyMoved:
-          params.refundAmountCents > 0 || accountCreditAmountCents > 0,
+          params.refundAmountCents > 0 || accountCreditAmountCents > 0 || params.appliedCreditGivenBackCents > 0,
       })
     : "";
   const settlementNote =
@@ -1464,7 +1472,10 @@ export async function sendBookingModifiedEmail(params: {
             ? `An additional Internet Banking payment of ${formatMoneyCents(params.additionalAmountCents, format)} is required.${xeroInvoicePaymentContext}${paymentReferenceContext} Xero reconciliation confirms the payment before it is treated as paid.`
             : `An additional payment of ${formatMoneyCents(params.additionalAmountCents, format)} is required.`
           : "";
-  const paymentNote = [reviewNote, settlementNote].filter(Boolean).join(" ");
+  // #3809: true beside a card refund on a booking paid by card and credit, so
+  // composed with the settlement note rather than one of its arms.
+  const giveBackNote = appliedCreditGiveBackNote(params.appliedCreditGivenBackCents, format);
+  const paymentNote = [reviewNote, settlementNote, giveBackNote].filter(Boolean).join(" ");
 
   await sendEmail({
     to: params.email,

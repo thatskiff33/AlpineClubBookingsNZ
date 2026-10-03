@@ -65,6 +65,12 @@ export type CancellationLedgerSnapshot = {
   keptBeyondPolicyCents: number;
   appliedCreditCents: number;
   creditRestoredCents: number;
+  /**
+   * #3809: the applied credit the tier was applied to, capped at what the
+   * booking was worth. A later review's netting (`INV-PAY-113`) re-runs the
+   * tier on it. Absent on cancellations before the cap, which tiered it all.
+   */
+  appliedCreditBaseCents?: number;
 };
 
 export async function writePaidCancellationEvent(

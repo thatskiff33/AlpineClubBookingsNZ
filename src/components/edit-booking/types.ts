@@ -260,6 +260,9 @@ export interface QuoteResult {
   changeFeeCents: number;
   netChargeCents: number;
   settlementOptions: SettlementOptions | null;
+  // #3809: applied credit saving would give back on a paid booking - all of a
+  // credit-paid one's tiered reduction, or what a card refund leaves.
+  appliedCreditGiveBackCents?: number;
   // #2266: the member's live credit balance (create-flow quote parity).
   availableCreditCents?: number;
   capacityAvailable: boolean;

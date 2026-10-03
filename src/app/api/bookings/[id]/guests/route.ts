@@ -1526,6 +1526,7 @@ export async function POST(
         newFinalPriceCents: result.booking.finalPriceCents,
         changeFeeCents: 0,
         refundAmountCents: 0,
+        appliedCreditGivenBackCents: 0,
         additionalAmountCents: result.additionalAmountCents,
         additionalPaymentMethod:
           result.additionalAmountCents > 0 &&
