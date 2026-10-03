@@ -15,7 +15,8 @@ spot a material gap and investigate.
   calendar month (newest snapshot per month is kept, so a daily re-sync of the
   current month does not crowd out earlier months).
 - Booking hut fees: `BookingGuestNight.priceCents` summed over `stayDate` in the
-  period, for realized bookings only (`FINANCE_REALIZED_BOOKING_STATUSES`), split
+  period, for realized bookings only (`FINANCE_REALIZED_BOOKING_STATUSES`, and
+  never a soft-deleted booking, #3745), split
   into member and non-member via `BookingGuest.isMember`.
 - Paid subscription count: `MemberSubscription` rows with status `PAID` and
   `paidAt` in the period.

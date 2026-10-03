@@ -3,13 +3,12 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { z } from "zod";
-import {
-  BookingStatus,
-  PaymentTransactionKind,
-  SubscriptionStatus,
-} from "@prisma/client";
+import { BookingStatus, SubscriptionStatus } from "@prisma/client";
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
-import { summarizeAdditionalLedgerGap } from "@/lib/additional-ledger-gap";
+import {
+  netCollectedPaymentSelect,
+  summarizeNetCollectedWithLedgerGap,
+} from "@/lib/additional-ledger-gap";
 import { getOccupiedBedsForNight } from "@/lib/capacity";
 import { resolveMetricsCapacityAndScope } from "@/lib/finance-booking-metrics";
 import logger from "@/lib/logger";
@@ -17,7 +16,6 @@ import {
   buildBookingTrendSeries,
   buildRevenueSeries,
   REPORT_BOOKING_STATUSES,
-  summarizeNetCollectedCash,
   summarizeOverlappingGuests,
 } from "@/lib/admin-reports";
 import { clubSeasonYear } from "@/lib/financial-year";
@@ -104,6 +102,7 @@ export async function GET(request: NextRequest) {
 
     const [
       bookings,
+      netCollectedPayments,
       totalActiveMembers,
       paidMembers,
       unpaidMembers,
@@ -140,22 +139,28 @@ export async function GET(request: NextRequest) {
               refundedAmountCents: true,
               additionalAmountCents: true,
               additionalPaymentStatus: true,
-              // #2408: the cash figure continues to come from amountCents. We
-              // load only ADDITIONAL ledger evidence so Reports can surface the
-              // same possible-understatement guard as Finance without
-              // rebuilding cash or returning transaction rows.
-              transactions: {
-                where: { kind: PaymentTransactionKind.ADDITIONAL },
-                select: {
-                  kind: true,
-                  status: true,
-                  amountCents: true,
-                },
-              },
             },
           },
         },
         orderBy: [{ checkIn: "asc" }, { id: "asc" }],
+      }),
+      // #3372, owner decision A: Net Collected reads its own payments -
+      // every booking in the range and lodge, any status - not the cohort
+      // above, whose status list and "deleted" view govern the other figures.
+      // `summarizeCollectedCash` applies the one Net Collected booking scope
+      // from the `deletedAt` loaded here.
+      prisma.payment.findMany({
+        where: {
+          booking: {
+            is: {
+              ...bookingLodgeWhere,
+              checkIn: { lte: toDay },
+              checkOut: { gt: fromDay },
+            },
+          },
+        },
+        select: netCollectedPaymentSelect,
+        orderBy: { bookingId: "asc" },
       }),
       prisma.member.count({
         where: {
@@ -254,10 +259,11 @@ export async function GET(request: NextRequest) {
     // Collected cash is booking-level payment data, deliberately separate from
     // stay-night revenue. Payment.amountCents already includes captured
     // additions (#2408), so transaction-ledger reconstruction is forbidden.
-    const netCollectedCents = summarizeNetCollectedCash(
-      bookings.map((booking) => booking.payment),
-    );
-    const additionalLedgerGap = summarizeAdditionalLedgerGap(bookings);
+    // The possible understatement of THAT figure, over the same payments.
+    const {
+      collected: { netCollectedCents },
+      ledgerGap: additionalLedgerGap,
+    } = summarizeNetCollectedWithLedgerGap(netCollectedPayments);
     if (additionalLedgerGap.bookingIds.length > 0) {
       logger.error(
         {
@@ -270,7 +276,7 @@ export async function GET(request: NextRequest) {
             additionalLedgerGap.additionalLedgerGapCents,
           netCollectedCents,
         },
-        "Admin Reports: payments record a collected additional payment with no captured ADDITIONAL PaymentTransaction behind it. Net Collected Cash may understate by additionalLedgerGapCents. Reconcile those payments' ledgers (reconcilePaymentAggregates) before trusting the collected figure.",
+        "Admin Reports: payments record a collected additional payment with no captured ADDITIONAL PaymentTransaction behind it. Net Collected may understate by additionalLedgerGapCents. Reconcile those payments' ledgers (reconcilePaymentAggregates) before trusting the collected figure.",
       );
     }
     // #2350: upward changes whose extra was never collected. This booking-level

@@ -25,6 +25,8 @@ import {
 import { appendBookingMoneyReconciliationDashboardState } from "@/lib/finance-dashboard-page/money-reconciliation";
 import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
 import type { ClubFormat } from "@/lib/club-format";
+import { formatNetCollectedLedgerGapWarning } from "@/lib/booking-payment-state";
+import { formatCents } from "@/lib/utils";
 
 // Compact day+month export label ("14 Jun"), deliberately year-less: it labels
 // rows already scoped to one range, and widening it to the shared medium form
@@ -41,6 +43,10 @@ import type { ClubFormat } from "@/lib/club-format";
 function formatShortDate(dateOnly: string, format: ClubDateFormat) {
   return formatClubDayMonth(requireCalendarDate(dateOnly), format);
 }
+
+/** The Net Collected card's footnote: where the figure comes from. */
+const NET_COLLECTED_SOURCE_NOTE =
+  "Worked out from this app's own payment, account credit and refund records, not from Xero revenue.";
 
 export async function buildBookingsDashboard(
   selection: FinanceDashboardSelection,
@@ -87,19 +93,23 @@ export async function buildBookingsDashboard(
     );
   }
 
-  // #2408. Net collected cash is the gross captured figure from the payment
+  // #2408. Net Collected starts from the captured figure on the payment
   // rows, which contains a collected price increase because the payment ledger
   // put it there. A payment that says its increase was collected without a
   // ledger row to prove it is the one shape where that is not true, so the card
   // below would understate the cash. Say so where the treasurer reads the
   // number, and say by how much, rather than publishing a figure that is
-  // quietly short.
+  // quietly short. #3637: the one wording Reports and Payments use, over the
+  // same payments the figure counts. Its amount is in exact cents, as there,
+  // not the page's whole dollars: a gap under a dollar must not read "$0".
   const ledgerGapBookings = metrics.paymentSummary.additionalLedgerGapBookings;
-  if (ledgerGapBookings > 0) {
-    warnings.push(
-      `Net collected cash may understate by ${formatDollarsDisplay(metrics.paymentSummary.additionalLedgerGapCents, format)}: ${formatNumber(ledgerGapBookings, format)} booking${ledgerGapBookings === 1 ? "" : "s"} in this range record an extra payment as collected without a matching payment record behind it. Ask a developer to re-check those payments before reconciling this figure.`,
-    );
-  }
+  const ledgerGapWarning = formatNetCollectedLedgerGapWarning(
+    metrics.paymentSummary,
+    { one: "booking in this range", many: "bookings in this range" },
+    (cents) => formatCents(cents, format),
+    (count) => formatNumber(count, format),
+  );
+  if (ledgerGapWarning) warnings.push(ledgerGapWarning);
   const moneyReconciliationPanel =
     appendBookingMoneyReconciliationDashboardState({
       warnings,
@@ -139,17 +149,22 @@ export async function buildBookingsDashboard(
         : undefined,
     },
     {
-      title: "Net collected cash",
+      title: "Net Collected",
       value: formatDollarsDisplay(metrics.paymentSummary.netCollectedCents, format),
       // #2408: one figure, counted once. The captured amount on a payment row
       // already includes any later price increase that was collected, so this
-      // is the whole of the cash and not a part of it.
+      // is the whole of the cash and not a part of it. #3637: over the one Net
+      // Collected booking scope (every booking in the range whatever its
+      // status, deleted ones left out), so it answers as the dashboard,
+      // Payments and Reports do.
       description:
-        "Captured payments less refunds from local payment rows, including any collected price increase.",
+        "Captured payments less refunds and credits for bookings in the range, including any collected price increase. Cancelled bookings count only what was kept of what was paid; deleted bookings are left out.",
+      // #3372 (3 Oct 2026): kept account credit and hand-backs owed come from
+      // this app's credit and refund-task rows too, so not "payment-derived".
       footnote:
         ledgerGapBookings > 0
-          ? `May understate by ${formatDollarsDisplay(metrics.paymentSummary.additionalLedgerGapCents, format)} - see the warning above. Cash is local payment-derived and separate from Xero revenue.`
-          : "Cash is local payment-derived and separate from Xero revenue.",
+          ? `May understate by ${formatCents(metrics.paymentSummary.additionalLedgerGapCents, format)} - see the warning above. ${NET_COLLECTED_SOURCE_NOTE}`
+          : NET_COLLECTED_SOURCE_NOTE,
     },
     {
       title: "Forward demand",
@@ -259,9 +274,9 @@ export async function buildBookingsDashboard(
           "Guest nights, occupancy, and booked revenue come from local booking and guest-night rows.",
       },
       {
-        label: "Payment cash",
+        label: "Net Collected",
         description:
-          "Net collected cash comes from local payment rows and remains separate from Xero revenue recognition.",
+          "Net Collected comes from local payment, account credit and refund-task rows and remains separate from Xero revenue recognition.",
       },
     ],
     exportSections: [

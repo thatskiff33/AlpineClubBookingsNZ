@@ -55,7 +55,7 @@ test("reports overlapping stay nights and keeps booked revenue distinct from cas
     .getByText("Booked Revenue", { exact: true })
     .locator("xpath=../..");
   const collectedCashCard = page
-    .getByText("Net Collected Cash", { exact: true })
+    .getByText("Net Collected", { exact: true })
     .locator("xpath=../..");
   const avgOccupancyCard = page
     .getByText("Avg Occupancy", { exact: true })

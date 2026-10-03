@@ -13,7 +13,7 @@ vi.mock("@/lib/prisma", () => ({
     booking: { count: vi.fn(), findMany: vi.fn() },
     choreAssignment: { findMany: vi.fn() },
     bedAllocation: { findMany: vi.fn() },
-    payment: { aggregate: vi.fn() },
+    payment: { findMany: vi.fn() },
     refundRequest: { count: vi.fn() },
     adminCreditAdjustmentRequest: { count: vi.fn() },
     membershipCancellationRequest: { count: vi.fn() },
@@ -55,6 +55,7 @@ import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
 import { prisma } from "@/lib/prisma";
+import { netCollectedBookingSelect } from "@/lib/additional-ledger-gap";
 
 function mockDashboardCounts({
   pendingBookingReviews,
@@ -94,9 +95,8 @@ function mockDashboardCounts({
     .mockResolvedValueOnce(unsettledAdditionalFinishedStays)
     .mockResolvedValueOnce(unsettledAdditionalUpcomingStays)
     .mockResolvedValueOnce(pendingBookingReviews);
-  vi.mocked(prisma.payment.aggregate).mockResolvedValue({
-    _sum: { amountCents: 0 },
-  } as any);
+  // #3372: the revenue card reads the month's payments.
+  vi.mocked(prisma.payment.findMany).mockResolvedValue([] as any);
   vi.mocked(prisma.booking.findMany).mockResolvedValue([]);
   vi.mocked(prisma.choreAssignment.findMany).mockResolvedValue([] as any);
   vi.mocked(prisma.bedAllocation.findMany).mockResolvedValue([] as any);
@@ -463,11 +463,18 @@ describe("admin dashboard deep links", () => {
     // The month bounds behind "revenue this month". Written out by hand rather
     // than recomputed through the kernel, so a kernel defect cannot agree with
     // itself here.
-    expect(vi.mocked(prisma.payment.aggregate).mock.calls).toContainEqual([
+    // #3372: every status and every booking, so the net-collected-cash
+    // derivation and not this query decides which statuses are captured and
+    // which bookings count.
+    expect(vi.mocked(prisma.payment.findMany).mock.calls).toContainEqual([
       {
-        _sum: { amountCents: true },
+        select: {
+          status: true,
+          amountCents: true,
+          refundedAmountCents: true,
+          booking: { select: netCollectedBookingSelect },
+        },
         where: {
-          status: "SUCCEEDED",
           createdAt: {
             gte: new Date(chosen.monthStart),
             lte: new Date(chosen.monthEnd),

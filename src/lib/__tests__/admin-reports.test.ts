@@ -8,10 +8,22 @@ import {
   buildRevenueSeries,
   getBookingRevenueByNight,
   getRevenueGranularity,
-  summarizeNetCollectedCash,
   summarizeOverlappingGuests,
   type RevenueBookingLike,
 } from "@/lib/admin-reports";
+import {
+  isInNetCollectedBookingScope,
+  summarizeCollectedCash,
+} from "@/lib/booking-payment-state";
+
+/** A payment on a live booking that has not been soft-deleted. */
+const LIVE = {
+  deletedAt: null,
+  status: "PAID",
+  creditsApplied: [],
+  creditsFromCancellation: [],
+  manualRefundTasks: [],
+};
 
 const EXPECTED_REPORT_STATUS_VALUES = [
   "PENDING",
@@ -245,19 +257,109 @@ describe("admin reports helpers", () => {
 
   it("derives net collected cash from payment aggregates without double-counting additions", () => {
     expect(
-      summarizeNetCollectedCash([
+      summarizeCollectedCash([
         {
           status: PaymentStatus.PARTIALLY_REFUNDED,
           amountCents: 12_100,
           refundedAmountCents: 1_000,
+          booking: LIVE,
         },
         {
           status: PaymentStatus.PENDING,
           amountCents: 9_000,
           refundedAmountCents: 0,
+          booking: LIVE,
         },
-      ]),
+      ]).netCollectedCents,
     ).toBe(11_100);
+  });
+
+  /*
+    #3372: the derivation of net collected cash (now in the
+    `booking-payment-state.ts` leaf, which the Reports route reads through
+    `summarizeNetCollectedWithLedgerGap`) hands back its working — gross captured, refunded and
+    credited, net — so the dashboard card can print the breakdown beneath the
+    headline instead of re-deriving it. Which statuses are "captured" is `isCapturedPaymentStatus`'s
+    call, so a PENDING or FAILED amount never enters the gross, while its
+    (zero) refund column is still read.
+  */
+  it("breaks collected cash down into captured gross, refunded and net", () => {
+    expect(
+      summarizeCollectedCash([
+        // The #3340 booking: $130.00 captured, $65.00 refunded.
+        {
+          status: PaymentStatus.PARTIALLY_REFUNDED,
+          amountCents: 13_000,
+          refundedAmountCents: 6_500,
+          booking: LIVE,
+        },
+        { status: PaymentStatus.SUCCEEDED, amountCents: 5_000, refundedAmountCents: 0, booking: LIVE },
+        { status: PaymentStatus.REFUNDED, amountCents: 2_000, refundedAmountCents: 2_000, booking: LIVE },
+        // Uncaptured: never in the gross, whatever the amount.
+        { status: PaymentStatus.PENDING, amountCents: 9_000, refundedAmountCents: 0, booking: LIVE },
+        { status: PaymentStatus.FAILED, amountCents: 4_000, refundedAmountCents: 0, booking: LIVE },
+        // A row with no status at all is uncaptured.
+        { status: null, amountCents: 1_000, refundedAmountCents: 0, booking: LIVE },
+      ]),
+    ).toEqual({
+      capturedGrossCents: 20_000,
+      refundedCents: 8_500,
+      handBackOwedCents: 0,
+      keptCreditCents: 0,
+      netCollectedCents: 11_500,
+    });
+  });
+
+  /*
+    #3372, owner decision A: the one Net Collected booking scope lives in the
+    derivation, so no surface can choose its own. A soft-deleted booking's
+    payment contributes to neither the gross nor the refund; the scope does not
+    read the booking's status, so a cancelled booking counts the money it kept out of what was paid.
+  */
+  it("applies the one Net Collected booking scope: a deleted booking's payment counts for nothing", () => {
+    const deleted = { ...LIVE, deletedAt: new Date("2026-04-02T00:00:00.000Z") };
+    expect(
+      summarizeCollectedCash([
+        // A cancelled booking's payment that kept a $50.00 fee.
+        {
+          status: PaymentStatus.PARTIALLY_REFUNDED,
+          amountCents: 20_000,
+          refundedAmountCents: 15_000,
+          booking: LIVE,
+        },
+        // A soft-deleted booking: out of scope, gross and refund alike.
+        { status: PaymentStatus.SUCCEEDED, amountCents: 7_000, refundedAmountCents: 0, booking: deleted },
+        { status: PaymentStatus.REFUNDED, amountCents: 3_000, refundedAmountCents: 3_000, booking: deleted },
+      ]),
+    ).toEqual({
+      capturedGrossCents: 20_000,
+      refundedCents: 15_000,
+      handBackOwedCents: 0,
+      keptCreditCents: 0,
+      netCollectedCents: 5_000,
+    });
+    expect(isInNetCollectedBookingScope({ deletedAt: null })).toBe(true);
+    expect(isInNetCollectedBookingScope(deleted)).toBe(false);
+  });
+
+  it("floors each payment at zero and counts its refund only up to what it took", () => {
+    // A refund larger than the capture cannot happen through the refund
+    // writers. Owner review on #3811: each payment adds what it received and
+    // has not refunded, so the excess $5.00 neither goes below zero nor comes
+    // off another payment, and the breakdown's refund is what came back out of
+    // money that came in - gross less net, so the card's line adds up.
+    expect(
+      summarizeCollectedCash([
+        { status: PaymentStatus.REFUNDED, amountCents: 1_000, refundedAmountCents: 1_500, booking: LIVE },
+        { status: PaymentStatus.SUCCEEDED, amountCents: 4_000, refundedAmountCents: 0, booking: LIVE },
+      ]),
+    ).toEqual({
+      capturedGrossCents: 5_000,
+      refundedCents: 1_000,
+      handBackOwedCents: 0,
+      keptCreditCents: 0,
+      netCollectedCents: 4_000,
+    });
   });
 });
 

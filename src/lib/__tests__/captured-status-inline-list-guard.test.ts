@@ -120,4 +120,65 @@ describe("INV-SSOT: captured-status lists are read from their one home (#3635)",
     );
     expect(source).toMatch(/status:\s*\{\s*in:\s*\[\.\.\.CAPTURED_PAYMENT_STATUS_LIST\]\s*\}/);
   });
+
+  /*
+    #3637: the finance dashboard's `FINANCE_CAPTURED_PAYMENT_STATUSES` and the
+    Xero invoice module's `STRIPE_CAPTURED_PAYMENT_STATUSES` were NAMED `Set`
+    copies of the trio - a shape the anonymous-`.includes` scan above cannot
+    see. Any array literal that spells exactly the trio (a `Set`, a named
+    constant, a Prisma `status.in`) fails here; Finance's all-status
+    `PAYMENT_STATUS_KEYS` is not the trio and is left alone.
+  */
+  function spellsTheCapturedTrio(source: string): boolean {
+    return [...stripComments(source).matchAll(/\[([^[\]]{0,300})\]/g)].some(
+      ([, values]) => {
+        const members = values
+          .split(",")
+          .map((value) => value.trim().replace(/^PaymentStatus\.|["'`]/g, ""))
+          .filter(Boolean);
+        return (
+          members.length === CAPTURED.length &&
+          CAPTURED.every((status) => members.includes(status))
+        );
+      },
+    );
+  }
+
+  function productionSource(file: string): string {
+    return readFileSync(join(process.cwd(), file), "utf8");
+  }
+
+  it("finance metrics and Xero invoices ask the one captured list, not a copy (#3637)", () => {
+    const finance = productionSource("src/lib/finance-booking-metrics.ts");
+    const xero = productionSource("src/lib/xero-booking-invoices.ts");
+    expect(spellsTheCapturedTrio(finance), "finance-booking-metrics.ts").toBe(false);
+    expect(spellsTheCapturedTrio(xero), "xero-booking-invoices.ts").toBe(false);
+    // Finance's captured question is Net collected, asked of the shared fold.
+    expect(stripComments(finance)).toMatch(
+      /import\s*\{[^}]*\bsummarizeNetCollectedWithLedgerGap\b[^}]*\}\s*from\s*"@\/lib\/additional-ledger-gap"/,
+    );
+    expect(stripComments(xero)).toMatch(
+      /import\s*\{[^}]*\bisCapturedPaymentStatus\b[^}]*\}\s*from\s*"@\/lib\/booking-payment-state"/,
+    );
+  });
+
+  it("catches the named-Set shapes #3637 removed", () => {
+    expect(
+      [
+        [
+          "const FINANCE_CAPTURED_PAYMENT_STATUSES = new Set<PaymentStatus>([",
+          "  PaymentStatus.SUCCEEDED,",
+          "  PaymentStatus.PARTIALLY_REFUNDED,",
+          "  PaymentStatus.REFUNDED,",
+          "]);",
+        ].join("\n"),
+        'const STRIPE_CAPTURED_PAYMENT_STATUSES = new Set<string>(["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"]);',
+        "where: { status: { in: [PaymentStatus.REFUNDED, PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED] } }",
+        // History in a comment, a pair, and the all-status list are not copies.
+        '// was: new Set(["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"])',
+        'const pair = ["SUCCEEDED", "REFUNDED"];',
+        'const all = ["PENDING", "SUCCEEDED", "FAILED", "REFUNDED", "PARTIALLY_REFUNDED", "CANCELLED"];',
+      ].map(spellsTheCapturedTrio),
+    ).toEqual([true, true, true, false, false, false]);
+  });
 });

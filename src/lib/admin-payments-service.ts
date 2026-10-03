@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
 import { BOOKING_ISSUED_CREDIT_TYPES } from "@/lib/member-credit-booking-rows";
 import { z } from "zod";
 import {
@@ -16,6 +16,15 @@ import {
   type XeroState,
 } from "@/lib/admin-operational-state";
 import { bookingOwner } from "@/lib/booking-owner";
+import {
+  netCollectedBookingSelect,
+  summarizeNetCollectedWithLedgerGap,
+} from "@/lib/additional-ledger-gap";
+import {
+  getPaymentNetOfRefundsCents,
+  sumRefundedAndCreditedCents,
+  type NetCollectedBookingFields,
+} from "@/lib/booking-payment-state";
 import logger from "@/lib/logger";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { prisma } from "@/lib/prisma";
@@ -145,13 +154,16 @@ type PaymentCandidate = {
   xeroInvoiceId: string | null;
   xeroInvoiceNumber: string | null;
   refundedAmountCents: number;
+  additionalAmountCents: number;
+  additionalPaymentStatus: string | null;
   updatedAt: Date;
-  transactions: Array<{ updatedAt: Date }>;
+  transactions: Array<{ updatedAt: Date; kind: PaymentTransactionKind; status: PaymentStatus; amountCents: number }>;
   refunds: Array<{ updatedAt: Date }>;
   booking: {
     id: string;
     status: string;
     checkIn: Date;
+    deletedAt: Date | null;
     member: {
       id: string;
       firstName: string;
@@ -160,11 +172,11 @@ type PaymentCandidate = {
     } | null;
     // #3369: the owner may be an Organisation; bookingOwner() reads both.
     organisation: { name: string; email: string | null } | null;
-    creditsFromCancellation: Array<{
-      amountCents: number;
-      description: string | null;
-    }>;
-  };
+    // #3372: the Net Collected rule's rows, widened by the chip's description.
+    creditsFromCancellation: Array<
+      NetCollectedBookingFields["creditsFromCancellation"][number] & { description: string | null }
+    >;
+  } & Pick<NetCollectedBookingFields, "creditsApplied" | "manualRefundTasks">;
 };
 
 type EnrichedPaymentCandidate = PaymentCandidate & {
@@ -305,8 +317,9 @@ function sortValue(payment: EnrichedPaymentCandidate, sortBy: z.infer<typeof sor
       // can see is wrong wherever a refund exists - the "Amount (net)" header and
       // this expression are one decision. The Amount FILTER stays gross: it is a
       // `where` on a database column, which a net expression cannot be, and the
-      // boxes say "Gross amount" for exactly that reason.
-      return payment.amountCents - payment.refundedAmountCents;
+      // boxes say "Gross amount" for exactly that reason. #3372: the column and
+      // this sort read the same per-payment helper, so they cannot drift apart.
+      return getPaymentNetOfRefundsCents(payment);
     case "status":
       return payment.status;
     case "stripe":
@@ -459,21 +472,27 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         xeroInvoiceId: true,
         xeroInvoiceNumber: true,
         refundedAmountCents: true,
+        // #3372: `summarizeAdditionalLedgerGap`'s inputs (Reports' check).
+        additionalAmountCents: true,
+        additionalPaymentStatus: true,
         updatedAt: true,
-        transactions: { select: { updatedAt: true } },
+        transactions: {
+          select: { updatedAt: true, kind: true, status: true, amountCents: true },
+        },
         refunds: { select: { updatedAt: true } },
         booking: {
           select: {
             id: true,
-            status: true,
             checkIn: true,
+            // #3372: the Net Collected booking fields shared by all four surfaces.
+            ...netCollectedBookingSelect,
             // Credit ISSUED from the booking only (#3791): a review's give-back
             // of applied credit names the booking as its source too, and is not
-            // a settlement of it.
+            // a settlement of it. Kept credit loses nothing (`cancelledBookingKeptCreditCents`).
             creditsFromCancellation: {
               where: { type: { in: [...BOOKING_ISSUED_CREDIT_TYPES] } },
               select: {
-                amountCents: true,
+                ...netCollectedBookingSelect.creditsFromCancellation.select,
                 description: true,
               },
             },
@@ -603,6 +622,9 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
                   select: {
                     amountCents: true,
                     description: true,
+                    // The restore test reads both (`isCancellationCreditRestoreRow`).
+                    type: true,
+                    restoredFromBookingId: true,
                   },
                 },
                 member: {
@@ -641,20 +663,23 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
           "none",
       }));
 
-    const summary = filteredCandidates.reduce(
-      (acc, payment) => {
-        // Total Revenue should reflect retained revenue only. A cancelled
-        // booking's payment must not count toward it (issue #773), even though
-        // the row still appears in the list and its refund is tracked below.
-        if (payment.booking.status !== "CANCELLED") {
-          acc.totalRevenueCents += payment.amountCents;
-        }
-        acc.refundedCents += payment.refundedAmountCents;
-        acc.count += 1;
-        return acc;
-      },
-      { totalRevenueCents: 0, refundedCents: 0, count: 0 }
-    );
+    // #3372: "Net Collected" is net of refunds and credits over captured
+    // payments, in the one Net Collected booking scope (owner decision A) -
+    // both applied by `summarizeCollectedCash`, as on the dashboard and
+    // Reports. It was "Total Revenue": gross, pending and failed included,
+    // cancelled bookings left out (#773). `refundedCents` is every matched
+    // row, as the "Refunded / Credited" hint says; the tiles are not a
+    // subtraction of one another. The ledger-gap check is Reports' (#2408),
+    // over exactly the payments the tile counts.
+    const { collected, ledgerGap } =
+      summarizeNetCollectedWithLedgerGap(filteredCandidates);
+    const summary = {
+      netCollectedCents: collected.netCollectedCents,
+      refundedCents: sumRefundedAndCreditedCents(filteredCandidates),
+      count: filteredCandidates.length,
+      additionalLedgerGapCents: ledgerGap.additionalLedgerGapCents,
+      additionalLedgerGapBookings: ledgerGap.additionalLedgerGapBookings,
+    };
 
     return jsonResult({
       data: orderedData,
