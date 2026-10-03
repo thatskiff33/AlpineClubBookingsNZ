@@ -463,14 +463,14 @@ Until §7's reads switch, `Payment.amountCents`, `creditAppliedCents`,
 `Booking.finalPriceCents` are **projections** of the ledger:
 
 ```
-finalPriceCents        == Σ GUEST_NIGHT + PROMOTION + GROUP_DISCOUNT + adjusted(b)   (not cancelled)
+finalPriceCents        == Σ GUEST_NIGHT + PROMOTION + GROUP_DISCOUNT + adjusted(b) − agreed give-backs   (not cancelled)
 owed(b)                == 0                                                          (cancelled, once its refunds have posted)
 amountCents            == Σ CARD_CAPTURE + BANK_RECEIPT + CASH_RECORDED     (gross of refunds — today's meaning)
 creditAppliedCents     == Σ CREDIT_APPLIED (a give-back is a negative line; a restore is CREDIT_ISSUED and leaves it alone) — EXCEPT where the Xero allocation repair capped the mirror at the payment amount; C4 classifies that, on evidence the money adds up
 refundedAmountCents    == -Σ CARD_REFUND
 changeFeeCents         == Σ CHANGE_FEE
 uncollected ask        == max(0, owed(b)) while the payment's latest, unwithdrawn ADDITIONAL row is not captured, else 0   (not cancelled)
-owed(b)                == INV-PAY-047's residual + the uncollected ask + issued credit the refunded column never counted   (not cancelled, confirmed)
+owed(b)                == INV-PAY-047's residual + the uncollected ask + issued credit the refunded column never counted − the agreed give-backs the credit rows evidence   (not cancelled, confirmed)
 ```
 
 **The six leave a gap, which the seventh closes** (#3583's review). A
@@ -491,6 +491,24 @@ change fees and `finalPriceCents` never does (`INV-PAY-047`'s change-fee term).
 The price is the night, promotion and group-discount lines plus the agreed
 adjustments — the form §5.3's closure rule already uses. The ask's column side
 is `outstandingAdditionalAskCents`, the money half of `INV-PAY-047`'s own term.
+
+**A review line is judged by what its closure credited** (#3583 against
+#3791, `booking-ledger-projection-census-review-adjustments.ts`). An agreed
+give-back (§5.3) is a price below the strands', and `finalPriceCents` is
+re-based from the strands, so the price identity leaves it out; the residual
+counts the give-back as still owed, so `owed(b)`'s column side takes it off.
+Neither figure is stored per task, so each is read from the money it is made
+of, each row used once: a give-back line plus its closure's re-price (the
+`PRICE_REBASE` row's `newData`) must equal one review give-back row
+(`BOOKING_APPLIED` naming the booking as source and target), and a stand-in
+posted after a cancellation for less than the share must be one give-back row,
+one share credit, or both. Any other stand-in is the share as typed. On a live
+booking, a give-back row no line records and no re-price of a task without
+one could absorb is counted on `owed(b)`'s column side, so a missing give-back
+line is a disagreement. What the rows cannot say is which sibling a row
+belongs to; equal amounts are interchangeable, so that loses nothing a sum
+would catch, and a cancelled booking's `owed(b) == 0` still checks the total
+exactly.
 
 `pnpm run booking-ledger:census` (#3583, `INV-MONEY-037`; read-only, one
 `RepeatableRead`, `READ ONLY` snapshot — the `censusBookingMoneyReconciliation`

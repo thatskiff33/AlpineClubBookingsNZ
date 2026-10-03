@@ -561,14 +561,15 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   `booking-ledger.md` §6, §7). `pnpm run booking-ledger:census` reads one
   `RepeatableRead`, `READ ONLY` snapshot, writes nothing, and checks seven
   identities per booking: `finalPriceCents` is Σ `GUEST_NIGHT`, `PROMOTION`
-  and `GROUP_DISCOUNT` plus `adjusted(b)`, or, once cancelled, `owed(b)` is
-  zero; `amountCents` is Σ captures; `creditAppliedCents` is
+  and `GROUP_DISCOUNT` plus `adjusted(b)` less agreed give-backs, or, once
+  cancelled, `owed(b)` is zero; `amountCents` is Σ captures; `creditAppliedCents` is
   Σ `CREDIT_APPLIED`; `refundedAmountCents` is −Σ `CARD_REFUND`;
   `changeFeeCents` is Σ `CHANGE_FEE`; the uncollected ask is `max(0, owed(b))`
   while an ask is live; and a live booking's `owed(b)` is what its columns say
-  is owed (`INV-PAY-047`'s residual plus the ask), so no line can be wrong
-  while every column agrees. A disagreement names the booking, both figures
-  and the delta.
+  is owed (`INV-PAY-047`'s residual plus the ask, less evidenced give-backs),
+  so no line can be wrong while every column agrees. A review line must match
+  what its closure credited, read from credit rows (§6). A disagreement names
+  the booking, both figures and the delta.
 
   **A class explains an exact amount, from evidence the delta does not
   hold.** It is classified only where components computed from the booking's
