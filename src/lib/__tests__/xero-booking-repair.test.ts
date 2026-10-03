@@ -8,6 +8,7 @@ import { withTimeZoneAsync } from "@/lib/__tests__/helpers/timezone";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND } from "@/lib/manual-settlement-reversal-event";
 import { unsettledRefundNoteRows } from "@/lib/xero-refund-note-unsettled";
+import { modificationNoteWording, readModificationNoteWording } from "@/lib/xero-refund-method";
 
 function makeBooking(overrides: Record<string, unknown> = {}) {
   return {
@@ -2266,6 +2267,65 @@ describe("runBookingXeroRepair", () => {
       },
     });
   });
+
+  // #3536: the repair re-queues the note the original attempt queued, so it
+  // must say what that attempt said - the officer's "Refunded in cash", or an
+  // unpaid invoice's "Invoice correction" - not fall back to the card default.
+  it.each(["cash", "invoice-correction"] as const)(
+    "re-queues a missing modification credit note with the wording the original attempt recorded (%s, #3536)",
+    async (noteWording) => {
+      const booking = makeBooking({
+        modifications: [
+          {
+            id: "mod_worded",
+            bookingId: "booking_1",
+            modificationType: "GUEST_REMOVE",
+            priceDiffCents: -7300,
+            changeFeeCents: 0,
+            createdAt: new Date("2026-05-02T00:00:00Z"),
+          },
+        ],
+      });
+      const original = {
+        queueType: "MODIFICATION_CREDIT_NOTE",
+        bookingId: "booking_1",
+        bookingModificationId: "mod_worded",
+        refundAmountCents: 7300,
+        ...(noteWording === "cash" ? { refundMethod: "internet-banking" } : {}),
+        noteWording,
+      };
+      const deps = createDependencies({
+        bookings: [booking],
+        operations: [
+          makeOperation({
+            id: "operation_cancelled_worded_note",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            localId: "mod_worded",
+            status: "CANCELLED",
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: null,
+            requestPayload: original,
+          }),
+        ],
+      });
+
+      await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        apply: true,
+        dependencies: deps,
+        scope: { all: true },
+      });
+
+      const [params] = (deps.enqueueXeroModificationCreditNoteOperation as ReturnType<typeof vi.fn>)
+        .mock.calls[0]!;
+      expect(params).toMatchObject({ bookingModificationId: "mod_worded", refundAmountCents: 7300 });
+      // The same reading the note builder applies, on both records.
+      expect(modificationNoteWording(readModificationNoteWording(params))).toBe(noteWording);
+      expect(modificationNoteWording(readModificationNoteWording(params))).toBe(
+        modificationNoteWording(readModificationNoteWording(original)),
+      );
+    },
+  );
 
   // #1427: an ACCOUNT-credit-note op shares entityType/operationType with
   // the invoice-applied note op on the same modification — its amount must

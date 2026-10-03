@@ -531,6 +531,13 @@ the member, the amount, the day the money went back, the stay dates, the booking
 identifier as plain text, and both the reason the payment was queued and the note
 saying it is already settled.
 
+**Settling a review the club pays back by hand asks how (#3536).** On a
+**Record the adjustment** dialog where the officer has chosen "The club owes the
+member" and the booking's money did not come in by card, a **How did the club
+pay the member back?** choice appears: **By bank transfer** or **In cash**,
+neither pre-selected. It sets only the wording on the Xero credit note; leaving
+it blank keeps the bank-transfer wording (`INV-PAY-113`).
+
 **A third kind of row, and it has no settle box at all (#3213, registered in this
 release and written in the next).** A booking change settled as money the member
 owes, whose Xero invoice was already being sent and could not be raised to carry

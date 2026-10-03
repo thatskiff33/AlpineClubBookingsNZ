@@ -10,7 +10,7 @@ import {
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { recordBookingEvent } from "@/lib/booking-events";
-import { editReviewSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
+import { editReviewRefundGoesBackOnCard, editReviewRefundSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
 import {
   chooseEditReviewChargeRoute,
   executeEditReviewCharge,
@@ -174,6 +174,15 @@ export type EditReviewSettlementRoute =
        * behind them and no invoice line to correct.
        */
       bookingModificationId: string | null;
+      /**
+       * #3536 (`INV-PAY-113`): the officer resolving the review said the club
+       * handed this money back in cash. Present only when they said so - the app
+       * never infers cash from "marked paid by hand", which covers bank transfers
+       * recorded outside Xero too. It changes the words on the Xero note and
+       * nothing else: the ledger line and the settlement still treat the
+       * hand-back as internet banking.
+       */
+      handedBackInCash?: true;
     }
   | {
       kind: "account-credit";
@@ -281,6 +290,7 @@ export async function chooseEditReviewSettlementRoute({
   amountCents,
   hasIssuedXeroInvoice,
   direction,
+  handedBackInCash = false,
   store,
 }: {
   task: EditReviewSettlementTask;
@@ -312,6 +322,12 @@ export async function chooseEditReviewSettlementRoute({
    * the member's card.
    */
   direction: ManualRefundTaskDirection;
+  /**
+   * #3536 (`INV-PAY-113`): the officer's answer that a hand-settled refund went
+   * back in cash. Read only where the review takes the `local-allocation` route;
+   * absent or false keeps the bank-transfer wording.
+   */
+  handedBackInCash?: boolean;
   store: Prisma.TransactionClient;
 }): Promise<EditReviewSettlementRoute | null> {
   if (task.kind !== ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
@@ -399,20 +415,14 @@ export async function chooseEditReviewSettlementRoute({
    * claim, and a capture or webhook replay cannot duplicate a backfill that does
    * not exist.
    */
-  const backfilledPayment =
-    task.paymentId === null
-      ? editReviewSettlementPayment(task.booking)
-      : null;
-  const settlementPaymentId = task.paymentId ?? backfilledPayment?.id ?? null;
-  const settlementPaymentSource =
-    task.paymentId !== null
-      ? (task.payment?.source ?? null)
-      : (backfilledPayment?.source ?? null);
+  // #3536: both the payment derivation (`editReviewRefundSettlementPayment`)
+  // and the card-or-by-hand test (`editReviewRefundGoesBackOnCard`) are shared
+  // with `editReviewRefundIsPaidBackByHand`, which the settle queue asks ahead
+  // of time to decide whether to offer the cash-or-bank question (`INV-SSOT`).
+  const settlementPayment = editReviewRefundSettlementPayment(task);
+  const settlementPaymentId = settlementPayment?.id ?? null;
 
-  if (
-    settlementPaymentId !== null &&
-    settlementPaymentSource === PaymentSource.STRIPE
-  ) {
+  if (settlementPayment !== null && editReviewRefundGoesBackOnCard(settlementPayment)) {
     if (!bookingModificationId) {
       throw new ManualBookingPaymentError(
         REVIEW_SETTLEMENT_ANCHOR_MISSING_MESSAGE,
@@ -424,7 +434,7 @@ export async function chooseEditReviewSettlementRoute({
     // cannot be short of `amountCents`, because the planner allocates
     // newest-first across exactly the transactions the cap totalled.
     const { slices, totalRefundableCents } = await planStripeRefundAllocation({
-      paymentId: settlementPaymentId,
+      paymentId: settlementPayment.id,
       amountCents,
       store,
     });
@@ -436,7 +446,7 @@ export async function chooseEditReviewSettlementRoute({
     }
     return {
       kind: "stripe-refund",
-      paymentId: settlementPaymentId,
+      paymentId: settlementPayment.id,
       bookingModificationId,
       allocation: slices,
     };
@@ -453,6 +463,8 @@ export async function chooseEditReviewSettlementRoute({
       kind: "local-allocation",
       paymentId: settlementPaymentId,
       bookingModificationId,
+      // #3536: words only, and the officer's answer, never inferred.
+      ...(handedBackInCash ? { handedBackInCash: true as const } : {}),
     };
   }
 

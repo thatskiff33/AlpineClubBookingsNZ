@@ -282,6 +282,9 @@ export async function dispatchEditReviewXeroSettlement({
     // ...and this is the claim about the instrument, for the note's wording
     // (`INV-PAY-101`): the hand-settled route reads as a bank transfer.
     refundMethod: refundMethodForEditReviewRoute(route),
+    // #3536: words only. The settlement above still reads the hand-back as the
+    // internet-banking method; the note says it was handed back in cash.
+    handedBackInCash: route?.kind === "local-allocation" && route.handedBackInCash === true,
     // Read only on the reduction branch (`settlementAmountCents ?? Math.abs`),
     // so a charge passes null and lets the positive delta speak for itself
     // rather than handing the credit-note arm an amount it must not use.

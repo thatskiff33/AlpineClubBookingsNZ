@@ -1378,10 +1378,124 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         priceDiffCents: -7300,
         settlementMethod: "card",
         refundMethod: "internet-banking",
+        // #3536: no answer from the officer keeps the bank-transfer wording.
+        handedBackInCash: false,
       })
     );
     // The hand-back note is the cancellation kind's leg, not a review's.
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  it("words a review refund as cash only when the officer says so, and settles it exactly as before (#3536)", async () => {
+    // A payment marked paid by hand is NOT evidence of cash (owner decision,
+    // 3 Oct 2026): the officer's answer is the only source of the wording.
+    const handMarked = editReviewTask({
+      booking: {
+        memberId: "member-1",
+        status: "PAID",
+        payment: {
+          id: "payment-1",
+          status: "SUCCEEDED",
+          xeroInvoiceId: "inv-1",
+          manuallyMarkedPaidAt: new Date("2026-06-01T00:00:00Z"),
+        },
+      },
+    });
+    const complete = (handedBackInCash?: boolean | null) =>
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "Handed back at the lodge.",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 7300,
+        direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: null,
+        ...(handedBackInCash === undefined ? {} : { handedBackInCash }),
+      }, CLUB_FORMAT_TEST);
+
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(handMarked);
+    await complete();
+    expect(mocks.queueXeroBookingEditSettlement).toHaveBeenLastCalledWith(
+      expect.objectContaining({ refundMethod: "internet-banking", handedBackInCash: false })
+    );
+
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(handMarked);
+    await complete(true);
+    // Words only: the same ledger mirror, the same ordinary credit note, and
+    // the method stays the internet-banking one the settlement reads.
+    expect(mocks.applyLocalRefundAllocation).toHaveBeenCalled();
+    expect(mocks.queueXeroBookingEditSettlement).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        priceDiffCents: -7300,
+        settlementMethod: "card",
+        refundMethod: "internet-banking",
+        handedBackInCash: true,
+      })
+    );
+
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(handMarked);
+    await complete(false);
+    expect(mocks.queueXeroBookingEditSettlement).toHaveBeenLastCalledWith(
+      expect.objectContaining({ refundMethod: "internet-banking", handedBackInCash: false })
+    );
+  });
+
+  it("MUTATION: never words a card refund or an account credit as cash, whatever the request sends (#3536)", async () => {
+    // The cash answer belongs to the hand-settled route alone. A stale form, or
+    // a crafted request, that sends it on a card refund or an account credit must
+    // not put "Refunded in cash" on a note for money that never left in cash.
+    // Pinned at BOTH gates: the chooser attaches the answer only to the
+    // `local-allocation` route, and the Xero leg reads it only from that route.
+    const complete = () =>
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "Settled.",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 4500,
+        direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: null,
+        handedBackInCash: true,
+      }, CLUB_FORMAT_TEST);
+
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({
+        payment: { source: PaymentSource.STRIPE },
+        booking: {
+          memberId: "member-1",
+          status: "PAID",
+          payment: { id: "payment-1", status: "SUCCEEDED", xeroInvoiceId: "inv-1" },
+        },
+      })
+    );
+    await complete();
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    expect(mocks.queueXeroBookingEditSettlement).toHaveBeenLastCalledWith(
+      expect.objectContaining({ refundMethod: "card", handedBackInCash: false })
+    );
+
+    mocks.queueXeroBookingEditSettlement.mockClear();
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({
+        paymentId: null,
+        booking: {
+          memberId: "member-1",
+          status: "CANCELLED",
+          payment: {
+            id: "payment-9",
+            status: "SUCCEEDED",
+            amountCents: 20000,
+            refundedAmountCents: 0,
+            xeroInvoiceId: "inv-1",
+          },
+        },
+      })
+    );
+    await complete();
+    expect(mocks.createBookingModificationCredit).toHaveBeenCalled();
+    expect(mocks.queueXeroBookingEditSettlement).toHaveBeenLastCalledWith(
+      expect.objectContaining({ settlementMethod: "credit", handedBackInCash: false })
+    );
   });
 
   it("MUTATION: queues NO Xero credit note when the booking has no issued invoice", async () => {

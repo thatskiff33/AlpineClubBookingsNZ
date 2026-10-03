@@ -4,6 +4,7 @@ import {
   type EditFinancialReviewEvidence,
 } from "@/lib/edit-financial-review-context";
 import { bookingOwner } from "@/lib/booking-owner";
+import { editReviewRefundIsPaidBackByHand } from "@/lib/booking-payment-state";
 import { isPartPaymentReviewTask } from "@/lib/manual-refund-task-settlement-rules";
 import type { QueueRepairableStrand } from "@/lib/stored-night-price-repair-queue";
 
@@ -32,6 +33,23 @@ type QueueBookingSummary = {
   organisation: { name: string; email: string | null } | null;
 };
 
+/**
+ * #3536: what `editReviewRefundIsPaidBackByHand` reads of an OPEN row - the
+ * task's own payment, and the booking's as it stands now - selected by the
+ * route so the settle screen can ask the cash-or-bank question only where a
+ * refund would be paid back by hand.
+ */
+export const OPEN_TASK_REFUND_PAYMENT_SELECT = {
+  paymentId: true,
+  payment: { select: { source: true } },
+} as const;
+export const OPEN_TASK_BOOKING_PAYMENT_SELECT = {
+  status: true,
+  payment: {
+    select: { id: true, status: true, amountCents: true, refundedAmountCents: true, source: true },
+  },
+} as const;
+
 /** An OPEN row the operator has to settle by hand. */
 export type OpenManualRefundTaskRow = {
   id: string;
@@ -55,7 +73,19 @@ export type OpenManualRefundTaskRow = {
   reviewContext: unknown;
   reason: string;
   createdAt: Date;
+  /** #3536: `OPEN_TASK_REFUND_PAYMENT_SELECT`. */
+  paymentId: string | null;
+  payment: { source: string } | null;
   booking: QueueBookingSummary & {
+    /** #3536: `OPEN_TASK_BOOKING_PAYMENT_SELECT`. */
+    status: string;
+    payment: {
+      id: string;
+      status: string;
+      amountCents: number | null;
+      refundedAmountCents: number | null;
+      source: string;
+    } | null;
     /**
      * #3033: who owns the booking, for the ownership half of the link grant.
      * Null since #3369 when the owner is an `Organisation`, which never signs
@@ -123,6 +153,13 @@ export type OpenManualRefundTaskPayload = {
    * card prints it, because this - not the best-effort email - is the record.
    */
   partPaymentReviewXeroPaid: { reportedAt: string; cashCents: number } | null;
+  /**
+   * #3536 (`INV-PAY-113`): a financial review whose refund the club would pay
+   * back by hand, so the settle screen asks the officer whether it went back in
+   * cash or by bank transfer. A preview only: the completion re-chooses the
+   * route under its lock, and the answer counts only on that route.
+   */
+  paidBackByHand: boolean;
   reason: string;
   createdAt: string;
   memberName: string;
@@ -200,6 +237,8 @@ export function toOpenManualRefundTaskPayload(
             cashCents: task.partPaymentReviewXeroPaidCents,
           }
         : null,
+    paidBackByHand:
+      task.kind === "EDIT_FINANCIAL_REVIEW" && editReviewRefundIsPaidBackByHand(task),
     reason: task.reason,
     createdAt: task.createdAt.toISOString(),
     memberName: memberName(task.booking),

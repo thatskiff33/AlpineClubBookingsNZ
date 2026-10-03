@@ -19,6 +19,7 @@ import {
 } from "@/lib/xero-operation-outbox";
 import {
   refundMethodForSettlementMethod,
+  type ModificationNoteSpecialWording,
   type RefundMethod,
 } from "@/lib/xero-refund-method";
 
@@ -39,8 +40,13 @@ type XeroBookingEditFinancialAction =
   | {
       type: "modification-credit-note";
       refundAmountCents: number;
-      /** `INV-PAY-101`: how the reduction went back, as the note will say. */
-      refundMethod: RefundMethod;
+      /**
+       * `INV-PAY-101`: how the reduction went back, as the note will say. Absent
+       * on an invoice correction, which refunds nothing (#3536).
+       */
+      refundMethod?: RefundMethod;
+      /** #3536: the owner-added wording that replaces the method's on the note. */
+      noteWording?: ModificationNoteSpecialWording;
       reason: string;
     }
   | {
@@ -107,6 +113,12 @@ export interface ClassifyXeroBookingEditSettlementInput {
    * when `refundMethod` is omitted.
    */
   refundedThroughStripe?: boolean | null;
+  /**
+   * #3536 (`INV-PAY-113`): the club handed this reduction back in cash. Words
+   * only: the note keeps its bank-transfer `refundMethod` (a modification note
+   * is allocated, never settled by a payment), and carries the cash wording.
+   */
+  handedBackInCash?: boolean;
 }
 
 export interface QueueXeroBookingEditSettlementInput
@@ -172,12 +184,29 @@ export function classifyXeroBookingEditSettlement(
         reason: "Negative booking-edit delta held as account credit needs an unapplied modification credit note.",
       };
     } else {
+      // #3536: an UNPAID pay-on-account invoice lowered by the edit. Nothing was
+      // paid, so the note corrects the invoice and refunds nothing; it is worded
+      // so, not as the bank transfer it used to read as. Read only when the
+      // caller named no method of its own and said the money is not a Stripe
+      // refund; a missing payment status is "unknown", which keeps the old words.
+      const correctsUnpaidInvoice =
+        input.refundMethod == null &&
+        input.refundedThroughStripe === false &&
+        input.originalPaymentStatus != null &&
+        !originalInvoiceUnsafe;
+      const refundMethod = correctsUnpaidInvoice
+        ? undefined
+        : (input.refundMethod ??
+          refundMethodForSettlementMethod(input.settlementMethod, input.refundedThroughStripe));
       financialAction = {
         type: "modification-credit-note",
         refundAmountCents,
-        refundMethod:
-          input.refundMethod ??
-          refundMethodForSettlementMethod(input.settlementMethod, input.refundedThroughStripe),
+        ...(refundMethod ? { refundMethod } : {}),
+        ...(input.handedBackInCash
+          ? { noteWording: "cash" as const }
+          : correctsUnpaidInvoice
+            ? { noteWording: "invoice-correction" as const }
+            : {}),
         reason: "Negative booking-edit delta needs a modification credit note instead of mutating the original invoice.",
       };
     }
@@ -278,7 +307,12 @@ export async function queueXeroBookingEditSettlement(
         bookingId: input.bookingId,
         refundAmountCents: decision.financialAction.refundAmountCents,
         bookingModificationId: input.bookingModificationId,
-        refundMethod: decision.financialAction.refundMethod,
+        ...(decision.financialAction.refundMethod
+          ? { refundMethod: decision.financialAction.refundMethod }
+          : {}),
+        ...(decision.financialAction.noteWording
+          ? { noteWording: decision.financialAction.noteWording }
+          : {}),
       },
       {
         createdByMemberId: input.createdByMemberId,
