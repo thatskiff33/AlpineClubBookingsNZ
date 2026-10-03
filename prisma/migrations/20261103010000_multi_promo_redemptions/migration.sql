@@ -13,24 +13,20 @@ BEGIN;
 -- single unique, which holds for exactly as long as the switch has never been on.
 --
 -- LOCK IMPACT: every statement is DDL on small, cold promo tables and the
--- module-settings singleton; none touches a hot table. CREATE UNIQUE INDEX
--- takes SHARE on its table for the build (blocking writes to it, not reads),
--- ADD COLUMN with a constant default is catalog-only under ACCESS EXCLUSIVE for
--- the instant of the catalog change, and DROP INDEX takes ACCESS EXCLUSIVE on
--- PromoRedemption for the instant of the drop. The migrate service's
--- lock_timeout bounds every wait.
+-- module-settings singleton; none touches a hot table. Inside this one
+-- transaction every lock taken is HELD UNTIL COMMIT, not released when its
+-- statement finishes: CREATE UNIQUE INDEX takes SHARE on its table (writes
+-- wait, reads continue), and ADD COLUMN with a constant default and DROP INDEX
+-- each take ACCESS EXCLUSIVE (reads wait too) — catalog-only work, but the lock
+-- lasts to the end of the transaction. The statements are therefore ORDERED so
+-- the strongest locks are taken last and held for the least time:
+-- BookingGuestNightAdjustment (read-only precheck, then a SHARE index build)
+-- first, the ClubModuleSettings column next, and PromoRedemption — whose DROP
+-- INDEX is the ACCESS EXCLUSIVE a booking's redemption read would queue behind
+-- — last, immediately before COMMIT. The migrate service's lock_timeout bounds
+-- every wait.
 
--- 1. The booker's order (D-3813-2). 0 for every existing, single-code booking.
-ALTER TABLE "PromoRedemption" ADD COLUMN "applicationOrder" INTEGER NOT NULL DEFAULT 0;
-
--- 2. One redemption per CODE per booking. Built before the old unique is dropped
---    so the table is never without an index leading on "bookingId". It cannot
---    fail on existing data: the dropped index is stricter.
-CREATE UNIQUE INDEX "PromoRedemption_bookingId_promoCodeId_key" ON "PromoRedemption"("bookingId", "promoCodeId");
-
-DROP INDEX "PromoRedemption_bookingId_key";
-
--- 3. "A night is never discounted twice" (#3492), held by the database: one
+-- 1. "A night is never discounted twice" (#3492), held by the database: one
 --    adjustment of a kind per night, across ALL of a booking's redemptions.
 --    The existing BookingGuestNightAdjustment_night_kind_redemption_key is
 --    scoped per redemption, which said the same thing only while a booking
@@ -38,7 +34,7 @@ DROP INDEX "PromoRedemption_bookingId_key";
 --
 --    WHY IT ALREADY HOLDS: night-adjustment-write.ts is the only writer
 --    (INV-MONEY-029 census). Each write names one booking's sole redemption
---    (PromoRedemption_bookingId_key, dropped above in this same transaction)
+--    (PromoRedemption_bookingId_key, dropped below in this same transaction)
 --    and only that booking's own nights, and no path moves a guest or a night
 --    between bookings — so (night, kind) was already unique. The check below
 --    refuses with a count rather than letting the index build fail on an
@@ -68,7 +64,17 @@ CREATE UNIQUE INDEX "BookingGuestNightAdjustment_night_kind_unique"
     ON "BookingGuestNightAdjustment" ("bookingGuestNightId", "kind")
     WHERE "bookingGuestNightId" IS NOT NULL;
 
--- 4. The rollout switch. Default OFF; see the header.
+-- 2. The rollout switch. Default OFF; see the header.
 ALTER TABLE "ClubModuleSettings" ADD COLUMN "multiPromoCodes" BOOLEAN NOT NULL DEFAULT false;
+
+-- 3. The booker's order (D-3813-2). 0 for every existing, single-code booking.
+ALTER TABLE "PromoRedemption" ADD COLUMN "applicationOrder" INTEGER NOT NULL DEFAULT 0;
+
+-- 4. One redemption per CODE per booking. Built before the old unique is dropped
+--    so the table is never without an index leading on "bookingId". It cannot
+--    fail on existing data: the dropped index is stricter.
+CREATE UNIQUE INDEX "PromoRedemption_bookingId_promoCodeId_key" ON "PromoRedemption"("bookingId", "promoCodeId");
+
+DROP INDEX "PromoRedemption_bookingId_key";
 
 COMMIT;
