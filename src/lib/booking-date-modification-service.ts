@@ -522,8 +522,7 @@ export async function modifyBookingDates({
         newCheckIn,
         newCheckOut,
         booking.guests.map((guest) => ({
-          stayStart: newCheckIn,
-          stayEnd: newCheckOut,
+          stayStart: newCheckIn, stayEnd: newCheckOut,
           memberId: guest.memberId,
         })),
         bookingId,
@@ -546,12 +545,11 @@ export async function modifyBookingDates({
     } else {
       const capacity = await checkCapacity(
         bookingLodgeId,
-        newCheckIn,
-        newCheckOut,
+        newCheckIn, newCheckOut,
         booking.guests.length,
         bookingId,
         tx,
-        booking.guests.map((guest) => guest.memberId),
+        booking.guests.map((guest) => guest.memberId), // so a custodian is one space (#3817)
       );
 
       if (!capacity.available) {

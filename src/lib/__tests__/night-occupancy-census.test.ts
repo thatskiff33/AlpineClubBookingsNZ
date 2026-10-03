@@ -91,15 +91,14 @@ const OCCUPANCY_TERMS = [
 /**
  * The symbols that implement an occupancy term. A file naming one of these is
  * either the module that defines it, or `capacity.ts`, or a seventh copy.
- * Matched on word boundaries so `getOccupiedBedsForNightFromIndex` does not
- * count as a mention of `getOccupiedBedsForNight`.
+ * Matched on word boundaries so `getCountedGuestsForNightFromIndex` and
+ * `getOccupiedBedsForNight` are never read as mentions of one another.
  */
 const TERM_SYMBOLS = [
   "buildLodgeCustodianNightCounter",
   "buildLodgePolicyExceptionReservationCounter",
   "buildWholeLodgeHoldIndex",
   "isNightWholeLodgeHeld",
-  "getOccupiedBedsForNightFromIndex",
   "getCountedGuestsForNightFromIndex",
   "getOccupiedBedsForNight",
 ] as const;

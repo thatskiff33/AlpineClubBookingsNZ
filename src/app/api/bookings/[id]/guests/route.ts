@@ -579,8 +579,7 @@ export async function POST(
         [
           ...booking.guests,
           ...normalizedNewGuests.map((guest) => ({
-            stayStart: booking.checkIn,
-            stayEnd: booking.checkOut,
+            stayStart: booking.checkIn, stayEnd: booking.checkOut,
             memberId: guest.memberId ?? null,
           })),
         ],

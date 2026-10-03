@@ -1707,11 +1707,7 @@ export async function verifyAndCreateNonMemberJoin(
         throw new Error(JOIN_ALREADY_CLAIMED);
       }
 
-      const ranges = guests.map((guest) => ({
-        stayStart: checkIn,
-        stayEnd: checkOut,
-        memberId: guest.memberId ?? null,
-      }));
+      const ranges = guests.map((guest) => ({ stayStart: checkIn, stayEnd: checkOut, memberId: guest.memberId ?? null }));
       const capacity = await checkCapacityForGuestRanges(
         groupLodgeId,
         checkIn,

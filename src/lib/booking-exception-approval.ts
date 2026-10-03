@@ -4,10 +4,7 @@ import type { CalendarDate } from "@/lib/club-time";
 
 import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
-import {
-  checkCapacityForGuestRanges,
-  type CapacityProposedGuest,
-} from "@/lib/capacity";
+import { checkCapacityForGuestRanges, type CapacityProposedGuest } from "@/lib/capacity";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { resolveHostingCoverageIncidents } from "@/lib/adult-member-hosting-coverage-incidents";
@@ -190,10 +187,7 @@ const BOOKABLE_AGE_TIERS = new Set<string>(BOOKABLE_AGE_TIER_VALUES);
 
 /** The proposed party as capacity-engine guest ranges (explicit night sets). */
 function proposedGuestRanges(party: ProposalParty): CapacityProposedGuest[] {
-  return party.guests.map((guest) => ({
-    nights: [...guest.nights],
-    memberId: guest.memberId,
-  }));
+  return party.guests.map((guest) => ({ nights: [...guest.nights], memberId: guest.memberId }));
 }
 
 /**

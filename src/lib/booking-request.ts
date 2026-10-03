@@ -2440,8 +2440,7 @@ export async function approveBookingRequest(input: {
         member = { id: ownerId };
       } else {
         const capacityRanges = guests.map((_guest, index) => ({
-          stayStart: request.checkIn,
-          stayEnd: request.checkOut,
+          stayStart: request.checkIn, stayEnd: request.checkOut,
           memberId: linkedMembers.get(index) ?? null,
         }));
         const capacity = await checkCapacityForGuestRanges(

@@ -88,12 +88,7 @@ function getNextMonthStartDateOnly(year: number, month: number): Date {
   return getMonthStartDateOnly(nextMonthYear, nextMonth);
 }
 
-/**
- * A guest the capacity engines are asked to admit. `memberId` is required —
- * null for a non-member — so no admission path can forget to say who the
- * party is: a party member who is a ticked custodian at the lodge takes one
- * space, not two (#3817, owner decision on #3820, 3 Oct 2026).
- */
+/** A guest to admit. `memberId` is required (null: non-member) so a custodian is one space (#3817). */
 export type CapacityProposedGuest = GuestStayRange & { memberId: string | null };
 
 type OccupancyGuest = GuestStayRange & { memberId?: string | null };
@@ -139,10 +134,7 @@ function buildOccupancyIndex(bookings: OccupancyBooking[]): OccupancyIndexEntry[
   return index;
 }
 
-/**
- * The guest rows term 1 counts on a night. One list for the count and for who
- * is in it, so the custodian rule (#3817) reads exactly the guests counted.
- */
+/** Term 1's guest rows on a night: one list for the count and for who is in it (#3817). */
 function getCountedGuestsForNightFromIndex(
   night: Date,
   index: OccupancyIndexEntry[]
@@ -152,36 +144,19 @@ function getCountedGuestsForNightFromIndex(
 
   for (const entry of index) {
     if (nightKey >= entry.checkInKey && nightKey < entry.checkOutKey) {
-      counted.push(
-        ...getActiveGuestsForNight(entry.booking.guests, night, {
-          checkIn: entry.checkIn,
-          checkOut: entry.checkOut,
-        })
-      );
+      const envelope = { checkIn: entry.checkIn, checkOut: entry.checkOut };
+      counted.push(...getActiveGuestsForNight(entry.booking.guests, night, envelope));
     }
   }
 
   return counted;
 }
 
-function getOccupiedBedsForNightFromIndex(
-  night: Date,
-  index: OccupancyIndexEntry[]
-): number {
-  return getCountedGuestsForNightFromIndex(night, index).length;
-}
-
-function countedGuestMemberIds(guests: readonly OccupancyGuest[]): Set<string> {
-  const ids = new Set<string>();
-  for (const guest of guests) if (guest.memberId) ids.add(guest.memberId);
-  return ids;
-}
-
 export function getOccupiedBedsForNight(
   night: Date,
   bookings: OccupancyBooking[]
 ): number {
-  return getOccupiedBedsForNightFromIndex(night, buildOccupancyIndex(bookings));
+  return getCountedGuestsForNightFromIndex(night, buildOccupancyIndex(bookings)).length;
 }
 
 type WholeLodgeHoldBooking = {
@@ -526,22 +501,11 @@ export interface NightOccupancy {
    * take the partition on trust.
    */
   custodianBeds: number;
-  /**
-   * Members term 1 counts as guests this night, plus the party passed in —
-   * the population a bedless custodian tick is de-duplicated against (#3817,
-   * `custodianOccupancyTakesSpace`). The custodian writer reads it to add its
-   * own assignment exactly as the counter would.
-   */
+  /** Term 1's guest members plus the party: what a bedless tick is de-duplicated against (#3817). */
   guestMemberIds: ReadonlySet<string>;
 }
 
-/**
- * One night's occupancy. `partyMemberIds` are the members of the party being
- * admitted who are present that night: a party member who is a ticked
- * custodian with no bed at this lodge is then not counted a second time by
- * their tick (#3817, owner decision on #3820, 3 Oct 2026, "one person is one
- * space"). Omit it only when no party is being admitted.
- */
+/** One night; `partyMemberIds` (the party being admitted) keeps a custodian one space (#3817). */
 export type NightOccupancyReader = (
   night: Date,
   partyMemberIds?: Iterable<string | null | undefined>
@@ -670,8 +634,10 @@ export async function computeNightOccupancy(input: {
   return (night, partyMemberIds) => {
     // Term 1.
     const guests = getCountedGuestsForNightFromIndex(night, occupancyIndex);
-    const guestMemberIds = countedGuestMemberIds(guests);
-    for (const id of partyMemberIds ?? []) if (id) guestMemberIds.add(id);
+    const guestMemberIds = new Set<string>();
+    for (const id of [...guests.map((g) => g.memberId), ...(partyMemberIds ?? [])]) {
+      if (id) guestMemberIds.add(id);
+    }
     // Term 2, after the one-person-one-space rule (#3817).
     const custodianBeds = custodianCount(night, guestMemberIds);
     return {
@@ -695,10 +661,7 @@ export async function checkCapacity(
   guestCount: number,
   excludeBookingId?: string,
   tx?: TransactionClient,
-  /**
-   * Who the `guestCount` guests are, every night (null for a non-member), when
-   * admitting a party: a ticked custodian among them is one space (#3817).
-   */
+  /** The `guestCount` guests' members when admitting a party (#3817). */
   partyMemberIds?: readonly (string | null)[]
 ): Promise<{ available: boolean; minAvailable: number; nightDetails: NightAvailability[] }> {
   const db = tx ?? prisma;
@@ -717,10 +680,7 @@ export async function checkCapacity(
   });
 
   const nightDetails: NightAvailability[] = nights.map((night) => {
-    const { occupiedBeds, wholeLodgeHeld, custodianBeds } = occupancy(
-      night,
-      partyMemberIds
-    );
+    const { occupiedBeds, wholeLodgeHeld, custodianBeds } = occupancy(night, partyMemberIds);
 
     return {
       date: night,
@@ -812,15 +772,9 @@ export async function checkCapacityForGuestRanges(
   });
 
   const nightDetails: NightAvailability[] = nights.map((night) => {
-    const proposed = getActiveGuestsForNight(guests, night, {
-      checkIn: start,
-      checkOut: exclusiveEnd,
-    });
+    const proposed = getActiveGuestsForNight(guests, night, { checkIn: start, checkOut: exclusiveEnd });
     const proposedBeds = proposed.length;
-    const { occupiedBeds, wholeLodgeHeld } = occupancy(
-      night,
-      proposed.map((guest) => guest.memberId)
-    );
+    const { occupiedBeds, wholeLodgeHeld } = occupancy(night, proposed.map((g) => g.memberId));
 
     return {
       date: night,

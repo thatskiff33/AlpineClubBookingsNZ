@@ -19,11 +19,7 @@ import type { AgeTierSettingsReader } from "@/lib/subscription-lockout-facts";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import { computeMemberGuestBoundary } from "@/lib/booking-guests";
 import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
-import {
-  acquireLodgeCapacityLock,
-  checkCapacityForGuestRanges,
-  type CapacityProposedGuest,
-} from "@/lib/capacity";
+import { acquireLodgeCapacityLock, checkCapacityForGuestRanges, type CapacityProposedGuest } from "@/lib/capacity";
 import {
   ACTIVE_BOOKING_STATUSES,
   bookingHoldsCapacity,
