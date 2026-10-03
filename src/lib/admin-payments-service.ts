@@ -624,6 +624,9 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
                   select: {
                     amountCents: true,
                     description: true,
+                    // The restore test reads both (`isCancellationCreditRestoreRow`).
+                    type: true,
+                    restoredFromBookingId: true,
                   },
                 },
                 member: {
@@ -662,7 +665,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
           "none",
       }));
 
-    // #3372: "Net Collected Cash" is net of refunds and credits over captured
+    // #3372: "Net Collected" is net of refunds and credits over captured
     // payments, in the one Net Collected booking scope (owner decision A) -
     // both applied by `summarizeCollectedCash`, as on the dashboard and
     // Reports. It was "Total Revenue": gross, pending and failed included,

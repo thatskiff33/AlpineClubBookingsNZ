@@ -44,6 +44,9 @@ export async function GET(req: NextRequest) {
               select: {
                 amountCents: true,
                 description: true,
+                // The restore test reads both (`isCancellationCreditRestoreRow`).
+                type: true,
+                restoredFromBookingId: true,
               },
             },
             payment: {

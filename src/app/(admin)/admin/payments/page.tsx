@@ -66,6 +66,7 @@ import {
 import {
   getCancellationSettlementBreakdown,
   getPaymentDisplayStatus,
+  type CancellationCreditEntry,
 } from "@/lib/payment-status-display";
 import Link from "next/link";
 import { cn, formatCents } from "@/lib/utils";
@@ -230,10 +231,7 @@ interface PaymentRow {
     status: string;
     checkIn: string;
     checkOut: string;
-    creditsFromCancellation: Array<{
-      amountCents: number;
-      description: string | null;
-    }>;
+    creditsFromCancellation: CancellationCreditEntry[];
     member: { id: string; firstName: string; lastName: string; email: string };
   };
 }
@@ -318,7 +316,7 @@ function settlementKindLabel(kind: string) {
 
 /**
  * The summary figures `/api/admin/payments` returns beside the list, with the
- * Net Collected Cash ledger-gap check Reports also runs.
+ * Net Collected ledger-gap check Reports also runs.
  */
 type PaymentsSummary = {
   netCollectedCents: number;
@@ -1089,7 +1087,7 @@ export default function PaymentsPage() {
             and kept, kept credit included (nil if never paid), deleted: none.
             The hints state the asymmetry: the refund tile counts every match. */}
         <SummaryCard
-          title="Net Collected Cash"
+          title="Net Collected"
           icon={DollarSign}
           hint="Payments received, less refunds and credits. Cancelled bookings count only what was kept of what was paid; deleted bookings are left out."
         >

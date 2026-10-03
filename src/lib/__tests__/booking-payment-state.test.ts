@@ -245,6 +245,34 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
       ).toBe(2_000);
     });
 
+    it("adds nil for a booking cancelled before 8 Jul whose restore row carries no marker", () => {
+      // #1636 added `restoredFromBookingId` on 8 Jul 2026 with no backfill, so
+      // an older restore is told apart by its type and its writer's text
+      // (`isCancellationCreditRestoreRow`), not read as credit the club kept.
+      const preMarkerRestore = {
+        type: "CANCELLATION_REFUND",
+        amountCents: 8_000,
+        description: "Credit restored from cancelled booking b-cancel",
+        restoredFromBookingId: null,
+      };
+      expect(
+        netWith(creditPaid, { creditsApplied: [applied(8_000)], creditsFromCancellation: [preMarkerRestore] }),
+      ).toEqual({
+        capturedGrossCents: 10_000,
+        refundedCents: 0,
+        handBackOwedCents: 0,
+        keptCreditCents: 0,
+        netCollectedCents: 10_000,
+      });
+      // The cancellation's own credit text is not a restore, marker or not.
+      expect(
+        netWith(creditPaid, {
+          creditsApplied: [applied(8_000)],
+          creditsFromCancellation: [{ ...preMarkerRestore, description: "Cancellation refund for booking b-cancel" }],
+        }).keptCreditCents,
+      ).toBe(8_000);
+    });
+
     it("never counts a LIVE booking's applied credit", () => {
       expect(
         summarizeCollectedCash([
@@ -302,6 +330,30 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
         netWith({ status: "SUCCEEDED", amountCents: 20_000, refundedAmountCents: 0 }, { manualRefundTasks: [handBack("OPEN", 25_000)] })
           .netCollectedCents,
       ).toBe(10_000);
+    });
+
+    it("reads an open task raised before task kinds existed (null kind, 19 Aug 2026) as a hand-back", () => {
+      // The kind column has no backfill, and on a cancelled booking the only
+      // task raised before it was the cancellation's hand-back.
+      expect(
+        netWith(
+          { status: "SUCCEEDED", amountCents: 20_000, refundedAmountCents: 0 },
+          { manualRefundTasks: [{ ...handBack("OPEN", 10_000), kind: null }] },
+        ),
+      ).toEqual({
+        capturedGrossCents: 30_000,
+        refundedCents: 0,
+        handBackOwedCents: 10_000,
+        keptCreditCents: 0,
+        netCollectedCents: 20_000,
+      });
+      // Still OPEN tasks only.
+      expect(
+        netWith(
+          { status: "SUCCEEDED", amountCents: 20_000, refundedAmountCents: 0 },
+          { manualRefundTasks: [{ ...handBack("DISMISSED", 10_000), kind: null }] },
+        ).netCollectedCents,
+      ).toBe(30_000);
     });
 
     it("never takes a hand-back off a LIVE booking", () => {

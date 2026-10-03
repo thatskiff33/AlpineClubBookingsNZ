@@ -108,7 +108,9 @@ export const netCollectedBookingSelect = Prisma.validator<Prisma.BookingSelect>(
   status: true,
   creditsApplied: { select: { type: true, amountCents: true } },
   creditsFromCancellation: {
-    select: { type: true, amountCents: true, restoredFromBookingId: true },
+    // `description` for a restore written before the marker existed
+    // (`isCancellationCreditRestoreRow`).
+    select: { type: true, amountCents: true, description: true, restoredFromBookingId: true },
   },
   manualRefundTasks: {
     select: {
@@ -135,7 +137,7 @@ export const netCollectedPaymentSelect = Prisma.validator<Prisma.PaymentSelect>(
 });
 
 /**
- * #3372 / #3637: a Net Collected Cash figure and its "may understate" ledger
+ * #3372 / #3637: a Net Collected figure and its "may understate" ledger
  * gap, over ONE set of payments. The gap runs over exactly the payments the
  * figure counts (the Net Collected booking scope), so no surface can warn about
  * a payment its figure left out, or stay silent about one it counted. Reports,

@@ -334,11 +334,16 @@ async function readCancellationCredits(
   tx: Prisma.TransactionClient,
   bookingId: string,
 ): Promise<
-  { amountCents: number; description: string | null; type: string }[]
+  {
+    amountCents: number;
+    description: string | null;
+    type: string;
+    restoredFromBookingId: string | null;
+  }[]
 > {
   const rows = await tx.memberCredit.findMany({
     where: { sourceBookingId: bookingId },
-    select: { amountCents: true, description: true, type: true },
+    select: { amountCents: true, description: true, type: true, restoredFromBookingId: true },
     take: CANCELLATION_CREDIT_CEILING + 1,
   });
   if (rows.length > CANCELLATION_CREDIT_CEILING) {
@@ -350,6 +355,7 @@ async function readCancellationCredits(
     amountCents: row.amountCents,
     description: row.description,
     type: String(row.type),
+    restoredFromBookingId: row.restoredFromBookingId,
   }));
 }
 

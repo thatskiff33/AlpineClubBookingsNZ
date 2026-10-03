@@ -7,6 +7,7 @@ import {
 import {
   cancelledBookingKeptCreditCents,
   type BookingCreditAmountRow,
+  type CreditRestoreEvidence,
 } from "@/lib/member-credit-booking-rows";
 
 /**
@@ -286,8 +287,8 @@ export interface CollectedCashSummary {
   keptCreditCents: number;
   /**
    * `capturedGrossCents - refundedCents - handBackOwedCents +
-   * keptCreditCents`, exactly: per
-   * payment, `getNetCollectedPaymentCents`. No payment adds less than nothing
+   * keptCreditCents`, exactly: per payment, the parts
+   * `getNetCollectedPaymentParts` returns. No payment adds less than nothing
    * and one that never took money adds nothing (beyond credit a cancellation
    * kept). Not "cash the club holds" — a credit is still owed to the member as
    * a future booking, and it is subtracted here all the same.
@@ -312,9 +313,7 @@ export interface NetCollectedBookingScopeFields {
 export interface NetCollectedBookingFields extends NetCollectedBookingScopeFields {
   status: string;
   creditsApplied: ReadonlyArray<BookingCreditAmountRow>;
-  creditsFromCancellation: ReadonlyArray<
-    BookingCreditAmountRow & { restoredFromBookingId: string | null }
-  >;
+  creditsFromCancellation: ReadonlyArray<BookingCreditAmountRow & CreditRestoreEvidence>;
   manualRefundTasks: ReadonlyArray<CancellationHandBackTaskRow>;
 }
 
@@ -323,7 +322,7 @@ const CANCELLED_BOOKING_STATUS = "CANCELLED" satisfies BookingStatus;
 /**
  * #3372, owner decision A (29 Sep 2026): THE booking scope of every "Net
  * Collected" figure - the dashboard card, the payments board tile, Reports'
- * Net Collected Cash and the finance dashboard's Net Collected Cash (#3637). A
+ * Net Collected and the finance dashboard's Net Collected (#3637). A
  * payment counts when its booking has not been
  * soft-deleted, whatever the booking's status.
  *
@@ -476,14 +475,14 @@ export function sumRefundedAndCreditedCents(
 /**
  * #3372: net collected cash over a set of payments, for the officer surfaces —
  * the Reports summary, the dashboard's "Net Collected This Month" card and the
- * payments board's "Net Collected Cash" tile all read it (`INV-SSOT-001`), so
+ * payments board's "Net Collected" tile all read it (`INV-SSOT-001`), so
  * they cannot disagree about what "net of refunds and credits" means, nor about
  * which bookings count: the Net Collected booking scope
  * (`isInNetCollectedBookingScope`) is applied here, to every row, and a row
  * outside it contributes nothing. Each surface still decides WHICH payments it
  * hands in - a month's, a filter's, a report range's - and says so on screen.
  *
- * The finance dashboard's "Net Collected Cash" (`finance-booking-metrics.ts`)
+ * The finance dashboard's "Net Collected" (`finance-booking-metrics.ts`)
  * reads it too, over the bookings staying in its window (#3637).
  *
  * PER PAYMENT, never pooled (owner review on PR #3811): each in-scope payment
@@ -536,7 +535,7 @@ export function summarizeCollectedCash(
 }
 
 /**
- * #3372: the "may understate" warning that goes with a Net Collected Cash figure
+ * #3372: the "may understate" warning that goes with a Net Collected figure
  * when `summarizeAdditionalLedgerGap` finds payments that record an additional
  * payment as collected with no captured ADDITIONAL ledger row behind it. One
  * sentence for every surface that runs the check - Reports, the payments board
@@ -560,7 +559,7 @@ export function formatNetCollectedLedgerGapWarning(
   const count = gap.additionalLedgerGapBookings;
   if (count === 0) return null;
   const singular = count === 1;
-  return `Net Collected Cash may understate by ${formatCents(gap.additionalLedgerGapCents)}: ${formatCount(count)} ${singular ? subject.one : subject.many} record${singular ? "s" : ""} an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile ${singular ? "that payment's ledger" : "those payments' ledgers"} before trusting this figure.`;
+  return `Net Collected may understate by ${formatCents(gap.additionalLedgerGapCents)}: ${formatCount(count)} ${singular ? subject.one : subject.many} record${singular ? "s" : ""} an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile ${singular ? "that payment's ledger" : "those payments' ledgers"} before trusting this figure.`;
 }
 
 /**
