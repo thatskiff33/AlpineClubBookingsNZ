@@ -10,11 +10,7 @@ import {
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { recordBookingEvent } from "@/lib/booking-events";
-import {
-  editReviewRefundGoesBackOnCard,
-  editReviewRefundSettlementPayment,
-  hasCapturedPayment,
-} from "@/lib/booking-payment-state";
+import { editReviewRefundGoesBackOnCard, editReviewRefundSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
 import {
   chooseEditReviewChargeRoute,
   executeEditReviewCharge,
@@ -426,11 +422,7 @@ export async function chooseEditReviewSettlementRoute({
   const settlementPayment = editReviewRefundSettlementPayment(task);
   const settlementPaymentId = settlementPayment?.id ?? null;
 
-  if (
-    settlementPayment !== null &&
-    settlementPaymentId !== null &&
-    editReviewRefundGoesBackOnCard(settlementPayment)
-  ) {
+  if (settlementPayment !== null && editReviewRefundGoesBackOnCard(settlementPayment)) {
     if (!bookingModificationId) {
       throw new ManualBookingPaymentError(
         REVIEW_SETTLEMENT_ANCHOR_MISSING_MESSAGE,
@@ -442,7 +434,7 @@ export async function chooseEditReviewSettlementRoute({
     // cannot be short of `amountCents`, because the planner allocates
     // newest-first across exactly the transactions the cap totalled.
     const { slices, totalRefundableCents } = await planStripeRefundAllocation({
-      paymentId: settlementPaymentId,
+      paymentId: settlementPayment.id,
       amountCents,
       store,
     });
@@ -454,7 +446,7 @@ export async function chooseEditReviewSettlementRoute({
     }
     return {
       kind: "stripe-refund",
-      paymentId: settlementPaymentId,
+      paymentId: settlementPayment.id,
       bookingModificationId,
       allocation: slices,
     };
