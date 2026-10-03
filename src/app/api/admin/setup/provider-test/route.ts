@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
 import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
@@ -78,7 +79,7 @@ async function testSentry() {
 
 async function testOperationalXero() {
   const token = await prisma.xeroToken.findFirst({
-    orderBy: { updatedAt: "desc" },
+    orderBy: XERO_TOKEN_ROW_ORDER,
     select: { expiresAt: true, tenantId: true },
   });
   if (!token) {

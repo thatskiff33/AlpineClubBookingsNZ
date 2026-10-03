@@ -5,7 +5,7 @@ import type {
 } from "@prisma/client";
 
 import { ApiError } from "@/lib/api-error";
-import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
+import { guestConsentStatus, isGuestOperationallyPresent } from "@/lib/member-guest-consent";
 import {
   aggregatePolicyExceptionViolations,
   type AggregatedPolicyExceptions,
@@ -373,9 +373,7 @@ export function toSubscriptionLockoutParticipants<
     stayStart: guest.stayStart ?? null,
     stayEnd: guest.stayEnd ?? null,
     nights: guest.nights ?? null,
-    operationallyPresent: isOperationallyPresentConsent(
-      guest.consentStatus ?? guest.memberGuestConsent?.consentStatus ?? null,
-    ),
+    operationallyPresent: isGuestOperationallyPresent({ consentStatus: guestConsentStatus(guest) }),
   }));
 }
 

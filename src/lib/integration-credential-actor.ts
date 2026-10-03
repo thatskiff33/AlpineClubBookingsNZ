@@ -74,6 +74,13 @@ export const CREDENTIAL_SYSTEM_ACTORS = [
   "servernz-push-registration",
   /** First use of Xero token encryption auto-generated (or replaced) the wrapped token key. */
   "xero-token-key-generation",
+  /**
+   * The Xero access token was near expiry, so the API client spent the refresh
+   * token under the shared refresh lease and stored the rotated pair (#3454).
+   * A connect, a disconnect and a verify-reset are NOT this actor: each has an
+   * administrator behind it and names them.
+   */
+  "xero-token-refresh",
   /** The E2E staging stack seeding Stripe test-mode keys. Never a real deployment. */
   "e2e-stripe-seed",
 ] as const;
@@ -386,6 +393,22 @@ export class CredentialExpectationError extends Error {
   }
 }
 
+/**
+ * WHY a mutation happened, when the write itself does not say (#3454).
+ *
+ * A closed set for the same reason the actors are one. Its first use is the
+ * verify-reset: an administrator who saves a Xero client id or secret destroys
+ * the stored OAuth tokens in the same transaction, and the token row's audit
+ * entry has to say that it was the consequence of that save rather than a
+ * disconnect — `credential` names the `provider:key` whose write caused it, a
+ * name and never a value.
+ */
+export type CredentialMutationCause =
+  | { readonly kind: "oauth-connect" }
+  | { readonly kind: "oauth-disconnect" }
+  | { readonly kind: "token-refresh" }
+  | { readonly kind: "verify-reset"; readonly credential: string };
+
 /** Describe an expectation for an audit row. Never carries a secret. */
 export function describeCredentialExpectation(
   expectation: CredentialWriteExpectation,
@@ -444,6 +467,7 @@ function buildCredentialAuditEvidence(params: {
   expectation: string | null;
   secretSource?: AuthSecretSource;
   labelVersion?: string;
+  cause?: CredentialMutationCause;
 }): Record<string, string | null> {
   const evidence = credentialActorEvidence(params.actor);
   return {
@@ -452,6 +476,12 @@ function buildCredentialAuditEvidence(params: {
     actorKind: evidence.actorKind,
     systemActor: evidence.systemActor,
     expectation: params.expectation,
+    // Present only when the caller declared one, for the reason given for the
+    // wrapping-key fields below.
+    ...(params.cause === undefined ? {} : { cause: params.cause.kind }),
+    ...(params.cause?.kind === "verify-reset"
+      ? { causedByCredential: params.cause.credential }
+      : {}),
     // PRESENT ONLY WHEN THERE IS ONE. A delete wraps nothing, so it has no
     // wrapping key and no label version, and a `null` under those names would
     // have to be read as "unknown" rather than as "not applicable". Absent
@@ -477,6 +507,7 @@ export async function recordCredentialMutation(
     expectation: string | null;
     secretSource?: AuthSecretSource;
     labelVersion?: string;
+    cause?: CredentialMutationCause;
     request?: CredentialRequestContext;
   },
 ): Promise<void> {
@@ -503,6 +534,7 @@ export async function recordCredentialMutation(
         expectation: params.expectation,
         secretSource: params.secretSource,
         labelVersion: params.labelVersion,
+        cause: params.cause,
       }),
       requestId: params.request?.id ?? null,
       ipAddress: params.request?.ipAddress ?? null,
