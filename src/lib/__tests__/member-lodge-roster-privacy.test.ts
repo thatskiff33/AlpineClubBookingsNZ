@@ -31,22 +31,18 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-vi.mock("@/lib/custodian-occupancy", async (importOriginal) => {
-  // PARTIAL mock: `holdCoversNight` is the real predicate, because a double
-  // for it would make the night arithmetic below a fact about the double.
-  // Only the database read is replaced.
-  // The cast goes OUTSIDE the call, not into a type argument: Semgrep cannot
-  // parse a call whose type argument contains an `import()` type and silently
-  // stops scanning the rest of the file (#3318 / #2842).
-  const actual = (await importOriginal()) as typeof import("@/lib/custodian-occupancy");
-  return { ...actual, findCustodianOccupants: vi.fn(async () => []) };
-});
+// Only the custodian database read is replaced; `holdCoversNight` and the
+// rest of custodian-occupancy stay real, so the night arithmetic below is a
+// fact about the roster, not about a double.
+vi.mock("@/lib/custodian-occupants", () => ({
+  findCustodianOccupants: vi.fn(async () => []),
+}));
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
-import { findCustodianOccupants } from "@/lib/custodian-occupancy";
+import { findCustodianOccupants } from "@/lib/custodian-occupants";
 import { prisma } from "@/lib/prisma";
 import {
   buildMemberLodgeRoster,

@@ -9,11 +9,8 @@ import {
   bookingOwnerHasNoAgeTier,
 } from "./booking-owner";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "./booking-status";
-import {
-  findCustodianOccupants,
-  holdCoversNight,
-  type CustodianOccupant,
-} from "./custodian-occupancy";
+import { holdCoversNight } from "./custodian-occupancy";
+import { findCustodianOccupants, type CustodianOccupant } from "./custodian-occupants";
 import {
   addCalendarDays,
   eachCalendarDate,
