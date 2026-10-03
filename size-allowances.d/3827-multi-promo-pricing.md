@@ -30,3 +30,21 @@ reason: an acceptance re-prices the booking's codes inside the consent transacti
   that already holds the locks it needs (D-3813-4), and its after-commit half
   runs from the one finalise step; the re-price itself is in
   booking-guest-acceptance-reprice.ts.
+
+file: src/app/api/bookings/[id]/guests/[guestId]/route.ts
+lines: 567
+reason: the removal's Booking Modified email says whether its refund is a bank
+  transfer the club still has to send (D-3813-6); one import and one field
+  beside the refund amount it qualifies.
+
+file: src/components/admin/manual-refund-task-queue.tsx
+lines: 2143
+reason: an edit's refund hand-back is a hand-back row that needs its own
+  explaining paragraph, kept out of the cancelled-booking one (D-3813-6); it
+  sits beside the other kinds' predicates and paragraphs it is chosen among.
+
+file: src/lib/email/booking.ts
+lines: 1768
+reason: the Booking Modified sender takes the required bank-transfer flag and
+  composes a split payment's cash and credit halves (D-3813-5/6); the sentence
+  itself lives in booking-modified-email-copy.ts.

@@ -476,13 +476,8 @@ export function bookingModifiedTemplate(params: {
    * review, the way `confirmedAmountCents` is asked for (`INV-SSOT`).
    */
   financialReviewPending: boolean;
-  /**
-   * #3827 (owner decision D-3813-6, `INV-PAY-113`): the refund goes back by a
-   * bank transfer the club still has to send (an internet-banking or cash
-   * payment), so the email says it WILL be refunded, never that it has been.
-   * REQUIRED for the reason `financialReviewPending` is: a default would answer
-   * "card" for every door that never thought about it.
-   */
+  /** #3827 (D-3813-6, `INV-PAY-113`): a bank transfer the club must still send.
+   * REQUIRED, as `financialReviewPending` is (`bookingModifiedRefundSentence`). */
   refundByBankTransfer: boolean;
 },
   format: ClubFormat,

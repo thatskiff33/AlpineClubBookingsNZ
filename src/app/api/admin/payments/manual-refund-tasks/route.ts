@@ -151,8 +151,7 @@ export async function GET() {
         lateCaptureApprovalIntentId: true,
         // #3643: marks a part-payment review, settled in Xero.
         partPaymentReviewPaymentId: true,
-        // #3827 (`INV-PAY-113`): marks an edit's refund hand-back.
-        occurrenceKey: true,
+        occurrenceKey: true, // #3827 (`INV-PAY-113`): an edit's refund hand-back
         // #3643 (`INV-PAY-108`): the sync's note that Xero reported it paid.
         partPaymentReviewXeroPaidAt: true,
         partPaymentReviewXeroPaidCents: true,
