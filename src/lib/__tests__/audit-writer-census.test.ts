@@ -1406,9 +1406,11 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // `payment`. RE-MEASURED with `npm run audit:census`.
     // 365 -> 366 (#3462): the Xero operation Mark failed record, unpinned
     // `xero`. RE-MEASURED with `pnpm run audit:census`.
-    // 366 -> 367 (#3792): the refused restored-booking allocation change
+    // 366 -> 367 (#3454): the two-factor enrolment / erasure-clear record,
+    // unpinned `security`. RE-MEASURED with `pnpm run audit:census`.
+    // 367 -> 368 (#3792): the refused restored-booking allocation change
     // record, unpinned `xero`. RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 128, unpinned: 367 });
+    ).toEqual({ pinned: 128, unpinned: 368 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

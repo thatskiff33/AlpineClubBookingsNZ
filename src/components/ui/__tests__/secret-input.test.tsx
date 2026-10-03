@@ -2,6 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import type { FormEvent } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { SecretInput } from "@/components/ui/secret-input";
@@ -134,5 +135,77 @@ describe("SecretInput", () => {
     edit(field, "abc-123", 7);
     expect(onValueChange).toHaveBeenLastCalledWith("abc-123");
     expect(field).not.toHaveAttribute("value");
+  });
+
+  describe("revealable", () => {
+    function renderRevealable() {
+      const onSubmit = vi.fn((event: FormEvent) => event.preventDefault());
+      render(
+        <form onSubmit={onSubmit}>
+          <SecretInput
+            aria-label="PIN"
+            revealable
+            secretNoun="PIN"
+            sanitise={sanitiseHutLeaderPin}
+            onValueChange={vi.fn()}
+          />
+        </form>,
+      );
+      return {
+        field: screen.getByLabelText("PIN") as HTMLInputElement,
+        onSubmit,
+      };
+    }
+
+    it("is masked by default and shows only while toggled, keeping the value", () => {
+      const { field } = renderRevealable();
+      expect(field.type).toBe("password");
+      typeAt(field, "1", 0);
+      typeAt(field, "4", 1);
+
+      const toggle = screen.getByRole("button", { name: "Show PIN" });
+      fireEvent.click(toggle);
+      expect(field.type).toBe("text");
+      expect(field.value).toBe("14");
+      expect(screen.getByRole("button", { name: "Hide PIN" })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Hide PIN" }));
+      expect(field.type).toBe("password");
+      expect(field.value).toBe("14");
+    });
+
+    it("publishes no value attribute in either state", () => {
+      const { field } = renderRevealable();
+      typeAt(field, "1", 0);
+      expect(field).not.toHaveAttribute("value");
+      fireEvent.click(screen.getByRole("button", { name: "Show PIN" }));
+      typeAt(field, "2", 1);
+      expect(field).not.toHaveAttribute("value");
+    });
+
+    it("is a non-submitting button", () => {
+      const { onSubmit } = renderRevealable();
+      const toggle = screen.getByRole("button", { name: "Show PIN" });
+      expect(toggle).toHaveAttribute("type", "button");
+      fireEvent.click(toggle);
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("keeps focus in the field when the toggle is clicked with a mouse", () => {
+      const { field } = renderRevealable();
+      field.focus();
+      const toggle = screen.getByRole("button", { name: "Show PIN" });
+      // A browser focuses a button on mousedown unless it is cancelled;
+      // fireEvent returns false when the event was default-prevented.
+      expect(fireEvent.mouseDown(toggle)).toBe(false);
+      fireEvent.click(toggle);
+      expect(field).toHaveFocus();
+    });
+
+    it("adds no toggle and keeps the caller's type when not revealable", () => {
+      render(<SecretInput aria-label="Token" type="text" onValueChange={vi.fn()} />);
+      expect(screen.queryByRole("button")).toBeNull();
+      expect((screen.getByLabelText("Token") as HTMLInputElement).type).toBe("text");
+    });
   });
 });

@@ -18,7 +18,8 @@ import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/deleted-account-email";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
 import { cancelBooking } from "@/lib/booking-cancel";
-import { createAuditLog, logAudit } from "@/lib/audit";
+import { createAuditLog, getAuditRequestContext, logAudit } from "@/lib/audit";
+import { recordErasureTwoFactorClear } from "@/lib/two-factor-audit";
 import {
   EMPTY_ORPHANED_FAMILY_LINKS,
   readFamilyLinkOrphans,
@@ -292,8 +293,10 @@ export async function POST(
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  // ONE request context for every audit row of this decision (#3454 review):
+  // the canonical helper's proxy-appended hop, not the client-settable first.
+  const auditRequest = getAuditRequestContext(request);
+  const ip = auditRequest?.ipAddress ?? "unknown";
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
@@ -910,6 +913,14 @@ export async function POST(
       // held so deletion cannot anonymise a member whose PII may already be in
       // flight to Xero or whose provider-created contact still needs linking.
       const fencedMember = await lockMemberForAccountDeletionXeroFence(tx, member.id);
+
+      // #3454: the clear of the member's second factor, below, is recorded in
+      // this transaction, read after the fence above.
+      await recordErasureTwoFactorClear(tx, {
+        memberId: member.id,
+        adminMemberId: session.user.id,
+        request: auditRequest,
+      });
 
       // 3. Anonymise the member record
       await tx.member.update({

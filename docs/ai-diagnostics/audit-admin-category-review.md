@@ -584,10 +584,10 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  495
+row-producing sites:  496
 uncategorised:        0
 category values: admin 109, booking 105, xero 39, family 35, payment 52,
-                 lodge 66, account 19, security 24, privacy 20,
+                 lodge 66, account 19, security 25, privacy 20,
                  communication 21, system 4
 ```
 
@@ -757,8 +757,10 @@ approval writes when its refund goes out. The review round added one more
 `booking-defaults.late_capture_refund_approval.changed`, who switched the
 club between automatic refunds and treasurer approval. #3462 then added one
 (`xero` 37 -> 38, 493 -> 494, RE-MEASURED): `xero.operation.marked_failed`,
-the per-row Mark failed on a stale RUNNING Xero operation. #3792 then added one
-(`xero` 38 -> 39, 494 -> 495, RE-MEASURED):
+the per-row Mark failed on a stale RUNNING Xero operation. #3454 then added one
+(`security` 24 -> 25, 494 -> 495, RE-MEASURED): the two-factor enrolment and
+erasure-clear record in `two-factor-audit.ts`. #3792 then added one
+(`xero` 38 -> 39, 495 -> 496, RE-MEASURED):
 `xero.allocation.restored-booking-change-refused`, a Xero allocation change the
 inbound credit-note sync refused to post to a cancelled booking whose applied
 credit was already restored.

@@ -1,4 +1,5 @@
 import { readClubModuleSettingsRecord } from "@/config/modules";
+import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
 import { prisma } from "@/lib/prisma";
 import { CLUB_TIME_SETTINGS_ID } from "@/lib/club-time-zone";
 import { resolveEnvironmentRole } from "@/lib/environment-role";
@@ -163,8 +164,8 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
       },
     }),
     prisma.xeroToken.findFirst({
-      orderBy: { updatedAt: "desc" },
-      select: { expiresAt: true, accessToken: true },
+      orderBy: XERO_TOKEN_ROW_ORDER,
+      select: { expiresAt: true },
     }),
     prisma.xeroAccountMapping.count({
       where: {
@@ -498,9 +499,9 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
   if (operationalXeroToken) {
     try {
       operationalXeroNeedsReentry =
-        (await getXeroTokenReadability({
-          accessToken: operationalXeroToken.accessToken,
-        })) === "unreadable";
+        // Over the CURRENT copy of the tokens, which since #3454 may be the
+        // credential-store one rather than this row's.
+        (await getXeroTokenReadability()) === "unreadable";
     } catch {
       operationalXeroNeedsReentry = false;
     }
