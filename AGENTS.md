@@ -632,10 +632,11 @@ At the successful end of a meaningful piece of work:
   appears under an agent login at all.
 - **The code-owner rule — its one home.** Review is required only through
   CODEOWNERS (owner decisions, 26 Sep 2026, #3341, narrowing 18 Aug's "no
-  review"). **Applied 2 Oct 2026**, tested on #3807/#3808: a PR touching
+  review"; widened 3 Oct 2026 to the dependency-audit gate, #3843).
+  **Applied 2 Oct 2026**, tested on #3807/#3808: a PR touching
   a `.github/CODEOWNERS` path needs the owner's GitHub Approve, and a push after
   it dismisses it; others merge as before. The Approve is the lock; the comment
-  stays the gate agents check, so a money PR's ready comment asks for both.
+  stays the gate agents check, so a code-owned PR's ready comment asks for both.
   Owner checklist:
   `CONTRIBUTING.md` → "Branch protection".
 
