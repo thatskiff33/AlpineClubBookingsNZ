@@ -250,7 +250,7 @@ describe("owner decision 2: the booking was cancelled before the review complete
     h.loadCancellationPolicy.mockResolvedValue([TIERS[0]!.rule]);
     restored(15_000);
     store.bookingEvent.findFirst.mockResolvedValueOnce({
-      snapshot: { appliedCreditBaseCents: 15_000, ledger: { appliedCreditCents: 20_000 } },
+      snapshot: { ledger: { appliedCreditCents: 20_000, appliedCreditBaseCents: 15_000 } },
     } as never);
 
     expect((await write()).givenBackCents).toBe(0);
@@ -261,7 +261,7 @@ describe("owner decision 2: the booking was cancelled before the review complete
     h.loadCancellationPolicy.mockResolvedValue([{ daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 0 }]);
     restored(7_500);
     store.bookingEvent.findFirst.mockResolvedValueOnce({
-      snapshot: { appliedCreditBaseCents: 15_000, ledger: { appliedCreditCents: 20_000 } },
+      snapshot: { ledger: { appliedCreditCents: 20_000, appliedCreditBaseCents: 15_000 } },
     } as never);
 
     // $50 + 50% of the $100 left - $75 restored.
@@ -393,6 +393,8 @@ describe("what of the share is applied credit coming back", () => {
     expect(await write(10_000, null, "payment-9")).toEqual({ givenBackCents: 2_500, mintedCents: 2_500, cancelled: false, invoiceReductionCents: null, agreedGiveBackCents: null });
     expect(h.createBookingModificationCredit).toHaveBeenCalledWith("member-1", 2_500, "booking-1", "mod-1", undefined, store, "payment-9");
     expect(h.giveBackAppliedCredit).toHaveBeenCalledWith(expect.objectContaining({ bookingId: "booking-1", sourceBookingId: "booking-1" }), store);
+    // The member's credit-ledger lock (inside the give-back) before the mint's Payment row lock.
+    expect(h.giveBackAppliedCredit.mock.invocationCallOrder[0]).toBeLessThan(h.createBookingModificationCredit.mock.invocationCallOrder[0]!);
   });
 
   it("MUTATION: #3835 - a credit part the applied rows cannot cover is refused, task OPEN, rather than half given back", async () => {

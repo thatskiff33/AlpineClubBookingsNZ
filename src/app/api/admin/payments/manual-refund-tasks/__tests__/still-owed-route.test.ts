@@ -14,9 +14,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock("@/lib/logger", () => ({ default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
 vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: vi.fn(async () => "Pacific/Auckland") }));
+vi.mock("@/lib/club-format-server", async () => ({ clubFormatValues: async () => (await import("@/lib/__tests__/support/club-format-fixture")).CLUB_FORMAT_TEST }));
 vi.mock("@/lib/edit-financial-review-still-owed", () => ({ previewEditReviewStillOwed: mocks.previewEditReviewStillOwed }));
 
 import { GET } from "../[id]/still-owed/route";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const params = Promise.resolve({ id: "task-1" });
 const get = (query: string) => GET(new NextRequest(`http://localhost/api/admin/payments/manual-refund-tasks/task-1/still-owed${query}`), { params });
@@ -33,7 +35,7 @@ describe("GET still-owed (#3835)", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ preview: { shareCents: 5_000, stillOwedCents: 2_500, captureCents: 2_500, creditCents: 0, route: "hand-back" } });
-    expect(mocks.previewEditReviewStillOwed).toHaveBeenCalledWith({ taskId: "task-1", shareCents: 5_000, clubZone: "Pacific/Auckland" });
+    expect(mocks.previewEditReviewStillOwed).toHaveBeenCalledWith({ taskId: "task-1", shareCents: 5_000, clubZone: "Pacific/Auckland", format: CLUB_FORMAT_TEST });
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "finance", level: "view" } });
   });
 

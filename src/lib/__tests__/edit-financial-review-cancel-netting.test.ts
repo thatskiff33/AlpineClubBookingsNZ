@@ -313,11 +313,35 @@ describe("#3835 review: the cancellation's own frozen figures", () => {
   });
 
   it("MUTATION: reads the frozen refundable base, which the price capped below what was paid (F3)", async () => {
-    // $250 paid against a $200 price: the tier ran on $200, so $80 came back at 50% less $20.
+    // $250 paid against a $200 price: the tier ran on $200, so $80 came back at
+    // 50% less $20, and the $50 above the price was left untiered. Read the
+    // paid figure as the base and the tier would not reproduce: refused.
     cancelledAt(25_000, 0, TIERS[1]!.rule, "card", 20_000);
     expect(snapshotOf().refundableBaseCents).toBe(20_000);
 
-    expect(await owed()).toBe(2_500);
+    // The share comes out of the untiered $50 first, as it would have first.
+    expect(await split()).toEqual({ captureCents: 5_000, creditCents: 0 });
+  });
+
+  it.each([
+    ["100%", TIERS[0]!.rule, 10_000],
+    ["50% less $20", TIERS[1]!.rule, 3_000],
+  ])("MUTATION: review round 2 F1 - a sibling re-priced the booking to $100 before a cancel at %s with $150 paid: B's $50 comes out of the untiered $50, as B first would", async (_tier, rule, refundedCents) => {
+    const returnedCents = cancelledAt(15_000, 0, rule, "card", 10_000);
+    expect(returnedCents).toBe(refundedCents);
+    expect(snapshotOf().refundableBaseCents).toBe(10_000);
+
+    expect(await split()).toEqual({ captureCents: 5_000, creditCents: 0 });
+    // B first: $50 back, then the cancel tiers the same $100 base.
+    expect(5_000 + cancelMoney(10_000, 0, 10_000, rule).refundAmountCents).toBe(5_000 + returnedCents);
+  });
+
+  it("MUTATION: review round 2 F1 - beyond the untiered excess, the rest nets against the base as before", async () => {
+    // $150 paid, $100 base, 50% less $20 ($30 back); an $80 share: $50 untiered + $30 off the base.
+    cancelledAt(15_000, 0, TIERS[1]!.rule, "card", 10_000);
+
+    // $80 + 50% of $70 less $20 ($15) - $30 = $65.
+    expect(await split(8_000)).toEqual({ captureCents: 6_500, creditCents: 0 });
   });
 
   it("an event older than #3835 falls back to paid less change fee and the branch's method", async () => {
@@ -332,7 +356,8 @@ describe("#3835 review: the cancellation's own frozen figures", () => {
     // $50 card + $200 credit on a $200 price, of which $150 was tiered.
     const rule = { daysBeforeStay: 0, refundPercentage: 100, fixedFeeCents: 0 };
     cancelledAt(5_000, 15_000, rule);
-    snapshotOf().appliedCreditBaseCents = 15_000;
+    // #3809 writes it inside the ledger snapshot, beside the rows' figure.
+    (snapshotOf().ledger as Record<string, number>).appliedCreditBaseCents = 15_000;
     (snapshotOf().ledger as Record<string, number>).appliedCreditCents = 20_000;
 
     // The re-tier reproduces the $150 restore from the $150 base; nothing is owed at 100%.

@@ -4071,10 +4071,19 @@ describe("#3835 - a review completed after a card-paid booking was cancelled", (
     mocks.planStripeRefundAllocation.mockResolvedValue({ slices: [], plannedAmountCents: 5_000, totalRefundableCents: 20_000 });
     mocks.paymentRecoveryOperationAggregate.mockResolvedValue({ _sum: { amountCents: 18_000 } });
 
-    await expect(complete()).rejects.toMatchObject({ status: 400 });
+    await expect(complete()).rejects.toMatchObject({
+      status: 409,
+      // Named: the payment history alone would show $200 of headroom.
+      message: expect.stringMatching(/^This booking's card already has \$180\.00 of refunds promised and not yet made .* only \$20\.00 of the \$50\.00/),
+    });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
     expect(mocks.paymentRecoveryOperationAggregate).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ paymentId: "payment-1", status: { not: "SUCCEEDED" } }),
+      where: expect.objectContaining({
+        paymentId: "payment-1",
+        status: { not: "SUCCEEDED" },
+        // A refund that FAILED for good is a person's; a hand refund lowers the headroom instead.
+        NOT: { status: "FAILED", nextRetryAt: null },
+      }),
     }));
   });
 

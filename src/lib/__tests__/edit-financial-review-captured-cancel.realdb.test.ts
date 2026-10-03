@@ -21,7 +21,10 @@
  * imports this file so CI reaches it; it owns and cleans its own `race-3835-`
  * fixtures.
  */
+import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import type { CalendarDate } from "@/lib/club-time";
@@ -39,6 +42,14 @@ const TRANSACTION_ID = "race-3835-txn";
 const INTENT_ID = "pi_race_3835";
 const CHECK_IN = new Date("2026-08-01T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-08-03T00:00:00.000Z");
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 /** Unconfigured only while this file runs; a pass-through for the rest of the harness. */
 const stripeKey = vi.hoisted(() => ({ unconfigured: false }));
@@ -106,7 +117,7 @@ let ledgerStartSeconds = 0;
  */
 async function dialogSays(taskId: string, shareCents = 5_000) {
   const { readClubTimeZoneOutsideRequest } = await import("@/lib/club-time-zone-runtime");
-  return previewEditReviewStillOwed({ taskId, shareCents, clubZone: await readClubTimeZoneOutsideRequest() });
+  return previewEditReviewStillOwed({ taskId, shareCents, clubZone: await readClubTimeZoneOutsideRequest(), format: CLUB_FORMAT_TEST });
 }
 
 (RUN ? describe : describe.skip)(
@@ -128,6 +139,8 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
       await prisma.payment.deleteMany({ where: { id: PAYMENT_ID } });
       await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE_ID } });
+      await prisma.bookingGuestNight.deleteMany({ where: { bookingGuestId: GUEST_ID } });
+      await prisma.bookingGuest.updateMany({ where: { id: GUEST_ID }, data: { priceCents: 20_000 } });
     }
 
     async function deleteFixtures() {
@@ -268,9 +281,73 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
 
     afterAll(async () => {
       stripeKey.unconfigured = false;
+      await Promise.all([lockHolderClient, observerClient].map((client) => client?.$disconnect().catch(() => {})));
       if (!prisma) return;
       await deleteFixtures();
     }, 60_000);
+
+    /** Two more connections: one holds the member's credit-ledger key, one looks. */
+    let lockHolderClient: PrismaClient | undefined;
+    let observerClient: PrismaClient | undefined;
+    async function separateClient(applicationName: string): Promise<PrismaClient> {
+      const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
+        import("@prisma/client"),
+        import("@/lib/prisma-adapter"),
+      ]);
+      const url = new URL(RACE_DB_URL);
+      url.searchParams.set("connection_limit", "1");
+      url.searchParams.set("application_name", applicationName);
+      const client = new SeparatePrismaClient({ adapter: createPrismaPgAdapter(url.toString()) });
+      await client.$connect();
+      return client;
+    }
+
+    /**
+     * Review round 2 F2 (`INV-LOCK-002`): a completion that gives credit back
+     * takes the member's credit-ledger key BEFORE it touches the Payment row -
+     * the order the Xero inbound applied-credit repair takes them in, so the two
+     * cannot deadlock. Forced, not hoped for: another connection holds the
+     * member key; once the completion is seen queued behind it, a third
+     * connection must still be able to lock the Payment row without waiting.
+     */
+    async function expectMemberKeyBeforePaymentRow(taskId: string, shareCents: number) {
+      lockHolderClient ??= await separateClient("race-3835-member-key");
+      observerClient ??= await separateClient("race-3835-observer");
+      const held = deferred();
+      const release = deferred();
+      let holderPid = 0;
+      const holder = lockHolderClient.$transaction(async (tx) => {
+        holderPid = (await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`)[0]!.pid;
+        await credit.lockMemberCreditLedger(MEMBER_ID, tx as never);
+        held.resolve();
+        await release.promise;
+      }, { maxWait: 5_000, timeout: 30_000 });
+      await held.promise;
+      const completion = completeShare(taskId, shareCents);
+      let queued = 0;
+      let paymentRowFree = false;
+      try {
+        const startedAt = process.hrtime.bigint();
+        while (realElapsedMs(startedAt) < 10_000 && queued < 1) {
+          queued = (await observerClient.$queryRaw<Array<{ count: number }>>`
+            SELECT COUNT(*)::int AS "count" FROM pg_stat_activity
+            WHERE datname = current_database() AND ${holderPid}::int = ANY(pg_blocking_pids(pid))
+          `)[0]!.count;
+          if (queued < 1) await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        paymentRowFree = await observerClient.$transaction(async (tx) => {
+          await tx.$executeRaw`SET LOCAL lock_timeout = '200ms'`;
+          await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${PAYMENT_ID} FOR NO KEY UPDATE`;
+          return true;
+        }).catch(() => false);
+      } finally {
+        release.resolve();
+        await holder;
+      }
+      await completion;
+      expect(queued, "the completion never queued behind the member's credit-ledger key").toBeGreaterThanOrEqual(1);
+      expect(paymentRowFree, "the completion held the Payment row while it waited for the member's key").toBe(true);
+    }
 
     for (const payment of PAYMENTS) {
       it.each(TIERS)(`${payment.paid}, the REAL cancel at $tier, then the review on the card route: $owedCents cents of the $50 share, $totalBackCents in all`, async ({ rule, owedCents, totalBackCents: expectedBackCents }) => {
@@ -382,6 +459,29 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
     const capture = async () =>
       (await prisma.paymentTransaction.findUniqueOrThrow({ where: { id: TRANSACTION_ID }, select: { amountCents: true } })).amountCents;
 
+    it("review round 2 F2: the bank-transfer hand-back with a credit part takes the member's credit-ledger key before the Payment row", async () => {
+      await paid({ paid: "credit plus internet banking", cardCents: 5_000, appliedCents: 15_000, source: "INTERNET_BANKING" });
+      const raised = await raise("2026-08-01");
+      await cancelAt({ refundPercentage: 50, fixedFeeCents: 0 });
+      expect(await dialogSays(raised.taskId, 10_000)).toMatchObject({ captureCents: 2_500, creditCents: 2_500, route: "hand-back" });
+
+      await expectMemberKeyBeforePaymentRow(raised.taskId, 10_000);
+
+      expect((await handBacks()).map((line) => line.unitCents)).toEqual([2_500]);
+      expect(await totalBackCents()).toBe(15_000);
+    });
+
+    it("review round 2 F2: the minted-credit route with a credit part takes the member's credit-ledger key before the Payment row", async () => {
+      await paid({ paid: "credit plus card", cardCents: 5_000, appliedCents: 15_000, source: "STRIPE" });
+      const raised = await raise("2026-08-01", null);
+      await cancelAt({ refundPercentage: 50, fixedFeeCents: 0 });
+      expect(await dialogSays(raised.taskId, 10_000)).toMatchObject({ stillOwedCents: 5_000, route: "account-credit" });
+
+      await expectMemberKeyBeforePaymentRow(raised.taskId, 10_000);
+
+      expect(await totalBackCents()).toBe(15_000);
+    });
+
     it("review F1: $150 credit + $50 card, cancelled at 50% (no fee), a $100 share: $25 to the card and $25 given back as credit - the card never promised more than it took", async () => {
       await paid({ paid: "credit plus card", cardCents: 5_000, appliedCents: 15_000, source: "STRIPE" });
       const raised = await raise("2026-08-01");
@@ -419,6 +519,42 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       await completeShare(after.taskId);
 
       expect(await totalBackCents()).toBe(13_000);
+    });
+
+    /** The strand now sells for `cents` in exact SOLD nights, so a review's re-price moves the booking to it. */
+    async function strandSellsFor(cents: number) {
+      await prisma.bookingGuest.update({ where: { id: GUEST_ID }, data: { priceCents: cents } });
+      await prisma.bookingGuestNight.createMany({
+        data: [
+          { bookingGuestId: GUEST_ID, stayDate: CHECK_IN, priceCents: cents / 2, priceSource: "SOLD" },
+          { bookingGuestId: GUEST_ID, stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: cents / 2, priceSource: "SOLD" },
+        ],
+      });
+    }
+
+    it.each([
+      ["100%", TIERS[0]!.rule, 10_000, 20_000],
+      ["50% with a $20 fee", TIERS[1]!.rule, 3_000, 13_000],
+    ])("review round 2 F1: review A re-prices the booking to $100 before the REAL cancel at %s; review B's $50 still comes back whole, as B first would", async (_tier, rule, cancelRefundCents, expectedBackCents) => {
+      await paid(PAYMENTS[0]!);
+      const first = await raise("2026-08-01");
+      const second = await raise("2026-08-02");
+      // A's re-price takes the strands' sum, which already drops B's removed nights too.
+      await strandSellsFor(10_000);
+      await completeShare(first.taskId);
+      const booking = await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { finalPriceCents: true } });
+      expect(booking.finalPriceCents).toBe(10_000);
+      await stripeRefundsWhatIsOwed();
+      await cancelAt(rule);
+      // $150 paid, tiered on the $100 price: the $50 above it is left untiered.
+      const cancelled = await prisma.bookingEvent.findFirstOrThrow({ where: { bookingId: BOOKING_ID, type: "CANCELLED" }, select: { snapshot: true } });
+      expect(cancelled.snapshot).toMatchObject({ paidAmountCents: 15_000, refundableBaseCents: 10_000, settledAmountCents: cancelRefundCents });
+
+      expect(await dialogSays(second.taskId)).toMatchObject({ stillOwedCents: 5_000, captureCents: 5_000, creditCents: 0 });
+      await completeShare(second.taskId);
+
+      expect(await totalBackCents()).toBe(expectedBackCents);
+      expect((await cardDebts()).reduce((sum, debt) => sum + debt.amountCents, 0)).toBeLessThanOrEqual(await capture());
     });
 
     it("a $150 share then a $40 share after the REAL card cancel at 50% less $20 net cumulatively: $75 then $35, $190 in all", async () => {

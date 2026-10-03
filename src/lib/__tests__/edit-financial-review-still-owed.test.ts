@@ -33,8 +33,10 @@ vi.mock("@/lib/payment-reconciliation", () => ({
 import { requireClubTimeZone } from "@/lib/club-time";
 import { previewEditReviewStillOwed } from "@/lib/edit-financial-review-still-owed";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
-const preview = () => previewEditReviewStillOwed({ taskId: "task-1", shareCents: 5_000, clubZone: requireClubTimeZone("Pacific/Auckland") });
+const preview = () =>
+  previewEditReviewStillOwed({ taskId: "task-1", shareCents: 5_000, clubZone: requireClubTimeZone("Pacific/Auckland"), format: CLUB_FORMAT_TEST });
 const reviewOn = (status: string) => ({
   id: "task-1", bookingId: "booking-1", kind: "EDIT_FINANCIAL_REVIEW", status: "OPEN",
   booking: { status, checkIn: new Date("2026-08-01T00:00:00.000Z"), lodgeId: "lodge-1", payment: null },
