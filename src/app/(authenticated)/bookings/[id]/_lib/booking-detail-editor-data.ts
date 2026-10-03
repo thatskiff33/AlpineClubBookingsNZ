@@ -1,4 +1,4 @@
-import { soleBookingPromoRedemption } from "@/lib/booking-promo-redemptions";
+import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import type { auth } from "@/lib/auth";
@@ -233,17 +233,11 @@ export async function buildBookingDetailEditorData({
     discountCents: booking.discountCents,
     promoAdjustmentCents: booking.promoAdjustmentCents,
     finalPriceCents: booking.finalPriceCents,
-    // #3826: the editor shows and edits one code; a booking carrying several
-    // is refused here until epic #3813's chips child widens the panel.
-    promo: ((promoCode) =>
-      promoCode
-        ? {
-            code: promoCode.code,
-            type: promoCode.type,
-            description: promoCode.description,
-            workPartyEventName: promoCode.workPartyEvent?.name ?? null,
-          }
-        : null)(soleBookingPromoRedemption(booking)?.promoCode),
+    // #3826: the editor shows and edits one code. #3828: a booking carrying
+    // several shows one money row per code (`promoLines`) and offers no
+    // one-code edit (`promo: null`) until epic #3813's chips child (C4)
+    // widens the panel.
+    ...bookingDetailPromoFields(booking),
     hasNonMembers: booking.hasNonMembers,
     nonMemberHoldUntil: booking.nonMemberHoldUntil?.toISOString() ?? null,
     canEditNonMemberGuestNames,
@@ -337,4 +331,45 @@ export async function buildBookingDetailEditorData({
     lodgeId: booking.lodgeId,
   };
   return editorData;
+}
+
+type DetailPromoCode = {
+  code: string;
+  type: string;
+  description: string | null;
+  workPartyEvent?: { name: string } | null;
+};
+
+/**
+ * The booking's promotion for the detail page (#3828): `promo` for a booking
+ * carrying one code, exactly as before; for several, `promo: null` and one
+ * `promoLines` row per code, each with its own adjustment, in the booker's order.
+ */
+function bookingDetailPromoFields(booking: {
+  promoRedemptions?: ReadonlyArray<{
+    id?: string;
+    applicationOrder?: number;
+    priceAdjustmentCents: number;
+    promoCode: DetailPromoCode | null;
+  }> | null;
+}) {
+  const describe = (promoCode: DetailPromoCode) => ({
+    code: promoCode.code,
+    type: promoCode.type,
+    description: promoCode.description,
+    workPartyEventName: promoCode.workPartyEvent?.name ?? null,
+  });
+  const redemptions = bookingPromoRedemptions(booking);
+  if (redemptions.length <= 1) {
+    const promoCode = redemptions[0]?.promoCode;
+    return { promo: promoCode ? describe(promoCode) : null };
+  }
+  return {
+    promo: null,
+    promoLines: redemptions.flatMap((redemption) =>
+      redemption.promoCode
+        ? [{ ...describe(redemption.promoCode), amountCents: redemption.priceAdjustmentCents }]
+        : [],
+    ),
+  };
 }

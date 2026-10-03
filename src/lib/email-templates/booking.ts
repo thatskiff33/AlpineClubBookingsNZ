@@ -16,6 +16,7 @@ import {
   bookingModificationSummaryRows,
   bookingModificationTypeLabel,
   promoAdjustmentSummaryRows,
+  type PromoCodeAdjustment,
   resolvePromoAdjustmentCents,
   resolveUnpaidCreditNetting,
   settledByPaymentCents,
@@ -102,6 +103,8 @@ export function bookingConfirmedTemplate(
     discountCents?: number;
     promoAdjustmentCents?: number;
     promoCode?: string;
+    /** #3828: each code's own adjustment, for one row per code. */
+    promoLines?: ReadonlyArray<PromoCodeAdjustment>;
     // #2328: account credit applied to this booking, read off the ledger by
     // the sender and threaded through unchanged. Absent/zero renders no credit
     // lines and leaves the message byte-for-byte as it was.
@@ -181,6 +184,7 @@ export function bookingConfirmedTemplate(
     promoAdjustmentCents,
     format,
     options?.promoCode,
+    options?.promoLines,
   )) {
     // The shared rows are unescaped plain text (the flat token path needs them
     // raw); the promo code inside the label is club-entered data, so escape at
