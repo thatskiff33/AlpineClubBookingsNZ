@@ -106,7 +106,6 @@ beforeEach(() => {
   mocks.prisma.booking.findUnique.mockResolvedValue({
     id: "booking-1",
     memberId: "booker",
-    organisationId: null,
     lodgeId: "lodge-1",
   });
   mocks.prisma.bookingGuest.findMany.mockResolvedValue([

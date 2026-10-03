@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
   if ("bookingId" in parsed.data) {
     const booking = await prisma.booking.findUnique({
       where: { id: parsed.data.bookingId },
-      select: { id: true, memberId: true, organisationId: true, lodgeId: true },
+      select: { id: true, memberId: true, lodgeId: true },
     });
     const ownerMemberId = booking ? bookingOwner(booking).memberId ?? null : null;
     if (!booking || (!isAdmin && ownerMemberId !== actorMemberId)) {

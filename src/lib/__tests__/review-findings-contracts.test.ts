@@ -3746,14 +3746,18 @@ describe("review finding source/schema contracts", () => {
   });
 
   it("keeps promo review-step text on directly gated semantic/solid pairs (F28)", () => {
+    // #3492: the review step's promo chips moved into the shared code list,
+    // which draws them for the wizard, the edit panel and Book on Behalf.
     const reviewStep = readRepoFile(
       "src/app/(authenticated)/book/_components/review-step.tsx",
     );
-    expect(reviewStep).toContain('className="mb-2 text-sm font-medium text-foreground"');
-    expect(reviewStep).toContain(
+    const promoChips = readRepoFile("src/components/promo-code-list.tsx");
+    expect(promoChips).toContain('className="mb-2 text-sm font-medium text-foreground"');
+    expect(promoChips).toContain(
       'className="font-sans font-normal text-brand-charcoal"',
     );
     expect(reviewStep).not.toContain("dark:text-brand-gold");
+    expect(promoChips).not.toContain("dark:text-brand-gold");
   });
 
   it("hard-reloads the waitlist confirm success path so the CTA can't stick on Confirming (F28)", () => {
