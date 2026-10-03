@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { hutLeaderStayGuestRow } from "@/lib/__tests__/helpers/hut-leader-stay";
 
 vi.setConfig({ testTimeout: 10_000 });
 
@@ -157,6 +158,11 @@ describe("#25: Hut Leader POST Overlap Enforcement", () => {
       },
     ]);
     mockPrisma.hutLeaderAssignment.create.mockResolvedValue({ id: "new-1" });
+    // #3817: the member stays the nights 10-12 Apr, so the stay check passes.
+    mockPrisma.bookingGuest.findMany.mockResolvedValue([
+      hutLeaderStayGuestRow("2026-04-10", "2026-04-13"),
+    ]);
+    mockPrisma.booking.findMany.mockResolvedValue([]);
 
     const { POST } = await import("@/app/api/admin/hut-leaders/route");
     const req = new Request("http://localhost/api/admin/hut-leaders", {
@@ -226,6 +232,11 @@ describe("#25: Hut Leader POST Overlap Enforcement", () => {
       });
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
     mockPrisma.hutLeaderAssignment.create.mockResolvedValue({ id: "new-1" });
+    // #3817: the member stays the nights 15-18 Apr, so the stay check passes.
+    mockPrisma.bookingGuest.findMany.mockResolvedValue([
+      hutLeaderStayGuestRow("2026-04-15", "2026-04-19"),
+    ]);
+    mockPrisma.booking.findMany.mockResolvedValue([]);
 
     const { POST } = await import("@/app/api/admin/hut-leaders/route");
     const req = new Request("http://localhost/api/admin/hut-leaders", {
@@ -465,9 +476,11 @@ describe("#25: Auto-Assign Hut Leaders", () => {
     vi.useRealTimers();
   });
 
-  // Helper: create dates at local midnight (matching how the cron generates days)
+  // Helper: a stored `@db.Date` calendar day (UTC midnight), which is what the
+  // cron's days and the booking columns are since #3817 — the night model
+  // refuses a local-midnight timestamp outright.
   function localMidnight(str: string): Date {
-    return new Date(str + "T00:00:00");
+    return new Date(str + "T00:00:00.000Z");
   }
 
   it("auto-assigns when exactly 1 adult member has PAID booking", async () => {

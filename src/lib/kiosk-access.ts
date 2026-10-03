@@ -11,6 +11,10 @@ import {
   type PrivilegeCheckInput,
 } from "@/lib/access-roles";
 import { bookingOwner } from "@/lib/booking-owner";
+import {
+  hutLeaderAccessWindowCoversDayWhere,
+  hutLeaderAccessWindowOf,
+} from "@/lib/hut-leader-access-window";
 
 export type KioskTier = "admin" | "hut-leader" | "lodge" | "staying-guest" | "none";
 
@@ -101,17 +105,17 @@ export async function getKioskAccessTier(
   if (hasLodgeAccess(user)) return "lodge";
 
   if (hasAccessRole(user, "USER")) {
-    // Check hut leader assignment: (startDate - 1 day) <= date <= endDate
-    const nextDay = addDaysDateOnly(date, 1);
-
+    // Hut leader: inside an assignment's access window, from the day before
+    // its first night to the day after its last (#3817). The one definition
+    // lives in hut-leader-access-window.ts.
     const hutLeaderCount = await prisma.hutLeaderAssignment.count({
       where: {
         memberId: user.id,
-        // startDate - 1 day <= date means startDate <= date + 1 day
-        startDate: { lte: nextDay },
-        endDate: { gte: date },
+        ...hutLeaderAccessWindowCoversDayWhere(date),
       },
     });
+
+    const nextDay = addDaysDateOnly(date, 1);
 
     if (hutLeaderCount > 0) return "hut-leader";
 
@@ -162,12 +166,7 @@ export async function getKioskDateRange(
   const assignments = await prisma.hutLeaderAssignment.findMany({
     where: {
       memberId: user.id,
-      ...(date && nextDay
-        ? {
-            startDate: { lte: nextDay },
-            endDate: { gte: date },
-          }
-        : {}),
+      ...(date ? hutLeaderAccessWindowCoversDayWhere(date) : {}),
     },
     select: { startDate: true, endDate: true },
   });
@@ -219,9 +218,8 @@ export async function getKioskDateRange(
   let maxDate: Date | null = null;
 
   for (const a of assignments) {
-    // Day-before access
-    const start = addDaysDateOnly(a.startDate, -1);
-    const end = a.endDate;
+    // Day before the first night to the departure day (#3817).
+    const { firstDay: start, lastDay: end } = hutLeaderAccessWindowOf(a);
 
     if (!minDate || start < minDate) minDate = start;
     if (!maxDate || end > maxDate) maxDate = end;

@@ -317,7 +317,44 @@ is a **custodian bed hold**: for the night of every covered date that bed is out
 of the bookable pool and out of the allocatable pool, with **no `Booking` and no
 `BedAllocation` row anywhere**. Without one — including every row the
 `hut-leader-auto-assign` cron creates — the assignment is a role only and has
-**zero** capacity effect.
+**zero** capacity effect, **unless it is ticked "Custodian (lives on site)"**.
+
+**The custodian tick (#3817, owner decision on #3820, 3 Oct 2026).**
+`HutLeaderAssignment.isCustodian` marks a custodian who lives on site. A ticked
+assignment takes **one space** off the lodge on every covered night exactly as a
+held bed does — with or without a bed, and whether or not the `bedAllocation`
+module is on. A custodian who also holds a bed is one assignment and counts
+**once**. The count's one source is `findCustodianOccupancies`
+(`src/lib/custodian-occupancy.ts`, bed **or** tick), which feeds the single
+per-night counter every engine reads; `findCustodianBedHolds` stays bed-only,
+because the allocation consumers ask which *bed* is held and a bedless custodian
+has none. Turning the tick on runs the bed path's own checks under the same
+lodge capacity lock: the over-capacity warn-and-confirm when the lodge is
+already full on those nights, and the whole-lodge hold question (`INV-CAP-038`)
+before narrowing another booking's sole occupancy, taking the global cohort key
+first only when the officer accepts it. Only the officer's manual create and edit
+set the tick (the form, or the row's Custodian button); the cron and the school
+writer never do.
+
+Two stated limits of the tick, neither of which moves an admission number in the
+wrong direction silently:
+
+- *Planner versus count on a whole-lodge-held night.* The count subtracts a
+  bedless ticked custodian from what the hold represents; the bed planner
+  (`wholeLodgeHoldOccupiedBedNightsForPlanner`) has no bed to skip for them, so
+  it still emits every active bed for the hold. A held night is pinned to the
+  full lodge either way (`INV-CAP-038`), and outside held nights admission is
+  capped at capacity less the custodian, so the planner only ever sees one spare
+  bed.
+- *A ticked custodian who is also a guest.* The tick and a guest row on a
+  booking at the same lodge are two occupants to the counter, so a ticked
+  custodian with no bed who also books takes two spaces on those nights. The
+  counter does not de-duplicate them: the admission engines add the requested
+  party on top of the count, so a de-duplication inside the counter would not
+  reach the booking being admitted. The create and the edit (the row's
+  Custodian toggle included) return a `custodianBookedWarning` the page shows
+  instead — one string and one failure-tolerant post-commit read
+  (`custodianBookedAsGuestWarning`), so the two cannot drift.
 
 **Night semantics.** The hold covers `startDate <= night <= endDate`,
 **inclusive** — matching the existing hut-leader coverage semantics. This is

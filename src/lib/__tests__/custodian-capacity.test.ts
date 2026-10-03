@@ -185,7 +185,7 @@ describe("custodian bed holds reduce bookable capacity", () => {
     expect(withHold.minAvailable).toBe(-1);
   });
 
-  it("asks only for BED-HOLDING assignments, so a role-only (cron-created) assignment subtracts nothing", async () => {
+  it("asks only for BED-HOLDING or TICKED-CUSTODIAN assignments, so a role-only (cron-created) assignment subtracts nothing", async () => {
     await checkCapacity(
       LODGE,
       parseDateOnly("2026-07-01"),
@@ -195,10 +195,11 @@ describe("custodian bed holds reduce bookable capacity", () => {
       db(),
     );
 
-    // The `bedId: { not: null }` filter is the whole feature gate: without it a
-    // role-only assignment would silently start removing a bed from the pool.
+    // The bed-or-tick filter is the whole feature gate (#3817): without it a
+    // role-only, unticked assignment would silently start removing a bed from
+    // the pool.
     const where = mocks.hutLeaderAssignmentFindMany.mock.calls[0][0].where;
-    expect(where.bedId).toEqual({ not: null });
+    expect(where.OR).toEqual([{ bedId: { not: null } }, { isCustodian: true }]);
     expect(where.lodgeId).toBe(LODGE);
   });
 
@@ -298,5 +299,56 @@ describe("custodian bed holds reduce bookable capacity", () => {
     );
 
     expect(result.nightDetails[0].occupiedBeds).toBe(1);
+  });
+});
+
+/**
+ * #3817 (owner decision "Yes, one space per night" on #3820): a ticked
+ * custodian takes one space off the lodge on each covered night, with or
+ * without a bed and whether or not bed allocation is on — and a custodian who
+ * also holds a bed counts ONCE. The double below applies the loader's own
+ * bed-or-tick filter, so the filter is what is under test.
+ */
+describe("a ticked custodian takes one space per night (#3817)", () => {
+  type Row = { id: string; bedId: string | null; isCustodian: boolean; startDate: Date; endDate: Date };
+  function serve(rows: Row[]) {
+    mocks.hutLeaderAssignmentFindMany.mockImplementation(
+      async ({ where }: { where: { OR?: Array<Record<string, unknown>> } }) =>
+        rows.filter((row) =>
+          (where.OR ?? []).some((arm) =>
+            "isCustodian" in arm ? row.isCustodian === arm.isCustodian : row.bedId !== null,
+          ),
+        ),
+    );
+  }
+  const night = (iso: string) => parseDateOnly(iso);
+
+  async function occupiedOn(iso: string) {
+    const result = await checkCapacity(LODGE, night(iso), night("2026-07-05"), 1, undefined, db());
+    return result.nightDetails[0]!.occupiedBeds;
+  }
+
+  it.each([false, true])("counts a bedless ticked custodian (bed allocation on: %s)", async (bedAllocation) => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation });
+    serve([{ id: "c1", bedId: null, isCustodian: true, startDate: night("2026-07-02"), endDate: night("2026-07-03") }]);
+    expect(await occupiedOn("2026-07-02")).toBe(1);
+    expect(await occupiedOn("2026-07-04")).toBe(0);
+  });
+
+  it("counts a custodian who also holds a bed once, not twice", async () => {
+    serve([{ id: "c1", bedId: "bed-1", isCustodian: true, startDate: night("2026-07-02"), endDate: night("2026-07-03") }]);
+    expect(await occupiedOn("2026-07-02")).toBe(1);
+  });
+
+  it("does not count an unticked role-only assignment", async () => {
+    serve([{ id: "r1", bedId: null, isCustodian: false, startDate: night("2026-07-02"), endDate: night("2026-07-03") }]);
+    expect(await occupiedOn("2026-07-02")).toBe(0);
+  });
+
+  it("refuses a stay that no longer fits once a ticked custodian takes the last space", async () => {
+    mocks.lodgeSettingsFindUnique.mockResolvedValue({ capacity: 1 });
+    serve([{ id: "c1", bedId: null, isCustodian: true, startDate: night("2026-07-02"), endDate: night("2026-07-02") }]);
+    const result = await checkCapacity(LODGE, night("2026-07-02"), night("2026-07-03"), 1, undefined, db());
+    expect(result.available).toBe(false);
   });
 });

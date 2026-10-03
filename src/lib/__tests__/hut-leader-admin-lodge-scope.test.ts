@@ -122,7 +122,7 @@ describe("hut-leader admin workspace has one strict lodge scope (#2701, #2887)",
     expect(mocks.getOccupancy).toHaveBeenCalledWith(expect.objectContaining({ lodgeId: "lodge-b" }))
   })
 
-  it("scopes eligible guests, booking owners and existing coverage to Lodge B", async () => {
+  it("scopes eligible guests and existing coverage to Lodge B, and reads no owned bookings", async () => {
     mocks.bookingGuestFindMany.mockResolvedValue([
       {
         memberId: "member-b",
@@ -154,9 +154,9 @@ describe("hut-leader admin workspace has one strict lodge scope (#2701, #2887)",
     expect(mocks.bookingGuestFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ booking: expect.objectContaining({ lodgeId: "lodge-b" }) }),
     }))
-    expect(mocks.bookingFindMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ lodgeId: "lodge-b" }),
-    }))
+    // Owning a booking is not a stay (owner decision on #3820, 3 Oct 2026), so
+    // the owner arm that read bookings by owner is gone.
+    expect(mocks.bookingFindMany).not.toHaveBeenCalled()
     expect(mocks.hutLeaderFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ lodgeId: "lodge-b" }),
     }))

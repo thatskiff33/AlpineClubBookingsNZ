@@ -138,6 +138,8 @@ vi.mock("@/lib/hut-leader", () => ({ isHutLeader: mocks.isHutLeader }));
 vi.mock("@/lib/capacity", () => ({ checkCapacity: mocks.checkCapacity }));
 
 import DashboardPage from "../page";
+import { isDayInHutLeaderAccessWindow } from "@/lib/hut-leader-access-window";
+import { parseDateOnly } from "@/lib/date-only";
 
 /** The instant every test in this file runs at — see the file comment. */
 const PINNED_INSTANT = "2026-07-01T13:30:00.000Z";
@@ -213,15 +215,21 @@ function withStay(stay: { checkIn: string; checkOut: string } | null) {
 
 /**
  * Serve `isHutLeader(memberId, date)` from one fixture assignment. The real
- * helper counts rows with `startDate <= date AND endDate >= date`, both
- * `@db.Date`, so the same narrowing applies to the date the page hands it —
- * which is the value under test here.
+ * helper counts rows whose ACCESS window (`hut-leader-access-window.ts`, the
+ * day before the first night to the day after the last, #3817) holds `date`,
+ * all `@db.Date`, so the same narrowing applies to the date the page hands it —
+ * which is the value under test here. The window itself is the real one.
  */
 function withAssignment(assignment: { startDate: string; endDate: string } | null) {
   mocks.isHutLeader.mockImplementation(async (_memberId: string, date: Date) => {
     if (!assignment) return false;
-    const day = boundDay(date);
-    return assignment.startDate <= day && assignment.endDate >= day;
+    return isDayInHutLeaderAccessWindow(
+      {
+        startDate: parseDateOnly(assignment.startDate),
+        endDate: parseDateOnly(assignment.endDate),
+      },
+      parseDateOnly(boundDay(date)),
+    );
   });
 }
 
@@ -285,13 +293,13 @@ describe("dashboard club-day boundaries (#2838)", () => {
       expect(boundDay(where.where.checkIn.lte as Date)).toBe("2026-07-03");
     });
 
-    it("asks the hut-leader assignment about tomorrow first, then today", async () => {
+    it("asks the hut-leader access window about the club's today, once (#3817)", async () => {
       await renderDashboard();
 
       const days = mocks.isHutLeader.mock.calls.map(([, date]) =>
         boundDay(date as Date),
       );
-      expect(days).toEqual(["2026-07-03", CLUB_TODAY]);
+      expect(days).toEqual([CLUB_TODAY]);
     });
   });
 
@@ -375,8 +383,20 @@ describe("dashboard club-day boundaries (#2838)", () => {
       expect(showsHutLeaderSurface(await renderDashboard())).toBe(true);
     });
 
-    it("does NOT admit a SINGLE-DAY assignment that finished yesterday", async () => {
+    it("admits a SINGLE-DAY assignment on its departure day, the day after its night (#3817)", async () => {
       withAssignment({ startDate: "2026-07-01", endDate: "2026-07-01" });
+
+      expect(showsHutLeaderSurface(await renderDashboard())).toBe(true);
+    });
+
+    it("does NOT admit an assignment whose departure day was yesterday", async () => {
+      withAssignment({ startDate: "2026-06-30", endDate: "2026-06-30" });
+
+      expect(showsHutLeaderSurface(await renderDashboard())).toBe(false);
+    });
+
+    it("does NOT admit a SINGLE-DAY assignment two days before its night", async () => {
+      withAssignment({ startDate: "2026-07-04", endDate: "2026-07-04" });
 
       expect(showsHutLeaderSurface(await renderDashboard())).toBe(false);
     });

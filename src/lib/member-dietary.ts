@@ -57,7 +57,7 @@ import {
   normalizeDietaryRequirements,
 } from "@/lib/member-dietary-field";
 import { prisma } from "@/lib/prisma";
-import { addDaysDateOnly } from "@/lib/date-only";
+import { hutLeaderAccessWindowCoversDayWhere } from "@/lib/hut-leader-access-window";
 import type { KioskTier } from "@/lib/kiosk-access";
 
 declare const DIETARY_GRANT_BRAND: unique symbol;
@@ -518,8 +518,8 @@ export async function grantKioskDietaryAccess(
       where: {
         memberId: access.actorMemberId,
         lodgeId: access.lodgeId,
-        startDate: { lte: addDaysDateOnly(access.date, 1) },
-        endDate: { gte: access.date },
+        // The same access window the tier was granted on (#3817).
+        ...hutLeaderAccessWindowCoversDayWhere(access.date),
       },
     });
     if (leads === 0) return null;

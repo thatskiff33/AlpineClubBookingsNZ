@@ -133,10 +133,12 @@ describe("the hut-leader window is bounded on club time (CT-4, #2870)", () => {
     //   - `getTodayDateOnly()` (the environment) gives 2026-07-01T00:00:00Z;
     //   - a club-LOCAL midnight bound gives 2026-06-30T06:00:00Z, which Prisma
     //     narrows to 29 June against a `@db.Date` column (INV-DATE-026).
-    // Only "the club's day, encoded at UTC midnight" produces this value.
+    // Only "the club's day, encoded at UTC midnight" produces this value —
+    // less the one departure day the access window runs past the last night
+    // (#3817): `endDate >= clubDay - 1`, so the club's 30 June bounds at 29 June.
     await get();
 
-    expect(boundFromLastCall().toISOString()).toBe("2026-06-30T00:00:00.000Z");
+    expect(boundFromLastCall().toISOString()).toBe("2026-06-29T00:00:00.000Z");
   });
 
   it("moves the bound when the persisted zone moves, and nothing else changes", async () => {
@@ -151,7 +153,8 @@ describe("the hut-leader window is bounded on club time (CT-4, #2870)", () => {
 
     await get();
 
-    expect(boundFromLastCall().toISOString()).toBe("2026-07-01T00:00:00.000Z");
+    // Auckland's 1 July, less the departure day (#3817).
+    expect(boundFromLastCall().toISOString()).toBe("2026-06-30T00:00:00.000Z");
   });
 
   it("really asks the ClubTimeSettings row for the zone", async () => {

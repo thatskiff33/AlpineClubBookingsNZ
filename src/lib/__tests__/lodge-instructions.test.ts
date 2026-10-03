@@ -229,10 +229,22 @@ describe("GET /api/lodge-instructions (reader access control)", () => {
     expect(response.status).toBe(200);
   });
 
-  it("denies a member whose only assignment has expired", async () => {
+  it("allows a member on their departure day, the day after their last night (#3817)", async () => {
     mocks.auth.mockResolvedValue(memberSession);
     useAssignments([
       { memberId: "member-1", endDate: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), -1) },
+    ]);
+
+    const response = await readerGET(readerRequest());
+    expect(response.status).toBe(200);
+  });
+
+  it("denies a member whose only assignment has expired", async () => {
+    mocks.auth.mockResolvedValue(memberSession);
+    // Last night two days ago: the departure day was yesterday, so the access
+    // window has closed (#3817).
+    useAssignments([
+      { memberId: "member-1", endDate: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), -2) },
     ]);
 
     const response = await readerGET(readerRequest());

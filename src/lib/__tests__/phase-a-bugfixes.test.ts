@@ -278,7 +278,15 @@ describe("#22: Hut Leader eligible members includes PAID bookings", () => {
     );
     const content = fs.readFileSync(routePath, "utf-8");
 
-    expect(content).toContain("OPERATIONAL_STAY_BOOKING_STATUSES");
+    // #3817: the route reads its bookings through the shared stay filter, which
+    // is where the status set now lives (the manual create's stay check reads
+    // the same one).
+    expect(content).toContain("hutLeaderStayBookingWhere");
+    const stayFilter = fs.readFileSync(
+      path.resolve(process.cwd(), "src", "lib", "hut-leader-stayed-nights.ts"),
+      "utf-8",
+    );
+    expect(stayFilter).toContain("OPERATIONAL_STAY_BOOKING_STATUSES");
     const { OPERATIONAL_STAY_BOOKING_STATUSES } = await import("@/lib/booking-status");
     expect(OPERATIONAL_STAY_BOOKING_STATUSES).toContain("PAID");
     expect(OPERATIONAL_STAY_BOOKING_STATUSES).toContain("COMPLETED");
@@ -299,8 +307,16 @@ describe("#22: Hut Leader eligible members includes PAID bookings", () => {
       "eligible-members",
       "route.ts"
     );
-    const content = fs.readFileSync(routePath, "utf-8");
+    // #3817: the status filter lives in the shared stay filter the route uses.
+    const content = [
+      fs.readFileSync(routePath, "utf-8"),
+      fs.readFileSync(
+        path.resolve(process.cwd(), "src", "lib", "hut-leader-stayed-nights.ts"),
+        "utf-8",
+      ),
+    ].join("\n");
     const statusMatches = content.match(/status:\s*\{\s*in:\s*\[([^\]]+)\]/g);
+    expect(statusMatches?.length ?? 0).toBeGreaterThan(0);
     for (const match of statusMatches!) {
       expect(match).not.toContain('"CANCELLED"');
       expect(match).not.toContain('"BUMPED"');

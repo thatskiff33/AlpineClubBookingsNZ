@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { hutLeaderStayGuestRow } from "@/lib/__tests__/helpers/hut-leader-stay";
 import { _testStore } from "../rate-limit";
 import {
   HUT_LEADER_PIN_SESSION_COOKIE,
@@ -36,6 +37,7 @@ const {
     },
     bookingGuest: {
       findFirst: vi.fn(),
+      findMany: vi.fn(),
       update: vi.fn(),
     },
     choreAssignment: {
@@ -132,6 +134,11 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     });
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
     mockPrisma.hutLeaderAssignment.create.mockResolvedValue({ id: "assign-1" });
+    // #3817: the member stays the nights 10-17 Jul, so the stay check passes.
+    mockPrisma.bookingGuest.findMany.mockResolvedValue([
+      hutLeaderStayGuestRow("2026-07-10", "2026-07-18"),
+    ]);
+    mockPrisma.booking.findMany.mockResolvedValue([]);
 
     const { POST } = await import("@/app/api/admin/hut-leaders/route");
     const res = await POST(
@@ -795,11 +802,13 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
       ["2026-04-14", true],
       ["2026-04-15", true],
       ["2026-04-16", true],
-      ["2026-04-17", false],
+      // #3817: the departure day, the day after the last night (16 Apr).
+      ["2026-04-17", true],
       ["2026-04-18", false],
       ["2026-04-19", false],
     ]);
-    expect(Object.keys(data.days[4]).sort()).toEqual([
+    // The first inaccessible day (18 Apr) carries no summary, only its date.
+    expect(Object.keys(data.days[5]).sort()).toEqual([
       "accessible",
       "date",
     ]);
@@ -1044,7 +1053,8 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
       pinSessionActive: true,
       dateRange: {
         minDate: "2026-04-12",
-        maxDate: "2026-04-16",
+        // #3817: through the departure day, the day after the last night.
+        maxDate: "2026-04-17",
       },
       canManageRoster: true,
       canMarkAttendance: true,

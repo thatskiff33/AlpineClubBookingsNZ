@@ -1,0 +1,318 @@
+import { HutLeaderAssignmentSource, type Prisma } from "@prisma/client";
+import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
+import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
+import { getGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
+import { isCustodianOccupancy } from "@/lib/custodian-occupancy";
+import {
+  addCalendarDays,
+  calendarDateOfDateOnlyInstant,
+  requireCalendarDate,
+} from "@/lib/club-time";
+
+/**
+ * Which lodge nights a member is STAYING, for the hut-leader writers (#3817).
+ *
+ * A hut-leader assignment claims lodge nights (`INV-DATE-002`), and the owner
+ * decided (2 Oct 2026, #3789/#3820, "Block it outright") that an officer cannot
+ * assign a night the member is not staying. "Staying" here is exactly what the
+ * eligible-members suggestion path already used, so the list an officer picks
+ * from and the rule that judges the pick cannot disagree:
+ *
+ * - a booking at THIS lodge, not soft-deleted, whose status is an operational
+ *   stay (PAID or COMPLETED — a cancelled stay is not a stay), and
+ * - a guest row for the member on it whose own consent does not leave them
+ *   operationally absent (owner decision D-12, #2307). Owning a booking is NOT
+ *   a stay: a member counts only on nights they are a guest (owner decision on
+ *   #3820, 3 Oct 2026, "Only if they're a guest"), which is also what the
+ *   nightly auto-assign has always counted;
+ * - nights come from the night model (`getGuestBedNightKeys`, `INV-DATE-020`),
+ *   so a split stay's gap nights are absences and a check-out morning is never
+ *   a night.
+ */
+
+/** A stay as the night model reads it: booking envelope plus the guest's own. */
+export type HutLeaderMemberStay = {
+  checkIn: Date;
+  checkOut: Date;
+  stayStart?: Date | null;
+  stayEnd?: Date | null;
+  nights?: Array<{ stayDate: Date }> | null;
+};
+
+/**
+ * The bookings whose nights count as a member's stay at `lodgeId` overlapping a
+ * range — THE one definition of "a booking that is a stay" for hut leaders
+ * (`INV-SSOT`). The manual create/edit stay check, the eligible-members
+ * suggestions and the nightly auto-assign's candidate query route here, so
+ * they cannot disagree about which bookings count. The presence-aware coverage
+ * reader (#3818) is meant to route here too and does not yet. A soft-deleted
+ * booking is not a stay, whatever its status.
+ */
+export function hutLeaderStayBookingWhere(input: {
+  lodgeId: string;
+  rangeStart: Date;
+  rangeEnd: Date;
+}): Prisma.BookingWhereInput {
+  return {
+    deletedAt: null,
+    lodgeId: input.lodgeId,
+    status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
+    checkIn: { lte: input.rangeEnd },
+    checkOut: { gt: input.rangeStart },
+  };
+}
+
+/** Every night key the stays cover, de-duplicated and sorted. */
+export function hutLeaderStayNightKeys(
+  stays: readonly HutLeaderMemberStay[],
+): string[] {
+  const keys = new Set<string>();
+  for (const stay of stays) {
+    for (const key of getGuestBedNightKeys(stay, stay)) keys.add(key);
+  }
+  return [...keys].sort();
+}
+
+/**
+ * The run of consecutive stayed nights containing `nightKey`, or null when
+ * `nightKey` is not stayed. One run is one assignment's worth of nights: a
+ * split stay has one run per segment.
+ */
+export function stayedNightRunContaining(
+  stayedNightKeys: readonly string[],
+  nightKey: string,
+): { first: string; last: string } | null {
+  const stayed = new Set(stayedNightKeys);
+  if (!stayed.has(nightKey)) return null;
+  let first = requireCalendarDate(nightKey);
+  for (;;) {
+    const previous = addCalendarDays(first, -1);
+    if (!stayed.has(previous)) break;
+    first = previous;
+  }
+  let last = requireCalendarDate(nightKey);
+  for (;;) {
+    const next = addCalendarDays(last, 1);
+    if (!stayed.has(next)) break;
+    last = next;
+  }
+  return { first, last };
+}
+
+type StayDb = Pick<Prisma.TransactionClient, "bookingGuest">;
+
+/**
+ * The member's stayed nights at `lodgeId` that fall inside
+ * `[rangeStart, rangeEnd]` (both nights, inclusive), sorted. Reads on the
+ * client it is given, so a caller holding the lodge capacity key reads under
+ * it.
+ */
+export async function loadHutLeaderStayedNightKeys(
+  db: StayDb,
+  input: { memberId: string; lodgeId: string; rangeStart: Date; rangeEnd: Date },
+): Promise<string[]> {
+  // Guest rows only: a booking the member owns but is not a guest on is not
+  // a stay (owner decision on #3820, 3 Oct 2026).
+  const guestRows = await db.bookingGuest.findMany({
+    where: {
+      memberId: input.memberId,
+      ...OPERATIONALLY_PRESENT_GUEST_WHERE,
+      booking: hutLeaderStayBookingWhere(input),
+    },
+    select: {
+      stayStart: true,
+      stayEnd: true,
+      nights: { select: { stayDate: true } },
+      booking: { select: { checkIn: true, checkOut: true } },
+    },
+  });
+
+  const stays: HutLeaderMemberStay[] = guestRows.map((guest) => ({
+    checkIn: guest.booking.checkIn,
+    checkOut: guest.booking.checkOut,
+    stayStart: guest.stayStart,
+    stayEnd: guest.stayEnd,
+    nights: guest.nights,
+  }));
+
+  const from = calendarDateOfDateOnlyInstant(input.rangeStart);
+  const to = calendarDateOfDateOnlyInstant(input.rangeEnd);
+  return hutLeaderStayNightKeys(stays).filter((key) => from <= key && key <= to);
+}
+
+export const HUT_LEADER_NIGHTS_NOT_STAYED = "HUT_LEADER_NIGHTS_NOT_STAYED";
+
+/**
+ * The way out the refusal names, worded for what the officer just did (#3817):
+ * a member who lives on site is marked custodian (the form's tick on a new
+ * assignment, the row's Custodian control on an existing one) and is then
+ * present without a stay. An officer who has just UNmarked them is not told to
+ * mark them again as if they had not; one releasing a bed is told to mark them
+ * before releasing it.
+ */
+const HUT_LEADER_CUSTODIAN_HINTS = {
+  default: "If they live on site, mark them Custodian (lives on site) first.",
+  custodian:
+    "They can only be hut leader for these nights as a custodian, so keep them marked Custodian (lives on site), or shorten or delete the assignment instead.",
+  bed: "If they live on site, mark them Custodian (lives on site) before releasing the bed; otherwise shorten or delete the assignment instead.",
+} as const;
+
+/**
+ * What an edit took away that had exempted the row from the stay check, when
+ * it took something away: the custodian tick or the held bed. Picks the
+ * refusal's wording ({@link HUT_LEADER_CUSTODIAN_HINTS}).
+ */
+export type HutLeaderStayExemptionRemoved = "custodian" | "bed";
+
+export type HutLeaderStayRefusal = {
+  code: typeof HUT_LEADER_NIGHTS_NOT_STAYED;
+  error: string;
+  /** The first assigned night the member is not staying. */
+  firstNightNotStayed: string;
+  /**
+   * The last night of the stayed run that begins on the start date, or null
+   * when the start night itself is not stayed. It is also the corrected end
+   * the officer is offered ("Change last night to …").
+   */
+  lastNightStayed: string | null;
+};
+
+/**
+ * Is this assignment exempt from the stay check? A custodian occupancy — one
+ * holding a bed or ticked "Custodian (lives on site)" — is present on every
+ * night it covers without a stay ({@link isCustodianOccupancy}, `INV-LIFE-062`,
+ * owner decision on #3820, 3 Oct 2026). A school teacher's row is exempt too:
+ * its nights are the school booking's and its teacher is not a guest (#2926;
+ * lane C owns who may lead those nights). Everything else — a role-only,
+ * non-custodian assignment — must be stayed.
+ */
+export function isHutLeaderStayCheckExempt(assignment: {
+  bedId: string | null | undefined;
+  isCustodian: boolean | null | undefined;
+  source: HutLeaderAssignmentSource;
+}): boolean {
+  return (
+    isCustodianOccupancy(assignment) ||
+    assignment.source === HutLeaderAssignmentSource.SCHOOL_BOOKING
+  );
+}
+
+/**
+ * Refuse an assignment that claims a night the member is not staying at the
+ * lodge (#3817, owner decision "Block it outright" — there is no override).
+ * Returns null when every night in `[startDate, endDate]` is stayed.
+ */
+export async function findHutLeaderStayRefusal(
+  db: StayDb,
+  input: {
+    memberId: string;
+    lodgeId: string;
+    startDate: Date;
+    endDate: Date;
+    /** Set by an edit that removed the row's exemption; picks the wording. */
+    exemptionRemoved?: HutLeaderStayExemptionRemoved;
+  },
+): Promise<HutLeaderStayRefusal | null> {
+  const stayed = await loadHutLeaderStayedNightKeys(db, {
+    memberId: input.memberId,
+    lodgeId: input.lodgeId,
+    rangeStart: input.startDate,
+    rangeEnd: input.endDate,
+  });
+  const stayedSet = new Set(stayed);
+  const startKey = calendarDateOfDateOnlyInstant(input.startDate);
+  const endKey = calendarDateOfDateOnlyInstant(input.endDate);
+  let firstNightNotStayed: string | null = null;
+  for (let key = startKey; key <= endKey; key = addCalendarDays(key, 1)) {
+    if (!stayedSet.has(key)) {
+      firstNightNotStayed = key;
+      break;
+    }
+  }
+  if (firstNightNotStayed === null) return null;
+
+  const run = stayedNightRunContaining(stayed, startKey);
+  const lastNightStayed = run?.last ?? null;
+  const reason = `The member is not staying at this lodge on the night of ${firstNightNotStayed}, so they cannot be hut leader for it.`;
+  const hint = HUT_LEADER_CUSTODIAN_HINTS[input.exemptionRemoved ?? "default"];
+  const error = lastNightStayed
+    ? `${reason} Their last night stayed from the start date is ${lastNightStayed}. ${hint}`
+    : `${reason} A hut leader must be staying every night they cover. ${hint}`;
+  return {
+    code: HUT_LEADER_NIGHTS_NOT_STAYED,
+    error,
+    firstNightNotStayed,
+    lastNightStayed,
+  };
+}
+
+/** The JSON body a route answers a stay refusal with (status 409). */
+export function hutLeaderStayRefusalBody(refusal: HutLeaderStayRefusal): {
+  error: string;
+  code: typeof HUT_LEADER_NIGHTS_NOT_STAYED;
+  firstNightNotStayed: string;
+  lastNightStayed: string | null;
+} {
+  return {
+    error: refusal.error,
+    code: refusal.code,
+    firstNightNotStayed: refusal.firstNightNotStayed,
+    lastNightStayed: refusal.lastNightStayed,
+  };
+}
+
+/** Thrown inside a transaction so it rolls back; carries the refusal to render. */
+export class HutLeaderNightsNotStayedError extends Error {
+  constructor(readonly refusal: HutLeaderStayRefusal) {
+    super(refusal.error);
+    this.name = "HutLeaderNightsNotStayedError";
+  }
+}
+
+/**
+ * {@link findHutLeaderStayRefusal} for a caller inside a transaction: throws
+ * {@link HutLeaderNightsNotStayedError} so nothing it has written survives.
+ */
+export async function assertHutLeaderNightsStayed(
+  db: StayDb,
+  input: { memberId: string; lodgeId: string; startDate: Date; endDate: Date },
+): Promise<void> {
+  const refusal = await findHutLeaderStayRefusal(db, input);
+  if (refusal) throw new HutLeaderNightsNotStayedError(refusal);
+}
+
+/**
+ * The advisory a ticked custodian with no bed gets when they are ALSO a guest
+ * on a booking at the lodge on some covered nights (#3817 stated limit,
+ * `INV-DATE-030`): they then take two spaces on those nights, custodian plus
+ * guest. One string for the create and the edit, so the two cannot drift.
+ */
+export const CUSTODIAN_BOOKED_AS_GUEST_WARNING =
+  "This custodian is also a guest on a booking at this lodge on some of these nights, so they take two spaces on those nights. Remove them from the booking if they sleep in their own quarters.";
+
+/**
+ * {@link CUSTODIAN_BOOKED_AS_GUEST_WARNING} for an assignment as it stands
+ * AFTER a committed create or edit, or null. Advisory and failure-tolerant: a
+ * failed read answers null, so it can never turn a committed write into an
+ * error. Call it after the transaction, never inside it.
+ */
+export async function custodianBookedAsGuestWarning(
+  db: StayDb,
+  assignment: {
+    memberId: string;
+    lodgeId: string;
+    startDate: Date;
+    endDate: Date;
+    bedId: string | null | undefined;
+    isCustodian: boolean | null | undefined;
+  },
+): Promise<string | null> {
+  if (assignment.isCustodian !== true || assignment.bedId) return null;
+  const nights = await loadHutLeaderStayedNightKeys(db, {
+    memberId: assignment.memberId,
+    lodgeId: assignment.lodgeId,
+    rangeStart: assignment.startDate,
+    rangeEnd: assignment.endDate,
+  }).catch(() => []);
+  return nights.length > 0 ? CUSTODIAN_BOOKED_AS_GUEST_WARNING : null;
+}

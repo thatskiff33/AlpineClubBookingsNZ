@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { hutLeaderStayGuestRow } from "@/lib/__tests__/helpers/hut-leader-stay";
 import { hashActionToken } from "@/lib/action-tokens";
 
 // This legacy file imports several Next route modules inside individual cases;
@@ -185,11 +186,13 @@ describe("F8: Hut Leader Role Assignment", () => {
       const result = await isHutLeader("member-1", new Date("2026-07-15"));
 
       expect(result).toBe(true);
+      // The access window (#3817): the day before the first night through the
+      // day after the last, so `startDate <= date + 1` and `endDate >= date - 1`.
       expect(mockPrisma.hutLeaderAssignment.count).toHaveBeenCalledWith({
         where: {
           memberId: "member-1",
-          startDate: { lte: new Date("2026-07-15") },
-          endDate: { gte: new Date("2026-07-15") },
+          startDate: { lte: new Date("2026-07-16") },
+          endDate: { gte: new Date("2026-07-14") },
         },
       });
     });
@@ -299,6 +302,14 @@ describe("F8: Hut Leader Role Assignment", () => {
   });
 
   describe("POST /api/admin/hut-leaders", () => {
+    // #3817: these cases are about the route's other rules, so the member is
+    // staying every night of July — the stay check passes.
+    beforeEach(() => {
+      mockPrisma.bookingGuest.findMany.mockResolvedValue([
+        hutLeaderStayGuestRow("2026-07-01", "2026-08-01"),
+      ]);
+      mockPrisma.booking.findMany.mockResolvedValue([]);
+    });
     it("returns 403 for non-admin", async () => {
       mockAuth.mockResolvedValue({
         user: { id: "m1", role: "USER", accessRoles: [{ role: "USER" }], email: "a@b.com" },
@@ -582,6 +593,14 @@ describe("F8: Hut Leader Role Assignment", () => {
   });
 
   describe("PUT /api/admin/hut-leaders/[id]", () => {
+    // #3817: these cases are about the route's other rules, so the member is
+    // staying every night of July — the stay check passes.
+    beforeEach(() => {
+      mockPrisma.bookingGuest.findMany.mockResolvedValue([
+        hutLeaderStayGuestRow("2026-07-01", "2026-08-01"),
+      ]);
+      mockPrisma.booking.findMany.mockResolvedValue([]);
+    });
     it("updates assignment dates", async () => {
       mockAuth.mockResolvedValue({
         user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },

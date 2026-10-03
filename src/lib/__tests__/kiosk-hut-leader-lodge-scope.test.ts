@@ -35,7 +35,11 @@ function matching(where: {
 const db = {
   hutLeaderAssignment: {
     findMany: vi.fn(async (args: { where: Parameters<typeof matching>[0] }) =>
-      matching(args.where).map(({ lodgeId, startDate }) => ({ lodgeId, startDate })),
+      matching(args.where).map(({ lodgeId, startDate, endDate }) => ({
+        lodgeId,
+        startDate,
+        endDate,
+      })),
     ),
     count: vi.fn(async (args: { where: Parameters<typeof matching>[0] }) =>
       matching(args.where).length,
@@ -97,6 +101,24 @@ describe("own-account hut leader lodge scope (#3029 S1)", () => {
     await expect(resolveKioskLodgeId(leader("2026-08-10"), db as never)).resolves.toBe("lodge-b");
   });
 
+  it("the window runs to the departure day, and a departure day outranks a day-before window (#3817)", async () => {
+    // A's last night is the 9th, so the 10th is A's departure day; B's first
+    // night is the 11th, so the 10th is also B's day-before. The leader is still
+    // at A until midday: A wins.
+    state.assignments = [
+      { memberId: "leader-1", lodgeId: "lodge-a", startDate: day("2026-08-05"), endDate: day("2026-08-09") },
+      { memberId: "leader-1", lodgeId: "lodge-b", startDate: day("2026-08-11"), endDate: day("2026-08-15") },
+    ];
+    await expect(resolveKioskLodgeId(leader("2026-08-10"), db as never)).resolves.toBe("lodge-a");
+    // A alone: its departure day is still inside the window...
+    state.assignments = [state.assignments[0]!];
+    await expect(resolveKioskLodgeId(leader("2026-08-10"), db as never)).resolves.toBe("lodge-a");
+    // ...and the day after it is not.
+    await expect(resolveKioskLodgeId(leader("2026-08-11"), db as never)).rejects.toBeInstanceOf(
+      KioskLodgeUnresolvedError,
+    );
+  });
+
   it("assignments at two lodges on the same day are refused as ambiguous", async () => {
     state.assignments.push({
       memberId: "leader-1",
@@ -126,6 +148,15 @@ describe("the kiosk dietary grant re-checks the leader's lodge and day (#3029 S1
     // Lodge A on a lodge-B day: the route's resolution should never produce
     // this, and the grant refuses it anyway.
     expect(await grantKioskDietaryAccess(access("lodge-a", "2026-08-12"), options)).toBeNull();
+  });
+
+  it("grants across the whole access window — day before through departure day — and not beyond (#3817)", async () => {
+    const options = { enabled: true, db: db as never };
+    // Lodge B's nights are 10-15 Aug.
+    expect(await grantKioskDietaryAccess(access("lodge-b", "2026-08-08"), options)).toBeNull();
+    expect(await grantKioskDietaryAccess(access("lodge-b", "2026-08-09"), options)).not.toBeNull();
+    expect(await grantKioskDietaryAccess(access("lodge-b", "2026-08-16"), options)).not.toBeNull();
+    expect(await grantKioskDietaryAccess(access("lodge-b", "2026-08-17"), options)).toBeNull();
   });
 
   it("a PIN session is judged by its own assignment and skips the re-read", async () => {

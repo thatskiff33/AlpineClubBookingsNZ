@@ -11,6 +11,8 @@ import {
 } from "@/lib/hut-leader-assignment-service";
 import { custodianBedHoldErrorResponse } from "@/lib/custodian-assignment-routes";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
+import { isCustodianOccupancy } from "@/lib/custodian-occupancy";
+import { custodianBookedAsGuestWarning } from "@/lib/hut-leader-stayed-nights";
 
 const updateSchema = z.object({
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -25,6 +27,7 @@ const updateSchema = z.object({
   // all — without it there would be no way to undo a hold except deleting the
   // whole assignment.
   bedId: z.string().min(1).nullable().optional(),
+  isCustodian: z.boolean().optional(), // #3817 custodian tick; absent = unchanged
   // #1668-style explicit override of the over-capacity warning.
   confirmOverCapacity: z.boolean().optional(),
   // #2698 ordering case: the officer's EXPLICIT acceptance that holding this
@@ -74,6 +77,7 @@ export async function PUT(
     endDate?: Date;
     lodgeId?: string;
     bedId?: string | null;
+    isCustodian?: boolean;
   } = {};
   if (parsed.data.startDate) {
     if (!isDateOnlyString(parsed.data.startDate)) {
@@ -101,19 +105,9 @@ export async function PUT(
     updateData.lodgeId = lodge.id;
   }
 
-  /*
-    Everything the locked decision rests on is re-derived from the row read
-    UNDER the lock, not from the pre-lock `existing` (#2887 review).
-
-    The pre-lock read stays for the cheap 404 and to supply the lock KEY. But
-    deriving the dates, the lodge and the surviving bed hold out here and only
-    re-reading the overlap set inside looked locked and was not — three
-    interleavings, each now a named case in
-    `custodian-hut-leaders-route.test.ts`: a bed hold that only exists in the
-    locked row skipping validation, two requests locking DIFFERENT keys because
-    one derived its key from a stale lodge, and two partial-field edits
-    composing into a span neither validated.
-  */
+  // Everything the locked decision rests on is re-derived from the row read
+  // UNDER the lock; the pre-lock `existing` supplies the cheap 404 and the lock
+  // KEY only (#2887 review; the three interleavings are named route tests).
   // Validate start <= end against the pre-lock row, so an obviously inverted
   // range is refused without paying for a lock. Re-checked under it.
   if ((updateData.startDate ?? existing.startDate) > (updateData.endDate ?? existing.endDate)) {
@@ -127,21 +121,22 @@ export async function PUT(
   // below detects that and refuses rather than acting under the wrong key.
   const intendedLodgeId = updateData.lodgeId ?? existing.lodgeId;
 
-  // Custodian bed hold (#2286). Three-state: absent leaves the hold alone,
-  // explicit null clears it, a string sets it. `bedIdProvided` is the only way
-  // to tell "not sent" from "sent as null", which is exactly the distinction
-  // between "don't touch the bed" and "release the bed".
-  // JSON has no `undefined`, so zod's three parsed values map one-to-one onto
-  // the three intents: undefined = key absent, null = explicit clear, string =
-  // set. No separate "was the key present" probe is needed or wanted.
+  // Custodian bed hold (#2286), three-state: zod's undefined = key absent
+  // (leave the bed), null = release it, string = set it.
+  if (parsed.data.isCustodian !== undefined) updateData.isCustodian = parsed.data.isCustodian;
   const bedIdProvided = parsed.data.bedId !== undefined;
   if (bedIdProvided) {
     updateData.bedId = parsed.data.bedId ?? null;
   }
-  // Module gate on the pre-lock view: this is a feature-availability refusal
-  // aimed at what the operator ASKED for, not a capacity decision.
   const requestedBedId = bedIdProvided ? parsed.data.bedId : existing.bedId;
-  if (requestedBedId && !(await isEffectiveModuleEnabled("bedAllocation"))) {
+  // Module gate (#3817), read only when it matters: SETTING a bed is refused
+  // here; moving nights or lodge is refused under the lock if a bed would move
+  // with it. Ticking Custodian and Release bed always work.
+  const movesNightsOrLodge = Boolean(updateData.startDate || updateData.endDate || updateData.lodgeId);
+  const bedAllocationEnabled = parsed.data.bedId || movesNightsOrLodge
+    ? await isEffectiveModuleEnabled("bedAllocation")
+    : true;
+  if (parsed.data.bedId && !bedAllocationEnabled) {
     return NextResponse.json(
       {
         error:
@@ -160,15 +155,19 @@ export async function PUT(
   // capture, settle, refund and credit-restore. `requestedBedId` is the
   // pre-lock view: a stale null costs the officer a retry and nothing more,
   // because the locked ordering check then THROWS with nothing written.
-  const amendRequested =
-    parsed.data.amendOverlappingHolds === true && Boolean(requestedBedId);
+  // #3817: a ticked custodian is an occupant too, so it may stand in for a bed.
+  const amendRequested = parsed.data.amendOverlappingHolds === true &&
+    isCustodianOccupancy({
+      bedId: requestedBedId,
+      isCustodian: parsed.data.isCustodian ?? existing.isCustodian,
+    });
 
   try {
     // Everything from here runs under the lodge capacity key, and the #2698
     // amend path additionally under the global cohort key ahead of it
     // (INV-LOCK-002). Both the locks and the reads that decide the edit live in
     // `hut-leader-assignment-service.ts`; see its module note for why.
-    const refusal = await applyHutLeaderAssignmentEditUnderLocks({
+    const { refusal, applied } = await applyHutLeaderAssignmentEditUnderLocks({
       assignmentId: id,
       intendedLodgeId,
       updateData,
@@ -176,17 +175,20 @@ export async function PUT(
       requestedBedId: parsed.data.bedId,
       confirmOverCapacity: parsed.data.confirmOverCapacity,
       amendAccepted: amendRequested,
+      bedAllocationEnabled,
       actorMemberId: session.user.id,
       auditRequest,
     });
 
     if (refusal) {
       return NextResponse.json(
-        { error: refusal.error },
+        { error: refusal.error, ...refusal.details },
         { status: refusal.status },
       );
     }
-    return NextResponse.json({ success: true });
+    // #3817 stated limit, as the create: a ticked guest takes two spaces.
+    const custodianBookedWarning = await custodianBookedAsGuestWarning(prisma, applied);
+    return NextResponse.json({ success: true, custodianBookedWarning });
   } catch (err) {
     const custodianResponse = custodianBedHoldErrorResponse(err);
     if (custodianResponse) return custodianResponse;

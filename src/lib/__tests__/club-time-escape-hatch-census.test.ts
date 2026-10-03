@@ -635,8 +635,15 @@ const CENSUS_CEILING = {
    * assignment window (`startDate <= day + 1`, `endDate >= day`) over the
    * `@db.Date` day `checkLodgeAuth` already judged, the same window
    * `getKioskAccessTier` uses. Re-measured by RUNNING this suite on this tree.
+   *
+   * 227 -> 226 (#3817): `member-dietary.ts` stops importing it. Every
+   * hut-leader access reader now asks the one window in
+   * `hut-leader-access-window.ts`, which steps its stored days with the
+   * club-time kernel (`addCalendarDays`), as does the new stay check in
+   * `hut-leader-stayed-nights.ts`; neither imports this adapter. Re-measured by
+   * RUNNING this suite on this tree.
    */
-  dateOnlyImporters: 227,
+  dateOnlyImporters: 226,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

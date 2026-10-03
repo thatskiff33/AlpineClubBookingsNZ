@@ -119,7 +119,7 @@ describe("occupancy calendar page integration", () => {
     fireEvent.click(screen.getByRole("button", { name: /pick range/i }));
 
     expect(screen.getByLabelText("Start Date")).toHaveValue("2099-07-10");
-    expect(screen.getByLabelText("End Date")).toHaveValue("2099-07-12");
+    expect(screen.getByLabelText("Last night")).toHaveValue("2099-07-12");
     await waitFor(() =>
       expect(global.fetch).toHaveBeenCalledWith(
         expect.stringContaining("/api/admin/hut-leaders/eligible-members?startDate=2099-07-10&endDate=2099-07-12&lodgeId="),

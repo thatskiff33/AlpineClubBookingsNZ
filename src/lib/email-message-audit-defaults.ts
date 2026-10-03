@@ -77,7 +77,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "hut-leader-assignment": {
     "defaultSubject": "Your {{CLUB_NAME}} hut leader assignment",
-    "defaultBody": "Hut Leader Assignment\n\nHi {{firstName}}, thanks for taking on hut leader duties for the lodge.\n\nStart date: {{startDate}}\nEnd date: {{endDate}}\nKiosk PIN: {{pin}}\n\nWhen you arrive, open the lodge kiosk and use this PIN to unlock hut leader controls for arrivals, departures, and roster management.\n\nPlease keep this PIN private and share it only with the assigned hut leader team for these dates.\n\nResponsibilities include checking the lodge list, helping guests settle in, marking arrivals and departures, and making sure the daily chore roster is set up and completed.\n\nOpen Lodge View: {{BASE_URL}}/lodge\n\nIf you have any issues accessing the kiosk, please contact a club administrator."
+    "defaultBody": "Hut Leader Assignment\n\nHi {{firstName}}, thanks for taking on hut leader duties for the lodge.\n\nStart date: {{startDate}}\nLast night: {{endDate}}\nKiosk PIN: {{pin}}\n\nWhen you arrive, open the lodge kiosk and use this PIN to unlock hut leader controls for arrivals, departures, and roster management.\n\nPlease keep this PIN private and share it only with the assigned hut leader team for these dates.\n\nResponsibilities include checking the lodge list, helping guests settle in, marking arrivals and departures, and making sure the daily chore roster is set up and completed.\n\nOpen Lodge View: {{BASE_URL}}/lodge\n\nIf you have any issues accessing the kiosk, please contact a club administrator."
   },
   "setup-intent-failed": {
     "defaultSubject": "Card Setup Failed - {{CLUB_LODGE_NAME}}",

@@ -3,7 +3,13 @@ import { createHmac, randomInt, timingSafeEqual } from "crypto";
 import { HUT_LEADER_PIN_LENGTH } from "@/lib/hut-leader-pin";
 import { cookies } from "next/headers";
 import { prisma } from "./prisma";
-import { addDaysDateOnly, formatDateOnly } from "./date-only";
+import { formatDateOnly } from "./date-only";
+import {
+  hutLeaderAccessWindowCoversDayWhere,
+  hutLeaderAccessWindowNotClosedByWhere,
+  hutLeaderAccessWindowOf,
+  isDayInHutLeaderAccessWindow,
+} from "./hut-leader-access-window";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { getAuthSecret } from "./runtime-config";
@@ -204,9 +210,11 @@ function getAssignmentRange(assignment: {
   startDate: Date;
   endDate: Date;
 }) {
+  // The day before the first night to the departure day (#3817).
+  const { firstDay, lastDay } = hutLeaderAccessWindowOf(assignment);
   return {
-    minDate: formatDateOnly(addDaysDateOnly(assignment.startDate, -1)),
-    maxDate: formatDateOnly(assignment.endDate),
+    minDate: formatDateOnly(firstDay),
+    maxDate: formatDateOnly(lastDay),
   };
 }
 
@@ -225,7 +233,8 @@ export async function hashHutLeaderPin(pin: string): Promise<string> {
  * Find the hut-leader assignment a kiosk PIN currently unlocks.
  *
  * `date` is REQUIRED (#3123) and is the day the credential window is judged
- * against (`startDate <= date + 1`, `endDate >= date`). It used to default to
+ * against: the hut-leader access window, the day before the first night to the
+ * departure day (`hut-leader-access-window.ts`, #3817). It used to default to
  * the ENVIRONMENT's day, which is a security decision taken from the wrong
  * clock: a club configured behind its container's zone either admitted a PIN
  * whose assignment had ended or locked out a hut leader whose assignment had
@@ -242,12 +251,10 @@ export async function findActiveHutLeaderAssignmentByPin(
   date: Date,
   kioskLodgeId?: string
 ) {
-  const nextDay = addDaysDateOnly(date, 1);
   const assignments = await prisma.hutLeaderAssignment.findMany({
     where: {
       hutLeaderPin: { not: null },
-      startDate: { lte: nextDay },
-      endDate: { gte: date },
+      ...hutLeaderAccessWindowCoversDayWhere(date),
       // A hut leader serves one lodge (ADR-001 resolved question 5): a PIN
       // only works on that lodge's kiosk. lodgeId is NOT NULL, so scope the
       // PIN lookup strictly to the kiosk's lodge when one is supplied.
@@ -286,9 +293,10 @@ export async function findActiveHutLeaderAssignmentByPin(
  * in the assignment email link) disambiguates which lodge the PIN belongs to —
  * hut-leader PINs are not globally unique — and confines a brute-force attempt
  * to this single assignment's PIN (the caller layers IP lockout + rate limiting
- * on top). Access is granted for a **current or upcoming** assignment
- * (endDate >= today), matching the login-gated instructions rule, so a hut
- * leader can read the instructions BEFORE their stay. Returns the matched
+ * on top). Access is granted for a **current or upcoming** assignment (its
+ * access window, which runs to the departure day, has not closed — #3817),
+ * matching the login-gated instructions rule, so a hut leader can read the
+ * instructions BEFORE their stay. Returns the matched
  * assignment (carrying lodgeId) or null; never reveals whether the id or the
  * PIN was the mismatch.
  *
@@ -308,9 +316,9 @@ export async function verifyHutLeaderPinForAssignment(
     where: {
       id: assignmentId,
       hutLeaderPin: { not: null },
-      // Current or upcoming only: an assignment whose stay has already ended
-      // no longer grants instructions access.
-      endDate: { gte: date },
+      // Current or upcoming only: an assignment whose access window has
+      // closed (after its departure day) no longer grants instructions access.
+      ...hutLeaderAccessWindowNotClosedByWhere(date),
     },
     include: {
       member: { select: { id: true, active: true } },
@@ -560,8 +568,7 @@ export async function getActiveLodgePinSessionForDate(
     return null;
   }
 
-  const rangeStart = addDaysDateOnly(assignment.startDate, -1);
-  if (date < rangeStart || date > assignment.endDate) {
+  if (!isDayInHutLeaderAccessWindow(assignment, date)) {
     return null;
   }
 
