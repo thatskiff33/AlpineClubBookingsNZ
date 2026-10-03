@@ -1594,18 +1594,22 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     scoped to the review task and wait for the deallocation, failing for an
     operator retry when it FAILED. A captured payment's share keeps the
     document rule.
-  - **The ledger posts what was credited**, none at zero; on a covered booking
+  - **The ledger posts what was returned**, none at zero; on a covered booking
     the give-back beyond the re-price is an agreed reduction no re-price
     reverses (`agreedGiveBackKey`).
   - **Unpaid** - credit short of the price beyond earlier review give-backs:
     no more given back than the booking's review re-prices removed.
-  - **Cancelled first**: netted cumulatively against the restore from figures
-    frozen at the cancellation, the tier re-run and refused, task OPEN, where
-    it does not reproduce the restore. $200 credit-paid, $50 share: $200 back
-    at 100%, $105 at 50% less $20, either order.
+  - **Cancelled first**, on a captured payment's card and minted-credit routes
+    too (#3835): netted cumulatively against what the cancellation refunded
+    and restored, from figures frozen on its CANCELLED event, the tier re-run
+    and refused, task OPEN, where it does not reproduce them. Refund, Xero and
+    ledger follow the netted figure. $200, $50 share: $200 back at 100%, $105
+    at 50% less $20, $50 at 0%, either order.
   - Home: `edit-financial-review-account-credit.ts`,
+    `edit-financial-review-cancel-netting.ts`,
     `dispatchEditReviewAccountCreditXero`; proven by
-    `edit-financial-review-races.realdb.test.ts`.
+    `edit-financial-review-races.realdb.test.ts` and
+    `edit-financial-review-captured-cancel.realdb.test.ts`.
 
 ## INV-PAY-069
 

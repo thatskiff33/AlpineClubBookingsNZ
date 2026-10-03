@@ -801,6 +801,10 @@ invoice-allocated modification credit note takes off the whole reduction
 agreed share on a covered one), the unallocated account note is raised only for
 minted credit, and on a cancelled booking nothing but that minted note is sent:
 given-back credit there is a noteless row, as the cancellation's own restore is.
+A captured payment's share on a cancelled booking is netted against the
+cancellation's refund first (#3835), and whatever its route raises follows the
+netted figure; a cancelled booking has no issued invoice for that route, so
+today it raises nothing and the invoice stays closed.
 Each note's correlation and Xero idempotency keys carry the review task
 (`reviewTaskKeyParts`), so sibling reviews of one edit raise a note each, and a
 review's allocated note waits, returned to PENDING with the reason kept in

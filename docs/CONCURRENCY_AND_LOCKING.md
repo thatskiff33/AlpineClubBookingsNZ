@@ -3187,6 +3187,14 @@ or queued after the commit; the worker calls Xero later, so no provider call
 runs under either key (`edit-financial-review-races.realdb.test.ts` forces the
 ledger-key interleaving).
 
+**#3835 adds no key.** On a captured payment's card and minted-credit routes,
+a cancelled booking's share is netted from rows written under `lock(1)` - the
+cancel's CANCELLED event, the sibling reviews' claims, their refund debts and
+minted credit - read under the completion's own `lock(1)`: before the claim on
+the card route, which plans and freezes the netted figure there, and after the
+re-price on the minted-credit route. The Stripe call stays after the commit
+(`edit-financial-review-captured-cancel.realdb.test.ts`).
+
 Registered in `advisory-lock-guard.test.ts` as `resolveManualRefundTask#1`
 (`INV-LOCK-002`). The four edit doors and the batch path post their own lines
 under the `lock(1)` they already take first; no other writer changes.
