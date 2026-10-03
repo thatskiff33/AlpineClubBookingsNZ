@@ -47,7 +47,7 @@ const store = {
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     createMany: vi.fn().mockResolvedValue({ count: 0 }),
   },
-  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
   bookingGuestNight: {
     findMany: vi.fn().mockResolvedValue([]),
     updateMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -83,7 +83,7 @@ function bookingWithStrands(
     discountCents: 15_000,
     promoAdjustmentCents: -15_000,
     finalPriceCents: 5_000,
-    promoRedemption: null,
+    promoRedemptions: [],
     nightAdjustments: [],
     guests: guests.map((guest) => ({
       memberId: null,

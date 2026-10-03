@@ -255,7 +255,7 @@ const tx = {
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     createMany: vi.fn().mockResolvedValue({ count: 0 }),
   },
-  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
   // #3219: the booking whose four money columns move with the strands.
   booking: {
     findUnique: (...a: unknown[]) => mocks.bookingFindUnique(...a),
@@ -300,7 +300,7 @@ function frozenBooking(overrides?: Record<string, unknown>) {
     finalPriceCents: 24_000,
     // No promotion on the default booking, so `recalculateBookingPromo` answers
     // zero without reading anything. The promotion cases install their own.
-    promoRedemption: null,
+    promoRedemptions: [],
     nightAdjustments: [],
     guests: [
       {

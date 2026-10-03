@@ -1145,7 +1145,7 @@ describe("path 1 — batch modification reprice (booking-modify-plan)", () => {
       booking: {
         memberId: ANN,
         lodgeId: "lodge-1",
-        promoRedemption,
+        promoRedemptions: promoRedemption ? [promoRedemption] : [],
       } as unknown as ApplyArgs[1]["booking"],
       bookingId: "booking-1",
       input: {} as unknown as ApplyArgs[1]["input"],
@@ -1223,7 +1223,7 @@ describe("path 4 — guest removal reprice (booking-guest-removal-service)", () 
         memberId: ANN,
         lodgeId: "lodge-1",
         checkIn: new Date("2026-08-01T00:00:00Z"),
-        promoRedemption: STORED_REDEMPTION,
+        promoRedemptions: STORED_REDEMPTION ? [STORED_REDEMPTION] : [],
       } as unknown as RemovalArgs["booking"],
       newTotalPriceCents: 30000,
       guestNightRates: GUEST_NIGHT_RATES,
@@ -1267,7 +1267,7 @@ describe("the price a partial promotion produces reaches every surface unchanged
         booking: {
           memberId: ANN,
           lodgeId: "lodge-1",
-          promoRedemption: STORED_REDEMPTION,
+          promoRedemptions: STORED_REDEMPTION ? [STORED_REDEMPTION] : [],
         } as unknown as Parameters<typeof applyPromoCodeChanges>[1]["booking"],
         bookingId: "booking-1",
         input: {} as unknown as Parameters<typeof applyPromoCodeChanges>[1]["input"],

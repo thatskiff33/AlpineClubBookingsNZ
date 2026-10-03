@@ -32,7 +32,7 @@ const tx = {
     findMany: vi.fn().mockResolvedValue([]),
     updateMany: vi.fn().mockResolvedValue({ count: 0 }),
   },
-  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
 }
 
 vi.mock("@/lib/prisma", () => ({

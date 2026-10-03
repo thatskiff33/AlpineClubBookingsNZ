@@ -87,6 +87,8 @@ vi.mock("@/lib/promo", () => ({
   redeemPromoCode: vi.fn(),
   replacePromoRedemptionAllocations: vi.fn(),
   deletePromoRedemptionAndAdjustCount: vi.fn(),
+  releaseBookingPromoRedemptions: vi.fn().mockResolvedValue(0),
+  releasePromoRedemptions: vi.fn().mockResolvedValue(undefined),
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 vi.mock("@/lib/stripe", () => ({
@@ -325,7 +327,7 @@ function makeBooking(options: {
     // member-guest-consent-service.test.ts.
     payment: null,
     member: { id: OWNER, email: "owner@example.com", firstName: "Ophelia", lastName: "Owner" },
-    promoRedemption: null,
+    promoRedemptions: [],
     nightAdjustments: [],
   };
 }
@@ -424,7 +426,7 @@ function makeTx(
     lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
     lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
     groupDiscountSetting: { findUnique: vi.fn().mockResolvedValue(null) },
-    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn().mockResolvedValue({}) },
+    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null), update: vi.fn().mockResolvedValue({}) },
     choreAssignment: {
       findMany: vi.fn().mockResolvedValue([]),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),

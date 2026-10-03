@@ -227,6 +227,8 @@ vi.mock("@/lib/promo", () => ({
     async (_tx: unknown, promoCode: unknown) => promoCode
   ),
   deletePromoRedemptionAndAdjustCount: vi.fn(),
+  releaseBookingPromoRedemptions: vi.fn().mockResolvedValue(0),
+  releasePromoRedemptions: vi.fn().mockResolvedValue(undefined),
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 
@@ -386,7 +388,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
       firstName: "Alice",
       lastName: "Member",
     },
-    promoRedemption: null,
+    promoRedemptions: [],
     ...overrides,
   };
   return {
@@ -536,6 +538,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     },
     promoRedemption: {
       findUnique: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      findFirst: vi.fn().mockResolvedValue(null),
       delete: vi.fn().mockResolvedValue(undefined),
       update: vi.fn().mockResolvedValue(undefined),
     },

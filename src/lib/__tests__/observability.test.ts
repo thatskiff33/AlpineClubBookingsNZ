@@ -382,10 +382,10 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
     vi.mocked(prisma.booking.findMany).mockResolvedValue([
       {
         id: "booking-1",
-        promoRedemption: {
+        promoRedemptions: [{
           id: "redemption-1",
           promoCodeId: "promo-1",
-        },
+        }],
       },
     ] as any);
     vi.mocked(prisma.promoRedemptionAllocation.count).mockResolvedValue(1);
