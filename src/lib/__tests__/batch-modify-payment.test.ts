@@ -526,6 +526,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       // replay test can put a row here instead.
       findUnique: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({ id: "task_1" }),
+      // #3827 (D-3813-6): an internet-banking reduction's officer refund task.
+      createMany: vi.fn().mockResolvedValue({ count: 1 }),
       // #3032: the modified email asks whether the club is still working
       // out an amount on this booking (`bookingHasOpenFinancialReview`).
       // Empty by default - no review is open - so every pre-#3032
@@ -3542,6 +3544,20 @@ describe("PUT /api/bookings/[id]/modify", () => {
     expect(data.stripeRefundId).toBeNull();
     expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
     expect(mockEnqueueBookingModificationRefundRecovery).not.toHaveBeenCalled();
+    // #3827 (D-3813-6, `INV-PAY-113`): nothing refunds itself, so the
+    // treasurer is asked to send the $50 back - one task for this edit.
+    expect(tx.manualRefundTask.createMany).toHaveBeenCalledTimes(1);
+    expect(tx.manualRefundTask.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          bookingId: "bk1",
+          amountCents: 5000,
+          kind: "CANCELLED_BOOKING_HAND_BACK",
+          occurrenceKey: "edit-refund-hand-back:mod_1",
+        }),
+      ],
+      skipDuplicates: true,
+    });
 
     await Promise.resolve();
     expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(

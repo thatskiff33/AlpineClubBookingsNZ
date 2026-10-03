@@ -130,6 +130,7 @@ function tx(loaded: ReturnType<typeof booking>) {
     },
     bookingModification: { create: vi.fn(async () => ({ id: "mod-1" })) },
     payment: { update: vi.fn() },
+    manualRefundTask: { createMany: vi.fn(async () => ({ count: 1 })) },
   };
 }
 
@@ -369,5 +370,127 @@ describe("a credit return is worded as account credit in Xero", () => {
       expect.objectContaining({ refundAmountCents: 0, accountCreditAmountCents: 6000 }),
       CLUB_FORMAT_TEST,
     );
+  });
+});
+
+describe("an internet-banking reduction asks the treasurer to send it back (D-3813-6, INV-PAY-113)", () => {
+  it("raises exactly one officer refund task for the modification, and the email promises a bank transfer", async () => {
+    const loaded = booking({
+      payment: { ...booking().payment, source: "INTERNET_BANKING", xeroInvoiceId: "inv-1" },
+    });
+    const client = tx(loaded);
+    const reprice = await repriceBookingAfterGuestAcceptance(client as never, {
+      bookingId: "booking-1",
+      acceptedGuestId: "g-cara",
+      actorMemberId: "cara",
+      todayAtClub: TODAY,
+      format: CLUB_FORMAT_TEST,
+    });
+    expect(client.manualRefundTask.createMany).toHaveBeenCalledTimes(1);
+    expect(client.manualRefundTask.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          bookingId: "booking-1",
+          paymentId: "pay-1",
+          amountCents: 6000,
+          kind: "CANCELLED_BOOKING_HAND_BACK",
+          occurrenceKey: "edit-refund-hand-back:mod-1",
+        }),
+      ],
+      skipDuplicates: true,
+    });
+    if (!reprice.repriced) throw new Error("expected a re-price");
+    h.sendBookingModifiedEmail.mockResolvedValue(undefined);
+    await settleGuestAcceptanceRepriceAfterCommit({ bookingId: "booking-1", actorMemberId: "cara", reprice, format: CLUB_FORMAT_TEST });
+    expect(h.sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 6000, refundByBankTransfer: true }),
+      CLUB_FORMAT_TEST,
+    );
+  });
+
+  it("a card reduction raises no task and keeps the card wording", async () => {
+    const client = tx(booking());
+    const reprice = await repriceBookingAfterGuestAcceptance(client as never, {
+      bookingId: "booking-1",
+      acceptedGuestId: "g-cara",
+      actorMemberId: "cara",
+      todayAtClub: TODAY,
+      format: CLUB_FORMAT_TEST,
+    });
+    expect(client.manualRefundTask.createMany).not.toHaveBeenCalled();
+    if (!reprice.repriced) throw new Error("expected a re-price");
+    h.sendBookingModifiedEmail.mockResolvedValue(undefined);
+    await settleGuestAcceptanceRepriceAfterCommit({ bookingId: "booking-1", actorMemberId: "cara", reprice, format: CLUB_FORMAT_TEST });
+    expect(h.sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ refundByBankTransfer: false }),
+      CLUB_FORMAT_TEST,
+    );
+  });
+});
+
+describe("a split payment gets the WHOLE reduction back: cash first, then credit (D-3813-5)", () => {
+  async function acceptSplit(payment: Record<string, unknown>, appliedCreditCents: number) {
+    h.deriveBookingAppliedCreditCents.mockResolvedValue(appliedCreditCents);
+    h.clampAppliedCreditToBookingPrice.mockResolvedValue({ appliedCreditCents: 26000, refundedExcessCents: 4000 });
+    const client = tx(booking({ payment: { ...booking().payment, ...payment } }));
+    const result = await repriceBookingAfterGuestAcceptance(client as never, {
+      bookingId: "booking-1",
+      acceptedGuestId: "g-cara",
+      actorMemberId: "cara",
+      todayAtClub: TODAY,
+      format: CLUB_FORMAT_TEST,
+    });
+    return { result, client };
+  }
+
+  it("card + credit: $20 back to the card, $40 back as credit", async () => {
+    // $20 on the card, $300 of credit: the $60 reduction is more than the card holds.
+    const { result, client } = await acceptSplit({ amountCents: 2000, creditAppliedCents: 30000 }, 30000);
+    expect(result).toMatchObject({
+      repriced: true,
+      refundAmountCents: 2000,
+      pendingRefundAmountCents: 2000,
+      accountCreditAmountCents: 4000,
+      settlementMethod: "card",
+      creditReturnedAsApplied: false,
+    });
+    expect(h.lockMemberCreditLedger).toHaveBeenCalledWith("ann", expect.anything());
+    expect(h.clampAppliedCreditToBookingPrice).toHaveBeenCalledWith(
+      expect.objectContaining({ memberId: "ann", newFinalPriceCents: 26000 }),
+      expect.anything(),
+    );
+    expect(client.payment.update).toHaveBeenCalledWith({ where: { id: "pay-1" }, data: { creditAppliedCents: 26000 } });
+    expect(client.manualRefundTask.createMany).not.toHaveBeenCalled();
+    expect(h.persistRepricedPromotions).toHaveBeenCalled();
+  });
+
+  it("internet banking + credit: the treasurer sends $20 back, $40 goes back as credit", async () => {
+    const { result, client } = await acceptSplit(
+      { source: "INTERNET_BANKING", xeroInvoiceId: "inv-1", amountCents: 2000, creditAppliedCents: 30000 },
+      30000,
+    );
+    expect(result).toMatchObject({
+      repriced: true,
+      refundAmountCents: 2000,
+      pendingRefundAmountCents: 0,
+      accountCreditAmountCents: 4000,
+    });
+    expect(client.manualRefundTask.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ amountCents: 2000, occurrenceKey: "edit-refund-hand-back:mod-1" })],
+      skipDuplicates: true,
+    });
+  });
+
+  it("a partly refunded card + credit: what is left on the card, then credit", async () => {
+    // $100 on the card, $80 already refunded by an earlier change: $20 left.
+    const { result } = await acceptSplit({ amountCents: 10000, refundedAmountCents: 8000, creditAppliedCents: 30000 }, 30000);
+    expect(result).toMatchObject({ repriced: true, refundAmountCents: 2000, accountCreditAmountCents: 4000 });
+  });
+
+  it("is refused, moving no code, when the cash left and the credit do not make up the price", async () => {
+    const { result } = await acceptSplit({ amountCents: 2000, creditAppliedCents: 20000 }, 20000);
+    expect(result).toEqual({ repriced: false, reason: "REDUCTION_NOT_FULLY_RETURNABLE" });
+    expect(h.persistRepricedPromotions).not.toHaveBeenCalled();
+    expect(h.clampAppliedCreditToBookingPrice).not.toHaveBeenCalled();
   });
 });

@@ -119,6 +119,24 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe("an edit's refund hand-back is not described as a cancellation (#3827, D-3813-6)", () => {
+  it("prints the edit-refund sentence, and not the cancelled-booking one, over an edit refund", async () => {
+    await renderQueue({
+      tasks: [{ ...HAND_BACK_TASK, editRefundHandBack: true }],
+      viewerCanViewBookings: true,
+    });
+    expect(screen.getByTestId("manual-refund-task-edit-refund-intro")).toBeInTheDocument();
+    expect(screen.queryByTestId("manual-refund-task-hand-back-intro")).not.toBeInTheDocument();
+    // Completed like any hand-back: the same paid-back control.
+    expect(screen.getByRole("button", { name: /paid back/i })).toBeInTheDocument();
+  });
+
+  it("a cancellation's hand-back keeps its own sentence alone", async () => {
+    await renderQueue({ tasks: [HAND_BACK_TASK], viewerCanViewBookings: true });
+    expect(screen.queryByTestId("manual-refund-task-edit-refund-intro")).not.toBeInTheDocument();
+  });
+});
+
 describe("the card only makes claims about rows it actually holds (#3033)", () => {
   it("prints the cash hand-back sentence only over rows it describes", async () => {
     await renderQueue({ tasks: [REVIEW_TASK], viewerCanViewBookings: true });

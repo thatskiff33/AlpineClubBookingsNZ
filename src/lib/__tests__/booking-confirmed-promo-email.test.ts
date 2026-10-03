@@ -713,6 +713,7 @@ describe("booking-modified default body (#2267)", () => {
       // #3032: required. This helper is about promo coverage, so the control
       // value keeps the review note out of every assertion here.
       financialReviewPending: false,
+      refundByBankTransfer: false,
       ...overrides,
     }, CLUB_FORMAT_TEST);
     const call = sendEmailMock.mock.calls[0][0];

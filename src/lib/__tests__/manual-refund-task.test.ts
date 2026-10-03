@@ -1656,6 +1656,52 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
   });
 
+  it("completes an EDIT refund hand-back like any hand-back but sends Xero nothing: the edit's credit note already stands (D-3813-6, INV-PAY-113)", async () => {
+    // The same paid-invoice shape as the cancellation hand-back above, on a
+    // LIVE booking an edit lowered. The edit queued the modification credit
+    // note when it saved, so a bank-transfer refund note here would correct
+    // the same money twice.
+    mocks.manualRefundTaskFindUnique.mockResolvedValue({
+      id: "task-1",
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      amountCents: 6000,
+      raisedAmountCents: 6000,
+      kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+      occurrenceKey: "edit-refund-hand-back:mod-1",
+      status: ManualRefundTaskStatus.OPEN,
+      booking: {
+        memberId: "member-1",
+        lodgeId: "lodge-1",
+        status: "PAID",
+        payment: { id: "payment-1", status: "SUCCEEDED", xeroInvoiceId: "inv-1" },
+      },
+    });
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: null,
+      actingMemberId: "admin-1",
+      confirmedAmountCents: null,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+
+    // The refund is recorded on the payment, exactly as a hand-back's is...
+    expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({
+      paymentId: "payment-1",
+      amountCents: 6000,
+      store: tx,
+    });
+    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: BookingEventType.REFUNDED, amountCents: 6000 })
+    );
+    // ...and no second Xero document is raised for it.
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
+  });
+
   it("MUTATION: a DISMISSED hand-back raises no refund note even with an issued invoice", async () => {
     mocks.manualRefundTaskFindUnique.mockResolvedValue({
       id: "task-1",
