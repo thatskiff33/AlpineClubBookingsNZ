@@ -1,0 +1,43 @@
+{
+  "initialMoneyInputs": 0,
+  "before": {
+    "viewportWidth": 627,
+    "documentScrollWidth": 627,
+    "button": {
+      "left": 361.671875,
+      "right": 408.59375,
+      "top": 418,
+      "bottom": 450,
+      "width": 46.921875
+    },
+    "actionGroup": {
+      "left": 270.515625,
+      "right": 627.34375,
+      "top": 418,
+      "bottom": 450,
+      "width": 356.828125
+    },
+    "header": {
+      "left": 66,
+      "right": 324,
+      "top": 392,
+      "bottom": 476,
+      "width": 258
+    },
+    "headerClass": "flex items-center justify-between",
+    "actionGroupClass": "flex space-x-2"
+  },
+  "afterRemovingOnlySavedSeasonActions": {
+    "viewportWidth": 390,
+    "documentScrollWidth": 390,
+    "moneyInputs": 0
+  },
+  "keyboardFocus": {
+    "tag": "BUTTON",
+    "label": "Increase Requested amount (optional) by one dollar",
+    "outlineStyle": "auto",
+    "outlineWidth": "1px",
+    "outlineColor": "rgb(16, 16, 16)",
+    "boxShadow": "none"
+  }
+}

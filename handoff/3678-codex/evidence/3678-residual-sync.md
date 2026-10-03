@@ -1,0 +1,2 @@
+LANE-SYNC: security blocker #3755 shipped in PR #3756 with owner approval and green CI, and is already in the epic through #3768. DOMPurify's residual advisory shipped in #3761. Residual follow-up #3783 now owns the remaining moderate fast-uri patch within the approved dependency plan; it targets main independently and will be finished before the wave's final completion audit. Current #3413 and #3416 sync resolutions were reviewed without blocking findings; their browser runs are still live.
+

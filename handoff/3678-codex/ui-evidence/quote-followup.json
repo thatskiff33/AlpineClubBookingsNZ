@@ -1,0 +1,1939 @@
+{
+  "sha": "7ce3bb1eaa65e45e32185cefc7af93400ab2d763",
+  "base": "htt[historical local path omitted]",
+  "cases": [
+    {
+      "name": "desktop:actual quote total and dense rates",
+      "status": "pass",
+      "detail": {
+        "total": {
+          "screenshot": "desktop-quotes-totals.png",
+          "horizontalOverflow": {
+            "client": 1280,
+            "scroll": 1280
+          },
+          "metrics": [
+            {
+              "id": "price-ui-school-CATERED",
+              "value": "12.34",
+              "field": {
+                "left": 299,
+                "top": 410,
+                "right": 463,
+                "bottom": 462,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "Total (NZD)",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 299,
+                    "top": 410,
+                    "right": 427,
+                    "bottom": 446,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase Total (NZD) by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 431,
+                    "top": 410,
+                    "right": 463,
+                    "bottom": 434,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease Total (NZD) by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 431,
+                    "top": 438,
+                    "right": 463,
+                    "bottom": 462,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "price-ui-school-NON_CATERED",
+              "value": "800.55",
+              "field": {
+                "left": 299,
+                "top": 548,
+                "right": 463,
+                "bottom": 600,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "Total (NZD)",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 299,
+                    "top": 548,
+                    "right": 427,
+                    "bottom": 584,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase Total (NZD) by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 431,
+                    "top": 548,
+                    "right": 463,
+                    "bottom": 572,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease Total (NZD) by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 431,
+                    "top": 576,
+                    "right": 463,
+                    "bottom": 600,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            }
+          ],
+          "suspicious": []
+        },
+        "dense": {
+          "screenshot": "desktop-quotes-rates.png",
+          "horizontalOverflow": {
+            "client": 1280,
+            "scroll": 1280
+          },
+          "metrics": [
+            {
+              "id": "ui-school:CATERED:ADULT:member",
+              "value": "12.34",
+              "field": {
+                "left": 299,
+                "top": 143,
+                "right": 463,
+                "bottom": 195,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "ADULT member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 299,
+                    "top": 143,
+                    "right": 427,
+                    "bottom": 179,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase ADULT member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 431,
+                    "top": 143,
+                    "right": 463,
+                    "bottom": 167,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease ADULT member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 431,
+                    "top": 171,
+                    "right": 463,
+                    "bottom": 195,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:CATERED:INFANT:non-member",
+              "value": "35.05",
+              "field": {
+                "left": 475,
+                "top": 143,
+                "right": 639,
+                "bottom": 195,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "INFANT non-member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 475,
+                    "top": 143,
+                    "right": 603,
+                    "bottom": 179,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase INFANT non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 607,
+                    "top": 143,
+                    "right": 639,
+                    "bottom": 167,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease INFANT non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 607,
+                    "top": 171,
+                    "right": 639,
+                    "bottom": 195,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:CATERED:CHILD:non-member",
+              "value": "36.05",
+              "field": {
+                "left": 651,
+                "top": 143,
+                "right": 815,
+                "bottom": 195,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "CHILD non-member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 651,
+                    "top": 143,
+                    "right": 779,
+                    "bottom": 179,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase CHILD non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 783,
+                    "top": 143,
+                    "right": 815,
+                    "bottom": 167,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease CHILD non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 783,
+                    "top": 171,
+                    "right": 815,
+                    "bottom": 195,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:CATERED:YOUTH:non-member",
+              "value": "37.05",
+              "field": {
+                "left": 827,
+                "top": 143,
+                "right": 991,
+                "bottom": 195,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "YOUTH non-member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 827,
+                    "top": 143,
+                    "right": 955,
+                    "bottom": 179,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase YOUTH non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 959,
+                    "top": 143,
+                    "right": 991,
+                    "bottom": 167,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease YOUTH non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 959,
+                    "top": 171,
+                    "right": 991,
+                    "bottom": 195,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:CATERED:ADULT:non-member",
+              "value": "38.05",
+              "field": {
+                "left": 1003,
+                "top": 143,
+                "right": 1167,
+                "bottom": 195,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "ADULT non-member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 1003,
+                    "top": 143,
+                    "right": 1131,
+                    "bottom": 179,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase ADULT non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 1135,
+                    "top": 143,
+                    "right": 1167,
+                    "bottom": 167,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease ADULT non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 1135,
+                    "top": 171,
+                    "right": 1167,
+                    "bottom": 195,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:NON_CATERED:ADULT:member",
+              "value": "23.05",
+              "field": {
+                "left": 299,
+                "top": 281,
+                "right": 463,
+                "bottom": 333,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "ADULT member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 299,
+                    "top": 281,
+                    "right": 427,
+                    "bottom": 317,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase ADULT member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 431,
+                    "top": 281,
+                    "right": 463,
+                    "bottom": 305,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease ADULT member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 431,
+                    "top": 309,
+                    "right": 463,
+                    "bottom": 333,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:NON_CATERED:INFANT:non-member",
+              "value": "35.05",
+              "field": {
+                "left": 475,
+                "top": 281,
+                "right": 639,
+                "bottom": 333,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "INFANT non-member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 475,
+                    "top": 281,
+                    "right": 603,
+                    "bottom": 317,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase INFANT non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 607,
+                    "top": 281,
+                    "right": 639,
+                    "bottom": 305,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease INFANT non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 607,
+                    "top": 309,
+                    "right": 639,
+                    "bottom": 333,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:NON_CATERED:CHILD:non-member",
+              "value": "36.05",
+              "field": {
+                "left": 651,
+                "top": 281,
+                "right": 815,
+                "bottom": 333,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "CHILD non-member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 651,
+                    "top": 281,
+                    "right": 779,
+                    "bottom": 317,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase CHILD non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 783,
+                    "top": 281,
+                    "right": 815,
+                    "bottom": 305,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease CHILD non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 783,
+                    "top": 309,
+                    "right": 815,
+                    "bottom": 333,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:NON_CATERED:YOUTH:non-member",
+              "value": "37.05",
+              "field": {
+                "left": 827,
+                "top": 281,
+                "right": 991,
+                "bottom": 333,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "YOUTH non-member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 827,
+                    "top": 281,
+                    "right": 955,
+                    "bottom": 317,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase YOUTH non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 959,
+                    "top": 281,
+                    "right": 991,
+                    "bottom": 305,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease YOUTH non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 959,
+                    "top": 309,
+                    "right": 991,
+                    "bottom": 333,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:NON_CATERED:ADULT:non-member",
+              "value": "38.05",
+              "field": {
+                "left": 1003,
+                "top": 281,
+                "right": 1167,
+                "bottom": 333,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "ADULT non-member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 1003,
+                    "top": 281,
+                    "right": 1131,
+                    "bottom": 317,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase ADULT non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 1135,
+                    "top": 281,
+                    "right": 1167,
+                    "bottom": 305,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease ADULT non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 1135,
+                    "top": 309,
+                    "right": 1167,
+                    "bottom": 333,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            }
+          ],
+          "suspicious": []
+        }
+      }
+    },
+    {
+      "name": "desktop:actual consumer read-only gates",
+      "status": "pass",
+      "detail": {
+        "screenshot": "desktop-quotes-readonly.png",
+        "horizontalOverflow": {
+          "client": 1280,
+          "scroll": 1280
+        },
+        "metrics": [
+          {
+            "id": "price-ui-school-CATERED",
+            "value": "",
+            "field": {
+              "left": 299,
+              "top": 1064,
+              "right": 463,
+              "bottom": 1116,
+              "width": 164,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Total (NZD)",
+                "disabled": true,
+                "readOnly": false,
+                "rect": {
+                  "left": 299,
+                  "top": 1064,
+                  "right": 427,
+                  "bottom": 1100,
+                  "width": 128,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Total (NZD) by one dollar",
+                "disabled": true,
+                "rect": {
+                  "left": 431,
+                  "top": 1064,
+                  "right": 463,
+                  "bottom": 1088,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Total (NZD) by one dollar",
+                "disabled": true,
+                "rect": {
+                  "left": 431,
+                  "top": 1092,
+                  "right": 463,
+                  "bottom": 1116,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "price-ui-school-NON_CATERED",
+            "value": "",
+            "field": {
+              "left": 299,
+              "top": 1202,
+              "right": 463,
+              "bottom": 1254,
+              "width": 164,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Total (NZD)",
+                "disabled": true,
+                "readOnly": false,
+                "rect": {
+                  "left": 299,
+                  "top": 1202,
+                  "right": 427,
+                  "bottom": 1238,
+                  "width": 128,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Total (NZD) by one dollar",
+                "disabled": true,
+                "rect": {
+                  "left": 431,
+                  "top": 1202,
+                  "right": 463,
+                  "bottom": 1226,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Total (NZD) by one dollar",
+                "disabled": true,
+                "rect": {
+                  "left": 431,
+                  "top": 1230,
+                  "right": 463,
+                  "bottom": 1254,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          }
+        ],
+        "suspicious": []
+      }
+    },
+    {
+      "name": "mobile:actual quote total and dense rates",
+      "status": "pass",
+      "detail": {
+        "total": {
+          "screenshot": "mobile-quotes-totals.png",
+          "horizontalOverflow": {
+            "client": 390,
+            "scroll": 390
+          },
+          "metrics": [
+            {
+              "id": "price-ui-school-CATERED",
+              "value": "12.34",
+              "field": {
+                "left": 67,
+                "top": 792,
+                "right": 231,
+                "bottom": 844,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "Total (NZD)",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 67,
+                    "top": 792,
+                    "right": 195,
+                    "bottom": 828,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase Total (NZD) by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 792,
+                    "right": 231,
+                    "bottom": 816,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease Total (NZD) by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 820,
+                    "right": 231,
+                    "bottom": 844,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "price-ui-school-NON_CATERED",
+              "value": "800.55",
+              "field": {
+                "left": 67,
+                "top": 930,
+                "right": 231,
+                "bottom": 982,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "Total (NZD)",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 67,
+                    "top": 930,
+                    "right": 195,
+                    "bottom": 966,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase Total (NZD) by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 930,
+                    "right": 231,
+                    "bottom": 954,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease Total (NZD) by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 958,
+                    "right": 231,
+                    "bottom": 982,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            }
+          ],
+          "suspicious": []
+        },
+        "dense": {
+          "screenshot": "mobile-quotes-rates.png",
+          "horizontalOverflow": {
+            "client": 390,
+            "scroll": 390
+          },
+          "metrics": [
+            {
+              "id": "ui-school:CATERED:ADULT:member",
+              "value": "12.34",
+              "field": {
+                "left": 67,
+                "top": 792,
+                "right": 231,
+                "bottom": 844,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "ADULT member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 67,
+                    "top": 792,
+                    "right": 195,
+                    "bottom": 828,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase ADULT member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 792,
+                    "right": 231,
+                    "bottom": 816,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease ADULT member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 820,
+                    "right": 231,
+                    "bottom": 844,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:CATERED:INFANT:non-member",
+              "value": "35.05",
+              "field": {
+                "left": 67,
+                "top": 880,
+                "right": 231,
+                "bottom": 932,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "INFANT non-member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 67,
+                    "top": 880,
+                    "right": 195,
+                    "bottom": 916,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase INFANT non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 880,
+                    "right": 231,
+                    "bottom": 904,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease INFANT non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 908,
+                    "right": 231,
+                    "bottom": 932,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:CATERED:CHILD:non-member",
+              "value": "36.05",
+              "field": {
+                "left": 67,
+                "top": 968,
+                "right": 231,
+                "bottom": 1020,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "CHILD non-member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 67,
+                    "top": 968,
+                    "right": 195,
+                    "bottom": 1004,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase CHILD non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 968,
+                    "right": 231,
+                    "bottom": 992,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease CHILD non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 996,
+                    "right": 231,
+                    "bottom": 1020,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:CATERED:YOUTH:non-member",
+              "value": "37.05",
+              "field": {
+                "left": 67,
+                "top": 1056,
+                "right": 231,
+                "bottom": 1108,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "YOUTH non-member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 67,
+                    "top": 1056,
+                    "right": 195,
+                    "bottom": 1092,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase YOUTH non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 1056,
+                    "right": 231,
+                    "bottom": 1080,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease YOUTH non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 1084,
+                    "right": 231,
+                    "bottom": 1108,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:CATERED:ADULT:non-member",
+              "value": "38.05",
+              "field": {
+                "left": 67,
+                "top": 1144,
+                "right": 231,
+                "bottom": 1196,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "ADULT non-member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 67,
+                    "top": 1144,
+                    "right": 195,
+                    "bottom": 1180,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase ADULT non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 1144,
+                    "right": 231,
+                    "bottom": 1168,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease ADULT non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 1172,
+                    "right": 231,
+                    "bottom": 1196,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:NON_CATERED:ADULT:member",
+              "value": "23.05",
+              "field": {
+                "left": 67,
+                "top": 1282,
+                "right": 231,
+                "bottom": 1334,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "ADULT member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 67,
+                    "top": 1282,
+                    "right": 195,
+                    "bottom": 1318,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase ADULT member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 1282,
+                    "right": 231,
+                    "bottom": 1306,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease ADULT member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 1310,
+                    "right": 231,
+                    "bottom": 1334,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:NON_CATERED:INFANT:non-member",
+              "value": "35.05",
+              "field": {
+                "left": 67,
+                "top": 1370,
+                "right": 231,
+                "bottom": 1422,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "INFANT non-member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 67,
+                    "top": 1370,
+                    "right": 195,
+                    "bottom": 1406,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase INFANT non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 1370,
+                    "right": 231,
+                    "bottom": 1394,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease INFANT non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 1398,
+                    "right": 231,
+                    "bottom": 1422,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:NON_CATERED:CHILD:non-member",
+              "value": "36.05",
+              "field": {
+                "left": 67,
+                "top": 1458,
+                "right": 231,
+                "bottom": 1510,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "CHILD non-member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 67,
+                    "top": 1458,
+                    "right": 195,
+                    "bottom": 1494,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase CHILD non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 1458,
+                    "right": 231,
+                    "bottom": 1482,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease CHILD non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 1486,
+                    "right": 231,
+                    "bottom": 1510,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:NON_CATERED:YOUTH:non-member",
+              "value": "37.05",
+              "field": {
+                "left": 67,
+                "top": 1546,
+                "right": 231,
+                "bottom": 1598,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "YOUTH non-member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 67,
+                    "top": 1546,
+                    "right": 195,
+                    "bottom": 1582,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase YOUTH non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 1546,
+                    "right": 231,
+                    "bottom": 1570,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease YOUTH non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 1574,
+                    "right": 231,
+                    "bottom": 1598,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            },
+            {
+              "id": "ui-school:NON_CATERED:ADULT:non-member",
+              "value": "38.05",
+              "field": {
+                "left": 67,
+                "top": 1634,
+                "right": 231,
+                "bottom": 1686,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "ADULT non-member",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 67,
+                    "top": 1634,
+                    "right": 195,
+                    "bottom": 1670,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase ADULT non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 1634,
+                    "right": 231,
+                    "bottom": 1658,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease ADULT non-member by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 199,
+                    "top": 1662,
+                    "right": 231,
+                    "bottom": 1686,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            }
+          ],
+          "suspicious": []
+        }
+      }
+    },
+    {
+      "name": "mobile:actual consumer read-only gates",
+      "status": "pass",
+      "detail": {
+        "screenshot": "mobile-quotes-readonly.png",
+        "horizontalOverflow": {
+          "client": 390,
+          "scroll": 390
+        },
+        "metrics": [
+          {
+            "id": "price-ui-school-CATERED",
+            "value": "",
+            "field": {
+              "left": 67,
+              "top": 1764,
+              "right": 231,
+              "bottom": 1816,
+              "width": 164,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Total (NZD)",
+                "disabled": true,
+                "readOnly": false,
+                "rect": {
+                  "left": 67,
+                  "top": 1764,
+                  "right": 195,
+                  "bottom": 1800,
+                  "width": 128,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Total (NZD) by one dollar",
+                "disabled": true,
+                "rect": {
+                  "left": 199,
+                  "top": 1764,
+                  "right": 231,
+                  "bottom": 1788,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Total (NZD) by one dollar",
+                "disabled": true,
+                "rect": {
+                  "left": 199,
+                  "top": 1792,
+                  "right": 231,
+                  "bottom": 1816,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "price-ui-school-NON_CATERED",
+            "value": "",
+            "field": {
+              "left": 67,
+              "top": 1902,
+              "right": 231,
+              "bottom": 1954,
+              "width": 164,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Total (NZD)",
+                "disabled": true,
+                "readOnly": false,
+                "rect": {
+                  "left": 67,
+                  "top": 1902,
+                  "right": 195,
+                  "bottom": 1938,
+                  "width": 128,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Total (NZD) by one dollar",
+                "disabled": true,
+                "rect": {
+                  "left": 199,
+                  "top": 1902,
+                  "right": 231,
+                  "bottom": 1926,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Total (NZD) by one dollar",
+                "disabled": true,
+                "rect": {
+                  "left": 199,
+                  "top": 1930,
+                  "right": 231,
+                  "bottom": 1954,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          }
+        ],
+        "suspicious": []
+      }
+    }
+  ],
+  "failures": [],
+  "limitations": [
+    "Synthetic data and loopback fetch mocks; no app authentication, database or provider integration is asserted.",
+    "Chromium touch emulation proves geometry and touch dispatch; no physical device or OS decimal keyboard is asserted."
+  ]
+}

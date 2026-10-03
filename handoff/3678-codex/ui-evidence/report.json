@@ -1,0 +1,3068 @@
+{
+  "sha": "7ce3bb1eaa65e45e32185cefc7af93400ab2d763",
+  "base": "htt[historical local path omitted]",
+  "cases": [
+    {
+      "name": "desktop:actual hut fee form",
+      "status": "pass",
+      "detail": {
+        "screenshot": "desktop-fees-hut.png",
+        "horizontalOverflow": {
+          "client": 1280,
+          "scroll": 1280
+        },
+        "metrics": [
+          {
+            "id": "rate-full::INFANT",
+            "value": "12.34",
+            "field": {
+              "left": 66,
+              "top": 584,
+              "right": 341,
+              "bottom": 636,
+              "width": 275,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Infant (under 5)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 584,
+                  "right": 305,
+                  "bottom": 620,
+                  "width": 239,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Infant (under 5) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 309,
+                  "top": 584,
+                  "right": 341,
+                  "bottom": 608,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Infant (under 5) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 309,
+                  "top": 612,
+                  "right": 341,
+                  "bottom": 636,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-full::CHILD",
+            "value": "36.05",
+            "field": {
+              "left": 357,
+              "top": 584,
+              "right": 632,
+              "bottom": 636,
+              "width": 275,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Child (5–9)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 357,
+                  "top": 584,
+                  "right": 596,
+                  "bottom": 620,
+                  "width": 239,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Child (5–9) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 600,
+                  "top": 584,
+                  "right": 632,
+                  "bottom": 608,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Child (5–9) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 600,
+                  "top": 612,
+                  "right": 632,
+                  "bottom": 636,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-full::YOUTH",
+            "value": "37.05",
+            "field": {
+              "left": 648,
+              "top": 584,
+              "right": 923,
+              "bottom": 636,
+              "width": 275,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Youth (10–17)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 648,
+                  "top": 584,
+                  "right": 887,
+                  "bottom": 620,
+                  "width": 239,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Youth (10–17) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 891,
+                  "top": 584,
+                  "right": 923,
+                  "bottom": 608,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Youth (10–17) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 891,
+                  "top": 612,
+                  "right": 923,
+                  "bottom": 636,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-full::ADULT",
+            "value": "38.05",
+            "field": {
+              "left": 939,
+              "top": 584,
+              "right": 1214,
+              "bottom": 636,
+              "width": 275,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Adult (18+)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 939,
+                  "top": 584,
+                  "right": 1178,
+                  "bottom": 620,
+                  "width": 239,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Adult (18+) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 1182,
+                  "top": 584,
+                  "right": 1214,
+                  "bottom": 608,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Adult (18+) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 1182,
+                  "top": 612,
+                  "right": 1214,
+                  "bottom": 636,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-non-member::INFANT",
+            "value": "45.05",
+            "field": {
+              "left": 66,
+              "top": 736,
+              "right": 341,
+              "bottom": 788,
+              "width": 275,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Infant (under 5)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 736,
+                  "right": 305,
+                  "bottom": 772,
+                  "width": 239,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Infant (under 5) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 309,
+                  "top": 736,
+                  "right": 341,
+                  "bottom": 760,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Infant (under 5) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 309,
+                  "top": 764,
+                  "right": 341,
+                  "bottom": 788,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-non-member::CHILD",
+            "value": "46.05",
+            "field": {
+              "left": 357,
+              "top": 736,
+              "right": 632,
+              "bottom": 788,
+              "width": 275,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Child (5–9)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 357,
+                  "top": 736,
+                  "right": 596,
+                  "bottom": 772,
+                  "width": 239,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Child (5–9) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 600,
+                  "top": 736,
+                  "right": 632,
+                  "bottom": 760,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Child (5–9) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 600,
+                  "top": 764,
+                  "right": 632,
+                  "bottom": 788,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-non-member::YOUTH",
+            "value": "47.05",
+            "field": {
+              "left": 648,
+              "top": 736,
+              "right": 923,
+              "bottom": 788,
+              "width": 275,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Youth (10–17)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 648,
+                  "top": 736,
+                  "right": 887,
+                  "bottom": 772,
+                  "width": 239,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Youth (10–17) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 891,
+                  "top": 736,
+                  "right": 923,
+                  "bottom": 760,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Youth (10–17) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 891,
+                  "top": 764,
+                  "right": 923,
+                  "bottom": 788,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-non-member::ADULT",
+            "value": "48.05",
+            "field": {
+              "left": 939,
+              "top": 736,
+              "right": 1214,
+              "bottom": 788,
+              "width": 275,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Adult (18+)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 939,
+                  "top": 736,
+                  "right": 1178,
+                  "bottom": 772,
+                  "width": 239,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Adult (18+) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 1182,
+                  "top": 736,
+                  "right": 1214,
+                  "bottom": 760,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Adult (18+) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 1182,
+                  "top": 764,
+                  "right": 1214,
+                  "bottom": 788,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-family::INFANT",
+            "value": "55.05",
+            "field": {
+              "left": 66,
+              "top": 888,
+              "right": 341,
+              "bottom": 940,
+              "width": 275,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Infant (under 5)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 888,
+                  "right": 305,
+                  "bottom": 924,
+                  "width": 239,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Infant (under 5) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 309,
+                  "top": 888,
+                  "right": 341,
+                  "bottom": 912,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Infant (under 5) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 309,
+                  "top": 916,
+                  "right": 341,
+                  "bottom": 940,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-family::CHILD",
+            "value": "56.05",
+            "field": {
+              "left": 357,
+              "top": 888,
+              "right": 632,
+              "bottom": 940,
+              "width": 275,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Child (5–9)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 357,
+                  "top": 888,
+                  "right": 596,
+                  "bottom": 924,
+                  "width": 239,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Child (5–9) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 600,
+                  "top": 888,
+                  "right": 632,
+                  "bottom": 912,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Child (5–9) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 600,
+                  "top": 916,
+                  "right": 632,
+                  "bottom": 940,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-family::YOUTH",
+            "value": "57.05",
+            "field": {
+              "left": 648,
+              "top": 888,
+              "right": 923,
+              "bottom": 940,
+              "width": 275,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Youth (10–17)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 648,
+                  "top": 888,
+                  "right": 887,
+                  "bottom": 924,
+                  "width": 239,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Youth (10–17) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 891,
+                  "top": 888,
+                  "right": 923,
+                  "bottom": 912,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Youth (10–17) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 891,
+                  "top": 916,
+                  "right": 923,
+                  "bottom": 940,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-family::ADULT",
+            "value": "58.05",
+            "field": {
+              "left": 939,
+              "top": 888,
+              "right": 1214,
+              "bottom": 940,
+              "width": 275,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Adult (18+)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 939,
+                  "top": 888,
+                  "right": 1178,
+                  "bottom": 924,
+                  "width": 239,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Adult (18+) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 1182,
+                  "top": 888,
+                  "right": 1214,
+                  "bottom": 912,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Adult (18+) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 1182,
+                  "top": 916,
+                  "right": 1214,
+                  "bottom": 940,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "flat-whole-lodge-rate",
+            "value": "350.45",
+            "field": {
+              "left": 66,
+              "top": 1060,
+              "right": 386,
+              "bottom": 1112,
+              "width": 320,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Flat whole-lodge night rate (NZD, optional)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 1060,
+                  "right": 350,
+                  "bottom": 1096,
+                  "width": 284,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Flat whole-lodge night rate (NZD, optional) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 354,
+                  "top": 1060,
+                  "right": 386,
+                  "bottom": 1084,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Flat whole-lodge night rate (NZD, optional) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 354,
+                  "top": 1088,
+                  "right": 386,
+                  "bottom": 1112,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          }
+        ],
+        "suspicious": []
+      }
+    },
+    {
+      "name": "desktop:actual joining and annual fee grids",
+      "status": "pass",
+      "detail": {
+        "screenshot": "desktop-fees-finance.png",
+        "horizontalOverflow": {
+          "client": 1280,
+          "scroll": 1280
+        },
+        "metrics": [
+          {
+            "id": "entrance-amount",
+            "value": "12.34",
+            "field": {
+              "left": 525,
+              "top": -821,
+              "right": 755,
+              "bottom": -769,
+              "width": 230,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Amount (NZD)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 525,
+                  "top": -821,
+                  "right": 719,
+                  "bottom": -785,
+                  "width": 194,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Amount (NZD) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 723,
+                  "top": -821,
+                  "right": 755,
+                  "bottom": -797,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Amount (NZD) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 723,
+                  "top": -793,
+                  "right": 755,
+                  "bottom": -769,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "membership-amount",
+            "value": "250.50",
+            "field": {
+              "left": 847.65625,
+              "top": -165,
+              "right": 1239,
+              "bottom": -113,
+              "width": 391.34375,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Annual amount (NZD)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 847.65625,
+                  "top": -165,
+                  "right": 1203,
+                  "bottom": -129,
+                  "width": 355.34375,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Annual amount (NZD) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 1207,
+                  "top": -165,
+                  "right": 1239,
+                  "bottom": -141,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Annual amount (NZD) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 1207,
+                  "top": -137,
+                  "right": 1239,
+                  "bottom": -113,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "component-amount-0",
+            "value": "200.25",
+            "field": {
+              "left": 459.75,
+              "top": 160,
+              "right": 658.625,
+              "bottom": 212,
+              "width": 198.875,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Amount (NZD)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 459.75,
+                  "top": 160,
+                  "right": 622.625,
+                  "bottom": 196,
+                  "width": 162.875,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Amount (NZD) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 626.625,
+                  "top": 160,
+                  "right": 658.625,
+                  "bottom": 184,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Amount (NZD) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 626.625,
+                  "top": 188,
+                  "right": 658.625,
+                  "bottom": 212,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "component-amount-1",
+            "value": "50.25",
+            "field": {
+              "left": 459.75,
+              "top": 264,
+              "right": 658.625,
+              "bottom": 316,
+              "width": 198.875,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Amount (NZD)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 459.75,
+                  "top": 264,
+                  "right": 622.625,
+                  "bottom": 300,
+                  "width": 162.875,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Amount (NZD) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 626.625,
+                  "top": 264,
+                  "right": 658.625,
+                  "bottom": 288,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Amount (NZD) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 626.625,
+                  "top": 292,
+                  "right": 658.625,
+                  "bottom": 316,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          }
+        ],
+        "suspicious": []
+      }
+    },
+    {
+      "name": "desktop:actual public refund appeal",
+      "status": "pass",
+      "detail": {
+        "layout": {
+          "screenshot": "desktop-refund.png",
+          "horizontalOverflow": {
+            "client": 1280,
+            "scroll": 1280
+          },
+          "metrics": [
+            {
+              "id": "amount",
+              "value": "12.34",
+              "field": {
+                "left": 312.546875,
+                "top": 288,
+                "right": 476.546875,
+                "bottom": 340,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "Requested amount (optional)",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 312.546875,
+                    "top": 288,
+                    "right": 440.546875,
+                    "bottom": 324,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase Requested amount (optional) by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 444.546875,
+                    "top": 288,
+                    "right": 476.546875,
+                    "bottom": 312,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease Requested amount (optional) by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 444.546875,
+                    "top": 316,
+                    "right": 476.546875,
+                    "bottom": 340,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            }
+          ],
+          "suspicious": []
+        },
+        "submitted": {
+          "path": "/api/bookings/ui-booking/refund-request",
+          "method": "POST",
+          "body": {
+            "reason": "Synthetic requested refund reason.",
+            "requestedAmountCents": 4567
+          }
+        }
+      }
+    },
+    {
+      "name": "desktop:supplementary signed/read-only/form boundaries",
+      "status": "pass",
+      "detail": {
+        "screenshot": "desktop-boundary.png",
+        "horizontalOverflow": {
+          "client": 1280,
+          "scroll": 1280
+        },
+        "metrics": [
+          {
+            "id": "money-input-_r_0_",
+            "value": "12.34",
+            "field": {
+              "left": 16,
+              "top": 60,
+              "right": 1264,
+              "bottom": 136,
+              "width": 1248,
+              "height": 76
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Form amount",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 16,
+                  "top": 84,
+                  "right": 144,
+                  "bottom": 120,
+                  "width": 128,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Form amount by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 148,
+                  "top": 84,
+                  "right": 180,
+                  "bottom": 108,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Form amount by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 148,
+                  "top": 112,
+                  "right": 180,
+                  "bottom": 136,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "money-input-_r_1_",
+            "value": "-0.50",
+            "field": {
+              "left": 16,
+              "top": 152,
+              "right": 1264,
+              "bottom": 228,
+              "width": 1248,
+              "height": 76
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Signed adjustment",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 16,
+                  "top": 176,
+                  "right": 144,
+                  "bottom": 212,
+                  "width": 128,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Signed adjustment by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 148,
+                  "top": 176,
+                  "right": 180,
+                  "bottom": 200,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Signed adjustment by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 148,
+                  "top": 204,
+                  "right": 180,
+                  "bottom": 228,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "money-input-_r_2_",
+            "value": "12.34",
+            "field": {
+              "left": 16,
+              "top": 244,
+              "right": 1264,
+              "bottom": 320,
+              "width": 1248,
+              "height": 76
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Disabled amount",
+                "disabled": true,
+                "readOnly": false,
+                "rect": {
+                  "left": 16,
+                  "top": 268,
+                  "right": 144,
+                  "bottom": 304,
+                  "width": 128,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Disabled amount by one dollar",
+                "disabled": true,
+                "rect": {
+                  "left": 148,
+                  "top": 268,
+                  "right": 180,
+                  "bottom": 292,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Disabled amount by one dollar",
+                "disabled": true,
+                "rect": {
+                  "left": 148,
+                  "top": 296,
+                  "right": 180,
+                  "bottom": 320,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "money-input-_r_3_",
+            "value": "12.34",
+            "field": {
+              "left": 16,
+              "top": 336,
+              "right": 1264,
+              "bottom": 412,
+              "width": 1248,
+              "height": 76
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Read only amount",
+                "disabled": false,
+                "readOnly": true,
+                "rect": {
+                  "left": 16,
+                  "top": 360,
+                  "right": 144,
+                  "bottom": 396,
+                  "width": 128,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Read only amount by one dollar",
+                "disabled": true,
+                "rect": {
+                  "left": 148,
+                  "top": 360,
+                  "right": 180,
+                  "bottom": 384,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Read only amount by one dollar",
+                "disabled": true,
+                "rect": {
+                  "left": 148,
+                  "top": 388,
+                  "right": 180,
+                  "bottom": 412,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          }
+        ],
+        "suspicious": []
+      }
+    },
+    {
+      "name": "mobile:actual hut fee form",
+      "status": "pass",
+      "detail": {
+        "screenshot": "mobile-fees-hut.png",
+        "horizontalOverflow": {
+          "client": 390,
+          "scroll": 627
+        },
+        "metrics": [
+          {
+            "id": "rate-full::INFANT",
+            "value": "12.34",
+            "field": {
+              "left": 66,
+              "top": 792,
+              "right": 324,
+              "bottom": 844,
+              "width": 258,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Infant (under 5)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 792,
+                  "right": 288,
+                  "bottom": 828,
+                  "width": 222,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Infant (under 5) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 792,
+                  "right": 324,
+                  "bottom": 816,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Infant (under 5) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 820,
+                  "right": 324,
+                  "bottom": 844,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-full::CHILD",
+            "value": "36.05",
+            "field": {
+              "left": 66,
+              "top": 884,
+              "right": 324,
+              "bottom": 936,
+              "width": 258,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Child (5–9)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 884,
+                  "right": 288,
+                  "bottom": 920,
+                  "width": 222,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Child (5–9) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 884,
+                  "right": 324,
+                  "bottom": 908,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Child (5–9) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 912,
+                  "right": 324,
+                  "bottom": 936,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-full::YOUTH",
+            "value": "37.05",
+            "field": {
+              "left": 66,
+              "top": 976,
+              "right": 324,
+              "bottom": 1028,
+              "width": 258,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Youth (10–17)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 976,
+                  "right": 288,
+                  "bottom": 1012,
+                  "width": 222,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Youth (10–17) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 976,
+                  "right": 324,
+                  "bottom": 1000,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Youth (10–17) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1004,
+                  "right": 324,
+                  "bottom": 1028,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-full::ADULT",
+            "value": "38.05",
+            "field": {
+              "left": 66,
+              "top": 1068,
+              "right": 324,
+              "bottom": 1120,
+              "width": 258,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Adult (18+)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 1068,
+                  "right": 288,
+                  "bottom": 1104,
+                  "width": 222,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Adult (18+) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1068,
+                  "right": 324,
+                  "bottom": 1092,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Adult (18+) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1096,
+                  "right": 324,
+                  "bottom": 1120,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-non-member::INFANT",
+            "value": "45.05",
+            "field": {
+              "left": 66,
+              "top": 1220,
+              "right": 324,
+              "bottom": 1272,
+              "width": 258,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Infant (under 5)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 1220,
+                  "right": 288,
+                  "bottom": 1256,
+                  "width": 222,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Infant (under 5) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1220,
+                  "right": 324,
+                  "bottom": 1244,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Infant (under 5) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1248,
+                  "right": 324,
+                  "bottom": 1272,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-non-member::CHILD",
+            "value": "46.05",
+            "field": {
+              "left": 66,
+              "top": 1312,
+              "right": 324,
+              "bottom": 1364,
+              "width": 258,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Child (5–9)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 1312,
+                  "right": 288,
+                  "bottom": 1348,
+                  "width": 222,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Child (5–9) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1312,
+                  "right": 324,
+                  "bottom": 1336,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Child (5–9) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1340,
+                  "right": 324,
+                  "bottom": 1364,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-non-member::YOUTH",
+            "value": "47.05",
+            "field": {
+              "left": 66,
+              "top": 1404,
+              "right": 324,
+              "bottom": 1456,
+              "width": 258,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Youth (10–17)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 1404,
+                  "right": 288,
+                  "bottom": 1440,
+                  "width": 222,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Youth (10–17) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1404,
+                  "right": 324,
+                  "bottom": 1428,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Youth (10–17) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1432,
+                  "right": 324,
+                  "bottom": 1456,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-non-member::ADULT",
+            "value": "48.05",
+            "field": {
+              "left": 66,
+              "top": 1496,
+              "right": 324,
+              "bottom": 1548,
+              "width": 258,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Adult (18+)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 1496,
+                  "right": 288,
+                  "bottom": 1532,
+                  "width": 222,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Adult (18+) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1496,
+                  "right": 324,
+                  "bottom": 1520,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Adult (18+) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1524,
+                  "right": 324,
+                  "bottom": 1548,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-family::INFANT",
+            "value": "55.05",
+            "field": {
+              "left": 66,
+              "top": 1648,
+              "right": 324,
+              "bottom": 1700,
+              "width": 258,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Infant (under 5)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 1648,
+                  "right": 288,
+                  "bottom": 1684,
+                  "width": 222,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Infant (under 5) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1648,
+                  "right": 324,
+                  "bottom": 1672,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Infant (under 5) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1676,
+                  "right": 324,
+                  "bottom": 1700,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-family::CHILD",
+            "value": "56.05",
+            "field": {
+              "left": 66,
+              "top": 1740,
+              "right": 324,
+              "bottom": 1792,
+              "width": 258,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Child (5–9)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 1740,
+                  "right": 288,
+                  "bottom": 1776,
+                  "width": 222,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Child (5–9) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1740,
+                  "right": 324,
+                  "bottom": 1764,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Child (5–9) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1768,
+                  "right": 324,
+                  "bottom": 1792,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-family::YOUTH",
+            "value": "57.05",
+            "field": {
+              "left": 66,
+              "top": 1832,
+              "right": 324,
+              "bottom": 1884,
+              "width": 258,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Youth (10–17)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 1832,
+                  "right": 288,
+                  "bottom": 1868,
+                  "width": 222,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Youth (10–17) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1832,
+                  "right": 324,
+                  "bottom": 1856,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Youth (10–17) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1860,
+                  "right": 324,
+                  "bottom": 1884,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "rate-family::ADULT",
+            "value": "58.05",
+            "field": {
+              "left": 66,
+              "top": 1924,
+              "right": 324,
+              "bottom": 1976,
+              "width": 258,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Adult (18+)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 1924,
+                  "right": 288,
+                  "bottom": 1960,
+                  "width": 222,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Adult (18+) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1924,
+                  "right": 324,
+                  "bottom": 1948,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Adult (18+) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 1952,
+                  "right": 324,
+                  "bottom": 1976,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "flat-whole-lodge-rate",
+            "value": "350.45",
+            "field": {
+              "left": 66,
+              "top": 2260,
+              "right": 324,
+              "bottom": 2312,
+              "width": 258,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Flat whole-lodge night rate (NZD, optional)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 66,
+                  "top": 2260,
+                  "right": 288,
+                  "bottom": 2296,
+                  "width": 222,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Flat whole-lodge night rate (NZD, optional) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 2260,
+                  "right": 324,
+                  "bottom": 2284,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Flat whole-lodge night rate (NZD, optional) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 292,
+                  "top": 2288,
+                  "right": 324,
+                  "bottom": 2312,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          }
+        ],
+        "suspicious": []
+      }
+    },
+    {
+      "name": "mobile:actual joining and annual fee grids",
+      "status": "pass",
+      "detail": {
+        "screenshot": "mobile-fees-finance.png",
+        "horizontalOverflow": {
+          "client": 390,
+          "scroll": 627
+        },
+        "metrics": [
+          {
+            "id": "entrance-amount",
+            "value": "12.34",
+            "field": {
+              "left": 41,
+              "top": -1315.5,
+              "right": 349,
+              "bottom": -1263.5,
+              "width": 308,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Amount (NZD)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 41,
+                  "top": -1315.5,
+                  "right": 313,
+                  "bottom": -1279.5,
+                  "width": 272,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Amount (NZD) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 317,
+                  "top": -1315.5,
+                  "right": 349,
+                  "bottom": -1291.5,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Amount (NZD) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 317,
+                  "top": -1287.5,
+                  "right": 349,
+                  "bottom": -1263.5,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "membership-amount",
+            "value": "250.50",
+            "field": {
+              "left": 41,
+              "top": -97.5,
+              "right": 349,
+              "bottom": -45.5,
+              "width": 308,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Annual amount (NZD)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 41,
+                  "top": -97.5,
+                  "right": 313,
+                  "bottom": -61.5,
+                  "width": 272,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Annual amount (NZD) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 317,
+                  "top": -97.5,
+                  "right": 349,
+                  "bottom": -73.5,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Annual amount (NZD) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 317,
+                  "top": -69.5,
+                  "right": 349,
+                  "bottom": -45.5,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "component-amount-0",
+            "value": "200.25",
+            "field": {
+              "left": 54,
+              "top": 527.5,
+              "right": 336,
+              "bottom": 579.5,
+              "width": 282,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Amount (NZD)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 54,
+                  "top": 527.5,
+                  "right": 300,
+                  "bottom": 563.5,
+                  "width": 246,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Amount (NZD) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 304,
+                  "top": 527.5,
+                  "right": 336,
+                  "bottom": 551.5,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Amount (NZD) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 304,
+                  "top": 555.5,
+                  "right": 336,
+                  "bottom": 579.5,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "component-amount-1",
+            "value": "50.25",
+            "field": {
+              "left": 54,
+              "top": 923.5,
+              "right": 336,
+              "bottom": 975.5,
+              "width": 282,
+              "height": 52
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Amount (NZD)",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 54,
+                  "top": 923.5,
+                  "right": 300,
+                  "bottom": 959.5,
+                  "width": 246,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Amount (NZD) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 304,
+                  "top": 923.5,
+                  "right": 336,
+                  "bottom": 947.5,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Amount (NZD) by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 304,
+                  "top": 951.5,
+                  "right": 336,
+                  "bottom": 975.5,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          }
+        ],
+        "suspicious": []
+      }
+    },
+    {
+      "name": "mobile:actual public refund appeal",
+      "status": "pass",
+      "detail": {
+        "layout": {
+          "screenshot": "mobile-refund.png",
+          "horizontalOverflow": {
+            "client": 390,
+            "scroll": 390
+          },
+          "metrics": [
+            {
+              "id": "amount",
+              "value": "12.34",
+              "field": {
+                "left": 56.546875,
+                "top": 288,
+                "right": 220.546875,
+                "bottom": 340,
+                "width": 164,
+                "height": 52
+              },
+              "checks": [
+                {
+                  "tag": "INPUT",
+                  "name": "Requested amount (optional)",
+                  "disabled": false,
+                  "readOnly": false,
+                  "rect": {
+                    "left": 56.546875,
+                    "top": 288,
+                    "right": 184.546875,
+                    "bottom": 324,
+                    "width": 128,
+                    "height": 36
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Increase Requested amount (optional) by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 188.546875,
+                    "top": 288,
+                    "right": 220.546875,
+                    "bottom": 312,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                },
+                {
+                  "tag": "BUTTON",
+                  "name": "Decrease Requested amount (optional) by one dollar",
+                  "disabled": false,
+                  "rect": {
+                    "left": 188.546875,
+                    "top": 316,
+                    "right": 220.546875,
+                    "bottom": 340,
+                    "width": 32,
+                    "height": 24
+                  },
+                  "exceedsField": false,
+                  "visibleCenterObstructed": false,
+                  "minTouchTarget": true,
+                  "clipping": []
+                }
+              ]
+            }
+          ],
+          "suspicious": []
+        },
+        "submitted": {
+          "path": "/api/bookings/ui-booking/refund-request",
+          "method": "POST",
+          "body": {
+            "reason": "Synthetic requested refund reason.",
+            "requestedAmountCents": 4567
+          }
+        }
+      }
+    },
+    {
+      "name": "mobile:supplementary signed/read-only/form boundaries",
+      "status": "pass",
+      "detail": {
+        "screenshot": "mobile-boundary.png",
+        "horizontalOverflow": {
+          "client": 390,
+          "scroll": 390
+        },
+        "metrics": [
+          {
+            "id": "money-input-_r_0_",
+            "value": "12.34",
+            "field": {
+              "left": 16,
+              "top": 60,
+              "right": 374,
+              "bottom": 136,
+              "width": 358,
+              "height": 76
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Form amount",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 16,
+                  "top": 84,
+                  "right": 144,
+                  "bottom": 120,
+                  "width": 128,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Form amount by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 148,
+                  "top": 84,
+                  "right": 180,
+                  "bottom": 108,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Form amount by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 148,
+                  "top": 112,
+                  "right": 180,
+                  "bottom": 136,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "money-input-_r_1_",
+            "value": "-0.50",
+            "field": {
+              "left": 16,
+              "top": 152,
+              "right": 374,
+              "bottom": 228,
+              "width": 358,
+              "height": 76
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Signed adjustment",
+                "disabled": false,
+                "readOnly": false,
+                "rect": {
+                  "left": 16,
+                  "top": 176,
+                  "right": 144,
+                  "bottom": 212,
+                  "width": 128,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Signed adjustment by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 148,
+                  "top": 176,
+                  "right": 180,
+                  "bottom": 200,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Signed adjustment by one dollar",
+                "disabled": false,
+                "rect": {
+                  "left": 148,
+                  "top": 204,
+                  "right": 180,
+                  "bottom": 228,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "money-input-_r_2_",
+            "value": "12.34",
+            "field": {
+              "left": 16,
+              "top": 244,
+              "right": 374,
+              "bottom": 320,
+              "width": 358,
+              "height": 76
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Disabled amount",
+                "disabled": true,
+                "readOnly": false,
+                "rect": {
+                  "left": 16,
+                  "top": 268,
+                  "right": 144,
+                  "bottom": 304,
+                  "width": 128,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Disabled amount by one dollar",
+                "disabled": true,
+                "rect": {
+                  "left": 148,
+                  "top": 268,
+                  "right": 180,
+                  "bottom": 292,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Disabled amount by one dollar",
+                "disabled": true,
+                "rect": {
+                  "left": 148,
+                  "top": 296,
+                  "right": 180,
+                  "bottom": 320,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          },
+          {
+            "id": "money-input-_r_3_",
+            "value": "12.34",
+            "field": {
+              "left": 16,
+              "top": 336,
+              "right": 374,
+              "bottom": 412,
+              "width": 358,
+              "height": 76
+            },
+            "checks": [
+              {
+                "tag": "INPUT",
+                "name": "Read only amount",
+                "disabled": false,
+                "readOnly": true,
+                "rect": {
+                  "left": 16,
+                  "top": 360,
+                  "right": 144,
+                  "bottom": 396,
+                  "width": 128,
+                  "height": 36
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Increase Read only amount by one dollar",
+                "disabled": true,
+                "rect": {
+                  "left": 148,
+                  "top": 360,
+                  "right": 180,
+                  "bottom": 384,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              },
+              {
+                "tag": "BUTTON",
+                "name": "Decrease Read only amount by one dollar",
+                "disabled": true,
+                "rect": {
+                  "left": 148,
+                  "top": 388,
+                  "right": 180,
+                  "bottom": 412,
+                  "width": 32,
+                  "height": 24
+                },
+                "exceedsField": false,
+                "visibleCenterObstructed": false,
+                "minTouchTarget": true,
+                "clipping": []
+              }
+            ]
+          }
+        ],
+        "suspicious": []
+      }
+    }
+  ],
+  "failures": [
+    {
+      "name": "desktop:actual quote total and dense rates",
+      "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equa[historical local path omitted] actual - expected\n\n+ [\n+   {\n+     body: {\n+       links: [\n+         {\n+           guestIndex: 0,\n+           memberId: 'ui-member'\n+         }\n+       ]\n+     },\n+     method: 'POST',\n+     path: '/api/admin/booking-requests/ui-school/link-conflicts'\n+   }\n+ ]\n- []\n",
+      "stack": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equa[historical local path omitted] actual - expected\n\n+ [\n+   {\n+     body: {\n+       links: [\n+         {\n+           guestIndex: 0,\n+           memberId: 'ui-member'\n+         }\n+       ]\n+     },\n+     method: 'POST',\n+     path: '/api/admin/booking-requests/ui-school/link-conflicts'\n+   }\n+ ]\n- []\n\n    at [historical local path omitted]    at async caseRun ([historical local path omitted])\n    at async main ([historical local path omitted])"
+    },
+    {
+      "name": "desktop:actual consumer read-only gates",
+      "error": "TimeoutError: locator.waitFor: Timeout 30000ms exceeded.\nCall lo[historical local path omitted]  - waiting for locator('[id=\"pricing-mode-ui-school\"]') to be visible\u001b[22m\n",
+      "stack": "locator.waitFor: Timeout 30000ms exceeded.\nCall lo[historical local path omitted]  - waiting for locator('[id=\"pricing-mode-ui-school\"]') to be visible\u001b[22m\n\n    at open ([historical local path omitted])\n    at async [historical local path omitted]    at async caseRun ([historical local path omitted])\n    at async main ([historical local path omitted])"
+    },
+    {
+      "name": "mobile:actual quote total and dense rates",
+      "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equa[historical local path omitted] actual - expected\n\n+ [\n+   {\n+     body: {\n+       links: [\n+         {\n+           guestIndex: 0,\n+           memberId: 'ui-member'\n+         }\n+       ]\n+     },\n+     method: 'POST',\n+     path: '/api/admin/booking-requests/ui-school/link-conflicts'\n+   }\n+ ]\n- []\n",
+      "stack": "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equa[historical local path omitted] actual - expected\n\n+ [\n+   {\n+     body: {\n+       links: [\n+         {\n+           guestIndex: 0,\n+           memberId: 'ui-member'\n+         }\n+       ]\n+     },\n+     method: 'POST',\n+     path: '/api/admin/booking-requests/ui-school/link-conflicts'\n+   }\n+ ]\n- []\n\n    at [historical local path omitted]    at async caseRun ([historical local path omitted])\n    at async main ([historical local path omitted])"
+    },
+    {
+      "name": "mobile:actual consumer read-only gates",
+      "error": "TimeoutError: locator.waitFor: Timeout 30000ms exceeded.\nCall lo[historical local path omitted]  - waiting for locator('[id=\"pricing-mode-ui-school\"]') to be visible\u001b[22m\n",
+      "stack": "locator.waitFor: Timeout 30000ms exceeded.\nCall lo[historical local path omitted]  - waiting for locator('[id=\"pricing-mode-ui-school\"]') to be visible\u001b[22m\n\n    at open ([historical local path omitted])\n    at async [historical local path omitted]    at async caseRun ([historical local path omitted])\n    at async main ([historical local path omitted])"
+    }
+  ],
+  "limitations": [
+    "Synthetic data and loopback fetch mocks; no app authentication, database or provider integration is asserted.",
+    "Chromium touch emulation proves geometry and touch dispatch; no physical device or OS decimal keyboard is asserted."
+  ]
+}

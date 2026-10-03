@@ -1,0 +1,1 @@
+Composition review found an in-scope pending-adult pricing gap: with every named teacher linked as a member, the quote panel omitted the ADULT non-member rate required for unnamed adults. The service correctly rejects that incomplete rate table. We are fixing the panel and adding a regression in this PR before merge; no pricing or provider contract is being changed.

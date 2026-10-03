@@ -1,0 +1,10 @@
+# Final review status at migration
+
+This is an orchestrator record of partial feedback, not an independent completed review.
+
+- Composition lens reviewed 7ce3bb1eaa65e45e32185cefc7af93400ab2d763 and found F1: inherited comments and normative prose contradicted strict acceptance/officer-owned conversion. No additional executable defect was found within that lens. Its report is preserved. Verification of correction c6270a6557cbd14348808ecb22c93dd0d7850aa8 did not complete.
+- Lock/deploy lens inspected the exact six initial merge resolutions against both parents, second sync's 514/512 -> 513 owner coordinate and third sync's zero textual conflicts. Partial feedback reported all first-sync resolutions preserved both parents; cancellation's difference against current main was only anonymous-reservation import/status/ACCEPTED protection/release. It also checked teacher default false/reverse owner review, pending-capacity maintenance-window activation and reverse's independent zero-count/zero-reservation refusals. No final signed report completed; these observations do not replace that gate.
+- The lock/deploy lens identified two remaining F1 registry explanations in `src/lib/__tests__/advisory-lock-guard.test.ts`: `respondToBookingRequestQuote#2` still says conversion follows the re-arm; `correctBookingRequest#1` still says MODIFY/QUERY is deliberately unfenced and absent from the registry, despite the registered third response site. Update those explanations during the next correction round and verify the affected guard.
+- The third final guard/UI source lens did not complete. Actual-component browser checks are separately complete at 7ce3 and have their own scope/limitations.
+- c627 comment removal shortened `booking-request-quotes.ts` to 2228 lines and `booking-request.ts` to 3064. Hosted verify failed because exact allowances still recorded 2278/3076. Re-measure and reconcile the declarations; no such correction was started during migration wrap-up.
+- No new review, fix round, merge or readiness transition was started after the owner instructed wrap-up.
