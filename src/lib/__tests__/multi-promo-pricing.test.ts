@@ -558,7 +558,7 @@ describe("an edit that reorders the booking's codes stores the new order", () =>
       inProgressPlan: null,
       newCheckIn: N1,
       newTotalPriceCents: 19000,
-      guestNightRates: [{ ...guest("ann", [10000, 9000]) }],
+      guestNightRates: [{ ...guest("ann", [10000, 9000]), nightDates: [N1, N2] }],
       todayAtClub: TODAY,
     });
     expect(result.promoChanged).toBe(true);

@@ -385,6 +385,7 @@ const GUEST_NIGHT_RATES = [
     isMember: true,
     perNightRates: [5000, 5000],
     nightDates: [new Date("2026-08-01T00:00:00Z"), new Date("2026-08-02T00:00:00Z")],
+    consentStatus: null,
   },
 ];
 
@@ -568,28 +569,6 @@ function promoValidationCalls(source: string): Array<{ at: number; text: string 
 
 function promoValidationCallArguments(source: string): string[] {
   return promoValidationCalls(source).map((call) => call.text);
-}
-
-/**
- * The text of a call's FIRST argument — for these call sites, the promo subject
- * the caps are read off. Brackets of every kind are tracked so the scan stops at
- * a comma that really is at argument level and not one inside the options object
- * a few arguments later.
- */
-function firstArgumentOf(call: string): string {
-  const open = call.indexOf("(");
-  let depth = 0;
-  for (let index = open; index < call.length; index += 1) {
-    const character = call[index];
-    if (character === "(" || character === "[" || character === "{") depth += 1;
-    else if (character === ")" || character === "]" || character === "}") {
-      depth -= 1;
-      if (depth === 0) return call.slice(open + 1, index).trim();
-    } else if (character === "," && depth === 1) {
-      return call.slice(open + 1, index).trim();
-    }
-  }
-  return "";
 }
 
 /**
