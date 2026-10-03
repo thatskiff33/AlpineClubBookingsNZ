@@ -1,8 +1,7 @@
-import { AgeTier, BookingRequestStatus, BookingStatus, Prisma } from "@prisma/client";
+import { AgeTier, type BookingGuestNightPriceSource, BookingRequestStatus, BookingStatus, Prisma } from "@prisma/client";
 
 import { logAudit } from "@/lib/audit";
 import { BookingRequestError, linkedGuestMemberMap, parseBookingRequestGuests } from "@/lib/booking-request";
-import { parseBookingRequestQuoteOptions } from "@/lib/booking-request-quotes";
 import { buildApprovalGuestNights, toPipelineGuestCreateData } from "@/lib/booking-request-shared";
 import { normaliseCorrectedTeachers, type CorrectedTeacher } from "@/lib/booking-request-correction-shape";
 import { pendingAdultReservationNightsMatch, releasePendingAdultNights, reservePendingAdultNights } from "@/lib/booking-request-pending-adult-reservations";
@@ -11,8 +10,10 @@ import { prisma } from "@/lib/prisma";
 import { resolveBookingGuestDietary, resolveBookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { areOldSchoolAdultsRuntimesStopped } from "@/lib/pending-school-adults-gate";
 import { storedSchoolTeacherListSchema } from "@/lib/school-teacher-schema";
-import { resolveGuestRateMembershipTypes } from "@/lib/membership-type-policy";
+import { resolveGuestRateMembershipTypes, resolveMembershipTypePoliciesForMembers } from "@/lib/membership-type-policy";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { planAcceptedSchoolHeldPrices, readAcceptedSchoolTerms } from "@/lib/school-pending-adult-price-plan";
+import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 
 /** Replace accepted anonymous slots with real names without changing the deal. */
 export async function resolveAcceptedSchoolPendingAdults(input: {
@@ -54,7 +55,7 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
     const request = await tx.bookingRequest.findUnique({ where: { id: input.requestId } });
     const hold = await tx.booking.findUnique({
       where: { id: locator.heldBookingId! },
-      include: { guests: { select: { firstName: true, lastName: true, ageTier: true, stayStart: true, stayEnd: true, priceCents: true } } },
+      include: { guests: { select: { id: true, memberId: true, firstName: true, lastName: true, ageTier: true, stayStart: true, stayEnd: true, priceCents: true, nights: { select: { id: true, stayDate: true, priceCents: true } } } } },
     });
     if (!request || request.type !== "SCHOOL" || request.status !== BookingRequestStatus.ACCEPTED ||
         request.version !== input.expectedVersion || request.heldBookingId !== locator.heldBookingId ||
@@ -76,12 +77,7 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
       guests[index]?.ageTier !== AgeTier.ADULT)) {
       throw new BookingRequestError("The named teachers and held guest list disagree. Review this request before resolving adults.", 409);
     }
-    const partyKey = (guest: { firstName: string; lastName: string; ageTier: AgeTier }) =>
-      `${guest.firstName}\u0000${guest.lastName}\u0000${guest.ageTier}`;
-    const requestParty = guests.map(partyKey).sort();
-    const heldParty = hold.guests.map(partyKey).sort();
-    if (JSON.stringify(requestParty) !== JSON.stringify(heldParty) ||
-        hold.guests.some((guest) => guest.stayStart.getTime() !== hold.checkIn.getTime() ||
+    if (hold.guests.some((guest) => guest.stayStart.getTime() !== hold.checkIn.getTime() ||
           guest.stayEnd.getTime() !== hold.checkOut.getTime())) {
       throw new BookingRequestError("The held guest list changed after the quote. Review its beds before naming adults.", 409);
     }
@@ -92,36 +88,34 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
       existingNames.add(key);
       // A matching club member can change rate and consent. That needs an
       // explicit new terms review, never an automatic accepted-quote rewrite.
-      const member = await tx.member.findFirst({
+      const members = await tx.member.findMany({
         where: {
           active: true,
-          canLogin: true,
           OR: [
             { firstName: { equals: teacher.firstName, mode: "insensitive" }, lastName: { equals: teacher.lastName, mode: "insensitive" } },
             ...(teacher.email ? [{ email: { equals: teacher.email, mode: "insensitive" as const } }] : []),
           ],
         },
-        select: { id: true },
+        select: { id: true, canLogin: true },
       });
-      if (member) throw new BookingRequestError("A named adult may be a club member. Review their rate and consent, then issue new terms if needed.", 409);
+      const policies = await resolveMembershipTypePoliciesForMembers(tx, {
+        memberIds: members.map((member) => member.id),
+        seasonYear: seasonYearOfStoredDate(hold.checkIn),
+      });
+      if (members.some((member) => member.canLogin || policies.get(member.id)?.bookingBehavior === "MEMBER_RATE")) {
+        throw new BookingRequestError("A named adult may be a club member. Review their rate and consent, then issue new terms if needed.", 409);
+      }
     }
 
-    const accepted = request.acceptedQuoteSnapshot
-      ? parseBookingRequestQuoteOptions([request.acceptedQuoteSnapshot])[0]
-      : null;
-    const pendingPrices = accepted?.guestBreakdown.filter((entry) => entry.kind === "PENDING_ADULT") ?? [];
+    const accepted = await readAcceptedSchoolTerms(request, hold, guests.length + request.pendingAdultCount);
+    const pendingPrices = accepted.guestBreakdown.filter((entry) => entry.kind === "PENDING_ADULT");
     const originalPendingCount = pendingPrices.length;
-    if (!accepted || originalPendingCount < request.pendingAdultCount ||
-        accepted.totalCents !== request.acceptedPriceCents ||
-        hold.totalPriceCents !== accepted.totalCents) {
-      throw new BookingRequestError("The accepted quote no longer proves each pending adult's price. Review the terms before naming adults.", 409);
-    }
     const resolvedSoFar = originalPendingCount - request.pendingAdultCount;
-    const heldAndPendingCents = hold.guests.reduce((sum, guest) => sum + guest.priceCents, 0) +
-      pendingPrices.slice(resolvedSoFar).reduce((sum, entry) => sum + entry.totalCents, 0);
-    if (heldAndPendingCents !== accepted.totalCents) {
-      throw new BookingRequestError("The held guest prices no longer match the accepted quote. Review the terms before naming adults.", 409);
-    }
+    const heldPrices = planAcceptedSchoolHeldPrices({
+      accepted, guests, teacherCount: teachers.length, pendingAdultCount: request.pendingAdultCount,
+      links: linkedGuestMemberMap(request.linkedGuestMembers),
+      checkIn: hold.checkIn, checkOut: hold.checkOut, heldGuests: hold.guests,
+    });
     const selectedPrices = pendingPrices.slice(resolvedSoFar, resolvedSoFar + proposed.length);
     if (selectedPrices.length !== proposed.length) {
       throw new BookingRequestError("The accepted quote's pending adult breakdown is incomplete.", 409);
@@ -171,6 +165,34 @@ export async function resolveAcceptedSchoolPendingAdults(input: {
     if (claimed.count !== 1) {
       throw new BookingRequestError("This request changed while adults were being named. Reload and try again.", 409);
     }
+    // Only provisional held cents move, to the immutable accepted snapshot.
+    // Guest/night ids and every identity/consent/dietary/bed field remain intact.
+    const nightUpdates = new Map<string, { ids: string[]; priceCents: number; priceSource: BookingGuestNightPriceSource }>();
+    for (const price of heldPrices) {
+      await tx.bookingGuest.update({ where: { id: price.guestId }, data: { priceCents: price.priceCents } });
+      for (const night of price.nights) {
+        const key = `${night.priceCents}:${night.priceSource}`;
+        const group = nightUpdates.get(key);
+        if (group) group.ids.push(night.id);
+        else nightUpdates.set(key, { ids: [night.id], priceCents: night.priceCents, priceSource: night.priceSource });
+      }
+    }
+    // One statement per distinct amount/source, independent of stay length.
+    // Every id was proved above; a lost row aborts the whole naming transaction.
+    for (const group of nightUpdates.values()) {
+      const updated = await tx.bookingGuestNight.updateMany({
+        where: { id: { in: group.ids }, priceCents: { not: null } },
+        data: { priceCents: group.priceCents, priceSource: group.priceSource },
+      });
+      if (updated.count !== group.ids.length) {
+        throw new BookingRequestError("The held guest nights changed while adults were being named. Reload and review the held beds.", 409);
+      }
+    }
+    const totalPriceCents = accepted.totalCents;
+    await tx.booking.update({ where: { id: hold.id }, data: {
+      totalPriceCents, discountCents: 0, promoAdjustmentCents: 0,
+      finalPriceCents: bookingFinalPriceCents({ totalPriceCents, promoAdjustmentCents: 0 }),
+    } });
     // Match the held-booking and approval writers' immutable rate-type snapshot.
     // The accepted cents stay fixed; these adults have no member identity.
     const ratedTeachers = await resolveGuestRateMembershipTypes(tx, {

@@ -67,6 +67,33 @@ describe("deployment image contracts", () => {
     expect(compose).toContain("target: builder");
   });
 
+  it("hands NODE_BUILD_OPTIONS to every image build in Compose, not only the app's (#3824)", () => {
+    const lines = directivesOnly(readRepoFile("docker-compose.yml")).split("\n");
+    // Every `build:` block, by indentation: the key line plus every deeper line.
+    // A census rather than a named pair, so a third builder-stage service cannot
+    // quietly miss the setting the way `migrate` did. The short form
+    // (`build: .`) is matched too: it yields an empty block and fails, because it
+    // cannot carry build args at all.
+    const buildBlocks: string[] = [];
+    lines.forEach((line, index) => {
+      const opener = /^(\s*)build:(\s|$)/.exec(line);
+      if (!opener) return;
+      const indent = opener[1].length;
+      const body: string[] = [];
+      for (const next of lines.slice(index + 1)) {
+        if (next.trim() !== "" && next.search(/\S/) <= indent) break;
+        body.push(next);
+      }
+      buildBlocks.push(body.join("\n"));
+    });
+
+    // The x-app-service anchor and the migrate service, at least.
+    expect(buildBlocks.length).toBeGreaterThanOrEqual(2);
+    for (const block of buildBlocks) {
+      expect(block).toContain("NODE_OPTIONS: ${NODE_BUILD_OPTIONS:-}");
+    }
+  });
+
   it("publishes app and migration images to GHCR after CI passes", () => {
     const workflow = readRepoFile(".github/workflows/ci.yml");
 
@@ -711,6 +738,23 @@ describe("deployment image contracts", () => {
       }
     });
 
+    // #3843: the advisory `dependency-review` job judges the same report the
+    // same way as the required job, through the one canonical wrapper. Run bare,
+    // `pnpm audit` would disagree with the required gate over a MITIGATED record.
+    it("routes the advisory dependency-review audit through the same wrapper (#3843)", () => {
+      const workflow = readRepoFile(".github/workflows/ci.yml");
+      const job = directivesOnly(
+        workflow.slice(
+          workflow.indexOf("  dependency-review:"),
+          workflow.indexOf("  dependency-audit:"),
+        ),
+      );
+      expect(job.length).toBeGreaterThan(0);
+      expect(job).toMatch(/^ +run: node scripts\/ci\/audit-dependencies\.mjs$/m);
+      expect(job).not.toContain("pnpm audit");
+      expect(job).not.toContain("continue-on-error");
+    });
+
     // The generalisation of the two job-level assertions above, applied to every
     // required check at once (#2946). A skipped job REPORTS a status and GitHub
     // counts a skipped required check as SATISFYING branch protection, so a
@@ -975,6 +1019,30 @@ describe("package manager contract (#3673)", () => {
     expect(dockerfile).not.toMatch(/pnpm@\d/);
     expect(dockerfile).toMatch(/^COPY package\.json pnpm-lock\.yaml pnpm-workspace\.yaml \.\/$/m);
     expect(dockerfile).toContain("pnpm install --frozen-lockfile");
+    // #3843: the lockfile records each `patchedDependencies` patch's hash, so
+    // the reviewed patches must reach the deps stage before its frozen install.
+    const deps = dockerfile.slice(
+      dockerfile.indexOf("FROM base AS deps"),
+      dockerfile.indexOf("FROM base AS builder"),
+    );
+    expect(deps).toMatch(/^COPY patches \.\/patches\/$/m);
+    expect(deps.indexOf("COPY patches")).toBeLessThan(deps.indexOf("pnpm install --frozen-lockfile"));
+    // Git does not track an empty directory, so once the last patch is retired
+    // `COPY patches` would fail on a missing source. The tracked placeholder
+    // keeps the directory, and the image build, whole with no patch in it.
+    expect(readdirSync(path.join(process.cwd(), "patches"))).toContain(".gitkeep");
+    // pnpm checks patch DATES before every `pnpm run`, so the builder must take
+    // patches/ from the deps layer (older than its install), AFTER `COPY . .`,
+    // or a cached deps layer fails the build with "Patches were modified".
+    const builder = dockerfile.slice(
+      dockerfile.indexOf("FROM base AS builder"),
+      dockerfile.indexOf("FROM node:24.17-alpine AS runner"),
+    );
+    expect(builder).toMatch(/^COPY --from=deps \/app\/patches \.\/patches\/$/m);
+    expect(builder.indexOf("COPY . .")).toBeLessThan(builder.indexOf("COPY --from=deps /app/patches"));
+    const firstPnpm = builder.search(/^RUN pnpm\b/m);
+    expect(firstPnpm).toBeGreaterThan(-1);
+    expect(builder.indexOf("COPY --from=deps /app/patches")).toBeLessThan(firstPnpm);
     expect(dockerfile).not.toMatch(/\bnpm ci\b|package-lock\.json/);
     // npm is used once, to install pnpm, and then removed in the SAME layer, so
     // the builder and migrate images carry pnpm and no npm/npx.

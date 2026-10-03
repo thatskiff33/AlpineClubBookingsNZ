@@ -242,12 +242,17 @@ a correction. Decline that quote or issue a fresh one first, deliberately.
 accepted school request, choose **Name one pending adult**, enter the real first
 and last name, then **Save real name**. Repeat until the count is zero. Each save
 replaces one unnamed held bed with a named guest on the same nights; the
-accepted price, quote and bed total stay fixed. The original quote continues to
-show that the name was pending when the school accepted it. **Approve & invoice
+accepted price, quote and bed total stay fixed, even when a different option or
+a revised quote was chosen. Naming aligns earlier provisional held prices with
+that accepted breakdown. Approval then preserves each person's accepted price
+and held guest identity, including children whose list position shifted as
+adults were named.
+The original quote still shows that the name was pending when the school
+accepted it. **Approve & invoice
 school** stays disabled until every adult has a real name. If a name matches a
-club member or the held party, reservations or prices no longer match the
-accepted terms, the save stops: review the rate, consent and terms with the
-school before issuing a new quote. Ordinary **Correct this request** cannot
+club member, or the held party, reservations and price breakdown cannot be
+mapped to the accepted terms, the save stops: review the rate, consent and terms
+with the school before issuing a new quote. Ordinary **Correct this request** cannot
 change an accepted quote.
 
 Declining or cancelling the request clears its pending adult count and releases

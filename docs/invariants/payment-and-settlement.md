@@ -841,25 +841,26 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 ## INV-PAY-019
 
 - Applied account credit is conserved across cancellation (#1547): EVERY
-  `cancelBooking` branch — and the Internet-Banking hold-expiry release
-  (`internet-banking-payment-cron.ts`), the one automatic cancel outside
-  `cancelBooking` — reverses the negative `BOOKING_APPLIED` ledger rows. The
-  never-captured / no-refund branches and the `PENDING` / no-payment branches
+  `cancelBooking` branch — and the automatic cancels (Internet-Banking
+  hold-expiry release, `internet-banking-payment-cron.ts`, and both capacity
+  cancels, #3792) — reverses the negative `BOOKING_APPLIED` ledger rows. The
+  never-captured / no-refund, `PENDING` / no-payment and automatic cancels
   restore at **100%**; the paid path restores the applied slice at the
   cancellation tier (#1164 / D7). Restore idempotency is STRUCTURAL, not
   lock-dependent (#1636): the restore row carries a nullable-unique
-  `restoredFromBookingId`, so at most one restore row per booking can exist
-  regardless of caller lock granularity — a duplicate insert is a
-  `skipDuplicates` no-op. This is a restore-specific key, NOT a unique over
+  `restoredFromBookingId`, so at most one restore row per booking can exist —
+  a duplicate insert is a `skipDuplicates` no-op. This is a restore-specific key, NOT a unique over
   `(sourceBookingId, type=CANCELLATION_REFUND)`, because three legitimate paths
   (`restoreCreditFromBooking`, `createCancellationCredit`'s held-as-credit
   refund, and the Xero inbound late-cash credit) all write that shape for one
-  booking. Each branch's atomic status flip remains the primary single-flight — the never-captured and `PENDING` branches are status-guarded claim-first under the booking advisory lock too — but the unique key removes the cross-path lock-granularity dependence, so moving a credit-restoring path off the shared `lock(1)` (e.g. a per-lodge release lock) can no longer double a restore.
+  booking. Each branch's atomic status flip remains the primary single-flight (the never-captured and `PENDING` branches claim first under the booking advisory lock), but the unique key removes the cross-path lock-granularity dependence, so moving a credit-restoring path off the shared `lock(1)` can no longer double a restore. The inbound
+  credit-note sync leaves a restored booking's ledger alone, alerting instead
+  (#3792).
   A CANCELLED booking may legitimately hold consumed credit with NO restore row
   only when its payment captured money (0%-tier paid cancels write no restore
   row; held-as-credit refunds keep the applied rows) or settled without cash
   (the fully-credit-covered $0 SUCCEEDED payment takes the paid path). The daily
-  credit-reconciliation cron alerts (alert-only, no auto-heal) on any CANCELLED
+  credit-reconciliation cron alerts (no auto-heal) on any CANCELLED
   booking still holding orphaned applied credit, and
   `scripts/backfill-orphaned-applied-credits.ts` heals pre-fix orphans. The
   cancelled-booking delete guard mirrors this: fully-reversed applied credit
@@ -1555,7 +1556,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   canonical Stripe refund for a card capture, made AFTER the commit; the local
   ledger allocation for an internet-banking hand-back; or
   `createBookingModificationCredit` where nothing was captured, whose
-  exactly-once key is the `BookingModification` id. **Which one is a question
+  exactly-once key is the `BookingModification` id; there a share is first
+  applied credit given back (`INV-PAY-113`). **Which one is a question
   about the booking, asked at completion** (#3194): a task carrying no payment id
   re-reads the booking's own payment through `editReviewSettlementPayment`, the
   single derivation the raise sites use too (`editReviewSettlementPaymentId`). A
@@ -1569,8 +1571,42 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   services use. The route is chosen and every refusal raised BEFORE the status
   claim, so a refused completion leaves the task OPEN; the Stripe route writes
   no allocation of its own, because `refundPaymentTransactions` writes it. The
-  completion holds no advisory lock (`docs/CONCURRENCY_AND_LOCKING.md`), so the
-  status claim is the whole single-flight guarantee.
+  completion holds no advisory lock across the Stripe call (since #3582 its
+  `lock(1)` is taken and released inside the transaction;
+  `docs/CONCURRENCY_AND_LOCKING.md`), so the status claim is the whole
+  single-flight guarantee across it.
+
+## INV-PAY-113
+
+- **A review share on a booking with nothing captured is that booking's applied
+  credit coming back, once** (#3791, owner decisions of 2 October 2026; Xero
+  per the orchestrator's reading of decision 1).
+  - **One give-back.** `giveBackAppliedCredit` (`member-credit.ts`) is the
+    clamp's mechanism and the share's: the credit-ledger lock, the
+    deallocation fence, a positive `BOOKING_APPLIED` row (a review's names the
+    booking in `sourceBookingId`) and the deallocation of an internet-banking
+    invoice's excess credit. The share lowers the mirror a cancellation tiers.
+  - **Xero agrees with the app**, for an issued invoice: invoice less its
+    reduction notes is the booking's price, Xero's due is the app's owed, and
+    the member's Xero credit, counting noteless rows minted when spent, is the
+    app's. So an invoice-ALLOCATED note takes off the whole reduction
+    (`reviewInvoiceReductionCents`); minted credit takes the unallocated note;
+    a cancelled booking is left alone except for that minted note. Notes are
+    scoped to the review task and wait for the deallocation, failing for an
+    operator retry when it FAILED. A captured payment's share keeps the
+    document rule.
+  - **The ledger posts what was credited**, none at zero; on a covered booking
+    the give-back beyond the re-price is an agreed reduction no re-price
+    reverses (`agreedGiveBackKey`).
+  - **Unpaid** - credit short of the price beyond earlier review give-backs:
+    no more given back than the booking's review re-prices removed.
+  - **Cancelled first**: netted cumulatively against the restore from figures
+    frozen at the cancellation, the tier re-run and refused, task OPEN, where
+    it does not reproduce the restore. $200 credit-paid, $50 share: $200 back
+    at 100%, $105 at 50% less $20, either order.
+  - Home: `edit-financial-review-account-credit.ts`,
+    `dispatchEditReviewAccountCreditXero`; proven by
+    `edit-financial-review-races.realdb.test.ts`.
 
 ## INV-PAY-069
 
@@ -1617,8 +1653,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   - **The total is DERIVED from the settled shares, never incremented.** Each
     task contributes exactly once, from the row its own status-fenced claim
     wrote; whichever completion commits LAST derives the true total, and
-    **neither leg may LOWER what is recorded**. On the Stripe leg that is a
-    refusal, not an atomic claim, and it is why no advisory lock is held.
+    **neither leg may LOWER what is recorded**. On the Stripe leg two runs are
+    ordered by a claim, not a lock ([INV-PAY-112]).
     A balance CARRIED IN from another edit ([INV-PAY-098]) is stored apart, so
     the sum stays monotone and the refusal stays correct.
   - **A share may not be added to a request the member has already paid, or to
@@ -1668,9 +1704,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   - **It never joins the derived share total.** [INV-PAY-062]'s refuse-to-lower
     rule is safe only because that sum never decreases, and that monotonicity is
     why this path can refuse a stale lowering with no lock across a provider
-    call ([`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md)). That
-    refusal is not an atomic claim; `syncEditFinancialReviewChargeRequest` says
-    what it does not order.
+    call ([`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md)). Two
+    concurrent raises are ordered by [INV-PAY-112]'s claim, not by it.
   - **A later share reads it off the row, never off the payment**, which mirrors
     this request by then.
   - **The accounting leg never sees it.** [INV-PAY-070] bills one invoice per
@@ -1684,6 +1719,37 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     refuses a deliberate assertion, so the call-site census refuses it.
   - **A FAILED mint carries nothing**: it retired nothing, so the earlier ask is
     still live for the replay to read.
+
+## INV-PAY-112
+
+- **ONE EDIT'S CHARGE REQUEST IS RAISED BY ONE RUN AT A TIME** (#3402). Refusing
+  to lower ([INV-PAY-062]) orders nothing between two runs that each derive more
+  than is stored: both raised the intent, and the LAST to land won even when it
+  was smaller.
+  - **Claim before the provider call.** A run must win the edit's
+    `EditReviewChargeRaiseClaim` lease and record its intended amount under that
+    exact token before ANY Stripe call. A loser calls nothing, arms the edit's
+    recovery row and reports `deferred`, which never closes a replay.
+  - **Release, then look again**, raising for a share that committed meanwhile.
+    After `already-paid` the holder looks again only if the recovery row is
+    dead, so each uncollected total is audited ONCE, and a paid request covering
+    every share not at all. A lease lost after a provider call reports
+    `deferred`, never `raised`.
+  - **The backstop runs.** Arming reopens a SUCCEEDED recovery row; the replay's
+    close and hand-back are fenced on its retry time and exact attempt. A
+    terminal FAILED row is not reopened (`INV-PAY-057`).
+  - **The raise writes amounts, never status**, onto a live, uncaptured
+    ADDITIONAL row only: a webhook landing mid-raise stands, and a declined
+    request KEEPS FAILED (still owed, still payable).
+  - **A lease, never a lock**: nothing is held across Stripe and no advisory key
+    is taken; an expired token is taken over, safe because the derived total
+    only grows and a raise is absolute.
+  - **Stated limits**, ordering and interleavings:
+    [`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md).
+  - Home: `edit-financial-review-charge-raise-claim.ts`,
+    `edit-financial-review-charge-sync.ts` and
+    `edit-financial-review-charge-recovery.ts`; proven against PostgreSQL by
+    `edit-financial-review-charge-raise-claim.realdb.test.ts`.
 
 ## INV-PAY-070
 

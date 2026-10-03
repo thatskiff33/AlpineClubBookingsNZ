@@ -3,6 +3,7 @@ import { ApiError } from "@/lib/api-error";
 import {
   AdminCreditAdjustmentRequestStatus,
   BookingEventType,
+  BookingStatus,
   CreditType,
   PaymentSource,
   Prisma,
@@ -419,47 +420,100 @@ export async function clampAppliedCreditToBookingPrice(
   if (memberId === null) {
     return { appliedCreditCents: 0, refundedExcessCents: 0 };
   }
-  await lockMemberCreditLedger(memberId, tx);
+  const { appliedCreditCents, givenBackCents: excessCents } = await giveBackAppliedCredit({
+    memberId,
+    bookingId,
+    giveBackCentsOf: (applied) => applied - Math.max(0, newFinalPriceCents),
+    description: `Applied credit returned after booking ${bookingId.slice(0, 8)} reprice`,
+    format,
+  }, tx);
 
+  return {
+    appliedCreditCents: appliedCreditCents - excessCents,
+    refundedExcessCents: excessCents,
+  };
+}
+
+/**
+ * THE GIVE-BACK OF APPLIED CREDIT, the one mechanism (#1887's clamp; #3791,
+ * `INV-SSOT`). The clamp above and a credit-paid booking's review share
+ * (`edit-financial-review-account-credit.ts`) are its only callers, and #3809
+ * is meant to be the next. Under the member's credit-ledger lock and the
+ * deallocation fence it writes one positive `BOOKING_APPLIED` row for what
+ * `giveBackCentsOf` returns, capped at the credit applied, and posts it through
+ * the credit sync.
+ *
+ * THE XERO STEP IS PART OF IT (owner decision 1 on #3791): where an
+ * internet-banking booking's applied credit is allocated against its Xero
+ * invoice beyond the new applied figure, the durable deallocation operation
+ * commits with the row, so the next inbound sync cannot pull the applied figure
+ * back up to Xero's. Never on a CANCELLED booking, whose invoice would reopen.
+ * The worker makes the provider calls after this transaction, never under the
+ * ledger lock.
+ *
+ * `giveBackCentsOf` is asked under the lock, with the applied credit and the
+ * payment just read, so its answer cannot be stale. Returns that applied credit
+ * (read BEFORE the give-back), what was given back and the payment; the
+ * `Payment.creditAppliedCents` mirror stays the caller's.
+ */
+export async function giveBackAppliedCredit(
+  { memberId, bookingId, giveBackCentsOf, description, format, sourceBookingId }: {
+    memberId: string;
+    bookingId: string;
+    /**
+     * Marks the row as a financial review's give-back (#3791): later reviews of
+     * the booking find the give-backs already made by it, not by a description
+     * a Xero repair may rewrite. Absent on the clamp's.
+     */
+    sourceBookingId?: string;
+    giveBackCentsOf: (
+      appliedCreditCents: number,
+      payment: AppliedCreditGiveBackPayment | null,
+    ) => number | Promise<number>;
+    description: string;
+    /** Club format resolved before the caller's transaction or ledger lock. */
+    format: ClubFormat;
+  },
+  tx: Prisma.TransactionClient,
+): Promise<{ appliedCreditCents: number; givenBackCents: number; payment: AppliedCreditGiveBackPayment | null }> {
+  await lockMemberCreditLedger(memberId, tx);
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
-    select: { payment: { select: { id: true, source: true, xeroInvoiceId: true } } },
+    select: { status: true, payment: { select: { id: true, source: true, xeroInvoiceId: true, creditAppliedCents: true } } },
   });
-  const payment = booking?.payment;
-  if (payment) {
-    await assertNoAppliedCreditDeallocationFence(payment.id, tx);
-  }
+  const payment = booking?.payment ?? null;
+  if (payment) await assertNoAppliedCreditDeallocationFence(payment.id, tx);
 
   const appliedCreditCents = await deriveBookingAppliedCreditCents(bookingId, tx);
-  const excessCents = appliedCreditCents - Math.max(0, newFinalPriceCents);
-
-  if (excessCents <= 0) {
-    return { appliedCreditCents, refundedExcessCents: 0 };
-  }
+  const givenBackCents = Math.max(0, Math.min(appliedCreditCents, await giveBackCentsOf(appliedCreditCents, payment)));
+  if (givenBackCents <= 0) return { appliedCreditCents, givenBackCents: 0, payment };
 
   await tx.memberCredit.create({
     data: {
       memberId,
-      amountCents: excessCents,
+      amountCents: givenBackCents,
       type: CreditType.BOOKING_APPLIED,
-      description: `Applied credit returned after booking ${bookingId.slice(0, 8)} reprice`,
+      description,
       appliedToBookingId: bookingId,
+      ...(sourceBookingId ? { sourceBookingId } : {}),
     },
   });
   await syncBookingLedgerCredits({ bookingId, store: tx });
 
-  if (payment?.source === PaymentSource.INTERNET_BANKING && payment.xeroInvoiceId) {
-    await repairLegacyAppliedCreditNoteAllocationsForBooking(
-      bookingId,
-      payment.xeroInvoiceId,
-      tx,
-      format,
-    );
+  // Never on a CANCELLED booking: its invoice stands as the cancellation left
+  // it, and releasing credit allocated against it would reopen it with an
+  // amount due. The caller returns that money in Xero another way (#3791).
+  if (
+    booking?.status !== BookingStatus.CANCELLED &&
+    payment?.source === PaymentSource.INTERNET_BANKING &&
+    payment.xeroInvoiceId
+  ) {
+    await repairLegacyAppliedCreditNoteAllocationsForBooking(bookingId, payment.xeroInvoiceId, tx, format);
     const allocated = await tx.memberCreditNoteAllocation.aggregate({
       where: { appliedToBookingId: bookingId },
       _sum: { amountCents: true },
     });
-    const targetAppliedCents = appliedCreditCents - excessCents;
+    const targetAppliedCents = appliedCreditCents - givenBackCents;
     if ((allocated._sum.amountCents ?? 0) > targetAppliedCents) {
       const correlationKey = buildXeroIdempotencyKey(
         "booking", bookingId, "applied-credit-deallocation", targetAppliedCents, "v1"
@@ -473,20 +527,21 @@ export async function clampAppliedCreditToBookingPrice(
         status: "PENDING",
         idempotencyKey: correlationKey,
         correlationKey,
-        requestPayload: {
-          queueType: XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
-          bookingId,
-        },
+        requestPayload: { queueType: XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE, bookingId },
         store: tx,
       });
     }
   }
-
-  return {
-    appliedCreditCents: appliedCreditCents - excessCents,
-    refundedExcessCents: excessCents,
-  };
+  return { appliedCreditCents, givenBackCents, payment };
 }
+
+/** The booking's payment as the give-back reads it, under the ledger lock. */
+export type AppliedCreditGiveBackPayment = {
+  id: string;
+  source: PaymentSource;
+  xeroInvoiceId: string | null;
+  creditAppliedCents: number;
+};
 
 export async function applyCreditToBooking(
   memberId: string,
@@ -559,6 +614,11 @@ export async function restoreCreditFromBooking(
   restoreAmountCentsOverride?: number
 ): Promise<number> {
   const db = tx || prisma;
+  // #3792: the member ledger lock, before the read, so the inbound Xero
+  // credit-note sync (same key) cannot post a de-allocation against applied
+  // rows this restore is about to give back. Re-entrant for callers already
+  // holding it; every caller takes lock(1) (and its lodge lock) first.
+  if (tx) await lockMemberCreditLedger(memberId, tx);
 
   // Find all BOOKING_APPLIED credits for this booking
   const appliedCredits = await db.memberCredit.findMany({

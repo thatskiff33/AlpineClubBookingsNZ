@@ -80,10 +80,10 @@ export async function findQueuedLiveCopy(
  * - when the retry looks stuck - where to reset it.
  */
 export function retryRunningRefusal(
-  retry: { startedAt: Date | null } | null,
+  retry: { status: string; startedAt: Date | null } | null,
   now: Date = new Date(),
 ): string {
-  if (retry && isStaleRunningXeroOperation(retry.startedAt, now)) {
+  if (retry && isStaleRunningXeroOperation(retry, now)) {
     return "A retry of this Xero operation has been running for a long time and looks stuck. Use Reset stale running operations on the Xero operations screen, then check Xero before resolving it.";
   }
   return "A retry of this Xero operation is running, so it was not marked resolved. Wait for the retry to finish, then check Xero: if the retry stood down because of this attempt, nothing ran and you can resolve it again.";

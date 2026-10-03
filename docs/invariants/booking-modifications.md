@@ -1261,27 +1261,25 @@ close and where all of it is pinned, `INV-MOD-049` to `-054`.
 ## INV-MOD-036
 
 **A `NULL` may be filled in afterwards by a PERSON, and by nothing else** (#3191,
-epic #2797; owner decision 31 Aug 2026). Settling the review that the park
-raised may now also record what each of that guest strand's unpriced nights sold
-for, under four conditions, none of which is optional:
+epic #2797; owner decision 31 Aug 2026). Review settlement may record each
+unpriced night's sold price only under these four conditions:
 
 - **the officer types every figure.** A partial answer is refused rather than
   completed, and there is no derivation anywhere in that path - no even split, no
   rate lookup, no rounding, no defaulted zero.
 
-- **the figures reconcile.** Together with the strand's already-priced nights
-  they must come to `BookingGuest.priceCents` adjusted by the settled amount -
-  minus a refund, plus a charge - which is what makes the strand exact under the
-  definition above, and is therefore what stops it parking again. The strand's
-  stored total is re-based to that sum in the same write, so what it is worth and
-  what its nights say cannot disagree afterwards;
+- **the figures reconcile.** Together with already-priced nights they must
+  sum to `BookingGuest.priceCents` adjusted by the settlement: minus a refund,
+  plus a charge. Re-base the strand's stored total to that sum in the same write
+  so the strand is exactly priced and does not park again;
 
-- **an existing price is never rewritten.** Every write is fenced on
-  `priceCents: null`, so a night that already carries a figure - a real stored
-  `0` included - cannot be touched by this path at all, and a race becomes a
-  refusal rather than a lost update. The strand's total is fenced on its previous
-  value the same way. `src/lib/stored-night-price-repair-store.ts` is the one
-  module in the tree permitted to update an existing night row's price in place;
+- **this repair never rewrites an existing price.** Every night write is fenced
+  on `priceCents: null`; stored `0` is protected. The strand total is fenced on
+  its previous value; a race refuses the repair.
+  `src/lib/stored-night-price-repair-store.ts` alone fills NULL prices.
+  #3794 also permits `school-pending-adult-resolution.ts` to reconcile accepted
+  quote terms while naming pending SCHOOL adults: proved, already-priced
+  held-night IDs only, NULL refusal, and exact affected-count rollback;
 
 - **it is audited as a money-affecting act**, in its own entry
   (`booking-payment.stored-night-price.record`, category `payment`) rather than
@@ -1769,9 +1767,10 @@ Five things about that re-price are load-bearing:
   to `critical`. A closure that issues one names the settled share, never the
   re-priced strands (`INV-MOD-058`);
 - **in the same transaction as the strand write**, under the claim that write
-  already holds, fenced on all four columns. This path takes no advisory lock, so
-  a concurrent edit that moved any of them is a 409 that rolls the whole
-  completion back rather than a lost update, and the repaired strand must be one
+  already holds, fenced on all four columns. Under the completion's `lock(1)`
+  (#3582) edits queue; a lock-free writer that moved any of them is a 409 that
+  rolls the completion back rather than a lost update, and the repaired
+  strand must be one
   of the booking's own at the value just written to it — nothing else
   cross-checks a review context's strand id against its task's booking.
 

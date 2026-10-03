@@ -548,6 +548,39 @@ describe("authoritative bed-allocation move", () => {
     );
   });
 
+  it("stamps moved rows' updatedAt with the bound UTC instant, never the database clock (#3825)", async () => {
+    // Its own instant, distinct from every fixture timestamp, so the assertion
+    // can only be satisfied by the move's clock read (and survives a moved
+    // default test clock).
+    const moveInstant = new Date("2026-07-01T05:43:21.123Z");
+    vi.setSystemTime(moveInstant);
+    const rows = [allocationRow({})];
+    install({ rows });
+    const preview = await previewBedAllocationMove(request(), prismaMock as never);
+
+    await applyBedAllocationMove({
+      request: { ...request(), previewDigest: preview.digest },
+      actorMemberId: "admin-1",
+    });
+
+    const moveCall = prismaMock.$executeRaw.mock.calls.find(([strings]) =>
+      (strings as TemplateStringsArray)
+        .join("")
+        .includes('UPDATE "BedAllocation" AS allocation'),
+    );
+    expect(moveCall).toBeDefined();
+    const [strings, ...values] = moveCall as [TemplateStringsArray, ...unknown[]];
+    // Strip SQL comments so the explanatory comment naming the banned
+    // expression cannot satisfy or trip the assertion.
+    const sql = strings.join("?").replace(/--[^\n]*/g, "");
+    // `updatedAt` is a UTC `timestamp(3)`; CURRENT_TIMESTAMP / now() convert to
+    // the session zone (Pacific/Auckland in the shipped stack) on assignment.
+    expect(sql).not.toMatch(/CURRENT_TIMESTAMP|\bnow\(\)|LOCALTIMESTAMP/i);
+    expect(sql).toMatch(/"updatedAt" = \?/);
+    const stamp = values[strings.findIndex((part) => /"updatedAt" = $/.test(part))];
+    expect(stamp).toEqual(moveInstant);
+  });
+
   it("locks counterpart booking lodges in sorted order before member and tuple locks", async () => {
     const moving = allocationRow({ memberId: "member-a" });
     const occupant = allocationRow({
