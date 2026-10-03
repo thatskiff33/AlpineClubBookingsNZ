@@ -38,10 +38,11 @@ reason: the removal's Booking Modified email says whether its refund is a bank
   beside the refund amount it qualifies.
 
 file: src/components/admin/manual-refund-task-queue.tsx
-lines: 2143
-reason: an edit's refund hand-back is a hand-back row that needs its own
-  explaining paragraph, kept out of the cancelled-booking one (D-3813-6); it
-  sits beside the other kinds' predicates and paragraphs it is chosen among.
+lines: 2169
+reason: an edit's refund hand-back, and an approved appeal's (D-3813-7), is a
+  hand-back row that needs its own explaining paragraph, kept out of the
+  cancelled-booking one (D-3813-6); each sits beside the other kinds'
+  predicates and paragraphs it is chosen among.
 
 file: src/lib/email/booking.ts
 lines: 1768
@@ -56,14 +57,23 @@ reason: the appeal review's ceiling is the approve route's net-of-open-edit-
   shared helper call, the arithmetic lives in manual-refund-task-settlement-rules.ts.
 
 file: src/app/api/admin/refund-requests/[id]/route.ts
-lines: 490
+lines: 536
 reason: the approval's cap and its claim must share one transaction under
   lock(1) (INV-PAY-114) so the figure checked is the figure approved; moving
   the claim out of the handler would split the #818 single-flight claim from
-  the money it guards.
+  the money it guards. D-3813-7 (INV-PAY-115) plans the card refund and
+  raises the bank-transfer task in that same transaction, and a released
+  claim takes its task with it under the same lock.
 
 file: src/app/api/bookings/[id]/refund-request/route.ts
 lines: 276
 reason: the appeal request refuses past the cash net of open edit refunds and
   says plainly when all of it is already being refunded by bank transfer
   (INV-PAY-114); both are refusals beside the existing ones they extend.
+
+file: src/lib/email-message-registry.ts
+lines: 2193
+reason: the approved appeal's email names how the refund comes back (D-3813-7);
+  its composed {{refundSentence}} token is registered, sampled and kept beside
+  {{amount}} for saved overrides, in the one registry every template token
+  lives in.
