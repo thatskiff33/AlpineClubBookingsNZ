@@ -1,5 +1,5 @@
 /**
- * #3827, owner decision D-3813-6 (#3492, `INV-PAY-114`): an internet-banking
+ * #3827, owner decision D-3813-6 (#3492, `INV-PAY-115`): an internet-banking
  * (or cash) price reduction, from any edit or a guest's acceptance, raises ONE
  * officer refund task in the money-to-settle queue, and the member's email says
  * the club will refund them by bank transfer.
@@ -81,7 +81,7 @@ describe("raising the edit's refund hand-back", () => {
   });
 });
 
-describe("telling an edit refund hand-back from a cancellation's (INV-PAY-114)", () => {
+describe("telling an edit refund hand-back from a cancellation's (INV-PAY-115)", () => {
   it("is the hand-back kind carrying the edit key, and nothing else", () => {
     const key = editRefundHandBackOccurrenceKey("mod-1");
     expect(key.startsWith(EDIT_REFUND_HAND_BACK_KEY_PREFIX)).toBe(true);

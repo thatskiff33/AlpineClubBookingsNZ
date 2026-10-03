@@ -1,5 +1,5 @@
 /**
- * #3827, owner decision D-3813-8 (#3492, `INV-PAY-115`): a refund request's
+ * #3827, owner decision D-3813-8 (#3492, `INV-PAY-116`): a refund request's
  * OWN Xero refund credit note. The pure seams: which task names a request,
  * which payload carries it, the link role its note is recorded under, the
  * retry input that must not re-enter per-delta mode, and the canonical-note

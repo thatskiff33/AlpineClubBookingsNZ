@@ -271,7 +271,7 @@ describe("resolveBookingNarrative", () => {
     expect(result.message).not.toContain("was refunded");
   });
 
-  it("EXCLUDES an edit refund sent back by hand from a later cancellation's settlement (#3827, INV-PAY-114)", () => {
+  it("EXCLUDES an edit refund sent back by hand from a later cancellation's settlement (#3827, INV-PAY-115)", () => {
     // An edit lowered the live booking by $30 and the treasurer sent that back
     // by bank transfer (a REFUNDED event marked as the edit task's completion);
     // the member later cancelled under a no-refund policy. The narrative must

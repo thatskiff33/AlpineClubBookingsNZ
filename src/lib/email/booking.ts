@@ -1405,7 +1405,7 @@ export async function sendBookingModifiedEmail(params: {
    */
   financialReviewPending: boolean;
   /**
-   * #3827 (D-3813-6, `INV-PAY-114`): the refund is a bank transfer the club
+   * #3827 (D-3813-6, `INV-PAY-115`): the refund is a bank transfer the club
    * still has to send. REQUIRED, as `financialReviewPending` is; the template's
    * own field says why.
    */

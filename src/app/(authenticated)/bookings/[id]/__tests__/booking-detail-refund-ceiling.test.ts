@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { resolveBookingDetailPayment } from "../_lib/booking-detail-payment";
 
 /**
- * #3827 (`INV-PAY-114`): the booking page offers a refund appeal up to the
+ * #3827 (`INV-PAY-115`): the booking page offers a refund appeal up to the
  * figure the appeal route enforces - the remaining refundable cash LESS the
  * edit refunds still promised back by bank transfer. Paid 200, refunded 75 at
  * cancel, a 50 edit refund still open: 75, not the gross 125.

@@ -48,7 +48,7 @@ export function isPartPaymentReviewTask<
 }
 
 /**
- * #3827 (owner decision D-3813-6, `INV-PAY-114`): THE OCCURRENCE-KEY PREFIX of
+ * #3827 (owner decision D-3813-6, `INV-PAY-115`): THE OCCURRENCE-KEY PREFIX of
  * an edit refund hand-back — the task an internet-banking (or cash) price
  * reduction raises so the treasurer sends the money back. One per
  * `BookingModification`, so the key is the duplicate fence and, with the kind,
@@ -56,13 +56,13 @@ export function isPartPaymentReviewTask<
  */
 export const EDIT_REFUND_HAND_BACK_KEY_PREFIX = "edit-refund-hand-back:";
 
-/** The one occurrence key of one edit's refund hand-back (`INV-PAY-114`). */
+/** The one occurrence key of one edit's refund hand-back (`INV-PAY-115`). */
 export function editRefundHandBackOccurrenceKey(bookingModificationId: string): string {
   return `${EDIT_REFUND_HAND_BACK_KEY_PREFIX}${bookingModificationId}`;
 }
 
 /**
- * #3827 (owner decision D-3813-7, `INV-PAY-114`): THE OCCURRENCE-KEY PREFIX of
+ * #3827 (owner decision D-3813-7, `INV-PAY-115`): THE OCCURRENCE-KEY PREFIX of
  * a refund-request hand-back - the task an approved refund request (appeal)
  * raises for the part of its amount no card refund can carry, so the treasurer
  * sends it by bank transfer. One per `RefundRequest`: the key is the duplicate
@@ -70,13 +70,13 @@ export function editRefundHandBackOccurrenceKey(bookingModificationId: string): 
  */
 export const REFUND_REQUEST_HAND_BACK_KEY_PREFIX = "refund-request-hand-back:";
 
-/** The one occurrence key of one refund request's hand-back (`INV-PAY-114`). */
+/** The one occurrence key of one refund request's hand-back (`INV-PAY-115`). */
 export function refundRequestHandBackOccurrenceKey(refundRequestId: string): string {
   return `${REFUND_REQUEST_HAND_BACK_KEY_PREFIX}${refundRequestId}`;
 }
 
 /**
- * #3827 (`INV-PAY-114`): the key prefixes of every hand-back that is NOT a
+ * #3827 (`INV-PAY-115`): the key prefixes of every hand-back that is NOT a
  * cancellation's - money promised back by bank transfer on a decision other
  * than a cancel (an edit's reduction, an approved refund request). The one
  * list the predicate and both query fragments below are built from.
@@ -91,7 +91,7 @@ function hasKeyPrefix(occurrenceKey: string | null, prefix: string): boolean {
 }
 
 /**
- * #3827 (`INV-PAY-114`): IS THIS TASK AN EDIT REFUND HAND-BACK? It is a
+ * #3827 (`INV-PAY-115`): IS THIS TASK AN EDIT REFUND HAND-BACK? It is a
  * `CANCELLED_BOOKING_HAND_BACK` — reused rather than a new label for the reason
  * #3639 and #3643 give: the previous app version cannot read a label it does
  * not know, and lists this kind as money to pay back by hand, which is what it
@@ -122,7 +122,7 @@ export function isRefundRequestHandBackTask(task: {
 }
 
 /**
- * #3827 (D-3813-8, `INV-PAY-115`): the refund request a refund-request
+ * #3827 (D-3813-8, `INV-PAY-116`): the refund request a refund-request
  * hand-back was raised for, read off its occurrence key - or null for any
  * other task. Its completion queues THAT request's own Xero refund credit
  * note, keyed by the request.
@@ -137,7 +137,7 @@ export function refundRequestIdOfHandBack(task: {
 }
 
 /**
- * #3827 (`INV-PAY-114`): IS THIS HAND-BACK SOMETHING OTHER THAN A
+ * #3827 (`INV-PAY-115`): IS THIS HAND-BACK SOMETHING OTHER THAN A
  * CANCELLATION'S - an edit's refund or an approved refund request's? Both are
  * money promised back by bank transfer whose `refundedAmountCents` moves only
  * when the treasurer marks the task paid back, both take `lock(1)` to close,
@@ -155,7 +155,7 @@ export function isNonCancellationHandBackTask(task: {
 }
 
 /**
- * #3827 (`INV-PAY-114`): AN EDIT REFUND HAND-BACK ON A CANCELLED BOOKING IS
+ * #3827 (`INV-PAY-115`): AN EDIT REFUND HAND-BACK ON A CANCELLED BOOKING IS
  * SETTLED BY PAYING IT, NEVER BY CHANGING ITS STATE THE OTHER WAY. A paid
  * cancellation sizes its refund and the club's kept figure from the cash net of
  * the edit refunds still OPEN (`refundableCashNetOfOpenHandBacks`): an open
@@ -178,7 +178,7 @@ export const EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE =
   "This booking has been cancelled since this edit refund was dismissed, and the cancellation's refund was worked out without it. Putting it back on the queue would promise the member money the cancellation already accounted for. If more is owed, raise it against the cancelled booking, for example as a refund appeal.";
 
 /**
- * #3827 (`INV-PAY-114`): the same question as a query fragment, for the server
+ * #3827 (`INV-PAY-115`): the same question as a query fragment, for the server
  * readers that select a CANCELLATION's hand-backs by kind and must not count an
  * edit's or an approved refund request's. Spread into a `ManualRefundTask`
  * where clause beside the kind.
@@ -195,7 +195,7 @@ export const NOT_NON_CANCELLATION_HAND_BACK_WHERE = {
 };
 
 /**
- * #3827 (`INV-PAY-114`): the POSITIVE form - the non-cancellation hand-backs
+ * #3827 (`INV-PAY-115`): the POSITIVE form - the non-cancellation hand-backs
  * themselves, for a reader that sizes money already promised back by hand
  * (`openNonCancellationHandBackCents`). The kind and the key prefixes together,
  * as `isNonCancellationHandBackTask` asks them.
@@ -208,7 +208,7 @@ export const NON_CANCELLATION_HAND_BACK_WHERE = {
 } as const;
 
 /**
- * #3827 (`INV-PAY-114`): the OPEN non-cancellation hand-backs on a payment, as a
+ * #3827 (`INV-PAY-115`): the OPEN non-cancellation hand-backs on a payment, as a
  * relation fragment for a read that loads the payment anyway (the cancel
  * preview). Paired with `sumOpenNonCancellationHandBackCents`
  * and `getRemainingRefundableCentsNetOf`, it gives a reader the same figure the
@@ -227,12 +227,12 @@ export function sumOpenNonCancellationHandBackCents(
 }
 
 /**
- * #3827 (`INV-PAY-115`): WHAT A REFUND APPEAL MAY STILL PROMISE. An appeal is
+ * #3827 (`INV-PAY-116`): WHAT A REFUND APPEAL MAY STILL PROMISE. An appeal is
  * sized from the payment's refundable cash, which two other hand-backs leave
  * overstated, so its ceiling subtracts both - and only an appeal's does:
  *
  * - EVERY open hand-back on the payment, of any kind. The edit and earlier
- *   appeals' (as `INV-PAY-114`), and also a CANCELLATION's own - the hand-back
+ *   appeals' (as `INV-PAY-115`), and also a CANCELLATION's own - the hand-back
  *   an organisation's late bank transfer raises (#3369), whose money moves
  *   `refundedAmountCents` only when it is paid back. An edit or a cancel sizes
  *   its refund EXCLUDING the cancellation's task, by design: that task is the
@@ -250,7 +250,7 @@ export const OPEN_HAND_BACKS_FOR_REFUND_APPEAL_SELECT = {
   select: { amountCents: true },
 } as const;
 
-/** A screen's refund-appeal ceiling (`INV-PAY-115`), from those two reads. */
+/** A screen's refund-appeal ceiling (`INV-PAY-116`), from those two reads. */
 export function refundAppealCeiling(
   payment:
     | (BookingPaymentState & { manualRefundTasks?: readonly { amountCents: number | null }[] })
@@ -269,7 +269,7 @@ export function refundAppealCeiling(
 }
 
 /**
- * #3827 (`INV-PAY-114`): the snapshot discriminator on the REFUNDED booking
+ * #3827 (`INV-PAY-115`): the snapshot discriminator on the REFUNDED booking
  * event an edit refund hand-back's completion writes. The booking is LIVE when
  * that money goes back, so the event is the settlement of an EDIT, never of a
  * cancellation - and the booking narrative takes the first REFUNDED event as a

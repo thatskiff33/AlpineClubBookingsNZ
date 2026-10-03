@@ -520,7 +520,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
     manualRefundTask: {
-      // #3827 (`INV-PAY-114`): no open edit refund hand-back on file.
+      // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
       aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
       // #3170: the park's own raise is a find-then-create on the occurrence
@@ -3546,7 +3546,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
     expect(data.stripeRefundId).toBeNull();
     expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
     expect(mockEnqueueBookingModificationRefundRecovery).not.toHaveBeenCalled();
-    // #3827 (D-3813-6, `INV-PAY-114`): nothing refunds itself, so the
+    // #3827 (D-3813-6, `INV-PAY-115`): nothing refunds itself, so the
     // treasurer is asked to send the $50 back - one task for this edit.
     expect(tx.manualRefundTask.createMany).toHaveBeenCalledTimes(1);
     expect(tx.manualRefundTask.createMany).toHaveBeenCalledWith({

@@ -373,7 +373,7 @@ describe("a credit return is worded as account credit in Xero", () => {
   });
 });
 
-describe("an internet-banking reduction asks the treasurer to send it back (D-3813-6, INV-PAY-114)", () => {
+describe("an internet-banking reduction asks the treasurer to send it back (D-3813-6, INV-PAY-115)", () => {
   it("raises exactly one officer refund task for the modification, and the email promises a bank transfer", async () => {
     const loaded = booking({
       payment: { ...booking().payment, source: "INTERNET_BANKING", xeroInvoiceId: "inv-1" },
@@ -495,7 +495,7 @@ describe("a split payment gets the WHOLE reduction back: cash first, then credit
   });
 });
 
-describe("cash an earlier edit already promised back is not refunded again (#3827, INV-PAY-114)", () => {
+describe("cash an earlier edit already promised back is not refunded again (#3827, INV-PAY-115)", () => {
   it("$300 paid as $200 internet banking + $100 credit, edited to $250 (task $50 open), accepted to $50: $150 by hand, $50 as credit", async () => {
     // Without the netting the $200 captured would read as all refundable, the
     // whole $200 reduction would go to a second task, and $250 of tasks would

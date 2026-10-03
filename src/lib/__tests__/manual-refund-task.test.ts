@@ -1668,7 +1668,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
   });
 
-  it("completes an EDIT refund hand-back like any hand-back but sends Xero nothing: the edit's credit note already stands (D-3813-6, INV-PAY-114)", async () => {
+  it("completes an EDIT refund hand-back like any hand-back but sends Xero nothing: the edit's credit note already stands (D-3813-6, INV-PAY-115)", async () => {
     // The same paid-invoice shape as the cancellation hand-back above, on a
     // LIVE booking an edit lowered. The edit queued the modification credit
     // note when it saved, so a bank-transfer refund note here would correct
@@ -1720,7 +1720,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     // D-3813-8 is for a refund request's task only: an EDIT task still sends Xero nothing.
     expect(mocks.enqueueXeroRefundRequestCreditNoteOperation).not.toHaveBeenCalled();
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
-    // #3827 (`INV-PAY-114`): it takes lock(1) FIRST, before the task is read for
+    // #3827 (`INV-PAY-115`): it takes lock(1) FIRST, before the task is read for
     // its money and before the claim, so its completion cannot commit between
     // an edit's read of `refundedAmountCents` and its read of the open tasks.
     expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
@@ -1742,7 +1742,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     );
   });
 
-  // #3827 (`INV-PAY-114`): the cancel counted an OPEN edit refund as going
+  // #3827 (`INV-PAY-115`): the cancel counted an OPEN edit refund as going
   // back to the member, so once the booking is cancelled the task is settled by
   // paying it. Dismissing it would leave the cancellation's kept figure wrong.
   describe("an edit refund hand-back on a CANCELLED booking (#3827)", () => {
@@ -1809,7 +1809,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     });
   });
 
-  // #3827 (owner decision D-3813-7, `INV-PAY-115`): an approved refund
+  // #3827 (owner decision D-3813-7, `INV-PAY-116`): an approved refund
   // appeal's bank-transfer task. Always on a CANCELLED booking (appeals exist
   // only after the cancel), with the paid invoice the cancellation hand-back
   // leg would otherwise write a refund note against.

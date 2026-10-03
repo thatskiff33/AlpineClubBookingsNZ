@@ -32,7 +32,7 @@ vi.mock("@/lib/prisma", () => ({
     booking: { findUnique: mocks.bookingFindUnique },
     memberCredit: { aggregate: mocks.memberCreditAggregate },
     clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique },
-    // #3827 (`INV-PAY-114`): no open edit refund hand-back on file.
+    // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
     manualRefundTask: { aggregate: mocks.manualRefundTaskAggregate },
   },
 }));
@@ -154,7 +154,7 @@ describe("cancel preview for a part-paid internet banking booking (#3643)", () =
     );
   });
 
-  it("#3827 (INV-PAY-114): quotes only the cash not already promised back on an open edit refund hand-back", async () => {
+  it("#3827 (INV-PAY-115): quotes only the cash not already promised back on an open edit refund hand-back", async () => {
     // $150 recorded, $50 of it already owed back on an earlier edit's task -
     // read on the SAME booking read as the payment, never a second query.
     const booking = partPaidBooking();

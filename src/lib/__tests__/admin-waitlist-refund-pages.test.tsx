@@ -803,7 +803,7 @@ describe("Admin refund and credit review page", () => {
     expect(screen.getByText("Max refundable: $0.00")).toBeTruthy();
   });
 
-  // #3827 (`INV-PAY-114`): the ceiling the screen offers is the one the approve
+  // #3827 (`INV-PAY-115`): the ceiling the screen offers is the one the approve
   // route enforces - the remaining refundable cash LESS the edit refunds still
   // promised back by bank transfer. Paid 200, refunded 75 at cancel, a 50 edit
   // refund still open: 75, not the gross 125.

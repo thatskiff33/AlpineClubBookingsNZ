@@ -149,7 +149,7 @@ export async function POST(
     );
   }
 
-  // #3827 (`INV-PAY-115`): what the member may ask for is the refundable cash
+  // #3827 (`INV-PAY-116`): what the member may ask for is the refundable cash
   // NET of every refund the club has already promised back by bank transfer
   // and not yet sent, and of the account credit already minted from a late
   // bank transfer - the same figure the approval caps at. Advisory here and

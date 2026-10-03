@@ -316,7 +316,7 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
             paymentTransaction: {
               findFirst: vi.fn().mockResolvedValue(null),
             },
-            // #3827 (`INV-PAY-114`): no open edit refund hand-back on file.
+            // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
             manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
             memberCredit: {
               aggregate: vi

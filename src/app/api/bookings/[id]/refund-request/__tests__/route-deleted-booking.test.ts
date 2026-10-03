@@ -46,7 +46,7 @@ vi.mock("@/lib/prisma", () => ({
       create: (...args: unknown[]) => mocks.refundRequestCreate(...args),
       findMany: (...args: unknown[]) => mocks.refundRequestFindMany(...args),
     },
-    // #3827 (`INV-PAY-115`): the appeal ceiling's two reads - nothing open,
+    // #3827 (`INV-PAY-116`): the appeal ceiling's two reads - nothing open,
     // no late-cash credit.
     manualRefundTask: { aggregate: async () => ({ _sum: { amountCents: null } }) },
     memberCredit: { aggregate: async () => ({ _sum: { amountCents: null } }) },

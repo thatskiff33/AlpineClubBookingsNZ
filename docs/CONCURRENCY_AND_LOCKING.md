@@ -3187,7 +3187,7 @@ does too, and both would post. So `resolveManualRefundTask` takes
   `updateMany` still fences on `OPEN` for every kind, pinned with the lock
   mocked in `manual-refund-task.test.ts`. Legacy hand-back kinds take no key,
   exactly as before — **except an edit refund hand-back** (#3827,
-  `INV-PAY-114`) and an approved refund appeal's (`INV-PAY-115`), which take
+  `INV-PAY-115`) and an approved refund appeal's (`INV-PAY-116`), which take
   the same key first, decided from its immutable
   `kind` and `occurrenceKey`. Its completion moves the payment's
   `refundedAmountCents` and closes the task in one commit, and every edit,
@@ -3195,7 +3195,7 @@ does too, and both would post. So `resolveManualRefundTask` takes
   the cash already promised back (`refundableCashNetOfOpenHandBacks`); under
   `lock(1)` the completion cannot commit between the two reads. A reopen of
   one already holds `lock(1)` and is refused past that same net cash, and a
-  refund appeal's approval reads ITS net cash (`INV-PAY-115`: every open
+  refund appeal's approval reads ITS net cash (`INV-PAY-116`: every open
   hand-back and the late-cash credit, `refundAppealHandedBackCents`, read
   BEFORE the payment so a cancellation hand-back's lock-free completion in
   between errs the cap low) under `lock(1)` and claims

@@ -75,7 +75,7 @@ export function resolveBookingDetailPayment({
       )
     : 0;
   const latestRefundAppeal = booking.refundRequests[0] ?? null;
-  // #3827 (`INV-PAY-115`): net of every hand-back still promised back by bank
+  // #3827 (`INV-PAY-116`): net of every hand-back still promised back by bank
   // transfer and of the credit minted from late cash - the figure the appeal
   // route caps at.
   const maxRefundableCents = refundAppealCeiling(booking.payment, booking.creditsFromCancellation);

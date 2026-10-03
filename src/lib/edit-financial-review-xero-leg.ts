@@ -115,7 +115,7 @@ export async function dispatchEditReviewXeroSettlement({
   format,
 }: {
   /**
-   * #3827 (owner decision D-3813-6, `INV-PAY-114`): the task closed is an edit
+   * #3827 (owner decision D-3813-6, `INV-PAY-115`): the task closed is an edit
    * refund hand-back. The edit that raised it already queued the modification
    * credit note correcting the invoice ("the Xero credit note stays"), so its
    * completion sends Xero nothing more - a second note would correct the same
@@ -123,7 +123,7 @@ export async function dispatchEditReviewXeroSettlement({
    */
   nonCancellationHandBack: boolean;
   /**
-   * #3827 (owner decision D-3813-8, `INV-PAY-115`): the task closed is a
+   * #3827 (owner decision D-3813-8, `INV-PAY-116`): the task closed is a
    * refund request's hand-back, for this request. Unlike an edit's, its
    * completion DOES owe Xero a note - that request's own refund credit note,
    * for exactly the amount paid back, queued here after the money has moved.
@@ -207,7 +207,7 @@ export async function dispatchEditReviewXeroSettlement({
     return;
   }
   // An EDIT refund hand-back owes Xero nothing more: its edit's credit note
-  // already corrects the invoice (`INV-PAY-114`).
+  // already corrects the invoice (`INV-PAY-115`).
   if (nonCancellationHandBack) return;
   const isCharge = route?.kind === "additional-charge";
   // Captured outside the dispatch closure: `isCharge` is a boolean and does not

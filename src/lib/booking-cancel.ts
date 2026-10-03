@@ -1562,7 +1562,7 @@ async function performBookingCancellation(
     const appliedCreditCents = await deriveBookingAppliedCreditCents(bookingId, tx);
     const money = paidCancellationMoney({
       payment,
-      // #3827 (`INV-PAY-114`): read under lock(1), which every edit that raises
+      // #3827 (`INV-PAY-115`): read under lock(1), which every edit that raises
       // such a task also holds, so none can appear before this cancel commits.
       openNonCancellationHandBackCents: await openNonCancellationHandBackCents(tx, payment.id),
       finalPriceCents: fresh.finalPriceCents,

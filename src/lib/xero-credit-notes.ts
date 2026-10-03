@@ -98,7 +98,7 @@ export interface CreateXeroRefundCreditNoteOptions
   /** #3635 round-3 R3: the club day the refund left Stripe; omitted, today. */
   documentDate?: string;
   /**
-   * #3827 (D-3813-8, `INV-PAY-115`): this is that refund request's OWN note,
+   * #3827 (D-3813-8, `INV-PAY-116`): this is that refund request's OWN note,
    * raised when its task is marked paid back. Keyed by the request, linked
    * under `REFUND_REQUEST_CREDIT_NOTE_ROLE`, never per-delta and never the
    * payment's one refund-note pointer.

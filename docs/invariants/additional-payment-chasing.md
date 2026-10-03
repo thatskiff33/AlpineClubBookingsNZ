@@ -641,7 +641,7 @@ cleanup deactivates, and active non-cancelled coverage above the cash
 refund-note target is reported as its own drift class
 (`overCoveredStripeRefundPayments`) because it silently suppresses every
 later refund note. A non-Stripe payment keeps ONE refund note; a refund
-request's own note (`INV-PAY-115`, role `REFUND_REQUEST_CREDIT_NOTE`) is
+request's own note (`INV-PAY-116`, role `REFUND_REQUEST_CREDIT_NOTE`) is
 outside it.
 The operator repair for already-damaged links is
 `scripts/xero-refund-note-link-repair.ts`

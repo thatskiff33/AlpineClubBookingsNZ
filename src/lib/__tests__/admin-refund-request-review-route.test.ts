@@ -312,7 +312,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
   });
 
-  // #3827 (`INV-PAY-114`): paid 200, an edit lowered it to 150 by internet
+  // #3827 (`INV-PAY-115`): paid 200, an edit lowered it to 150 by internet
   // banking (a 50 refund task still OPEN), the cancel then handed back 75. The
   // gross remainder is 125, but 50 of it is already promised back by the edit's
   // own task, so an appeal can be approved for 75 at most - approving 125 would
@@ -353,7 +353,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
         error: "Amount exceeds maximum refundable of $75.00",
       });
       expect(mocks.manualRefundTaskAggregate).toHaveBeenCalledWith({
-        // `INV-PAY-115`: EVERY open hand-back on the payment, any key - an
+        // `INV-PAY-116`: EVERY open hand-back on the payment, any key - an
         // edit's, an earlier appeal's, and a cancellation's own.
         where: {
           paymentId: "payment_1",
@@ -380,7 +380,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       expect(lockSql).toContain("pg_advisory_xact_lock(1)");
       const lockedAt = mocks.executeRaw.mock.invocationCallOrder[0];
       expect(lockedAt).toBeLessThan(mocks.manualRefundTaskAggregate.mock.invocationCallOrder[0]);
-      // `INV-PAY-115`: the handed-back sums are read BEFORE the payment, so a
+      // `INV-PAY-116`: the handed-back sums are read BEFORE the payment, so a
       // cancellation hand-back completing between them errs the cap low.
       expect(mocks.manualRefundTaskAggregate.mock.invocationCallOrder[0]).toBeLessThan(
         mocks.paymentFindUnique.mock.invocationCallOrder[0],
@@ -399,7 +399,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     });
   });
 
-  // #3827 (owner decision D-3813-7, `INV-PAY-115`): what no card refund can
+  // #3827 (owner decision D-3813-7, `INV-PAY-116`): what no card refund can
   // carry goes back by bank transfer, as ONE officer task raised inside the
   // approval's locked transaction, and the member is told so.
   describe("an approval the card cannot carry raises a bank-transfer task (D-3813-7)", () => {
@@ -683,7 +683,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
-  // M1 (`INV-PAY-115`): an appeal's cap also subtracts money already returned
+  // M1 (`INV-PAY-116`): an appeal's cap also subtracts money already returned
   // through the two channels that never move `refundedAmountCents`.
   describe("the appeal cap nets money already returned another way (#3827)", () => {
     function approveFor(approvedAmountCents: number) {

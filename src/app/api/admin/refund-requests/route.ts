@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
               select: {
                 // #2932: the screen derives its refund ceiling through
                 // `getRemainingRefundableCents`, which answers 0 unless the
-                // payment actually captured. #3827 (`INV-PAY-115`): less every
+                // payment actually captured. #3827 (`INV-PAY-116`): less every
                 // hand-back still open on the payment and the late-cash credit
                 // in `creditsFromCancellation` above (`refundAppealCeiling`),
                 // the figure the approve route caps at.

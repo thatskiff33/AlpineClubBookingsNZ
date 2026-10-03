@@ -32,7 +32,7 @@ reason: the cancel release now gives back every promo code a booking carries
   cleanup helper keeps a cheap probe so a booking with no code opens no
   transaction, and its docblock says so. #3827 then hands the paid cancel's
   money calculation the open edit refund hand-backs it must not refund twice
-  (`INV-PAY-114`): one import and one argument read under the claim's lock.
+  (`INV-PAY-115`): one import and one argument read under the claim's lock.
 
 file: src/lib/booking-delete.ts
 lines: 752

@@ -7,7 +7,7 @@ import { readResolvedRefundCreditNoteCoverage } from "@/lib/xero-resolved-in-xer
 import { startXeroSyncOperation } from "@/lib/xero-sync";
 
 /**
- * #3827, owner decision D-3813-8 (`INV-PAY-115`): queue a refund request's
+ * #3827, owner decision D-3813-8 (`INV-PAY-116`): queue a refund request's
  * OWN Xero refund credit note, for exactly the amount the treasurer paid back,
  * when its refund task is marked paid back - after the money has moved.
  *

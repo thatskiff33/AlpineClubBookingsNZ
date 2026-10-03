@@ -132,7 +132,7 @@ export const REOPEN_ALREADY_OPEN_MESSAGE =
   "This item is already on the queue.";
 
 /**
- * #3827 (`INV-PAY-114`): an edit refund hand-back promises cash back. Once it
+ * #3827 (`INV-PAY-115`): an edit refund hand-back promises cash back. Once it
  * is dismissed that cash is refundable again, and a later edit or cancellation
  * may already have promised or returned it, so putting the task back could
  * promise more than the club took.
@@ -224,14 +224,14 @@ export async function reopenManualRefundTask({
       );
     }
 
-    // #3827 (`INV-PAY-114`): a cancellation since the dismissal sized its refund
+    // #3827 (`INV-PAY-115`): a cancellation since the dismissal sized its refund
     // without this task, so reopening it would promise the same money twice.
     if (isEditRefundHandBackTask(task) && task.booking.status === BookingStatus.CANCELLED) {
       throw new ManualBookingPaymentError(EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE, 409);
     }
-    // #3827 (`INV-PAY-114`): never promise back more cash than was taken - for
+    // #3827 (`INV-PAY-115`): never promise back more cash than was taken - for
     // an edit's refund and (D-3813-7) an approved appeal's alike, an appeal's
-    // measured by the appeal's own ceiling (`INV-PAY-115`: every open
+    // measured by the appeal's own ceiling (`INV-PAY-116`: every open
     // hand-back and the late-cash credit too). Read under lock(1), which every
     // edit, acceptance, paid cancel and approval holds.
     if (

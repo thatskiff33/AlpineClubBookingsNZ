@@ -379,7 +379,7 @@ export default function RefundRequestsPage() {
     // doubles - float money arithmetic into a money box (`INV-MONEY-003`).
     // The ceiling is the figure the approve route decides by - since #3827 net
     // of the hand-backs still promised back and the late-cash credit
-    // (`INV-PAY-115`) - and there is
+    // (`INV-PAY-116`) - and there is
     // an ELSE: a request whose booking has no captured payment used to leave
     // the amount prefilled for the request viewed before it (#2932 review).
     const max = refundAppealCeiling(req.booking.payment, req.booking.creditsFromCancellation)

@@ -529,7 +529,7 @@ export async function executeEditReviewSettlement({
   bookingPaymentStatus: string | null;
   /** `INV-PAY-101` (#3529): see `dispatchEditReviewXeroSettlement`. */
   cancellationHandBackInvoiceId: string | null;
-  /** #3827 (`INV-PAY-114`): see `dispatchEditReviewXeroSettlement`. */
+  /** #3827 (`INV-PAY-115`): see `dispatchEditReviewXeroSettlement`. */
   nonCancellationHandBack: boolean;
   /** #3827 (D-3813-8): see `dispatchEditReviewXeroSettlement`. */
   refundRequestId?: string | null;

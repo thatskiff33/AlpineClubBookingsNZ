@@ -80,7 +80,7 @@ import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settleme
  *   ordinary edit's "money back" arm (`applyPaymentAdjustments` with
  *   `calculateFullReductionSettlementOptions`): a Stripe refund after commit for
  *   a card, and for internet banking (or cash) an officer refund task in the
- *   money-to-settle queue (D-3813-6, `INV-PAY-114`) beside the Xero credit note;
+ *   money-to-settle queue (D-3813-6, `INV-PAY-115`) beside the Xero credit note;
  * - whatever the cash cannot cover went on account credit and goes back as
  *   account credit, the way an edit returns over-applied credit
  *   (`clampAppliedCreditToBookingPrice`, INV-MOD-012) — the whole reduction for
@@ -463,7 +463,7 @@ export async function repriceBookingAfterGuestAcceptance(
     sides,
     site: "guest-acceptance",
   });
-  // D-3813-6 (`INV-PAY-114`): the cash share of a reduction on a booking paid
+  // D-3813-6 (`INV-PAY-115`): the cash share of a reduction on a booking paid
   // by internet banking or by hand is the treasurer's to send back.
   await raiseEditRefundHandBackIfOwed(tx, {
     bookingId,
@@ -539,7 +539,7 @@ async function fullReductionReturnRoute(
   // Captured cash: the edit's money-back arm, at 100% and never above what is
   // still refundable (`calculateFullReductionSettlementOptions`); null once a
   // card has been refunded in full.
-  // Net of edit refunds already promised back by hand (#3827, `INV-PAY-114`):
+  // Net of edit refunds already promised back by hand (#3827, `INV-PAY-115`):
   // an earlier edit's open task is cash the club owes, not cash it holds.
   const settlementOptions = capturedCash
     ? calculateFullReductionSettlementOptions({

@@ -722,7 +722,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
                   bookingId: settlementPayment.bookingId,
                   paymentId: settlementPayment.id,
                   kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
-                  // #3827 (`INV-PAY-114`): an edit's refund hand-back on the
+                  // #3827 (`INV-PAY-115`): an edit's refund hand-back on the
                   // same payment is not this cancellation's.
                   ...NOT_NON_CANCELLATION_HAND_BACK_WHERE,
                 },

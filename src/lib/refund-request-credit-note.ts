@@ -1,5 +1,5 @@
 /**
- * #3827, owner decision D-3813-8 (#3492, `INV-PAY-115`): A REFUND REQUEST'S
+ * #3827, owner decision D-3813-8 (#3492, `INV-PAY-116`): A REFUND REQUEST'S
  * OWN XERO REFUND CREDIT NOTE.
  *
  * An approved refund request on an internet-banking payment is paid back by

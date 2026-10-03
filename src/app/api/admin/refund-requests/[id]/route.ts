@@ -37,7 +37,7 @@ import { clubFormat } from "@/lib/club-format-server";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { refundRequestApprovedRefundSentence } from "@/lib/booking-modified-email-copy";
 
-/** #3827 (`INV-PAY-115`): thrown inside the approval to roll its claim back. */
+/** #3827 (`INV-PAY-116`): thrown inside the approval to roll its claim back. */
 class RefundRequestHandBackNotRaisedError extends Error {}
 
 const reviewSchema = z.object({
@@ -119,7 +119,7 @@ export async function PUT(
     //
     // #3827 (D-3813-7) does NOT lift this, though an approval can now raise a
     // bank-transfer task and its cap nets the cancellation's own open
-    // hand-back (`INV-PAY-115`): once that task is paid it moves
+    // hand-back (`INV-PAY-116`): once that task is paid it moves
     // `refundedAmountCents`, but a dismissed one (the club decided to keep the
     // money) reads as refundable again, so an appeal here could re-promise
     // money the treasurer already decided on. Kept for the owner to revisit.
@@ -135,7 +135,7 @@ export async function PUT(
       );
     }
 
-    // #3827 (`INV-PAY-115`): cap at the refundable cash NET of every refund
+    // #3827 (`INV-PAY-116`): cap at the refundable cash NET of every refund
     // still promised back by bank transfer - an edit's, an earlier approved
     // appeal's (D-3813-7), or a cancellation's own hand-back - and of the
     // account credit already minted from late cash, or an appeal re-promises
@@ -200,7 +200,7 @@ export async function PUT(
         store: tx,
       });
 
-      // #3827 (owner decision D-3813-7, `INV-PAY-115`): on a booking paid by
+      // #3827 (owner decision D-3813-7, `INV-PAY-116`): on a booking paid by
       // internet banking, what no card refund can carry (normally all of it)
       // goes back by bank transfer. ONE officer task, raised here so it is
       // netted from the refundable cash before the lock is released - a second
@@ -379,7 +379,7 @@ export async function PUT(
     // Queue the Xero credit note durably and try to kick the worker - for the
     // part refunded through the card only (the whole approval, on a card
     // payment, exactly as before). The bank-transfer part gets NO note here:
-    // owner decision D-3813-8 (`INV-PAY-115`) queues that request's own note
+    // owner decision D-3813-8 (`INV-PAY-116`) queues that request's own note
     // when the treasurer marks its task paid back, after the money has moved
     // (`enqueueXeroRefundRequestCreditNoteOperation`).
     const cardNoteCents = approvedAmountCents - bankTransferCents;

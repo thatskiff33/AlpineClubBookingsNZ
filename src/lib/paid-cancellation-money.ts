@@ -27,7 +27,7 @@ export type PaidCancellationMoney = {
   /**
    * Money taken for the booking, net of earlier refunds and of edit refunds
    * already promised back by hand (`amountCents - refundedAmountCents -
-   * openNonCancellationHandBackCents`, `INV-PAY-114`).
+   * openNonCancellationHandBackCents`, `INV-PAY-115`).
    */
   paidAmountCents: number;
   /** The slice the tier applies to: paid, capped at price plus change fee, less the change fee. */
@@ -90,7 +90,7 @@ export function paidCancellationMoney({
   };
   /**
    * The payment's open edit refund hand-backs (`openNonCancellationHandBackCents`,
-   * #3827 `INV-PAY-114`), read under the cancel's locks: cash promised back on an
+   * #3827 `INV-PAY-115`), read under the cancel's locks: cash promised back on an
    * earlier edit that this cancellation must not refund or credit a second time.
    */
   openNonCancellationHandBackCents: number;
