@@ -33,3 +33,7 @@
   email says the club **will** refund them by bank transfer, and marking the
   task paid back records the refund. The Xero credit note is unchanged. Card
   refunds are unaffected.
+
+  **Deploy note:** do not mark these refund tasks paid back until cutover
+  completes. The previous version would also queue a second Xero refund
+  credit note (`docs/UPGRADING.md`).

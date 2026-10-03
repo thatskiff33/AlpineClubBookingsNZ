@@ -3186,7 +3186,14 @@ does too, and both would post. So `resolveManualRefundTask` takes
   claim (`edit-financial-review-races.realdb.test.ts`). The status-guarded
   `updateMany` still fences on `OPEN` for every kind, pinned with the lock
   mocked in `manual-refund-task.test.ts`. Legacy hand-back kinds take no key,
-  exactly as before.
+  exactly as before — **except an edit refund hand-back** (#3827,
+  `INV-PAY-114`), which takes the same key first, decided from its immutable
+  `kind` and `occurrenceKey`. Its completion moves the payment's
+  `refundedAmountCents` and closes the task in one commit, and every edit,
+  acceptance and paid cancel reads those two separately to size a refund net of
+  the cash already promised back (`refundableCashNetOfOpenEditRefunds`); under
+  `lock(1)` the completion cannot commit between the two reads. A reopen of
+  one already holds `lock(1)` and is refused past that same net cash.
 
 Registered in `advisory-lock-guard.test.ts` as `resolveManualRefundTask#1`
 (`INV-LOCK-002`). The four edit doors and the batch path post their own lines

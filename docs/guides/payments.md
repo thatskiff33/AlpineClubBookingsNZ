@@ -201,6 +201,12 @@ Xero, record the refund against that credit note. Each change raises at most
 one task. A card-paid booking is refunded to the card automatically and raises
 none.
 
+While such a task is open, its amount counts as already promised back. A later
+change or a cancellation of the same booking refunds only what is left of the
+money paid, never that amount a second time. For the same reason a dismissed one
+cannot be put back on the queue once that money has been refunded or promised
+back another way.
+
 The card holds several kinds of row and says which is which: a cash hand-back
 (above), a part payment settled in Xero (next), a booking change to price
 ("Decide a booking change the system would not price"), an amount the club may

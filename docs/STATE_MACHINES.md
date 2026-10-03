@@ -1907,7 +1907,11 @@ lifecycle unchanged.** A price reduction on a booking not paid through Stripe
 raises the task OPEN, inside the edit's transaction, keyed one per
 `BookingModification`; it is completed or dismissed exactly as a cancellation's
 hand-back, except that its completion queues no Xero document, because the
-edit's own credit note already corrects the invoice. See
+edit's own credit note already corrects the invoice, and its `REFUNDED` event
+is marked so the narrative never reads it as a cancellation's settlement. While
+it is OPEN its amount is cash already promised back: later edits, acceptances
+and cancellations refund only what is left, and a DISMISSED one cannot be
+reopened past that. See
 [`INV-PAY-114`](invariants/payment-and-settlement.md#inv-pay-114).
 
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED

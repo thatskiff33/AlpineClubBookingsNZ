@@ -3,6 +3,8 @@ import "server-only";
 import { ManualRefundTaskStatus } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
+import { refundableCashNetOfOpenEditRefunds } from "@/lib/edit-refund-hand-back";
+import { isEditRefundHandBackTask } from "@/lib/manual-refund-task-settlement-rules";
 import { recordManualRefundTaskReopenAudit } from "@/lib/manual-refund-task-reopen-audit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import {
@@ -121,6 +123,15 @@ export const REOPEN_ONLY_OFFICER_DISMISSAL_MESSAGE =
 export const REOPEN_ALREADY_OPEN_MESSAGE =
   "This item is already on the queue.";
 
+/**
+ * #3827 (`INV-PAY-114`): an edit refund hand-back promises cash back. Once it
+ * is dismissed that cash is refundable again, and a later edit or cancellation
+ * may already have promised or returned it, so putting the task back could
+ * promise more than the club took.
+ */
+export const REOPEN_EDIT_REFUND_EXCEEDS_CASH_MESSAGE =
+  "This refund can no longer be put back on the queue: since it was dismissed, the money it would return has been refunded or promised back another way. Check the booking's payments before raising anything further.";
+
 export const REOPEN_RACED_MESSAGE =
   "This item changed while you were putting it back — refresh and try again.";
 
@@ -176,6 +187,9 @@ export async function reopenManualRefundTask({
         id: true,
         bookingId: true,
         kind: true,
+        // #3827: an edit refund hand-back's marker and the cash behind it.
+        occurrenceKey: true,
+        payment: { select: { id: true, status: true, amountCents: true, refundedAmountCents: true } },
         status: true,
         amountCents: true,
         raisedAmountCents: true,
@@ -199,6 +213,15 @@ export async function reopenManualRefundTask({
         REOPEN_ONLY_OFFICER_DISMISSAL_MESSAGE,
         409,
       );
+    }
+
+    // #3827 (`INV-PAY-114`): never promise back more cash than was taken. Read
+    // under lock(1), which every edit, acceptance and paid cancel also holds.
+    if (
+      isEditRefundHandBackTask(task) &&
+      (task.amountCents ?? 0) > (await refundableCashNetOfOpenEditRefunds(tx, task.payment))
+    ) {
+      throw new ManualBookingPaymentError(REOPEN_EDIT_REFUND_EXCEEDS_CASH_MESSAGE, 409);
     }
 
     /*

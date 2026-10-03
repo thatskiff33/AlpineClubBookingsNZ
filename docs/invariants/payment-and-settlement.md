@@ -1741,8 +1741,13 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     exclusion (`edit-refund-hand-back-readers-census.test.ts`).
   - **The amount is the edit's refund, fixed at raise.** Completing it is a
     hand-back's completion: the refund allocation on the payment, the
-    bank-refund ledger line and the `REFUNDED` event. It queues NO Xero
-    document, because the modification credit note the edit queued stands.
+    bank-refund ledger line and the `REFUNDED` event, marked
+    `edit_refund_hand_back_completed` so the narrative never reads it as a
+    cancellation's. It queues NO Xero document: the edit's credit note stands.
+  - **Promised cash is not refundable twice.** Until it closes, later edits,
+    acceptances and paid cancels size refunds off captured cash less the open
+    tasks (`refundableCashNetOfOpenEditRefunds`), and reopening a dismissed
+    one is refused past that cash; completing one takes `lock(1)`.
   - **The member is told the club WILL refund by bank transfer**, never that a
     refund "has been processed" (`bookingModifiedRefundSentence`).
 

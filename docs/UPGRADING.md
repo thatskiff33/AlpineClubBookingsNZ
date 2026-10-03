@@ -119,6 +119,30 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Do not mark an edit's refund task paid back until cutover completes (#3827)
+
+**What changes.** When a change lowers the price of a booking paid by internet
+banking or in cash, the new version raises a task in **Money to settle** on the
+Payments page so the treasurer sends the refund by bank transfer. Its reason
+reads "Booking … lowered by a … ; paid by internet banking or by hand, so the
+club refunds the difference by bank transfer". The change's own Xero credit
+note already corrects the invoice, so the new version records the refund when
+the task is marked paid back and sends Xero nothing more.
+
+**The window.** The previous version lists these tasks too, as ordinary
+hand-backs, and has no way to tell them apart. If an officer marks one paid
+back on the **old** colour while both colours are serving, the old colour also
+queues a bank-transfer refund credit note against the same invoice. Xero then
+shows the same refund twice. Nothing in the code can stop the old colour doing
+this.
+
+**What to do.** Until cutover completes and the old colour has drained, tell
+your treasurer not to mark these tasks paid back. Sending the money is fine:
+mark the task paid back after cutover. If a task was marked paid back during the
+window, open the booking's invoice in Xero. Look for two refund credit notes
+for that amount, the change's own note and a second one dated when the task was
+completed. Void the second one by hand.
+
 ### You must declare whether this deployment is the live site (#3034, epic #2986)
 
 **Do this before you deploy, or the deploy will refuse to run.** Add one line to
