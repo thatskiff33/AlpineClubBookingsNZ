@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   refundRequestUpdateMany: vi.fn(),
   paymentFindUnique: vi.fn(),
   paymentUpdate: vi.fn(),
+  executeRaw: vi.fn(),
+  manualRefundTaskAggregate: vi.fn(),
   transaction: vi.fn(),
   processRefund: vi.fn(),
   refundPaymentTransactions: vi.fn(),
@@ -141,13 +143,20 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     mocks.refundRequestApprovedTemplate.mockReturnValue("<p>approved</p>");
     mocks.refundRequestDeclinedTemplate.mockReturnValue("<p>declined</p>");
     mocks.refundRequestUpdateMany.mockResolvedValue({ count: 1 });
+    // #3827: the approval re-reads the payment under lock(1) for its cap.
     mocks.paymentFindUnique.mockResolvedValue({
+      id: "payment_1",
+      status: "SUCCEEDED",
       amountCents: 10000,
       refundedAmountCents: 0,
     });
+    mocks.executeRaw.mockResolvedValue(1);
+    mocks.manualRefundTaskAggregate.mockResolvedValue({ _sum: { amountCents: null } });
     mocks.paymentUpdate.mockResolvedValue({});
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
+        $executeRaw: mocks.executeRaw,
+        manualRefundTask: { aggregate: mocks.manualRefundTaskAggregate },
         refundRequest: {
           updateMany: mocks.refundRequestUpdateMany,
         },
@@ -287,6 +296,83 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     expect(response.status).toBe(409);
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  // #3827 (`INV-PAY-114`): paid 200, an edit lowered it to 150 by internet
+  // banking (a 50 refund task still OPEN), the cancel then handed back 75. The
+  // gross remainder is 125, but 50 of it is already promised back by the edit's
+  // own task, so an appeal can be approved for 75 at most - approving 125 would
+  // queue a credit note for the same 50 twice.
+  describe("caps at the cash net of open edit refunds (#3827)", () => {
+    function lockedPaymentAfterEditAndCancel() {
+      // The route's pre-lock read (approvedRefundRequest) still says nothing
+      // was refunded: the cap must come from the re-read under the lock.
+      mocks.paymentFindUnique.mockResolvedValue({
+        id: "payment_1",
+        status: "PARTIALLY_REFUNDED",
+        amountCents: 20000,
+        refundedAmountCents: 7500,
+      });
+      mocks.manualRefundTaskAggregate.mockResolvedValue({ _sum: { amountCents: 5000 } });
+      mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+    }
+
+    function approveFor(approvedAmountCents: number) {
+      return new NextRequest("http://localhost/api/admin/refund-requests/refund_1", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "x-forwarded-for": "127.0.0.1" },
+        body: JSON.stringify({ status: "APPROVED", approvedAmountCents }),
+      });
+    }
+
+    it("refuses an approval that would re-promise an open edit refund, before any claim or money", async () => {
+      lockedPaymentAfterEditAndCancel();
+
+      const response = await PUT(approveFor(12500), {
+        params: Promise.resolve({ id: "refund_1" }),
+      });
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: "Amount exceeds maximum refundable of $75.00",
+      });
+      expect(mocks.manualRefundTaskAggregate).toHaveBeenCalledWith({
+        where: {
+          paymentId: "payment_1",
+          status: "OPEN",
+          kind: "CANCELLED_BOOKING_HAND_BACK",
+          occurrenceKey: { startsWith: "edit-refund-hand-back:" },
+        },
+        _sum: { amountCents: true },
+      });
+      expect(mocks.refundRequestUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.planStripeRefundAllocation).not.toHaveBeenCalled();
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    });
+
+    it("approves up to that net figure, reading it and claiming under lock(1)", async () => {
+      lockedPaymentAfterEditAndCancel();
+
+      const response = await PUT(approveFor(7500), {
+        params: Promise.resolve({ id: "refund_1" }),
+      });
+
+      expect(response.status).toBe(200);
+      const lockSql = (mocks.executeRaw.mock.calls[0]?.[0] as TemplateStringsArray).join("?");
+      expect(lockSql).toContain("pg_advisory_xact_lock(1)");
+      const lockedAt = mocks.executeRaw.mock.invocationCallOrder[0];
+      expect(lockedAt).toBeLessThan(mocks.paymentFindUnique.mock.invocationCallOrder[0]);
+      expect(lockedAt).toBeLessThan(mocks.manualRefundTaskAggregate.mock.invocationCallOrder[0]);
+      expect(mocks.manualRefundTaskAggregate.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.refundRequestUpdateMany.mock.invocationCallOrder[0],
+      );
+      // The claim ran inside the locked transaction, before the provider call.
+      expect(mocks.refundRequestUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.planStripeRefundAllocation.mock.invocationCallOrder[0],
+      );
+      expect(mocks.transaction).toHaveBeenCalledTimes(1);
+    });
   });
 
   // #1039 item 1 (PR #846 residual): a failed Stripe refund no longer bounces

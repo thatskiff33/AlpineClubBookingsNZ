@@ -802,4 +802,67 @@ describe("Admin refund and credit review page", () => {
     expect(amountBox().value).toBe("");
     expect(screen.getByText("Max refundable: $0.00")).toBeTruthy();
   });
+
+  // #3827 (`INV-PAY-114`): the ceiling the screen offers is the one the approve
+  // route enforces - the remaining refundable cash LESS the edit refunds still
+  // promised back by bank transfer. Paid 200, refunded 75 at cancel, a 50 edit
+  // refund still open: 75, not the gross 125.
+  it("offers the ceiling net of open edit refunds, the figure the approve route caps at", async () => {
+    mocks.currentSearch = "";
+    mocks.sessionUser = { id: "admin-2", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] };
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/admin/refund-requests?status=PENDING") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            data: [
+              {
+                id: "edited",
+                bookingId: "booking-edited",
+                memberId: "member-edited",
+                reason: "Weather closure",
+                requestedAmountCents: null,
+                status: "PENDING",
+                adminNotes: null,
+                approvedAmountCents: null,
+                reviewedAt: null,
+                createdAt: "2026-07-01T00:00:00.000Z",
+                booking: {
+                  id: "booking-edited",
+                  checkIn: "2026-08-01T00:00:00.000Z",
+                  checkOut: "2026-08-03T00:00:00.000Z",
+                  finalPriceCents: 15000,
+                  status: "CANCELLED",
+                  noEmails: false,
+                  creditsFromCancellation: [],
+                  payment: {
+                    status: "PARTIALLY_REFUNDED",
+                    amountCents: 20000,
+                    refundedAmountCents: 7500,
+                    stripePaymentIntentId: null,
+                    manualRefundTasks: [{ amountCents: 5000 }],
+                  },
+                },
+                member: { id: "member-edited", firstName: "Jane", lastName: "edited", email: "e@example.com" },
+              },
+            ],
+            page: 1,
+            pageSize: 25,
+            total: 1,
+          }),
+        });
+      }
+      if (url === "/api/admin/credit-approvals?status=PENDING") {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    render(<RefundRequestsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+
+    expect((screen.getByLabelText(/Refund Amount/i) as HTMLInputElement).value).toBe("75.00");
+    expect(screen.getByText("Max refundable: $75.00")).toBeTruthy();
+  });
 });

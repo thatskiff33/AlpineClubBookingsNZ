@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ManualRefundTaskStatus } from "@prisma/client";
+import { EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE } from "@/lib/manual-refund-task-settlement-rules";
 
 /**
  * #3498 (owner decision D2, epic #2797): putting a DISMISSED money task back on
@@ -324,5 +325,30 @@ describe("reopening a dismissed EDIT refund hand-back (#3827, INV-PAY-114)", () 
 
     await expect(reopen()).rejects.toMatchObject({ message: REOPEN_EDIT_REFUND_EXCEEDS_CASH_MESSAGE });
     expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses once the booking is cancelled, even with the cash still there: the cancel sized its refund without it", async () => {
+    mocks.findUnique.mockResolvedValue({
+      ...dismissedEditRefund({ amountCents: 30000, refundedAmountCents: 0 }),
+      booking: { memberId: "member-1", status: "CANCELLED", organisation: null },
+    });
+    mocks.aggregate.mockResolvedValue({ _sum: { amountCents: null } });
+
+    await expect(reopen()).rejects.toMatchObject({
+      status: 409,
+      message: EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE,
+    });
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("CONTROL: a cancellation's own dismissed hand-back on a cancelled booking still reopens", async () => {
+    mocks.findUnique.mockResolvedValue({
+      ...DISMISSED_BY_OFFICER,
+      kind: "CANCELLED_BOOKING_HAND_BACK",
+      occurrenceKey: null,
+      booking: { memberId: "member-1", status: "CANCELLED", organisation: null },
+    });
+
+    await expect(reopen()).resolves.toMatchObject({ status: ManualRefundTaskStatus.OPEN });
   });
 });

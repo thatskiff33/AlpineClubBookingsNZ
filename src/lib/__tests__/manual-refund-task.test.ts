@@ -205,6 +205,7 @@ vi.mock("@/lib/member-credit", () => {
 });
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
+import { EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE } from "@/lib/manual-refund-task-settlement-rules";
 import { postHandBackLedgerLine } from "@/lib/booking-ledger-hand-back";
 import { postReviewClosureLedgerLines } from "@/lib/booking-ledger-modification-sync";
 // The MOCKED class — the same constructor the module under test compares
@@ -1728,6 +1729,73 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       expect.anything(),
       expect.stringContaining("must be corrected manually"),
     );
+  });
+
+  // #3827 (`INV-PAY-114`): the cancel counted an OPEN edit refund as going
+  // back to the member, so once the booking is cancelled the task is settled by
+  // paying it. Dismissing it would leave the cancellation's kept figure wrong.
+  describe("an edit refund hand-back on a CANCELLED booking (#3827)", () => {
+    function editRefundTaskOn(bookingStatus: string) {
+      mocks.manualRefundTaskFindUnique.mockResolvedValue({
+        id: "task-1",
+        bookingId: "booking-1",
+        paymentId: "payment-1",
+        amountCents: 5000,
+        raisedAmountCents: 5000,
+        kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+        occurrenceKey: "edit-refund-hand-back:mod-1",
+        status: ManualRefundTaskStatus.OPEN,
+        booking: {
+          memberId: "member-1",
+          lodgeId: "lodge-1",
+          status: bookingStatus,
+          payment: { id: "payment-1", status: "PARTIALLY_REFUNDED", xeroInvoiceId: null },
+        },
+      });
+    }
+
+    function dismiss() {
+      return resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "dismissed",
+        note: "member said keep it",
+        actingMemberId: "admin-1",
+        recordedNightPrices: null,
+      }, CLUB_FORMAT_TEST);
+    }
+
+    it("refuses the dismissal, under lock(1), before any claim", async () => {
+      editRefundTaskOn("CANCELLED");
+
+      await expect(dismiss()).rejects.toMatchObject({
+        status: 409,
+        message: EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE,
+      });
+      expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+      expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("CONTROL: still lets it be dismissed while the booking is live", async () => {
+      editRefundTaskOn("PAID");
+
+      await dismiss();
+
+      expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: ManualRefundTaskStatus.DISMISSED }) }),
+      );
+    });
+
+    it("CONTROL: a CANCELLATION's own hand-back on a cancelled booking still dismisses", async () => {
+      editRefundTaskOn("CANCELLED");
+      mocks.manualRefundTaskFindUnique.mockResolvedValue({
+        ...(await mocks.manualRefundTaskFindUnique()),
+        occurrenceKey: null,
+      });
+
+      await dismiss();
+
+      expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalled();
+    });
   });
 
   it("MUTATION: a DISMISSED hand-back raises no refund note even with an issued invoice", async () => {
