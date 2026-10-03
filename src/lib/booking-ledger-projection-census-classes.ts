@@ -46,22 +46,23 @@ import {
 } from "@/lib/payment-transaction-status";
 
 // ---------------------------------------------------------------------------
-// The two pending owner decisions (#3583's plan comment). Each is ONE line.
+// The owner's two decisions on #3583 (3 Oct 2026, both A). Each is ONE line.
 // ---------------------------------------------------------------------------
 
 export const BOOKING_LEDGER_CENSUS_GATE_POLICY = {
   /**
-   * Owner decision 1, recommended A: bookings already damaged by #3791, #3792
-   * or #1641 are listed under `KNOWN_DEFECT_HISTORY` and HOLD the gate until
-   * each is corrected by an officer or written off — the owner's written-off
-   * list is the census's `--acknowledged` file. `false` is option B: a class
-   * that does not hold the gate.
+   * Owner decision 1, A (#3583, 3 Oct 2026): bookings already damaged by
+   * #3791, #3792 or #1641 are listed under `KNOWN_DEFECT_HISTORY` and HOLD the
+   * gate until each is corrected by an officer or written off with the owner's
+   * acknowledgement on #3583 — that written-off list is the census's
+   * `--acknowledged` file. Option B (a class that does not hold) was declined.
    */
   knownDefectHistoryHoldsGate: true,
   /**
-   * Owner decision 2, recommended A: a group-booking child settled through
-   * `GroupBookingSettlement` is named `GROUP_SETTLEMENT_OFF_LEDGER` and does not
-   * hold the gate (its poster is a separate issue). `true` would hold it.
+   * Owner decision 2, A (#3583, 3 Oct 2026): a group-booking child settled
+   * through `GroupBookingSettlement` is named `GROUP_SETTLEMENT_OFF_LEDGER` and
+   * does not hold the gate; its poster is #3854, which lands before #3584 moves
+   * a reader that shows one. Option B (the poster here) was declined.
    */
   groupSettlementOffLedgerHoldsGate: false,
 } as const;
