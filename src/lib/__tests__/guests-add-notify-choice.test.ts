@@ -716,6 +716,55 @@ describe("POST /api/bookings/[id]/guests clears a flagged review in place (#3500
   });
 });
 
+// #3770, owner decision "only agreed adults count": adding children to a booking
+// whose only adult is a member guest from beyond the family who has NOT agreed
+// yet raises the adult-supervision review, exactly as children alone would.
+describe("POST /api/bookings/[id]/guests: a pending outsider adult is not the responsible adult (#3770)", () => {
+  const CHILD_GUEST = { firstName: "Kid", lastName: "Jones", ageTier: "CHILD", isMember: false };
+  function bookingWithOutsiderAdult(consentStatus: "PENDING" | "CONFIRMED") {
+    const booking = makeBooking();
+    booking.guests[0].ageTier = "YOUTH";
+    booking.guests.push({
+      ...booking.guests[0],
+      id: "g2",
+      firstName: "Grace",
+      lastName: "Hopper",
+      ageTier: "ADULT",
+      memberId: "member-x",
+      consentStatus,
+      member: hostingMemberRow("member-x"),
+    } as unknown as (typeof booking.guests)[number]);
+    return booking;
+  }
+  async function reviewFlagAfterAddingAChild(consentStatus: "PENDING" | "CONFIRMED") {
+    const tx = makeTx(bookingWithOutsiderAdult(consentStatus));
+    // A non-member child rate, so the added child prices.
+    tx.season.findMany.mockResolvedValue([
+      {
+        ...CURRENT_SEASON[0],
+        membershipTypeRates: [
+          ...CURRENT_SEASON[0].membershipTypeRates,
+          { membershipTypeId: "type-nonmember", ageTier: "CHILD", pricePerNightCents: 4000 },
+        ],
+      },
+    ]);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+    const res = await POST(guestsRequest({ guests: [CHILD_GUEST] }), params);
+    expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
+    const data = tx.booking.update.mock.calls.at(-1)?.[0]?.data as Record<string, unknown>;
+    return data.requiresAdminReview;
+  }
+
+  it("flags the booking for review when the only adult has not agreed yet", async () => {
+    expect(await reviewFlagAfterAddingAChild("PENDING")).toBe(true);
+  });
+
+  it("CONTROL: an outsider adult who has agreed still counts", async () => {
+    expect(await reviewFlagAfterAddingAChild("CONFIRMED")).toBeFalsy();
+  });
+});
+
 describe("POST /api/bookings/[id]/guests refuses the owner's dependant as a typed guest (#3451)", () => {
   /**
    * `INV-GUEST-019` on the standalone add door. The owner's decision (1 Oct 2026,

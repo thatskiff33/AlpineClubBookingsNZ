@@ -12,7 +12,11 @@ import type {
 import type { GuestData } from "@/components/guest-form";
 
 vi.mock("@/components/guest-form", () => ({
-  GuestForm: () => <div data-testid="guest-form" />,
+  // The header actions are rendered so the "+ Add Member Guest" control the
+  // step passes in can be asserted (#3770); the form itself stays a stub.
+  GuestForm: ({ headerActions }: { headerActions?: React.ReactNode }) => (
+    <div data-testid="guest-form">{headerActions}</div>
+  ),
 }));
 
 function renderGuestsStep(
@@ -47,6 +51,9 @@ function renderGuestsStep(
       memberGuestEnabled={false}
       memberGuestOpenSearchEnabled={false}
       addMemberGuest={vi.fn()}
+      familyMembersLoaded
+      familyMembersLoadFailed={false}
+      retryFamilyMembersLoad={vi.fn()}
       memberGuestAddError={null}
       dependantIdentityCollisions={[]}
       declaredDependantMemberIds={[]}
@@ -143,6 +150,9 @@ describe("GuestsStep", () => {
         memberGuestEnabled={false}
         memberGuestOpenSearchEnabled={false}
         addMemberGuest={vi.fn()}
+        familyMembersLoaded
+        familyMembersLoadFailed={false}
+        retryFamilyMembersLoad={vi.fn()}
         memberGuestAddError={null}
         capacityShortNights={[]}
         capacityShortMessage={null}
@@ -437,5 +447,37 @@ describe("GuestsStep", () => {
         nights: ["2026-07-10", "2026-07-11"],
       });
     });
+  });
+});
+
+/*
+  #3770: the member-guest finder stays closed until the family list has answered,
+  because the consent prediction (and the adult-supervision check that reads it)
+  needs it. A failed load says so and offers a retry.
+*/
+describe("GuestsStep holds the member-guest finder until the family list loads (#3770)", () => {
+  it("disables the finder and offers a retry when the family load failed", () => {
+    const retry = vi.fn();
+    renderGuestsStep({
+      memberGuestEnabled: true,
+      familyMembersLoaded: false,
+      familyMembersLoadFailed: true,
+      retryFamilyMembersLoad: retry,
+    });
+    expect(screen.getByRole("button", { name: "+ Add Member Guest" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the finder while the family list is still loading", () => {
+    renderGuestsStep({ memberGuestEnabled: true, familyMembersLoaded: false });
+    expect(screen.getByRole("button", { name: "+ Add Member Guest" })).toBeDisabled();
+    expect(screen.getByText("Loading your family…")).toBeInTheDocument();
+  });
+
+  it("enables the finder once the family list has loaded", () => {
+    renderGuestsStep({ memberGuestEnabled: true, familyMembersLoaded: true });
+    expect(screen.getByRole("button", { name: "+ Add Member Guest" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 });

@@ -109,6 +109,9 @@ export default function BookPage() {
     addFamilyMemberAsGuest,
     addMemberGuest,
     memberGuestConfig,
+    familyMembersLoaded,
+    familyMembersLoadFailed,
+    retryFamilyMembersLoad,
     memberGuestAddError,
     handleRemoveConflictGuest,
     handleDateSelect,
@@ -601,6 +604,9 @@ export default function BookPage() {
           memberGuestEnabled={memberGuestConfig.enabled}
           memberGuestOpenSearchEnabled={memberGuestConfig.openSearchEnabled}
           addMemberGuest={addMemberGuest}
+          familyMembersLoaded={familyMembersLoaded}
+          familyMembersLoadFailed={familyMembersLoadFailed}
+          retryFamilyMembersLoad={retryFamilyMembersLoad}
           memberGuestAddError={memberGuestAddError}
           capacityShortNights={capacityShortNights}
           capacityShortMessage={capacityShortMessage}

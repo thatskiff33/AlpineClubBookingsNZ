@@ -141,7 +141,9 @@ describe("D-8 leak 1 — the profile-completeness gate", () => {
   it("a cross-family target wins over a family one blocked in the same request", async () => {
     // Reporting the family member in full while staying silent about the stranger
     // would leak by omission, and a caller could read the same oracle one id at a
-    // time.
+    // time. The GATE keeps this order; the create route never hands it both at
+    // once, because it gates the family first (#3770, owner decision) — pinned in
+    // `create-dependant-identity-guard.test.ts`.
     const error = await assertLinkedBookingMembersCanBeBooked(
       profileGateDb(),
       new Map([

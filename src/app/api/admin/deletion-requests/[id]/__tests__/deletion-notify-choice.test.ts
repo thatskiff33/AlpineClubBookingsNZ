@@ -98,6 +98,8 @@ vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/audit", () => ({
   logAudit: h.logAudit,
   createAuditLog: h.createAuditLog,
+  // #3454: the erasure's two-factor clear takes the canonical request context.
+  getAuditRequestContext: () => ({ id: null, ipAddress: null, userAgent: null }),
 }));
 vi.mock("@/lib/booking-cancel", () => ({ cancelBooking: h.cancelBooking }));
 vi.mock("@/lib/adult-member-hosting-review", () => ({

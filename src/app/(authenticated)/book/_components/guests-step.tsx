@@ -67,6 +67,13 @@ interface GuestsStepProps {
   memberGuestEnabled: boolean;
   memberGuestOpenSearchEnabled: boolean;
   addMemberGuest: (candidate: MemberGuestCandidate) => void;
+  /**
+   * #3770: the finder stays closed until the family list has answered — the
+   * consent prediction (and the adult-supervision check that reads it) needs it.
+   */
+  familyMembersLoaded: boolean;
+  familyMembersLoadFailed: boolean;
+  retryFamilyMembersLoad: () => void;
   memberGuestAddError: string | null;
   /**
    * Advisory per-night capacity for the party as it stands (#2930): the nights
@@ -132,6 +139,9 @@ export function GuestsStep({
   memberGuestEnabled,
   memberGuestOpenSearchEnabled,
   addMemberGuest,
+  familyMembersLoaded,
+  familyMembersLoadFailed,
+  retryFamilyMembersLoad,
   memberGuestAddError,
   capacityShortNights,
   capacityShortMessage,
@@ -379,20 +389,41 @@ export function GuestsStep({
           maxGuests={lodgeCapacity}
           headerActions={
             memberGuestEnabled ? (
-              <Button
-                ref={findTriggerRef}
-                type="button"
-                variant={findPanelOpen ? "secondary" : "outline"}
-                size="sm"
-                disabled={atPartyCeiling}
-                onClick={() => setFindPanelOpen((open) => !open)}
-              >
-                + Add Member Guest
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  ref={findTriggerRef}
+                  type="button"
+                  variant={findPanelOpen ? "secondary" : "outline"}
+                  size="sm"
+                  disabled={atPartyCeiling || !familyMembersLoaded}
+                  onClick={() => setFindPanelOpen((open) => !open)}
+                >
+                  + Add Member Guest
+                </Button>
+                {!familyMembersLoaded &&
+                  (familyMembersLoadFailed ? (
+                    <span className="text-sm text-muted-foreground" role="status">
+                      We couldn&apos;t load your family list.{" "}
+                      <Button
+                        type="button"
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0"
+                        onClick={retryFamilyMembersLoad}
+                      >
+                        Try again
+                      </Button>
+                    </span>
+                  ) : (
+                    <span className="text-sm text-muted-foreground" role="status">
+                      Loading your family…
+                    </span>
+                  ))}
+              </div>
             ) : null
           }
           belowHeader={
-            memberGuestEnabled && findPanelOpen ? (
+            memberGuestEnabled && findPanelOpen && familyMembersLoaded ? (
               <MemberGuestFindPanel
                 openSearchEnabled={memberGuestOpenSearchEnabled}
                 existingMemberIds={guests

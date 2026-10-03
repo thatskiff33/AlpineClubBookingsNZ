@@ -426,6 +426,10 @@ this page already learnt about once, from the rotation runbook two sections up.
   for pushes and stored the secret the central server issued.
 - `xero-token-key-generation` — first use of Xero token encryption generated
   (or, after an auth-secret change, replaced) the wrapped token key.
+- `xero-token-refresh` — the Xero access token was near expiry, so the API
+  client spent the refresh token under the shared refresh lease and stored the
+  rotated pair (#3454). Connecting, disconnecting and the verify-reset each have
+  an administrator behind them and name that person instead.
 - `e2e-stripe-seed` — the E2E staging stack seeding Stripe test-mode keys.
   Never a real deployment.
 
@@ -467,23 +471,43 @@ every signature-verified test-mode event, so it is written only when the
 freshness answer would actually change, rather than minting a seven-year row per
 delivery.
 
-**What this contract covers, and what it does not.** Everything above is about
-the `IntegrationCredential` table. Two other secrets are stored elsewhere and
-are outside it, which is worth saying plainly on the page an operator reads to
-plan a rotation or reconstruct an incident:
+**What this contract covers.** Everything above is about the
+`IntegrationCredential` table, and since #3454 that includes **the Xero access
+and refresh tokens**. An operator planning a rotation or reconstructing an
+incident can rely on the following:
 
-- **The Xero access and refresh tokens** (`XeroToken`) are their own table, with
-  no actor column and no audit row on any write or delete. `deleteXeroTokens()`
-  wipes them from the verify-reset path described above and from the OAuth
-  disconnect, so an administrator changing a Xero client credential destroys a
-  live provider grant and the trail records the credential write beside it but
-  nothing about the tokens.
-- **A member's TOTP secret** (`Member.totpSecret`) is encrypted at rest and
-  written at enrolment with no audit row of its own.
-
-Neither is a regression — both predate this contract and neither ever carried
-attribution — and neither is in this issue's scope. They are named here so the
-section is not read as covering every stored secret.
+- **The tokens are one credential row**, `xero-oauth` / `token-set`, written by
+  the store's own mutators. Connecting Xero, every token refresh, disconnecting
+  and the verify-reset each record who did it — the administrator, or the named
+  `xero-token-refresh` job — in the same transaction as the change.
+- **The verify-reset is ONE action, in one transaction.** Saving a Xero client id
+  or secret destroys the stored tokens in the same transaction as the credential
+  write, and the token row's audit entry carries the same request and
+  `cause: verify-reset` naming the credential that caused it
+  (`causedByCredential`, a name and never a value). A treasurer asking why the
+  connection broke now gets both halves.
+- **The old `XeroToken` table is still written, for now.** A blue-green deploy
+  runs the previous colour beside this one for a while, and that colour reads and
+  refreshes only `XeroToken`. Xero refresh tokens can be spent once, so this
+  release keeps that row current in the same transaction as every write and
+  keeps the refresh lease on it, so the two colours can never both spend one
+  refresh token. Writes the previous colour makes during that window are not
+  attributed, because that code predates this contract. In this release only
+  the token store may write `XeroToken`: the credential census reports any other
+  writer, raw SQL or migration that rewrites it, because the token store reads
+  that row as the newer copy when it no longer matches. Retiring the table is a
+  separate, later change.
+- **A member's second factor** — the TOTP secret (`Member.totpSecret`) and the
+  recovery codes — stays where it is, encrypted or hashed at rest; it is not a
+  provider credential. Enrolment, replacing the recovery codes and the
+  account-erasure clear each write a `security` audit row in the same
+  transaction, naming the member (who may act only on their own) or the
+  administrator, with no field that could hold a secret
+  (`src/lib/two-factor-audit.ts`). There is no compare-and-set here.
+  `two-factor-secret-census.test.ts` pins every writer of those fields and of
+  the recovery-code table, so a new one cannot land unaudited unseen. The member
+  sees the generic event on their own timeline; it declares no member-facing
+  text.
 
 **What the census can and cannot see.** It enumerates every DIRECT CALL of the
 three store mutators, found by walking the tree — not every function that

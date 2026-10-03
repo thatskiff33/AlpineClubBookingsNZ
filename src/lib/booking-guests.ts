@@ -13,6 +13,7 @@ import {
   MEMBER_GUEST_CROSS_FAMILY_REFUSAL_STATUS,
   MEMBER_GUEST_NOT_ADDABLE_CODE,
 } from "@/lib/member-guest-refusal";
+import { normalizeMemberIds } from "@/lib/member-id-normalization";
 
 export type BookingGuestPricingInput = {
   ageTier: AgeTier;
@@ -226,14 +227,6 @@ export function getBookingGuestValidationErrorResponse(
   }
 
   return { error: error.message };
-}
-
-function normalizeMemberIds(memberIds: Array<string | null | undefined>): string[] {
-  return [...new Set(
-    memberIds
-      .map((memberId) => memberId?.trim())
-      .filter((memberId): memberId is string => Boolean(memberId))
-  )];
 }
 
 /**
@@ -729,7 +722,11 @@ export async function assertLinkedBookingMembersCanBeBooked(
     // read the same oracle the detailed body used to hand over. Refusing
     // wholesale costs the booker one extra round trip: they drop the member the
     // club will not discuss, retry, and get the full, helpful detail for their
-    // own family exactly as before.
+    // own family exactly as before. The create route and both policy-exception
+    // doors do not reach this ordering (owner decision, issue #3770 comment
+    // 5946598639, `INV-GUEST-020`): `member-guest-family-first.ts` gates the
+    // family before resolving any beyond-family member, so a blocked family
+    // member is reported in full there, whether or not a named stranger is real.
     const crossFamilyIds = new Set(context?.crossFamilyMemberIds ?? []);
     const blockedCrossFamilyIds = blockedMembers
       .map((member) => member.memberId)
