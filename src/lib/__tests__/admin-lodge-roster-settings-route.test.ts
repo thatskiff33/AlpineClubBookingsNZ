@@ -42,7 +42,8 @@ vi.mock("@/lib/session-guards", () => ({
 vi.mock("@/lib/audit", () => ({
   createAuditLog: (...args: unknown[]) => mockCreateAuditLog(...args),
 }));
-vi.mock("@/lib/module-settings", () => ({
+vi.mock("@/lib/module-settings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/module-settings")),
   loadEffectiveModuleFlags: (...args: unknown[]) => mockModuleFlags(...args),
 }));
 

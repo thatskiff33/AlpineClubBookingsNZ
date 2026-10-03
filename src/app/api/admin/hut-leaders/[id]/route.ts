@@ -12,7 +12,6 @@ import {
 import { custodianBedHoldErrorResponse } from "@/lib/custodian-assignment-routes";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { isCustodianOccupancy } from "@/lib/custodian-occupancy";
-import { custodianBookedAsGuestWarning } from "@/lib/hut-leader-stayed-nights";
 
 const updateSchema = z.object({
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -167,7 +166,7 @@ export async function PUT(
     // amend path additionally under the global cohort key ahead of it
     // (INV-LOCK-002). Both the locks and the reads that decide the edit live in
     // `hut-leader-assignment-service.ts`; see its module note for why.
-    const { refusal, applied } = await applyHutLeaderAssignmentEditUnderLocks({
+    const refusal = await applyHutLeaderAssignmentEditUnderLocks({
       assignmentId: id,
       intendedLodgeId,
       updateData,
@@ -186,9 +185,7 @@ export async function PUT(
         { status: refusal.status },
       );
     }
-    // #3817 stated limit, as the create: a ticked guest takes two spaces.
-    const custodianBookedWarning = await custodianBookedAsGuestWarning(prisma, applied);
-    return NextResponse.json({ success: true, custodianBookedWarning });
+    return NextResponse.json({ success: true });
   } catch (err) {
     const custodianResponse = custodianBedHoldErrorResponse(err);
     if (custodianResponse) return custodianResponse;

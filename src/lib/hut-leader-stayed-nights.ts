@@ -285,39 +285,3 @@ export async function assertHutLeaderNightsStayed(
   const refusal = await findHutLeaderStayRefusal(db, input);
   if (refusal) throw new HutLeaderNightsNotStayedError(refusal);
 }
-
-/**
- * The advisory a ticked custodian with no bed gets when they are ALSO a guest
- * on a booking at the lodge on some covered nights (#3817 stated limit,
- * `INV-DATE-030`): they then take two spaces on those nights, custodian plus
- * guest. One string for the create and the edit, so the two cannot drift.
- */
-export const CUSTODIAN_BOOKED_AS_GUEST_WARNING =
-  "This custodian is also a guest on a booking at this lodge on some of these nights, so they take two spaces on those nights. Remove them from the booking if they sleep in their own quarters.";
-
-/**
- * {@link CUSTODIAN_BOOKED_AS_GUEST_WARNING} for an assignment as it stands
- * AFTER a committed create or edit, or null. Advisory and failure-tolerant: a
- * failed read answers null, so it can never turn a committed write into an
- * error. Call it after the transaction, never inside it.
- */
-export async function custodianBookedAsGuestWarning(
-  db: StayDb,
-  assignment: {
-    memberId: string;
-    lodgeId: string;
-    startDate: Date;
-    endDate: Date;
-    bedId: string | null | undefined;
-    isCustodian: boolean | null | undefined;
-  },
-): Promise<string | null> {
-  if (assignment.isCustodian !== true || assignment.bedId) return null;
-  const nights = await loadHutLeaderStayedNightKeys(db, {
-    memberId: assignment.memberId,
-    lodgeId: assignment.lodgeId,
-    rangeStart: assignment.startDate,
-    rangeEnd: assignment.endDate,
-  }).catch(() => []);
-  return nights.length > 0 ? CUSTODIAN_BOOKED_AS_GUEST_WARNING : null;
-}

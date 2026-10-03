@@ -5,7 +5,7 @@ import { parseDateOnly } from "@/lib/date-only";
  * Custodian occupancy — the read-side module itself (#2286).
  *
  * These are the primitives every consumer shares: the night predicates, the
- * per-night count index, the planner rows, and the guard that refuses a
+ * per-night custodian counter, the planner rows, and the guard that refuses a
  * placement. Getting the INCLUSIVE endDate semantics wrong here would be wrong
  * everywhere at once, so they are pinned directly rather than only through the
  * engines.
@@ -18,12 +18,14 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     hutLeaderAssignment: { findMany: mocks.hutLeaderAssignmentFindMany },
+    // The counter reads the bed-allocation flag when a custodian holds a bed.
+    clubModuleSettings: { findUnique: async () => ({ bedAllocation: true }) },
   },
 }));
 
 import {
   assertBedNightsFreeOfCustodianHold,
-  buildCustodianNightIndex,
+  buildLodgeCustodianNightCounter,
   custodianHeldBedNightKeys,
   custodianHeldNightsForBed,
   custodianOccupiedBedNightsForPlanner,
@@ -83,23 +85,82 @@ describe("night semantics", () => {
   });
 });
 
-describe("buildCustodianNightIndex", () => {
-  it("is a per-night COUNT, so two custodians on a handover night make two", () => {
-    const index = buildCustodianNightIndex(
-      [
-        hold({ bedId: "bed-1", startDate: "2026-07-01", endDate: "2026-07-02" }),
-        hold({ bedId: "bed-2", startDate: "2026-07-02", endDate: "2026-07-03" }),
-      ],
-      nights("2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04"),
-    );
-    expect(index.get("2026-07-01")).toBe(1);
-    expect(index.get("2026-07-02")).toBe(2);
-    expect(index.get("2026-07-03")).toBe(1);
-    expect(index.has("2026-07-04")).toBe(false);
+describe("buildLodgeCustodianNightCounter", () => {
+  function occupancyRow(input: {
+    id: string;
+    bedId: string | null;
+    startDate: string;
+    endDate: string;
+    memberId?: string;
+  }) {
+    return {
+      id: input.id,
+      memberId: input.memberId ?? `member-${input.id}`,
+      bedId: input.bedId,
+      startDate: parseDateOnly(input.startDate),
+      endDate: parseDateOnly(input.endDate),
+    };
+  }
+
+  it("is a per-night COUNT, so two custodians on a handover night make two", async () => {
+    mocks.hutLeaderAssignmentFindMany.mockResolvedValue([
+      occupancyRow({ id: "a1", bedId: "bed-1", startDate: "2026-07-01", endDate: "2026-07-02" }),
+      occupancyRow({ id: "a2", bedId: "bed-2", startDate: "2026-07-02", endDate: "2026-07-03" }),
+    ]);
+    const count = await buildLodgeCustodianNightCounter({
+      lodgeId: "lodge-1",
+      from: parseDateOnly("2026-07-01"),
+      toExclusive: parseDateOnly("2026-07-05"),
+    });
+    const none = new Set<string>();
+    expect(count(parseDateOnly("2026-07-01"), none)).toBe(1);
+    expect(count(parseDateOnly("2026-07-02"), none)).toBe(2);
+    expect(count(parseDateOnly("2026-07-03"), none)).toBe(1);
+    expect(count(parseDateOnly("2026-07-04"), none)).toBe(0);
   });
 
-  it("returns an empty index for no holds, so consumers can short-circuit", () => {
-    expect(buildCustodianNightIndex([], nights("2026-07-01")).size).toBe(0);
+  it("one person is one space: a guest custodian's held bed is waived only while bed allocation is off (#3817)", async () => {
+    const findUnique = vi.fn();
+    const db = (rows: ReturnType<typeof occupancyRow>[]) =>
+      ({
+        hutLeaderAssignment: { findMany: async () => rows },
+        clubModuleSettings: { findUnique },
+      }) as never;
+    const night = parseDateOnly("2026-07-01");
+    const asGuest = new Set(["member-c"]);
+    const counter = (rows: ReturnType<typeof occupancyRow>[]) =>
+      buildLodgeCustodianNightCounter({
+        lodgeId: "lodge-1",
+        from: night,
+        toExclusive: parseDateOnly("2026-07-02"),
+        db: db(rows),
+      });
+    const held = occupancyRow({ id: "c", memberId: "member-c", bedId: "bed-1", startDate: "2026-07-01", endDate: "2026-07-01" });
+    const tick = { ...held, bedId: null };
+
+    findUnique.mockResolvedValue({ bedAllocation: true });
+    expect((await counter([held]))(night, asGuest)).toBe(1);
+    expect((await counter([held]))(night, new Set())).toBe(1);
+
+    findUnique.mockResolvedValue({ bedAllocation: false });
+    expect((await counter([held]))(night, asGuest)).toBe(0);
+    expect((await counter([held]))(night, new Set())).toBe(1);
+
+    // A bedless tick never depends on the flag, so it is never read for one.
+    findUnique.mockClear();
+    expect((await counter([tick]))(night, asGuest)).toBe(0);
+    expect((await counter([tick]))(night, new Set())).toBe(1);
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it("counts nothing, without reading, for an empty window", async () => {
+    const count = await buildLodgeCustodianNightCounter({
+      lodgeId: "lodge-1",
+      from: parseDateOnly("2026-07-01"),
+      toExclusive: parseDateOnly("2026-07-01"),
+    });
+    expect(count(parseDateOnly("2026-07-01"), new Set())).toBe(0);
+    expect(mocks.hutLeaderAssignmentFindMany).not.toHaveBeenCalled();
   });
 });
 

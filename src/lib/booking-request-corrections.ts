@@ -632,7 +632,14 @@ export async function correctBookingRequest(
     lodgeId,
     checkIn,
     checkOut,
-    guests.map(() => ({ stayStart: checkIn, stayEnd: checkOut })),
+    guests.map((_guest, index) => ({
+      stayStart: checkIn,
+      stayEnd: checkOut,
+      // A changed party cleared its member links above.
+      memberId: partyChanged
+        ? null
+        : (storedLinks.find((link) => link.guestIndex === index)?.memberId ?? null),
+    })),
   );
 
   return {

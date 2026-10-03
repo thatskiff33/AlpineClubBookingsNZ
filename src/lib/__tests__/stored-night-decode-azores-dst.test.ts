@@ -203,7 +203,7 @@ describe("#3107 the admission check spans the transition correctly", () => {
       "lodge-a",
       parseDateOnly("2026-03-28"),
       parseDateOnly("2026-03-31"),
-      [{ nights: NIGHTS }, { nights: NIGHTS }],
+      [{ memberId: null, nights: NIGHTS }, { memberId: null, nights: NIGHTS }],
     );
 
     expect(

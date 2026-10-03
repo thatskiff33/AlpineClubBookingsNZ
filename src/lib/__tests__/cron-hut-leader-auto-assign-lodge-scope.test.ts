@@ -32,7 +32,12 @@ const { mockPrisma, mockFlags, mockLookahead } = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("./prisma", () => ({ prisma: mockPrisma }));
-vi.mock("@/lib/module-settings", () => ({ loadEffectiveModuleFlags: mockFlags }));
+// Partial: `admin-modules` (reached through the capacity counter since the
+// #3817 one-space rule) reads `normalizeClubModuleSettings` at import time.
+vi.mock("@/lib/module-settings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/module-settings")),
+  loadEffectiveModuleFlags: mockFlags,
+}));
 vi.mock("./module-settings", () => ({ loadEffectiveModuleFlags: mockFlags }));
 vi.mock("@/lib/lodge-settings", () => ({
   loadHutLeaderLookaheadDays: mockLookahead,

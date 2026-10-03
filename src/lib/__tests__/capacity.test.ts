@@ -530,10 +530,12 @@ describe("capacity calendar availability", () => {
       parseDateOnly("2026-04-12"),
       [
         {
+          memberId: null,
           stayStart: parseDateOnly("2026-04-10"),
           stayEnd: parseDateOnly("2026-04-11"),
         },
         {
+          memberId: null,
           stayStart: parseDateOnly("2026-04-11"),
           stayEnd: parseDateOnly("2026-04-12"),
         },
@@ -562,7 +564,7 @@ describe("capacity calendar availability", () => {
       LODGE_A,
       parseDateOnly("2026-04-10"),
       parseDateOnly("2026-04-12"),
-      [{}, {}]
+      [{ memberId: null }, { memberId: null }]
     );
 
     expect(result.available).toBe(false);
@@ -817,7 +819,7 @@ describe("whole-lodge exclusive hold — capacity engine (issue #118)", () => {
       LODGE_A,
       HELD_IN,
       HELD_OUT,
-      [{ stayStart: HELD_IN, stayEnd: HELD_OUT }],
+      [{ memberId: null, stayStart: HELD_IN, stayEnd: HELD_OUT }],
     );
 
     expect(result.available).toBe(false);
@@ -883,7 +885,7 @@ describe("whole-lodge exclusive hold — capacity engine (issue #118)", () => {
       LODGE_A,
       HELD_IN,
       HELD_OUT,
-      [{ stayStart: HELD_IN, stayEnd: HELD_OUT }],
+      [{ memberId: null, stayStart: HELD_IN, stayEnd: HELD_OUT }],
     );
 
     // Unavailable exactly like a full lodge, but with NO confirmable night —
@@ -908,7 +910,7 @@ describe("whole-lodge exclusive hold — capacity engine (issue #118)", () => {
       LODGE_A,
       parseDateOnly("2026-08-10"),
       parseDateOnly("2026-08-12"),
-      [{ stayStart: parseDateOnly("2026-08-10"), stayEnd: parseDateOnly("2026-08-12") }],
+      [{ memberId: null, stayStart: parseDateOnly("2026-08-10"), stayEnd: parseDateOnly("2026-08-12") }],
     );
 
     expect(result.available).toBe(true);
@@ -923,7 +925,7 @@ describe("whole-lodge exclusive hold — capacity engine (issue #118)", () => {
       LODGE_A,
       HELD_IN,
       HELD_OUT,
-      [{ stayStart: HELD_IN, stayEnd: HELD_OUT }],
+      [{ memberId: null, stayStart: HELD_IN, stayEnd: HELD_OUT }],
       "held-booking",
     );
 
@@ -951,7 +953,7 @@ describe("whole-lodge exclusive hold — capacity engine (issue #118)", () => {
       LODGE_A,
       HELD_IN,
       HELD_OUT,
-      [{ stayStart: HELD_IN, stayEnd: HELD_OUT }],
+      [{ memberId: null, stayStart: HELD_IN, stayEnd: HELD_OUT }],
     );
 
     expect(result.available).toBe(false);
@@ -985,7 +987,7 @@ describe("whole-lodge exclusive hold — capacity engine (issue #118)", () => {
       LODGE_A,
       HELD_IN,
       HELD_OUT,
-      [{ stayStart: HELD_IN, stayEnd: HELD_OUT }],
+      [{ memberId: null, stayStart: HELD_IN, stayEnd: HELD_OUT }],
     );
 
     // The overlap query is scoped by capacityHoldingBookingFilter(), whose
@@ -1350,6 +1352,7 @@ describe("#2307 capacity freeze: a PENDING member guest still occupies a bed (D-
       parseDateOnly("2026-08-03"),
       [
         {
+          memberId: null,
           stayStart: parseDateOnly("2026-08-01"),
           stayEnd: parseDateOnly("2026-08-03"),
         },

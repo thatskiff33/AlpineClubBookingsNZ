@@ -1970,7 +1970,8 @@ describe("POST /api/bookings/[id]/guests", () => {
       booking.checkOut,
       [
         ...booking.guests,
-        { stayStart: booking.checkIn, stayEnd: booking.checkOut },
+        // A typed guest is no member, said so (#3817: the party's members).
+        { stayStart: booking.checkIn, stayEnd: booking.checkOut, memberId: null },
       ],
       "bk1",
       tx

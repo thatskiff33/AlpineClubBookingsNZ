@@ -70,8 +70,18 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // The asking member is passed as the party (#3817 review): a ticked custodian
+  // booking themselves takes the one space their tick already holds
+  // (`INV-DATE-030`), so without this the member wizard would read that night as
+  // full and steer them to the waitlist. ADVISORY ONLY — the booking's own
+  // admission passes its real party and decides. When the member books only for
+  // others, or an admin books on behalf of someone else through this route,
+  // the figure can show one space more (or, for a custodian booked by an
+  // admin, one fewer) than the admission will; the admission is the authority.
   const [result, lodgeCapacity] = await Promise.all([
-    checkCapacity(lodgeId, checkIn, checkOut, 1),
+    checkCapacity(lodgeId, checkIn, checkOut, 1, undefined, undefined, [
+      session.user.id,
+    ]),
     getLodgeCapacity(lodgeId),
   ]);
 

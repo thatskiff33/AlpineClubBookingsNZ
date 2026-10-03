@@ -219,3 +219,24 @@ describe("GET /api/availability/check — held-night occupiedBeds pinning (issue
     });
   });
 });
+
+describe("GET /api/availability/check — the asking member is the party (#3817 review)", () => {
+  it("passes the session member so a ticked custodian booking themselves is one space", async () => {
+    h.checkCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 1,
+      nightDetails: [],
+    });
+
+    const res = await GET(
+      makeRequest({ checkIn: "2026-08-10", checkOut: "2026-08-11" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(h.checkCapacity).toHaveBeenCalledTimes(1);
+    // INV-DATE-030: without the party the engine counts the member's own tick
+    // AND the space they are asking about, and the wizard sends them to the
+    // waitlist on a night that has room for them.
+    expect(h.checkCapacity.mock.calls[0][6]).toEqual(["member-1"]);
+  });
+});

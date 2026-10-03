@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { hutLeaderStayGuestRow } from "@/lib/__tests__/helpers/hut-leader-stay";
-import { CUSTODIAN_BOOKED_AS_GUEST_WARNING } from "@/lib/hut-leader-stayed-nights";
 
 /**
  * Custodian bed hold — the hut-leaders write routes (#2286).
@@ -1019,13 +1018,17 @@ describe("#3817 — a role-only assignment may claim only nights the member stay
     const res = await POST(postRequest({ ...CREATE_BODY, isCustodian: true }));
 
     expect(res.status).toBe(201);
-    // Never the stay CHECK (neither the cheap ask nor the locked re-ask): the
-    // one read is the post-commit "also a guest here?" advisory.
-    expect(mocks.bookingGuestFindMany).toHaveBeenCalledTimes(1);
+    // Never the stay CHECK (neither the cheap ask nor the locked re-ask).
+    expect(mocks.bookingGuestFindMany).not.toHaveBeenCalled();
     // The tick takes a space off capacity, so the bed path's capacity check
-    // runs for it too — after the lodge lock, before the write.
+    // runs for it too — after the lodge lock, before the write — told who the
+    // custodian is, so a night they are a guest adds no space (#3817).
     expect(mocks.validateCustodianBedHold).toHaveBeenCalledWith(
-      expect.objectContaining({ bedId: null, isCustodian: true }),
+      expect.objectContaining({
+        bedId: null,
+        isCustodian: true,
+        memberId: CREATE_BODY.memberId,
+      }),
     );
     expect(callOrder.indexOf("validate")).toBeGreaterThan(callOrder.indexOf("lock"));
     expect(callOrder.indexOf("validate")).toBeLessThan(callOrder.indexOf("create"));
@@ -1124,8 +1127,8 @@ describe("#3817 — a role-only assignment may claim only nights the member stay
     const res = await PUT(putRequest({ bedId: null, isCustodian: true }), { params });
 
     expect(res.status).toBe(200);
-    // Never the stay CHECK: the one read is the post-commit two-spaces advisory.
-    expect(mocks.bookingGuestFindMany).toHaveBeenCalledTimes(1);
+    // Never the stay CHECK.
+    expect(mocks.bookingGuestFindMany).not.toHaveBeenCalled();
     expect(mocks.txAssignmentUpdate.mock.calls[0][0].data).toMatchObject({
       bedId: null,
       isCustodian: true,
@@ -1191,9 +1194,7 @@ describe("#3817 — a role-only assignment may claim only nights the member stay
     expect(mocks.txAssignmentUpdate.mock.calls[0][0].data).toMatchObject({ bedId: null });
   });
 
-  it("PUT warns when ticking an existing hut leader who is also a guest here (#3817 review D2)", async () => {
-    // A role-only row assigned under the stay rule: they ARE a guest (the
-    // default stay), so the tick makes them two spaces on those nights.
+  it("PUT ticking a hut leader who is also a guest here answers no two-spaces advisory: they are one space (#3817)", async () => {
     mocks.txAssignmentFindUnique.mockResolvedValue({
       id: "a1", memberId: "member-1", lodgeId: LODGE, bedId: null, isCustodian: false,
       source: "MANUAL",
@@ -1203,30 +1204,8 @@ describe("#3817 — a role-only assignment may claim only nights the member stay
     const res = await PUT(putRequest({ isCustodian: true }), { params });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body).toMatchObject({ success: true });
-    expect(body.custodianBookedWarning).toBe(CUSTODIAN_BOOKED_AS_GUEST_WARNING);
-    // Read AFTER the commit, never inside the transaction.
-    expect(callOrder.indexOf("update")).toBeGreaterThan(-1);
-    expect(mocks.bookingGuestFindMany).toHaveBeenCalledTimes(1);
-  });
-
-  it("PUT gives no warning when the ticked custodian is not a guest here, or the read fails", async () => {
-    mocks.txAssignmentFindUnique.mockResolvedValue({
-      id: "a1", memberId: "member-1", lodgeId: LODGE, bedId: null, isCustodian: false,
-      source: "MANUAL",
-      startDate: new Date("2026-07-01T00:00:00.000Z"),
-      endDate: new Date("2026-07-05T00:00:00.000Z"),
-    });
-    mocks.bookingGuestFindMany.mockResolvedValueOnce([]);
-    const quiet = await PUT(putRequest({ isCustodian: true }), { params });
-    await expect(quiet.json()).resolves.toMatchObject({ custodianBookedWarning: null });
-
-    // Failure-tolerant: the edit committed, so a failed advisory read is not a 500.
-    mocks.bookingGuestFindMany.mockRejectedValueOnce(new Error("db blip"));
-    const failed = await PUT(putRequest({ isCustodian: true }), { params });
-    expect(failed.status).toBe(200);
-    await expect(failed.json()).resolves.toMatchObject({ custodianBookedWarning: null });
+    await expect(res.json()).resolves.toEqual({ success: true });
+    expect(mocks.bookingGuestFindMany).not.toHaveBeenCalled();
   });
 
   it("PUT leaves changing one bed for another alone (the row stays a custodian occupancy)", async () => {
@@ -1236,18 +1215,11 @@ describe("#3817 — a role-only assignment may claim only nights the member stay
     expect(mocks.bookingGuestFindMany).not.toHaveBeenCalled();
   });
 
-  it("POST warns a ticked custodian with no bed who is also a guest here takes two spaces", async () => {
+  it("POST answers no two-spaces advisory for a ticked custodian who is also a guest here (#3817)", async () => {
     const res = await POST(postRequest({ ...CREATE_BODY, isCustodian: true }));
     expect(res.status).toBe(201);
-    await expect(res.json()).resolves.toMatchObject({
-      custodianBookedWarning: expect.stringMatching(/two spaces/),
-    });
-  });
-
-  it("POST does not give that warning to a custodian with no booking here", async () => {
-    mocks.bookingGuestFindMany.mockResolvedValue([]);
-    const res = await POST(postRequest({ ...CREATE_BODY, isCustodian: true }));
-    await expect(res.json()).resolves.toMatchObject({ custodianBookedWarning: null });
+    const body = await res.json();
+    expect(body).not.toHaveProperty("custodianBookedWarning");
   });
 
   it("POST warns that a ticked MINOR custodian with no bed is never named on the lodge screen", async () => {
