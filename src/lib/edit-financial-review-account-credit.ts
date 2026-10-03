@@ -4,9 +4,6 @@ import {
   BookingEventType,
   BookingStatus,
   CreditType,
-  ManualRefundTaskDirection,
-  ManualRefundTaskKind,
-  ManualRefundTaskStatus,
   type Prisma,
 } from "@prisma/client";
 
@@ -21,6 +18,7 @@ import {
   frozenAppliedCreditBaseCents,
   frozenCents,
   jsonRecord,
+  reviewsSettledAfterCancelWhere,
   shareOwedAfterCancellationCents,
 } from "@/lib/edit-financial-review-cancel-netting";
 import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
@@ -392,7 +390,7 @@ async function creditSliceStillOwedAfterCancellation({
   if (frozen === null || appliedAtCancelCents === null || appliedAtCancelCents <= 0) {
     throw new ManualBookingPaymentError(REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE, 409);
   }
-  const earlierSharesCents = await sharesSettledSinceCents({ bookingId, taskId, since: restore.createdAt, store });
+  const earlierSharesCents = await sharesSettledSinceCents({ bookingId, taskId, snapshot: frozen.snapshot, since: restore.createdAt, store });
   const earlierSliceCents = Math.min(appliedAtCancelCents, earlierSharesCents);
   const sliceCents = Math.max(0, Math.min(shareCents, appliedAtCancelCents - earlierSliceCents));
   if (restoredCents >= appliedAtCancelCents) return { sliceCents, owedCents: 0 };
@@ -428,7 +426,7 @@ async function frozenAppliedAtCancellationCents({
   bookingId: string;
   restoredAt: Date;
   store: Prisma.TransactionClient;
-}): Promise<{ rowsCents: number; tieredCents: number } | null> {
+}): Promise<{ rowsCents: number; tieredCents: number; snapshot: Record<string, unknown> | null } | null> {
   const cancelled = await store.bookingEvent.findFirst({
     where: { bookingId, type: BookingEventType.CANCELLED },
     orderBy: { occurredAt: "desc" },
@@ -436,42 +434,38 @@ async function frozenAppliedAtCancellationCents({
   });
   const snapshot = jsonRecord(cancelled?.snapshot);
   const rowsCents = frozenCents(jsonRecord(snapshot?.ledger), "appliedCreditCents");
-  if (rowsCents !== null) return { rowsCents, tieredCents: frozenAppliedCreditBaseCents(snapshot) ?? rowsCents };
+  if (rowsCents !== null) return { rowsCents, tieredCents: frozenAppliedCreditBaseCents(snapshot) ?? rowsCents, snapshot };
   const asRestored = await store.memberCredit.aggregate({
     where: { appliedToBookingId: bookingId, type: CreditType.BOOKING_APPLIED, createdAt: { lte: restoredAt } },
     _sum: { amountCents: true },
   });
   if (asRestored._sum.amountCents === null) return null;
   const asRestoredCents = Math.max(0, -asRestored._sum.amountCents);
-  return { rowsCents: asRestoredCents, tieredCents: asRestoredCents };
+  return { rowsCents: asRestoredCents, tieredCents: asRestoredCents, snapshot };
 }
 
 /**
  * The shares other reviews of this booking have settled back to the member
- * since the restore - the slices `C` already counts. A completion with no
- * payment behind it is this route by construction (`chooseEditReviewSettlementRoute`).
+ * since the cancellation - the slices `C` already counts - by the one rule the
+ * captured routes use (`reviewsSettledAfterCancelWhere`), from the restore's
+ * time where the event froze no ids. A completion with no payment behind it is
+ * this route by construction (`chooseEditReviewSettlementRoute`).
  */
 async function sharesSettledSinceCents({
   bookingId,
   taskId,
+  snapshot,
   since,
   store,
 }: {
   bookingId: string;
   taskId: string;
+  snapshot: Record<string, unknown> | null;
   since: Date;
   store: Prisma.TransactionClient;
 }): Promise<number> {
   const earlier = await store.manualRefundTask.aggregate({
-    where: {
-      bookingId,
-      id: { not: taskId },
-      kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
-      status: ManualRefundTaskStatus.COMPLETED,
-      settlementDirection: ManualRefundTaskDirection.REFUND_TO_MEMBER,
-      paymentId: null,
-      completedAt: { gte: since },
-    },
+    where: { ...reviewsSettledAfterCancelWhere({ bookingId, taskId, snapshot, since }), paymentId: null },
     _sum: { amountCents: true },
   });
   return earlier._sum.amountCents ?? 0;

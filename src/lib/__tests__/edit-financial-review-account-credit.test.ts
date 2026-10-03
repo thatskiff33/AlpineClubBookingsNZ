@@ -68,6 +68,8 @@ const rows = {
   /** Shares other reviews settled since the restore. */
   earlierSharesCents: 0,
   priceRebaseRows: [] as Array<{ newData: unknown }>,
+  /** Other completed reviews, where a case lists them. */
+  siblings: null as Array<{ id: string; amountCents: number; completedAt: Date }> | null,
 };
 
 const store = {
@@ -90,7 +92,17 @@ const store = {
     ),
   },
   manualRefundTask: {
-    aggregate: vi.fn(async () => ({ _sum: { amountCents: rows.earlierSharesCents } })),
+    // Settled shares: the fixed figure, or - where a case lists its siblings - those the query's where admits.
+    aggregate: vi.fn(async ({ where }: { where: { id?: { notIn?: string[] }; completedAt?: { gte: Date } } }) => ({
+      _sum: {
+        amountCents: rows.siblings === null
+          ? rows.earlierSharesCents
+          : rows.siblings
+              .filter((task) => !(where.id?.notIn ?? []).includes(task.id))
+              .filter((task) => !where.completedAt || task.completedAt >= where.completedAt.gte)
+              .reduce((sum, task) => sum + task.amountCents, 0),
+      },
+    })),
     // #3835: the captured route's siblings - none here.
     findMany: vi.fn(async () => []),
   },
@@ -135,6 +147,7 @@ beforeEach(() => {
     reviewGiveBacksCents: 0,
     earlierSharesCents: 0,
     priceRebaseRows: [],
+    siblings: null,
   });
   h.giveBackAppliedCredit.mockImplementation(
     async ({ giveBackCentsOf }: { giveBackCentsOf: (applied: number, payment: unknown) => Promise<number> }) => {
@@ -200,6 +213,27 @@ describe("owner decision 2: the booking was cancelled before the review complete
 
     expect(second).toEqual({ givenBackCents: 1_000, mintedCents: 0, cancelled: true, invoiceReductionCents: 0, agreedGiveBackCents: null });
     expect(8_000 + first.givenBackCents + second.givenBackCents).toBe(10_000);
+  });
+
+  it("MUTATION: #3835 - siblings count as since the cancel by the ids it froze, not by the clock: one before, one after", async () => {
+    // $200 credit-only; a $20 review gave $20 back BEFORE the cancel at 50% less $20
+    // ($180 tiered, $70 restored); another $20 review gave $10 back after it.
+    bookingIs("CANCELLED");
+    h.loadCancellationPolicy.mockResolvedValue([TIERS[1]!.rule]);
+    restored(7_000);
+    h.applied.cents = 17_000;
+    h.applied.mirrorCents = 17_000;
+    store.bookingEvent.findFirst.mockResolvedValueOnce({
+      snapshot: { ledger: { appliedCreditCents: 18_000 }, completedReviewTaskIds: ["task-before"] },
+    } as never);
+    // The frozen clock stamps both siblings with the restore's own instant.
+    rows.siblings = [
+      { id: "task-before", amountCents: 2_000, completedAt: RESTORED_AT },
+      { id: "task-1", amountCents: 2_000, completedAt: RESTORED_AT },
+    ];
+
+    // $40 since the cancel + 50% of the $140 left less $20 - $70 restored - $10 given back.
+    expect((await write(2_000)).givenBackCents).toBe(1_000);
   });
 
   it("MUTATION: without a CANCELLED snapshot, the frozen figure is the applied net as the restore was written", async () => {

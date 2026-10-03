@@ -252,17 +252,8 @@ async function settledSinceCancellation({
   since: Date;
   store: Prisma.TransactionClient;
 }): Promise<{ sharesCents: number; captureReturnedCents: number }> {
-  const frozenIds = snapshot?.completedReviewTaskIds;
-  const priorIds = Array.isArray(frozenIds) ? frozenIds.filter((id): id is string => typeof id === "string") : null;
   const siblings = await store.manualRefundTask.findMany({
-    where: {
-      bookingId,
-      id: { notIn: [taskId, ...(priorIds ?? [])] },
-      kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
-      status: ManualRefundTaskStatus.COMPLETED,
-      settlementDirection: ManualRefundTaskDirection.REFUND_TO_MEMBER,
-      ...(priorIds === null ? { completedAt: { gte: since } } : {}),
-    },
+    where: reviewsSettledAfterCancelWhere({ bookingId, taskId, snapshot, since }),
     select: { id: true, amountCents: true, reviewContext: true },
   });
   if (siblings.length === 0) return { sharesCents: 0, captureReturnedCents: 0 };
@@ -285,6 +276,35 @@ async function settledSinceCancellation({
   return {
     sharesCents: siblings.reduce((sum, task) => sum + (task.amountCents ?? 0), 0),
     captureReturnedCents: (refunded._sum.amountCents ?? 0) + (handedBack._sum.unitCents ?? 0) + (minted?._sum.amountCents ?? 0),
+  };
+}
+
+/**
+ * THE ONE RULE for which other reviews of a booking were settled to the member
+ * AFTER its cancellation (#3835), on every route: not among the ids its
+ * CANCELLED event froze as already settled; an event without them (older than
+ * #3835) falls back to completion time, `since` being when the cancel ran.
+ */
+export function reviewsSettledAfterCancelWhere({
+  bookingId,
+  taskId,
+  snapshot,
+  since,
+}: {
+  bookingId: string;
+  taskId: string;
+  snapshot: Record<string, unknown> | null;
+  since: Date;
+}): Prisma.ManualRefundTaskWhereInput {
+  const frozenIds = snapshot?.completedReviewTaskIds;
+  const priorIds = Array.isArray(frozenIds) ? frozenIds.filter((id): id is string => typeof id === "string") : null;
+  return {
+    bookingId,
+    id: { notIn: [taskId, ...(priorIds ?? [])] },
+    kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
+    status: ManualRefundTaskStatus.COMPLETED,
+    settlementDirection: ManualRefundTaskDirection.REFUND_TO_MEMBER,
+    ...(priorIds === null ? { completedAt: { gte: since } } : {}),
   };
 }
 
