@@ -263,6 +263,15 @@ export async function listRefundsForPaymentIntent(paymentIntentId: string): Prom
 }
 
 /**
+ * #3653: one refund, read back by Stripe's id - how the payments cron learns
+ * that an organiser child refund Stripe accepted as `pending` later failed.
+ */
+export async function retrieveRefund(refundId: string): Promise<Stripe.Refund> {
+  const stripe = await getStripe();
+  return stripe.refunds.retrieve(refundId);
+}
+
+/**
  * Retrieve a PaymentIntent by ID.
  */
 export async function getPaymentIntent(

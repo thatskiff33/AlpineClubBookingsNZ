@@ -106,7 +106,7 @@ import {
   enqueueGroupSettlementRefundRecovery,
   markGroupSettlementRefundRecoverySucceeded,
 } from "@/lib/payment-recovery";
-import { readPerChildRefundPlan } from "@/lib/organiser-child-refund";
+import { deserializeRefundPlan, readPerChildRefundPlan } from "@/lib/organiser-child-refund";
 import { refundOrganiserCancelChildren } from "@/lib/organiser-child-refund-executor";
 import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 import logger from "@/lib/logger";
@@ -140,28 +140,6 @@ async function resolveSettlementRecoveryAnchorPaymentId(
     children.find((candidate) => candidate.payment)?.payment?.id ??
     null
   );
-}
-
-/**
- * Deserialize a persisted refund plan ({childId: cents}) into a Map, defensively.
- * Only finite non-negative integer cent values survive; malformed entries are
- * skipped and a non-object never throws. The plan is applied verbatim on a
- * re-drive, so a corrupt entry must degrade to "no refund for that child" rather
- * than crash the cleanup.
- */
-function deserializeRefundPlan(value: unknown): Map<string, number> {
-  const plan = new Map<string, number>();
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return plan;
-  }
-  for (const [childId, cents] of Object.entries(
-    value as Record<string, unknown>
-  )) {
-    if (typeof cents === "number" && Number.isInteger(cents) && cents >= 0) {
-      plan.set(childId, cents);
-    }
-  }
-  return plan;
 }
 
 async function markGroupCancelled(groupBookingId: string): Promise<void> {
@@ -346,6 +324,10 @@ export async function settleGroupBookingOnOrganiserCancel(
   // club pays by hand and which no Stripe refund can back.
   const settled = settlement?.status === PaymentStatus.SUCCEEDED;
   let refundByChildId = new Map<string, number>();
+  // #3653: a per-child refund this run could not complete. Still owed - the
+  // recovery runner completes it and audits the recovery - so the child's own
+  // row must not say no payment was taken.
+  let owedByChildId = new Map<string, number>();
   let totalRefundCents = 0;
   const mirrorPlan =
     settlement != null &&
@@ -380,14 +362,14 @@ export async function settleGroupBookingOnOrganiserCancel(
       });
     }
   } else if (settlement?.stripePaymentIntentId) {
-    refundByChildId = await refundOrganiserCancelChildren({
+    ({ refunded: refundByChildId, owed: owedByChildId } = await refundOrganiserCancelChildren({
       settlementId: settlement.id,
       organiserBookingId,
       firstChild: children[0] ?? null,
       activeChildStatuses: ACTIVE_CHILD_STATUSES,
       todayAtClub,
       format,
-    });
+    }));
   }
   for (const cents of refundByChildId.values()) {
     totalRefundCents += cents;
@@ -524,6 +506,7 @@ export async function settleGroupBookingOnOrganiserCancel(
 
   for (const child of children) {
     const refundForChild = refundByChildId.get(child.id) ?? 0;
+    const owedForChild = owedByChildId.get(child.id) ?? 0;
     // Captured from inside the per-child tx so the best-effort outbox worker
     // kick can run POST-commit (the enqueue itself is now durable — below).
     let queuedCreditNoteOperationId: string | null = null;
@@ -666,12 +649,15 @@ export async function settleGroupBookingOnOrganiserCancel(
       details:
         refundForChild > 0
           ? `Group organiser cancelled; refunded ${formatCents(refundForChild, format)} of the settled beds to the organiser`
-          : "Group organiser cancelled; released the held spot (no payment taken)",
+          : owedForChild > 0
+            ? `Group organiser cancelled; a refund of ${formatCents(owedForChild, format)} to the organiser's card is owed and will be retried`
+            : "Group organiser cancelled; released the held spot (no payment taken)",
       metadata: {
         groupBookingId: group.id,
         organiserBookingId,
         statusBefore: child.status,
         refundForChild,
+        owedRefundForChild: owedForChild,
         paymentId: child.payment?.id ?? null,
       },
       ipAddress,
@@ -687,7 +673,9 @@ export async function settleGroupBookingOnOrganiserCancel(
       reason:
         refundForChild > 0
           ? "Group organiser cancelled the booking; the settled beds were refunded to the organiser."
-          : "Group organiser cancelled the booking, releasing this held spot.",
+          : owedForChild > 0
+            ? "Group organiser cancelled the booking; the refund to the organiser is owed and will be retried."
+            : "Group organiser cancelled the booking, releasing this held spot.",
     }).catch((err) =>
       logger.error(
         { err, bookingId: child.id },

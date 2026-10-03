@@ -18,7 +18,14 @@
  *  - a later cancellation sizes each child from what remains after refunds made
  *    AND owed, freezes its plan, and a re-plan changes nothing;
  *  - total refunds never exceed the combined capture;
- *  - the read-only audit tells a mirror Stripe backs from one it does not.
+ *  - the read-only audit tells a mirror Stripe backs from one it does not;
+ *  - an edit door's Xero dispatch raises no modification note for a reduction
+ *    the executor's refund note covers, so ONE note credits the joiner's issued
+ *    invoice across both link roles (fix round);
+ *  - a mirror a reconcile or a stale Xero repair zeroed cannot re-promise
+ *    refunded money to a reduction or a cancellation (fix round);
+ *  - a refund Stripe accepted as pending and then failed is taken back out and
+ *    owed again, and still spoken for against the combined capture (fix round).
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions, which
@@ -46,6 +53,9 @@ const CHECK_IN = new Date("2027-08-01T00:00:00.000Z");
 const CHECK_OUT = new Date("2027-08-03T00:00:00.000Z");
 const CHILD_CENTS = 4_500;
 const COMBINED_CENTS = 9_000; // children 1 and 2; child 3 is the legacy fixture
+// Fix round: two more groups of one child each, so their arithmetic is their own.
+const B = { organiser: `${P}-b-organiser`, group: `${P}-b-group`, settlement: `${P}-b-settlement`, child: `${P}-b-child`, payment: `${P}-b-pay`, pi: "pi_race_3653_b" };
+const C = { organiser: `${P}-c-organiser`, group: `${P}-c-group`, settlement: `${P}-c-settlement`, child: `${P}-c-child`, payment: `${P}-c-pay`, pi: "pi_race_3653_c" };
 
 /** Standalone fail-closed copy: importing this file must not register another suite. */
 export function assertSafeOrganiserChildRefundDbUrl(url: string): void {
@@ -73,9 +83,25 @@ function fakeStripe() {
   let seq = 0;
   let loseNextResponse = false;
   let failNextCall = false;
+  let pendNextRefund = false;
   const stripe = {
     calls: 0,
     byKey,
+    /** The next NEW refund is answered `pending`, as a bank-debit refund can be. */
+    pendNextRefund() {
+      pendNextRefund = true;
+    },
+    /** Stripe later moves a refund on - how a pending refund fails. */
+    setStatus(refundId: string, status: string) {
+      const refund = [...byKey.values()].find((candidate) => candidate.id === refundId);
+      if (!refund) throw new Error(`No refund ${refundId}`);
+      (refund as { status: string }).status = status;
+    },
+    async retrieveRefund(refundId: string) {
+      const refund = [...byKey.values()].find((candidate) => candidate.id === refundId);
+      if (!refund) throw new Error(`No such refund: ${refundId}`);
+      return { ...refund } as Stripe.Refund;
+    },
     loseNextResponse() {
       loseNextResponse = true;
     },
@@ -101,7 +127,7 @@ function fakeStripe() {
           id: `re_race_3653_${seq}`,
           amount: input.amountCents,
           currency: "nzd",
-          status: "succeeded",
+          status: pendNextRefund ? "pending" : "succeeded",
           reason: null,
           created: Math.floor(Date.now() / 1000),
           charge: "ch_race_3653",
@@ -109,6 +135,7 @@ function fakeStripe() {
           metadata: input.metadata ?? {},
         } as unknown as Stripe.Refund;
         byKey.set(key, refund);
+        pendNextRefund = false;
       }
       if (loseNextResponse) {
         loseNextResponse = false;
@@ -127,6 +154,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let core: typeof import("@/lib/organiser-child-refund");
 let executor: typeof import("@/lib/organiser-child-refund-executor");
 let audit: typeof import("@/lib/organiser-child-refund-audit");
+let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
 
 (RUN ? describe : describe.skip)(
   "an organiser child's refund out of the combined card payment — real PostgreSQL (#3653)",
@@ -135,16 +163,19 @@ let audit: typeof import("@/lib/organiser-child-refund-audit");
     const stripe = fakeStripe();
 
     async function deleteFixtures() {
-      const bookingIds = [ORGANISER_BOOKING, ...CHILDREN];
-      await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "Payment", localId: { in: PAYMENTS } } });
+      const bookingIds = [ORGANISER_BOOKING, ...CHILDREN, B.organiser, B.child, C.organiser, C.child];
+      const paymentIds = [...PAYMENTS, B.payment, C.payment];
+      await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "Payment", localId: { in: paymentIds } } });
+      await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "BookingModification", localId: { startsWith: P } } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: { in: bookingIds } } });
+      await prisma.auditLog.deleteMany({ where: { targetId: { in: bookingIds } } });
       await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: { in: bookingIds } } });
-      await prisma.paymentRefund.deleteMany({ where: { paymentId: { in: PAYMENTS } } });
-      await prisma.payment.deleteMany({ where: { id: { in: PAYMENTS } } });
-      await prisma.groupBookingSettlement.deleteMany({ where: { id: SETTLEMENT_ID } });
-      await prisma.groupBooking.deleteMany({ where: { id: GROUP_ID } });
-      await prisma.booking.deleteMany({ where: { id: { in: CHILDREN } } });
-      await prisma.booking.deleteMany({ where: { id: ORGANISER_BOOKING } });
+      await prisma.paymentRefund.deleteMany({ where: { paymentId: { in: paymentIds } } });
+      await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
+      await prisma.groupBookingSettlement.deleteMany({ where: { id: { in: [SETTLEMENT_ID, B.settlement, C.settlement] } } });
+      await prisma.groupBooking.deleteMany({ where: { id: { in: [GROUP_ID, B.group, C.group] } } });
+      await prisma.booking.deleteMany({ where: { id: { in: [...CHILDREN, B.child, C.child] } } });
+      await prisma.booking.deleteMany({ where: { id: { in: [ORGANISER_BOOKING, B.organiser, C.organiser] } } });
       await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE_ID } });
       await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
       await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
@@ -154,23 +185,53 @@ let audit: typeof import("@/lib/organiser-child-refund-audit");
       return prisma.groupBookingSettlement.findUniqueOrThrow({ where: { id: SETTLEMENT_ID } });
     }
 
-    async function combined() {
-      const row = await settlement();
-      return { id: row.id, stripePaymentIntentId: PI, amountCents: row.amountCents };
-    }
-
     /** Write an edit's debt the way an edit door does: under lock(1), in its transaction. */
     async function reserveReduction(child: number, modificationId: string, amountCents: number) {
-      const plan = { settlement: await combined(), amountCents };
+      return reserveFor(
+        { settlementId: SETTLEMENT_ID, pi: PI, childId: CHILDREN[child]!, paymentId: PAYMENTS[child]! },
+        modificationId,
+        amountCents,
+      );
+    }
+
+    async function reserveFor(
+      target: { settlementId: string; pi: string; childId: string; paymentId: string },
+      modificationId: string,
+      amountCents: number,
+    ) {
+      const row = await prisma.groupBookingSettlement.findUniqueOrThrow({ where: { id: target.settlementId } });
+      const plan = { settlement: { id: row.id, stripePaymentIntentId: target.pi, amountCents: row.amountCents }, amountCents };
       return prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-        const payment = await tx.payment.findUniqueOrThrow({ where: { id: PAYMENTS[child] } });
+        const payment = await tx.payment.findUniqueOrThrow({ where: { id: target.paymentId } });
         return core.reserveOrganiserChildModificationRefund(tx, {
           plan,
-          bookingId: CHILDREN[child]!,
+          bookingId: target.childId,
           payment,
           bookingModificationId: modificationId,
         });
+      });
+    }
+
+    /** A one-child organiser-pays group, settled by card. */
+    async function createOneChildGroup(
+      group: typeof B,
+      settlementCents: number,
+      childCents: number,
+      base: Record<string, unknown>,
+    ) {
+      await prisma.booking.create({ data: { ...base, id: group.organiser, status: "PAID" } as never });
+      await prisma.groupBooking.create({
+        data: { id: group.group, organiserBookingId: group.organiser, organiserMemberId: MEMBER_ID, joinCode: group.group, paymentMode: "ORGANISER_PAYS" },
+      });
+      await prisma.groupBookingSettlement.create({
+        data: { id: group.settlement, groupBookingId: group.group, stripePaymentIntentId: group.pi, source: "STRIPE", amountCents: settlementCents, status: "SUCCEEDED" },
+      });
+      await prisma.booking.create({
+        data: { ...base, id: group.child, status: "PAID", parentBookingId: group.organiser, organiserSettled: true, totalPriceCents: childCents, finalPriceCents: childCents } as never,
+      });
+      await prisma.payment.create({
+        data: { id: group.payment, bookingId: group.child, amountCents: childCents, source: "STRIPE", status: "SUCCEEDED" },
       });
     }
 
@@ -190,6 +251,7 @@ let audit: typeof import("@/lib/organiser-child-refund-audit");
       core = await import("@/lib/organiser-child-refund");
       executor = await import("@/lib/organiser-child-refund-executor");
       audit = await import("@/lib/organiser-child-refund-audit");
+      xeroEdit = await import("@/lib/xero-booking-edit-settlement");
 
       await deleteFixtures();
       await prisma.member.create({
@@ -211,6 +273,11 @@ let audit: typeof import("@/lib/organiser-child-refund-audit");
           data: { id: PAYMENTS[index]!, bookingId: id, amountCents: CHILD_CENTS, source: "STRIPE", status: "SUCCEEDED" },
         });
       }
+      // Child 1 has an ISSUED invoice, so both credit-note roles can fire for it.
+      await prisma.payment.update({ where: { id: PAYMENTS[0] }, data: { xeroInvoiceId: `${P}-inv-1` } });
+      // Group B: 20000 captured, one 10000 child. Group C: 5000 and 5000.
+      await createOneChildGroup(B, 20_000, 10_000, booking);
+      await createOneChildGroup(C, 5_000, 5_000, booking);
       // Child 3: a pre-#3653 phantom - a mirror nothing backs.
       await prisma.payment.update({ where: { id: PAYMENTS[2] }, data: { refundedAmountCents: 1_000, status: "PARTIALLY_REFUNDED" } });
     });
@@ -224,6 +291,27 @@ let audit: typeof import("@/lib/organiser-child-refund-audit");
       const debt = await reserveReduction(0, `${P}-mod-1`, 1_500);
       expect(debt?.amountCents).toBe(1_500);
 
+      // The edit door's own Xero dispatch, with exactly what the batch door
+      // passes for this reduction against an ISSUED invoice. It raises no
+      // modification note: the executor's refund note is the one.
+      await xeroEdit.queueXeroBookingEditSettlement({
+        bookingId: CHILDREN[0]!,
+        bookingModificationId: `${P}-mod-1`,
+        hasIssuedXeroInvoice: true,
+        originalPaymentStatus: "SUCCEEDED",
+        priceDiffCents: -1_500,
+        changeFeeCents: 0,
+        datesChanged: false,
+        guestIdentityChanged: false,
+        settlementMethod: "card",
+        refundedThroughStripe: true,
+        organiserChildRefundOwnsCreditNote: true,
+        settlementAmountCents: 1_500,
+        createPrimaryInvoiceWhenMissing: false,
+        requiresAdditionalStripePayment: false,
+        additionalPaymentIntentId: null,
+      });
+
       await run(debt!.id);
 
       const refunds = await prisma.paymentRefund.findMany({ where: { paymentId: PAYMENTS[0] } });
@@ -235,8 +323,19 @@ let audit: typeof import("@/lib/organiser-child-refund-audit");
       });
       expect((await settlement()).status).toBe("PARTIALLY_REFUNDED");
       expect((await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: debt!.id } })).status).toBe("SUCCEEDED");
-      const notes = await prisma.xeroSyncOperation.findMany({ where: { localModel: "Payment", localId: PAYMENTS[0], entityType: "CREDIT_NOTE" } });
+      // ONE credit note for this refund, across BOTH link roles: the refund
+      // note on the payment, and none on the modification.
+      const notes = await prisma.xeroSyncOperation.findMany({
+        where: {
+          entityType: "CREDIT_NOTE",
+          OR: [
+            { localModel: "Payment", localId: PAYMENTS[0] },
+            { localModel: "BookingModification", localId: `${P}-mod-1` },
+          ],
+        },
+      });
       expect(notes).toHaveLength(1);
+      expect(notes[0]).toMatchObject({ localModel: "Payment" });
 
       // A replay (a second worker, a re-delivered claim) records nothing again.
       const callsBefore = stripe.calls;
@@ -268,6 +367,18 @@ let audit: typeof import("@/lib/organiser-child-refund-audit");
         refundedAmountCents: 4_500,
         status: "REFUNDED",
       });
+
+      // Fix round: the refund an earlier attempt failed to make is audited as
+      // recovered - once, and only for the refund that needed recovering (the
+      // first test's refund was made on its first attempt). The writer is
+      // fire-and-forget, so the row is awaited, not assumed.
+      const recovered = { action: "booking.payment.refund_recovered", targetId: CHILDREN[0] };
+      for (let tries = 0; tries < 50 && (await prisma.auditLog.count({ where: recovered })) === 0; tries += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const rows = await prisma.auditLog.findMany({ where: recovered });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ category: "booking", entityType: "Booking", entityId: CHILDREN[0] });
     });
 
     it("refuses a reduction the child's payment can no longer cover, before the edit commits", async () => {
@@ -336,6 +447,81 @@ let audit: typeof import("@/lib/organiser-child-refund-audit");
       expect(findings).toEqual([
         expect.objectContaining({ bookingId: CHILDREN[2], classification: "unbacked", unexplainedCents: 1_000 }),
       ]);
+    });
+
+    it("never re-promises refunded money once a reconcile or a stale Xero repair zeroes the mirror (10000 / 4000 / -> 0)", async () => {
+      const target = { settlementId: B.settlement, pi: B.pi, childId: B.child, paymentId: B.payment };
+      const first = await reserveFor(target, `${P}-b-mod-1`, 4_000);
+      await run(first!.id);
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: B.payment } })).refundedAmountCents).toBe(4_000);
+
+      // What `reconcilePaymentAggregates` writes for a child once an ask gave it
+      // a transaction row (the +1000 the edit door now refuses), and what a
+      // stale inbound Xero repair can write as an absolute figure: a mirror
+      // that forgot the 4000.
+      await prisma.payment.update({ where: { id: B.payment }, data: { refundedAmountCents: 0, status: "SUCCEEDED" } });
+
+      // 6000 remains of the child's payment, whatever the mirror says.
+      await expect(reserveFor(target, `${P}-b-mod-2`, 7_000)).rejects.toBeInstanceOf(core.OrganiserChildRefundRefusedError);
+
+      const plan = await core.planOrganiserCancelChildRefunds({
+        settlementId: B.settlement,
+        organiserBookingId: B.organiser,
+        activeChildStatuses: ["PAYMENT_PENDING", "CONFIRMED", "PAID"],
+        daysUntilCheckIn: 300,
+        policy: [{ daysBeforeStay: 0, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0, creditFixedFeeCents: 0 }],
+      });
+      expect(Object.fromEntries(plan)).toEqual({ [B.child]: 6_000 });
+
+      const owed = await prisma.paymentRecoveryOperation.findMany({ where: { bookingId: B.child, status: { not: "SUCCEEDED" } } });
+      for (const debt of owed) await run(debt.id);
+      const total = await prisma.paymentRefund.aggregate({ where: { stripePaymentIntentId: B.pi }, _sum: { amountCents: true } });
+      expect(total._sum.amountCents).toBe(10_000); // the child's whole payment, never more
+      expect(await prisma.payment.findUniqueOrThrow({ where: { id: B.payment } })).toMatchObject({
+        refundedAmountCents: 10_000,
+        status: "REFUNDED",
+      });
+    });
+
+    it("takes back a refund Stripe accepted as pending and then failed, and keeps it owed", async () => {
+      const target = { settlementId: C.settlement, pi: C.pi, childId: C.child, paymentId: C.payment };
+      stripe.pendNextRefund();
+      const debt = await reserveFor(target, `${P}-c-mod-1`, 2_000);
+      const refundId = await run(debt!.id);
+
+      expect(await prisma.paymentRefund.findUniqueOrThrow({ where: { stripeRefundId: refundId } })).toMatchObject({ status: "pending" });
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: C.payment } })).refundedAmountCents).toBe(2_000);
+      expect((await prisma.groupBookingSettlement.findUniqueOrThrow({ where: { id: C.settlement } })).status).toBe("PARTIALLY_REFUNDED");
+
+      // Nothing has changed at Stripe yet: the sweep leaves it alone.
+      await executor.reconcilePendingOrganiserChildRefunds(stripe);
+      expect((await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: debt!.id } })).status).toBe("SUCCEEDED");
+
+      stripe.setStatus(refundId, "failed");
+      const swept = await executor.reconcilePendingOrganiserChildRefunds(stripe);
+      expect(swept.reversed).toBe(1);
+
+      expect(await prisma.paymentRefund.findUniqueOrThrow({ where: { stripeRefundId: refundId } })).toMatchObject({ status: "failed" });
+      expect(await prisma.payment.findUniqueOrThrow({ where: { id: C.payment } })).toMatchObject({
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+      });
+      expect((await prisma.groupBookingSettlement.findUniqueOrThrow({ where: { id: C.settlement } })).status).toBe("SUCCEEDED");
+      expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: debt!.id } })).toMatchObject({
+        status: "FAILED",
+        attempts: 1,
+        succeededAt: null,
+      });
+
+      // Still spoken for: 5000 captured, 2000 owed again, so 4000 cannot fit.
+      await expect(reserveFor(target, `${P}-c-mod-2`, 4_000)).rejects.toBeInstanceOf(core.OrganiserChildRefundRefusedError);
+
+      // A replay inside Stripe's key window reads back the failed refund: the
+      // debt stays owed and nothing is recorded twice. A second sweep finds
+      // nothing left to take back.
+      await expect(run(debt!.id)).rejects.toThrow("failed");
+      expect(await prisma.paymentRefund.count({ where: { paymentId: C.payment } })).toBe(1);
+      expect((await executor.reconcilePendingOrganiserChildRefunds(stripe)).reversed).toBe(0);
     });
   },
 );

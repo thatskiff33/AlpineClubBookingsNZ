@@ -3239,6 +3239,17 @@ export async function processPaymentRecoveryOperations(options?: {
     }
   }
 
+  // #3653: an organiser child refund Stripe accepted as pending and later
+  // failed is owed again. The combined intent has no Payment for the webhook to
+  // resolve, so this run reads those refunds back. Isolated: a failure here
+  // never fails the run that has already processed the queue above.
+  try {
+    const { reconcilePendingOrganiserChildRefunds } = await import("@/lib/organiser-child-refund-executor");
+    await reconcilePendingOrganiserChildRefunds();
+  } catch (err) {
+    logger.error({ err }, "Could not re-read pending organiser child refunds (#3653)");
+  }
+
   return result;
 }
 

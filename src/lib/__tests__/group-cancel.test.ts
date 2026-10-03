@@ -390,6 +390,16 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       expect.anything(), expect.anything(), expect.anything(), CHECK_IN, CHECK_OUT, 0,
       CLUB_FORMAT_TEST, "card", 0, undefined
     );
+    // #3653 fix round: the refund is OWED, not "no payment taken". The
+    // recovery that later makes it writes `booking.payment.refund_recovered`
+    // (the executor's own suite).
+    const childAudit = mocks.logAudit.mock.calls
+      .map(([entry]) => entry as { targetId: string; details: string; metadata: Record<string, unknown> })
+      .find((entry) => entry.targetId === "child-1");
+    expect(childAudit?.details).toBe(
+      "Group organiser cancelled; a refund of $45.00 to the organiser's card is owed and will be retried",
+    );
+    expect(childAudit?.metadata).toMatchObject({ refundForChild: 0, owedRefundForChild: 4500 });
   });
 
   it("#3653: a re-drive replays the frozen per-child plan and never re-plans or re-runs a closed debt", async () => {
