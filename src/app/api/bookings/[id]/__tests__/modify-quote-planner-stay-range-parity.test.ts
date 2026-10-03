@@ -1134,8 +1134,11 @@ describe("#2563 the preview, the save and the freeze resolve one party", () => {
       // 6. The adult-supervision (child-safety) rule judges the same party. The
       //    preview does not run the rule — the save does — so what has to match
       //    is its INPUT, checked by evaluating the pure predicate on both.
-      expect(requiresAdultSupervisionReview(route.party!)).toBe(
-        requiresAdultSupervisionReview(planner.party),
+      //    Nobody here needed consent, which the rule now requires to be stated.
+      const noConsent = (rows: Array<{ ageTier: string }>) =>
+        rows.map((row) => ({ ...row, consentStatus: null }));
+      expect(requiresAdultSupervisionReview(noConsent(route.party!))).toBe(
+        requiresAdultSupervisionReview(noConsent(planner.party)),
       );
 
       // 7. Minimum stay is judged over the resolved envelope, or not at all when

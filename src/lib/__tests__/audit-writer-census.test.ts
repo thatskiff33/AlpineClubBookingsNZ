@@ -1408,7 +1408,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 364 -> 365 (#3413): pending-adult identity resolution is classified.
     // 365 -> 366 (#3462): the Xero operation Mark failed record, unpinned
     // `xero`. RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 128, unpinned: 366 });
+    // 366 -> 367 (#3454): the two-factor enrolment / erasure-clear record,
+    // unpinned `security`. RE-MEASURED with `pnpm run audit:census`.
+    ).toEqual({ pinned: 128, unpinned: 367 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

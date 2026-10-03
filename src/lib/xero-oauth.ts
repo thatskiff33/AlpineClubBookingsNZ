@@ -18,6 +18,7 @@ import {
   deleteXeroTokens,
   loadXeroTokens,
   saveXeroTokens,
+  type XeroTokenWriteContext,
 } from "./xero-token-store";
 
 export async function createXeroClient(state?: string): Promise<XeroClient> {
@@ -44,13 +45,17 @@ export async function getXeroConsentUrl(state?: string): Promise<string> {
  * Handle the OAuth2 callback from Xero.
  * Exchanges the authorization code for tokens and stores them encrypted.
  */
-export async function handleXeroCallback(url: string, state?: string): Promise<void> {
+export async function handleXeroCallback(
+  url: string,
+  state: string | undefined,
+  context: XeroTokenWriteContext,
+): Promise<void> {
   // Test-only mock-Xero harness (#2080). Inert in production (env unset).
   // Token exchange is a SERVER-side fetch, so it uses the in-container origin
   // (the browser-facing origin may be a host-mapped port the container can't dial).
   const mockInternalOrigin = getXeroMockInternalOrigin();
   if (mockInternalOrigin) {
-    await handleMockXeroCallback(mockInternalOrigin, url);
+    await handleMockXeroCallback(mockInternalOrigin, url, context);
     return;
   }
 
@@ -70,13 +75,13 @@ export async function handleXeroCallback(url: string, state?: string): Promise<v
     refreshToken: tokenSet.refresh_token!,
     expiresAt: new Date(Date.now() + (tokenSet.expires_in ?? 1800) * 1000),
     tenantId,
-  });
+  }, context);
 }
 
 /**
  * Disconnect Xero by revoking stored tokens (best-effort) and removing them locally.
  */
-export async function disconnectXero(): Promise<void> {
+export async function disconnectXero(context: XeroTokenWriteContext): Promise<void> {
   const tokens = await loadXeroTokens();
   if (tokens) {
     try {
@@ -92,5 +97,5 @@ export async function disconnectXero(): Promise<void> {
       // Best-effort revocation; continue with local cleanup
     }
   }
-  await deleteXeroTokens();
+  await deleteXeroTokens({ ...context, cause: { kind: "oauth-disconnect" } });
 }

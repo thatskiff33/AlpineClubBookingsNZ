@@ -149,6 +149,12 @@ for the money side, and the
   banner so you can finish later.
 - If your booking needs committee sign-off, step 4 reads **Admin Review** instead
   and no payment is taken until it is approved.
+- If your party has children and no adult, the review step asks you for a short
+  reason before you can confirm, and the booking goes to an officer for review.
+  An adult from another family who still has to agree to come does not count as
+  the adult yet, so children plus such a guest are asked for a reason too. At a
+  club where added members are told rather than asked, they count straight
+  away.
 
 Paying by card versus by internet banking is covered in
 [Paying for your stay](paying-for-your-stay.md).
