@@ -30,9 +30,11 @@ reason: one import of bookingPromoCodeLabel for the plural promo read (#3826); t
   two call sites changed in place.
 
 file: src/lib/booking-cancel.ts
-lines: 2601
+lines: 2603
 reason: the cancel release now gives back every promo code a booking carries
-  (#3826); one more line in the existing cleanup helper.
+  (#3826), through the one booking-level release in promo.ts; the existing
+  cleanup helper keeps a cheap probe so a booking with no code opens no
+  transaction, and its docblock says so.
 
 file: src/lib/booking-create.ts
 lines: 2119
@@ -69,10 +71,11 @@ reason: the new multiPromoCodes module key must be classified for config transfe
   (#3826), and the classification and its reason live in this one table.
 
 file: src/lib/promo.ts
-lines: 2054
+lines: 2065
 reason: redeemPromoCode now asks the rollout switch before writing, and the plural
   release helpers must sit beside deletePromoRedemptionAndAdjustCount they
-  compose (#3826); the switch probe itself moved to promo-redemption-slot.ts.
+  compose (#3826), with the lock-order note that their sort holds per call; the
+  switch probe itself moved to promo-redemption-slot.ts.
 
 file: src/lib/waitlist-cross-lodge.ts
 lines: 1006
