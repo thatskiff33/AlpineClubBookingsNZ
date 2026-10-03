@@ -66,6 +66,21 @@ export function promoLodgeRestrictionRefusal(
     : null;
 }
 
+/**
+ * The refusal a booker-picks-guests code gives when more guests are chosen than
+ * `maxGuestsPerBooking` allows, or null. One spelling, read by the engine below
+ * and by the several-code orchestrator (`booking-promotions.ts`), which counts
+ * a choice that includes guests the engine is not shown (#3827).
+ */
+export function promoGuestCountRefusal(
+  maxGuestsPerBooking: number | null | undefined,
+  selectedCount: number,
+): string | null {
+  if (maxGuestsPerBooking === null || maxGuestsPerBooking === undefined) return null;
+  if (selectedCount <= maxGuestsPerBooking) return null;
+  return `Choose no more than ${maxGuestsPerBooking} guest${maxGuestsPerBooking === 1 ? "" : "s"} for this promo code`;
+}
+
 type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 export interface PromoValidationResult {
@@ -1171,13 +1186,13 @@ export async function validateAndCalculatePromoDiscount(
         beneficiaryMemberIds: [],
       };
     }
-    if (
-      promoCode.maxGuestsPerBooking !== null &&
-      promoCode.maxGuestsPerBooking !== undefined &&
-      selectedGuestIndexes.indexes.length > promoCode.maxGuestsPerBooking
-    ) {
+    const guestCountRefusal = promoGuestCountRefusal(
+      promoCode.maxGuestsPerBooking,
+      selectedGuestIndexes.indexes.length,
+    );
+    if (guestCountRefusal) {
       return {
-        error: `Choose no more than ${promoCode.maxGuestsPerBooking} guest${promoCode.maxGuestsPerBooking === 1 ? "" : "s"} for this promo code`,
+        error: guestCountRefusal,
         requiresGuestSelection: true,
         selectableGuestIndexes,
         beneficiaryMemberIds: [],
@@ -1822,10 +1837,17 @@ export async function redeemPromoCode(
   eligibleGuestCount?: number,
   allocations?: PromoBeneficiaryAllocation[],
   targetBookingGuestIds?: string[],
-  lodgeId?: string | null
+  lodgeId?: string | null,
+  // #3827: the booker's position for this code (D-3813-2), when the writer
+  // priced several codes together; omitted, the code is appended.
+  requestedApplicationOrder?: number
 ): Promise<void> {
   await assertPromoRedeemableAtLodge(tx, promoCodeId, lodgeId);
-  const applicationOrder = await nextPromoApplicationOrder(tx, bookingId);
+  const applicationOrder = await nextPromoApplicationOrder(
+    tx,
+    bookingId,
+    requestedApplicationOrder,
+  );
   const redemption = await tx.promoRedemption.create({
     data: {
       promoCodeId,

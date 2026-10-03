@@ -46,13 +46,20 @@ export const SECOND_PROMO_CODE_REFUSED_MESSAGE =
 export async function nextPromoApplicationOrder(
   tx: Prisma.TransactionClient,
   bookingId: string,
+  /**
+   * The position the booker chose for this code (#3827, D-3813-2), when the
+   * writer prices several codes at once and knows each one's place. Omitted, a
+   * new code is appended after the last, as before. Either way the switch is
+   * consulted exactly when the booking already holds a code.
+   */
+  requestedOrder?: number,
 ): Promise<number> {
   const last = await tx.promoRedemption.findFirst({
     where: { bookingId },
     orderBy: { applicationOrder: "desc" },
     select: { applicationOrder: true },
   });
-  if (!last) return 0;
+  if (!last) return requestedOrder ?? 0;
   // Normalised by the one module-settings normaliser: a club that has never
   // saved the Modules page reads the default, which is OFF — fail-closed.
   const { multiPromoCodes } = normalizeClubModuleSettings(
@@ -61,5 +68,26 @@ export async function nextPromoApplicationOrder(
   if (!multiPromoCodes) {
     throw new ApiError(SECOND_PROMO_CODE_REFUSED_MESSAGE, 409);
   }
-  return last.applicationOrder + 1;
+  return requestedOrder ?? last.applicationOrder + 1;
+}
+
+/**
+ * Record the booker's order for a booking's codes (#3827, D-3813-2: "the order
+ * is stored with the booking and can be changed"). Writes only the rows whose
+ * position moved, and only `applicationOrder` — a column the
+ * `PromoRedemption_sync_allocation_update` trigger does not watch (it fires on
+ * `promoCodeId`, `bookingId`, `memberId`, `discountCents`, `freeNightsUsed`), so
+ * a reorder can never re-create the booker allocation row INV-MONEY-005 removes.
+ */
+export async function writePromoApplicationOrder(
+  tx: Prisma.TransactionClient,
+  rows: ReadonlyArray<{ id: string; applicationOrder: number; nextOrder: number }>,
+): Promise<void> {
+  for (const row of rows) {
+    if (row.applicationOrder === row.nextOrder) continue;
+    await tx.promoRedemption.update({
+      where: { id: row.id },
+      data: { applicationOrder: row.nextOrder },
+    });
+  }
 }
