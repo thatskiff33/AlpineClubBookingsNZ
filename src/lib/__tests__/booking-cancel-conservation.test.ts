@@ -294,6 +294,8 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
           );
           const mockTx = {
             bookingEvent: { create: mocks.txBookingEventCreate },
+            // #3835: the reviews settled before the cancel, frozen on its event.
+            manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
             $executeRaw: vi.fn().mockResolvedValue(undefined),
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
