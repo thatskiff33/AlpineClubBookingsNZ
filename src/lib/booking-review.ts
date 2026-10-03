@@ -1,4 +1,4 @@
-import { AdminReviewStatus, AgeTier, BookingStatus, type Prisma } from "@prisma/client";
+import { AdminReviewStatus, BookingStatus, type Prisma } from "@prisma/client";
 import { isCapacityHoldingBookingStatus } from "@/lib/booking-status";
 
 export const ADULT_SUPERVISION_REVIEW_REASON =
@@ -57,18 +57,9 @@ export function bookingReviewReasonSentences(
   );
 }
 
-export function requiresAdultSupervisionReview(
-  guests: Array<{ ageTier: AgeTier | string }>
-): boolean {
-  const hasAdult = guests.some((guest) => guest.ageTier === AgeTier.ADULT);
-  const hasMinor = guests.some((guest) =>
-    guest.ageTier === AgeTier.CHILD ||
-    guest.ageTier === AgeTier.YOUTH ||
-    guest.ageTier === AgeTier.INFANT
-  );
-
-  return hasMinor && !hasAdult;
-}
+// The adult-supervision rule lives in its client-safe home (#3770); re-exported
+// here so every server caller keeps importing it from the review module.
+export { requiresAdultSupervisionReview } from "@/lib/adult-supervision";
 
 type ReviewGate = {
   requiresAdminReview: boolean;

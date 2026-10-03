@@ -2636,7 +2636,7 @@ rate-limited, or temporarily unavailable.
 | `GROUP_CANCEL_RESUME_GRACE_MINUTES`   | Grace before the group-settlement-reaper resumes a crash-interrupted organiser-cancel cleanup (#1236); defaults to 15 minutes. |
 | `WAITLIST_TRANSACTION_RETRY_ATTEMPTS` | Optional waitlist transaction retry count.                                  |
 | `WAITLIST_TRANSACTION_RETRY_DELAY_MS` | Optional waitlist transaction retry delay.                                  |
-| `NODE_BUILD_OPTIONS`                  | Optional Node flags for `docker compose build` only, applied to `next build` as `NODE_OPTIONS` inside the builder stage. Empty by default. Typically `--max-old-space-size=4096` where a small server's build is OOM-killed. Does NOT affect the running container. |
+| `NODE_BUILD_OPTIONS`                  | Optional Node flags for `docker compose build` only, applied to `next build` as `NODE_OPTIONS` inside the builder stage, for both the `app` and the `migrate` image builds (#3824). Empty by default. Typically `--max-old-space-size=4096` where a small server's build is OOM-killed. Does NOT affect the running container. |
 | `BACKUP_CRON_SCHEDULE`                | Cron expression for the nightly backup schedule (cron-leader timing).       |
 | `BACKUP_LOCAL_HOST_DIR`               | Host directory bind-mounted into the app container for local database backups. Used only by `docker-compose.yml`; empty uses the `backup_data` named volume instead. Must be owned by uid 1001. |
 | `BACKUP_LOCAL_DIR`                    | Path **inside the container** that mount lands on (default `/backups`). What the app writes to, and the value `/admin/backups` pre-fills. A path saved on that page overrides it. |

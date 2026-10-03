@@ -1,5 +1,7 @@
 import type { GuestData } from "@/components/guest-form";
+import type { MemberGuestConsentStatus } from "@prisma/client";
 import type { MemberGuestConsentColumns } from "@/lib/member-guest-consent";
+import { requiresAdultSupervisionReview } from "@/lib/adult-supervision";
 
 /**
  * Turn a wizard guest row's display-only consent PREVIEW into the column shape
@@ -86,6 +88,35 @@ export function memberGuestConsentPreviewColumns(
     };
   }
   return null;
+}
+
+/**
+ * Does this party need a written reason before it can be booked? The SERVER's
+ * adult-supervision rule (`requiresAdultSupervisionReview`), asked of the rows
+ * as the client holds them: each row states the consent its add will produce
+ * (#3770, owner decision "only agreed adults count"). A row the finder added
+ * carries a prediction — pending where the club asks first, confirmed where it
+ * only notifies or an officer adds — and every other row needs no consent. So
+ * the wizard asks for the reason when the create route will demand it. That
+ * holds because the finder adds nobody before the family list has loaded (#3770),
+ * so every outsider row carries its prediction.
+ */
+export function partyNeedsSupervisionJustification(
+  guests: ReadonlyArray<{
+    ageTier: string;
+    memberGuestConsentPreview?: GuestData["memberGuestConsentPreview"];
+    consentStatus?: MemberGuestConsentStatus | null;
+  }>,
+): boolean {
+  return requiresAdultSupervisionReview(
+    guests.map((guest) => ({
+      ageTier: guest.ageTier,
+      consentStatus:
+        guest.consentStatus ??
+        memberGuestConsentPreviewColumns(guest)?.consentStatus ??
+        null,
+    })),
+  );
 }
 
 /**
