@@ -22,6 +22,9 @@ overrides:
   browserslist: ^4.28.7
   mysql2: ^3.22.0
 
+patchedDependencies:
+  braces@3.0.3: 37f95f7d660c05bfd44d4b429ca49ceeede99dcff68389f81ee9b995a8ea24d2
+
 importers:
 
   .:
@@ -7959,7 +7962,7 @@ snapshots:
     dependencies:
       balanced-match: 4.0.4
 
-  braces@3.0.3:
+  braces@3.0.3(patch_hash=37f95f7d660c05bfd44d4b429ca49ceeede99dcff68389f81ee9b995a8ea24d2):
     dependencies:
       fill-range: 7.1.1
 
@@ -9427,7 +9430,7 @@ snapshots:
 
   micromatch@4.0.8:
     dependencies:
-      braces: 3.0.3
+      braces: 3.0.3(patch_hash=37f95f7d660c05bfd44d4b429ca49ceeede99dcff68389f81ee9b995a8ea24d2)
       picomatch: 2.3.2
 
   mime-db@1.52.0: {}
