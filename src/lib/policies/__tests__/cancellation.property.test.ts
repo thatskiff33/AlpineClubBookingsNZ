@@ -286,6 +286,7 @@ describe("calculateCancellationPreview properties", () => {
           );
           const preview = calculateCancellationPreview({
             payment,
+            openNonCancellationHandBackCents: 0,
             finalPriceCents,
             checkIn,
             policyRules: rules,

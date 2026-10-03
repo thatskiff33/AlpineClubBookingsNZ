@@ -37,6 +37,12 @@ import {
   isQuotePricedBooking,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
+// Pure readers of the request, imported from their home rather than the barrel
+// so a test that stubs the barrel's pipeline still reads the request for real.
+import {
+  requestChangesPromoCodes,
+  requestedPromoCodeChange,
+} from "@/lib/booking-modify-promo-request";
 import {
   OtherLodgeRateAmountUnderReviewError,
   requestCarriesOtherLodgeElection,
@@ -92,6 +98,10 @@ import {
   type PromoChangeNotAppliedNotice,
 } from "@/lib/promo-change-not-applied";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import {
+  editRefundGoesBackByHand,
+  raiseEditRefundHandBackIfOwed,
+} from "@/lib/edit-refund-hand-back";
 import { prisma } from "@/lib/prisma";
 import {
   withOptionalTransaction,
@@ -426,6 +436,7 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
         isMember: guest.isMember,
         perNightRates: rated.map((night) => night.priceCents),
         nightDates: rated.map((night) => night.stayDate),
+        consentStatus: guest.consentStatus ?? null,
       };
     }),
     // Nothing was rated here — this echo does not run the rate resolver at all.
@@ -852,10 +863,9 @@ export async function modifyBookingBatch({
       input.guestUpdates?.length ||
       // #2337: a placeholder→member link is a guest change, never a date override.
       input.linkGuestToMember?.length ||
-      input.promoCode ||
+      requestChangesPromoCodes(input) ||
       input.promoGuestIds?.length ||
       input.promoAddedGuestIndexes?.length ||
-      input.removePromoCode ||
       // #2266: an explicit undefined-check — a 0-cent election is falsy.
       input.applyCreditCents !== undefined
     ) {
@@ -1023,8 +1033,7 @@ export async function modifyBookingBatch({
         // #2337: a link re-rates a guest, so it is structural — it must never take
         // the identity-only price-preserving echo (that would skip the re-rate).
         input.linkGuestToMember?.length ||
-        input.promoCode ||
-        input.removePromoCode,
+        requestChangesPromoCodes(input),
     );
     const requestIsIdentityOnly =
       !requestedStructuralChange && Boolean(input.guestUpdates?.length);
@@ -1066,8 +1075,7 @@ export async function modifyBookingBatch({
         input.addGuests?.length ||
         input.removeGuestIds?.length ||
         input.guestStayRanges?.length ||
-        input.promoCode ||
-        input.removePromoCode
+        requestChangesPromoCodes(input)
       );
     /**
      * The other-lodge election, exempt on exactly the link's terms (owner
@@ -1422,6 +1430,7 @@ export async function modifyBookingBatch({
           newPromoAdjustmentCents: booking.promoAdjustmentCents,
           promoRemoved: false,
           promoChanged: false,
+          promoCodeLabel: bookingPromoCodeLabel(booking),
           // A price-preserving modification re-runs no cap, so it cannot change
           // who the promotion covers.
           promoCoverage: null,
@@ -1484,8 +1493,7 @@ export async function modifyBookingBatch({
     const promoChangeNotApplied = promo.promoEngineRan
       ? null
       : describePromoChangeNotApplied({
-          requestedPromoCode: input.promoCode,
-          removePromoCodeRequested: Boolean(input.removePromoCode),
+          ...requestedPromoCodeChange(input),
           currentPromoCode: bookingPromoCodeLabel(booking),
           // The RESOLVED removals, not `input.removeGuestIds`: a resent code's
           // sentence claims who it covers has not changed, and a removed guest
@@ -1797,11 +1805,8 @@ export async function modifyBookingBatch({
                 }),
                 after: pricingSideFromWrittenGuests(writtenGuests, {
                   promoAdjustmentCents: promo.newPromoAdjustmentCents,
-                  promoCode: promo.promoRemoved
-                    ? null
-                    : promo.promoChanged
-                      ? (input.promoCode?.trim() || existingPromoCode)
-                      : existingPromoCode,
+                  // #3827: the codes the booking carries after this edit.
+                  promoCode: promo.promoCodeLabel,
                 }),
               };
             },
@@ -1949,6 +1954,16 @@ export async function modifyBookingBatch({
       bookingModification,
       sides: pricingSides,
       site: "batch-modify",
+    });
+
+    // D-3813-6 (`INV-PAY-115`): a reduction on a booking paid by internet
+    // banking or by hand asks the treasurer to send it back.
+    await raiseEditRefundHandBackIfOwed(tx, {
+      bookingId,
+      paymentId: booking.payment?.id ?? null,
+      bookingModificationId: bookingModification.id,
+      adjusted: payments,
+      editLabel: "booking change",
     });
 
     /**
@@ -2624,6 +2639,7 @@ async function dispatchBatchPostTransactionSideEffects({
     // who closed the panel without reading the banner still has this.
     promoChangeNotAppliedNote: result.promoChangeNotApplied?.message ?? null,
     financialReviewPending,
+    refundByBankTransfer: editRefundGoesBackByHand(result),
     lodgeId: result.booking.lodgeId,
   }, format).catch((err) =>
     logger.error(

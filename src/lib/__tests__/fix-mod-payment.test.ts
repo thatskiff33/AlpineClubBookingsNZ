@@ -88,6 +88,8 @@ vi.mock("@/lib/prisma", () => ({
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
     manualRefundTask: {
+      // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
+      aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
       // #3032: the modified email asks whether the club is still working
       // out an amount on this booking (`bookingHasOpenFinancialReview`).
@@ -543,6 +545,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
     manualRefundTask: {
+      // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
+      aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
       // #3032: the modified email asks whether the club is still working
       // out an amount on this booking (`bookingHasOpenFinancialReview`).
@@ -555,6 +559,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       // as an opaque 400 — which is how a park looks exactly like a refusal.
       findUnique: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({ id: "task-1" }),
+      // #3827 (D-3813-6): an internet-banking reduction's officer refund task.
+      createMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     bookingModification: { create: vi.fn().mockResolvedValue({ id: "mod1" }) },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
@@ -975,6 +981,23 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     expect(data.additionalPaymentClientSecret).toBeNull();
     expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
     expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+    // #3827 (D-3813-6, `INV-PAY-115`): the treasurer is asked to send the
+    // $30 back, and the member is told it is coming by bank transfer.
+    expect(tx.manualRefundTask.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          amountCents: 3000,
+          kind: "CANCELLED_BOOKING_HAND_BACK",
+          occurrenceKey: "edit-refund-hand-back:mod1",
+        }),
+      ],
+      skipDuplicates: true,
+    });
+    const { sendBookingModifiedEmail } = await import("@/lib/email");
+    expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 3000, refundByBankTransfer: true }),
+      expect.anything(),
+    );
 
     await Promise.resolve();
     expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(

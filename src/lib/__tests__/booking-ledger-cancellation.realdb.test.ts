@@ -395,6 +395,7 @@ function reversedTwice(all: Awaited<ReturnType<typeof lines>>): boolean {
     await settle("CARD_REFUND", 3_000, "race-3611-share", "refund:race-3611-share");
     const money = paidMoney.paidCancellationMoney({
       payment: { amountCents: 20_000, refundedAmountCents: 3_000, changeFeeCents: 0, creditAppliedCents: 0 },
+      openNonCancellationHandBackCents: 0,
       finalPriceCents: 20_000,
       appliedCreditCents: 0,
       restoresToMemberLedger: true,

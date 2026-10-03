@@ -9,6 +9,16 @@ export const SECOND_PROMO_CODE_REFUSED_MESSAGE =
   "This booking already carries a promo code.";
 
 /**
+ * Is the `multiPromoCodes` rollout switch on? Read through the caller's
+ * transaction client and the one module-settings normaliser: a club that has
+ * never saved the Modules page reads the default, which is OFF — fail-closed.
+ * The one read of the switch on a write path (#3827).
+ */
+export async function multiPromoCodesEnabled(tx: Prisma.TransactionClient): Promise<boolean> {
+  return normalizeClubModuleSettings(await readClubModuleSettingsRecord(tx)).multiPromoCodes;
+}
+
+/**
  * Where a new redemption sits in the booking's application order — or a
  * refusal, when the booking already carries a code and the club has not
  * switched on several codes per booking (#3826, epic #3813).
@@ -46,20 +56,22 @@ export const SECOND_PROMO_CODE_REFUSED_MESSAGE =
 export async function nextPromoApplicationOrder(
   tx: Prisma.TransactionClient,
   bookingId: string,
+  /**
+   * The position the booker chose for this code (#3827, D-3813-2), when the
+   * writer prices several codes at once and knows each one's place. Omitted, a
+   * new code is appended after the last, as before. Either way the switch is
+   * consulted exactly when the booking already holds a code.
+   */
+  requestedOrder?: number,
 ): Promise<number> {
   const last = await tx.promoRedemption.findFirst({
     where: { bookingId },
     orderBy: { applicationOrder: "desc" },
     select: { applicationOrder: true },
   });
-  if (!last) return 0;
-  // Normalised by the one module-settings normaliser: a club that has never
-  // saved the Modules page reads the default, which is OFF — fail-closed.
-  const { multiPromoCodes } = normalizeClubModuleSettings(
-    await readClubModuleSettingsRecord(tx),
-  );
-  if (!multiPromoCodes) {
+  if (!last) return requestedOrder ?? 0;
+  if (!(await multiPromoCodesEnabled(tx))) {
     throw new ApiError(SECOND_PROMO_CODE_REFUSED_MESSAGE, 409);
   }
-  return last.applicationOrder + 1;
+  return requestedOrder ?? last.applicationOrder + 1;
 }

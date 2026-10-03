@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   readHoldPaymentEvidence: vi.fn(),
   hasAdminAccess: vi.fn(),
   checkRateLimit: vi.fn(),
+  manualRefundTaskAggregate: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -31,6 +32,8 @@ vi.mock("@/lib/prisma", () => ({
     booking: { findUnique: mocks.bookingFindUnique },
     memberCredit: { aggregate: mocks.memberCreditAggregate },
     clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique },
+    // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
+    manualRefundTask: { aggregate: mocks.manualRefundTaskAggregate },
   },
 }));
 vi.mock("@/lib/cancellation", () => ({
@@ -129,6 +132,7 @@ beforeEach(() => {
     updatedAt: new Date("2026-01-01T00:00:00.000Z"),
   });
   mocks.readHoldPaymentEvidence.mockResolvedValue(PART_PAID);
+  mocks.manualRefundTaskAggregate.mockResolvedValue({ _sum: { amountCents: null } });
 });
 
 describe("cancel preview for a part-paid internet banking booking (#3643)", () => {
@@ -148,6 +152,43 @@ describe("cancel preview for a part-paid internet banking booking (#3643)", () =
     expect(mocks.readHoldPaymentEvidence).toHaveBeenCalledWith(
       expect.objectContaining({ id: "payment-ib", xeroInvoiceId: "inv-ib" }),
     );
+  });
+
+  it("#3827 (INV-PAY-115): quotes only the cash not already promised back on an open edit refund hand-back", async () => {
+    // $150 recorded, $50 of it already owed back on an earlier edit's task -
+    // read on the SAME booking read as the payment, never a second query.
+    const booking = partPaidBooking();
+    mocks.bookingFindUnique.mockResolvedValue({
+      ...booking,
+      payment: { ...booking.payment, manualRefundTasks: [{ amountCents: 5_000 }] },
+    });
+
+    const { status, body } = await preview();
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ totalPaidCents: 10_000, creditRefundAmountCents: 5_000 });
+    expect(mocks.bookingFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: {
+          payment: {
+            include: {
+              manualRefundTasks: {
+                where: {
+                  status: "OPEN",
+                  kind: "CANCELLED_BOOKING_HAND_BACK",
+                  OR: [
+                    { occurrenceKey: { startsWith: "edit-refund-hand-back:" } },
+                    { occurrenceKey: { startsWith: "refund-request-hand-back:" } },
+                  ],
+                },
+                select: { amountCents: true },
+              },
+            },
+          },
+        },
+      }),
+    );
+    expect(mocks.manualRefundTaskAggregate).not.toHaveBeenCalled();
   });
 
   it("sends a member to the club, with the cancel's own sentence, when Xero shows cash it cannot size", async () => {

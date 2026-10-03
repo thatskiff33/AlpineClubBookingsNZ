@@ -33,6 +33,7 @@ import {
   createUnappliedXeroCreditNoteForModification,
   createXeroCreditNote,
 } from "@/lib/xero-credit-notes";
+import { readRefundRequestIdFromPayload } from "@/lib/refund-request-credit-note";
 import {
   readModificationNoteWording,
   type CashRefundMethod,
@@ -2990,6 +2991,10 @@ export async function processQueuedXeroOutboxOperations(options?: {
               : {}),
             ...(payload.paymentIntentId ? { paymentIntentId: payload.paymentIntentId } : {}),
             ...(payload.documentDate ? { documentDate: payload.documentDate } : {}),
+            // #3827 (D-3813-8): a refund request's own note (`refund-request-credit-note.ts`).
+            ...(readRefundRequestIdFromPayload(queuedOperation.requestPayload)
+              ? { refundRequestId: readRefundRequestIdFromPayload(queuedOperation.requestPayload)! }
+              : {}),
           }
         );
       } else if (

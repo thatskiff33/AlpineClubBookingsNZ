@@ -84,10 +84,28 @@ vi.mock("@/lib/membership-type-policy", () => ({
 }))
 
 vi.mock("@/lib/booking-create-promo", () => ({
-  resolveEffectivePromoSource: vi.fn().mockResolvedValue(null),
-  resolvePromoInTransaction: vi.fn(),
+  // #3827: the plural resolution; no codes, so no promotion.
+  promoCodeRequestsOf: vi.fn().mockReturnValue([]),
+  resolveEffectivePromoSources: vi.fn().mockResolvedValue([]),
+  resolvePromotionsInTransaction: vi.fn().mockResolvedValue({
+    discountCents: 0,
+    promoAdjustmentCents: 0,
+    promoAdjustmentTargets: [],
+    redemptions: [],
+  }),
   getPromoTargetBookingGuestIds: vi.fn().mockReturnValue([]),
   remapPromoIndexesToSubset: vi.fn().mockReturnValue([]),
+}))
+
+// #3827 (C1): the code-row locks and the redemptions, in the order they ran.
+vi.mock("@/lib/promo", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/promo")),
+  lockPromoCodeRowsForUpdate: async (_tx: unknown, ids: string[]) => {
+    mocks.order.push(`rows:${[...ids].sort().join(",")}`)
+  },
+  redeemPromoCode: async (_tx: unknown, promoCodeId: string) => {
+    mocks.order.push(`redeem:${promoCodeId}`)
+  },
 }))
 
 vi.mock("@/lib/adult-member-hosting-review", () => ({
@@ -114,6 +132,7 @@ import {
   createWaitlistedBooking,
   type WaitlistedBookingInput,
 } from "@/lib/booking-create"
+import { resolvePromotionsInTransaction } from "@/lib/booking-create-promo"
 
 describe("createWaitlistedBooking per-lodge position", () => {
   beforeEach(() => {
@@ -199,5 +218,48 @@ describe("createWaitlistedBooking per-lodge position", () => {
       1,
       "lodge-b",
     )
+  })
+
+  it("locks every code row in one sorted call after the lodge key, before any redemption (#3827)", async () => {
+    // Two codes, the booker's order putting the later id first: each
+    // redemption's counter write row-locks its code, so without the sorted
+    // lock two such creates in opposite orders would deadlock.
+    const redemption = (promoCodeId: string, applicationOrder: number) => ({
+      promoCodeId,
+      applicationOrder,
+      discountCents: 1_000,
+      priceAdjustmentCents: -1_000,
+      freeNightsUsed: 0,
+      eligibleGuestCount: 1,
+      allocations: [],
+      selectedGuestIndexes: undefined,
+    })
+    vi.mocked(resolvePromotionsInTransaction).mockResolvedValueOnce({
+      discountCents: 2_000,
+      promoAdjustmentCents: -2_000,
+      promoAdjustmentTargets: [],
+      redemptions: [redemption("zz-promo", 0), redemption("aa-promo", 1)],
+    })
+
+    await createWaitlistedBooking({
+      effectiveMemberId: "member-b",
+      isOnBehalf: false,
+      sessionUserId: "member-b",
+      checkIn: new Date("2026-08-10"),
+      checkOut: new Date("2026-08-12"),
+      lodgeId: "lodge-b",
+      guestDietarySeeding: bookingGuestDietarySeeding(false),
+      guests: [
+        { firstName: "Bea", lastName: "Member", ageTier: "ADULT", isMember: true, memberId: "member-b" },
+      ],
+    } as WaitlistedBookingInput)
+
+    expect(mocks.order.slice(0, 4)).toEqual([
+      "lock:lodge-b",
+      "rows:aa-promo,zz-promo",
+      // The redemptions keep the booker's order; only the locks are sorted.
+      "redeem:zz-promo",
+      "redeem:aa-promo",
+    ])
   })
 })

@@ -22,6 +22,7 @@ import {
   REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE,
   REVIEW_SETTLEMENT_ANCHOR_MISSING_MESSAGE,
 } from "@/lib/edit-financial-review-refund-refusals";
+import { assertByHandReviewRefundWithinUnpromisedCash } from "@/lib/edit-refund-hand-back";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -35,7 +36,7 @@ import {
   refundPaymentTransactions,
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
-import { dispatchEditReviewXeroSettlement } from "@/lib/edit-financial-review-xero-leg";
+import { dispatchEditReviewXeroSettlement, type EditReviewHandBackXeroFacts } from "@/lib/edit-financial-review-xero-leg";
 import {
   finishEditReviewAccountCredit,
   type EditReviewAccountCreditOutcome,
@@ -456,7 +457,8 @@ export async function chooseEditReviewSettlementRoute({
     // does. The cap lives inside `applyLocalRefundAllocation`, which runs INSIDE
     // the caller's transaction - so its refusal rolls the claim back and leaves
     // the task OPEN, which is the guarantee the pre-claim card cap above has to
-    // buy by hand.
+    // buy by hand. #3827 (`INV-PAY-115`): and, before the claim, net of open hand-backs.
+    await assertByHandReviewRefundWithinUnpromisedCash(store, settlementPaymentId, amountCents);
     return {
       kind: "local-allocation",
       paymentId: settlementPaymentId,
@@ -526,8 +528,8 @@ export async function executeEditReviewSettlement({
   hasIssuedXeroInvoice,
   bookingPaymentStatus,
   bookingXeroInvoiceId = null,
-  cancellationHandBackInvoiceId,
   format,
+  ...handBackXero
 }: {
   bookingId: string;
   taskId: string;
@@ -540,11 +542,9 @@ export async function executeEditReviewSettlement({
   bookingXeroInvoiceId?: string | null;
   hasIssuedXeroInvoice: boolean;
   bookingPaymentStatus: string | null;
-  /** `INV-PAY-101` (#3529): see `dispatchEditReviewXeroSettlement`. */
-  cancellationHandBackInvoiceId: string | null;
   /** The club's format (#3565), resolved once by the caller, before its transaction. */
   format: ClubFormat;
-}): Promise<{
+} & EditReviewHandBackXeroFacts): Promise<{
   stripeRefundId: string | null;
   additionalPaymentIntentId: string | null;
 }> {
@@ -691,7 +691,7 @@ export async function executeEditReviewSettlement({
     chargeTotalCents,
     hasIssuedXeroInvoice,
     bookingPaymentStatus,
-    cancellationHandBackInvoiceId,
+    ...handBackXero,
     additionalPaymentIntentId,
   });
 

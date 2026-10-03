@@ -14,6 +14,7 @@ import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import type { XeroInvoiceEmailInstruction } from "@/lib/xero-invoice-email-instruction";
 import { xeroSyncErrorText } from "@/lib/xero-sync-error-text";
+import { REFUND_REQUEST_CREDIT_NOTE_ROLE } from "@/lib/refund-request-credit-note";
 
 export interface XeroSyncOperationInput {
   direction: string;
@@ -329,6 +330,22 @@ export async function findCanonicalPaymentRefundCreditNote(
       xeroObjectNumber: true,
     },
   });
+  // #3827 (D-3813-8): a refund request's own note is an allowed extra, never
+  // this payment's one refund note - left out of every fallback below, or a
+  // cancellation's note would be absorbed into a request's.
+  const refundRequestNoteIds = new Set(
+    (
+      (await db.xeroObjectLink.findMany({
+        where: {
+          localModel: "Payment",
+          localId: paymentId,
+          xeroObjectType: "CREDIT_NOTE",
+          role: REFUND_REQUEST_CREDIT_NOTE_ROLE,
+        },
+        select: { xeroObjectId: true },
+      })) ?? []
+    ).map((link) => link.xeroObjectId)
+  );
   const refundPaymentLinks = await db.xeroObjectLink.findMany({
     where: {
       localModel: "Payment",
@@ -352,7 +369,10 @@ export async function findCanonicalPaymentRefundCreditNote(
       operationType: "CREATE",
       localModel: "Payment",
       localId: paymentId,
-      xeroObjectId: { not: null },
+      xeroObjectId:
+        refundRequestNoteIds.size > 0
+          ? { not: null, notIn: Array.from(refundRequestNoteIds) }
+          : { not: null },
     },
     orderBy: [
       { completedAt: "desc" },
@@ -388,7 +408,7 @@ export async function findCanonicalPaymentRefundCreditNote(
   for (const link of refundPaymentLinks) {
     const metadata = asRecord(link.metadata);
     const linkedCreditNoteId = readString(metadata?.creditNoteId);
-    if (linkedCreditNoteId) {
+    if (linkedCreditNoteId && !refundRequestNoteIds.has(linkedCreditNoteId)) {
       return {
         xeroObjectId: linkedCreditNoteId,
         xeroObjectNumber: xeroObjectNumberById.get(linkedCreditNoteId) ?? null,

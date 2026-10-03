@@ -33,6 +33,7 @@ import {
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { cancellationKeptCents, paidCancellationMoney } from "@/lib/paid-cancellation-money";
+import { openNonCancellationHandBackCents } from "@/lib/edit-refund-hand-back";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import {
   applyLocalRefundAllocation,
@@ -1561,6 +1562,9 @@ async function performBookingCancellation(
     const appliedCreditCents = await deriveBookingAppliedCreditCents(bookingId, tx);
     const money = paidCancellationMoney({
       payment,
+      // #3827 (`INV-PAY-115`): read under lock(1), which every edit that raises
+      // such a task also holds, so none can appear before this cancel commits.
+      openNonCancellationHandBackCents: await openNonCancellationHandBackCents(tx, payment.id),
       finalPriceCents: fresh.finalPriceCents,
       appliedCreditCents,
       restoresToMemberLedger: restoreMemberId !== null,

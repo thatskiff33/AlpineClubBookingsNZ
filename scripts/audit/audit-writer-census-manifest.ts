@@ -591,7 +591,11 @@ export const AUDIT_CENSUS_TOTALS = {
   // enrolment and the erasure's clear, categorised `security` at the site. The
   // Xero token writes add no site: they go through the credential store's
   // existing `recordCredentialMutation`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 495,
+  // 495 -> 496 (#3827): `booking.modify.promo_reprice`, the edit-shaped record a
+  // guest's acceptance writes when it re-prices the booking's promo codes and
+  // moves money, `booking` at the site like the guest-removal edit it mirrors.
+  // RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 496,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -679,7 +683,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // awaited `createAuditLog` inside the reset's own transaction, so the
     // reset and its record commit together. RE-MEASURED with
     // `pnpm run audit:census`.
-    logAudit: { total: 270, uncategorised: 0 },
+    // 270 -> 271 (#3827): the guest-acceptance re-price record, above.
+    logAudit: { total: 271, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -885,7 +890,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 104 -> 105 (#3029): the booking dietary edit record. A stay's dietary
     // note is booking data, read by booking officers, so `booking` is its
     // affected domain (`INV-PRIV-012`); the row names the field, never its value.
-    booking: 105,
+    // 105 -> 106 (#3827): the guest-acceptance re-price record — a booking's
+    // money changing, read by booking officers like every `booking.modify.*`.
+    booking: 106,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the

@@ -31,7 +31,6 @@ import {
   type SupersededPrimaryPaymentIntent,
 } from "@/lib/booking-payment-cleanup";
 import {
-  getRemainingRefundableCents,
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
   isSettledBookingStatus,
@@ -47,6 +46,10 @@ import {
   deriveBookingAppliedCreditCents,
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
+import {
+  refundableCashNetOfOpenHandBacks,
+  type OpenNonCancellationHandBackDb,
+} from "@/lib/edit-refund-hand-back";
 
 export type BookingModificationSettlementOptions = {
   basisAmountCents: number;
@@ -106,7 +109,11 @@ export async function calculateModificationSettlementOptions({
 }: {
   booking: Pick<LoadedBookingForModify, "checkIn" | "status" | "payment" | "lodgeId">;
   netChargeCents: number;
-  db: CancellationPolicyDb;
+  /**
+   * Also reads the payment's OPEN edit refund hand-backs (#3827,
+   * `INV-PAY-115`), so a reduction is sized off cash not already promised back.
+   */
+  db: CancellationPolicyDb & OpenNonCancellationHandBackDb;
   /**
    * The club's own calendar day (`INV-CONFIG-002`), resolved outside this
    * transaction. It feeds `daysUntilDate` below, which is the refund-tier
@@ -115,18 +122,12 @@ export async function calculateModificationSettlementOptions({
    */
   todayAtClub: CalendarDate;
 }): Promise<BookingModificationSettlementOptions | null> {
-  const reductionAmountCents = Math.max(0, -netChargeCents);
-  const remainingRefundableCents = getRemainingRefundableCents(booking.payment);
-  const basisAmountCents = Math.min(
-    reductionAmountCents,
-    remainingRefundableCents,
+  const basisAmountCents = settlementBasisCents(
+    booking,
+    netChargeCents,
+    await refundableCashNetOfOpenHandBacks(db, booking.payment),
   );
-  const hasSettledPayment =
-    isSettledBookingStatus(booking.status) && hasCapturedPayment(booking.payment);
-
-  if (basisAmountCents <= 0 || !hasSettledPayment) {
-    return null;
-  }
+  if (basisAmountCents === null) return null;
 
   const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, db);
   const daysUntilCheckIn = daysUntilDate(booking.checkIn, todayAtClub);
@@ -146,6 +147,61 @@ export async function calculateModificationSettlementOptions({
     daysUntilCheckIn,
     requiresSettlementMethod:
       cardRefundAmountCents > 0 || creditRefundAmountCents > 0,
+  };
+}
+
+/**
+ * What a reduction can return from the captured payment: the reduction, capped
+ * at what is still refundable — or null when the booking holds no captured
+ * payment in a settled status, or there is nothing to return. ONE basis for the
+ * policy-tiered options above and the untiered ones below.
+ *
+ * `refundableCashCents` is REQUIRED and is
+ * `refundableCashNetOfOpenHandBacks` (#3827, `INV-PAY-115`): the captured
+ * cash not yet refunded AND not already promised back by an open edit refund
+ * hand-back.
+ */
+function settlementBasisCents(
+  booking: Pick<LoadedBookingForModify, "status" | "payment">,
+  netChargeCents: number,
+  refundableCashCents: number,
+): number | null {
+  const basisAmountCents = Math.min(Math.max(0, -netChargeCents), refundableCashCents);
+  const hasSettledPayment =
+    isSettledBookingStatus(booking.status) && hasCapturedPayment(booking.payment);
+  return basisAmountCents > 0 && hasSettledPayment ? basisAmountCents : null;
+}
+
+/**
+ * The settlement options for a reduction that is NOT a cancellation, so no
+ * cancellation-policy tier applies: the whole basis comes back, by either arm
+ * (#3827, owner decision D-3813-5 — a guest's acceptance re-pricing the
+ * booking's promo codes). The same basis and shape as
+ * {@link calculateModificationSettlementOptions}, at 100%, so the ordinary
+ * `applyPaymentAdjustments` settles it unchanged. Pure: no policy is read.
+ */
+export function calculateFullReductionSettlementOptions({
+  booking,
+  netChargeCents,
+  refundableCashCents,
+  todayAtClub,
+}: {
+  booking: Pick<LoadedBookingForModify, "checkIn" | "status" | "payment">;
+  netChargeCents: number;
+  /** `refundableCashNetOfOpenHandBacks`, read by the caller under its locks (`INV-PAY-115`). */
+  refundableCashCents: number;
+  todayAtClub: CalendarDate;
+}): BookingModificationSettlementOptions | null {
+  const basisAmountCents = settlementBasisCents(booking, netChargeCents, refundableCashCents);
+  if (basisAmountCents === null) return null;
+  return {
+    basisAmountCents,
+    cardRefundAmountCents: basisAmountCents,
+    cardRefundPercentage: 100,
+    accountCreditAmountCents: basisAmountCents,
+    accountCreditPercentage: 100,
+    daysUntilCheckIn: daysUntilDate(booking.checkIn, todayAtClub),
+    requiresSettlementMethod: true,
   };
 }
 
@@ -220,7 +276,8 @@ export async function applyPaymentAdjustments(
   const hasSucceededPayment =
     hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
-  const remainingRefundableCents = getRemainingRefundableCents(booking.payment);
+  // #3827 (`INV-PAY-115`): net of edit refunds already promised back by hand.
+  const remainingRefundableCents = await refundableCashNetOfOpenHandBacks(tx, booking.payment);
 
   const netAmountCents = priceDiffCents + changeFeeCents;
   const selectedSettlement = resolveSelectedSettlementAmount({

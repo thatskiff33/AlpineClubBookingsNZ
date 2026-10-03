@@ -6,7 +6,7 @@ import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import type { BookingPriceRebaseDeclineReason } from "@/lib/booking-money-reconciliation";
 import { recalculateBookingPromo } from "@/lib/booking-guest-removal-service";
 import type { CalendarDate } from "@/lib/club-time";
-import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
+import { readStrandNightPrices } from "@/lib/booking-strand-night-prices";
 import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
 import {
   BOOKING_MONEY_BUILD_UP_INVARIANT,
@@ -289,86 +289,12 @@ const REBASE_BOOKING_INCLUDE = {
       priceCents: true,
       memberId: true,
       isMember: true,
+      // #3827 (D-3813-4): a guest still awaiting acceptance takes no code.
+      consentStatus: true,
       nights: { select: { stayDate: true, priceCents: true } },
     },
   },
 } as const;
-
-type RebaseStrand = {
-  id: string;
-  priceCents: number;
-  memberId: string | null;
-  isMember: boolean;
-  nights: ReadonlyArray<{ stayDate: Date; priceCents: number | null }>;
-};
-
-type StrandNightPrices = {
-  bookingGuestId: string;
-  memberId: string | null;
-  isMember: boolean;
-  perNightRates: number[];
-  nightDates: Date[];
-};
-
-/**
- * Each surviving strand's nights as exact money, or `null` the moment one cannot
- * be read back that way.
- *
- * THE THREE CONDITIONS ARE `INV-MOD-028` APPLIED TO THE WHOLE BOOKING rather
- * than to one strand. A strand with no night rows has a stay envelope and no
- * evidence; a row that is not usable money is an absence of evidence and not a
- * price; and rows that do not sum to the strand's stored total are two stored
- * numbers disagreeing, which is a decision about which one is wrong rather than
- * a number anybody has. Feeding any of those to the promotion would re-price the
- * booking from evidence the system has already said it cannot read.
- *
- * The rows are sorted by date so `perNightRates` and `nightDates` are parallel
- * and in stay order, which is what an internal work-party promo's night window
- * is applied against.
- *
- * A STATED LIMIT, pre-existing and deliberately not closed here: the three
- * conditions require the rows to EXIST, to be usable money and to SUM to the
- * strand's stored total - never that they span the strand's stay envelope. A
- * strand whose stored total is covered by fewer rows than it has nights reads
- * back as exact, and the booking's total is unaffected either way because that
- * sums `BookingGuest.priceCents`. What can be short is the per-night VECTOR
- * handed to the promotion, so a free-nights or night-windowed code re-caps
- * against a shorter stay than the guest actually has. Moving the trigger (#3257)
- * builds that vector on more closures without changing when it can be short.
- * Closing it needs a stay envelope this writer is not given, and belongs with
- * the writers that create the night rows.
- */
-function readStrandNightPrices(
-  guests: readonly RebaseStrand[],
-): StrandNightPrices[] | null {
-  const read: StrandNightPrices[] = [];
-  for (const guest of guests) {
-    if (!isNonNegativeIntegerCents(guest.priceCents)) return null;
-    if (guest.nights.length === 0) return null;
-    const nights = [...guest.nights].sort(
-      (a, b) => a.stayDate.getTime() - b.stayDate.getTime(),
-    );
-    let sum = 0;
-    const perNightRates: number[] = [];
-    const nightDates: Date[] = [];
-    for (const night of nights) {
-      if (night.priceCents === null) return null;
-      if (!isNonNegativeIntegerCents(night.priceCents)) return null;
-      sum += night.priceCents;
-      perNightRates.push(night.priceCents);
-      nightDates.push(night.stayDate);
-    }
-    if (sum !== guest.priceCents) return null;
-    read.push({
-      bookingGuestId: guest.id,
-      memberId: guest.memberId,
-      isMember: guest.isMember,
-      perNightRates,
-      nightDates,
-    });
-  }
-  return read;
-}
 
 /**
  * Re-base the booking's four money columns from its strands.
@@ -497,6 +423,7 @@ export async function rebaseBookingPriceFromStrands({
       // Every promo window on this booking dates from the stay start, exactly as
       // the removal and waitlist repricings pass it.
       firstNight: booking.checkIn,
+      consentStatus: strand.consentStatus,
     })),
     todayAtClub,
   });

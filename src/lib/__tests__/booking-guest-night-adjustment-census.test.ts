@@ -116,17 +116,18 @@ const PROMO_WRITERS: Record<string, (code: string) => void> = {
     expect(code.match(/\brecordBookingNightAdjustments\(/g)).toHaveLength(4);
   },
   "src/app/api/bookings/[id]/guests/route.ts": (code) => {
-    expect(everyWriteIsFollowedBy(code, /\bawait replacePromoRedemptionAllocations\(/, RECORD)).toBe(true);
+    // #3827: every code re-priced through the shared re-price, then recorded.
+    expect(everyWriteIsFollowedBy(code, /\bawait repriceBookingPromotions\(/, RECORD)).toBe(true);
     // The nested night write precedes the record; the targets come off the
-    // bundled discount; a PARKED add records nothing.
+    // re-price; a PARKED add records nothing.
     expect(precedes(code, /nights:\s*\{\s*create:/, RECORD)).toBe(true);
-    expect(code).toMatch(/adjustmentTargets = promoResult\.adjustmentTargets/);
+    expect(code).toMatch(/adjustmentTargets = repriced\.adjustmentTargets/);
     expect(code).toMatch(/if \(!parked\) \{\s*await recordBookingNightAdjustments\(/);
   },
   "src/lib/booking-date-modification-service.ts": (code) => {
-    expect(everyWriteIsFollowedBy(code, /\bawait replacePromoRedemptionAllocations\(/, RECORD)).toBe(true);
+    expect(everyWriteIsFollowedBy(code, /\bawait repriceBookingPromotions\(/, RECORD)).toBe(true);
     expect(precedes(code, /bookingGuestNight\.createMany\(/, RECORD)).toBe(true);
-    expect(code).toMatch(/adjustmentTargets = promoResult\.adjustmentTargets/);
+    expect(code).toMatch(/adjustmentTargets = repriced\.adjustmentTargets/);
     expect(code).toMatch(/if \(!parked\) \{\s*await recordBookingNightAdjustments\(/);
     // The admin shift snapshots before translating the rows and restores after,
     // shifted by the same delta.
@@ -136,9 +137,9 @@ const PROMO_WRITERS: Record<string, (code: string) => void> = {
   },
   "src/lib/booking-guest-removal-service.ts": (code) => {
     expect(everyWriteIsFollowedBy(code, /\bpromoResult = await recalculateBookingPromo\(/, RECORD)).toBe(true);
-    // recalculateBookingPromo hands the bundled build-up back to its callers.
-    expect(code).toMatch(/adjustmentTargets = discount\.adjustmentTargets/);
-    expect(code).toMatch(/return \{\s*newDiscountCents,[\s\S]{0,300}adjustmentTargets,\s*\}/);
+    // recalculateBookingPromo hands the shared re-price's build-up — every
+    // code's targets, each naming its code — back to its callers (#3827).
+    expect(code).toMatch(/return repriceBookingPromotions\(tx, \{/);
   },
   "src/lib/booking-review-price-rebase.ts": (code) => {
     // Settling a review re-runs the promotion over the strands' stored nights;
@@ -164,9 +165,10 @@ const PROMO_WRITERS: Record<string, (code: string) => void> = {
   "src/lib/booking-modify-plan.ts": (code) => {
     // applyPromoCodeChanges reports the build-up only on the arm where the
     // engine ran; the union on PromoChangeResult makes the other arm carry none.
-    expect(code).toMatch(/promoEngineRan: true,\s*adjustmentTargets,/);
+    // #3827: both arms where the engine ran — a plain re-price and an add,
+    // remove or reorder — hand back every code's targets.
+    expect(code.match(/promoEngineRan: true,\s*adjustmentTargets: (?:repriced|priced)\.adjustmentTargets,/g)).toHaveLength(2);
     expect(code).toMatch(/promoEngineRan: false,\s*\};/);
-    expect(code.match(/adjustmentTargets = promoResult\.adjustmentTargets/g)).toHaveLength(2);
   },
   "src/lib/booking-batch-modification-service.ts": (code) => {
     // THE ORDERING HAZARD: the promotion is written before the night rows are
@@ -178,6 +180,18 @@ const PROMO_WRITERS: Record<string, (code: string) => void> = {
     expect(precedes(code, SNAPSHOT, /\bawait applyGuestChanges\(/)).toBe(true);
     expect(precedes(code, /\bawait applyGuestChanges\(/, RESTORE)).toBe(true);
     expect(code).toMatch(/promoEngineRan: false as const,\s*\}\s*:\s*await applyPromoCodeChanges\(/);
+  },
+  "src/lib/booking-promotions.ts": (code) => {
+    // #3827: the shared re-price writes every code's redemption and hands the
+    // targets back; its CALLERS record, after their own night writes.
+    expect(code).toMatch(/adjustmentTargets: priced\.adjustmentTargets,/);
+    expect(code).not.toMatch(RECORD);
+  },
+  "src/lib/booking-guest-acceptance-reprice.ts": (code) => {
+    // #3827 (D-3813-4): the acceptance re-price writes the codes, then records
+    // their build-up over the stored nights, before it moves any money.
+    expect(everyWriteIsFollowedBy(code, /\bawait persistRepricedPromotions\(/, RECORD)).toBe(true);
+    expect(precedes(code, RECORD, /\bawait applyPaymentAdjustments\(/)).toBe(true);
   },
   "prisma/demo-seed.ts": (code) => {
     // The paid FREE_NIGHTS fixture is a real canonical promotion write, even
@@ -277,7 +291,7 @@ describe("INV-MONEY-029 night adjustment build-up census", () => {
   it("finds no promotion writer outside the paired set", () => {
     const writers = new Set<string>();
     const WRITER_CALL =
-      /\b(?:await redeemPromoCode|await replacePromoRedemptionAllocations|await recalculateBookingPromo|await applyPromoCodeChanges)\(/;
+      /\b(?:await redeemPromoCode|await replacePromoRedemptionAllocations|await recalculateBookingPromo|await applyPromoCodeChanges|await repriceBookingPromotions|await persistRepricedPromotions)\(/;
     for (const file of SOURCE) {
       const relative = relativeSource(file);
       if (relative === "src/lib/promo.ts") continue;

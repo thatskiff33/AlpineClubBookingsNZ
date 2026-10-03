@@ -1,7 +1,7 @@
 import type { BookingGuestNightPriceSource } from "@prisma/client";
 
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
-import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { bookingDiscountCents, bookingFinalPriceCents } from "@/lib/booking-final-price";
 import {
   deriveNightAdjustmentState,
   combinedPromoRedemptionEvidence,
@@ -163,7 +163,7 @@ export function reconcileBookingMoney(
     }
   }
 
-  if (booking.discountCents !== Math.max(0, -booking.promoAdjustmentCents)) {
+  if (booking.discountCents !== bookingDiscountCents({ promoAdjustmentCents: booking.promoAdjustmentCents })) {
     found.add("DISCOUNT_COMPONENT_MISMATCH");
   }
 

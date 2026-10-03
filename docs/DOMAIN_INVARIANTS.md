@@ -103,6 +103,8 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-034` | Settlement lines converge from payment rows where the mirror is derived |
 | `INV-MONEY-035` | Every booking credit row and hand-back posts one line, in its writer |
 | `INV-MONEY-036` | Edits post per-night lines or none; closures record a share once |
+| `INV-MONEY-037` | Several codes price through one orchestrator, booker's order, staying guests |
+| `INV-MONEY-038` | A night carries at most one code; the earliest code claims it |
 | `INV-MONEY-006` | Refunds, credits, Stripe and Xero amounts reconcile back to cent-based ledger records |
 | `INV-MONEY-007` | Admin adjustments need audit, approval, and a visible business reason |
 | `INV-MONEY-008` | A confirmed subscription charge is immutable; only delivery, status, Xero metadata advance |
@@ -273,6 +275,8 @@ Prefix `INV-PAY`.
 | `INV-PAY-100` | Work-item grain follows the moved strands; the lead absorbs the settlement |
 | `INV-PAY-101` | Refund documents name the method from the settlement decision, never the source |
 | `INV-PAY-114` | Invoice-correction and officer-chosen cash notes have their own wordings |
+| `INV-PAY-115` | A by-hand edit refund raises one officer refund task |
+| `INV-PAY-116` | An approved appeal's non-card part raises one officer refund task |
 | `INV-PAY-111` | A refund note's own operation completes only with its payment or skip |
 | `INV-PAY-070` | Xero leg bills the total on one invoice per edit, anchor-locked |
 | `INV-PAY-063` | Recorded shortfalls are billed on a second invoice; sent invoices only |

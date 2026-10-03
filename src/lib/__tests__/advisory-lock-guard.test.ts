@@ -261,6 +261,20 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
       "Switching to Internet Banking with holdBedSlots flips the booking to CONFIRMED — a net-new capacity claim and a money side effect — and re-reads under the locks, because the pre-transaction snapshot was read with no lock at all.",
     invariant: "INV-LOCK-002",
   },
+  {
+    site: "PUT /api/admin/refund-requests/[id]#1",
+    tier: "GLOBAL",
+    reason:
+      "#3827 (INV-PAY-115, INV-PAY-116): a refund appeal's approval caps at the refundable cash NET of the refunds still promised back by bank transfer (an edit's, or an earlier approved appeal's). A hand-back's completion moves the payment's refunded total and closes its task in one commit under this key, and a reopen re-promises one under it, so the cap reads the payment and the open-task sum under the same key, claims the request, plans the card refund and raises the bank-transfer task for the rest in the same transaction - a second approval queues behind it and sees that task. Takes the global key alone; the Stripe refund and Xero note run after the commit.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "PUT /api/admin/refund-requests/[id]#2",
+    tier: "GLOBAL",
+    reason:
+      "#3827 (INV-PAY-116): releasing an approval whose Stripe refund AND recovery enqueue both failed puts the request back to PENDING and deletes the OPEN bank-transfer task the approval raised, in one transaction under the key every reader of the open-task sum and every approval holds, so no approval can size its cap between the two writes. Takes the global key alone; no provider call.",
+    invariant: "INV-LOCK-001",
+  },
 
   // ── Bed allocation: inventory, placement and reconciliation ───────────────
   {
@@ -1204,7 +1218,6 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   "src/lib/bed-allocation-move.ts": 1,
   "src/lib/bed-allocation-removal.ts": 1,
   "src/lib/requested-room-write.ts": 1,
-  "src/lib/booking-create-promo.ts": 1,
   // Promo usage caps (#2299): `lockPromoCodeRowsForUpdate` takes a
   // `SELECT 1 … FOR UPDATE` on the promo row for the modification paths,
   // which can now RELEASE a cap slot as well as take one. One raw statement
@@ -1214,11 +1227,12 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // re-reads `currentRedemptions` under the lock. That wrapper has four call
   // sites, not three: the batch path also calls it on its no-swap reprice
   // branch, where the lock is already held and the refreshed counter is the
-  // point. Booking creation takes its own lock in booking-create-promo.ts
-  // above, which since #2289 also selects a constant and reads the promo back
-  // through `tx.promoCode.findUnique` — it used to `SELECT *` and read the raw
-  // row, and that unchecked cast is what silently disabled a redemption cap and
-  // a FREE_NIGHTS discount. Ids are sorted and locked one
+  // point. Since #3827 booking creation takes the SAME statement too: it used
+  // to lock its own row by the mutable `code` in booking-create-promo.ts, and
+  // now resolves ids unlocked, locks them here in sorted order and re-reads by
+  // id, so a two-code create orders its rows like every other writer. (#2289:
+  // the read was always typed — a raw `SELECT *` cast is what once silently
+  // disabled a redemption cap and a FREE_NIGHTS discount.) Ids are sorted and locked one
   // statement at a time so a promo swap (outgoing + incoming code in one
   // transaction) can never build a lock cycle with another swap; callers hold
   // the per-lodge capacity lock first, so the order stays lodge -> promo row.

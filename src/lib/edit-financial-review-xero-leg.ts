@@ -1,5 +1,7 @@
 import "server-only";
 
+import { ManualRefundTaskKind, type Prisma } from "@prisma/client";
+
 import {
   recordShortEditReviewChargeInvoice,
   restateEditReviewChargeSupplementaryInvoice,
@@ -11,6 +13,8 @@ import {
   enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
+import { enqueueXeroRefundRequestCreditNoteOperation } from "@/lib/xero-refund-request-credit-note-outbox";
+import { refundRequestIdOfHandBack } from "@/lib/manual-refund-task-settlement-rules";
 import type { RefundMethod } from "@/lib/xero-refund-method";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -91,11 +95,90 @@ export function editReviewXeroDocumentAsk({
   return { bookingModificationId, amountCents: xeroAmountCents };
 }
 
+/**
+ * The hand-back facts the completion carries through to this leg untouched:
+ * `cancellationHandBackInvoiceId` (`INV-PAY-101`, #3529), and #3827's
+ * `nonCancellationHandBack` (`INV-PAY-115`) and `refundRequestId` (D-3813-8,
+ * `INV-PAY-116`). Typed once here, beside the parameters that document them.
+ */
+export type EditReviewHandBackXeroFacts = Pick<
+  Parameters<typeof dispatchEditReviewXeroSettlement>[0],
+  "cancellationHandBackInvoiceId" | "nonCancellationHandBack" | "refundRequestId"
+>;
+
 /** The same answer as a yes/no, derived from it rather than restated. */
 export function editReviewSettlementIssuesXeroDocument(
   input: Parameters<typeof editReviewXeroDocumentAsk>[0],
 ): boolean {
   return editReviewXeroDocumentAsk(input) !== null;
+}
+
+/**
+ * #3827 (D-3813-8, `INV-PAY-116`): DOES THIS COMPLETION OWE A REFUND REQUEST
+ * ITS OWN XERO NOTE, and for what? A request's hand-back settled by hand, for
+ * a positive amount, on a payment whose paid invoice the note answers (a note
+ * against no invoice is a permanently failing outbox row). The one gate: the
+ * completion queues the note from it INSIDE its transaction (the outbox
+ * pattern, so a paid-back request never commits without its note), and the
+ * post-commit leg kicks the outbox from it.
+ */
+export function refundRequestCreditNoteAsk({
+  route,
+  cancellationHandBackInvoiceId,
+  amountCents,
+  refundRequestId,
+}: {
+  route: EditReviewSettlementRoute | null;
+  cancellationHandBackInvoiceId: string | null;
+  amountCents: number | null;
+  refundRequestId: string | null | undefined;
+}): { paymentId: string; refundRequestId: string; amountCents: number } | null {
+  if (
+    !refundRequestId ||
+    route?.kind !== "local-allocation" ||
+    cancellationHandBackInvoiceId === null ||
+    amountCents === null ||
+    amountCents <= 0
+  ) {
+    return null;
+  }
+  return { paymentId: route.paymentId, refundRequestId, amountCents };
+}
+
+/** `INV-PAY-101` (#3529): the paid invoice a cancellation hand-back (an appeal's too) refunds against. */
+export function cancellationHandBackInvoiceIdOf(task: {
+  kind: ManualRefundTaskKind | null;
+  booking: { payment?: { xeroInvoiceId?: string | null } | null };
+}): string | null {
+  return task.kind === ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK
+    ? (task.booking.payment?.xeroInvoiceId ?? null)
+    : null;
+}
+
+/**
+ * Review F4: the completion queues the request's note through the outbox on
+ * its OWN transaction, so a paid-back request never commits without it; the
+ * Xero call runs from the outbox after the commit.
+ */
+export async function queueRefundRequestCreditNoteInTransaction(params: {
+  task: Parameters<typeof cancellationHandBackInvoiceIdOf>[0] & { occurrenceKey: string | null };
+  route: EditReviewSettlementRoute | null;
+  amountCents: number | null;
+  createdByMemberId: string;
+  store: Prisma.TransactionClient;
+}): Promise<void> {
+  const ask = refundRequestCreditNoteAsk({
+    route: params.route,
+    cancellationHandBackInvoiceId: cancellationHandBackInvoiceIdOf(params.task),
+    amountCents: params.amountCents,
+    refundRequestId: refundRequestIdOfHandBack(params.task),
+  });
+  if (!ask) return;
+  await enqueueXeroRefundRequestCreditNoteOperation({
+    ...ask,
+    createdByMemberId: params.createdByMemberId,
+    store: params.store,
+  });
 }
 
 export async function dispatchEditReviewXeroSettlement({
@@ -108,9 +191,27 @@ export async function dispatchEditReviewXeroSettlement({
   hasIssuedXeroInvoice,
   bookingPaymentStatus,
   cancellationHandBackInvoiceId,
+  nonCancellationHandBack,
+  refundRequestId,
   additionalPaymentIntentId,
   format,
 }: {
+  /**
+   * #3827 (owner decision D-3813-6, `INV-PAY-115`): the task closed is an edit
+   * refund hand-back. The edit that raised it already queued the modification
+   * credit note correcting the invoice ("the Xero credit note stays"), so its
+   * completion sends Xero nothing more - a second note would correct the same
+   * money twice.
+   */
+  nonCancellationHandBack: boolean;
+  /**
+   * #3827 (owner decision D-3813-8, `INV-PAY-116`): the task closed is a
+   * refund request's hand-back, for this request. Unlike an edit's, its
+   * completion DOES owe Xero a note - that request's own refund credit note,
+   * for exactly the amount paid back, queued here after the money has moved.
+   * Null for every other task.
+   */
+  refundRequestId?: string | null;
   bookingId: string;
   taskId: string;
   /**
@@ -156,6 +257,23 @@ export async function dispatchEditReviewXeroSettlement({
    * Best-effort and after the commit, matching every other caller: a Xero outage
    * must not undo a completion whose money has already moved.
    */
+  if (refundRequestId) {
+    // D-3813-8: the request's own note was queued inside the completion's
+    // transaction (`refundRequestCreditNoteAsk`, review F4); only the kick of
+    // the outbox is left, best-effort, after the commit.
+    if (refundRequestCreditNoteAsk({ route, cancellationHandBackInvoiceId, amountCents, refundRequestId })) {
+      await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((err) =>
+        logger.error(
+          { err, bookingId, taskId, refundRequestId },
+          "Failed to start the Xero outbox for a completed refund-request hand-back's credit note",
+        ),
+      );
+    }
+    return;
+  }
+  // An EDIT refund hand-back owes Xero nothing more: its edit's credit note
+  // already corrects the invoice (`INV-PAY-115`).
+  if (nonCancellationHandBack) return;
   const isCharge = route?.kind === "additional-charge";
   // Captured outside the dispatch closure: `isCharge` is a boolean and does not
   // narrow `route` inside a `.then`.

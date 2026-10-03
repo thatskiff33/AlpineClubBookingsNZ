@@ -36,7 +36,7 @@ vi.mock("@/lib/prisma", () => ({
       default - no review is open - so every pre-#3032 assertion in this file
       means exactly what it meant before.
     */
-    manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
+    manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })), findMany: vi.fn().mockResolvedValue([]) },
     // #3341: the REAL supersede reads the live ADDITIONAL asks a mint retires.
     // The fixture payment carries none, so the ledger holds none.
     paymentTransaction: { findMany: vi.fn().mockResolvedValue([]) },
@@ -533,6 +533,8 @@ function makeTx(
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
     manualRefundTask: {
+      // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
+      aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
       // #3032: the modified email asks whether the club is still working
       // out an amount on this booking (`bookingHasOpenFinancialReview`).

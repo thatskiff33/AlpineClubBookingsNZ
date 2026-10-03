@@ -981,7 +981,24 @@ describe("consent columns have exactly one writer", () => {
     // being added — so the apply path judges presence exactly as the preview
     // does. It composes no consent shape of its own.
     "src/lib/booking-modify-plan.ts":
-      "the edit apply path reads stored and just-planned consent state for the paid-up-adult test, and writes only the shape the shared planner composed",
+      "the edit apply path reads stored and just-planned consent state for the paid-up-adult test and the promotion, and writes only the shape the shared planner composed",
+    // --- #3827 (D-3813-4): only a guest actually staying can benefit from a
+    // promo code. All READERS: each hands a guest's stored or planned consent
+    // to the one orchestrator, which asks the shared presence predicate.
+    "src/lib/booking-promotions.ts":
+      "the promo orchestrator shows a code only the guests the shared presence predicate says are staying",
+    "src/lib/booking-create-promo.ts":
+      "the create promotion reads each row's planned consent for the orchestrator",
+    "src/lib/booking-date-modification-service.ts":
+      "the date change hands each guest's stored consent to the promo re-price",
+    "src/lib/booking-review-price-rebase.ts":
+      "the review re-base selects each strand's stored consent for the promo re-price",
+    "src/lib/booking-strand-night-prices.ts":
+      "the strand reader carries each strand's stored consent to the promo re-price",
+    "src/lib/waitlist.ts":
+      "the waitlist offer hands each guest's stored consent to the promo re-price",
+    "src/app/api/promo-codes/validate/route.ts":
+      "the promo preview marks a guest the booker says awaits acceptance as pending",
     // The override door. A READER, and the narrowest kind: one `where`/`select`
     // pair asking which of a live booking's member rows are operationally
     // present, so a party refused by a booking path reproduces the SAME violation

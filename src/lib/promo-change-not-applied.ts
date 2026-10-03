@@ -302,8 +302,9 @@ export function promoChangeNotAppliedMessage(input: {
  * silence this exists to remove. Over-telling is a nuisance; under-telling is the
  * defect.
  *
- * Removal wins when a request somehow carries both, because that is the order
- * `applyPromoCodeChanges` resolves them in (`input.promoCode && !input.removePromoCode`).
+ * Removal wins when a request somehow carries both legacy fields, because that
+ * is the order `requestedPromoCodeList` reads them in: `removePromoCode` before
+ * `promoCode` (the plural `promoCodes`, when sent, before either).
  */
 export function describePromoChangeNotApplied(input: {
   /** `BatchModifyInput.promoCode` as the member sent it. */

@@ -5,7 +5,11 @@ import {
 } from "@/lib/edit-financial-review-context";
 import { bookingOwner } from "@/lib/booking-owner";
 import { editReviewRefundIsPaidBackByHand } from "@/lib/booking-payment-state";
-import { isPartPaymentReviewTask } from "@/lib/manual-refund-task-settlement-rules";
+import {
+  isEditRefundHandBackTask,
+  isPartPaymentReviewTask,
+  isRefundRequestHandBackTask,
+} from "@/lib/manual-refund-task-settlement-rules";
 import type { QueueRepairableStrand } from "@/lib/stored-night-price-repair-queue";
 
 /**
@@ -67,6 +71,8 @@ export type OpenManualRefundTaskRow = {
   lateCaptureApprovalIntentId: string | null;
   /** #3643: set on a part-payment review, settled in Xero rather than here. */
   partPaymentReviewPaymentId: string | null;
+  /** #3827 (`INV-PAY-115`): an edit refund hand-back's marker (with the kind). */
+  occurrenceKey: string | null;
   /** #3643 (`INV-PAY-108`): the inbound sync's note that Xero reported the invoice paid. */
   partPaymentReviewXeroPaidAt: Date | null;
   partPaymentReviewXeroPaidCents: number | null;
@@ -146,6 +152,20 @@ export type OpenManualRefundTaskPayload = {
    * dismissal, so none of the hand-back wording fits it either.
    */
   partPaymentReview: boolean;
+  /**
+   * #3827 (owner decision D-3813-6, `INV-PAY-115`): an edit lowered the price
+   * of a booking paid by internet banking or by hand, and the club refunds the
+   * difference by bank transfer. A hand-back like any other, but of a LIVE
+   * booking, so the cancelled-booking sentence does not fit it.
+   */
+  editRefundHandBack: boolean;
+  /**
+   * #3827 (owner decision D-3813-7, `INV-PAY-116`): an approved refund appeal
+   * on a booking not paid by card, which the club refunds by bank transfer.
+   * The booking was cancelled before the appeal, but the money is the
+   * appeal's, so neither the cancellation nor the edit sentence fits it.
+   */
+  refundRequestHandBack: boolean;
   /**
    * #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): on a review, when the inbound
    * Xero sync learned the invoice was reported PAID and the invoice's cash then.
@@ -228,6 +248,8 @@ export function toOpenManualRefundTaskPayload(
     kind: task.kind,
     awaitingLateCaptureApproval: task.lateCaptureApprovalIntentId !== null,
     partPaymentReview: isPartPaymentReviewTask(task),
+    editRefundHandBack: isEditRefundHandBackTask(task),
+    refundRequestHandBack: isRefundRequestHandBackTask(task),
     partPaymentReviewXeroPaid:
       isPartPaymentReviewTask(task) &&
       task.partPaymentReviewXeroPaidAt &&

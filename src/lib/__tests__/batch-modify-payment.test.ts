@@ -102,7 +102,7 @@ vi.mock("@/lib/prisma", () => ({
       default - no review is open - so every pre-#3032 assertion in this file
       means exactly what it meant before.
     */
-    manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
+    manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })), findMany: vi.fn().mockResolvedValue([]) },
     $transaction: (...args: unknown[]) => {
       const fn = args[0];
       if (typeof fn === "function") return (mockTransaction as (cb: unknown) => unknown)(fn);
@@ -228,6 +228,8 @@ vi.mock("@/lib/promo", () => ({
   ),
   deletePromoRedemptionAndAdjustCount: vi.fn(),
   releaseBookingPromoRedemptions: vi.fn().mockResolvedValue(0),
+  // #3827: an edit stores the booker's order for the codes it keeps.
+  writePromoApplicationOrder: vi.fn(),
   releasePromoRedemptions: vi.fn().mockResolvedValue(undefined),
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
@@ -518,12 +520,16 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
     manualRefundTask: {
+      // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
+      aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
       // #3170: the park's own raise is a find-then-create on the occurrence
       // key. Nothing on file by default, so a raising test sees a create and a
       // replay test can put a row here instead.
       findUnique: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({ id: "task_1" }),
+      // #3827 (D-3813-6): an internet-banking reduction's officer refund task.
+      createMany: vi.fn().mockResolvedValue({ count: 1 }),
       // #3032: the modified email asks whether the club is still working
       // out an amount on this booking (`bookingHasOpenFinancialReview`).
       // Empty by default - no review is open - so every pre-#3032
@@ -543,9 +549,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       delete: vi.fn().mockResolvedValue(undefined),
       update: vi.fn().mockResolvedValue(undefined),
     },
-    promoCode: {
-      update: vi.fn().mockResolvedValue(undefined),
-      findUnique: vi.fn().mockResolvedValue({
+    promoCode: (() => {
+      const FREE100 = {
         id: "promo_1",
         code: "FREE100",
         type: "PERCENTAGE",
@@ -560,8 +565,15 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
         membersOnly: false,
         singleUse: false,
         assignments: [],
-      }),
-    },
+      };
+      return {
+        update: vi.fn().mockResolvedValue(undefined),
+        findUnique: vi.fn().mockResolvedValue(FREE100),
+        // #3827: an applied code is resolved by code, then re-read by id under
+        // its lock — both reads answer with the same row here.
+        findMany: vi.fn().mockResolvedValue([FREE100]),
+      };
+    })(),
     choreAssignment: {
       findMany: vi.fn().mockResolvedValue([]),
       delete: vi.fn().mockResolvedValue(undefined),
@@ -3534,6 +3546,20 @@ describe("PUT /api/bookings/[id]/modify", () => {
     expect(data.stripeRefundId).toBeNull();
     expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
     expect(mockEnqueueBookingModificationRefundRecovery).not.toHaveBeenCalled();
+    // #3827 (D-3813-6, `INV-PAY-115`): nothing refunds itself, so the
+    // treasurer is asked to send the $50 back - one task for this edit.
+    expect(tx.manualRefundTask.createMany).toHaveBeenCalledTimes(1);
+    expect(tx.manualRefundTask.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          bookingId: "bk1",
+          amountCents: 5000,
+          kind: "CANCELLED_BOOKING_HAND_BACK",
+          occurrenceKey: "edit-refund-hand-back:mod_1",
+        }),
+      ],
+      skipDuplicates: true,
+    });
 
     await Promise.resolve();
     expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(

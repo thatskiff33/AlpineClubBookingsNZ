@@ -8,7 +8,8 @@ import {
   type Role,
 } from "@prisma/client";
 
-import { soleBookingPromoRedemption } from "@/lib/booking-promo-redemptions";
+import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
+import { repriceBookingPromotions } from "@/lib/booking-promotions";
 import type { BookingGuestNightPriceSource } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { ApiError } from "@/lib/api-error";
@@ -68,6 +69,10 @@ import {
 } from "@/lib/over-capacity-confirmation";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
+  editRefundGoesBackByHand,
+  raiseEditRefundHandBackIfOwed,
+} from "@/lib/edit-refund-hand-back";
+import {
   applyPaymentAdjustments,
   assertBookingNotQuotePriced,
   calculateModificationSettlementOptions,
@@ -105,25 +110,12 @@ import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import {
-  deletePromoRedemptionAndAdjustCount,
-  lockAndRefreshPromoCodeUsage,
-  replacePromoRedemptionAllocations,
-  validateAndCalculatePromoDiscount,
-} from "@/lib/promo";
-import {
   recordBookingNightAdjustments,
   restoreBookingNightAdjustments,
   snapshotBookingNightAdjustments,
   type PromoAdjustmentTarget,
 } from "@/lib/night-adjustment-write";
-import {
-  describePromoCapCoverage,
-  type PromoCoverageNotice,
-} from "@/lib/promo-cap-coverage";
-import {
-  selectedIndexesForStoredGuestTargets,
-  targetBookingGuestIdsForSelectedIndexes,
-} from "@/lib/promo-stored-guest-targets";
+import type { PromoCoverageNotice } from "@/lib/promo-cap-coverage";
 import { prisma } from "@/lib/prisma";
 import {
   type SeasonRateData,
@@ -391,9 +383,10 @@ export async function modifyBookingDates({
       throw new ApiError("Booking not found", 404);
     }
 
-    // #3826: a booking may carry several promo codes; this edit path prices
-    // one, so it refuses a booking carrying more (epic #3813 C2 widens it).
-    const promoRedemption = soleBookingPromoRedemption(booking);
+    // #3827: every code the booking carries, in its stored order.
+    const promoRedemptions = bookingPromoRedemptions(booking).filter(
+      (redemption) => redemption.promoCode,
+    );
 
     if (bookingOwner(booking).memberId !== actor.id && actor.role !== "ADMIN") {
       throw new ApiError("Forbidden", 403);
@@ -769,6 +762,8 @@ export async function modifyBookingDates({
         // is the new check-in night. Dates the rates so internal work-party
         // promos restrict the discount to the event's night window.
         firstNight: newCheckIn,
+        // #3827 (D-3813-4): a guest still awaiting acceptance takes no code.
+        consentStatus: booking.guests[index]!.consentStatus,
       };
     });
 
@@ -776,6 +771,7 @@ export async function modifyBookingDates({
     let newPromoAdjustmentCents = 0;
     let promoRemoved = false;
     let promoCoverage: PromoCoverageNotice | null = null;
+    let remainingPromoCodeLabel = bookingPromoCodeLabel(booking);
     // #3276: what the promotion took off each night or guest; empty when the
     // booking carries none.
     let adjustmentTargets: PromoAdjustmentTarget[] = [];
@@ -787,72 +783,31 @@ export async function modifyBookingDates({
       // a function of a price nobody has worked out yet.
       newDiscountCents = booking.discountCents;
       newPromoAdjustmentCents = booking.promoAdjustmentCents;
-    } else if (promoRedemption?.promoCode) {
-      // Row-lock the promo code and re-read its usage counter before the caps
-      // are checked (#2299). This reprice can release a total-redemptions slot
-      // (the new dates leave the promo with no benefit) or re-take one, so
-      // check-then-consume must be serialised against every other promo writer.
-      // The per-lodge capacity lock is already held, so the order stays
-      // lodge -> promo row.
-      const promo = await lockAndRefreshPromoCodeUsage(
-        tx,
-        promoRedemption.promoCode
-      );
-      const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
-        promoRedemption,
-        guestNightRates
-      );
-      const application = await validateAndCalculatePromoDiscount(
-        promo,
-        {
-          memberId: bookingOwner(booking).memberId,
-          bookingCheckIn: newCheckIn,
-          totalPriceCents: newTotalPriceCents,
-          guests: guestNightRates,
-        },
-        promo.assignments.length > 0
-          ? promo.assignments.map((assignment) => assignment.memberId)
-          : null,
-        {
-          excludeBookingId: bookingId,
-          db: tx,
-          selectedGuestIndexes,
-          lodgeId: bookingLodgeId,
-          // #2390: a member moving their dates is never blocked by somebody
-          // else's cap consumption, and never loses a discount they already had.
-          capOverflow: "coverExisting",
-          // #3123 — resolved above, before this transaction opened.
-          todayAtClub,
-        },
-      );
-
-      if (application.error || !application.discount) {
-        promoRemoved = true;
-        await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
-      } else {
-        const promoResult = application.discount;
-        newDiscountCents = promoResult.discountCents;
-        newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
-        adjustmentTargets = promoResult.adjustmentTargets;
-        promoCoverage = await describePromoCapCoverage(tx, {
-          promoCode: promo.code,
-          capCoverage: application.capCoverage,
-        });
-
-        await replacePromoRedemptionAllocations(
-          tx,
-          promoRedemption,
-          newDiscountCents,
-          newPromoAdjustmentCents,
-          promoResult.freeNightsUsed,
-          promoResult.eligibleGuestCount,
-          promoResult.allocations,
-          targetBookingGuestIdsForSelectedIndexes(
-            guestNightRates,
-            application.selectedGuestIndexes
-          ),
-        );
-      }
+    } else if (promoRedemptions.length > 0) {
+      // #3827: every code, through the one re-price, which row-locks each code
+      // and re-reads its usage counter before the caps are checked (#2299,
+      // INV-MONEY-023). This reprice can release a total-redemptions slot (the
+      // new dates leave a code with no benefit) or re-take one. The per-lodge
+      // capacity lock is already held, so the order stays lodge -> promo rows.
+      // #2390: a member moving their dates is never blocked by somebody else's
+      // cap consumption, and never loses a discount they already had.
+      const repriced = await repriceBookingPromotions(tx, {
+        bookingId,
+        redemptions: promoRedemptions,
+        memberId: bookingOwner(booking).memberId,
+        bookingCheckIn: newCheckIn,
+        totalPriceCents: newTotalPriceCents,
+        guests: guestNightRates,
+        lodgeId: bookingLodgeId,
+        // #3123 — resolved above, before this transaction opened.
+        todayAtClub,
+      });
+      newDiscountCents = repriced.newDiscountCents;
+      newPromoAdjustmentCents = repriced.newPromoAdjustmentCents;
+      promoRemoved = repriced.promoRemoved;
+      promoCoverage = repriced.promoCoverage;
+      remainingPromoCodeLabel = repriced.remainingPromoCodeLabel;
+      adjustmentTargets = repriced.adjustmentTargets;
     }
 
     // #3166: on a parked edit the booking's stored final price is written back
@@ -1294,7 +1249,7 @@ export async function modifyBookingDates({
           () => ({
             before: pricingSideFromStoredGuests(booking.guests, {
               promoAdjustmentCents: booking.promoAdjustmentCents,
-              promoCode: promoRedemption?.promoCode.code ?? null,
+              promoCode: bookingPromoCodeLabel(booking),
             }),
             after: pricingSideFromPriceBreakdown(
                 booking.guests.map((g) => ({
@@ -1304,9 +1259,7 @@ export async function modifyBookingDates({
                 priceBreakdown.guests,
                 {
                   promoAdjustmentCents: newPromoAdjustmentCents,
-                  promoCode: promoRemoved
-                    ? null
-                    : (promoRedemption?.promoCode.code ?? null),
+                  promoCode: remainingPromoCodeLabel,
                 },
               ),
           }),
@@ -1360,6 +1313,16 @@ export async function modifyBookingDates({
       bookingModification,
       sides: pricingSides,
       site: "date-change",
+    });
+
+    // D-3813-6 (`INV-PAY-115`): a reduction on a booking paid by internet
+    // banking or by hand asks the treasurer to send it back.
+    await raiseEditRefundHandBackIfOwed(tx, {
+      bookingId,
+      paymentId: booking.payment?.id ?? null,
+      bookingModificationId: bookingModification.id,
+      adjusted: payments,
+      editLabel: "date change",
     });
 
     /**
@@ -1741,6 +1704,7 @@ async function dispatchDatePostTransactionSideEffects({
       // #2390: same words as the edit preview and the booking history.
       promoCoverageNote: result.promoCoverage?.message ?? null,
       financialReviewPending,
+      refundByBankTransfer: editRefundGoesBackByHand(result),
       lodgeId: result.booking.lodgeId,
     }, format).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send booking modified email"),
@@ -2303,6 +2267,8 @@ export async function adminShiftBookingDates({
       paymentReference: result.paymentReference,
       xeroInvoiceNumber: result.xeroInvoiceNumber,
       financialReviewPending,
+      // A shift keeps the price, so nothing is refunded.
+      refundByBankTransfer: false,
       lodgeId: result.lodgeId,
     }, format).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send admin override date-shift email"),

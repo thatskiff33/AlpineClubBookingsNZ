@@ -385,6 +385,7 @@ const GUEST_NIGHT_RATES = [
     isMember: true,
     perNightRates: [5000, 5000],
     nightDates: [new Date("2026-08-01T00:00:00Z"), new Date("2026-08-02T00:00:00Z")],
+    consentStatus: null,
   },
 ];
 
@@ -571,93 +572,107 @@ function promoValidationCallArguments(source: string): string[] {
 }
 
 /**
- * The text of a call's FIRST argument — for these call sites, the promo subject
- * the caps are read off. Brackets of every kind are tracked so the scan stops at
- * a comma that really is at argument level and not one inside the options object
- * a few arguments later.
+ * The text of every call to `name(` in a source, brackets balanced — used for
+ * the shared re-price's own calls below (#3827).
  */
-function firstArgumentOf(call: string): string {
-  const open = call.indexOf("(");
-  let depth = 0;
-  for (let index = open; index < call.length; index += 1) {
-    const character = call[index];
-    if (character === "(" || character === "[" || character === "{") depth += 1;
-    else if (character === ")" || character === "]" || character === "}") {
-      depth -= 1;
-      if (depth === 0) return call.slice(open + 1, index).trim();
-    } else if (character === "," && depth === 1) {
-      return call.slice(open + 1, index).trim();
+function callsOf(source: string, name: string): Array<{ at: number; text: string }> {
+  const marker = `${name}(`;
+  const calls: Array<{ at: number; text: string }> = [];
+  let from = source.indexOf(marker);
+  while (from !== -1) {
+    let depth = 0;
+    let index = from + marker.length - 1;
+    for (; index < source.length; index += 1) {
+      if (source[index] === "(") depth += 1;
+      else if (source[index] === ")") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
     }
+    calls.push({ at: from, text: source.slice(from, index + 1) });
+    from = source.indexOf(marker, index + 1);
   }
-  return "";
+  return calls;
 }
 
+// #3827: the four re-price paths no longer call the engine themselves. Each
+// hands its booking to the ONE re-price (`repriceBookingPromotions`, in
+// `booking-promotions.ts`), which locks every code, re-reads each counter under
+// the lock and runs the engine once per code with the booking excluded. So the
+// contract is pinned in two halves: every path reaches the shared re-price with
+// its own booking id, and the shared re-price does the three things #2299 asks.
 const REPRICE_CALL_SITES: Array<[string, string]> = [
   ["adding guests", "src/app/api/bookings/[id]/guests/route.ts"],
   ["changing dates", "src/lib/booking-date-modification-service.ts"],
   ["removing guests", "src/lib/booking-guest-removal-service.ts"],
   ["batch modification", "src/lib/booking-modify-plan.ts"],
 ];
+const SHARED_REPRICE = "src/lib/booking-promotions.ts";
 
 describe("every reprice path excludes its own booking and takes the promo lock", () => {
   it.each(REPRICE_CALL_SITES)(
-    "%s passes excludeBookingId into the promo validation itself",
+    "%s re-prices through the shared re-price, for its own booking",
     (_name, path) => {
-      const calls = promoValidationCallArguments(readSource(path));
+      const calls = callsOf(readSource(path), "repriceBookingPromotions");
       expect(calls.length).toBeGreaterThan(0);
       for (const call of calls) {
-        // Without this the booking's own allocation rows are counted against
-        // the total-uses cap and it fails its own reprice.
-        expect(call).toContain("excludeBookingId: bookingId");
+        // The shared re-price excludes exactly this id from the caps; without
+        // it the booking's own allocation rows count against the total-uses
+        // cap and it fails its own reprice.
+        // The path's OWN `bookingId`, handed over as the first property —
+        // not some other id under that name.
+        expect(call.text).toMatch(/^repriceBookingPromotions\(tx, \{\s*bookingId,/);
       }
-    }
+    },
   );
 
-  it.each(REPRICE_CALL_SITES.slice(0, 3))(
-    "%s locks and refreshes the promo row before validating",
-    (_name, path) => {
-      const source = readSource(path);
-      const lockIndex = source.indexOf("await lockAndRefreshPromoCodeUsage(");
-      const validateIndex = source.indexOf("validateAndCalculatePromoDiscount(");
-      // Called, not merely imported, and called first: without it the cap read
-      // and the counter write are not serialised against the other paths.
-      expect(lockIndex).toBeGreaterThan(-1);
-      expect(validateIndex).toBeGreaterThan(-1);
-      expect(lockIndex).toBeLessThan(validateIndex);
-    }
-  );
+  it("the shared re-price passes the booking it re-prices into the engine as excluded", () => {
+    const source = readSource(SHARED_REPRICE);
+    const engine = promoValidationCallArguments(source);
+    expect(engine).toHaveLength(1);
+    expect(engine[0]).toContain("excludeBookingId: context.excludeBookingId");
+    const orchestrations = callsOf(source, "applyBookingPromotions").filter(
+      (call) => !call.text.startsWith("applyBookingPromotions<"),
+    );
+    expect(orchestrations.some((call) => call.text.includes("excludeBookingId: bookingId"))).toBe(true);
+  });
 
-  it.each(REPRICE_CALL_SITES)(
-    "%s validates the REFRESHED promo, not the snapshot it passed in",
-    (_name, path) => {
-      const source = readSource(path);
-      // `lockAndRefreshPromoCodeUsage` is only worth calling for what it
-      // RETURNS. A path that locks, throws the refreshed object away, and
-      // validates the snapshot loaded with the booking would still satisfy the
-      // two assertions above — lock present, exclusion present — while quietly
-      // reopening the race the lock exists to close (#2299 F2). So bind the
-      // refreshed value to a name and require that name to BE the promo subject
-      // the very next validation reads its caps off.
-      const binding = /const (\w+) = await lockAndRefreshPromoCodeUsage\(/.exec(source);
-      expect(binding).not.toBeNull();
-      const refreshed = binding![1];
+  it("the shared re-price locks and refreshes every code before it prices any", () => {
+    const source = readSource(SHARED_REPRICE);
+    const body = source.slice(source.indexOf("export async function priceStoredBookingPromotions("));
+    const lockIndex = body.indexOf("await lockAndRefreshPromoCodeUsage(");
+    const priceIndex = body.indexOf("await applyBookingPromotions(");
+    expect(lockIndex).toBeGreaterThan(-1);
+    expect(priceIndex).toBeGreaterThan(-1);
+    expect(lockIndex).toBeLessThan(priceIndex);
+  });
 
-      const validation = promoValidationCalls(source).find(
-        (call) => call.at > binding!.index
-      );
-      expect(validation).toBeDefined();
-      expect(firstArgumentOf(validation!.text)).toBe(refreshed);
-    }
-  );
+  it.each([
+    ["the shared re-price", SHARED_REPRICE],
+    ["batch modification", "src/lib/booking-modify-plan.ts"],
+  ])("%s prices the REFRESHED promo, not the snapshot it passed in", (_name, path) => {
+    const source = readSource(path);
+    // `lockAndRefreshPromoCodeUsage` is only worth calling for what it
+    // RETURNS. A path that locks, throws the refreshed object away, and prices
+    // the snapshot loaded with the booking would still lock — while quietly
+    // reopening the race the lock exists to close (#2299 F2). So the refreshed
+    // value's name must BE the promo subject the code is priced with.
+    const binding = /const (\w+) = await lockAndRefreshPromoCodeUsage\(/.exec(source);
+    expect(binding).not.toBeNull();
+    const refreshed = binding![1];
+    const after = source.slice(binding!.index);
+    expect(after).toMatch(new RegExp(`promoCode: ${refreshed}\\b`));
+  });
 
-  it("the batch-modification path locks both codes of a swap up front", () => {
+  it("the batch-modification path locks every code of the change up front", () => {
     const source = readSource("src/lib/booking-modify-plan.ts");
     const lockIndex = source.indexOf("await lockPromoCodeRowsForUpdate(tx, [");
-    const validateIndex = source.indexOf("validateAndCalculatePromoDiscount(");
+    const priceIndex = source.indexOf("await applyBookingPromotions(");
     expect(lockIndex).toBeGreaterThan(-1);
-    expect(lockIndex).toBeLessThan(validateIndex);
-    // ...and refreshes the counter on its own reprice branch, whose snapshot
-    // was loaded with the booking, before the lock.
+    expect(lockIndex).toBeLessThan(priceIndex);
+    expect(callsOf(source, "applyBookingPromotions").some((call) => call.text.includes("excludeBookingId: bookingId"))).toBe(true);
+    // ...and refreshes the counter of every code it keeps, whose snapshot was
+    // loaded with the booking, before the lock.
     expect(source).toContain("await lockAndRefreshPromoCodeUsage(");
   });
 });

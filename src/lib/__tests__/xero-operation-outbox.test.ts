@@ -205,6 +205,8 @@ vi.mock("@/lib/xero-credit-notes", () => ({
   createUnappliedXeroCreditNoteForModification:
     mocks.createUnappliedXeroCreditNoteForModification,
   createXeroCreditNote: mocks.createXeroCreditNote,
+  refundRequestCreditNoteKey: (paymentId: string, refundRequestId: string) =>
+    `payment:${paymentId}:refund-request-credit-note:${refundRequestId}:v1`,
 }));
 
 vi.mock("@/lib/xero-entrance-fee-invoices", () => ({
@@ -285,6 +287,7 @@ import {
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
   restatePendingSupplementaryInvoiceAmount,
 } from "@/lib/xero-operation-outbox";
+import { enqueueXeroRefundRequestCreditNoteOperation } from "@/lib/xero-refund-request-credit-note-outbox";
 import {
   attachRecoveredIntentToWaitingSupplementaryInvoice,
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
@@ -943,6 +946,88 @@ describe("enqueueXeroSupplementaryInvoiceOperation", () => {
         }),
       })
     );
+  });
+});
+
+// #3827, owner decision D-3813-8 (`INV-PAY-116`): a refund request's OWN note,
+// queued when its task is marked paid back - keyed by the request, so a second
+// request on the same payment is never absorbed, and a replay queues nothing.
+describe("enqueueXeroRefundRequestCreditNoteOperation (D-3813-8)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findManyOperations.mockResolvedValue([]);
+    mocks.findFirstOperation.mockResolvedValue(null);
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_request_note_1" });
+  });
+
+  it("queues one note for exactly the amount paid back, keyed by the request, never per-delta", async () => {
+    await expect(
+      enqueueXeroRefundRequestCreditNoteOperation({
+        paymentId: "payment_1",
+        refundRequestId: "req_1",
+        amountCents: 4000,
+        createdByMemberId: "admin_1",
+      }),
+    ).resolves.toMatchObject({ queueOperationId: "op_request_note_1" });
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        direction: "OUTBOUND",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: "payment_1",
+        status: "PENDING",
+        idempotencyKey: "payment:payment_1:refund-request-credit-note:req_1:v1",
+        correlationKey: "payment:payment_1:refund-request-credit-note:req_1:v1",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "REFUND_CREDIT_NOTE",
+          refundAmountCents: 4000,
+          refundMethod: "internet-banking",
+          refundRequestId: "req_1",
+        },
+      }),
+    );
+    // Never the one-note-per-payment absorption, never Stripe coverage.
+    expect(mocks.findCanonicalPaymentRefundCreditNote).not.toHaveBeenCalled();
+    expect(mocks.sumCoveredRefundCreditNoteCents).not.toHaveBeenCalled();
+  });
+
+  it("a second request on the same payment gets its own key", async () => {
+    await enqueueXeroRefundRequestCreditNoteOperation({ paymentId: "payment_1", refundRequestId: "req_1", amountCents: 4000 });
+    await enqueueXeroRefundRequestCreditNoteOperation({ paymentId: "payment_1", refundRequestId: "req_2", amountCents: 3000 });
+    const keys = mocks.startXeroSyncOperation.mock.calls.map(
+      ([input]) => (input as { correlationKey: string }).correlationKey,
+    );
+    expect(keys).toEqual([
+      "payment:payment_1:refund-request-credit-note:req_1:v1",
+      "payment:payment_1:refund-request-credit-note:req_2:v1",
+    ]);
+  });
+
+  it("a replay finds this request's row, whatever its status, and queues nothing", async () => {
+    mocks.findFirstOperation.mockResolvedValue({ id: "op_done" });
+    await expect(
+      enqueueXeroRefundRequestCreditNoteOperation({ paymentId: "payment_1", refundRequestId: "req_1", amountCents: 4000 }),
+    ).resolves.toMatchObject({ queueOperationId: "op_done" });
+    expect(mocks.findFirstOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.not.objectContaining({ status: expect.anything() }),
+      }),
+    );
+    expect(mocks.findFirstOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ correlationKey: "payment:payment_1:refund-request-credit-note:req_1:v1" }),
+      }),
+    );
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it("queues nothing for a zero amount", async () => {
+    await expect(
+      enqueueXeroRefundRequestCreditNoteOperation({ paymentId: "payment_1", refundRequestId: "req_1", amountCents: 0 }),
+    ).resolves.toMatchObject({ queueOperationId: null });
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
   });
 });
 
@@ -2192,6 +2277,36 @@ describe("processQueuedXeroOutboxOperations", () => {
       createdByMemberId: "admin_1",
       syncOperationId: "op_credit_note_1",
       watermarkCents: 8000,
+    });
+  });
+
+  // #3827 (D-3813-8): a refund request's own note reaches the builder as that
+  // request's note - no watermark, the request id forwarded.
+  it("dispatches a refund request's own note with its request id and no watermark", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_request_note_1",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "REFUND_CREDIT_NOTE",
+          refundAmountCents: 4000,
+          refundMethod: "internet-banking",
+          refundRequestId: "req_1",
+        },
+      },
+    ]);
+    mocks.createXeroCreditNote.mockResolvedValue("cn_req_1");
+
+    await processQueuedXeroOutboxOperations({ limit: 5 });
+
+    expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("payment_1", 4000, {
+      createdByMemberId: "admin_1",
+      syncOperationId: "op_request_note_1",
+      watermarkCents: undefined,
+      refundMethod: "internet-banking",
+      refundRequestId: "req_1",
     });
   });
 

@@ -1,5 +1,6 @@
 import type { XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { isRefundRequestNoteOperation } from "@/lib/refund-request-credit-note";
 import { asRecord, readString } from "@/lib/xero-json";
 import { parseXeroOperationRequeueOriginalId } from "@/lib/xero-operation-queue";
 
@@ -335,6 +336,10 @@ export async function resolveFailedXeroOperationStates(
       && representative.localId
       && paymentIdsWithRefundRepair.has(representative.localId)
       && paymentIdsWithRefundPaymentLink.has(representative.localId)
+      // #3827 (`INV-PAY-116`): the payment's pointer and refund payment are its
+      // ONE refund note's; a refund request's own note is a separate document
+      // they say nothing about, so its failure keeps its Retry.
+      && !ordered.some(isRefundRequestNoteOperation)
     ) {
       repairedReason = "The payment already has a linked refund credit note and refund payment.";
     }

@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  495
+row-producing sites:  496
 uncategorised:        0
-category values: admin 109, booking 105, xero 38, family 35, payment 52,
+category values: admin 109, booking 106, xero 38, family 35, payment 52,
                  lodge 66, account 19, security 25, privacy 20,
                  communication 21, system 4
 ```
@@ -759,7 +759,9 @@ club between automatic refunds and treasurer approval. #3462 then added one
 (`xero` 37 -> 38, 493 -> 494, RE-MEASURED): `xero.operation.marked_failed`,
 the per-row Mark failed on a stale RUNNING Xero operation. #3454 then added one
 (`security` 24 -> 25, 494 -> 495, RE-MEASURED): the two-factor enrolment and
-erasure-clear record in `two-factor-audit.ts`.
+erasure-clear record in `two-factor-audit.ts`. #3827 then added one (`booking`
+105 -> 106, 495 -> 496, RE-MEASURED): `booking.modify.promo_reprice`, a guest's
+acceptance re-pricing the booking's promo codes.
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):

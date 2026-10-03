@@ -68,12 +68,16 @@ vi.mock("@/lib/prisma", () => ({
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
     manualRefundTask: {
+      // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
+      aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
       // #3032: the modified email asks whether the club is still working
       // out an amount on this booking (`bookingHasOpenFinancialReview`).
       // Empty by default - no review is open - so every pre-#3032
       // assertion in this file means exactly what it meant before.
       findMany: vi.fn().mockResolvedValue([]),
+      // #3827 (D-3813-6): an internet-banking reduction's officer refund task.
+      createMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     bookingModification: { create: mockCreate },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
@@ -496,12 +500,16 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
     manualRefundTask: {
+      // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
+      aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
       // #3032: the modified email asks whether the club is still working
       // out an amount on this booking (`bookingHasOpenFinancialReview`).
       // Empty by default - no review is open - so every pre-#3032
       // assertion in this file means exactly what it meant before.
       findMany: vi.fn().mockResolvedValue([]),
+      // #3827 (D-3813-6): an internet-banking reduction's officer refund task.
+      createMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     bookingModification: {
       create: vi.fn().mockResolvedValue({ id: "mod1" }),
@@ -2457,6 +2465,48 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     );
   });
 
+  it("an internet-banking removal raises the officer refund task and promises a bank transfer (#3827, D-3813-6)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const base = makeBooking();
+    const booking = makeBooking({
+      payment: {
+        ...base.payment,
+        source: "INTERNET_BANKING",
+        stripePaymentIntentId: null,
+        xeroInvoiceId: "inv_primary",
+      },
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCalcPrice.mockReturnValue({
+      guests: [{ ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }],
+      totalPriceCents: 5000,
+    });
+    mockedCalcDualRefund.mockReturnValue({
+      cardRefundAmountCents: 2500,
+      cardRefundPercentage: 50,
+      creditRefundAmountCents: 3750,
+      creditRefundPercentage: 75,
+    } as any);
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
+
+    const res = await DELETE(deleteWithMethod("g2", "card"), {
+      params: Promise.resolve({ id: "bk1", guestId: "g2" }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).refundAmountCents).toBe(2500);
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    expect(tx.manualRefundTask.createMany).toHaveBeenCalledTimes(1);
+    expect(tx.manualRefundTask.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ amountCents: 2500, kind: "CANCELLED_BOOKING_HAND_BACK" })],
+      skipDuplicates: true,
+    });
+    expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 2500, refundByBankTransfer: true }),
+      expect.anything(),
+    );
+  });
+
   it("returns 400 when a settled booking is reduced without a settlement method (#1014)", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
@@ -3183,6 +3233,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
+      refundByBankTransfer: false,
     }, CLUB_FORMAT_TEST);
     expect(html).toContain("Booking Modified");
     expect(html).toContain("Alice");
@@ -3210,6 +3261,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
+      refundByBankTransfer: false,
     }, CLUB_FORMAT_TEST);
     expect(html).toContain("Guests Added");
     expect(html).toContain("Previous Guests");
@@ -3236,6 +3288,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
+      refundByBankTransfer: false,
     }, CLUB_FORMAT_TEST);
     expect(html).toContain("Guest Removed");
     expect(html).toContain("refund");
@@ -3261,6 +3314,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
+      refundByBankTransfer: false,
     }, CLUB_FORMAT_TEST);
     expect(html).toContain("Change Fee");
     expect(html).toContain("$50.00");
@@ -3289,6 +3343,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
+      refundByBankTransfer: false,
     }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("additional Internet Banking payment");
@@ -3316,6 +3371,7 @@ describe("bookingModifiedTemplate", () => {
       // #3032: required, and this suite is not about the review note.
       // False is the control state for every assertion here.
       financialReviewPending: false,
+      refundByBankTransfer: false,
     }, CLUB_FORMAT_TEST);
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
