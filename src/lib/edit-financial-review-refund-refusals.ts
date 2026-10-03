@@ -93,3 +93,11 @@ export const REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE =
  */
 export const REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE =
   "This booking was cancelled and its account credit restored under terms the current cancellation policy no longer reproduces, so the share cannot be netted against that restore automatically. Work out what is still owed, hand it back another way, then dismiss this task with a note saying what was done.";
+
+/**
+ * #3835: the same refusal on a captured payment's share, whose cancellation
+ * REFUNDED by tier: the frozen figures must reproduce that refund and restore
+ * before the share is netted against them (`capturedShareOwedAfterCancellationCents`).
+ */
+export const REVIEW_CANCELLATION_REFUND_UNREPRODUCIBLE_MESSAGE =
+  "This booking was cancelled and refunded under terms the current cancellation policy no longer reproduces, so the share cannot be netted against that refund automatically. Work out what is still owed, hand it back another way, then dismiss this task with a note saying what was done.";

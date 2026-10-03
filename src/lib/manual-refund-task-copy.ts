@@ -116,6 +116,10 @@ export function completionSettlementShape(
   return "hand-back";
 }
 
+/** #3791/#3835: a share the booking's cancellation had already returned, by credit or card. */
+const NOTHING_FURTHER_RETURNED =
+  "Nothing further was credited or refunded: the booking's cancellation had already returned this share to the member.";
+
 /**
  * What the operator is told a completion actually did.
  *
@@ -133,7 +137,7 @@ export function completionSettlementShape(
  */
 export function completionMessage(result: {
   amountAmended: boolean;
-  settlementRoute: { kind: string; collectVia?: "stripe" | "invoice" } | null;
+  settlementRoute: { kind: string; collectVia?: "stripe" | "invoice"; refundCents?: number } | null;
   stripeRefundId: string | null;
   additionalPaymentIntentId: string | null;
   /** #3791: what the account-credit route gave back and minted, where it ran. */
@@ -142,6 +146,8 @@ export function completionMessage(result: {
   const amended = result.amountAmended ? " at the confirmed amount" : "";
   switch (completionSettlementShape(result.settlementRoute)) {
     case "card-refund":
+      // #3835: a share netted against a cancellation's refund can leave nothing to send.
+      if (result.settlementRoute?.refundCents === 0) return NOTHING_FURTHER_RETURNED;
       return result.stripeRefundId
         ? `Refund sent back to the card${amended}.`
         : "The card refund could not be sent just now. It has been recorded and will be retried automatically — check this booking's payment history before handing the money back another way.";
@@ -149,7 +155,7 @@ export function completionMessage(result: {
       // #3791: a share netted against a cancellation's restore can leave
       // nothing to credit, and "credit issued" would be a receipt for nothing.
       return result.accountCredit && result.accountCredit.givenBackCents + result.accountCredit.mintedCents === 0
-        ? "Nothing further was credited: the booking's cancellation had already returned this share to the member's account credit."
+        ? NOTHING_FURTHER_RETURNED
         : `Account credit issued to the member${amended}.`;
     // #3170: the direction that asks for money rather than returning it. Its two
     // sentences say what the member will actually receive, because "adjustment

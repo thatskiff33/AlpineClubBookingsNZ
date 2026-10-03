@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   BookingEventType,
+  BookingStatus,
   ManualRefundTaskDirection,
   ManualRefundTaskKind,
   PaymentSource,
@@ -47,6 +48,9 @@ import {
   type LateCaptureRefundRoute,
 } from "@/lib/late-capture-refund-approval";
 import type { ClubFormat } from "@/lib/club-format";
+import type { ClubTimeZone } from "@/lib/club-time";
+import { capturedShareOwedAfterCancellationCents } from "@/lib/edit-financial-review-cancel-netting";
+import type { EditReviewSettlementTask } from "@/lib/edit-financial-review-settlement-task";
 
 /**
  * #3032 (epic #2797): WHERE a confirmed review amount goes when the task is
@@ -167,6 +171,8 @@ export type EditReviewSettlementRoute =
        * replay send byte-identical Stripe requests and converge on one refund.
        */
       allocation: RefundAllocationSlice[];
+      /** What goes back: the share, or on a cancelled booking what is still owed (#3835). */
+      refundCents: number;
     }
   | {
       kind: "local-allocation";
@@ -222,55 +228,6 @@ export type EditReviewSettlementRoute =
   | LateCaptureRefundRoute;
 
 /**
- * Exactly what the route decision reads off the task, and nothing else.
- *
- * `paymentId` is the money behind the booking WHEN THE REVIEW WAS RAISED;
- * `booking.status` and `booking.payment` are the money behind it NOW (#3194) -
- * see `chooseEditReviewSettlementRoute` for why both are read and which wins.
- */
-export type EditReviewSettlementTask = {
-  paymentId: string | null;
-  kind: ManualRefundTaskKind | null;
-  /** #3639: set on a late capture held for a treasurer; names its intent. */
-  lateCaptureApprovalIntentId: string | null;
-  /** #3639: a #2700 task's frozen sentence, which names its capture. */
-  reason: string;
-  reviewContext: unknown;
-  payment: { source: PaymentSource } | null;
-  booking: {
-    /**
-     * #3194: the booking's own lifecycle status, so the settle-time read of its
-     * captured money asks exactly the question the raise sites asked. Already
-     * selected by the caller for `hasIssuedPrimaryXeroInvoice`.
-     */
-    status: string;
-    payment: {
-      id: string;
-      status: string;
-      amountCents: number | null;
-      refundedAmountCents: number | null;
-      /**
-       * #3170: a CHARGE has no task payment to route on - the money is coming the
-       * other way - so it asks the BOOKING's payment whether there is a card
-       * behind it, and needs that payment's own source and Stripe customer.
-       */
-      source: PaymentSource;
-      stripeCustomerId: string | null;
-    } | null;
-    /**
-     * #3170: for `findOrCreateCustomer` when a charge has to mint a Stripe
-     * customer. Read inside the completion transaction with everything else.
-     */
-    member: {
-      id: string;
-      email: string;
-      firstName: string;
-      lastName: string;
-    } | null;
-  };
-};
-
-/**
  * Choose the settlement route for a completion, or throw the refusal that stops
  * it.
  *
@@ -290,6 +247,7 @@ export async function chooseEditReviewSettlementRoute({
   amountCents,
   hasIssuedXeroInvoice,
   direction,
+  clubZone,
   store,
 }: {
   task: EditReviewSettlementTask;
@@ -321,6 +279,8 @@ export async function chooseEditReviewSettlementRoute({
    * the member's card.
    */
   direction: ManualRefundTaskDirection;
+  /** The club's zone, resolved before the transaction (`INV-LOCK-004`), for #3835's netting. */
+  clubZone: ClubTimeZone;
   store: Prisma.TransactionClient;
 }): Promise<EditReviewSettlementRoute | null> {
   if (task.kind !== ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
@@ -428,16 +388,23 @@ export async function chooseEditReviewSettlementRoute({
         409,
       );
     }
+    // #3835: a cancelled booking's share is netted against the cancellation's
+    // refund (owner decision 2 on #3791), and only that is planned and capped.
+    const refundCents = task.booking.status === BookingStatus.CANCELLED
+      ? await capturedShareOwedAfterCancellationCents({
+          bookingId: task.bookingId, taskId: task.id, booking: task.booking, shareCents: amountCents, clubZone, store,
+        })
+      : amountCents;
     // Freeze the allocation and cap the amount in ONE read, on the caller's
     // transaction and before its claim. Once the cap has passed the planned total
-    // cannot be short of `amountCents`, because the planner allocates
-    // newest-first across exactly the transactions the cap totalled.
+    // cannot be short of it: the planner allocates newest-first across exactly
+    // the transactions the cap totalled.
     const { slices, totalRefundableCents } = await planStripeRefundAllocation({
       paymentId: settlementPaymentId,
-      amountCents,
+      amountCents: refundCents,
       store,
     });
-    if (amountCents > totalRefundableCents) {
+    if (refundCents > totalRefundableCents) {
       throw new ManualBookingPaymentError(
         REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE,
         400,
@@ -448,6 +415,7 @@ export async function chooseEditReviewSettlementRoute({
       paymentId: settlementPaymentId,
       bookingModificationId,
       allocation: slices,
+      refundCents,
     };
   }
 
@@ -561,8 +529,8 @@ export async function executeEditReviewSettlement({
     });
   }
 
-  if (route?.kind === "stripe-refund") {
-    const refundAmountCents = amountCents ?? 0;
+  if (route?.kind === "stripe-refund" && route.refundCents > 0) {
+    const refundAmountCents = route.refundCents;
     try {
       const refundResult = await refundPaymentTransactions({
         format,

@@ -302,9 +302,12 @@ export async function resolveManualRefundTask(
           amountCents: settlement.amountCents,
           hasIssuedXeroInvoice,
           direction: settlementDirection,
+          clubZone,
           store: tx,
         })
       : null;
+    // #3835: what actually goes back - on the card route, netted against a cancellation.
+    const settledCents = settlementRoute?.kind === "stripe-refund" ? settlementRoute.refundCents : (settlement?.amountCents ?? null);
 
     // #3191/#3219 D2: the night prices, checked BEFORE the claim so a refusal
     // leaves the task OPEN - one plan per repairable strand since #3498.
@@ -406,12 +409,12 @@ export async function resolveManualRefundTask(
             store: tx,
           });
         }
-        else if (settlementRoute.kind === "stripe-refund") {
+        else if (settlementRoute.kind === "stripe-refund" && settlementRoute.refundCents > 0) {
           await enqueueEditFinancialReviewRefundRecovery({
             bookingId: task.bookingId,
             paymentId: settlementRoute.paymentId,
             taskId: task.id,
-            amountCents: settlement.amountCents,
+            amountCents: settlementRoute.refundCents,
             allocationPlan: settlementRoute.allocation,
             store: tx,
           });
@@ -500,7 +503,7 @@ export async function resolveManualRefundTask(
         todayAtClub,
         hasIssuedXeroInvoice,
         settlementRoute,
-        settlementAmountCents: settlement?.amountCents ?? null,
+        settlementAmountCents: settledCents,
         settlementDirection: settlement ? settlementDirection : null,
         store: tx,
       });
@@ -572,7 +575,7 @@ export async function resolveManualRefundTask(
        * outcome, including a dismissal.
        */
       settlementRoute,
-      settlementAmountCents: settlement?.amountCents ?? null,
+      settlementAmountCents: settledCents,
       /** #3791: what the account-credit route gave back and minted, else null. */
       accountCredit: accountCredit as EditReviewAccountCreditOutcome | null,
       /** #3170: which way this completion sent the money, or null on a dismissal. */

@@ -38,6 +38,7 @@ export const MANUAL_REFUND_TASK_RESOLUTION_SELECT = Prisma.validator<Prisma.Manu
     select: {
       memberId: true,
       lodgeId: true,
+      checkIn: true, // #3835: a cancelled booking's netting re-tiers by it
       // #3170: the CHARGE direction mints an additional PaymentIntent
       // through the same helper every ordinary price increase uses, and
       // that helper needs a Stripe customer. Read here, under the same

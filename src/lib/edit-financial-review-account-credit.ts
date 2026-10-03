@@ -14,6 +14,12 @@ import { recordBookingEvent } from "@/lib/booking-events";
 import type { BookingPriceRebase } from "@/lib/booking-review-price-rebase";
 import { calculateAppliedCreditRestore, daysUntilDate, loadCancellationPolicy } from "@/lib/cancellation";
 import type { ClubFormat } from "@/lib/club-format";
+import {
+  cancellationReturnOf,
+  capturedShareOwedAfterCancellationCents,
+  jsonRecord,
+  shareOwedAfterCancellationCents,
+} from "@/lib/edit-financial-review-cancel-netting";
 import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
 import {
   REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE,
@@ -128,8 +134,17 @@ export async function writeEditReviewAccountCredit({
   const mint = (cents: number, paymentId?: string) =>
     createBookingModificationCredit(memberId, cents, bookingId, route.bookingModificationId, undefined, store, paymentId);
   if (route.allocateAgainstPaymentId !== null) {
-    await mint(amountCents, route.allocateAgainstPaymentId);
-    return { givenBackCents: 0, mintedCents: amountCents, cancelled: false, invoiceReductionCents: null, agreedGiveBackCents: null };
+    // #3835: on a cancelled booking, only what the cancellation's refund left
+    // owed. `cancelled` stays false: Xero hears of this route as it always did.
+    const booking = await store.booking.findUniqueOrThrow({
+      where: { id: bookingId },
+      select: { status: true, checkIn: true, lodgeId: true },
+    });
+    const mintedCents = booking.status === BookingStatus.CANCELLED
+      ? await capturedShareOwedAfterCancellationCents({ bookingId, taskId, booking, shareCents: amountCents, clubZone, store })
+      : amountCents;
+    if (mintedCents > 0) await mint(mintedCents, route.allocateAgainstPaymentId);
+    return { givenBackCents: 0, mintedCents, cancelled: false, invoiceReductionCents: null, agreedGiveBackCents: null };
   }
 
   let creditSliceCents = 0;
@@ -344,12 +359,17 @@ async function creditSliceStillOwedAfterCancellation({
   if (restoreOf(appliedAtCancelCents) !== restoredCents) {
     throw new ManualBookingPaymentError(REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE, 409);
   }
-  const slicesCents = earlierSliceCents + sliceCents;
   // What reviews have given back since the cancellation: the restore leaves the
   // applied rows alone, so it is exactly how far they have fallen from `A`.
-  const givenBackSinceCents = Math.max(0, appliedAtCancelCents - appliedNowCents);
-  const owedCents = slicesCents + restoreOf(appliedAtCancelCents - slicesCents) - restoredCents - givenBackSinceCents;
-  return { sliceCents, owedCents: Math.max(0, owedCents) };
+  const owedCents = shareOwedAfterCancellationCents({
+    sharesCents: earlierSliceCents + sliceCents,
+    cardBaseCents: 0,
+    appliedCents: appliedAtCancelCents,
+    returnedByCancellationCents: restoredCents,
+    returnedSinceCents: Math.max(0, appliedAtCancelCents - appliedNowCents),
+    returnOf: cancellationReturnOf(days, policy, "card"),
+  });
+  return { sliceCents, owedCents };
 }
 
 /**
@@ -409,10 +429,6 @@ async function sharesSettledSinceCents({
     _sum: { amountCents: true },
   });
   return earlier._sum.amountCents ?? 0;
-}
-
-function jsonRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 /**
