@@ -9,6 +9,16 @@ export const SECOND_PROMO_CODE_REFUSED_MESSAGE =
   "This booking already carries a promo code.";
 
 /**
+ * Is the `multiPromoCodes` rollout switch on? Read through the caller's
+ * transaction client and the one module-settings normaliser: a club that has
+ * never saved the Modules page reads the default, which is OFF — fail-closed.
+ * The one read of the switch on a write path (#3827).
+ */
+export async function multiPromoCodesEnabled(tx: Prisma.TransactionClient): Promise<boolean> {
+  return normalizeClubModuleSettings(await readClubModuleSettingsRecord(tx)).multiPromoCodes;
+}
+
+/**
  * Where a new redemption sits in the booking's application order — or a
  * refusal, when the booking already carries a code and the club has not
  * switched on several codes per booking (#3826, epic #3813).
@@ -60,12 +70,7 @@ export async function nextPromoApplicationOrder(
     select: { applicationOrder: true },
   });
   if (!last) return requestedOrder ?? 0;
-  // Normalised by the one module-settings normaliser: a club that has never
-  // saved the Modules page reads the default, which is OFF — fail-closed.
-  const { multiPromoCodes } = normalizeClubModuleSettings(
-    await readClubModuleSettingsRecord(tx),
-  );
-  if (!multiPromoCodes) {
+  if (!(await multiPromoCodesEnabled(tx))) {
     throw new ApiError(SECOND_PROMO_CODE_REFUSED_MESSAGE, 409);
   }
   return requestedOrder ?? last.applicationOrder + 1;

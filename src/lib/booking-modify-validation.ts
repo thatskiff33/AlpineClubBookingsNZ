@@ -108,6 +108,18 @@ export type BatchModifyInput = {
   promoGuestIds?: string[];
   promoAddedGuestIndexes?: number[];
   removePromoCode?: boolean;
+  /**
+   * #3827: the COMPLETE list of codes the booking should carry after this edit,
+   * in the booker's order (D-3813-2) — so one field adds, removes and reorders.
+   * A code already on the booking with no guest choice is kept and re-priced; one
+   * sent with a guest choice is re-applied fresh. Supersedes the legacy
+   * `promoCode` / `removePromoCode` pair when present.
+   */
+  promoCodes?: Array<{
+    code: string;
+    promoGuestIds?: string[];
+    promoAddedGuestIndexes?: number[];
+  }>;
   // #2266: the member's credit election, integer cents. The modify path never
   // moves credit itself — it stores the election on the booking
   // (Booking.creditElectionCents, #2265) for the pay step to consume, exactly
@@ -414,7 +426,7 @@ export function resolveTargetDates({
         400,
       );
     }
-    if (input.promoCode || input.removePromoCode) {
+    if (requestChangesPromoCodes(input)) {
       throw new ApiError(
         "Promo code changes are not available for in-progress bookings",
         400,
@@ -611,4 +623,75 @@ export async function assertBookingNotQuotePriced(
   if (await isQuotePricedBooking(db, bookingId)) {
     throw new ApiError(QUOTE_PRICED_EDIT_BLOCK_MESSAGE, 400);
   }
+}
+
+/** One entry of the code list an edit asks the booking to carry (#3827). */
+export type RequestedPromoCode = {
+  code: string;
+  promoGuestIds?: string[];
+  promoAddedGuestIndexes?: number[];
+  /** Apply fresh even when the booking already carries this code. */
+  reapply: boolean;
+};
+
+/**
+ * The codes an edit asks the booking to carry afterwards, in order — or `null`
+ * when it says nothing about codes and every code the booking has is simply
+ * re-priced. THE ONE READING of the three request shapes (#3827): the plural
+ * `promoCodes`; the legacy `removePromoCode` (none); and the legacy single
+ * `promoCode`, which has always meant "replace the booking's code with this
+ * one, applied fresh".
+ */
+export type PromoCodeRequestFields = Pick<
+  BatchModifyInput,
+  "promoCode" | "promoGuestIds" | "promoAddedGuestIndexes" | "removePromoCode" | "promoCodes"
+>;
+
+export function requestedPromoCodeList(input: PromoCodeRequestFields): RequestedPromoCode[] | null {
+  if (input.promoCodes) {
+    return input.promoCodes.map((entry) => ({
+      code: entry.code.toUpperCase().trim(),
+      ...(entry.promoGuestIds ? { promoGuestIds: entry.promoGuestIds } : {}),
+      ...(entry.promoAddedGuestIndexes
+        ? { promoAddedGuestIndexes: entry.promoAddedGuestIndexes }
+        : {}),
+      reapply: Boolean(entry.promoGuestIds?.length || entry.promoAddedGuestIndexes?.length),
+    }));
+  }
+  if (input.removePromoCode) return [];
+  if (input.promoCode) {
+    return [
+      {
+        code: input.promoCode.toUpperCase().trim(),
+        ...(input.promoGuestIds ? { promoGuestIds: input.promoGuestIds } : {}),
+        ...(input.promoAddedGuestIndexes
+          ? { promoAddedGuestIndexes: input.promoAddedGuestIndexes }
+          : {}),
+        reapply: true,
+      },
+    ];
+  }
+  return null;
+}
+
+/** Does this edit ask for any promo-code change at all? */
+export function requestChangesPromoCodes(input: PromoCodeRequestFields): boolean {
+  return requestedPromoCodeList(input) !== null;
+}
+
+/**
+ * The promo change an edit asked for, as `describePromoChangeNotApplied` names
+ * it when the change is dropped (#3179): the codes asked for, joined in order,
+ * or a removal. Read through `requestedPromoCodeList`, so the plural and the
+ * legacy fields cannot be described two ways (#3827).
+ */
+export function requestedPromoCodeChange(input: PromoCodeRequestFields): {
+  requestedPromoCode: string | undefined;
+  removePromoCodeRequested: boolean;
+} {
+  const list = requestedPromoCodeList(input);
+  return {
+    requestedPromoCode: list && list.length > 0 ? list.map((entry) => entry.code).join(", ") : undefined,
+    removePromoCodeRequested: list !== null && list.length === 0,
+  };
 }

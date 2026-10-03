@@ -4,13 +4,16 @@
 // gate contract test compares string indexes across this pipeline in one
 // file. Code moved verbatim; import via the "@/lib/booking-modify" barrel.
 
-import { soleBookingPromoRedemption } from "@/lib/booking-promo-redemptions";
+import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
+import { applyBookingPromotions, repriceBookingPromotions } from "@/lib/booking-promotions";
+import { multiPromoCodesEnabled, writePromoApplicationOrder } from "@/lib/promo-redemption-slot";
 import {
   AdminReviewStatus,
   BookingStatus,
   type AgeTier,
   type BookingGuest,
   type BookingGuestNightPriceSource,
+  type MemberGuestConsentStatus,
   type Prisma,
   type Role,
 } from "@prisma/client";
@@ -85,13 +88,15 @@ import {
   lockAndRefreshPromoCodeUsage,
   lockPromoCodeRowsForUpdate,
   redeemPromoCode,
+  releasePromoRedemptions,
   replacePromoRedemptionAllocations,
   shouldPersistPromoRedemption,
-  validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
 import type { PromoAdjustmentTarget } from "@/lib/night-adjustment-write";
 import {
   describePromoCapCoverage,
+  mergePromoCoverageNotices,
+  promoReleasedNotice,
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
 import {
@@ -134,7 +139,9 @@ import {
   requiredNightPriceSourceToWrite,
 } from "@/lib/stored-night-price-write";
 import {
+  guestConsentStatus,
   isOperationallyPresentConsent,
+  type GuestConsentFields,
   type MemberGuestAddActor,
   type MemberGuestConsentColumns,
 } from "@/lib/member-guest-consent";
@@ -151,6 +158,7 @@ import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-
 import {
   BookingModifyReviewJustificationRequiredError,
   isBookingFullyPaidForGuestNameEdits,
+  requestedPromoCodeList,
   resolveStayRangesOrApiError,
   type BatchModifyInput,
   type LoadedBookingForModify,
@@ -164,6 +172,31 @@ import {
   type BookingGuestDietarySeeding,
 } from "@/lib/member-dietary-booking-writes";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
+
+/**
+ * The proposed party's consent, row by row (D-12, #2543): the stored status for
+ * a row already on the booking, the status `planMemberGuestConsentWrites` has
+ * just decided for a row being added. Built from data already in hand — no
+ * query. One reader for the review gate and the promotion (#3827, D-3813-4:
+ * a guest still awaiting acceptance takes no code).
+ */
+function proposedGuestConsentStatusReader(
+  bookingGuests: ReadonlyArray<{ id: string; consentStatus?: MemberGuestConsentStatus | null }>,
+  addedGuests: ReadonlyArray<GuestConsentFields & { memberId?: string | null }> | undefined,
+): (guest: { bookingGuestId?: string | null; memberId?: string | null }) => MemberGuestConsentStatus | null {
+  const consentStatusByGuestId = new Map(
+    bookingGuests.map((guest) => [guest.id, guest.consentStatus ?? null]),
+  );
+  const addedConsentByMemberId = new Map(
+    (addedGuests ?? [])
+      .filter((guest) => guest.memberId)
+      .map((guest) => [guest.memberId as string, guestConsentStatus(guest)]),
+  );
+  return (guest) =>
+    guest.bookingGuestId
+      ? consentStatusByGuestId.get(guest.bookingGuestId) ?? null
+      : addedConsentByMemberId.get(guest.memberId ?? "") ?? null;
+}
 
 type ProposedGuestPricingInput = {
   bookingGuestId?: string | null;
@@ -1156,25 +1189,10 @@ export async function prepareGuestPlan(
   // status for a row already on the booking, and the status
   // `planMemberGuestConsentWrites` has just decided for a row being added. Built
   // from data already in hand — no extra query.
-  const consentStatusByGuestId = new Map(
-    booking.guests.map((guest) => [guest.id, guest.consentStatus ?? null]),
+  const proposedConsentStatus = proposedGuestConsentStatusReader(
+    booking.guests,
+    normalizedAddGuestsWithRanges,
   );
-  const addedConsentByMemberId = new Map(
-    (normalizedAddGuestsWithRanges ?? [])
-      .filter((guest) => guest.memberId)
-      .map((guest) => [
-        guest.memberId as string,
-        guest.memberGuestConsent?.consentStatus ?? null,
-      ]),
-  );
-  /** The proposed row's consent: stored for a kept row, planned for an added one. */
-  const proposedConsentStatus = (guest: {
-    bookingGuestId: string | null;
-    memberId?: string | null;
-  }) =>
-    guest.bookingGuestId
-      ? consentStatusByGuestId.get(guest.bookingGuestId) ?? null
-      : addedConsentByMemberId.get(guest.memberId ?? "") ?? null;
 
   // Only an agreed adult counts (#3770, owner decision), read through the same
   // D-12 facts the paid-up-adult requirement below uses.
@@ -1421,6 +1439,8 @@ export type PricedModification = {
     perNightRates: number[];
     /** #3276: REQUIRED, so an adjustment row can be attributed to a night by date. */
     nightDates: Date[];
+    /** #3827 (D-3813-4): REQUIRED — only a guest actually staying can benefit from a code. */
+    consentStatus: MemberGuestConsentStatus | null;
   }>;
   /**
    * The existing guests pricing ACTUALLY resolved to the other-lodge member rate
@@ -2116,6 +2136,7 @@ export async function calculateModifiedPricing(
   }
 
   const newTotalPriceCents = priceBreakdown.totalPriceCents;
+  const consentStatusOf = proposedGuestConsentStatusReader(booking.guests, normalizedAddGuests);
   const guestNightRates = inProgressPlan
     ? []
     : guestsForPricing.map((guest, index) => ({
@@ -2137,6 +2158,7 @@ export async function calculateModifiedPricing(
         // the discount to the event's night window — correct for gaps too.
         firstNight: guest.stayStart ?? newCheckIn,
         nightDates: priceBreakdown.guests[index]?.nightDates ?? [],
+        consentStatus: consentStatusOf(guest),
       }));
 
   return {
@@ -2171,6 +2193,8 @@ export type PromoChangeResult = {
   newPromoAdjustmentCents: number;
   promoRemoved: boolean;
   promoChanged: boolean;
+  /** #3827: the codes the booking carries after this edit, in order, joined; null for none. */
+  promoCodeLabel: string | null;
   // #2390: set only when a usage cap stopped the promotion reaching somebody on
   // the repriced booking; null means everyone it applies to is covered.
   promoCoverage: PromoCoverageNotice | null;
@@ -2304,6 +2328,8 @@ export async function applyPromoCodeChanges(
       perNightRates: number[];
       /** #3276: REQUIRED, so an adjustment row can be attributed to a night by date. */
       nightDates: Date[];
+      /** #3827 (D-3813-4): REQUIRED — only a guest actually staying can benefit. */
+      consentStatus: MemberGuestConsentStatus | null;
     }>;
     /**
      * The club's own calendar day (#3123, `INV-CONFIG-002`), resolved by the
@@ -2325,6 +2351,7 @@ export async function applyPromoCodeChanges(
       newPromoAdjustmentCents: inProgressPlan.newPromoAdjustmentCents,
       promoRemoved: false,
       promoChanged: false,
+      promoCodeLabel: bookingPromoCodeLabel(booking),
       // An in-progress plan reuses prices already agreed; it re-runs no cap.
       promoCoverage: null,
       // #3179: THE SECOND STUB. The batch service has one of its own for a
@@ -2336,205 +2363,218 @@ export async function applyPromoCodeChanges(
     };
   }
 
-  let newDiscountCents = 0;
-  let newPromoAdjustmentCents = 0;
-  let promoRemoved = false;
-  let promoChanged = false;
-  let promoCoverage: PromoCoverageNotice | null = null;
-  let adjustmentTargets: PromoAdjustmentTarget[] = [];
-
-  // #3826: a booking may carry several promo codes; this edit path prices
-  // one, so it refuses a booking carrying more (epic #3813 C2 widens it).
-  const promoRedemption = soleBookingPromoRedemption(booking);
+  // #3827: every code the booking carries, in its stored order.
+  const existing = bookingPromoRedemptions(booking).filter(
+    (redemption) => redemption.promoCode,
+  );
   const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
+  const requested = requestedPromoCodeList(input);
 
-  // Row-lock every promo code whose usage caps this transaction may charge or
-  // refund, BEFORE the first cap read and the first counter write (#2299).
-  // Booking creation has locked its promo row for a long time; none of the four
-  // modification paths did, so two concurrent modifications could both pass a
-  // "one use left" check. (The other three now take the same lock via
-  // `lockAndRefreshPromoCodeUsage`; this one may touch TWO codes, so it uses the
-  // multi-id form.) `lockPromoCodeRowsForUpdate` sorts the ids, so the outgoing
-  // and incoming codes of a swap are always taken in the same global order and
-  // no two transactions can build a cycle.
-  const incomingPromoCodeId =
-    input.promoCode && !input.removePromoCode
-      ? (
-          await tx.promoCode.findUnique({
-            where: { code: input.promoCode.toUpperCase().trim() },
-            select: { id: true },
-          })
-        )?.id
-      : undefined;
-  await lockPromoCodeRowsForUpdate(tx, [
-    promoRedemption?.promoCodeId,
-    incomingPromoCodeId,
-  ]);
-
-  if (input.removePromoCode && promoRedemption) {
-    await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
-    promoRemoved = true;
+  if (requested === null) {
+    // No promo change asked for: re-price every code the booking carries
+    // (INV-MONEY-024 per code). #2390: a cap narrows who a code covers rather
+    // than refusing the edit. The one re-price row-locks every code in one
+    // sorted call and re-reads each counter under it (#2299, INV-MONEY-023).
+    const repriced = await repriceBookingPromotions(tx, {
+      bookingId,
+      redemptions: existing,
+      memberId: bookingOwner(booking).memberId,
+      bookingCheckIn: newCheckIn,
+      totalPriceCents: newTotalPriceCents,
+      guests: guestNightRates,
+      lodgeId: bookingLodgeId,
+      // #3123 — resolved by the caller before this transaction opened.
+      todayAtClub,
+    });
+    return {
+      newDiscountCents: repriced.newDiscountCents,
+      newPromoAdjustmentCents: repriced.newPromoAdjustmentCents,
+      promoRemoved: repriced.promoRemoved,
+      promoChanged: false,
+      promoCodeLabel: repriced.remainingPromoCodeLabel,
+      promoCoverage: repriced.promoCoverage,
+      promoEngineRan: true,
+      adjustmentTargets: repriced.adjustmentTargets,
+    };
   }
 
-  if (input.promoCode && !input.removePromoCode) {
-    if (promoRedemption && !promoRemoved) {
-      await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
-      promoRemoved = true;
+  // The booker's new list (D-3813-2: add, remove or reorder in one request).
+  if (new Set(requested.map((entry) => entry.code)).size !== requested.length) {
+    throw new ApiError("The same promo code was entered more than once.", 400);
+  }
+  if (requested.length > 1 && !(await multiPromoCodesEnabled(tx))) {
+    throw new ApiError("Only one promo code can be used on a booking.", 400);
+  }
+  const existingByCode = new Map(existing.map((redemption) => [redemption.promoCode.code, redemption]));
+  const kept = new Set(
+    requested
+      .filter((entry) => !entry.reapply && existingByCode.has(entry.code))
+      .map((entry) => entry.code),
+  );
+  const incomingCodes = requested.filter((entry) => !kept.has(entry.code)).map((entry) => entry.code);
+
+  // Row-lock every code this transaction may charge or refund — the outgoing,
+  // the kept and the incoming — in ONE sorted call, BEFORE the first cap read
+  // and the first counter write (#2299, INV-MONEY-023). Sorting is what keeps
+  // two opposite edits from building a cycle. The incoming ids are resolved
+  // unlocked first and re-read by id under the lock below.
+  const incomingIds = incomingCodes.length
+    ? await tx.promoCode.findMany({
+        where: { code: { in: incomingCodes } },
+        select: { id: true, code: true },
+      })
+    : [];
+  await lockPromoCodeRowsForUpdate(tx, [
+    ...existing.map((redemption) => redemption.promoCodeId),
+    ...incomingIds.map((row) => row.id),
+  ]);
+
+  // Release what the booker took off — or re-applies fresh — first, so a code
+  // applied again is validated with its own slot given back, as before.
+  const released = existing.filter((redemption) => !kept.has(redemption.promoCode.code));
+  await releasePromoRedemptions(tx, released);
+  let promoRemoved = released.length > 0;
+
+  const incomingRows = incomingIds.length
+    ? await tx.promoCode.findMany({
+        where: { id: { in: incomingIds.map((row) => row.id) } },
+        include: {
+          assignments: { select: { memberId: true } },
+          lodges: { select: { lodgeId: true } },
+        },
+      })
+    : [];
+  const addedGuestCount = input.addGuests?.length ?? 0;
+  const applications = [];
+  for (const entry of requested) {
+    const keptRedemption = kept.has(entry.code) ? existingByCode.get(entry.code)! : null;
+    if (keptRedemption) {
+      // Re-read under the lock just taken: the snapshot came with the booking.
+      const promo = await lockAndRefreshPromoCodeUsage(tx, keptRedemption.promoCode);
+      applications.push({
+        redemption: keptRedemption,
+        code: promo.code,
+        promoCode: promo,
+        assignedMemberIds: promo.assignments.length ? promo.assignments.map((a) => a.memberId) : null,
+        selectedGuestIndexes: selectedIndexesForStoredGuestTargets(keptRedemption, guestNightRates),
+        // #2390: a code the booking keeps narrows its coverage, never refuses.
+        capOverflow: "coverExisting" as const,
+      });
+      continue;
     }
-
-    // Re-read under the lock taken above, so the caps this validation sees are
-    // the caps the redemption below consumes.
-    const promoCode = await tx.promoCode.findUnique({
-      where: { code: input.promoCode.toUpperCase().trim() },
-      include: {
-        assignments: { select: { memberId: true } },
-        lodges: { select: { lodgeId: true } },
-      },
-    });
-
-    // Internal promos (work party events) cannot be entered as codes.
+    const id = incomingIds.find((row) => row.code === entry.code)?.id;
+    const promoCode = incomingRows.find((row) => row.id === id && row.code === entry.code);
+    // Internal promos (work party events) cannot be entered as codes; a code
+    // renamed between the unlocked read and the lock is not found.
     if (!promoCode || promoCode.internal) {
       throw new ApiError("Promo code not found", 400);
     }
-
-    const assignedMemberIds = promoCode.assignments.length
-      ? promoCode.assignments.map((assignment) => assignment.memberId)
-      : null;
-    const application = await validateAndCalculatePromoDiscount(
+    applications.push({
+      redemption: null,
+      code: promoCode.code,
       promoCode,
-      {
-        memberId: bookingOwner(booking).memberId,
-        bookingCheckIn: newCheckIn,
-        totalPriceCents: newTotalPriceCents,
-        guests: guestNightRates,
-      },
-      assignedMemberIds,
-      {
-        excludeBookingId: bookingId,
-        db: tx,
-        // #2266 (MED-4): existing beneficiaries arrive bound by bookingGuestId
-        // and are resolved against THIS transaction's priced guest list, so a
-        // concurrent edit can never re-point the discount; stale ids 400.
-        selectedGuestIndexes: resolvePromoBeneficiarySelection({
-          guestNightRates,
-          addedGuestCount: input.addGuests?.length ?? 0,
-          promoGuestIds: input.promoGuestIds,
-          promoAddedGuestIndexes: input.promoAddedGuestIndexes,
-        }),
-        lodgeId: bookingLodgeId,
-        // #3123 — resolved by the caller before this transaction opened.
-        todayAtClub,
-      },
-    );
-    if (application.error || !application.discount) {
-      throw new ApiError(application.error ?? "Promo code could not be applied", 400);
-    }
-
-    const promoResult = application.discount;
-    newDiscountCents = promoResult.discountCents;
-    newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
-    adjustmentTargets = promoResult.adjustmentTargets;
-
-    if (shouldPersistPromoRedemption(promoResult)) {
-      await redeemPromoCode(
-        tx,
-        promoCode.id,
-        bookingId,
-        bookingOwner(booking).memberId,
-        newDiscountCents,
-        newPromoAdjustmentCents,
-        promoResult.freeNightsUsed,
-        promoResult.eligibleGuestCount,
-        promoResult.allocations,
-        targetBookingGuestIdsForSelectedIndexes(
-          guestNightRates,
-          application.selectedGuestIndexes
-        ),
-        bookingLodgeId,
-      );
-    }
-    promoChanged = true;
-  } else if (
-    !input.removePromoCode &&
-    !promoRemoved &&
-    promoRedemption?.promoCode
-  ) {
-    // The lock is already held (taken above for both codes of a possible swap),
-    // but this snapshot was loaded with the booking, BEFORE it — so re-read the
-    // usage counter under the lock. Locking and then deciding against a number
-    // read outside the lock would leave the race open (#2299).
-    const promo = await lockAndRefreshPromoCodeUsage(
-      tx,
-      promoRedemption.promoCode
-    );
-    const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
-      promoRedemption,
-      guestNightRates
-    );
-    const application = await validateAndCalculatePromoDiscount(
-      promo,
-      {
-        memberId: bookingOwner(booking).memberId,
-        bookingCheckIn: newCheckIn,
-        totalPriceCents: newTotalPriceCents,
-        guests: guestNightRates,
-      },
-      promo.assignments.length > 0
-        ? promo.assignments.map((assignment) => assignment.memberId)
-        : null,
-      {
-        excludeBookingId: bookingId,
-        db: tx,
-        selectedGuestIndexes,
-        lodgeId: bookingLodgeId,
-        // #2390: the reprice branch keeps the code the booking already has, so
-        // a cap must narrow who it covers rather than refuse the whole edit.
-        // The swap branch above deliberately does NOT do this: there the member
-        // is applying a code, nobody holds a discount from it yet, and "this
-        // code is full" is the honest answer.
-        capOverflow: "coverExisting",
-        // #3123 — resolved by the caller before this transaction opened.
-        todayAtClub,
-      },
-    );
-
-    if (application.error || !application.discount) {
-      await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
-      promoRemoved = true;
-    } else {
-      const promoResult = application.discount;
-      newDiscountCents = promoResult.discountCents;
-      newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
-      adjustmentTargets = promoResult.adjustmentTargets;
-      promoCoverage = await describePromoCapCoverage(tx, {
-        promoCode: promo.code,
-        capCoverage: application.capCoverage,
-      });
-
-      await replacePromoRedemptionAllocations(
-        tx,
-        promoRedemption,
-        newDiscountCents,
-        newPromoAdjustmentCents,
-        promoResult.freeNightsUsed,
-        promoResult.eligibleGuestCount,
-        promoResult.allocations,
-        targetBookingGuestIdsForSelectedIndexes(
-          guestNightRates,
-          application.selectedGuestIndexes
-        ),
-      );
-    }
+      assignedMemberIds: promoCode.assignments.length ? promoCode.assignments.map((a) => a.memberId) : null,
+      // #2266 (MED-4): existing beneficiaries arrive bound by bookingGuestId
+      // and are resolved against THIS transaction's priced guest list, so a
+      // concurrent edit can never re-point the discount; stale ids 400.
+      selectedGuestIndexes: resolvePromoBeneficiarySelection({
+        guestNightRates,
+        addedGuestCount,
+        promoGuestIds: entry.promoGuestIds,
+        promoAddedGuestIndexes: entry.promoAddedGuestIndexes,
+      }),
+      // A code being applied now refuses at its cap: nobody holds it yet.
+      capOverflow: "reject" as const,
+    });
   }
 
+  const priced = await applyBookingPromotions(applications, {
+    memberId: bookingOwner(booking).memberId,
+    bookingCheckIn: newCheckIn,
+    totalPriceCents: newTotalPriceCents,
+    guests: guestNightRates,
+    db: tx,
+    lodgeId: bookingLodgeId,
+    // #3123 — resolved by the caller before this transaction opened.
+    todayAtClub,
+    excludeBookingId: bookingId,
+  });
+
+  const notices: Array<PromoCoverageNotice | null> = [];
+  const orderWrites: Array<{ id: string; applicationOrder: number; nextOrder: number }> = [];
+  const carried: string[] = [];
+  let promoChanged = released.length > 0;
+  for (const { application, applicationOrder, result } of priced.outcomes) {
+    const { redemption } = application;
+    if (result.error || !result.discount) {
+      if (!redemption) {
+        throw new ApiError(result.error ?? "Promo code could not be applied", 400);
+      }
+      await deletePromoRedemptionAndAdjustCount(tx, redemption);
+      promoRemoved = true;
+      notices.push(promoReleasedNotice(application.code, result.error ?? "it no longer applies"));
+      continue;
+    }
+    const discount = result.discount;
+    const targetIds = targetBookingGuestIdsForSelectedIndexes(
+      guestNightRates,
+      result.selectedGuestIndexes,
+    );
+    if (redemption) {
+      carried.push(application.code);
+      notices.push(
+        await describePromoCapCoverage(tx, { promoCode: application.code, capCoverage: result.capCoverage }),
+      );
+      await replacePromoRedemptionAllocations(
+        tx,
+        redemption,
+        discount.discountCents,
+        discount.priceAdjustmentCents,
+        discount.freeNightsUsed,
+        discount.eligibleGuestCount,
+        discount.allocations,
+        targetIds,
+      );
+      orderWrites.push({
+        id: redemption.id,
+        applicationOrder: redemption.applicationOrder,
+        nextOrder: applicationOrder,
+      });
+      continue;
+    }
+    promoChanged = true;
+    if (!shouldPersistPromoRedemption(discount)) continue;
+    carried.push(application.code);
+    // Under `pg_advisory_xact_lock(1)`, which every caller of this function
+    // holds — the switch probe's precondition (`redeemPromoCode`).
+    await redeemPromoCode(
+      tx,
+      application.promoCode.id,
+      bookingId,
+      bookingOwner(booking).memberId,
+      discount.discountCents,
+      discount.priceAdjustmentCents,
+      discount.freeNightsUsed,
+      discount.eligibleGuestCount,
+      discount.allocations,
+      targetIds,
+      bookingLodgeId,
+      applicationOrder,
+    );
+  }
+  // D-3813-2: the booker's order is stored with the booking and can change.
+  if (orderWrites.some((row) => row.applicationOrder !== row.nextOrder)) promoChanged = true;
+  await writePromoApplicationOrder(tx, orderWrites);
+
   return {
-    newDiscountCents,
-    newPromoAdjustmentCents,
+    newDiscountCents: priced.discountCents,
+    newPromoAdjustmentCents: priced.priceAdjustmentCents,
     promoRemoved,
     promoChanged,
-    promoCoverage,
+    promoCodeLabel: carried.length > 0 ? carried.join(", ") : null,
+    promoCoverage: mergePromoCoverageNotices(notices),
     promoEngineRan: true,
-    adjustmentTargets,
+    adjustmentTargets: priced.adjustmentTargets,
   };
 }
 
