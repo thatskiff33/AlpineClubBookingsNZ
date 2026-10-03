@@ -10,7 +10,7 @@ import {
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { recordBookingEvent } from "@/lib/booking-events";
-import { editReviewSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
+import { editReviewRefundGoesBackOnCard, editReviewRefundSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
 import {
   chooseEditReviewChargeRoute,
   executeEditReviewCharge,
@@ -178,6 +178,9 @@ export type EditReviewSettlementRoute =
        * behind them and no invoice line to correct.
        */
       bookingModificationId: string | null;
+      /** #3536 (`INV-PAY-114`): the officer said this went back in cash, never inferred from
+       * "marked paid by hand". Words on the Xero note only; settlement and ledger unchanged. */
+      handedBackInCash?: true;
     }
   | {
       kind: "account-credit";
@@ -290,6 +293,7 @@ export async function chooseEditReviewSettlementRoute({
   amountCents,
   hasIssuedXeroInvoice,
   direction,
+  handedBackInCash = false,
   store,
 }: {
   task: EditReviewSettlementTask;
@@ -321,6 +325,9 @@ export async function chooseEditReviewSettlementRoute({
    * the member's card.
    */
   direction: ManualRefundTaskDirection;
+  /** #3536 (`INV-PAY-114`): the officer's cash answer, read only on the `local-allocation` route;
+   * absent or false keeps the bank-transfer wording. */
+  handedBackInCash?: boolean;
   store: Prisma.TransactionClient;
 }): Promise<EditReviewSettlementRoute | null> {
   if (task.kind !== ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
@@ -408,20 +415,12 @@ export async function chooseEditReviewSettlementRoute({
    * claim, and a capture or webhook replay cannot duplicate a backfill that does
    * not exist.
    */
-  const backfilledPayment =
-    task.paymentId === null
-      ? editReviewSettlementPayment(task.booking)
-      : null;
-  const settlementPaymentId = task.paymentId ?? backfilledPayment?.id ?? null;
-  const settlementPaymentSource =
-    task.paymentId !== null
-      ? (task.payment?.source ?? null)
-      : (backfilledPayment?.source ?? null);
+  // #3536 (`INV-SSOT`): this payment and the card-or-by-hand test are shared with
+  // `editReviewRefundIsPaidBackByHand`, which decides whether the settle queue asks cash-or-bank.
+  const settlementPayment = editReviewRefundSettlementPayment(task);
+  const settlementPaymentId = settlementPayment?.id ?? null;
 
-  if (
-    settlementPaymentId !== null &&
-    settlementPaymentSource === PaymentSource.STRIPE
-  ) {
+  if (settlementPayment !== null && editReviewRefundGoesBackOnCard(settlementPayment)) {
     if (!bookingModificationId) {
       throw new ManualBookingPaymentError(
         REVIEW_SETTLEMENT_ANCHOR_MISSING_MESSAGE,
@@ -433,7 +432,7 @@ export async function chooseEditReviewSettlementRoute({
     // cannot be short of `amountCents`, because the planner allocates
     // newest-first across exactly the transactions the cap totalled.
     const { slices, totalRefundableCents } = await planStripeRefundAllocation({
-      paymentId: settlementPaymentId,
+      paymentId: settlementPayment.id,
       amountCents,
       store,
     });
@@ -445,7 +444,7 @@ export async function chooseEditReviewSettlementRoute({
     }
     return {
       kind: "stripe-refund",
-      paymentId: settlementPaymentId,
+      paymentId: settlementPayment.id,
       bookingModificationId,
       allocation: slices,
     };
@@ -462,6 +461,7 @@ export async function chooseEditReviewSettlementRoute({
       kind: "local-allocation",
       paymentId: settlementPaymentId,
       bookingModificationId,
+      ...(handedBackInCash ? { handedBackInCash: true as const } : {}),
     };
   }
 

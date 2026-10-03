@@ -61,9 +61,11 @@ import {
 import {
   getOperationQueueTypeHint,
   isSuccessfulXeroOperation,
+  readJsonRecord,
   toIsoDate,
 } from "./xero-booking-repair-utils";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import { readModificationNoteWording } from "@/lib/xero-refund-method";
 import { isCancellationRefundDecisionRecorded } from "@/lib/cancellation-settled-money";
 import { isRecordedBookingInvoicePayment } from "@/lib/xero-inbound/object-links";
 import { PART_PAYMENT_RECOGNISED_REASON } from "@/lib/part-payment-recognition-reason";
@@ -959,6 +961,14 @@ export function classifyBookingContext(
                 bookingId: booking.id,
                 bookingModificationId: modification.id,
                 refundAmountCents: expectedCreditNoteCents,
+                // #3536 (`INV-PAY-114`): the wording the original attempt
+                // recorded - its refund method and any owner-added wording,
+                // such as the officer's "Refunded in cash" - read from the
+                // same stored request the amount came from, so the repair
+                // says what the original would have said.
+                ...(storedSettlement?.source === "operation-request"
+                  ? readModificationNoteWording(readJsonRecord(storedSettlement.requestPayload))
+                  : {}),
               },
             });
             addFinding(findings, {

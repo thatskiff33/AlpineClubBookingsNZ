@@ -302,6 +302,10 @@ export async function resolveManualRefundTask(
           amountCents: settlement.amountCents,
           hasIssuedXeroInvoice,
           direction: settlementDirection,
+          // #3536: the officer's cash-or-bank answer, carried into the route
+          // chosen here under the lock.
+          handedBackInCash:
+            input.resolution === "completed" && input.handedBackInCash === true,
           store: tx,
         })
       : null;
