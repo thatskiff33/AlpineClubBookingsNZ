@@ -589,14 +589,16 @@ export async function resolveManualRefundTask(
       bookingPaymentStatus: task.booking.payment?.status ?? null,
       // `INV-PAY-101` (#3529): the invoice a cancellation hand-back refunds
       // against - `hasIssuedXeroInvoice` is false for every CANCELLED booking.
-      // #3827 (`INV-PAY-113`): never for an edit refund hand-back, whose edit
-      // already queued the Xero credit note that corrects the invoice.
       cancellationHandBackInvoiceId:
-        task.kind === ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK &&
-        !isEditRefundHandBackTask(task)
+        task.kind === ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK
           ? (task.booking.payment?.xeroInvoiceId ?? null)
           : null,
-      /** #3827: the Xero leg owes nothing for an edit refund hand-back. */
+      /**
+       * #3827 (`INV-PAY-113`): the Xero leg owes nothing for an edit refund
+       * hand-back - its edit already queued the credit note that corrects the
+       * invoice. The ONE fence: the dispatch returns before reading anything
+       * else, the cancellation invoice above included.
+       */
       editRefundHandBack: isEditRefundHandBackTask(task),
       status:
         resolution === "completed"
