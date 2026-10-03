@@ -30,7 +30,7 @@ export const SECOND_PROMO_CODE_REFUSED_MESSAGE =
  * order; a later child lets the booker choose it).
  */
 export async function nextPromoApplicationOrder(
-  tx: Pick<Prisma.TransactionClient, "promoRedemption" | "clubModuleSettings">,
+  tx: Prisma.TransactionClient,
   bookingId: string,
 ): Promise<number> {
   const last = await tx.promoRedemption.findFirst({
