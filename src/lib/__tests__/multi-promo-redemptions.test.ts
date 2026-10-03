@@ -22,11 +22,8 @@ import {
   soleBookingPromoRedemption,
 } from "../booking-promo-redemptions";
 import { bookingPromoEmailOptions } from "../booking-promo-email-options";
-import {
-  SECOND_PROMO_CODE_REFUSED_MESSAGE,
-  redeemPromoCode,
-  releaseBookingPromoRedemptions,
-} from "../promo";
+import { redeemPromoCode, releaseBookingPromoRedemptions } from "../promo";
+import { SECOND_PROMO_CODE_REFUSED_MESSAGE } from "../promo-redemption-slot";
 import {
   combinedPromoRedemptionEvidence,
   deriveNightAdjustmentState,
