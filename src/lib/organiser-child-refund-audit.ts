@@ -5,7 +5,7 @@
  */
 import { BookingStatus, PaymentSource, type Prisma } from "@prisma/client";
 
-import { readPerChildRefundPlan } from "@/lib/organiser-child-refund";
+import { deserializeRefundPlan } from "@/lib/organiser-child-refund";
 import { EXCLUDED_LEDGER_REFUND_STATUSES } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
 
@@ -70,11 +70,8 @@ export async function findUnbackedOrganiserChildRefundMirrors(
         _sum: { amountCents: true },
       }),
     ]);
-    const plan = group.settlement?.refundPlan;
-    const legacyCents =
-      plan && typeof plan === "object" && !Array.isArray(plan) && readPerChildRefundPlan(plan) === null
-        ? legacyPlanCents(plan as Record<string, unknown>, payment.booking.id)
-        : 0;
+    // A #3653 per-child plan reads as an empty legacy plan, by its shape.
+    const legacyCents = deserializeRefundPlan(group.settlement?.refundPlan).get(payment.booking.id) ?? 0;
     const providerRefundCents = refunds._sum.amountCents ?? 0;
     const accountCreditCents = Math.max(0, credits._sum.amountCents ?? 0);
     let remaining = payment.refundedAmountCents - providerRefundCents;
@@ -99,9 +96,4 @@ export async function findUnbackedOrganiserChildRefundMirrors(
     });
   }
   return findings;
-}
-
-function legacyPlanCents(plan: Record<string, unknown>, childId: string): number {
-  const cents = plan[childId];
-  return typeof cents === "number" && Number.isInteger(cents) && cents > 0 ? cents : 0;
 }

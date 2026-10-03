@@ -31,6 +31,7 @@ import type {
   MemberGuestDelegateAnswer,
   MemberGuestStillOnBookingReason,
 } from "@/lib/member-guest-email-notes";
+import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import {
@@ -669,7 +670,16 @@ export async function expireMemberGuestConsent(params: {
           consentStatus: true,
           consentExpiresAt: true,
           bookingId: true,
-          booking: { select: { id: true, lodgeId: true, memberId: true } },
+          booking: {
+            select: {
+              id: true,
+              lodgeId: true,
+              memberId: true,
+              organiserSettled: true,
+              parentBookingId: true,
+              payment: { select: { source: true } },
+            },
+          },
         },
       });
 
@@ -724,7 +734,11 @@ export async function expireMemberGuestConsent(params: {
         // writing it here would attribute to them an act they did not take.
         actorMemberId: expiryActorMemberId,
         kind: "CONSENT_EXPIRY",
-        settlementMethod: "credit",
+        // #3653: D-15's credit election is the OWNER's account. A booking the
+        // group organiser paid for by card has one disposition instead - the
+        // organiser's card - and electing credit there is refused, which would
+        // leave the lapsed guest on the booking for ever. It falls through.
+        ...(paidByOrganiserCard(guest.booking) ? {} : { settlementMethod: "credit" as const }),
         today: clubTodayDateOnly,
         format,
       });

@@ -61,6 +61,7 @@ import {
   targetBookingGuestIdsForSelectedIndexes,
 } from "@/lib/promo-stored-guest-targets";
 import { ApiError as SharedApiError } from "@/lib/api-error";
+import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
@@ -1112,7 +1113,15 @@ export async function POST(
        * plus the per-lodge key, above), so the ask being superseded is read under
        * the same locks that serialise every counterpart writer in this route.
        */
-      if (hasSucceededPayment && priceDiffCents > 0) {
+      if (hasSucceededPayment && priceDiffCents > 0 && paidByOrganiserCard(booking)) {
+        // #3653: the organiser paid for this booking out of one combined card
+        // payment; an ask here would charge the joiner. Refused before commit,
+        // exactly as `applyPaymentAdjustments` refuses the other doors' asks.
+        throw new ApiError(
+          "This booking was paid for by the group organiser, so a change that raises its price cannot be charged here. Contact the club to make this change.",
+          409,
+        );
+      } else if (hasSucceededPayment && priceDiffCents > 0) {
         additionalAsk = sizeAdditionalAsk({
           priceDiffCents,
           // A guest add never charges one; the route passes 0 to the Xero

@@ -32,3 +32,24 @@ export function organiserHasPaidSettlement(
     (ORGANISER_PAID_SETTLEMENT_STATUSES as readonly string[]).includes(settlement.status)
   );
 }
+
+/**
+ * #3653 (`INV-PAY-113`): a joiner's booking the organiser paid for BY CARD - an
+ * organiser-settled child whose payment mirror came from the group's combined
+ * Stripe payment. Its reductions and cancellation go back to the organiser's
+ * card, never to the joiner as account credit. A child the organiser settled
+ * by Internet Banking is not one: no card money moved, and its group-invoice
+ * settlement belongs to #3642. The settle path writes the child's mirror with
+ * the settlement's source, so the mirror's source is the answer here.
+ */
+export function paidByOrganiserCard(booking: {
+  organiserSettled: boolean;
+  parentBookingId: string | null;
+  payment: { source: string } | null;
+}): boolean {
+  return (
+    booking.organiserSettled &&
+    booking.parentBookingId != null &&
+    booking.payment?.source === "STRIPE"
+  );
+}

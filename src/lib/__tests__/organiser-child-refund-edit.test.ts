@@ -4,7 +4,11 @@ import { resolve } from "node:path";
 import { PaymentSource, PaymentStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 
-import { applyPaymentAdjustments } from "@/lib/booking-modify-settlement";
+import { requireCalendarDate } from "@/lib/club-time";
+import {
+  applyPaymentAdjustments,
+  calculateModificationSettlementOptions,
+} from "@/lib/booking-modify-settlement";
 import type { BookingModificationSettlementOptions } from "@/lib/booking-modify-settlement";
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { OrganiserChildRefundRefusedError } from "@/lib/organiser-child-refund";
@@ -128,6 +132,88 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     });
     expect(result.organiserChildRefund).toBeNull();
     expect(result.pendingRefundAmountCents).toBe(1500);
+  });
+
+  /** A policy db for `calculateModificationSettlementOptions`: one 100% card, 100% credit tier. */
+  const POLICY_DB = {
+    lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge_1" }) },
+    bookingPeriod: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
+    bookingDefaults: { findFirst: vi.fn().mockResolvedValue(null), findUnique: vi.fn().mockResolvedValue(null) },
+    cancellationPolicy: {
+      findMany: vi.fn().mockResolvedValue([
+        { lodgeId: "lodge_1", daysBeforeStay: 0, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0, creditFixedFeeCents: 0 },
+      ]),
+    },
+  } as unknown as Parameters<typeof calculateModificationSettlementOptions>[0]["db"];
+
+  function ibChild() {
+    const booking = child();
+    return {
+      ...booking,
+      payment: { ...booking.payment!, source: PaymentSource.INTERNET_BANKING },
+    } as unknown as LoadedBookingForModify;
+  }
+
+  it("quotes the organiser's card only for a child the organiser paid for BY CARD", async () => {
+    const todayAtClub = requireCalendarDate("2026-07-01");
+    const card = await calculateModificationSettlementOptions({
+      booking: child(),
+      netChargeCents: -1500,
+      db: POLICY_DB,
+      todayAtClub,
+    });
+    expect(card).toMatchObject({ returnsToOrganiser: true, requiresSettlementMethod: false, accountCreditAmountCents: 0 });
+
+    // An organiser who settled by Internet Banking moved no card money: the
+    // child keeps the ordinary choice it had before #3653 (#3642 owns that
+    // group settlement), and is never quoted a refund to a card.
+    const ib = await calculateModificationSettlementOptions({
+      booking: ibChild(),
+      netChargeCents: -1500,
+      db: POLICY_DB,
+      todayAtClub,
+    });
+    expect(ib).toMatchObject({ returnsToOrganiser: false, requiresSettlementMethod: true, accountCreditAmountCents: 1500 });
+  });
+
+  it("leaves an Internet Banking organiser child's reduction off the organiser's card", async () => {
+    const tx = txWithSettlement(CARD_SETTLEMENT);
+    const result = await applyPaymentAdjustments(tx, {
+      booking: ibChild(),
+      priceDiffCents: -1500,
+      changeFeeCents: 0,
+      settlementOptions: {
+        ...ORGANISER_OPTIONS,
+        accountCreditAmountCents: 1500,
+        returnsToOrganiser: false,
+        requiresSettlementMethod: true,
+      },
+      settlementMethod: "credit",
+    });
+    expect(result.organiserChildRefund).toBeNull();
+    expect(result.accountCreditAmountCents).toBe(1500);
+  });
+
+  it("refuses a price increase on a child the organiser paid for by card, before the edit commits", async () => {
+    // An ask here would charge the JOINER for a booking the organiser paid for,
+    // and its transaction row would make the next reconcile wipe the child's
+    // refunded total - the 10000 paid / 4000 refunded / +1000 sequence that
+    // re-promised the 4000 to a later cancellation.
+    await expect(
+      applyPaymentAdjustments(txWithSettlement(CARD_SETTLEMENT), {
+        booking: child(),
+        priceDiffCents: 1000,
+        changeFeeCents: 0,
+      }),
+    ).rejects.toBeInstanceOf(OrganiserChildRefundRefusedError);
+
+    // The Internet Banking child keeps its supplementary-invoice path.
+    const ib = await applyPaymentAdjustments(txWithSettlement(null), {
+      booking: ibChild(),
+      priceDiffCents: 1000,
+      changeFeeCents: 0,
+    });
+    expect(ib.additionalAsk.amountCents).toBe(0);
   });
 
   it("every door that settles an edit through applyPaymentAdjustments writes the child's refund debt before it commits", () => {

@@ -49,9 +49,11 @@ import {
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { ApiError } from "@/lib/api-error";
 import {
+  OrganiserChildRefundRefusedError,
   planOrganiserChildModificationRefund,
   type CombinedCardSettlement,
 } from "@/lib/organiser-child-refund";
+import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
 
 export type BookingModificationSettlementOptions = {
   basisAmountCents: number;
@@ -122,7 +124,10 @@ export async function calculateModificationSettlementOptions({
   db,
   todayAtClub,
 }: {
-  booking: Pick<LoadedBookingForModify, "checkIn" | "status" | "payment" | "lodgeId" | "organiserSettled">;
+  booking: Pick<
+    LoadedBookingForModify,
+    "checkIn" | "status" | "payment" | "lodgeId" | "organiserSettled" | "parentBookingId"
+  >;
   netChargeCents: number;
   db: CancellationPolicyDb;
   /**
@@ -155,8 +160,10 @@ export async function calculateModificationSettlementOptions({
     creditRefundPercentage,
   } = calculateDualRefundAmounts(basisAmountCents, daysUntilCheckIn, policy);
 
-  if (booking.organiserSettled) {
-    // #3653: one disposition, the organiser's card, so nothing to choose.
+  if (paidByOrganiserCard(booking)) {
+    // #3653: one disposition, the organiser's card, so nothing to choose. A
+    // child the organiser settled by Internet Banking keeps the ordinary
+    // options: no card money moved, and that group's settlement is #3642's.
     return {
       basisAmountCents,
       cardRefundAmountCents,
@@ -344,7 +351,16 @@ export async function applyPaymentAdjustments(
       // The Xero arm below is deliberately untouched: `xeroAdditionalAmountCents`
       // sizes a SUPPLEMENTARY INVOICE for THIS edit, which supersedes nothing and
       // is collected alongside whatever came before it.
-      if (hasSucceededPayment) {
+      if (hasSucceededPayment && paidByOrganiserCard(booking)) {
+        // #3653: the organiser paid for this booking out of ONE combined card
+        // payment. An ask minted here would charge the JOINER, and its
+        // transaction row would make the next reconcile recompute this
+        // payment's refunded total from rows that do not hold the organiser's
+        // refunds. Refused before the edit commits.
+        throw new OrganiserChildRefundRefusedError(
+          "This booking was paid for by the group organiser, so a change that raises its price cannot be charged here. Contact the club to make this change.",
+        );
+      } else if (hasSucceededPayment) {
         additionalAsk = sizeAdditionalAsk({
           priceDiffCents,
           changeFeeCents,
