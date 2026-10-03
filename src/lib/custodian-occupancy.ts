@@ -199,9 +199,8 @@ export function holdCoversNight(
  *   already holds, because that one left the set when it was first created.
  *
  * The capacity engines work in per-night COUNTS rather than bed sets, so they
- * subtract the custodians in count shape — `buildCustodianNightIndex` /
- * `buildLodgeCustodianNightCounter`, fed to `wholeLodgeHoldRepresentedBeds` in
- * `capacity.ts`. Two loaders, one per question, both keyed by the same
+ * subtract the custodians in count shape — `buildLodgeCustodianNightCounter`,
+ * fed to `wholeLodgeHoldRepresentedBeds` in `capacity.ts`. Two loaders, one per question, both keyed by the same
  * inclusive {@link holdCoversNight}: the COUNT reads
  * {@link findCustodianOccupancies} (a held bed or the custodian tick, #3817),
  * the BED views read {@link findCustodianBedHolds} (a held bed only). A ticked
@@ -364,30 +363,6 @@ export async function findCustodianOccupancies(input: {
     startDate: formatDateOnly(row.startDate),
     endDate: formatDateOnly(row.endDate),
   }));
-}
-
-/**
- * Per-night custodian head COUNT for a set of holds.
- *
- * A count, not a flag: two custodians handing over on the same night hold two
- * beds and subtract two. Keys are `YYYY-MM-DD`; nights with no hold are absent
- * from the map (callers use `?? 0`).
- */
-export function buildCustodianNightIndex(
-  holds: readonly Pick<CustodianBedHold, "startDate" | "endDate">[],
-  nights: readonly Date[],
-): Map<string, number> {
-  const index = new Map<string, number>();
-  if (holds.length === 0) return index;
-  for (const night of nights) {
-    const key = formatDateOnly(night);
-    let count = 0;
-    for (const hold of holds) {
-      if (holdCoversNight(hold, key)) count += 1;
-    }
-    if (count > 0) index.set(key, count);
-  }
-  return index;
 }
 
 /**
