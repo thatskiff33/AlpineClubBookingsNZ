@@ -86,7 +86,11 @@ const store = {
       rows.frozenAppliedCents === null ? null : { snapshot: { ledger: { appliedCreditCents: rows.frozenAppliedCents } } },
     ),
   },
-  manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: rows.earlierSharesCents } })) },
+  manualRefundTask: {
+    aggregate: vi.fn(async () => ({ _sum: { amountCents: rows.earlierSharesCents } })),
+    // #3835: the captured route's siblings - none here.
+    findMany: vi.fn(async () => []),
+  },
   bookingModification: { findMany: vi.fn(async () => rows.priceRebaseRows) },
   payment: { update: vi.fn() },
 };
@@ -296,6 +300,30 @@ describe("what of the share is applied credit coming back", () => {
 
     // A $50 share here: $30 of headroom is left, so $30 back and $20 minted.
     expect(await write(5_000, null)).toMatchObject({ givenBackCents: 3_000, mintedCents: 2_000, cancelled: false });
+  });
+
+  it("MUTATION: #3835 - with a captured payment on a cancelled booking, mints only what the cancellation's refund left owed", async () => {
+    // $200 by card, cancelled at 50% less $20: $80 refunded, so $25 of a $50 share.
+    bookingIs("CANCELLED");
+    h.loadCancellationPolicy.mockResolvedValue([TIERS[1]!.rule]);
+    store.bookingEvent.findFirst.mockResolvedValueOnce({
+      occurredAt: RESTORED_AT,
+      snapshot: { refundMethod: "card", paidAmountCents: 20_000, settledAmountCents: 8_000, changeFeeCents: 0, ledger: { appliedCreditCents: 0, creditRestoredCents: 0 } },
+    } as never);
+
+    expect(await write(5_000, null, "payment-9")).toEqual({ givenBackCents: 0, mintedCents: 2_500, cancelled: false, invoiceReductionCents: null, agreedGiveBackCents: null });
+    expect(h.createBookingModificationCredit).toHaveBeenCalledWith("member-1", 2_500, "booking-1", "mod-1", undefined, store, "payment-9");
+  });
+
+  it("MUTATION: #3835 - and mints nothing where the cancellation already refunded it all", async () => {
+    bookingIs("CANCELLED");
+    store.bookingEvent.findFirst.mockResolvedValueOnce({
+      occurredAt: RESTORED_AT,
+      snapshot: { refundMethod: "card", paidAmountCents: 20_000, settledAmountCents: 20_000, changeFeeCents: 0, ledger: { appliedCreditCents: 0, creditRestoredCents: 0 } },
+    } as never);
+
+    expect((await write(5_000, null, "payment-9")).mintedCents).toBe(0);
+    expect(h.createBookingModificationCredit).not.toHaveBeenCalled();
   });
 
   it("with a captured payment, mints the whole share against it and gives nothing back", async () => {

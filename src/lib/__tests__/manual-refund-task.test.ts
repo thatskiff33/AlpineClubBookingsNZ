@@ -50,6 +50,8 @@ const mocks = vi.hoisted(() => ({
   bookingFindUniqueOrThrow: vi.fn(),
   paymentUpdate: vi.fn(),
   bookingEventFindFirst: vi.fn(),
+  manualRefundTaskFindMany: vi.fn(),
+  paymentRecoveryOperationAggregate: vi.fn(),
   // #3032: the card route is no longer one opaque helper. The completion freezes
   // the allocation and persists the refund DEBT inside its own transaction, then
   // executes exactly those slices after the commit - booking-cancel's #1349
@@ -221,6 +223,7 @@ vi.mock("@/lib/member-credit", () => {
 });
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
+import { completionMessage } from "@/lib/manual-refund-task-copy";
 import { loadCancellationPolicy } from "@/lib/cancellation";
 import logger from "@/lib/logger";
 import { postHandBackLedgerLine } from "@/lib/booking-ledger-hand-back";
@@ -250,7 +253,11 @@ const tx = {
     findUnique: (...a: unknown[]) => mocks.manualRefundTaskFindUnique(...a),
     updateMany: (...a: unknown[]) => mocks.manualRefundTaskUpdateMany(...a),
     aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }),
+    // #3835: the sibling reviews a cancelled booking's captured share nets across.
+    findMany: (...a: unknown[]) => mocks.manualRefundTaskFindMany(...a),
   },
+  // #3835: what those siblings sent back to the card.
+  paymentRecoveryOperation: { aggregate: (...a: unknown[]) => mocks.paymentRecoveryOperationAggregate(...a) },
   // #3032: the anchor-taken check (owner decision D-3032-1) reads this inside
   // the same transaction, before the claim.
   memberCredit: {
@@ -424,6 +431,8 @@ beforeEach(() => {
   });
   mocks.paymentUpdate.mockResolvedValue({});
   mocks.bookingEventFindFirst.mockResolvedValue(null);
+  mocks.manualRefundTaskFindMany.mockResolvedValue([]);
+  mocks.paymentRecoveryOperationAggregate.mockResolvedValue({ _sum: { amountCents: null } });
   mocks.planKeptLateCaptureXeroRecord.mockResolvedValue({ kind: "none" });
   mocks.finishKeptLateCaptureXeroRecord.mockResolvedValue(undefined);
   mocks.settleKeptLateCaptureRecordOnApproval.mockResolvedValue(undefined);
@@ -655,6 +664,28 @@ function editReviewTask(overrides: Record<string, unknown> = {}) {
     reviewContext: reviewContext(),
     booking: { memberId: "member-1", status: "PAID", payment: null },
     ...overrides,
+  };
+}
+
+/**
+ * #3835: a paid cancellation's CANCELLED event, as `writePaidCancellationEvent`
+ * freezes it: $200 by card, nothing applied, unless a case says otherwise.
+ */
+function frozenCardCancellation({
+  settledAmountCents,
+  paidAmountCents = 20_000,
+  appliedCreditCents = 0,
+  creditRestoredCents = 0,
+}: { settledAmountCents: number; paidAmountCents?: number; appliedCreditCents?: number; creditRestoredCents?: number }) {
+  return {
+    occurredAt: new Date("2026-07-01T00:00:00.000Z"),
+    snapshot: {
+      refundMethod: "card",
+      paidAmountCents,
+      settledAmountCents,
+      changeFeeCents: 0,
+      ledger: { appliedCreditCents, creditRestoredCents },
+    },
   };
 }
 
@@ -3302,6 +3333,8 @@ describe("#3194 - a review raised before the member paid still refunds to their 
         booking: paidBooking({ status: "CANCELLED" }),
       })
     );
+    // #3835: a cancellation that kept everything, so the share is owed whole.
+    mocks.bookingEventFindFirst.mockResolvedValue(frozenCardCancellation({ settledAmountCents: 0 }));
 
     await resolveManualRefundTask({
       taskId: "task-1",
@@ -3875,5 +3908,79 @@ describe("#3643 - a part-payment review is dismiss-only", () => {
       }),
       expect.anything(),
     );
+  });
+});
+
+/**
+ * #3835: a card-paid booking cancelled before its review completes. The card
+ * route refunds only what the cancellation's refund left owed - planned,
+ * capped, frozen as the debt, sent, posted on the ledger and told to Xero at
+ * that figure, never the typed share. The figures themselves are
+ * `edit-financial-review-cancel-netting.test.ts`'s.
+ */
+describe("#3835 - a review completed after a card-paid booking was cancelled", () => {
+  const cancelledCardTask = () =>
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({
+        payment: { source: PaymentSource.STRIPE },
+        booking: {
+          memberId: "member-1",
+          status: "CANCELLED",
+          checkIn: new Date("2026-08-01T00:00:00.000Z"),
+          lodgeId: "lodge-1",
+          payment: { id: "payment-1", status: "PARTIALLY_REFUNDED", amountCents: 20_000, refundedAmountCents: 8_000, source: PaymentSource.STRIPE, stripeCustomerId: null, xeroInvoiceId: "inv-1" },
+        },
+      }),
+    );
+  const complete = () =>
+    resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the booking's own payment history.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 5_000,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+
+  it("MUTATION: cancelled at 50% less $20 ($80 back), a $50 share refunds the $25 still owed - not $50", async () => {
+    cancelledCardTask();
+    mocks.bookingEventFindFirst.mockResolvedValue(frozenCardCancellation({ settledAmountCents: 8_000 }));
+    vi.mocked(loadCancellationPolicy).mockResolvedValueOnce([{ daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 2_000 }]);
+
+    const result = await complete();
+
+    expect(mocks.planStripeRefundAllocation).toHaveBeenCalledWith(expect.objectContaining({ paymentId: "payment-1", amountCents: 2_500 }));
+    expect(mocks.enqueueEditFinancialReviewRefundRecovery).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 2_500 }));
+    expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 2_500 }));
+    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "REFUNDED", amountCents: 2_500 }));
+    expect(vi.mocked(postReviewClosureLedgerLines)).toHaveBeenCalledWith(
+      expect.objectContaining({ settlement: { direction: "REFUND_TO_MEMBER", amountCents: 2_500 } }),
+    );
+    // The task keeps the share the officer typed, as #3791's does.
+    expect(result.amountCents).toBe(5_000);
+    expect(result.settlementAmountCents).toBe(2_500);
+  });
+
+  it("MUTATION: cancelled at 100%, nothing is owed: the task completes with no refund, no debt, no event, no stand-in and a receipt that says so", async () => {
+    cancelledCardTask();
+    mocks.bookingEventFindFirst.mockResolvedValue(frozenCardCancellation({ settledAmountCents: 20_000 }));
+
+    const result = await complete();
+
+    expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueEditFinancialReviewRefundRecovery).not.toHaveBeenCalled();
+    expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    expect(vi.mocked(postReviewClosureLedgerLines)).toHaveBeenCalledWith(expect.objectContaining({ settlement: null }));
+    expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
+    expect(completionMessage(result)).toMatch(/^Nothing further was credited or refunded/);
+  });
+
+  it("MUTATION: refuses with the task OPEN where the cancellation's refund cannot be reproduced", async () => {
+    cancelledCardTask();
+
+    await expect(complete()).rejects.toMatchObject({ status: 409 });
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
   });
 });
