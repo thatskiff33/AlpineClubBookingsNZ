@@ -657,6 +657,50 @@ describe("custodian bed holds and partner-shared admission (#2286)", () => {
     expect(result.available).toBe(true);
     expect(result.partnerSharedHeadroom).toBe(1);
   });
+
+  it("counts a ticked custodian with no bed once when they are in the party (#3817)", async () => {
+    // 3 beds, no doubles, 2 already booked, and a bedless ticked custodian:
+    // full. The custodian as a guest is the same person, so they fit; anyone
+    // else still does not.
+    const withTickedCustodian = () => {
+      const base = fakeDb({ beds: 3, doubles: 0, bookings: [fullStayBooking(2)] }) as object;
+      return {
+        ...base,
+        hutLeaderAssignment: {
+          findMany: vi.fn().mockResolvedValue([
+            {
+              id: "custodian-0",
+              memberId: "custodian-member",
+              bedId: null,
+              startDate: CHECK_IN,
+              endDate: new Date(CHECK_OUT.getTime() - 24 * 60 * 60 * 1000),
+            },
+          ]),
+        },
+      } as never;
+    };
+    const asGuest = await checkCapacityForPartnerSharedAdmission(
+      LODGE,
+      CHECK_IN,
+      CHECK_OUT,
+      [{ stayStart: CHECK_IN, stayEnd: CHECK_OUT, memberId: "custodian-member" }],
+      [],
+      undefined,
+      withTickedCustodian(),
+    );
+    expect(asGuest.available).toBe(true);
+
+    const someoneElse = await checkCapacityForPartnerSharedAdmission(
+      LODGE,
+      CHECK_IN,
+      CHECK_OUT,
+      nightGuests(1),
+      [],
+      undefined,
+      withTickedCustodian(),
+    );
+    expect(someoneElse.available).toBe(false);
+  });
 });
 
 

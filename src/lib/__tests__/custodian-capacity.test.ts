@@ -356,3 +356,172 @@ describe("a ticked custodian takes one space per night (#3817)", () => {
     expect(result.available).toBe(false);
   });
 });
+
+/**
+ * "One person is one space" (#3817, owner decision on #3820, 3 Oct 2026). A
+ * ticked custodian with no bed who is also a guest at the lodge is not counted
+ * twice — not by the count, and not by the admission check, which adds the
+ * requested party on top of it. A held bed is a physical bed kept out of the
+ * pool, so it still takes its own space whoever the guests are.
+ */
+describe("a ticked custodian who is also a guest takes one space (#3817)", () => {
+  const OTHER_LODGE = "lodge-b";
+  const night = (iso: string) => parseDateOnly(iso);
+  type Row = {
+    id: string;
+    memberId: string;
+    lodgeId?: string;
+    bedId: string | null;
+    isCustodian: boolean;
+    startDate: Date;
+    endDate: Date;
+  };
+  type Booking = {
+    id: string;
+    lodgeId?: string;
+    checkIn: Date;
+    checkOut: Date;
+    guests: Array<{ memberId: string | null; stayStart: Date; stayEnd: Date; nights: [] }>;
+  };
+
+  /** Query-faithful doubles: the lodge scope, the bed-or-tick filter and the edit's exclusion. */
+  function serve(rows: Row[], bookings: Booking[]) {
+    mocks.hutLeaderAssignmentFindMany.mockImplementation(
+      async ({ where }: { where: { lodgeId?: string; OR?: Array<Record<string, unknown>> } }) =>
+        rows.filter(
+          (row) =>
+            (row.lodgeId ?? LODGE) === where.lodgeId &&
+            (where.OR ?? []).some((arm) =>
+              "isCustodian" in arm ? row.isCustodian === arm.isCustodian : row.bedId !== null,
+            ),
+        ),
+    );
+    mocks.bookingFindMany.mockImplementation(
+      async ({ where }: { where: { lodgeId?: string; id?: { not?: string } } }) =>
+        bookings.filter(
+          (booking) =>
+            (booking.lodgeId ?? LODGE) === where.lodgeId && booking.id !== where.id?.not,
+        ),
+    );
+  }
+
+  const guest = (memberId: string | null, from: string, to: string) => ({
+    memberId,
+    stayStart: night(from),
+    stayEnd: night(to),
+    nights: [] as [],
+  });
+  const tick = (overrides: Partial<Row> = {}): Row => ({
+    id: "c1",
+    memberId: "custodian",
+    bedId: null,
+    isCustodian: true,
+    startDate: night("2026-07-02"),
+    endDate: night("2026-07-03"),
+    ...overrides,
+  });
+  /** Night 07-02 is full at capacity 2: the custodian's tick plus one other guest. */
+  const otherGuestBooking: Booking = {
+    id: "bk-other",
+    checkIn: night("2026-07-02"),
+    checkOut: night("2026-07-03"),
+    guests: [guest("someone-else", "2026-07-02", "2026-07-03")],
+  };
+
+  async function admit(party: Array<string | null>, excludeBookingId?: string) {
+    return checkCapacityForGuestRanges(
+      LODGE,
+      night("2026-07-02"),
+      night("2026-07-03"),
+      party.map((memberId) => guest(memberId, "2026-07-02", "2026-07-03")),
+      excludeBookingId,
+      db(),
+    );
+  }
+
+  beforeEach(() => {
+    mocks.lodgeSettingsFindUnique.mockResolvedValue({ capacity: 2 });
+  });
+
+  it("the count does not add the tick on a night the custodian is a guest, and does on the nights they are not", async () => {
+    serve([tick()], [
+      {
+        id: "bk-custodian",
+        checkIn: night("2026-07-02"),
+        checkOut: night("2026-07-03"),
+        guests: [guest("custodian", "2026-07-02", "2026-07-03")],
+      },
+    ]);
+    const result = await checkCapacity(LODGE, night("2026-07-02"), night("2026-07-04"), 0, undefined, db());
+    expect(result.nightDetails.map((n) => n.occupiedBeds)).toEqual([1, 1]);
+  });
+
+  it("admits the custodian as a guest on a night the lodge is full: they are one space", async () => {
+    serve([tick()], [otherGuestBooking]);
+    expect((await admit(["custodian"])).available).toBe(true);
+  });
+
+  it("still refuses anyone else on that full night (a non-custodian is unchanged)", async () => {
+    serve([tick()], [otherGuestBooking]);
+    expect((await admit([null])).available).toBe(false);
+    expect((await admit(["someone-new"])).available).toBe(false);
+  });
+
+  it("gives back one tick however many rows the party gives the custodian", async () => {
+    serve([tick()], [otherGuestBooking]);
+    const result = await admit(["custodian", "custodian"]);
+    // Two guest rows are two guests; only the tick is de-duplicated.
+    expect(result.nightDetails[0]!.occupiedBeds).toBe(3);
+  });
+
+  it("keeps a held bed's own space when its custodian is also a guest (ticked or not)", async () => {
+    for (const isCustodian of [true, false]) {
+      serve([tick({ bedId: "bed-1", isCustodian })], [otherGuestBooking]);
+      expect((await admit(["custodian"])).available).toBe(false);
+    }
+  });
+
+  it("still counts the tick when the custodian's booking is at a different lodge", async () => {
+    serve([tick()], [
+      otherGuestBooking,
+      {
+        id: "bk-away",
+        lodgeId: OTHER_LODGE,
+        checkIn: night("2026-07-02"),
+        checkOut: night("2026-07-03"),
+        guests: [guest("custodian", "2026-07-02", "2026-07-03")],
+      },
+    ]);
+    const here = await checkCapacity(LODGE, night("2026-07-02"), night("2026-07-03"), 0, undefined, db());
+    expect(here.nightDetails[0]!.occupiedBeds).toBe(2);
+    // And admitting them at the OTHER lodge gives back nothing here or there.
+    mocks.lodgeSettingsFindUnique.mockResolvedValue({ capacity: 1 });
+    const away = await checkCapacityForGuestRanges(
+      OTHER_LODGE,
+      night("2026-07-02"),
+      night("2026-07-03"),
+      [guest("custodian", "2026-07-02", "2026-07-03")],
+      "bk-away",
+      db(),
+    );
+    expect(away.available).toBe(true);
+    expect(away.nightDetails[0]!.occupiedBeds).toBe(1);
+  });
+
+  it("an edit that adds the custodian to a booking at their lodge fits a full night", async () => {
+    // bk-edit holds the one other guest; the edit adds the custodian to it.
+    serve([tick()], [{ ...otherGuestBooking, id: "bk-edit" }]);
+    expect((await admit(["someone-else", "custodian"], "bk-edit")).available).toBe(true);
+    expect((await admit(["someone-else", null], "bk-edit")).available).toBe(false);
+  });
+
+  it("checkCapacity gives back the tick for a party it is told about (the date-move path)", async () => {
+    serve([tick()], [otherGuestBooking]);
+    const told = await checkCapacity(
+      LODGE, night("2026-07-02"), night("2026-07-03"), 1, undefined, db(), ["custodian"],
+    );
+    expect(told.available).toBe(true);
+    const untold = await checkCapacity(LODGE, night("2026-07-02"), night("2026-07-03"), 1, undefined, db());
+    expect(untold.available).toBe(false);
+  });
+});
