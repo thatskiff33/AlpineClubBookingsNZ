@@ -50,7 +50,11 @@ import {
   enqueuePaymentIntentCancellationRecovery,
   markBookingCancellationRefundRecoverySucceeded,
   recordBookingCancellationRefundRecoveryInlineError,
+  runPaymentRecoveryOperationNow,
 } from "@/lib/payment-recovery";
+import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { organiserChildCancelBasis, reserveOrganiserChildRefund } from "@/lib/organiser-child-refund";
+import { buildOrganiserChildCancellationRefundKey } from "@/lib/payment-recovery-keys";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
 import {
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
@@ -1498,7 +1502,15 @@ async function performBookingCancellation(
       return { claimed: false as const };
     }
     const payment = lockedPayment;
-    refundMethod = forcedCancelRefundMethod(payment.source) ?? refundMethod;
+    // #3653 (`INV-PAY-113`): a joiner cancelling a booking the group organiser
+    // paid for by card. Its refund goes back to the ORGANISER's card, out of
+    // the combined payment, with no account-credit option; the policy tiers
+    // what remains after refunds already made AND owed.
+    const organiserCard = paidByOrganiserCard({ ...fresh, payment })
+      ? await organiserChildCancelBasis(tx, fresh, payment)
+      : null;
+    const forcedMethod = forcedCancelRefundMethod(payment.source, organiserCard !== null);
+    refundMethod = forcedMethod === "credit" ? "credit" : forcedMethod === "organiser_card" ? "card" : refundMethod;
 
     // #1491 (review): materialize any folded (mirror-only) refund into the
     // capture ledger BEFORE executing new refunds. The inbound reconcile
@@ -1561,7 +1573,9 @@ async function performBookingCancellation(
     const restoreMemberId = bookingOwner(fresh).memberId;
     const appliedCreditCents = await deriveBookingAppliedCreditCents(bookingId, tx);
     const money = paidCancellationMoney({
-      payment,
+      payment: organiserCard
+        ? { ...payment, refundedAmountCents: organiserCard.committedRefundCents }
+        : payment,
       finalPriceCents: fresh.finalPriceCents,
       appliedCreditCents,
       restoresToMemberLedger: restoreMemberId !== null,
@@ -1569,7 +1583,8 @@ async function performBookingCancellation(
       policy,
       refundMethod,
     });
-    const { paidAmountCents, refundableBaseCents, refundAmountCents, refundPercentage } = money;
+    const { paidAmountCents, refundableBaseCents, refundPercentage } = money;
+    let refundAmountCents = money.refundAmountCents;
 
     // Idempotent-by-claim credit restore: only reached once per claim. The
     // applied-credit slice is now tiered by the SAME card tier as the card
@@ -1725,7 +1740,25 @@ async function performBookingCancellation(
     // minting credit alongside a cash payout is a double refund. The policy
     // MATH is unchanged — refundMethod is already coerced to "credit" for an
     // internet-banking payment above, which is the owner-decided tier (28 Jul).
-    const manualDisposition = Boolean(payment.manuallyMarkedPaidAt);
+    // #3653: the organiser child's debt, written with the claim, clamped to
+    // what the combined payment and the child still hold. Nothing is returned
+    // when that payment no longer holds money, and the cancel says so.
+    let organiserChildDebtId: string | null = null;
+    if (organiserCard && refundAmountCents > 0) {
+      const debt = organiserCard.settlement
+        ? await reserveOrganiserChildRefund(tx, {
+            key: buildOrganiserChildCancellationRefundKey(organiserCard.settlement.id, bookingId),
+            settlement: organiserCard.settlement,
+            childBookingId: bookingId,
+            childPayment: payment,
+            amountCents: refundAmountCents,
+            overCap: "clamp",
+          })
+        : null;
+      refundAmountCents = debt?.amountCents ?? 0;
+      organiserChildDebtId = debt?.id ?? null;
+    }
+    const manualDisposition = !organiserCard && Boolean(payment.manuallyMarkedPaidAt);
     const branch = paidCancellationBranch({
       manualDisposition,
       refundMethod,
@@ -1792,7 +1825,7 @@ async function performBookingCancellation(
     // ledger dedupes on refund id.
     let cardRefundPlan: RefundAllocationSlice[] | null = null;
     let plannedCardRefundCents = 0;
-    if (refundMethod === "card" && refundAmountCents > 0) {
+    if (refundMethod === "card" && refundAmountCents > 0 && !organiserCard) {
       const { slices, plannedAmountCents } = await planStripeRefundAllocation({
         paymentId: payment.id,
         amountCents: refundAmountCents,
@@ -1883,6 +1916,7 @@ async function performBookingCancellation(
       manualRefundTaskId,
       clearingOperationId,
       branch,
+      organiserChildDebtId,
     };
   }).catch((err: unknown) => {
     if (err instanceof PartPaymentChangedError) return { claimed: false as const };
@@ -1913,6 +1947,7 @@ async function performBookingCancellation(
     manualRefundTaskId,
     clearingOperationId,
     branch,
+    organiserChildDebtId,
   } = claim;
   const paymentId = payment.id;
 
@@ -2114,6 +2149,60 @@ async function performBookingCancellation(
         creditAmountCents: refundAmountCents,
         creditRestoredCents: creditRestoredCents || undefined,
         message: `Booking cancelled. ${refundPercentage}% credit of ${formatCents(refundAmountCents, format)} added to your account.`,
+      },
+    };
+  }
+
+  // ── #3653: a joiner's booking the organiser paid for by card ───────
+  // The debt committed with the claim; its executor makes the refund out of the
+  // combined payment and records it - refund row, mirror, Xero note, REFUNDED
+  // event - only once Stripe has answered. A failure leaves it owed for the
+  // recovery runner, which alerts on exhaustion.
+  if (branch === "card" && organiserChildDebtId) {
+    await runPaymentRecoveryOperationNow(organiserChildDebtId, format);
+    await cleanupPromoRedemption(bookingId);
+    logBookingCancellationAudit({
+      booking: fresh,
+      bookingId,
+      sessionUserId,
+      details: `Refund ${refundPercentage}% = ${formatCents(refundAmountCents, format)} to the group organiser's card, who paid for this booking`,
+      ipAddress,
+      metadata: {
+        refundMethod: "card",
+        refundTo: "organiser",
+        refundAmountCents,
+        refundPercentage,
+        refundableBaseCents,
+        changeFeeCents: payment.changeFeeCents,
+        creditRestoredCents,
+        ...notifyAuditFields,
+      },
+    });
+    if (notifyMember) {
+      sendBookingCancelledEmail(
+        { bookingId: fresh.id, recipientMemberId: bookingOwner(fresh).memberId },
+        bookingOwner(fresh).member.email,
+        bookingOwner(fresh).member.firstName,
+        fresh.checkIn,
+        fresh.checkOut,
+        refundAmountCents,
+        format,
+        "card",
+        creditRestoredCents,
+        fresh.lodgeId
+      ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
+    }
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId }, format)
+      .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after organiser-card cancellation"));
+    return {
+      status: 200,
+      data: {
+        success: true,
+        refundAmountCents,
+        refundPercentage,
+        refundMethod: "card",
+        creditRestoredCents: creditRestoredCents || undefined,
+        message: `Booking cancelled. The group organiser paid for this booking, so ${formatCents(refundAmountCents, format)} (${refundPercentage}%) is being refunded to the organiser's card.`,
       },
     };
   }

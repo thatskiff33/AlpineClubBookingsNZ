@@ -13,6 +13,8 @@ import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { forcedCancelRefundMethod } from "@/lib/cancel-refund-method";
+import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
+import { organiserChildCancelBasis } from "@/lib/organiser-child-refund";
 import {
   PART_PAYMENT_MANUAL_MEMBER_REFUSAL,
   readPartPaymentAtCancel,
@@ -140,11 +142,25 @@ export async function GET(
     }
 
     const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId);
+    // #3653: a joiner's booking the organiser paid for by card is refunded to
+    // the organiser from what remains after refunds made AND owed - the base
+    // the cancel itself tiers - and from nothing once the organiser's payment
+    // no longer holds money.
+    const organiserCard = paidByOrganiserCard(booking)
+      ? await organiserChildCancelBasis(prisma, booking, booking.payment)
+      : null;
     const preview = calculateCancellationPreview({
       // #3643: the cash the cancel will record, not the invoice's face value.
       payment: partPayment
         ? { ...booking.payment, amountCents: partPayment.paidCents, refundedAmountCents: 0 }
-        : booking.payment,
+        : organiserCard
+          ? {
+              ...booking.payment,
+              refundedAmountCents: organiserCard.settlement
+                ? organiserCard.committedRefundCents
+                : booking.payment.amountCents,
+            }
+          : booking.payment,
       finalPriceCents: booking.finalPriceCents,
       checkIn: booking.checkIn,
       policyRules: policy,
@@ -171,7 +187,7 @@ export async function GET(
       // The method the cancel will use whatever is chosen (an internet banking
       // payment refunds as account credit), from the cancel path's own home,
       // so the dialog offers only that option.
-      refundMethodForced: forcedCancelRefundMethod(booking.payment.source),
+      refundMethodForced: forcedCancelRefundMethod(booking.payment.source, organiserCard !== null),
     });
   } catch (error) {
     logger.error({ err: error }, "Error generating cancel preview");

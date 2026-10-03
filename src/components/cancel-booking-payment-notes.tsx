@@ -47,3 +47,28 @@ export function ForcedCreditRefundNote({
     </div>
   );
 }
+
+/** #3653: the only outcome for a booking the group organiser paid for by card. */
+export function OrganiserCardRefundNote({
+  refundAmountCents,
+  refundPercentage,
+  format,
+}: {
+  refundAmountCents: number;
+  refundPercentage: number;
+  format: ClubFormat;
+}) {
+  return (
+    <div className="space-y-1" data-testid="organiser-card-refund">
+      <p>
+        <span className="font-medium text-success-11">
+          Refund {formatCents(refundAmountCents, format)} to the group organiser&apos;s card
+        </span>
+        <span className="text-muted-foreground ml-1">({refundPercentage}% refund)</span>
+      </p>
+      <p className="text-muted-foreground">
+        The group organiser paid for this booking, so any refund goes back to their card.
+      </p>
+    </div>
+  );
+}

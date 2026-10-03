@@ -22,6 +22,7 @@ import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
 import {
   ForcedCreditRefundNote,
+  OrganiserCardRefundNote,
   NoRefundablePaymentNote,
 } from "@/components/cancel-booking-payment-notes";
 
@@ -46,7 +47,7 @@ interface CancelPreview {
    * internet banking payment, decided in `cancel-refund-method.ts` and returned
    * by the preview. When set, the dialog shows only that option.
    */
-  refundMethodForced?: "credit" | null;
+  refundMethodForced?: "credit" | "organiser_card" | null;
   /**
    * #3643 DECISION 2: Xero shows a payment the app cannot hand back as credit,
    * so an officer's cancel treats the booking as unpaid and the treasurer
@@ -200,7 +201,7 @@ export function CancelBookingButton({
       }
       const data: CancelPreview = await res.json();
       setPreview(data);
-      setRefundMethod(data.refundMethodForced ?? "card");
+      setRefundMethod(data.refundMethodForced === "credit" ? "credit" : "card");
       setStep("preview");
     } catch {
       setErrorMsg("Failed to load cancellation details");
@@ -474,6 +475,13 @@ export function CancelBookingButton({
               <ForcedCreditRefundNote
                 creditRefundAmountCents={preview.creditRefundAmountCents}
                 creditRefundPercentage={preview.creditRefundPercentage}
+                format={format}
+              />
+            )}
+            {!preview.manualRefund && hasCardRefund && preview.refundMethodForced === "organiser_card" && (
+              <OrganiserCardRefundNote
+                refundAmountCents={preview.refundAmountCents}
+                refundPercentage={preview.refundPercentage}
                 format={format}
               />
             )}
