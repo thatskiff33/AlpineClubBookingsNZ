@@ -24,7 +24,7 @@ export function NoRefundablePaymentNote({ settledByHand }: { settledByHand?: boo
 }
 
 /** The only outcome for an internet banking payment (`forcedCancelRefundMethod`). */
-export function ForcedCreditRefundNote({
+function ForcedCreditRefundNote({
   creditRefundAmountCents,
   creditRefundPercentage,
   format,
@@ -49,7 +49,7 @@ export function ForcedCreditRefundNote({
 }
 
 /** #3653: the only outcome for a booking the group organiser paid for by card. */
-export function OrganiserCardRefundNote({
+function OrganiserCardRefundNote({
   refundAmountCents,
   refundPercentage,
   format,
@@ -70,5 +70,35 @@ export function OrganiserCardRefundNote({
         The group organiser paid for this booking, so any refund goes back to their card.
       </p>
     </div>
+  );
+}
+
+/** The one outcome a forced refund method leaves (`forcedCancelRefundMethod`). */
+export function ForcedRefundNote({
+  preview,
+  forced,
+  format,
+}: {
+  preview: {
+    refundAmountCents: number;
+    refundPercentage: number;
+    creditRefundAmountCents: number;
+    creditRefundPercentage: number;
+  };
+  forced: "credit" | "organiser_card";
+  format: ClubFormat;
+}) {
+  return forced === "organiser_card" ? (
+    <OrganiserCardRefundNote
+      refundAmountCents={preview.refundAmountCents}
+      refundPercentage={preview.refundPercentage}
+      format={format}
+    />
+  ) : (
+    <ForcedCreditRefundNote
+      creditRefundAmountCents={preview.creditRefundAmountCents}
+      creditRefundPercentage={preview.creditRefundPercentage}
+      format={format}
+    />
   );
 }

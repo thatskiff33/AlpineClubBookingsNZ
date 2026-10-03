@@ -670,16 +670,8 @@ export async function expireMemberGuestConsent(params: {
           consentStatus: true,
           consentExpiresAt: true,
           bookingId: true,
-          booking: {
-            select: {
-              id: true,
-              lodgeId: true,
-              memberId: true,
-              organiserSettled: true,
-              parentBookingId: true,
-              payment: { select: { source: true } },
-            },
-          },
+          // #3653: and whether the organiser paid for it by card (below).
+          booking: { select: { id: true, lodgeId: true, memberId: true, organiserSettled: true, parentBookingId: true, payment: { select: { source: true } } } },
         },
       });
 

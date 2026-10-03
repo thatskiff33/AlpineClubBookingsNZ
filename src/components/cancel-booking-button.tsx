@@ -21,8 +21,7 @@ import {
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
 import {
-  ForcedCreditRefundNote,
-  OrganiserCardRefundNote,
+  ForcedRefundNote,
   NoRefundablePaymentNote,
 } from "@/components/cancel-booking-payment-notes";
 
@@ -471,19 +470,8 @@ export function CancelBookingButton({
                 back to {onBehalfOfMember ? "the member" : "you"} directly.
               </p>
             )}
-            {!preview.manualRefund && hasCardRefund && preview.refundMethodForced === "credit" && (
-              <ForcedCreditRefundNote
-                creditRefundAmountCents={preview.creditRefundAmountCents}
-                creditRefundPercentage={preview.creditRefundPercentage}
-                format={format}
-              />
-            )}
-            {!preview.manualRefund && hasCardRefund && preview.refundMethodForced === "organiser_card" && (
-              <OrganiserCardRefundNote
-                refundAmountCents={preview.refundAmountCents}
-                refundPercentage={preview.refundPercentage}
-                format={format}
-              />
+            {!preview.manualRefund && hasCardRefund && preview.refundMethodForced && (
+              <ForcedRefundNote preview={preview} forced={preview.refundMethodForced} format={format} />
             )}
             {!preview.manualRefund && hasCardRefund && !preview.refundMethodForced && (
               <div className="space-y-2">
