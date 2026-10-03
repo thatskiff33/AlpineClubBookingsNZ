@@ -1880,6 +1880,29 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       );
     });
 
+    it("queues no note when the payment has no Xero invoice to answer (a permanently failing row otherwise)", async () => {
+      appealTask();
+      const task = await mocks.manualRefundTaskFindUnique.getMockImplementation()!();
+      mocks.manualRefundTaskFindUnique.mockResolvedValue({
+        ...task,
+        booking: { ...task.booking, payment: { ...task.booking.payment, xeroInvoiceId: null } },
+      });
+
+      await resolveManualRefundTask({
+        taskId: "task-7",
+        resolution: "completed",
+        note: null,
+        actingMemberId: "admin-1",
+        confirmedAmountCents: null,
+        direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: null,
+      }, CLUB_FORMAT_TEST);
+
+      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalled();
+      expect(mocks.enqueueXeroRefundRequestCreditNoteOperation).not.toHaveBeenCalled();
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    });
+
     it("may be dismissed on its cancelled booking: the cancel came first and never counted it", async () => {
       appealTask();
 
