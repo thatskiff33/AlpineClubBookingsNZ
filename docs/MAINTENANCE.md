@@ -1663,13 +1663,13 @@ a booking confirmed before it can carry settlement lines with no confirmation.
 That is the gap the back-post fills; any other finding is a poster bug to
 report with the figures the census prints. The gate opens on zero
 unclassified disagreements, zero coverage gaps, zero integrity findings and no
-booking in a class that holds it. Two classes wait on owner decisions on #3583
-and are one-line switches in `BOOKING_LEDGER_CENSUS_GATE_POLICY`
+booking in a class that holds it. Two classes follow the owner's decisions on
+#3583 and are one-line switches in `BOOKING_LEDGER_CENSUS_GATE_POLICY`
 (`src/lib/booking-ledger-projection-census-classes.ts`):
 `KNOWN_DEFECT_HISTORY` (bookings #3791, #3792 or #1641 damaged) holds the gate
 until each is corrected, or written off in the acknowledgement file, and
 `GROUP_SETTLEMENT_OFF_LEDGER` (children settled through the organiser's group
-settlement) does not. The census takes no lock, so run it off-peak against
+settlement, whose poster is #3854) does not. The census takes no lock, so run it off-peak against
 production; a whole history is read in one transaction, 500 bookings a page.
 
 ### Census the booking ledger identity (#3340)

@@ -579,8 +579,8 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   integrity findings, and no booking in a class that holds it.** Coverage is
   money with no lines, a paid booking unconfirmed on the ledger, or an edit,
   fee or credit row no line records. `KNOWN_DEFECT_HISTORY` holds the gate and
-  `GROUP_SETTLEMENT_OFF_LEDGER` does not, both pending owner decisions on
-  #3583. The owner's `--acknowledged` file, kept outside the repository,
+  `GROUP_SETTLEMENT_OFF_LEDGER` does not (its poster is #3854), the owner's
+  decisions on #3583. The owner's `--acknowledged` file, kept outside the repository,
   releases a finding it names to the cent; one whose figure has moved is stale
   and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
   on bookings the real writers built.
