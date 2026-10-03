@@ -416,7 +416,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - Two writers set an organiser-settled child's mirror directly, because the
   child has no transaction rows: the pre-#3653 group-settlement path
   (`INV-PAY-031`–`037`) and the organiser child refund executor
-  (`organiser-child-refund-executor.ts`, [`INV-PAY-113`](#inv-pay-113)), which
+  (`organiser-child-refund-executor.ts`, [`INV-PAY-114`](#inv-pay-114)), which
   records each Stripe refund's row first.
 - Pinned by `payment-transactions-refunds.test.ts` and
   `card-refund-mirror-races.realdb.test.ts`. Totals the old formula left short
@@ -1213,7 +1213,7 @@ one, check the other.
 
 ## INV-PAY-034
 
-**Related: `INV-PAY-113`**, which supersedes this for a card settlement cancelled after #3653.
+**Related: `INV-PAY-114`**, which supersedes this for a card settlement cancelled after #3653.
 
 - An organiser-cancel group cleanup must be re-drivable after a crash (#1236).
   Cancelling the organiser booking is single-flight, so a re-invoked cancel
@@ -1250,7 +1250,7 @@ one, check the other.
 
 ## INV-PAY-036
 
-**Related: `INV-PAY-113`**, which supersedes this for a card settlement cancelled after #3653.
+**Related: `INV-PAY-114`**, which supersedes this for a card settlement cancelled after #3653.
 
 - The group-cancel refund credit-note enqueue is **durable** (#1257/#1377).
   Each child's Xero refund credit-note outbox row (integer cents) is enqueued
@@ -1266,7 +1266,7 @@ one, check the other.
 
 ## INV-PAY-037
 
-**Related: `INV-PAY-113`**, which supersedes this for a card settlement cancelled after #3653.
+**Related: `INV-PAY-114`**, which supersedes this for a card settlement cancelled after #3653.
 
 - A failed settlement refund must stay durably owed (#1351): the frozen plan
   is never nulled, a payment-recovery operation persisted before the inline
@@ -1277,7 +1277,7 @@ one, check the other.
   already-CANCELLED plan child whose `refundedAmountCents` is still zero,
   via a conditional update. Alerts fire on retry exhaustion only.
 
-## INV-PAY-113
+## INV-PAY-114
 
 **Related: `INV-PAY-034`, `INV-PAY-036`, `INV-PAY-037`** (the legacy and
 Internet Banking path) and **`INV-PAY-103`** (the one card-refund writer).

@@ -465,7 +465,7 @@ written but no credit-note operation queued — durable for every source,
 including Internet-Banking children the #1354 self-heal cannot recover. Only the
 outbox worker kick stays best-effort and post-commit.
 
-Since #3653 (`INV-PAY-113`) that single-refund plan is the path for a plan frozen
+Since #3653 (`INV-PAY-114`) that single-refund plan is the path for a plan frozen
 before #3653 and for an Internet Banking settlement only. A card settlement
 freezes `{ perChildRefunds }` instead, with one `organiser_child_refund_*`
 recovery operation per paid child (`PENDING -> PROCESSING -> SUCCEEDED`, or

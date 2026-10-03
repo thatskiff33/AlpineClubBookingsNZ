@@ -1733,7 +1733,7 @@ the first is the #3640 repair question. The arithmetic and its caveats are in
 Before #3653 a joiner's reduction of a booking the group organiser paid for could
 hand the joiner account credit, or leave recovery that refunded nothing, and the
 joiner's `Payment` mirror then read as partly refunded with no Stripe refund
-behind it (`INV-PAY-113` stops new cases). A later group cancellation sizes from
+behind it (`INV-PAY-114` stops new cases). A later group cancellation sizes from
 that mirror, so the organiser can be under-refunded.
 `scripts/audit-organiser-child-refunds.ts` lists each organiser-settled child
 whose mirror Stripe does not fully back, classed `legacy-group-cancel` (a

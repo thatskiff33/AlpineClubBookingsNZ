@@ -34,7 +34,7 @@ export function organiserHasPaidSettlement(
 }
 
 /**
- * #3653 (`INV-PAY-113`): a joiner's booking the organiser paid for BY CARD - an
+ * #3653 (`INV-PAY-114`): a joiner's booking the organiser paid for BY CARD - an
  * organiser-settled child whose payment mirror came from the group's combined
  * Stripe payment. Its reductions and cancellation go back to the organiser's
  * card, never to the joiner as account credit. A child the organiser settled

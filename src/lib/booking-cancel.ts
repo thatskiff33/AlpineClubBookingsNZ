@@ -1502,7 +1502,7 @@ async function performBookingCancellation(
       return { claimed: false as const };
     }
     const payment = lockedPayment;
-    // #3653 (`INV-PAY-113`): a joiner cancelling a booking the group organiser
+    // #3653 (`INV-PAY-114`): a joiner cancelling a booking the group organiser
     // paid for by card. Its refund goes back to the ORGANISER's card, out of
     // the combined payment, with no account-credit option; the policy tiers
     // what remains after refunds already made AND owed.

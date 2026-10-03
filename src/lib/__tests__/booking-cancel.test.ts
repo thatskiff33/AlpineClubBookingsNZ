@@ -1952,7 +1952,7 @@ describe("cancelBooking credit refunds", () => {
   // allocation plan) instead of a silently lost refund. The processor-side
   // replay of that operation is covered in payment-recovery.test.ts.
   // ---------------------------------------------------------------------------
-  // #3653 (`INV-PAY-113`), fix round: a joiner cancelling a booking the group
+  // #3653 (`INV-PAY-114`), fix round: a joiner cancelling a booking the group
   // organiser paid for by card. It used to plan zero Stripe slices (the child
   // has no transaction of its own), so nobody was refunded - or hand the JOINER
   // account credit - and it tiered off a mirror that ignored the refunds still

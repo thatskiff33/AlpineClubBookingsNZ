@@ -108,7 +108,7 @@ export interface ClassifyXeroBookingEditSettlementInput {
    */
   refundedThroughStripe?: boolean | null;
   /**
-   * #3653 (`INV-PAY-113`): the reduction is an organiser-settled child's,
+   * #3653 (`INV-PAY-114`): the reduction is an organiser-settled child's,
    * returned to the organiser's card out of the group's combined payment. Its
    * refund credit note is raised by `processOrganiserChildRefundOperation` in
    * the transaction that records the refund Stripe made - AFTER the money moved

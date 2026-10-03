@@ -3551,7 +3551,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
     );
   });
 
-  // #3653 (`INV-PAY-113`), fix round. A REAL edit door, on a joiner's booking
+  // #3653 (`INV-PAY-114`), fix round. A REAL edit door, on a joiner's booking
   // the organiser paid for by card, against an ISSUED invoice. The door used to
   // queue the ordinary modification credit note at commit - before Stripe had
   // moved anything - and the organiser child refund's executor queues the

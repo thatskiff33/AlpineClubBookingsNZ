@@ -18,7 +18,7 @@
  *     organiser.
  *
  * The settlement is a single Stripe PaymentIntent for the combined total. Since
- * #3653 (`INV-PAY-113`) each paid child is refunded by its OWN Stripe refund
+ * #3653 (`INV-PAY-114`) each paid child is refunded by its OWN Stripe refund
  * against that intent, sized by the same date-based cancellation policy as every
  * normal booking applied to what remains of the child's payment after any
  * edit's refund, and recorded against the child before its mirror or Xero note

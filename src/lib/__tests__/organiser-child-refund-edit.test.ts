@@ -18,7 +18,7 @@ import { OrganiserChildRefundRefusedError } from "@/lib/organiser-child-refund";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 /*
-  #3653 (`INV-PAY-113`): an edit that reduces a booking the group organiser paid
+  #3653 (`INV-PAY-114`): an edit that reduces a booking the group organiser paid
   for returns the reduction to the organiser's card, from the group's combined
   payment. These pin the edit-door half: one disposition (no account credit),
   and a refusal BEFORE the edit commits when the combined payment cannot pay it.

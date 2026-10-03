@@ -2858,7 +2858,7 @@ settle legitimately overwrites `FAILED` → `SUCCEEDED`. `lock(1)` guarantees th
 two run whole-before-whole; it is not a veto on that transition.
 
 **#3653 adds the organiser child's refund out of the combined card payment
-(`INV-PAY-113`).** Three writers join this cohort and mint no keyspace. The edit
+(`INV-PAY-114`).** Three writers join this cohort and mint no keyspace. The edit
 doors write a child's refund debt (`reserveOrganiserChildModificationRefund`)
 inside the transaction that already holds `lock(1)` and the per-lodge key; a
 joiner's own cancel writes its one debt (`reserveOrganiserChildRefund`) in the
