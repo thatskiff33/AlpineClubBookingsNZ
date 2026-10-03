@@ -2705,7 +2705,7 @@ add, family scope, or module OFF
 booking copy of an existing cross-family guest
     -> re-stamped against the copying admin; consent is NOT transitive across bookings
 
-PENDING -> CONFIRMED   the target, or a delegate the resolver accepts (D-5/D-10); respondedAt + respondedBy recorded; bed allocations reconciled post-commit
+PENDING -> CONFIRMED   the target, or a delegate the resolver accepts (D-5/D-10); respondedAt + respondedBy recorded; bed allocations reconciled post-commit; the booking's promo codes re-priced in the same transaction, a paid reduction returned in full the way it was paid (#3827, D-3813-5)
 PENDING -> DECLINED    same actors; then the SHARED removal path (never a second delete)
 PENDING -> EXPIRED     the nightly sweep, when now >= consentExpiresAt; then the shared removal path, electing account credit (D-15); respondedBy stays NULL because nobody decided
 CONFIRMED              terminal. D-13: no later modification of the booking re-opens it, in either policy mode

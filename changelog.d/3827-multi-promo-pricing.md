@@ -7,12 +7,16 @@
   discount is refused as "already covered", and removing a guest removes only
   their code. Each code keeps its own usage limits. Booking, editing and
   previewing accept a list of codes (`promoCodes`); the single `promoCode`
-  field still works. While the module is off, a second code is refused.
+  field still works, and an edit through it keeps a working-bee discount
+  rather than dropping it. While the module is off, a second code — or a code
+  beside a working-bee discount — is refused.
 
   **A deliberate tightening, for every booking:** a guest added from outside
   the booker's family who has **not yet accepted** their place now gets no
   promo discount — not even from a code typed at booking, which used to
   discount their nights too. When they accept, the booking's codes are applied
-  again; on a paid booking a lower price goes back to the booking owner as
-  account credit, and an issued invoice is corrected in Xero. A decline uses up
-  nothing.
+  again; on a paid booking the whole reduction goes back, with no
+  cancellation-policy percentage, the way it was paid (card refund, bank
+  transfer, or account credit), and the owner is emailed. If it cannot all go
+  back that way the price is left for the next edit and the codes use nothing.
+  A decline uses up nothing.

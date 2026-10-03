@@ -1665,6 +1665,12 @@ mispricing a booking.
   (`multi-promo-pricing.test.ts` pins it). No counterpart writer may take a
   promo row and then a lodge lock. The waitlisted create prices before its
   transaction, unlocked, as it always has; the offer re-prices under locks.
+  Inside its transaction it holds the lodge key but not `lock(1)`, and each
+  redemption's counter write row-locks its code, so it locks every code row
+  in one sorted call after the lodge key, before the first redemption (#3827):
+  two waitlisted creates naming the same codes in opposite orders would
+  otherwise deadlock. No cap is re-read there; the counter write is an atomic
+  increment and the offer decides the caps.
 - **Every booking-modification path that may write `currentRedemptions`** takes
   the same protocol via `lockPromoCodeRowsForUpdate` / the reprice wrapper
   `lockAndRefreshPromoCodeUsage` (both `src/lib/promo.ts`), *before* its first

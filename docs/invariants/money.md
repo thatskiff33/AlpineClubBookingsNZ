@@ -371,9 +371,14 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   Any number of codes of any kind combine. A guest whose cross-family place is
   still `PENDING` is shown to no code — a typed code included — and their
   acceptance re-prices the booking's codes through the ordinary edit
-  machinery; a decline consumed nothing. Each code keeps its own caps, its own
-  allocations and its own integer cents: `Booking.promoAdjustmentCents` is the
-  sum of the redemptions' adjustments, with no rounding across codes. Every
+  machinery; a decline consumed nothing. A lower price on a paid booking goes
+  back in full, with no cancellation-policy tier, the way it was paid (card,
+  bank transfer or account credit; D-3813-5); a re-price that cannot return
+  the whole reduction is not written, so no code is used beyond what is
+  returned. Each code keeps its own caps, its own allocations and its own
+  integer cents: `Booking.promoAdjustmentCents` is the sum of the redemptions'
+  adjustments, with no rounding across codes, and `discountCents` is
+  `bookingDiscountCents` of that sum (`INV-MONEY-031`). Every
   write path — create, every edit and re-price, the waitlist offer, the review
   re-base, a guest's acceptance — prices through this orchestrator, and a
   re-price locks every code row in one sorted call before its first cap read
