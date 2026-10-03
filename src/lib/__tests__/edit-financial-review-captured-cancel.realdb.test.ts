@@ -412,7 +412,8 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       await stripeRefundsWhatIsOwed();
       await cancelAt(TIERS[1]!.rule);
       // The cancel tiered the $150 left: $75 less $20.
-      expect((await cardDebts()).map((debt) => debt.amountCents)).toEqual([5_000, 5_500]);
+      // (Sorted: the frozen clock gives both debts one createdAt.)
+      expect((await cardDebts()).map((debt) => debt.amountCents).sort((a, b) => a - b)).toEqual([5_000, 5_500]);
 
       expect(await dialogSays(after.taskId)).toMatchObject({ stillOwedCents: 2_500, captureCents: 2_500 });
       await completeShare(after.taskId);
