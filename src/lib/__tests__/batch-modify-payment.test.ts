@@ -102,7 +102,7 @@ vi.mock("@/lib/prisma", () => ({
       default - no review is open - so every pre-#3032 assertion in this file
       means exactly what it meant before.
     */
-    manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
+    manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })), findMany: vi.fn().mockResolvedValue([]) },
     $transaction: (...args: unknown[]) => {
       const fn = args[0];
       if (typeof fn === "function") return (mockTransaction as (cb: unknown) => unknown)(fn);
@@ -520,6 +520,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
     manualRefundTask: {
+      // #3827 (`INV-PAY-114`): no open edit refund hand-back on file.
+      aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
       // #3170: the park's own raise is a find-then-create on the occurrence
       // key. Nothing on file by default, so a raising test sees a create and a

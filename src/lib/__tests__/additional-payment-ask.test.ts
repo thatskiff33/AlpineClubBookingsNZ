@@ -466,6 +466,8 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
   function stubTx() {
     return {
       payment: { update: vi.fn().mockResolvedValue({}) },
+      // #3827 (`INV-PAY-114`): no open edit refund hand-back on file.
+      manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
     } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
   }
 

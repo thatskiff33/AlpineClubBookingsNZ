@@ -130,7 +130,7 @@ function tx(loaded: ReturnType<typeof booking>) {
     },
     bookingModification: { create: vi.fn(async () => ({ id: "mod-1" })) },
     payment: { update: vi.fn() },
-    manualRefundTask: { createMany: vi.fn(async () => ({ count: 1 })) },
+    manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })), createMany: vi.fn(async () => ({ count: 1 })) },
   };
 }
 
@@ -492,5 +492,55 @@ describe("a split payment gets the WHOLE reduction back: cash first, then credit
     expect(result).toEqual({ repriced: false, reason: "REDUCTION_NOT_FULLY_RETURNABLE" });
     expect(h.persistRepricedPromotions).not.toHaveBeenCalled();
     expect(h.clampAppliedCreditToBookingPrice).not.toHaveBeenCalled();
+  });
+});
+
+describe("cash an earlier edit already promised back is not refunded again (#3827, INV-PAY-114)", () => {
+  it("$300 paid as $200 internet banking + $100 credit, edited to $250 (task $50 open), accepted to $50: $150 by hand, $50 as credit", async () => {
+    // Without the netting the $200 captured would read as all refundable, the
+    // whole $200 reduction would go to a second task, and $250 of tasks would
+    // stand against $200 taken.
+    decides(-20000);
+    h.deriveBookingAppliedCreditCents.mockResolvedValue(10000);
+    h.clampAppliedCreditToBookingPrice.mockResolvedValue({ appliedCreditCents: 5000, refundedExcessCents: 5000 });
+    const night = (stayDate: Date, priceCents: number) => ({ stayDate, priceCents, priceSource: "SOLD" });
+    const loaded = booking({
+      totalPriceCents: 25000,
+      finalPriceCents: 25000,
+      guests: [
+        { id: "g-ann", memberId: "ann", isMember: true, consentStatus: null, priceCents: 20000, nights: [night(N1, 10000), night(N2, 10000)] },
+        { id: "g-cara", memberId: "cara", isMember: true, consentStatus: "CONFIRMED", priceCents: 5000, nights: [night(N1, 2500), night(N2, 2500)] },
+      ],
+      payment: {
+        ...booking().payment,
+        source: "INTERNET_BANKING",
+        xeroInvoiceId: "inv-1",
+        amountCents: 20000,
+        creditAppliedCents: 10000,
+      },
+    });
+    const client = tx(loaded);
+    client.manualRefundTask.aggregate.mockResolvedValue({ _sum: { amountCents: 5000 } } as never);
+    const result = await repriceBookingAfterGuestAcceptance(client as never, {
+      bookingId: "booking-1",
+      acceptedGuestId: "g-cara",
+      actorMemberId: "cara",
+      todayAtClub: TODAY,
+      format: CLUB_FORMAT_TEST,
+    });
+    expect(client.manualRefundTask.aggregate).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        paymentId: "pay-1",
+        status: "OPEN",
+        kind: "CANCELLED_BOOKING_HAND_BACK",
+        occurrenceKey: { startsWith: "edit-refund-hand-back:" },
+      }),
+      _sum: { amountCents: true },
+    });
+    expect(result).toMatchObject({ repriced: true, refundAmountCents: 15000, accountCreditAmountCents: 5000 });
+    expect(client.manualRefundTask.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ amountCents: 15000, occurrenceKey: "edit-refund-hand-back:mod-1" })],
+      skipDuplicates: true,
+    });
   });
 });

@@ -6,6 +6,9 @@
  * duplicate check). Every production read that filters on that kind must also
  * spread `NOT_EDIT_REFUND_HAND_BACK_WHERE`, the one spelling of the exclusion.
  *
+ * A reader OF the edit hand-backs (`openEditRefundHandBackCents`) spreads the
+ * positive `EDIT_REFUND_HAND_BACK_WHERE` instead, so it names no kind here.
+ *
  * Reads the source from disk: no import edge reaches these files.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";

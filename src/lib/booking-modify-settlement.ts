@@ -31,7 +31,6 @@ import {
   type SupersededPrimaryPaymentIntent,
 } from "@/lib/booking-payment-cleanup";
 import {
-  getRemainingRefundableCents,
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
   isSettledBookingStatus,
@@ -47,6 +46,10 @@ import {
   deriveBookingAppliedCreditCents,
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
+import {
+  refundableCashNetOfOpenEditRefunds,
+  type OpenEditRefundHandBackDb,
+} from "@/lib/edit-refund-hand-back";
 
 export type BookingModificationSettlementOptions = {
   basisAmountCents: number;
@@ -106,7 +109,11 @@ export async function calculateModificationSettlementOptions({
 }: {
   booking: Pick<LoadedBookingForModify, "checkIn" | "status" | "payment" | "lodgeId">;
   netChargeCents: number;
-  db: CancellationPolicyDb;
+  /**
+   * Also reads the payment's OPEN edit refund hand-backs (#3827,
+   * `INV-PAY-114`), so a reduction is sized off cash not already promised back.
+   */
+  db: CancellationPolicyDb & OpenEditRefundHandBackDb;
   /**
    * The club's own calendar day (`INV-CONFIG-002`), resolved outside this
    * transaction. It feeds `daysUntilDate` below, which is the refund-tier
@@ -115,7 +122,11 @@ export async function calculateModificationSettlementOptions({
    */
   todayAtClub: CalendarDate;
 }): Promise<BookingModificationSettlementOptions | null> {
-  const basisAmountCents = settlementBasisCents(booking, netChargeCents);
+  const basisAmountCents = settlementBasisCents(
+    booking,
+    netChargeCents,
+    await refundableCashNetOfOpenEditRefunds(db, booking.payment),
+  );
   if (basisAmountCents === null) return null;
 
   const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, db);
@@ -144,15 +155,18 @@ export async function calculateModificationSettlementOptions({
  * at what is still refundable — or null when the booking holds no captured
  * payment in a settled status, or there is nothing to return. ONE basis for the
  * policy-tiered options above and the untiered ones below.
+ *
+ * `refundableCashCents` is REQUIRED and is
+ * `refundableCashNetOfOpenEditRefunds` (#3827, `INV-PAY-114`): the captured
+ * cash not yet refunded AND not already promised back by an open edit refund
+ * hand-back.
  */
 function settlementBasisCents(
   booking: Pick<LoadedBookingForModify, "status" | "payment">,
   netChargeCents: number,
+  refundableCashCents: number,
 ): number | null {
-  const basisAmountCents = Math.min(
-    Math.max(0, -netChargeCents),
-    getRemainingRefundableCents(booking.payment),
-  );
+  const basisAmountCents = Math.min(Math.max(0, -netChargeCents), refundableCashCents);
   const hasSettledPayment =
     isSettledBookingStatus(booking.status) && hasCapturedPayment(booking.payment);
   return basisAmountCents > 0 && hasSettledPayment ? basisAmountCents : null;
@@ -169,13 +183,16 @@ function settlementBasisCents(
 export function calculateFullReductionSettlementOptions({
   booking,
   netChargeCents,
+  refundableCashCents,
   todayAtClub,
 }: {
   booking: Pick<LoadedBookingForModify, "checkIn" | "status" | "payment">;
   netChargeCents: number;
+  /** `refundableCashNetOfOpenEditRefunds`, read by the caller under its locks (`INV-PAY-114`). */
+  refundableCashCents: number;
   todayAtClub: CalendarDate;
 }): BookingModificationSettlementOptions | null {
-  const basisAmountCents = settlementBasisCents(booking, netChargeCents);
+  const basisAmountCents = settlementBasisCents(booking, netChargeCents, refundableCashCents);
   if (basisAmountCents === null) return null;
   return {
     basisAmountCents,
@@ -259,7 +276,8 @@ export async function applyPaymentAdjustments(
   const hasSucceededPayment =
     hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
-  const remainingRefundableCents = getRemainingRefundableCents(booking.payment);
+  // #3827 (`INV-PAY-114`): net of edit refunds already promised back by hand.
+  const remainingRefundableCents = await refundableCashNetOfOpenEditRefunds(tx, booking.payment);
 
   const netAmountCents = priceDiffCents + changeFeeCents;
   const selectedSettlement = resolveSelectedSettlementAmount({

@@ -88,6 +88,17 @@ export const NOT_EDIT_REFUND_HAND_BACK_WHERE = {
 };
 
 /**
+ * #3827 (`INV-PAY-114`): the POSITIVE form - the edit refund hand-backs
+ * themselves, for a reader that sizes money already promised back by hand
+ * (`openEditRefundHandBackCents`). The kind and the key prefix together, as
+ * `isEditRefundHandBackTask` asks them.
+ */
+export const EDIT_REFUND_HAND_BACK_WHERE = {
+  kind: "CANCELLED_BOOKING_HAND_BACK" satisfies ManualRefundTaskKind,
+  occurrenceKey: { startsWith: EDIT_REFUND_HAND_BACK_KEY_PREFIX },
+} as const;
+
+/**
  * May a task of this kind be closed as money that moved?
  *
  * FALSE FOR EXACTLY ONE KIND. `UNCOLLECTED_EDIT_REVIEW_SHARE` is a notice that

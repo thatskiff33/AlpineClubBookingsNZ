@@ -490,6 +490,12 @@ export function calculateCancellationPreview(input: {
     changeFeeCents: number;
     creditAppliedCents?: number | null;
   };
+  /**
+   * #3827 (`INV-PAY-114`): the payment's open edit refund hand-backs, the same
+   * figure the executed cancel reads (`openEditRefundHandBackCents`), so the
+   * preview promises nothing the treasurer already owes back.
+   */
+  openEditRefundHandBackCents: number;
   finalPriceCents: number;
   checkIn: Date;
   policyRules: CancellationRule[];
@@ -518,13 +524,16 @@ export function calculateCancellationPreview(input: {
   totalPaidCents: number;
 } {
   const paidAmountCents =
-    input.payment.amountCents - input.payment.refundedAmountCents;
+    input.payment.amountCents -
+    input.payment.refundedAmountCents -
+    input.openEditRefundHandBackCents;
   const changeFeeCents = input.payment.changeFeeCents;
   // The refundable base cancelBooking itself uses (#1031): the preview must not
   // promise a refund the stale Payment mirror can no longer back.
   const refundableBaseCents = cancelRefundableBaseCents({
     amountCents: input.payment.amountCents,
     refundedAmountCents: input.payment.refundedAmountCents,
+    openEditRefundHandBackCents: input.openEditRefundHandBackCents,
     finalPriceCents: input.finalPriceCents,
     changeFeeCents,
   });

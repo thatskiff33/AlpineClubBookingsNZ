@@ -168,14 +168,22 @@ export function getRemainingRefundableCents(
  * non-refundable change fee. The cap is why a stale mirror cannot pay out more
  * than the booking is worth; the refunded term is why an understated mirror
  * would (#3640).
+ *
+ * #3827 (`INV-PAY-114`): "not yet handed back" also excludes the edit refunds
+ * already PROMISED back by hand (`openEditRefundHandBackCents`, the sum of the
+ * payment's open edit refund hand-backs), REQUIRED so no caller can forget it:
+ * a cancellation must not refund or credit cash the treasurer still owes on an
+ * earlier edit's task.
  */
 export function cancelRefundableBaseCents(input: {
   amountCents: number;
   refundedAmountCents: number;
+  openEditRefundHandBackCents: number;
   finalPriceCents: number;
   changeFeeCents: number;
 }): number {
-  const paidAmountCents = input.amountCents - input.refundedAmountCents;
+  const paidAmountCents =
+    input.amountCents - input.refundedAmountCents - input.openEditRefundHandBackCents;
   return (
     Math.min(paidAmountCents, input.finalPriceCents + input.changeFeeCents) -
     input.changeFeeCents

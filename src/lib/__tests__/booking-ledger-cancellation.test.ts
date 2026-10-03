@@ -128,6 +128,7 @@ function paidCancel(payment: {
       changeFeeCents: payment.changeFeeCents,
       creditAppliedCents: payment.creditAppliedCents,
     },
+    openEditRefundHandBackCents: 0,
     finalPriceCents: payment.finalPriceCents,
     appliedCreditCents: payment.creditAppliedCents,
     restoresToMemberLedger: true,

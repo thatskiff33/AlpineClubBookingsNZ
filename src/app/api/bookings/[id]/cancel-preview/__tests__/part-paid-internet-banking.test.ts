@@ -31,6 +31,8 @@ vi.mock("@/lib/prisma", () => ({
     booking: { findUnique: mocks.bookingFindUnique },
     memberCredit: { aggregate: mocks.memberCreditAggregate },
     clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique },
+    // #3827 (`INV-PAY-114`): no open edit refund hand-back on file.
+    manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
   },
 }));
 vi.mock("@/lib/cancellation", () => ({

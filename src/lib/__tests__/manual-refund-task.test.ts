@@ -1700,6 +1700,19 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     // ...and no second Xero document is raised for it.
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
+    // #3827 (`INV-PAY-114`): it takes lock(1) FIRST, before the task is read for
+    // its money and before the claim, so its completion cannot commit between
+    // an edit's read of `refundedAmountCents` and its read of the open tasks.
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+    expect(String((mocks.executeRaw.mock.calls[0]![0] as TemplateStringsArray).join(""))).toContain(
+      "pg_advisory_xact_lock(1)",
+    );
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.manualRefundTaskFindUnique.mock.invocationCallOrder[1]!,
+    );
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!,
+    );
     // Nor is the officer told the invoice needs correcting by hand: the edit's
     // own credit note already corrected it.
     const { default: logger } = await import("@/lib/logger");
@@ -1894,7 +1907,10 @@ describe("recording per-night amounts while settling (#3191)", () => {
     // the read that picks the money route comes after.
     expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
     expect(mocks.manualRefundTaskFindUnique.mock.calls[0]![0]).toMatchObject({ select: { kind: true } });
-    expect(Object.keys((mocks.manualRefundTaskFindUnique.mock.calls[0]![0] as { select: object }).select)).toEqual(["kind"]);
+    expect(Object.keys((mocks.manualRefundTaskFindUnique.mock.calls[0]![0] as { select: object }).select)).toEqual([
+      "kind",
+      "occurrenceKey",
+    ]);
     expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.manualRefundTaskFindUnique.mock.invocationCallOrder[1]!,
     );

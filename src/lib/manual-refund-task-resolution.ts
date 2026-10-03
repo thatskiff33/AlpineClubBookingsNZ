@@ -150,8 +150,23 @@ export async function resolveManualRefundTask(
     // edit review takes lock(1) as this transaction's FIRST lock (INV-LOCK-002)
     // and only then reads what picks its money route, so nothing that route
     // depends on is stale. Why: docs/CONCURRENCY_AND_LOCKING.md.
-    const head = await tx.manualRefundTask.findUnique({ where: { id: taskId }, select: { kind: true } });
-    if (head?.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
+    //
+    // #3827 (`INV-PAY-114`): an EDIT REFUND HAND-BACK takes the same key. Its
+    // completion moves `refundedAmountCents` and closes the task in one commit,
+    // and every edit, acceptance and paid cancel reads those two separately to
+    // size a refund net of what is already promised back
+    // (`refundableCashNetOfOpenEditRefunds`). Under `lock(1)` the completion
+    // cannot commit between the two reads, which would count the same money
+    // as neither refunded nor promised. Its occurrence key, like its kind, is
+    // written once at creation and never again.
+    const head = await tx.manualRefundTask.findUnique({
+      where: { id: taskId },
+      select: { kind: true, occurrenceKey: true },
+    });
+    if (
+      head?.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW ||
+      (head !== null && isEditRefundHandBackTask(head))
+    ) {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     }
     const task = await tx.manualRefundTask.findUnique({

@@ -8,6 +8,7 @@ import { loadCancellationPolicy } from "@/lib/cancellation";
 import { calculateCancellationPreview } from "@/lib/policies/booking-route-decisions";
 import { clubTime } from "@/lib/club-time/server";
 import { paymentEligibleForPaidCancelPath } from "@/lib/booking-cancel";
+import { openEditRefundHandBackCents } from "@/lib/edit-refund-hand-back";
 import { memberCancelRefusal } from "@/lib/booking-cancel-eligibility";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
@@ -145,6 +146,8 @@ export async function GET(
       payment: partPayment
         ? { ...booking.payment, amountCents: partPayment.paidCents, refundedAmountCents: 0 }
         : booking.payment,
+      // #3827 (`INV-PAY-114`): cash an earlier edit already promised back by hand.
+      openEditRefundHandBackCents: await openEditRefundHandBackCents(prisma, booking.payment.id),
       finalPriceCents: booking.finalPriceCents,
       checkIn: booking.checkIn,
       policyRules: policy,

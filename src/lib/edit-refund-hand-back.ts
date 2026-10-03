@@ -1,6 +1,18 @@
-import { ManualRefundTaskKind, type Prisma } from "@prisma/client";
+import {
+  ManualRefundTaskKind,
+  ManualRefundTaskStatus,
+  type Prisma,
+  type PrismaClient,
+} from "@prisma/client";
 
-import { editRefundHandBackOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
+import {
+  getRemainingRefundableCents,
+  type BookingPaymentState,
+} from "@/lib/booking-payment-state";
+import {
+  EDIT_REFUND_HAND_BACK_WHERE,
+  editRefundHandBackOccurrenceKey,
+} from "@/lib/manual-refund-task-settlement-rules";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 
 /**
@@ -77,4 +89,54 @@ export async function raiseEditRefundHandBackIfOwed(
     skipDuplicates: true,
   });
   return true;
+}
+
+/**
+ * The one read a refund sizer needs for the money below: a client that can
+ * aggregate `ManualRefundTask`. A transaction under the caller's locks, or the
+ * pooled client for an advisory quote that holds none.
+ */
+export type OpenEditRefundHandBackDb = Pick<PrismaClient, "manualRefundTask">;
+
+/**
+ * #3827 (`INV-PAY-114`): MONEY ALREADY PROMISED BACK, NOT YET SENT.
+ *
+ * An edit refund hand-back is raised when the edit commits, but the payment's
+ * `refundedAmountCents` moves only when the treasurer marks it paid back. Until
+ * then the payment still reads as if that money were refundable, so a second
+ * reduction, a guest's acceptance or a cancellation would size its own refund
+ * off cash the club has already promised - $250 of tasks against $200 taken.
+ *
+ * This is the sum of the OPEN edit refund hand-backs on one payment. A completed
+ * one has moved `refundedAmountCents` and drops out here as it does; a dismissed
+ * one was never sent, so its money is refundable again.
+ */
+export async function openEditRefundHandBackCents(
+  db: OpenEditRefundHandBackDb,
+  paymentId: string | null | undefined,
+): Promise<number> {
+  if (!paymentId) return 0;
+  const open = await db.manualRefundTask.aggregate({
+    where: { paymentId, status: ManualRefundTaskStatus.OPEN, ...EDIT_REFUND_HAND_BACK_WHERE },
+    _sum: { amountCents: true },
+  });
+  return open._sum.amountCents ?? 0;
+}
+
+/**
+ * #3827 (`INV-PAY-114`): THE REFUNDABLE CASH ON A PAYMENT, NET OF EDIT REFUNDS
+ * ALREADY PROMISED BACK BY HAND. The one figure an edit, a guest's acceptance
+ * and a cancellation size their refund from, so what the club promises back
+ * never exceeds what it took. Read under the locks the caller already holds
+ * (the global cohort key on every edit, acceptance and paid cancel), which every
+ * raise of such a task also holds, so no task can appear between this read and
+ * the caller's own raise.
+ */
+export async function refundableCashNetOfOpenEditRefunds(
+  db: OpenEditRefundHandBackDb,
+  payment: (BookingPaymentState & { id: string }) | null | undefined,
+): Promise<number> {
+  const remaining = getRemainingRefundableCents(payment);
+  if (remaining === 0 || !payment) return 0;
+  return Math.max(0, remaining - (await openEditRefundHandBackCents(db, payment.id)));
 }

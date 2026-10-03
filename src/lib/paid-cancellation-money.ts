@@ -24,7 +24,11 @@ import {
 } from "@/lib/cancellation";
 
 export type PaidCancellationMoney = {
-  /** Money taken for the booking, net of earlier refunds (`amountCents - refundedAmountCents`). */
+  /**
+   * Money taken for the booking, net of earlier refunds and of edit refunds
+   * already promised back by hand (`amountCents - refundedAmountCents -
+   * openEditRefundHandBackCents`, `INV-PAY-114`).
+   */
   paidAmountCents: number;
   /** The slice the tier applies to: paid, capped at price plus change fee, less the change fee. */
   refundableBaseCents: number;
@@ -70,6 +74,7 @@ export function cancellationKeptCents({
 
 export function paidCancellationMoney({
   payment,
+  openEditRefundHandBackCents,
   finalPriceCents,
   appliedCreditCents,
   restoresToMemberLedger,
@@ -83,6 +88,12 @@ export function paidCancellationMoney({
     changeFeeCents: number;
     creditAppliedCents: number;
   };
+  /**
+   * The payment's open edit refund hand-backs (`openEditRefundHandBackCents`,
+   * #3827 `INV-PAY-114`), read under the cancel's locks: cash promised back on an
+   * earlier edit that this cancellation must not refund or credit a second time.
+   */
+  openEditRefundHandBackCents: number;
   finalPriceCents: number;
   /** The credit the booking's applied rows actually hold (`deriveBookingAppliedCreditCents`). */
   appliedCreditCents: number;
@@ -92,8 +103,13 @@ export function paidCancellationMoney({
   policy: CancellationRule[];
   refundMethod: "card" | "credit";
 }): PaidCancellationMoney {
-  const paidAmountCents = payment.amountCents - payment.refundedAmountCents;
-  const refundableBaseCents = cancelRefundableBaseCents({ ...payment, finalPriceCents });
+  const paidAmountCents =
+    payment.amountCents - payment.refundedAmountCents - openEditRefundHandBackCents;
+  const refundableBaseCents = cancelRefundableBaseCents({
+    ...payment,
+    openEditRefundHandBackCents,
+    finalPriceCents,
+  });
   const creditToRestoreCents =
     payment.creditAppliedCents > 0
       ? calculateAppliedCreditRestore(payment.creditAppliedCents, refundableBaseCents, days, policy)

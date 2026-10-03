@@ -370,6 +370,8 @@ describe("cancelBooking credit refunds", () => {
               aggregate: mocks.txMemberCreditAggregate,
             },
             manualRefundTask: {
+              // #3827 (`INV-PAY-114`): no open edit refund hand-back on file.
+              aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
               findFirst: mocks.txManualRefundTaskFindFirst,
               create: mocks.txManualRefundTaskCreate,
             },
@@ -4221,6 +4223,8 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
               // #3793: the re-read under the Payment row lock.
               findUnique: lockedPaymentReReadDouble(mocks.txBookingFindUnique),
             },
+            // #3827 (`INV-PAY-114`): no open edit refund hand-back on file.
+            manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
           };
           return arg(mockTx);
         }

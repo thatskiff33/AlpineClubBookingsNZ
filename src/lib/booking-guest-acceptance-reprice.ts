@@ -48,6 +48,7 @@ import { sendBookingModifiedEmail } from "@/lib/email/booking";
 import {
   editRefundGoesBackByHand,
   raiseEditRefundHandBackIfOwed,
+  refundableCashNetOfOpenEditRefunds,
 } from "@/lib/edit-refund-hand-back";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import logger from "@/lib/logger";
@@ -538,8 +539,15 @@ async function fullReductionReturnRoute(
   // Captured cash: the edit's money-back arm, at 100% and never above what is
   // still refundable (`calculateFullReductionSettlementOptions`); null once a
   // card has been refunded in full.
+  // Net of edit refunds already promised back by hand (#3827, `INV-PAY-114`):
+  // an earlier edit's open task is cash the club owes, not cash it holds.
   const settlementOptions = capturedCash
-    ? calculateFullReductionSettlementOptions({ booking: loaded, netChargeCents: priceDiffCents, todayAtClub })
+    ? calculateFullReductionSettlementOptions({
+        booking: loaded,
+        netChargeCents: priceDiffCents,
+        refundableCashCents: await refundableCashNetOfOpenEditRefunds(tx, booking.payment),
+        todayAtClub,
+      })
     : null;
   const cashCents = settlementOptions?.basisAmountCents ?? 0;
   if (settlementOptions && cashCents === reductionCents) {
