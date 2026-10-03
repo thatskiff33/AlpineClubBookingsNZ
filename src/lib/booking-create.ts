@@ -52,16 +52,8 @@ import { ApiError } from "@/lib/api-error";
 import { addDaysDateOnly } from "@/lib/date-only";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import {
-  redeemPromoCode,
-  shouldPersistPromoRedemption,
-  validateAndCalculatePromoDiscount,
-  type PromoBeneficiaryAllocation,
-} from "@/lib/promo";
-import {
-  recordBookingNightAdjustments,
-  type PromoAdjustmentTarget,
-} from "@/lib/night-adjustment-write";
+import { redeemPromoCode } from "@/lib/promo";
+import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   sendAdminNewBookingAlert,
@@ -105,13 +97,11 @@ import {
 } from "./booking-create-types";
 import { DUPLICATE_STAY_BOOKING_STATUSES } from "./booking-status";
 import {
-  type ResolvedPromo,
   getPromoTargetBookingGuestIds,
-  normalizePromoCodeInput,
-  promoCodeVisibilityRefusal,
+  promoCodeRequestsOf,
   remapPromoIndexesToSubset,
-  resolveEffectivePromoSource,
-  resolvePromoInTransaction,
+  resolveEffectivePromoSources,
+  resolvePromotionsInTransaction,
 } from "./booking-create-promo";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import {
@@ -257,8 +247,6 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     checkOut: inputCheckOut,
     guests,
     notes,
-    promoCodeStr,
-    promoGuestIndexes,
     workPartyEventId,
     expectedArrivalTime,
     requestedRoomId,
@@ -365,46 +353,26 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       skipAuthorization: isOnBehalf,
     });
 
-    let discountCents = 0;
-    let promoAdjustmentCents = 0;
-    let promoFreeNightsUsed = 0;
-    let promoEligibleGuestCount = 0;
-    let promoAllocations: PromoBeneficiaryAllocation[] = [];
-    let promoAdjustmentTargets: PromoAdjustmentTarget[] = [];
-    let promoSelectedGuestIndexes: number[] | undefined;
-    let promoShouldPersist = false;
-    let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
-    const promoSource = await resolveEffectivePromoSource(tx, {
-      promoCodeStr,
+    const promoSources = await resolveEffectivePromoSources(tx, {
+      promoCodes: promoCodeRequestsOf(input),
       workPartyEventId,
       checkIn,
       checkOut,
       lodgeId: bookingLodgeId,
     });
-    if (promoSource) {
-      const resolved = await resolvePromoInTransaction(tx, {
-        promoCodeStr: promoSource.promoCodeStr,
-        allowInternal: promoSource.allowInternal,
-        effectiveMemberId,
-        checkIn,
-        guests,
-        totalPriceCents: price.totalPriceCents,
-        perNightCentsByGuest: price.guests.map((g) => g.perNightCents),
-        nightDatesByGuest: price.guests.map((g) => g.nightDates),
-        promoGuestIndexes,
-        lodgeId: bookingLodgeId,
-        todayAtClub,
-      });
-      discountCents = resolved.discountCents;
-      promoAdjustmentCents = resolved.promoAdjustmentCents;
-      promoFreeNightsUsed = resolved.promoFreeNightsUsed;
-      promoEligibleGuestCount = resolved.promoEligibleGuestCount;
-      promoAllocations = resolved.promoAllocations;
-      promoAdjustmentTargets = resolved.promoAdjustmentTargets;
-      promoSelectedGuestIndexes = resolved.promoSelectedGuestIndexes;
-      promoShouldPersist = resolved.promoShouldPersist;
-      promoCodeRecord = resolved.promoCodeRecord;
-    }
+    const promotions = await resolvePromotionsInTransaction(tx, {
+      sources: promoSources,
+      lockRows: true,
+      effectiveMemberId,
+      checkIn,
+      guests,
+      totalPriceCents: price.totalPriceCents,
+      perNightCentsByGuest: price.guests.map((g) => g.perNightCents),
+      nightDatesByGuest: price.guests.map((g) => g.nightDates),
+      lodgeId: bookingLodgeId,
+      todayAtClub,
+    });
+    const { discountCents, promoAdjustmentCents } = promotions;
 
     const finalPriceCents = bookingFinalPriceCents({
       totalPriceCents: price.totalPriceCents,
@@ -470,19 +438,23 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       include: { guests: true },
     });
 
-    if (promoCodeRecord && promoShouldPersist) {
+    // #3827: one redemption per applied code, each in the booker's order. The
+    // booking was created a statement above in this transaction, which is the
+    // precondition `redeemPromoCode`'s switch probe needs.
+    for (const redemption of promotions.redemptions) {
       await redeemPromoCode(
         tx,
-        promoCodeRecord.id,
+        redemption.promoCodeId,
         createdBooking.id,
         effectiveMemberId,
-        discountCents,
-        promoAdjustmentCents,
-        promoFreeNightsUsed || undefined,
-        promoEligibleGuestCount || undefined,
-        promoAllocations,
-        getPromoTargetBookingGuestIds(createdBooking.guests, promoSelectedGuestIndexes),
+        redemption.discountCents,
+        redemption.priceAdjustmentCents,
+        redemption.freeNightsUsed || undefined,
+        redemption.eligibleGuestCount || undefined,
+        redemption.allocations,
+        getPromoTargetBookingGuestIds(createdBooking.guests, redemption.selectedGuestIndexes),
         bookingLodgeId,
+        redemption.applicationOrder,
       );
     }
 
@@ -493,7 +465,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       format: input.format,
       bookingId: createdBooking.id,
       guestIds: createdBooking.guests.map((guest) => guest.id),
-      targets: promoAdjustmentTargets,
+      targets: promotions.promoAdjustmentTargets,
       writer: "booking creation",
     });
 
@@ -607,8 +579,6 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     checkOut: inputCheckOut,
     guests,
     notes,
-    promoCodeStr,
-    promoGuestIndexes,
     workPartyEventId,
     expectedArrivalTime,
     requestedRoomId,
@@ -754,9 +724,13 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
   const effectiveCancelIfGuestsBumped = flaggedProvisional;
   // Promo selection indexes are remapped onto the member subset of a split.
   const primaryHasNonMembers = primaryGuests.some((g) => !g.isMember);
-  const primaryPromoGuestIndexes = splitBooking
-    ? remapPromoIndexesToSubset(promoGuestIndexes, guests, primaryGuests)
-    : promoGuestIndexes;
+  // #3827: each code's choice, remapped on its own.
+  const primaryPromoCodes = promoCodeRequestsOf(input).map((request) => ({
+    ...request,
+    promoGuestIndexes: splitBooking
+      ? remapPromoIndexesToSubset(request.promoGuestIndexes, guests, primaryGuests)
+      : request.promoGuestIndexes,
+  }));
 
   // A member-created youth-only booking lands in AWAITING_REVIEW regardless
   // of the caller's requested status — payment is intentionally blocked
@@ -927,46 +901,26 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         skipAuthorization: isOnBehalf,
       });
 
-      let discountCents = 0;
-      let promoAdjustmentCents = 0;
-      let promoFreeNightsUsed = 0;
-      let promoEligibleGuestCount = 0;
-      let promoAllocations: PromoBeneficiaryAllocation[] = [];
-      let promoAdjustmentTargets: PromoAdjustmentTarget[] = [];
-      let promoSelectedGuestIndexes: number[] | undefined;
-      let promoShouldPersist = false;
-      let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
-      const promoSource = await resolveEffectivePromoSource(tx, {
-        promoCodeStr,
+      const promoSources = await resolveEffectivePromoSources(tx, {
+        promoCodes: primaryPromoCodes,
         workPartyEventId,
         checkIn,
         checkOut,
         lodgeId: bookingLodgeId,
       });
-      if (promoSource) {
-        const resolved = await resolvePromoInTransaction(tx, {
-          promoCodeStr: promoSource.promoCodeStr,
-          allowInternal: promoSource.allowInternal,
-          effectiveMemberId,
-          checkIn,
-          guests: primaryGuests,
-          totalPriceCents: price.totalPriceCents,
-          perNightCentsByGuest: price.guests.map((g) => g.perNightCents),
-          nightDatesByGuest: price.guests.map((g) => g.nightDates),
-          promoGuestIndexes: primaryPromoGuestIndexes,
-          lodgeId: bookingLodgeId,
-          todayAtClub,
-        });
-        discountCents = resolved.discountCents;
-        promoAdjustmentCents = resolved.promoAdjustmentCents;
-        promoFreeNightsUsed = resolved.promoFreeNightsUsed;
-        promoEligibleGuestCount = resolved.promoEligibleGuestCount;
-        promoAllocations = resolved.promoAllocations;
-        promoAdjustmentTargets = resolved.promoAdjustmentTargets;
-        promoSelectedGuestIndexes = resolved.promoSelectedGuestIndexes;
-        promoShouldPersist = resolved.promoShouldPersist;
-        promoCodeRecord = resolved.promoCodeRecord;
-      }
+      const promotions = await resolvePromotionsInTransaction(tx, {
+        sources: promoSources,
+        lockRows: true,
+        effectiveMemberId,
+        checkIn,
+        guests: primaryGuests,
+        totalPriceCents: price.totalPriceCents,
+        perNightCentsByGuest: price.guests.map((g) => g.perNightCents),
+        nightDatesByGuest: price.guests.map((g) => g.nightDates),
+        lodgeId: bookingLodgeId,
+        todayAtClub,
+      });
+      const { discountCents, promoAdjustmentCents } = promotions;
 
       const finalPriceCents = bookingFinalPriceCents({
         totalPriceCents: price.totalPriceCents,
@@ -1123,19 +1077,23 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         include: { guests: true },
       });
 
-      if (promoCodeRecord && promoShouldPersist) {
+      // #3827: one redemption per applied code, in the booker's order, on the
+      // booking created above in this transaction (the switch probe's
+      // precondition).
+      for (const redemption of promotions.redemptions) {
         await redeemPromoCode(
           tx,
-          promoCodeRecord.id,
+          redemption.promoCodeId,
           newBooking.id,
           effectiveMemberId,
-          discountCents,
-          promoAdjustmentCents,
-          promoFreeNightsUsed || undefined,
-          promoEligibleGuestCount || undefined,
-          promoAllocations,
-          getPromoTargetBookingGuestIds(newBooking.guests, promoSelectedGuestIndexes),
+          redemption.discountCents,
+          redemption.priceAdjustmentCents,
+          redemption.freeNightsUsed || undefined,
+          redemption.eligibleGuestCount || undefined,
+          redemption.allocations,
+          getPromoTargetBookingGuestIds(newBooking.guests, redemption.selectedGuestIndexes),
           bookingLodgeId,
+          redemption.applicationOrder,
         );
       }
 
@@ -1146,7 +1104,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         format: input.format,
         bookingId: newBooking.id,
         guestIds: newBooking.guests.map((guest) => guest.id),
-        targets: promoAdjustmentTargets,
+        targets: promotions.promoAdjustmentTargets,
         writer: "booking creation",
       });
 
@@ -1736,8 +1694,6 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     checkOut: inputCheckOut,
     guests,
     notes,
-    promoCodeStr,
-    promoGuestIndexes,
     workPartyEventId,
     expectedArrivalTime,
     requestedRoomId,
@@ -1834,87 +1790,41 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     skipAuthorization: isOnBehalf,
   });
 
-  let discountCents = 0;
-  let promoAdjustmentCents = 0;
-  let promoFreeNightsUsed = 0;
-  let promoEligibleGuestCount = 0;
-  let promoAllocations: PromoBeneficiaryAllocation[] = [];
-  let promoAdjustmentTargets: PromoAdjustmentTarget[] = [];
-  let promoSelectedGuestIndexes: number[] | undefined;
-  let promoShouldPersist = false;
-  let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
-
-  const promoSource = await resolveEffectivePromoSource(prisma, {
-    promoCodeStr,
+  // Priced BEFORE the transaction, unlocked, as the waitlisted create always
+  // has: a waitlisted booking consumes no use until it is offered, and the
+  // offer re-prices every code under its locks (`recalculateBookingPromo`).
+  const promoSources = await resolveEffectivePromoSources(prisma, {
+    promoCodes: promoCodeRequestsOf(input),
     workPartyEventId,
     checkIn,
     checkOut,
     lodgeId: waitlistLodgeId,
   });
-  if (promoSource) {
-    const normalizedCode = normalizePromoCodeInput(promoSource.promoCodeStr);
-    const promoCode = await prisma.promoCode.findUnique({
-      where: { code: normalizedCode },
-      include: {
-        assignments: { select: { memberId: true } },
-        lodges: { select: { lodgeId: true } },
-      },
-    });
-    const hidden = promoCodeVisibilityRefusal(promoCode, promoSource.allowInternal);
-    if (hidden) {
-      throw new BookingPromoError(hidden);
+  // Each guest's own priced row, read once. The breakdown was built for
+  // exactly this party, so a guest with no row would be a promo evaluated
+  // against nothing — refused rather than discounted on a guess (#2800).
+  const pricedPerGuest = guests.map((_, index) => {
+    const priced = price.guests[index];
+    if (priced === undefined) {
+      throw new Error(
+        `Promo evaluation has no priced guest at breakdown position ${index} of ${price.guests.length} (#3167).`,
+      );
     }
-    const assignedMemberIds = promoCode?.assignments?.length
-      ? promoCode.assignments.map((a) => a.memberId)
-      : null;
-    // Each guest's own priced row, read once. The breakdown was built for
-    // exactly this party, so a guest with no row would be a promo evaluated
-    // against nothing — refused rather than discounted on a guess (#2800).
-    const guestNightRates = guests.map((guest, index) => {
-      const priced = price.guests[index];
-      if (priced === undefined) {
-        throw new Error(
-          `Promo evaluation has no priced guest at breakdown position ${index} of ${price.guests.length} (#3167).`,
-        );
-      }
-      return {
-        memberId: guest.memberId ?? null,
-        isMember: guest.isMember,
-        perNightRates: priced.perNightCents,
-        firstNight: guest.stayStart ?? checkIn,
-        nightDates: priced.nightDates,
-      };
-    });
-    const application = await validateAndCalculatePromoDiscount(
-      promoCode,
-      {
-        memberId: effectiveMemberId,
-        bookingCheckIn: checkIn,
-        totalPriceCents: price.totalPriceCents,
-        guests: guestNightRates,
-      },
-      assignedMemberIds,
-      {
-        db: prisma,
-        selectedGuestIndexes: promoGuestIndexes,
-        lodgeId: waitlistLodgeId,
-        todayAtClub,
-      }
-    );
-    if (application.error || !application.discount) {
-      throw new BookingPromoError(application.error ?? "Promo code could not be applied");
-    }
-    const promoResult = application.discount;
-    discountCents = promoResult.discountCents;
-    promoAdjustmentCents = promoResult.priceAdjustmentCents;
-    promoFreeNightsUsed = promoResult.freeNightsUsed;
-    promoEligibleGuestCount = promoResult.eligibleGuestCount;
-    promoAllocations = promoResult.allocations;
-    promoAdjustmentTargets = promoResult.adjustmentTargets;
-    promoSelectedGuestIndexes = application.selectedGuestIndexes;
-    promoShouldPersist = shouldPersistPromoRedemption(promoResult);
-    promoCodeRecord = promoCode;
-  }
+    return priced;
+  });
+  const promotions = await resolvePromotionsInTransaction(prisma, {
+    sources: promoSources,
+    lockRows: false,
+    effectiveMemberId,
+    checkIn,
+    guests,
+    totalPriceCents: price.totalPriceCents,
+    perNightCentsByGuest: pricedPerGuest.map((priced) => priced.perNightCents),
+    nightDatesByGuest: pricedPerGuest.map((priced) => priced.nightDates),
+    lodgeId: waitlistLodgeId,
+    todayAtClub,
+  });
+  const { discountCents, promoAdjustmentCents } = promotions;
 
   const finalPriceCents = bookingFinalPriceCents({
     totalPriceCents: price.totalPriceCents,
@@ -1991,19 +1901,23 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       include: { guests: true },
     });
 
-    if (promoCodeRecord && promoShouldPersist) {
+    // #3827: one redemption per applied code, in the booker's order, on the
+    // booking created above in this transaction (the switch probe's
+    // precondition).
+    for (const redemption of promotions.redemptions) {
       await redeemPromoCode(
         tx,
-        promoCodeRecord.id,
+        redemption.promoCodeId,
         createdBooking.id,
         effectiveMemberId,
-        discountCents,
-        promoAdjustmentCents,
-        promoFreeNightsUsed || undefined,
-        promoEligibleGuestCount || undefined,
-        promoAllocations,
-        getPromoTargetBookingGuestIds(createdBooking.guests, promoSelectedGuestIndexes),
+        redemption.discountCents,
+        redemption.priceAdjustmentCents,
+        redemption.freeNightsUsed || undefined,
+        redemption.eligibleGuestCount || undefined,
+        redemption.allocations,
+        getPromoTargetBookingGuestIds(createdBooking.guests, redemption.selectedGuestIndexes),
         waitlistLodgeId,
+        redemption.applicationOrder,
       );
     }
 
@@ -2014,7 +1928,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       format: input.format,
       bookingId: createdBooking.id,
       guestIds: createdBooking.guests.map((guest) => guest.id),
-      targets: promoAdjustmentTargets,
+      targets: promotions.promoAdjustmentTargets,
       writer: "waitlist booking creation",
     });
 
