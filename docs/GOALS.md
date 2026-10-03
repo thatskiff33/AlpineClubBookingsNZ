@@ -63,8 +63,7 @@ practice — there is no mechanical check for "intuitive".
 ### Docs that go with it
 
 - **Agent docs slimmed.** [`AGENTS.md`](../AGENTS.md) and `CLAUDE.md` are cut
-  down to the architecture and the key rules, so agents stop guessing instead
-  of skimming past a wall of text.
+  down to the architecture and the key rules, so agents stop guessing.
 - **Adopter guides kept accurate** for the pilot (Goal 3). The
   [adopter path](adopters/README.md) is what the pilot volunteer will follow,
   so a sweep that changes behaviour updates it in the same change.
@@ -122,8 +121,7 @@ count moves.
 
 ## Goal 2: Tested releases
 
-Clubs install from a tested, tagged release — never from the development
-branch. The flow:
+The flow:
 
 1. **Public `main`** — the development branch, where changes land.
 2. **The maintainer's staging**, running on a copy of live data.
