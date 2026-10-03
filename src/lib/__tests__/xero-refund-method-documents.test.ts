@@ -45,6 +45,8 @@ const mocks = vi.hoisted(() => ({
   readLateCaptureXeroReceipt: vi.fn(),
 }));
 
+const deallocationFence = vi.hoisted(() => ({ findFirst: vi.fn() }));
+
 vi.mock("@/lib/prisma", () => {
   const prisma = {
     // #3548: a new refund note is recorded (payment, link, row) in one transaction.
@@ -60,7 +62,12 @@ vi.mock("@/lib/prisma", () => {
       findFirst: mocks.xeroObjectLinkFindFirst,
       findMany: mocks.xeroObjectLinkFindMany,
     },
-    xeroSyncOperation: { update: mocks.xeroSyncOperationUpdate, findUnique: async () => null },
+    xeroSyncOperation: {
+      update: mocks.xeroSyncOperationUpdate,
+      findUnique: async () => null,
+      // #3791: the unconverged-deallocation read a review's note defers on.
+      findFirst: (...a: unknown[]) => deallocationFence.findFirst(...a),
+    },
     memberCredit: { updateMany: mocks.memberCreditUpdateMany },
   };
   return { prisma };
@@ -513,6 +520,148 @@ describe("the account-credit note (createUnappliedXeroCreditNote)", () => {
   });
 });
 
+describe("#3791: a review task's share is a document of its own", () => {
+  beforeEach(() => {
+    deallocationFence.findFirst.mockResolvedValue(null);
+  });
+
+  const reviewNote = () =>
+    createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 1000,
+      bookingModificationId: "cmmodification01",
+      reviewTaskId: "task-7",
+      refundMethod: "account-credit",
+      syncOperationId: "op-note",
+    });
+
+  it.each(["PENDING", "RUNNING"])("MUTATION: waits, as a transient busy error, while the payment's deallocation is %s - and creates nothing", async (status) => {
+    deallocationFence.findFirst.mockResolvedValue({ id: "dealloc-1", status });
+    const { XeroAppliedCreditOperationBusyError } = await import("@/lib/xero-applied-credit-operation-serialization");
+
+    await expect(reviewNote()).rejects.toBeInstanceOf(XeroAppliedCreditOperationBusyError);
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.xeroSyncOperationUpdate).not.toHaveBeenCalled();
+    expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+  });
+
+  it.each(["FAILED", "PARTIAL"])("MUTATION: FAILS, naming the deallocation, when it is %s - only an operator's retry moves that, so waiting would spin for ever", async (status) => {
+    deallocationFence.findFirst.mockResolvedValue({ id: "dealloc-1", status });
+    const { XeroAppliedCreditOperationBusyError } = await import("@/lib/xero-applied-credit-operation-serialization");
+
+    const error = await reviewNote().then(() => null, (e: unknown) => e);
+
+    expect(error).not.toBeInstanceOf(XeroAppliedCreditOperationBusyError);
+    expect((error as Error).message).toContain(`deallocation dealloc-1 is ${status}`);
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith("op-note", error);
+    expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: once the deallocation has been retried, an operator retry of the note raises it", async () => {
+    deallocationFence.findFirst.mockResolvedValueOnce({ id: "dealloc-1", status: "FAILED" });
+    await reviewNote().catch(() => undefined);
+
+    // The deallocation converged; the operator retries the note (a fresh row).
+    deallocationFence.findFirst.mockResolvedValue(null);
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 1000,
+      bookingModificationId: "cmmodification01",
+      reviewTaskId: "task-7",
+      refundMethod: "account-credit",
+      repairExistingLink: true,
+    });
+
+    expect(mocks.retryXeroWriteWithContactRepair).toHaveBeenCalledTimes(1);
+    expect(mocks.createCreditNoteAllocation).toHaveBeenCalledTimes(1);
+  });
+
+  it("an edit's own note does not wait on a deallocation", async () => {
+    deallocationFence.findFirst.mockResolvedValue({ id: "dealloc-1", status: "PENDING" });
+
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 1000,
+      bookingModificationId: "cmmodification01",
+    });
+
+    expect(mocks.retryXeroWriteWithContactRepair).toHaveBeenCalledTimes(1);
+  });
+
+  it("MUTATION: a queued account note keeps its amount and queue shape when it rewrites the payload, so a retry can rebuild it", async () => {
+    mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
+
+    await createUnappliedXeroCreditNote(PAYMENT_ID, 1000, CLUB_FORMAT_TEST, {
+      bookingModificationId: "cmmodification01",
+      reviewTaskId: "task-7",
+      syncOperationId: "op-queued",
+    });
+
+    expect(mocks.xeroSyncOperationUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "op-queued" },
+      data: {
+        requestPayload: expect.objectContaining({
+          queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+          refundAmountCents: 1000,
+          paymentId: PAYMENT_ID,
+          bookingModificationId: "cmmodification01",
+          reviewTaskId: "task-7",
+        }),
+      },
+    }));
+  });
+
+  it("MUTATION: scopes the invoice-allocated note's keys - the note's and its allocation's - to the task, amount kept, and records the task for a retry", async () => {
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 1000,
+      bookingModificationId: "cmmodification01",
+      reviewTaskId: "task-7",
+      refundMethod: "account-credit",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: "booking-mod:cmmodification01:review-task:task-7:mod-credit-note:1000:v1",
+      requestPayload: expect.objectContaining({ reviewTaskId: "task-7" }),
+    }));
+    const allocationKeys = mocks.createCreditNoteAllocation.mock.calls.map((call) => call.at(-1));
+    expect(allocationKeys).toEqual(["booking-mod:cmmodification01:review-task:task-7:mod-credit-note-allocation:1000:v1"]);
+  });
+
+  it("leaves an edit's own note keyed exactly as before", async () => {
+    await createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 1000,
+      bookingModificationId: "cmmodification01",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: "booking-mod:cmmodification01:mod-credit-note:1000:v1",
+    }));
+  });
+
+  it("MUTATION: an unallocated note for a review task neither short-cuts on a sibling's link nor shares its key", async () => {
+    mocks.paymentFindUnique.mockResolvedValue(paymentRow(PaymentSource.STRIPE));
+    // A sibling review's note already on the anchor.
+    mocks.xeroObjectLinkFindFirst.mockResolvedValue({ xeroObjectId: "cn-sibling", xeroObjectNumber: "CN-1" });
+
+    await createUnappliedXeroCreditNote(PAYMENT_ID, 1000, CLUB_FORMAT_TEST, {
+      bookingModificationId: "cmmodification01",
+      reviewTaskId: "task-7",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: "booking-mod:cmmodification01:review-task:task-7:mod-unapplied-credit-note:1000:v1",
+    }));
+    expect(builtCreditNote().reference).toBe("Account Credit - Booking cmbookin");
+  });
+});
+
 describe("the modification credit note (createXeroCreditNoteForModification)", () => {
   it("carries the method it was handed", async () => {
     await createXeroCreditNoteForModification({
@@ -824,6 +973,33 @@ describe("itemised modification notes (#3530)", () => {
       }),
     );
   });
+
+  it.each([
+    ["invoice-correction", "Invoice correction — nothing refunded"],
+    ["cash", "Refunded in cash"],
+  ] as const)(
+    "words a %s note with the owner's #3536 words and records it so a replay says the same",
+    async (noteWording, words) => {
+      await createXeroCreditNoteForModification({
+        format: CLUB_FORMAT_TEST,
+        bookingId: BOOKING_ID,
+        refundAmountCents: 8000,
+        bookingModificationId: "cmmodification01",
+        noteWording,
+      });
+
+      const note = builtCreditNote();
+      expect(note.reference).toBe(`${words} - Booking cmbookin`);
+      expect(note.lineItems?.[0]?.description).toBe(
+        `${words} - Booking cmbookin - booking change cmmodifi`,
+      );
+      expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestPayload: expect.objectContaining({ noteWording }),
+        }),
+      );
+    },
+  );
 
   it("a note that returns less than the reduction keeps the single method line and says why", async () => {
     await createXeroCreditNoteForModification({

@@ -573,14 +573,22 @@ export function bookingRebaseAuditMetadata({
 export function rebaseDivergesFromIssuedInvoice({
   rebase,
   hasIssuedXeroInvoice,
-  settlementIssuesXeroDocument,
+  settlement,
 }: {
-  rebase: BookingPriceRebase;
+  /** What the re-base did, or null where it declined. */
+  rebase: BookingPriceRebase | null;
   hasIssuedXeroInvoice: boolean;
-  settlementIssuesXeroDocument: boolean;
+  /**
+   * Whether the closure's Xero document corrects the invoice - or, for an
+   * uncaptured account-credit share (#3791), what its allocated note takes off
+   * it, which must equal the re-price's drop; null falls back to the document.
+   */
+  settlement: { issuesXeroDocument: boolean; invoiceReductionCents?: number | null };
 }): boolean {
   if (!hasIssuedXeroInvoice) return false;
-  if (settlementIssuesXeroDocument) return false;
+  const priceDropCents = rebase ? rebase.previousFinalPriceCents - rebase.newFinalPriceCents : 0;
+  if (typeof settlement.invoiceReductionCents === "number") return settlement.invoiceReductionCents !== priceDropCents;
+  if (rebase === null || settlement.issuesXeroDocument) return false;
   return rebase.newFinalPriceCents !== rebase.previousFinalPriceCents;
 }
 

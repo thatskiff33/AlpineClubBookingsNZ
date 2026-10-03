@@ -504,6 +504,45 @@ describe("what completing or dismissing means, per kind (#3033)", () => {
     });
   });
 
+  it("asks how a hand-settled refund went back, and posts only what the officer chose (#3536)", async () => {
+    const handSettled = { ...REVIEW_TASK, id: "task-review-hand", paidBackByHand: true };
+    await openDialog(handSettled, "Record the adjustment");
+    // Not before a direction: a charge is never handed back.
+    expect(screen.queryByLabelText("In cash")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/The member owes the club/));
+    expect(screen.queryByLabelText("In cash")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/The club owes the member/));
+    // Offered with nothing chosen: the app never answers for the officer.
+    expect(screen.getByLabelText("In cash")).not.toBeChecked();
+    expect(screen.getByLabelText("By bank transfer")).not.toBeChecked();
+    // The help sentence is the group's accessible description, not loose text.
+    expect(
+      screen.getByRole("group", { name: "How did the club pay the member back?" }),
+    ).toHaveAccessibleDescription(/only changes the wording on the Xero credit note/);
+    fireEvent.click(screen.getByLabelText("In cash"));
+    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "73.00" } });
+    fireEvent.change(screen.getByLabelText(/^Note/), {
+      target: { value: "handed back at the lodge" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Pay the member back" }));
+
+    await waitFor(() => {
+      const call = vi.mocked(fetch).mock.calls.find(
+        ([url]) => typeof url === "string" && url.includes("/manual-refund-tasks/task-review-hand"),
+      );
+      expect(call).toBeDefined();
+      const body = JSON.parse(String((call?.[1] as RequestInit).body));
+      expect(body.direction).toBe("REFUND_TO_MEMBER");
+      expect(body.handedBackInCash).toBe(true);
+    });
+  });
+
+  it("never asks cash-or-bank where a refund is not paid back by hand (#3536)", async () => {
+    await openDialog({ ...REVIEW_TASK, id: "task-review-card", paidBackByHand: false }, "Record the adjustment");
+    fireEvent.click(screen.getByLabelText(/The club owes the member/));
+    expect(screen.queryByLabelText("In cash")).not.toBeInTheDocument();
+  });
+
   it("does not read a hand-back's placeholder as an amount", async () => {
     /*
       #2971 made `amountCents` nullable for every kind, so an UNPRICED HAND-BACK

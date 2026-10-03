@@ -1515,6 +1515,36 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  it("replays a stored booking-edit wording with the credit note (#3536)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_cash",
+        requestPayload: {
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          bookingId: "book_123",
+          refundAmountCents: 2500,
+          bookingModificationId: "mod_cash",
+          refundMethod: "internet-banking",
+          noteWording: "cash",
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: -2500,
+      changeFeeCents: 0,
+    });
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith(
+      expect.objectContaining({ refundMethod: "internet-banking", noteWording: "cash" })
+    );
+  });
+
   // #1356: the enqueued policy-limited refund amount wins over any rebuild —
   // the modification row does not record the settlement cap, and the amount
   // is embedded in the Xero idempotency key.
@@ -1675,6 +1705,66 @@ describe("retryXeroSyncOperation", () => {
       createdByMemberId: "admin_1",
       repairExistingLink: true,
     });
+  });
+
+  it("MUTATION: #3791 - rebuilds a review task's share under its own task-scoped keys", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_review",
+        requestPayload: {
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          bookingId: "book_123",
+          refundAmountCents: 1000,
+          bookingModificationId: "mod_review",
+          reviewTaskId: "task_7",
+          refundMethod: "account-credit",
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: -2500,
+      changeFeeCents: 0,
+    });
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 1000, reviewTaskId: "task_7", refundMethod: "account-credit" }),
+    );
+  });
+
+  it("MUTATION: #3791 - retries a FAILED review account note on a PARKED anchor from its executed payload, never from the anchor's zero net", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_parked",
+        queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+        // The shape `createUnappliedXeroCreditNote` leaves after it ran.
+        requestPayload: {
+          creditNotes: [{ type: "ACCRECCREDIT" }],
+          refundAmountCents: 2500,
+          queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+          bookingId: "book_123",
+          paymentId: "pay_123",
+          bookingModificationId: "mod_parked",
+          reviewTaskId: "task_9",
+        },
+      })
+    );
+    // The parked edit moved no money of its own.
+    mocks.findUniqueBookingModification.mockResolvedValue({ bookingId: "book_123", priceDiffCents: 0, changeFeeCents: 0 });
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createUnappliedXeroCreditNoteForModification).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "pay_123", refundAmountCents: 2500, bookingModificationId: "mod_parked", reviewTaskId: "task_9" }),
+    );
   });
 
   it("refuses to rebuild a modification credit note when the signed net is not a reduction (#1356)", async () => {

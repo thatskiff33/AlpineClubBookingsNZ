@@ -311,7 +311,12 @@ Work the amount out from that evidence and the booking's payment history, then:
 
 - if something is owed, record the confirmed adjustment. **Record the adjustment**
   stays disabled until an amount has been confirmed, because closing one of these
-  with no figure is refused;
+  with no figure is refused. If the club owes the member and the booking was not
+  paid by card, the club pays them back by hand, and the screen also asks **How
+  did the club pay the member back?**: **By bank transfer** or **In cash**. Your
+  answer only sets the wording on the Xero credit note ("Refunded in cash" for
+  cash). The system never guesses cash from a payment being marked paid by hand,
+  and if you leave it blank the note says the money went back by bank transfer;
 - if, on the evidence, nothing is owed, click **No adjustment**. That closes the
   review as *looked at, nothing due* — it moves no money and records none as
   having moved. A note is required, and it should say what the evidence showed.

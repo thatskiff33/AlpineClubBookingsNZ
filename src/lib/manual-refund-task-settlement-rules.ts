@@ -62,7 +62,7 @@ export function editRefundHandBackOccurrenceKey(bookingModificationId: string): 
 }
 
 /**
- * #3827 (owner decision D-3813-7, `INV-PAY-115`): THE OCCURRENCE-KEY PREFIX of
+ * #3827 (owner decision D-3813-7, `INV-PAY-116`): THE OCCURRENCE-KEY PREFIX of
  * a refund-request hand-back - the task an approved refund request (appeal)
  * raises for the part of its amount no card refund can carry, so the treasurer
  * sends it by bank transfer. One per `RefundRequest`: the key is the duplicate
@@ -70,7 +70,7 @@ export function editRefundHandBackOccurrenceKey(bookingModificationId: string): 
  */
 export const REFUND_REQUEST_HAND_BACK_KEY_PREFIX = "refund-request-hand-back:";
 
-/** The one occurrence key of one refund request's hand-back (`INV-PAY-115`). */
+/** The one occurrence key of one refund request's hand-back (`INV-PAY-116`). */
 export function refundRequestHandBackOccurrenceKey(refundRequestId: string): string {
   return `${REFUND_REQUEST_HAND_BACK_KEY_PREFIX}${refundRequestId}`;
 }

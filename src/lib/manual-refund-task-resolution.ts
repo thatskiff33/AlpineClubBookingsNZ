@@ -18,10 +18,18 @@ import {
   executeEditReviewSettlement,
   type EditReviewSettlementRoute,
 } from "@/lib/edit-financial-review-settlement";
+import {
+  writeEditReviewAccountCredit,
+  type EditReviewAccountCreditOutcome,
+} from "@/lib/edit-financial-review-account-credit";
 import { refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero-leg";
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
-import { createBookingModificationCredit, requireMemberCreditRecipient, SchoolHasNoCreditAccountError } from "@/lib/member-credit";
+import { requireMemberCreditRecipient, SchoolHasNoCreditAccountError } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import {
+  needsOperatorXeroRetry,
+  XeroAppliedCreditOperationBusyError,
+} from "@/lib/xero-applied-credit-operation-serialization";
 import { enqueueEditFinancialReviewRefundRecovery } from "@/lib/payment-recovery";
 import {
   applyLocalRefundAllocation,
@@ -327,6 +335,10 @@ export async function resolveManualRefundTask(
           amountCents: settlement.amountCents,
           hasIssuedXeroInvoice,
           direction: settlementDirection,
+          // #3536: the officer's cash-or-bank answer, carried into the route
+          // chosen here under the lock.
+          handedBackInCash:
+            input.resolution === "completed" && input.handedBackInCash === true,
           store: tx,
         })
       : null;
@@ -399,20 +411,10 @@ export async function resolveManualRefundTask(
             amountCents: settlement.amountCents,
             store: tx,
           });
-        } else if (settlementRoute.kind === "account-credit") {
-          // #3032: the canonical account-credit writer, re-entered unchanged.
-          // Its exactly-once key is the `BookingModification` id (D-3032-1), and
-          // it writes the refund allocation itself when handed a payment id.
-          await createBookingModificationCredit(
-            requireMemberCreditRecipient(bookingOwner(task.booking).memberId),
-            settlement.amountCents,
-            task.bookingId,
-            settlementRoute.bookingModificationId,
-            undefined,
-            tx,
-            settlementRoute.allocateAgainstPaymentId ?? undefined,
-          );
         }
+        // `account-credit` is written by the closure's re-price below, once the
+        // re-price has run: what of a share is applied credit coming back
+        // depends on what that re-price removed (#3791).
         // `stripe-refund` writes no LEDGER allocation here on purpose: the
         // provider call has to happen outside this transaction, and
         // `refundPaymentTransactions` writes the allocation as part of it.
@@ -452,39 +454,7 @@ export async function resolveManualRefundTask(
           });
         }
       } catch (error) {
-        // #3030: the settlement cap is now OPERATOR-REACHABLE. Before this the
-        // amount always came from cancellation or capture policy and could not
-        // exceed what was captured; now an admin types it. The cap itself is not
-        // weakened by a byte here - the allocation still refuses and the
-        // transaction still rolls back - but a correct refusal must not be
-        // reported as a server fault: an untyped Error falls past the route's
-        // `instanceof ManualBookingPaymentError` check, so the operator was told
-        // "Could not close the refund task" and monitoring recorded a 500 for
-        // working code. This says what is wrong and what to do about it.
-        if (
-          error instanceof Error &&
-          error.message === "Refund amount exceeds captured payments"
-        ) {
-          throw new ManualBookingPaymentError("That is more than was ever captured on this payment — check the amount against the booking's payment history.", 400);
-        }
-        // #3032: a lock-free writer on the same payment (the charge.refunded
-        // sync; a legacy kind's completion takes no key at all) can still move
-        // the ledger under this completion - an edit review's `lock(1)` (#3582)
-        // excludes only edits and settles. The compare-and-set
-        // inside `applyLocalRefundAllocation` retries against the fresh total
-        // (#3640) and refuses loudly only when that writer used the headroom
-        // this completion needed; the transaction rolls back, so the task is
-        // still OPEN and its money is still owed when the operator retries.
-        if (error instanceof RefundAllocationRacedError) {
-          throw new ManualBookingPaymentError("This booking's payment changed while you were closing the task — refresh and try again.", 409);
-        }
-        // #3369: the same masking again. A school's reduction settled as account
-        // credit is a CORRECT refusal that reported a 500, on the screen that
-        // had just offered the choice; its message has to arrive.
-        if (error instanceof SchoolHasNoCreditAccountError) {
-          throw new ManualBookingPaymentError(error.message, error.status);
-        }
-        throw error;
+        throw settlementWriteRefusal(error);
       }
       // #3599: the money the club handed back by hand, on the booking ledger.
       if (settlementRoute.kind === "local-allocation") {
@@ -523,11 +493,41 @@ export async function resolveManualRefundTask(
       });
     }
 
+    // #3791: the account-credit route's write, run by the re-price below once
+    // it has re-priced (an edit review is the only kind that reaches this route).
+    let accountCredit: EditReviewAccountCreditOutcome | null = null;
+    const creditRoute = settlement && settlementRoute?.kind === "account-credit" ? settlementRoute : null;
     // #3191/#3219/#3257: blanks become numbers inside the claim; the booking
     // re-prices on EVERY parked review closing. Why, and why the KIND is the
     // condition, is `recordReviewClosurePricing`'s docblock.
     if (task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
       await recordReviewClosurePricing({
+        settleAgainstRebase: creditRoute && settlement
+          ? async (rebase) => {
+              try {
+                accountCredit = await writeEditReviewAccountCredit({
+                  route: creditRoute,
+                  taskId: task.id,
+                  memberId: requireMemberCreditRecipient(bookingOwner(task.booking).memberId),
+                  bookingId: task.bookingId,
+                  amountCents: settlement.amountCents,
+                  rebase,
+                  clubZone,
+                  format,
+                  store: tx,
+                });
+              } catch (error) {
+                throw settlementWriteRefusal(error);
+              }
+              // What the member was actually credited: the stand-in line and
+              // the invoice-divergence check read this, not the typed share.
+              return {
+                creditedCents: accountCredit.givenBackCents + accountCredit.mintedCents,
+                invoiceReductionCents: accountCredit.invoiceReductionCents,
+                agreedGiveBackCents: accountCredit.agreedGiveBackCents,
+              };
+            }
+          : null,
         format,
         plans: nightPriceRepairs,
         task,
@@ -610,6 +610,8 @@ export async function resolveManualRefundTask(
        */
       settlementRoute,
       settlementAmountCents: settlement?.amountCents ?? null,
+      /** #3791: what the account-credit route gave back and minted, else null. */
+      accountCredit: accountCredit as EditReviewAccountCreditOutcome | null,
       /** #3170: which way this completion sent the money, or null on a dismissal. */
       settlementDirection: settlement ? settlementDirection : null,
       memberId: bookingOwner(task.booking).memberId,
@@ -619,6 +621,7 @@ export async function resolveManualRefundTask(
        */
       hasIssuedXeroInvoice,
       bookingPaymentStatus: task.booking.payment?.status ?? null,
+      bookingXeroInvoiceId: task.booking.payment?.xeroInvoiceId ?? null,
       // `INV-PAY-101` (#3529): the invoice a cancellation hand-back refunds
       // against - `hasIssuedXeroInvoice` is false for every CANCELLED booking.
       cancellationHandBackInvoiceId:
@@ -681,6 +684,8 @@ export async function resolveManualRefundTask(
       actingMemberId,
       route: result.settlementRoute,
       amountCents: result.settlementAmountCents,
+      accountCredit: result.accountCredit,
+      bookingXeroInvoiceId: result.bookingXeroInvoiceId,
       hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
       bookingPaymentStatus: result.bookingPaymentStatus,
       cancellationHandBackInvoiceId: result.cancellationHandBackInvoiceId,
@@ -694,4 +699,54 @@ export async function resolveManualRefundTask(
   await finishKeptLateCaptureXeroRecord(keptLateCaptureXeroPlan);
 
   return { ...closed, stripeRefundId, additionalPaymentIntentId };
+}
+
+/**
+ * A settlement write's refusal, as the operator should read it - or the error
+ * itself where it is not one. Shared by the writes before the re-price and the
+ * account-credit write after it, so the two cannot answer the same refusal
+ * differently.
+ */
+function settlementWriteRefusal(error: unknown): unknown {
+  // #3030: the settlement cap is now OPERATOR-REACHABLE. Before this the amount
+  // always came from cancellation or capture policy and could not exceed what
+  // was captured; now an admin types it. The cap itself is not weakened by a
+  // byte here - the allocation still refuses and the transaction still rolls
+  // back - but a correct refusal must not be reported as a server fault: an
+  // untyped Error falls past the route's `instanceof ManualBookingPaymentError`
+  // check, so the operator was told "Could not close the refund task" and
+  // monitoring recorded a 500 for working code. This says what is wrong and
+  // what to do about it.
+  if (error instanceof Error && error.message === "Refund amount exceeds captured payments") {
+    return new ManualBookingPaymentError("That is more than was ever captured on this payment — check the amount against the booking's payment history.", 400);
+  }
+  // #3032: a lock-free writer on the same payment (the charge.refunded sync; a
+  // legacy kind's completion takes no key at all) can still move the ledger
+  // under this completion - an edit review's `lock(1)` (#3582) excludes only
+  // edits and settles. The compare-and-set inside `applyLocalRefundAllocation`
+  // retries against the fresh total (#3640) and refuses loudly only when that
+  // writer used the headroom this completion needed; the transaction rolls
+  // back, so the task is still OPEN and its money is still owed when the
+  // operator retries.
+  if (error instanceof RefundAllocationRacedError) {
+    return new ManualBookingPaymentError("This booking's payment changed while you were closing the task — refresh and try again.", 409);
+  }
+  // #3369: the same masking again. A school's reduction settled as account
+  // credit is a CORRECT refusal that reported a 500, on the screen that had just
+  // offered the choice; its message has to arrive.
+  if (error instanceof SchoolHasNoCreditAccountError) {
+    return new ManualBookingPaymentError(error.message, error.status);
+  }
+  // #3791: a give-back of applied credit waits for a Xero deallocation on the
+  // payment, as the clamp does; the task stays OPEN. One that FAILED waits for a
+  // person, so the officer is told who has to act rather than to wait.
+  if (error instanceof XeroAppliedCreditOperationBusyError) {
+    return new ManualBookingPaymentError(
+      needsOperatorXeroRetry(error)
+        ? "This booking's account credit is held by a Xero update that failed. An operator has to retry that Xero operation (Xero sync failures) before this review can be completed."
+        : "This booking's account credit is still being updated in Xero — try again in a few minutes.",
+      409,
+    );
+  }
+  return error;
 }

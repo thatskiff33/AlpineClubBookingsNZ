@@ -178,6 +178,9 @@ describe("the queue payload marks an appeal's hand-back for the card", () => {
       amountCents: 6000,
       raisedAmountCents: 6000,
       kind: "CANCELLED_BOOKING_HAND_BACK",
+      // #3536: the payment the cash-or-bank question reads (edit reviews only).
+      paymentId: null,
+      payment: null,
       lateCaptureApprovalIntentId: null,
       partPaymentReviewPaymentId: null,
       partPaymentReviewXeroPaidAt: null,
@@ -193,6 +196,8 @@ describe("the queue payload marks an appeal's hand-back for the card", () => {
         organisation: null,
         memberId: "ann",
         deletedAt: null,
+        status: "CANCELLED",
+        payment: null,
       },
     };
     const appealPayload = toOpenManualRefundTaskPayload(row, null, []);

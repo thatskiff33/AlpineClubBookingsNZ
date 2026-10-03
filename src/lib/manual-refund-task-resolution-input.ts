@@ -85,6 +85,15 @@ export type ManualRefundTaskResolution =
        * ONE ARRAY PER REPAIRABLE STRAND, in the order the screen offered them.
        */
       recordedNightPrices: RecordedStrandNightPrices[] | null;
+      /**
+       * #3536 (`INV-PAY-114`, owner decision 3 Oct 2026): how a refund the club
+       * pays back BY HAND went back - true for cash, false for a bank transfer.
+       * The officer says; the app never infers cash from "marked paid by hand".
+       * Null or absent keeps the bank-transfer wording. Words on the Xero note
+       * only: the settlement, the ledger line and the refund method are the
+       * same either way, and the answer is ignored on any other route.
+       */
+      handedBackInCash?: boolean | null;
     }
   | {
       taskId: string;
@@ -106,4 +115,6 @@ export type ManualRefundTaskResolution =
        * (`ManualRefundTask_direction_only_when_completed`).
        */
       direction?: never;
+      /** A dismissal hands nothing back, so there is no way it went (#3536). */
+      handedBackInCash?: never;
     };

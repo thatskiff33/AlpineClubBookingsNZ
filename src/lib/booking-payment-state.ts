@@ -278,3 +278,53 @@ export function editReviewSettlementPaymentId(booking: {
 }): string | null {
   return editReviewSettlementPayment(booking)?.id ?? null;
 }
+
+/**
+ * #3194 / #3536: the payment an edit review's REFUND comes back out of, and its
+ * source - the stored task id where it has one, else the booking's own captured
+ * payment re-asked now. `chooseEditReviewSettlementRoute` picks its refund route
+ * from this, and the settle queue asks it ahead of time so the cash-or-bank
+ * question is offered only where the club pays the money back by hand.
+ */
+export function editReviewRefundSettlementPayment(task: {
+  paymentId: string | null;
+  payment: { source: string } | null | undefined;
+  booking: {
+    status: string;
+    payment: (BookingPaymentState & { id: string; source: string }) | null | undefined;
+  };
+}): { id: string; source: string | null } | null {
+  if (task.paymentId !== null) {
+    return { id: task.paymentId, source: task.payment?.source ?? null };
+  }
+  const backfilled = editReviewSettlementPayment(task.booking);
+  return backfilled ? { id: backfilled.id, source: backfilled.source } : null;
+}
+
+/**
+ * #3536: THE one test of "this refund goes back on the card" for a payment
+ * `editReviewRefundSettlementPayment` returned (`INV-SSOT`).
+ * `chooseEditReviewSettlementRoute` takes the `stripe-refund` route exactly when
+ * this is true, and `editReviewRefundIsPaidBackByHand` below is exactly its
+ * complement over a non-null payment, so a new `PaymentSource` cannot be sent
+ * down one route by the chooser and offered the other by the settle screen. A
+ * missing source counts as NOT a card, matching the chooser's ledger fallback.
+ */
+export function editReviewRefundGoesBackOnCard(payment: {
+  source: string | null;
+}): boolean {
+  return payment.source === "STRIPE";
+}
+
+/**
+ * #3536: a refund on this review would be paid back by hand - the
+ * `local-allocation` route - because the money behind it did not go out on a
+ * card. Only the officer knows whether that hand-back was cash or a bank
+ * transfer, so this is where the screen asks.
+ */
+export function editReviewRefundIsPaidBackByHand(
+  task: Parameters<typeof editReviewRefundSettlementPayment>[0],
+): boolean {
+  const payment = editReviewRefundSettlementPayment(task);
+  return payment !== null && !editReviewRefundGoesBackOnCard(payment);
+}

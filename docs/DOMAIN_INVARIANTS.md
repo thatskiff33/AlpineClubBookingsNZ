@@ -266,6 +266,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-096` | A share mid-send for its invoice becomes a dismiss-only queue item |
 | `INV-PAY-097` | One withheld share is one item; a credit-only completion records no refund |
 | `INV-PAY-061` | Confirmed amounts settle through an existing path, chosen at completion |
+| `INV-PAY-113` | A credit-paid share is applied credit given back, once |
 | `INV-PAY-069` | Completions record their direction; charging re-enters the additional-payment path |
 | `INV-PAY-062` | One booking edit raises one charge request, derived from settled shares |
 | `INV-PAY-098` | A replacement ask carries the unpaid balance it retires, and records it |
@@ -273,6 +274,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-099` | A dismissed money task can be reopened; a completed one cannot |
 | `INV-PAY-100` | Work-item grain follows the moved strands; the lead absorbs the settlement |
 | `INV-PAY-101` | Refund documents name the method from the settlement decision, never the source |
+| `INV-PAY-114` | Invoice-correction and officer-chosen cash notes have their own wordings |
 | `INV-PAY-115` | A by-hand edit refund raises one officer refund task |
 | `INV-PAY-116` | An approved appeal's non-card part raises one officer refund task |
 | `INV-PAY-111` | A refund note's own operation completes only with its payment or skip |

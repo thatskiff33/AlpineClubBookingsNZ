@@ -499,7 +499,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:274",
   "src/lib/kiosk-access.ts:232",
-  "src/lib/manual-refund-task-queue-payload.ts:247",
+  "src/lib/manual-refund-task-queue-payload.ts:286",
   "src/lib/requested-room-write.ts:62",
   "src/lib/waitlist-cross-lodge.ts:343",
   "src/lib/waitlist-cross-lodge.ts:531",
@@ -777,7 +777,7 @@ describe("#3369: an `organisation` selection names a relation that exists", () =
 /** Measured, not counted by hand. Re-measure by running this test. */
 const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   "src/app/api/admin/booking-change-requests/[id]/route.ts:56",
-  "src/app/api/admin/payments/manual-refund-tasks/route.ts:80",
+  "src/app/api/admin/payments/manual-refund-tasks/route.ts:81",
   "src/lib/bed-allocation-removal.ts:144",
   "src/lib/cron-additional-payment-reminders.ts:437",
   "src/lib/cron-confirm-pending.ts:190",
