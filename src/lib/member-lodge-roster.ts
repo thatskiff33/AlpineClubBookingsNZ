@@ -10,9 +10,9 @@ import {
 } from "./booking-owner";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "./booking-status";
 import {
-  findCustodianBedHolds,
+  findCustodianOccupants,
   holdCoversNight,
-  type CustodianBedHold,
+  type CustodianOccupant,
 } from "./custodian-occupancy";
 import {
   addCalendarDays,
@@ -283,15 +283,18 @@ export async function buildMemberLodgeRoster(
     select: MEMBER_ROSTER_BOOKING_SELECT,
   });
 
-  // Custodian bed holds for the same window, per lodge. Read per lodge rather
-  // than once unfiltered, so no row for a lodge this member cannot reach is
+  // Custodians for the same window, per lodge: every custodian occupancy — a
+  // held bed or the "Custodian (lives on site)" tick, one entry per assignment
+  // (#3818, orchestrator decision on #3820, 3 Oct 2026: "The roster therefore
+  // includes ticked custodians, under its existing naming rules"). Read per
+  // lodge rather than once unfiltered, so no row for a lodge this member cannot reach is
   // ever loaded — the same discipline the booking read follows.
-  const custodianHoldsByLodge = new Map<string, CustodianBedHold[]>();
+  const custodianHoldsByLodge = new Map<string, CustodianOccupant[]>();
   await Promise.all(
     lodgeIds.map(async (lodgeId) => {
       custodianHoldsByLodge.set(
         lodgeId,
-        await findCustodianBedHolds({
+        await findCustodianOccupants({
           lodgeId,
           from: dateOnlyInstantOf(from),
           toExclusive: dateOnlyInstantOf(to),
@@ -324,7 +327,7 @@ export async function buildMemberLodgeRoster(
 function buildOneLodgeRoster(
   lodge: { id: string; name: string; rosterNameGranularity: DisplayNameGranularity | null },
   bookings: readonly RosterBookingRow[],
-  custodianHolds: readonly CustodianBedHold[],
+  custodianHolds: readonly CustodianOccupant[],
   windowNights: readonly CalendarDate[]
 ): LodgeRoster {
   const granularity = lodge.rosterNameGranularity ?? DEFAULT_ROSTER_NAME_GRANULARITY;

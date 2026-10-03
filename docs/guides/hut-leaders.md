@@ -174,14 +174,15 @@ handed back.
 What a held bed does, and does not, do:
 
 - **Members** simply see one fewer bed on the availability calendar for those
-  nights. There is deliberately no custodian label on any member-facing screen.
+  nights. The calendar carries no custodian label; the roster (below) does.
 - The **allocation board** draws a hatched *Custodian* band across the bed's
   cells. It is not a drop target, and the server refuses any placement onto it.
-- The **lodge screen** shows a `Custodian` line in its footer while the
-  assignment is running — the fixed word for every club, whatever your club
-  calls the role in the admin area. On a handover night, when two people hold two
-  beds, it reads `Custodians` with both names or, if either of them may not be
-  named, with the count. A minor-age custodian is never named there at any
+- The **lodge screen** and the members' **Who's at the lodge** roster show
+  every custodian — ticked, holding a bed, or both, counted once — while the
+  assignment is running. The screen's footer line reads `Custodian`, the fixed
+  word for every club, whatever your club calls the role in the admin area. On
+  a handover night, with two custodians, it reads `Custodians` with both names
+  or, if either of them may not be named, with the count. A minor-age custodian is never named there at any
   name-display setting, and neither is anyone else once a minor is among them —
   naming one of two would identify the other by elimination.
 - The custodian is **not a guest**: no chore-roster entry, no booking row, no

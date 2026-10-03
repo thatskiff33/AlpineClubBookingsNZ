@@ -31,6 +31,7 @@ import {
 } from "./club-theme-schema";
 import { getSanitizedLodgeInstructions } from "./lodge-instructions";
 import { DISPLAY_RELEVANT_MODULE_KEYS } from "./lodge-display/conditions";
+import { CUSTODIAN_OCCUPANCY_WHERE } from "./custodian-occupancy";
 import { lodgeNullTolerantScope } from "./lodges";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "./member-guest-consent";
 import { loadEffectiveModuleFlags } from "./module-settings";
@@ -202,12 +203,16 @@ export interface DisplayState {
   /**
    * The custodian(s) in residence today (#2286), or null when there is none.
    *
-   * ONLY a bed-holding hut-leader assignment produces this slot: a role-only
-   * assignment is not an occupancy and does not appear. The custodian is not a
+   * ONLY a custodian occupancy produces this slot — a hut-leader assignment
+   * holding a bed, ticked "Custodian (lives on site)", or both
+   * (`isCustodianOccupancy`; owner decision on #3820, 3 Oct 2026, "Yes, show
+   * ticked custodians"). A role-only, unticked assignment is not an occupancy
+   * and does not appear. The custodian is not a
    * BookingGuest, so their exclusion from the occupancy counts, the booking
    * rows and the chore roster is structural — there is nothing to filter.
    *
-   * `count` is how many bed-holding custodians are in residence tonight. It is
+   * `count` is how many custodians are in residence tonight, one per
+   * assignment, so a ticked custodian who also holds a bed counts once. It is
    * a COUNT, not a flag, because a handover night legitimately has two people
    * on two different beds — the previous shape (one `findFirst`) silently named
    * one of them and hid the other, which is the one thing a "who is here" slot
@@ -851,8 +856,10 @@ export async function buildDisplayState(
 
   // Custodian in residence (#2286). Scoped to this lodge and to the window's
   // CURRENT day — the wall answers "who is here now", not "who will be here on
-  // Thursday". `bedId: not null` is the whole gate: a role-only assignment is
-  // not an occupancy and never renders a slot.
+  // Thursday". `CUSTODIAN_OCCUPANCY_WHERE` is the whole gate — a held bed or
+  // the custodian tick (#3817), the one definition the capacity count reads
+  // (#3818, owner decision on #3820: "Yes, show ticked custodians"): a
+  // role-only, unticked assignment is not an occupancy and never renders a slot.
   //
   // Gated on the hutLeaders module like every other module-owned read in this
   // builder (`flags.bedAllocation` for rooms, `flags.chores` for the roster): a
@@ -867,7 +874,7 @@ export async function buildDisplayState(
   const custodianAssignments = flags.hutLeaders
     ? await prisma.hutLeaderAssignment.findMany({
         where: {
-          bedId: { not: null },
+          ...CUSTODIAN_OCCUPANCY_WHERE,
           startDate: { lte: startDate },
           endDate: { gte: startDate },
           ...lodgeNullTolerantScope(lodgeId),

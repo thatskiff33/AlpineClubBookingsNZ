@@ -339,27 +339,94 @@ export async function findCustodianOccupancies(input: {
   toExclusive: Date;
   db?: CustodianDb;
 }): Promise<CustodianOccupancy[]> {
+  const where = custodianOccupancyWindowWhere(input);
+  if (!where) return [];
   const db = input.db ?? prisma;
-  const from = truncateToDateOnly(input.from);
-  const toExclusive = truncateToDateOnly(input.toExclusive);
-  if (from >= toExclusive) return [];
-
   const rows = await db.hutLeaderAssignment.findMany({
-    where: {
-      // A role-only, unticked assignment still never reaches capacity.
-      ...CUSTODIAN_OCCUPANCY_WHERE,
-      startDate: { lt: toExclusive },
-      endDate: { gte: from },
-      ...lodgeNullTolerantScope(input.lodgeId),
-    },
+    where,
     select: { id: true, bedId: true, startDate: true, endDate: true },
     orderBy: [{ startDate: "asc" }, { id: "asc" }],
   });
-  return rows.map((row) => ({
+  return rows.map(toCustodianOccupancy);
+}
+
+/**
+ * The one window filter both occupancy loaders read: a custodian occupancy
+ * ({@link CUSTODIAN_OCCUPANCY_WHERE}) at `lodgeId` covering any night of the
+ * half-open `[from, toExclusive)`, or null for an empty window.
+ */
+function custodianOccupancyWindowWhere(input: {
+  lodgeId: string;
+  from: Date;
+  toExclusive: Date;
+}): Prisma.HutLeaderAssignmentWhereInput | null {
+  const from = truncateToDateOnly(input.from);
+  const toExclusive = truncateToDateOnly(input.toExclusive);
+  if (from >= toExclusive) return null;
+  return {
+    // A role-only, unticked assignment still never reaches capacity.
+    ...CUSTODIAN_OCCUPANCY_WHERE,
+    startDate: { lt: toExclusive },
+    endDate: { gte: from },
+    ...lodgeNullTolerantScope(input.lodgeId),
+  };
+}
+
+function toCustodianOccupancy(row: {
+  id: string;
+  bedId: string | null;
+  startDate: Date;
+  endDate: Date;
+}): CustodianOccupancy {
+  return {
     assignmentId: row.id,
     bedId: row.bedId,
     startDate: formatDateOnly(row.startDate),
     endDate: formatDateOnly(row.endDate),
+  };
+}
+
+/** A custodian occupancy with who it is, for a surface that names custodians. */
+export interface CustodianOccupant extends CustodianOccupancy {
+  memberFirstName: string;
+  memberLastName: string;
+  /** Minor-age custodians are never individually named on any shared surface. */
+  memberIsMinor: boolean;
+}
+
+/**
+ * {@link findCustodianOccupancies} with the member's name parts and minor flag
+ * — the same occupancies, for the member lodge roster, which shows ticked
+ * custodians as well as bed holders (#3818, orchestrator decision on #3820,
+ * 3 Oct 2026). One row per assignment, so a ticked custodian holding a bed is
+ * listed once. Kept apart from the count's loader so the capacity hot path
+ * never reads a name.
+ */
+export async function findCustodianOccupants(input: {
+  lodgeId: string;
+  from: Date;
+  toExclusive: Date;
+  db?: CustodianDb;
+}): Promise<CustodianOccupant[]> {
+  const where = custodianOccupancyWindowWhere(input);
+  if (!where) return [];
+  const db = input.db ?? prisma;
+  const rows = await db.hutLeaderAssignment.findMany({
+    where,
+    select: {
+      id: true,
+      bedId: true,
+      startDate: true,
+      endDate: true,
+      member: { select: { firstName: true, lastName: true, ageTier: true } },
+    },
+    orderBy: [{ startDate: "asc" }, { id: "asc" }],
+  });
+  return rows.map((row) => ({
+    ...toCustodianOccupancy(row),
+    memberFirstName: row.member.firstName ?? "",
+    memberLastName: row.member.lastName ?? "",
+    memberIsMinor: isMinorAgeTier(row.member.ageTier),
   }));
 }
 

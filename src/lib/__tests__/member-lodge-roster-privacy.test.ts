@@ -39,14 +39,14 @@ vi.mock("@/lib/custodian-occupancy", async (importOriginal) => {
   // parse a call whose type argument contains an `import()` type and silently
   // stops scanning the rest of the file (#3318 / #2842).
   const actual = (await importOriginal()) as typeof import("@/lib/custodian-occupancy");
-  return { ...actual, findCustodianBedHolds: vi.fn(async () => []) };
+  return { ...actual, findCustodianOccupants: vi.fn(async () => []) };
 });
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
-import { findCustodianBedHolds } from "@/lib/custodian-occupancy";
+import { findCustodianOccupants } from "@/lib/custodian-occupancy";
 import { prisma } from "@/lib/prisma";
 import {
   buildMemberLodgeRoster,
@@ -55,7 +55,7 @@ import {
   ROSTER_WINDOW_DAYS,
 } from "@/lib/member-lodge-roster";
 
-const mockFindCustodianBedHolds = findCustodianBedHolds as unknown as ReturnType<
+const mockFindCustodianOccupants = findCustodianOccupants as unknown as ReturnType<
   typeof vi.fn
 >;
 
@@ -64,20 +64,15 @@ function custodianHold(
   lastName: string,
   startDate: string,
   endDate: string,
-  isMinor = false
+  isMinor = false,
+  bedId: string | null = "bed-1"
 ) {
   return {
     assignmentId: `hold-${firstName}`,
-    memberId: `member-${firstName}`,
-    memberName: `${firstName} ${lastName}`,
+    bedId,
     memberFirstName: firstName,
     memberLastName: lastName,
     memberIsMinor: isMinor,
-    lodgeId: "lodge-a",
-    bedId: "bed-1",
-    bedName: "Bed 1",
-    roomId: "room-1",
-    roomName: "Room 1",
     startDate,
     endDate,
   };
@@ -295,7 +290,7 @@ function organisationBookingRow(options: {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockFindCustodianBedHolds.mockResolvedValue([]);
+  mockFindCustodianOccupants.mockResolvedValue([]);
   mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
   mockPrisma.lodge.findMany.mockResolvedValue([lodgeRow("lodge-a", "Alpha")]);
   mockPrisma.booking.findMany.mockResolvedValue([]);
@@ -884,7 +879,7 @@ describe("member lodge roster — the presence rule's other shapes", () => {
 
 describe("member lodge roster — the custodian is shown, not inferred", () => {
   it("lists the custodian by name, with the nights they are here", async () => {
-    mockFindCustodianBedHolds.mockResolvedValue([
+    mockFindCustodianOccupants.mockResolvedValue([
       custodianHold("Hemi", "Walker", TODAY, "2026-07-03"),
     ]);
 
@@ -898,7 +893,7 @@ describe("member lodge roster — the custodian is shown, not inferred", () => {
   });
 
   it("never names a custodian under 18, but still says one is here", async () => {
-    mockFindCustodianBedHolds.mockResolvedValue([
+    mockFindCustodianOccupants.mockResolvedValue([
       custodianHold("Tama", "Rangi", TODAY, TODAY, true),
     ]);
 
@@ -916,7 +911,7 @@ describe("member lodge roster — the custodian is shown, not inferred", () => {
   it("withholds EVERY custodian name when one of them may not be named", async () => {
     // Naming one and withholding the other identifies the withheld person by
     // elimination, so the rule is all-or-nothing.
-    mockFindCustodianBedHolds.mockResolvedValue([
+    mockFindCustodianOccupants.mockResolvedValue([
       custodianHold("Hemi", "Walker", TODAY, TODAY),
       custodianHold("Tama", "Rangi", TODAY, TODAY, true),
     ]);
@@ -935,7 +930,7 @@ describe("member lodge roster — the custodian is shown, not inferred", () => {
     mockPrisma.lodge.findMany.mockResolvedValue([
       lodgeRow("lodge-a", "Alpha", "FIRST_NAME_SURNAME_INITIAL"),
     ]);
-    mockFindCustodianBedHolds.mockResolvedValue([
+    mockFindCustodianOccupants.mockResolvedValue([
       custodianHold("Hemi", "Walker", TODAY, TODAY),
     ]);
 
@@ -944,11 +939,32 @@ describe("member lodge roster — the custodian is shown, not inferred", () => {
   });
 
   it("drops a hold that does not reach into the window", async () => {
-    mockFindCustodianBedHolds.mockResolvedValue([
+    mockFindCustodianOccupants.mockResolvedValue([
       custodianHold("Hemi", "Walker", "2026-08-10", "2026-08-12"),
     ]);
     const roster = await buildMemberLodgeRoster("viewer-1");
     expect(roster.lodges[0]?.custodians).toEqual([]);
+  });
+
+  it("lists a ticked custodian who holds no bed (#3818)", async () => {
+    // The loader returns every custodian occupancy — a held bed or the tick —
+    // and the roster shows each one (orchestrator decision on #3820).
+    mockFindCustodianOccupants.mockResolvedValue([
+      custodianHold("Hemi", "Walker", TODAY, TODAY, false, null),
+    ]);
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    expect(roster.lodges[0]?.custodians).toEqual([
+      { name: "Hemi Walker", nights: [TODAY] },
+    ]);
+  });
+
+  it("never names a ticked minor custodian who holds no bed", async () => {
+    mockFindCustodianOccupants.mockResolvedValue([
+      custodianHold("Tama", "Rangi", TODAY, TODAY, true, null),
+    ]);
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    expect(JSON.stringify(roster)).not.toContain("Tama");
+    expect(roster.lodges[0]?.custodians).toEqual([{ name: null, nights: [TODAY] }]);
   });
 
   it("reads custodian holds only for lodges the member may reach", async () => {
@@ -956,7 +972,7 @@ describe("member lodge roster — the custodian is shown, not inferred", () => {
       { lodgeId: "lodge-a" },
     ]);
     await buildMemberLodgeRoster("viewer-1");
-    for (const call of mockFindCustodianBedHolds.mock.calls) {
+    for (const call of mockFindCustodianOccupants.mock.calls) {
       expect(call[0].lodgeId).toBe("lodge-a");
     }
   });

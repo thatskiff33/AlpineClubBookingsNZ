@@ -270,8 +270,9 @@ interface DisplayState {
    *  capability conditions read these; the full club flag map never ships. */
   capabilities: Record<string, boolean>;
   /** The custodian(s) in residence tonight (#2286), or null when there is none.
-   *  ONLY a bed-holding `HutLeaderAssignment` produces this — a role-only
-   *  assignment is not an occupancy and never appears. Read at all only when the
+   *  ONLY a custodian occupancy produces this — a `HutLeaderAssignment` holding
+   *  a bed or ticked "Custodian (lives on site)" (#3818), counted once per
+   *  assignment; a role-only, unticked assignment never appears. Read at all only when the
    *  `hutLeaders` module is on.
    *
    *  `count` is a COUNT, not a flag: a handover night legitimately has two
