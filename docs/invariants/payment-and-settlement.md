@@ -1550,7 +1550,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   canonical Stripe refund for a card capture, made AFTER the commit; the local
   ledger allocation for an internet-banking hand-back; or
   `createBookingModificationCredit` where nothing was captured, whose
-  exactly-once key is the `BookingModification` id. **Which one is a question
+  exactly-once key is the `BookingModification` id; there a share is first
+  applied credit given back (`INV-PAY-113`). **Which one is a question
   about the booking, asked at completion** (#3194): a task carrying no payment id
   re-reads the booking's own payment through `editReviewSettlementPayment`, the
   single derivation the raise sites use too (`editReviewSettlementPaymentId`). A
@@ -1568,6 +1569,38 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   `lock(1)` is taken and released inside the transaction;
   `docs/CONCURRENCY_AND_LOCKING.md`), so the status claim is the whole
   single-flight guarantee across it.
+
+## INV-PAY-113
+
+- **A review share on a booking with nothing captured is that booking's applied
+  credit coming back, once** (#3791, owner decisions of 2 October 2026; Xero
+  per the orchestrator's reading of decision 1).
+  - **One give-back.** `giveBackAppliedCredit` (`member-credit.ts`) is the
+    clamp's mechanism and the share's: the credit-ledger lock, the
+    deallocation fence, a positive `BOOKING_APPLIED` row (a review's names the
+    booking in `sourceBookingId`) and the deallocation of an internet-banking
+    invoice's excess credit. The share lowers the mirror a cancellation tiers.
+  - **Xero agrees with the app**, for an issued invoice: invoice less its
+    reduction notes is the booking's price, Xero's due is the app's owed, and
+    the member's Xero credit, counting noteless rows minted when spent, is the
+    app's. So an invoice-ALLOCATED note takes off the whole reduction
+    (`reviewInvoiceReductionCents`); minted credit takes the unallocated note;
+    a cancelled booking is left alone except for that minted note. Notes are
+    scoped to the review task and wait for the deallocation, failing for an
+    operator retry when it FAILED. A captured payment's share keeps the
+    document rule.
+  - **The ledger posts what was credited**, none at zero; on a covered booking
+    the give-back beyond the re-price is an agreed reduction no re-price
+    reverses (`agreedGiveBackKey`).
+  - **Unpaid** - credit short of the price beyond earlier review give-backs:
+    no more given back than the booking's review re-prices removed.
+  - **Cancelled first**: netted cumulatively against the restore from figures
+    frozen at the cancellation, the tier re-run and refused, task OPEN, where
+    it does not reproduce the restore. $200 credit-paid, $50 share: $200 back
+    at 100%, $105 at 50% less $20, either order.
+  - Home: `edit-financial-review-account-credit.ts`,
+    `dispatchEditReviewAccountCreditXero`; proven by
+    `edit-financial-review-races.realdb.test.ts`.
 
 ## INV-PAY-069
 

@@ -378,7 +378,7 @@ the database makes — and its lines cascade with it.)
 | --- | --- | --- | --- |
 | Card capture, PRIMARY or ADDITIONAL (`INV-PAY-055`, `INV-PAY-081`) | `CARD_CAPTURE` (+) for the captured amount, `method = CARD` | `PAYMENT_TRANSACTION` | the Stripe webhook / recovery settle, inside the fenced claim |
 | Internet Banking invoice paid (`INV-PAY-015`, `INV-PAY-026`) | `BANK_RECEIPT` (+) for the cash evidenced, `method = INTERNET_BANKING` | `PAYMENT_TRANSACTION` | the inbound Xero reconciler's settle |
-| Account credit applied at confirmation (`INV-PAY-002`, `INV-PAY-024`) | `CREDIT_APPLIED` (+), `method = ACCOUNT_CREDIT`, linked to the `BOOKING_APPLIED` `MemberCredit` row; a clamp give-back (a positive applied row) posts a negative one | `MEMBER_CREDIT` | every writer of the row, through `syncBookingLedgerCredits` |
+| Account credit applied at confirmation (`INV-PAY-002`, `INV-PAY-024`) | `CREDIT_APPLIED` (+), `method = ACCOUNT_CREDIT`, linked to the `BOOKING_APPLIED` `MemberCredit` row; a clamp give-back (a positive applied row) posts a negative one, and so does a credit-paid booking's review share, which goes through that same `giveBackAppliedCredit` (#3791, `INV-PAY-113`) | `MEMBER_CREDIT` | every writer of the row, through `syncBookingLedgerCredits` |
 | Manual mark-paid (`INV-PAY-001`, `INV-PAY-038`) | `CASH_RECORDED` (+), `method = CASH`, `postedByMemberId` = the officer | `PAYMENT_TRANSACTION` | the mark-paid settle |
 | Mark-paid reversal (`INV-PAY-045`) | reversal of the `CASH_RECORDED` line | `PAYMENT_TRANSACTION` | the reversal |
 | Card refund — cancellation tier, reduction, superseded payment, duplicate capture (`INV-MOD-011`, `INV-PAY-043`, `INV-PAY-065`) | `CARD_REFUND` (−), `method = CARD` | `PAYMENT_REFUND` | converges from the `PaymentRefund` row once it records the refund (see above: the debt is durable before the provider call, `INV-ADDPAY-018`; the ledger line follows the answer) |
@@ -419,6 +419,13 @@ by `planReviewClosureShareLines` after the closure's re-price rows (§5.1):
   posts.
 - **Otherwise** (the re-base declined, or the charges do not carry the price):
   the share posts as the stand-in for money the headline has not moved yet.
+- **An agreed give-back is not a stand-in** (#3791). A review that gives back
+  applied credit on a booking its credit covered has agreed a lower price than
+  the strands say, by the give-back beyond its re-price. That posts as its own
+  `AGREED_ADJUSTMENT`, keyed `agreed-give-back:<taskId>`, whatever the charges
+  carry and in place of the share's stand-in, and no later re-price reverses
+  it: the strands never come to carry it, and the invoice already took it off
+  (`INV-PAY-113`). A cancellation still reverses it with the stay.
 
 Why the re-price carries the share: where the officer typed night prices,
 `checkStoredNightPriceRepair` requires them to come to the strand's stored total
