@@ -22,3 +22,8 @@
   Treasurers can list joiner payments whose refunded figure is not backed by a
   Stripe refund with `pnpm run payments:audit-organiser-child-refunds`; it is
   read-only.
+
+  A refund to the organiser that only succeeds on a retry now leaves a
+  `booking.payment.refund_recovered` record in the audit log (category
+  `booking`, so the audit-category distribution moves by one booking writer;
+  no member-facing change).
