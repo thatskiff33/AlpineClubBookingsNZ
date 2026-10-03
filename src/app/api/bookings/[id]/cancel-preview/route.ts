@@ -14,7 +14,12 @@ import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { forcedCancelRefundMethod } from "@/lib/cancel-refund-method";
 import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
-import { organiserChildCancelBasis } from "@/lib/organiser-child-refund";
+import {
+  findGroupCancellationChildDebt,
+  groupCancellationRefundNote,
+  organiserChildCancelBasis,
+} from "@/lib/organiser-child-refund";
+import { clubFormatValues } from "@/lib/club-format-server";
 import {
   PART_PAYMENT_MANUAL_MEMBER_REFUSAL,
   readPartPaymentAtCancel,
@@ -173,9 +178,31 @@ export async function GET(
       // the right reader (`docs/CLUB_TIME_KERNEL.md`).
       todayAtClub: (await clubTime()).today(),
     });
+    // #3653: the organiser's cancellation of the group already owes this
+    // child's refund, so the joiner's cancel behind it returns nothing of its
+    // own and says whose the refund is. Asked through the cancel's own lookup,
+    // so the preview cannot quote a refund the cancel will not make (#1491).
+    const groupDebt = organiserCard?.settlement
+      ? await findGroupCancellationChildDebt(prisma, organiserCard.settlement.id, booking.id)
+      : null;
+    const groupCancellation = groupDebt
+      ? {
+          refundAmountCents: 0,
+          refundPercentage: 0,
+          creditRefundAmountCents: 0,
+          creditRefundPercentage: 0,
+          keptAmountCents: preview.keptAmountCents + preview.refundAmountCents,
+          groupCancellationRefundCents: groupDebt.amountCents,
+          groupCancellationRefundNote: groupCancellationRefundNote(
+            groupDebt.amountCents,
+            await clubFormatValues(),
+          ),
+        }
+      : {};
 
     return NextResponse.json({
       ...preview,
+      ...groupCancellation,
       hasPayment: true,
       // B5 (#2262): this booking was settled in cash / by an off-Xero bank
       // transfer, so cancelling raises a hand-back task an admin pays by hand —

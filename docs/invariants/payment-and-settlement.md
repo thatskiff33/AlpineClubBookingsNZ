@@ -1304,13 +1304,15 @@ Internet Banking path) and **`INV-PAY-103`** (the one card-refund writer).
     tiers what remains less refunds owed through `cancelRefundableBaseCents`
     ([INV-PAY-018]); the organiser's freezes `{ perChildRefunds }`. A joiner's
     cancel after a reduction takes the paid path; behind the group's it refunds
-    nothing more; its frozen figures follow the final amount. A
+    nothing more, and its preview says so; its frozen figures follow the final
+    amount. A
     pre-#3653 `{childId: cents}` plan and an Internet Banking settlement keep
     `INV-PAY-034`-`037`.
   - **Only Stripe evidence raises a child's mirror**: the Xero
     credit-note repair never takes it past the child's recorded refunds.
   - **A pending refund that fails** is taken back out by the payments cron
-    and its debt reopened, due after Stripe's 24-hour key window.
+    and its debt reopened, due after Stripe's 24-hour key window and marked so
+    its recovery is audited.
   - `pnpm run payments:audit-organiser-child-refunds` lists unbacked mirrors,
     read-only. Home: `organiser-child-refund.ts` and its executor; proven by
     `organiser-child-refund.realdb.test.ts`.

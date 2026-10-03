@@ -62,7 +62,10 @@ const C = { organiser: `${P}-c-organiser`, group: `${P}-c-group`, settlement: `$
 const D = { organiser: `${P}-d-organiser`, group: `${P}-d-group`, settlement: `${P}-d-settlement`, child: `${P}-d-child`, payment: `${P}-d-pay`, pi: "pi_race_3653_d" };
 const E = { organiser: `${P}-e-organiser`, group: `${P}-e-group`, settlement: `${P}-e-settlement`, child: `${P}-e-child`, payment: `${P}-e-pay`, pi: "pi_race_3653_e" };
 const F = { organiser: `${P}-f-organiser`, group: `${P}-f-group`, settlement: `${P}-f-settlement`, child: `${P}-f-child`, payment: `${P}-f-pay`, pi: "pi_race_3653_f" };
-const EXTRA = [D, E, F];
+// Final fix round: a refund Stripe failed after it was recorded, made good on a
+// later attempt of the reopened debt (G).
+const G = { organiser: `${P}-g-organiser`, group: `${P}-g-group`, settlement: `${P}-g-settlement`, child: `${P}-g-child`, payment: `${P}-g-pay`, pi: "pi_race_3653_g" };
+const EXTRA = [D, E, F, G];
 
 /** Standalone fail-closed copy: importing this file must not register another suite. */
 export function assertSafeOrganiserChildRefundDbUrl(url: string): void {
@@ -288,6 +291,11 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
       return event.snapshot as Record<string, unknown> & { ledger: Record<string, number> };
     }
 
+    /** Stripe forgets an idempotency key once its 24-hour window has passed. */
+    function forgetKey(key: string) {
+      stripe.byKey.delete(key);
+    }
+
     /** Claim the row as the recovery runner does, then run it. */
     async function run(operationId: string) {
       const claimed = await prisma.paymentRecoveryOperation.update({
@@ -335,6 +343,7 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
       await createOneChildGroup(E, 5_000, 5_000, booking);
       // F's combined payment holds less than its child's tier would return.
       await createOneChildGroup(F, 3_000, 5_000, booking);
+      await createOneChildGroup(G, 5_000, 5_000, booking);
       // Child 3: a pre-#3653 phantom - a mirror nothing backs.
       await prisma.payment.update({ where: { id: PAYMENTS[2] }, data: { refundedAmountCents: 1_000, status: "PARTIALLY_REFUNDED" } });
     });
@@ -582,6 +591,39 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
       await expect(run(debt!.id)).rejects.toThrow("is recorded as failed");
       expect(await prisma.paymentRefund.count({ where: { paymentId: C.payment } })).toBe(1);
       expect((await executor.reconcilePendingOrganiserChildRefunds(stripe)).reversed).toBe(0);
+    });
+
+    it("audits a reopened refund as recovered when a later attempt makes it, though the reopen restarted its attempts (final fix round)", async () => {
+      const target = { settlementId: G.settlement, pi: G.pi, childId: G.child, paymentId: G.payment };
+      stripe.pendNextRefund();
+      const debt = await reserveFor(target, `${P}-g-mod-1`, 2_000);
+      const failedRefundId = await run(debt!.id);
+      stripe.setStatus(failedRefundId, "failed");
+      expect((await executor.reconcilePendingOrganiserChildRefunds(stripe)).reversed).toBe(1);
+
+      // The reopen restarts the retry budget, and says durably that it reopened.
+      const reopened = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: debt!.id } });
+      expect(reopened).toMatchObject({ status: "PENDING", attempts: 0 });
+      expect(core.organiserChildRefundWasReopened(reopened.allocationPlan)).toBe(true);
+      expect(reopened.allocationPlan).toEqual([
+        { paymentTransactionId: reopened.idempotencyKey, amountCents: 2_000, reopenedAfterRefundId: failedRefundId },
+      ]);
+
+      // Past Stripe's key window, the first attempt after the reopen makes the
+      // refund: attempt 1, so only the marker can say an earlier one failed.
+      forgetKey(reopened.idempotencyKey);
+      const madeRefundId = await run(debt!.id);
+      expect(madeRefundId).not.toBe(failedRefundId);
+      expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: debt!.id } })).toMatchObject({
+        status: "SUCCEEDED",
+        attempts: 1,
+      });
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: G.payment } })).refundedAmountCents).toBe(2_000);
+
+      const recovered = { action: "booking.payment.refund_recovered", targetId: G.child };
+      expect(await settledAuditCount(recovered)).toBe(1);
+      const [row] = await prisma.auditLog.findMany({ where: recovered });
+      expect(row!.metadata).toMatchObject({ attempts: 1, reopened: true, stripeRefundId: madeRefundId });
     });
 
     it("refunds a joiner's own cancel after a reduction: the tiered remainder, to the organiser's card (fix round 2, F1)", async () => {

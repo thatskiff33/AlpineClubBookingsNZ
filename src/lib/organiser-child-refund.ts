@@ -60,6 +60,8 @@ import {
 } from "@/lib/payment-recovery-keys";
 import { EXCLUDED_LEDGER_REFUND_STATUSES } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
+import type { ClubFormat } from "@/lib/club-format";
+import { formatCents } from "@/lib/utils";
 
 type Db = Prisma.TransactionClient;
 
@@ -240,6 +242,66 @@ export async function organiserChildCancelBasis(
 }
 
 /**
+ * The debt the organiser's cancellation of the group already wrote for this
+ * child, or null. It shares its key with the joiner's own cancellation, so a
+ * joiner cancelling behind the group refunds nothing of its own: the group's
+ * cancellation tiered this child and owes its refund. The executed cancel and
+ * its preview both ask through here, so the preview can never quote a refund
+ * the cancel will not make (#1491).
+ */
+export async function findGroupCancellationChildDebt(
+  db: Db,
+  settlementId: string,
+  childBookingId: string,
+): Promise<{ id: string; amountCents: number } | null> {
+  return db.paymentRecoveryOperation.findUnique({
+    where: { idempotencyKey: buildOrganiserChildCancellationRefundKey(settlementId, childBookingId) },
+    select: { id: true, amountCents: true },
+  });
+}
+
+/** What a joiner's cancel behind the group's says about the group's refund, for the cancel and its preview alike. */
+export function groupCancellationRefundNote(amountCents: number, format: ClubFormat): string {
+  return `The group organiser's cancellation is already refunding ${formatCents(amountCents, format)} for this booking to the organiser's card.`;
+}
+
+/**
+ * The allocation an organiser child refund debt carries: one slice naming a
+ * transaction that cannot exist (see `reserveOrganiserChildRefund`), so a
+ * worker older than #3653 fails the row rather than closing it. The executor
+ * reads one thing from it - `reopenedAfterRefundId`, written when the cron
+ * reopens a debt whose recorded refund Stripe later failed. The reopen restarts
+ * the retry budget at 0 attempts, so the attempts count alone cannot say an
+ * earlier refund failed; this marker survives every claim, which `lastError`
+ * does not.
+ */
+export function organiserChildRefundAllocationPlan(
+  key: string,
+  amountCents: number,
+  reopenedAfterRefundId?: string,
+): Prisma.InputJsonValue {
+  return [
+    reopenedAfterRefundId
+      ? { paymentTransactionId: key, amountCents, reopenedAfterRefundId }
+      : { paymentTransactionId: key, amountCents },
+  ];
+}
+
+/** Whether this organiser child refund debt was reopened after Stripe failed a refund it had recorded. */
+export function organiserChildRefundWasReopened(allocationPlan: Prisma.JsonValue): boolean {
+  return (
+    Array.isArray(allocationPlan) &&
+    allocationPlan.some(
+      (slice) =>
+        typeof slice === "object" &&
+        slice !== null &&
+        !Array.isArray(slice) &&
+        typeof slice.reopenedAfterRefundId === "string",
+    )
+  );
+}
+
+/**
  * Write one child refund's debt (step 1). The CALLER holds `lock(1)`, which is
  * what makes the headroom read and the insert one decision: every writer of a
  * child refund debt and every recorder of one take it. Idempotent on `key`: an
@@ -291,9 +353,8 @@ export async function reserveOrganiserChildRefund(
       // A worker still running the code before #3653 reads this as an ordinary
       // modification refund. Pointing its frozen allocation at a transaction
       // that cannot exist makes that worker FAIL the row (and retry it) instead
-      // of finding nothing to refund and closing it as done. The executor below
-      // never reads the allocation.
-      allocationPlan: [{ paymentTransactionId: input.key, amountCents }],
+      // of finding nothing to refund and closing it as done.
+      allocationPlan: organiserChildRefundAllocationPlan(input.key, amountCents),
       nextRetryAt: new Date(),
     },
   });

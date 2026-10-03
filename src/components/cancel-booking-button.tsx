@@ -53,6 +53,12 @@ interface CancelPreview {
    * settles that payment by hand.
    */
   paymentSettledByHand?: boolean;
+  /**
+   * #3653: the group organiser's cancellation already owes this booking's
+   * refund to the organiser's card, so this cancel returns nothing of its own.
+   * The sentence the cancel itself reports, from the same home.
+   */
+  groupCancellationRefundNote?: string;
 }
 
 export function CancelBookingButton({
@@ -452,10 +458,13 @@ export function CancelBookingButton({
           </div>
         ) : !hasRefund ? (
           <p className="text-sm text-muted-foreground">
-            No refund applies per cancellation policy.
+            {preview.groupCancellationRefundNote ?? "No refund applies per cancellation policy."}
           </p>
         ) : (
           <div className="space-y-3 text-sm">
+            {preview.groupCancellationRefundNote && (
+              <p className="text-sm text-muted-foreground">{preview.groupCancellationRefundNote}</p>
+            )}
             {/* Refund method selection — only meaningful when a card/bank slice
                 can be refunded. A credit-only cancel (#1164) has no card slice,
                 so the radios are hidden and only the restored-credit row shows. */}

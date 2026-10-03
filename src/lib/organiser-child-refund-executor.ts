@@ -23,7 +23,9 @@ import logger from "@/lib/logger";
 import { ORGANISER_PAID_SETTLEMENT_STATUSES } from "@/lib/group-organiser-paid";
 import {
   findCombinedCardSettlementForChild,
+  organiserChildRefundAllocationPlan,
   organiserChildRefundedCents,
+  organiserChildRefundWasReopened,
   planOrganiserCancelChildRefunds,
 } from "@/lib/organiser-child-refund";
 import { runPaymentRecoveryOperationNow } from "@/lib/payment-recovery";
@@ -238,10 +240,13 @@ export async function processOrganiserChildRefundOperation(
       logger.error({ err, bookingId: operation.bookingId }, "Failed to record the organiser child refund event"),
     );
     // A refund an earlier attempt failed to make (the first claim is attempt
-    // 1): the door that decided it wrote its audit row before the money moved -
-    // a group cancel says it released the spot with the refund still owed - so
-    // the recovery says, in the same trail, that the money has now gone back.
-    if (operation.attempts > 1) {
+    // 1), or one Stripe failed after it was recorded (the debt was reopened,
+    // with its attempts restarted at 0 - so the reopen's durable marker, not
+    // the count, says so): the door that decided it wrote its audit row before
+    // the money moved - a group cancel says it released the spot with the
+    // refund still owed - so the recovery says, in the same trail, that the
+    // money has now gone back.
+    if (operation.attempts > 1 || organiserChildRefundWasReopened(operation.allocationPlan)) {
       logAudit({
         action: "booking.payment.refund_recovered",
         targetId: operation.bookingId,
@@ -259,6 +264,7 @@ export async function processOrganiserChildRefundOperation(
           refundCents: refund.amount,
           stripeRefundId: refund.id,
           attempts: operation.attempts,
+          reopened: organiserChildRefundWasReopened(operation.allocationPlan),
         },
       });
     }
@@ -349,9 +355,19 @@ export async function reconcilePendingOrganiserChildRefunds(
         // window, counted from the refund's creation (the key's first use) plus
         // a margin, and starts with its whole budget: attempts 0, as a debt
         // that has never been tried.
+        //
+        // The restart is why the allocation carries the reopen's marker: the
+        // recovery's audit must still say an earlier refund failed.
+        const debt = await tx.paymentRecoveryOperation.findUnique({
+          where: { idempotencyKey: key },
+          select: { amountCents: true },
+        });
         await tx.paymentRecoveryOperation.updateMany({
           where: { idempotencyKey: key, status: PaymentRecoveryOperationStatus.SUCCEEDED },
           data: {
+            ...(debt
+              ? { allocationPlan: organiserChildRefundAllocationPlan(key, debt.amountCents, refund.id) }
+              : {}),
             // PENDING, not FAILED: owed and claimable again, not a terminal
             // failure (`INV-PAY-056` keeps that one route).
             status: PaymentRecoveryOperationStatus.PENDING,

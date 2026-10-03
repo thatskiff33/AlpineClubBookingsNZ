@@ -53,7 +53,12 @@ import {
   runPaymentRecoveryOperationNow,
 } from "@/lib/payment-recovery";
 import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
-import { organiserChildCancelBasis, reserveOrganiserChildRefund } from "@/lib/organiser-child-refund";
+import {
+  findGroupCancellationChildDebt,
+  groupCancellationRefundNote,
+  organiserChildCancelBasis,
+  reserveOrganiserChildRefund,
+} from "@/lib/organiser-child-refund";
 import { buildOrganiserChildCancellationRefundKey } from "@/lib/payment-recovery-keys";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
 import {
@@ -1758,11 +1763,8 @@ async function performBookingCancellation(
       const key = organiserCard.settlement
         ? buildOrganiserChildCancellationRefundKey(organiserCard.settlement.id, bookingId)
         : null;
-      const groupDebt = key
-        ? await tx.paymentRecoveryOperation.findUnique({
-            where: { idempotencyKey: key },
-            select: { id: true, amountCents: true },
-          })
+      const groupDebt = organiserCard.settlement
+        ? await findGroupCancellationChildDebt(tx, organiserCard.settlement.id, bookingId)
         : null;
       if (groupDebt) {
         groupCancellationRefundCents = groupDebt.amountCents;
@@ -2421,7 +2423,7 @@ async function performBookingCancellation(
   // the organiser's card; this cancel adds none of its own, and says whose it is.
   const groupRefundNote =
     groupCancellationRefundCents > 0
-      ? `The group organiser's cancellation is already refunding ${formatCents(groupCancellationRefundCents, format)} for this booking to the organiser's card.`
+      ? groupCancellationRefundNote(groupCancellationRefundCents, format)
       : null;
   logBookingCancellationAudit({
     booking: fresh,
