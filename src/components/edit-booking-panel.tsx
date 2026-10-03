@@ -18,7 +18,10 @@ import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 // re-implemented (MG4 #2309). The first cut of this panel wrote its own copy of
 // both and the two immediately disagreed about an admin add — see
 // `predictMemberGuestConsent`'s note on `actorKind`.
-import { predictMemberGuestConsent } from "@/app/(authenticated)/book/_components/member-guest-preview";
+import {
+  partyNeedsSupervisionJustification,
+  predictMemberGuestConsent,
+} from "@/app/(authenticated)/book/_components/member-guest-preview";
 import type { MemberGuestCandidate } from "@/lib/member-guest-find";
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice";
 import { HostingCoverageOverridePrompt } from "@/components/hosting-coverage-override-prompt";
@@ -98,20 +101,6 @@ import {
   usePromoSelectionState,
 } from "@/components/edit-booking/hooks/use-promo-selection";
 import { useReviewJustificationLatch } from "@/components/edit-booking/hooks/use-review-justification-latch";
-
-// #2104: mirror of requiresAdultSupervisionReview (src/lib/booking-review.ts).
-// Inlined (not imported) to match the create wizard's client-side predicate
-// (use-booking-wizard.ts:180-187) and keep server-leaning modules out of the
-// client bundle. The server remains the enforcer; this only drives the UI.
-function editTripsAdultSupervisionReview(
-  guests: Array<{ ageTier: string }>,
-): boolean {
-  const hasAdult = guests.some((g) => g.ageTier === "ADULT");
-  const hasMinor = guests.some(
-    (g) => g.ageTier === "CHILD" || g.ageTier === "YOUTH" || g.ageTier === "INFANT",
-  );
-  return hasMinor && !hasAdult;
-}
 
 /**
  * The edit-booking panel's shell: the pending edit's state, the mutations, and
@@ -1198,9 +1187,11 @@ export function EditBookingPanel({
   // #2104: does the post-edit guest set (remaining + added) leave minors with no
   // adult? The server (resolveModifyReviewUpdate) only demands a written reason
   // on the FIRST trip, so an already-flagged/reviewed booking never re-prompts.
-  const postEditTripsReview = editTripsAdultSupervisionReview([
-    ...remainingGuests.map((g) => ({ ageTier: g.ageTier })),
-    ...addedGuests.map((g) => ({ ageTier: g.ageTier })),
+  // The server's own rule (#3770): a kept row states its stored consent, an
+  // added row the consent its add will produce.
+  const postEditTripsReview = partyNeedsSupervisionJustification([
+    ...remainingGuests,
+    ...addedGuests,
   ]);
   const bookingAlreadyUnderReview =
     Boolean(booking.requiresAdminReview) && (booking.adminReviewStatus ?? null) !== null;

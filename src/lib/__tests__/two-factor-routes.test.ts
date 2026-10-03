@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   verifyTwoFactorEmailCode: vi.fn().mockResolvedValue(true),
   verifyStoredTotpCode: vi.fn().mockResolvedValue(true),
   consumeRecoveryCode: vi.fn().mockResolvedValue(true),
+  replaceRecoveryCodes: vi.fn().mockResolvedValue(["WXYZ-WXYZ-WXYZ"]),
   verifyTotpCode: vi.fn().mockReturnValue(true),
   generateTotpEnrollment: vi.fn().mockReturnValue({
     secret: "BASE32SECRET",
@@ -67,6 +68,7 @@ vi.mock("@/lib/two-factor", () => ({
   verifyTwoFactorEmailCode: mocks.verifyTwoFactorEmailCode,
   verifyStoredTotpCode: mocks.verifyStoredTotpCode,
   consumeRecoveryCode: mocks.consumeRecoveryCode,
+  replaceRecoveryCodes: mocks.replaceRecoveryCodes,
   verifyTotpCode: mocks.verifyTotpCode,
   generateTotpEnrollment: mocks.generateTotpEnrollment,
 }));
@@ -75,6 +77,7 @@ import { POST as sendEmailCode } from "@/app/api/auth/2fa/email/send/route";
 import { POST as enrollEmail } from "@/app/api/auth/2fa/enroll/email/route";
 import { POST as verifyCode } from "@/app/api/auth/2fa/verify/route";
 import { GET as setupTotp } from "@/app/api/auth/2fa/totp/setup/route";
+import { POST as regenerateRecoveryCodes } from "@/app/api/auth/2fa/recovery/regenerate/route";
 
 function sessionGuard(overrides?: {
   required?: boolean;
@@ -135,6 +138,22 @@ describe("two-factor auth routes", () => {
     });
   });
 
+  it("replaces recovery codes as the member themself, with the request (#3454)", async () => {
+    mocks.requireTwoFactorApiSession.mockResolvedValue(
+      sessionGuard({ enrolled: true, verified: true, method: "TOTP" }),
+    );
+    const response = await regenerateRecoveryCodes(
+      request("/api/auth/2fa/recovery/regenerate"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.replaceRecoveryCodes).toHaveBeenCalledWith({
+      memberId: "member-1",
+      actor: { kind: "member", memberId: "member-1" },
+      request: expect.any(Object),
+    });
+  });
+
   it("enrolls email 2FA and returns recovery codes", async () => {
     const response = await enrollEmail(
       request("/api/auth/2fa/enroll/email", { code: "123456" }),
@@ -152,6 +171,9 @@ describe("two-factor auth routes", () => {
     expect(mocks.enrollTwoFactor).toHaveBeenCalledWith({
       memberId: "member-1",
       method: "EMAIL",
+      // #3454: the member is the actor of their own enrolment.
+      actor: { kind: "member", memberId: "member-1" },
+      request: expect.any(Object),
     });
     expect(mocks.markTwoFactorSessionVerified).toHaveBeenCalled();
   });

@@ -307,8 +307,38 @@ leave a stale row here.
   `modify-quote` and `modify`, asking about guests an edit **adds** or
   **renames** onto a new name, while `POST /api/bookings/[id]/guests` refuses
   with a pointer to Edit Booking. Untouched guests are not re-asked.
-- **The server re-resolves both from authenticated data**, taking the member ids
-  that really resolved rather than trusting a row, so a forged member link, a
+- **The server re-resolves both from authenticated data**, asking before the
+  member lookup (after it at approval), which refuses any claimed id that does
+  not resolve, so a forged member link, a
   fabricated or unrelated dependant id and a stale declaration are refused.
   **Identity is keyed by the normalised name, never a party position.** Home:
   `src/lib/booking-dependant-identity.ts`.
+
+## INV-GUEST-020
+
+- **The booker's family is judged before any member from beyond it is
+  resolved** (owner decision 2 Oct 2026, #3770), on `POST /api/bookings` and both
+  policy-exception doors. A refusal reachable only once a named member resolved
+  says that member is real, so the boundary is computed from the booker's family
+  groups, and on a member's own request a beyond-family id is refused outright
+  where member guests are off; then the family is resolved and gated before any
+  outsider is looked up. One home: `src/lib/member-guest-family-first.ts`. The
+  #2388 throttle is spent on the boundary on create, and on a collapsed refusal
+  on the exception doors.
+- **On create, every per-member refusal about the family** (night clash,
+  membership type, unpaid subscription) **runs before the outsider lookup too,
+  and so does a full lodge** (owner decision on R4), counting the rows the
+  service will count (`decideBookingSplit`: the whole party unless it splits,
+  and the whole party when a justification is supplied and no adult other
+  than the outsider is known); the services still decide. The guards then run again over the whole
+  party, where only the outsider can refuse, with D-8's neutral sentence.
+- **This reverses, on these doors, the "cross-family refusal wins" order** the
+  profile gate, the person-night guard and the membership-type message keep
+  elsewhere.
+- **A rule a beyond-family adult can satisfy waits for that member.** With one
+  named on a member's own booking, paid-up adult, hosting and adult supervision
+  are judged on the whole party; a failure, or the create service's own hosting
+  or supervision refusal, is the lookup's collapsed refusal. An officer acting on
+  a member's behalf keeps the detailed answers.
+- **Not yet before the lookup on create:** promo usage caps and guest
+  eligibility, and race-only refusals.

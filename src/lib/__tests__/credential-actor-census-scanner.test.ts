@@ -327,6 +327,65 @@ describe("credential-actor census scanner: writers that skip the store (#2723)",
   });
 });
 
+describe("credential-actor census scanner: the XeroToken mirror (#3454)", () => {
+  it("REPORTS a write to the mirror outside the token store, by property, alias and destructure", () => {
+    const census = tree({
+      "src/lane.ts": `
+        import { prisma } from "@/lib/prisma";
+        export async function plant(tx: any) {
+          await prisma.xeroToken.update({ where: { id: "t" }, data: { refreshToken: "x" } });
+          const rows = tx.xeroToken;
+          await rows.updateMany({ where: {}, data: {} });
+          const { xeroToken: mirror } = tx;
+          await mirror.create({ data: {} });
+        }
+      `,
+    });
+
+    expect(census.bypasses.map((bypass) => bypass.statement)).toEqual([
+      "xeroToken.update",
+      "xeroToken.updateMany",
+      "xeroToken.create",
+    ]);
+    expect(census.tokenMirrorWrites).toEqual([]);
+  });
+
+  it("inventories the token store's own mirror writes instead of reporting them", () => {
+    const census = tree({
+      "src/lib/xero-token-store.ts": `
+        export async function save(tx: any) {
+          await tx.xeroToken.updateMany({ where: {}, data: {} });
+        }
+      `,
+    });
+
+    expect(census.bypasses).toEqual([]);
+    expect(census.tokenMirrorWrites.map((write) => write.statement)).toEqual([
+      "xeroToken.updateMany",
+    ]);
+  });
+
+  it("REPORTS raw SQL and a migration that rewrite the mirror, but not a read", () => {
+    const census = tree({
+      "src/lane.ts": `
+        export async function plant(prisma: any) {
+          await prisma.$executeRawUnsafe('UPDATE "XeroToken" SET "refreshToken" = $1', "x");
+          await prisma.$queryRawUnsafe('SELECT "tenantId" FROM "XeroToken"');
+          await prisma.xeroToken.findFirst();
+        }
+      `,
+      "prisma/migrations/20260101000000_x/migration.sql": `
+        DELETE FROM "XeroToken";
+      `,
+    });
+
+    expect(census.bypasses.map((bypass) => bypass.statement).sort()).toEqual([
+      "raw.$executeRawUnsafe",
+      "sql.xero-token.delete",
+    ]);
+  });
+});
+
 describe("credential-actor census scanner: reading the call site (#2723)", () => {
   it("fails CLOSED on a params object whose keys it cannot name", () => {
     // A computed key sets a key at run time that the parser cannot resolve, so

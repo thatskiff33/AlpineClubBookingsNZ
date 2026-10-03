@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { handleXeroCallback } from "@/lib/xero";
 import logger from "@/lib/logger";
+import { getAuditRequestContext } from "@/lib/audit";
 import {
   getExpiredXeroOAuthStateCookieOptions,
   isValidXeroOAuthState,
@@ -80,7 +81,12 @@ export async function GET(request: NextRequest) {
       },
       "Processing Xero OAuth callback"
     );
-    await handleXeroCallback(publicCallbackUrl, requestState ?? undefined);
+    // The connect is this administrator's act, and the token write records it
+    // as theirs, on this request (#3454).
+    await handleXeroCallback(publicCallbackUrl, requestState ?? undefined, {
+      actor: { kind: "admin", memberId: guard.session.user.id },
+      request: getAuditRequestContext(request),
+    });
     const response = NextResponse.redirect(
       new URL(`${returnPath}${returnQuerySep}connected=true`, baseUrl)
     );

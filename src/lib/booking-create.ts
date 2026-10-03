@@ -34,6 +34,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import {
   calculateBookingCreditApplication,
+  decideBookingSplit,
   priceDeferredNonMemberPortion,
   toGuestPricingInputs,
   toSeasonRateData,
@@ -105,6 +106,8 @@ import { DUPLICATE_STAY_BOOKING_STATUSES } from "./booking-status";
 import {
   type ResolvedPromo,
   getPromoTargetBookingGuestIds,
+  normalizePromoCodeInput,
+  promoCodeVisibilityRefusal,
   remapPromoIndexesToSubset,
   resolveEffectivePromoSource,
   resolvePromoInTransaction,
@@ -739,27 +742,16 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
   // Pure parties stay a single booking. Bookings held for admin review are
   // never split — the whole party waits in AWAITING_REVIEW until an admin
   // decides.
-  const memberGuests = guests.filter((g) => g.isMember);
-  const nonMemberGuests = guests.filter((g) => !g.isMember);
-  const hasMemberGuests = memberGuests.length > 0;
-  const hasNonMemberGuests = nonMemberGuests.length > 0;
-  const flaggedProvisional =
-    shouldBePending &&
-    (cancelIfGuestsBumped ?? false) &&
-    hasNonMemberGuests &&
-    !review.blockForReview;
-  const splitBooking =
-    hasMemberGuests &&
-    hasNonMemberGuests &&
-    shouldBePending &&
-    !flaggedProvisional &&
-    !review.blockForReview;
+  // The split decision, and which rows hold capacity, are `decideBookingSplit`'s
+  // — one definition, shared with the create route's full-lodge pre-flight.
+  const { nonMemberGuests, flaggedProvisional, splitBooking, primaryGuests } =
+    decideBookingSplit(guests, {
+      shouldBePending,
+      cancelIfGuestsBumped,
+      blockForReview: review.blockForReview,
+    });
   const effectiveCancelIfGuestsBumped = flaggedProvisional;
-
-  // The primary (returned) booking. For a split it carries only the member
-  // guests; the non-member guests become the linked child created in the same
-  // transaction. Promo selection indexes are remapped onto the member subset.
-  const primaryGuests = splitBooking ? memberGuests : guests;
+  // Promo selection indexes are remapped onto the member subset of a split.
   const primaryHasNonMembers = primaryGuests.some((g) => !g.isMember);
   const primaryPromoGuestIndexes = splitBooking
     ? remapPromoIndexesToSubset(promoGuestIndexes, guests, primaryGuests)
@@ -1853,7 +1845,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     lodgeId: waitlistLodgeId,
   });
   if (promoSource) {
-    const normalizedCode = promoSource.promoCodeStr.toUpperCase().trim();
+    const normalizedCode = normalizePromoCodeInput(promoSource.promoCodeStr);
     const promoCode = await prisma.promoCode.findUnique({
       where: { code: normalizedCode },
       include: {
@@ -1861,8 +1853,9 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
         lodges: { select: { lodgeId: true } },
       },
     });
-    if (promoCode?.internal && !promoSource.allowInternal) {
-      throw new BookingPromoError("Promo code not found");
+    const hidden = promoCodeVisibilityRefusal(promoCode, promoSource.allowInternal);
+    if (hidden) {
+      throw new BookingPromoError(hidden);
     }
     const assignedMemberIds = promoCode?.assignments?.length
       ? promoCode.assignments.map((a) => a.memberId)

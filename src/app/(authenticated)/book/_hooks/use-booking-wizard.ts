@@ -46,7 +46,10 @@ import {
   useDependantIdentityAnswers,
 } from "@/lib/use-dependant-identity-answers";
 import type { MemberGuestCandidate } from "@/lib/member-guest-find";
-import { predictMemberGuestConsent } from "../_components/member-guest-preview";
+import {
+  partyNeedsSupervisionJustification,
+  predictMemberGuestConsent,
+} from "../_components/member-guest-preview";
 import {
   readExceptionOffer,
   type ExceptionOffer,
@@ -431,6 +434,9 @@ export function useBookingWizard() {
   // Whether `/api/members/family` has answered at all — see the note in the
   // fetch below and in `predictMemberGuestConsent`.
   const [familyMembersLoaded, setFamilyMembersLoaded] = useState(false);
+  // #3770: a family load that FAILED (not merely pending), so the guests step
+  // can offer a retry for the member-guest finder it holds closed meanwhile.
+  const [familyMembersLoadFailed, setFamilyMembersLoadFailed] = useState(false);
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
   const [availablePromoCodes, setAvailablePromoCodes] = useState<AvailablePromoCode[]>([]);
@@ -453,14 +459,10 @@ export function useBookingWizard() {
     useState<MemberGuestConfig>(MEMBER_GUEST_CONFIG_OFF);
   const [memberGuestAddError, setMemberGuestAddError] = useState<string | null>(null);
   const [memberReviewJustification, setMemberReviewJustification] = useState("");
-  const requiresAdminReviewLocal = (() => {
-    if (guests.length === 0) return false;
-    const hasAdult = guests.some((g) => g.ageTier === "ADULT");
-    const hasMinor = guests.some(
-      (g) => g.ageTier === "YOUTH" || g.ageTier === "CHILD" || g.ageTier === "INFANT",
-    );
-    return hasMinor && !hasAdult;
-  })();
+  // The server's adult-supervision rule, asked of the rows as added: an outsider
+  // still waiting to agree is not the adult (#3770), so children plus one need
+  // the written reason the create route will otherwise refuse without.
+  const requiresAdminReviewLocal = partyNeedsSupervisionJustification(guests);
 
   // Display label for capacity copy: the lodge's name once a second lodge
   // exists, the generic phrase otherwise (ADR-002 presentation rule).
@@ -668,7 +670,10 @@ export function useBookingWizard() {
       // empty list that really means "we could not ask" would predict
       // "Waiting for Mia to approve" over the booker's own child. See
       // `predictMemberGuestConsent`.
-      if (!data) return null;
+      if (!data) {
+        if (seq === familyLoadSeqRef.current) setFamilyMembersLoadFailed(true);
+        return null;
+      }
       const ownDependantsFromServer: BookerDependant[] = Array.isArray(
         data.ownDependants,
       )
@@ -684,11 +689,18 @@ export function useBookingWizard() {
       setFamilyMembers(data.familyMembers || []);
       setOwnDependants(ownDependantsFromServer);
       setFamilyMembersLoaded(true);
+      setFamilyMembersLoadFailed(false);
       return { ownDependants: ownDependantsFromServer };
     } catch {
+      if (seq === familyLoadSeqRef.current) setFamilyMembersLoadFailed(true);
       return null;
     }
   }, []);
+  /** The guests step's "Try again" for a failed family load (#3770). */
+  const retryFamilyMembersLoad = useCallback(() => {
+    setFamilyMembersLoadFailed(false);
+    void loadFamilyMembers();
+  }, [loadFamilyMembers]);
   useEffect(() => {
     void loadFamilyMembers();
     // The confirm-details wizard overlays this page on a member's first visit;
@@ -1034,6 +1046,12 @@ export function useBookingWizard() {
    * avoids.
    */
   function addMemberGuest(candidate: MemberGuestCandidate) {
+    // #3770: no add before the family list has answered. The consent prediction
+    // decides "is this my own family?" from that list, and the adult-supervision
+    // check reads the prediction; a row added blind would carry none, count as a
+    // present adult, and leave a party the server refuses with no reason field to
+    // fill in. The guests step holds the finder closed until then.
+    if (!familyMembersLoaded) return;
     if (guests.some((g) => g.memberId === candidate.memberId)) return;
     if (partyAtCeiling(guests)) return;
     const dateStrings = getBookingDateStrings();
@@ -2293,6 +2311,9 @@ export function useBookingWizard() {
     addFamilyMemberAsGuest,
     addMemberGuest,
     memberGuestConfig,
+    familyMembersLoaded,
+    familyMembersLoadFailed,
+    retryFamilyMembersLoad,
     memberGuestAddError,
     handleRemoveConflictGuest,
     handleDateSelect,
