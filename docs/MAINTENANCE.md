@@ -1647,8 +1647,11 @@ owed — against the ledger lines that project them, and prints:
 - per identity, how many bookings it applies to, agree, disagree, are
   classified, or are a coverage gap;
 - **coverage**: bookings with money and no lines (`NO_LINES`), paid bookings not
-  confirmed on the ledger, and edits, change fees or account-credit rows no
-  line records;
+  confirmed on the ledger, edits, change fees or account-credit rows no line
+  records, captured transactions and recorded card refunds with no live line
+  of their own (`UNPOSTED_SETTLEMENT`), and money handed back before the
+  posters existed — a legacy seed's refund, a V3 hand-back — that the balance
+  owed cannot yet see (`UNPOSTED_LEGACY_REFUND`);
 - **integrity**: reversals that name no line or are not its exact opposite, a
   second live line for one guest-night, an unknown posting-key namespace or one
   on an anchor it never posts under, and a live line its source row (or a
@@ -1657,7 +1660,9 @@ owed — against the ledger lines that project them, and prints:
 - **named classes** — expected differences, each matched to the cent from the
   booking's own rows (in-flight refunds and hand-backs, a review share kept by
   the club, the refunded total's credit and hand-back allocations, and so on).
-  Each list is for the owner to acknowledge on #3583;
+  Each instance holds the gate until the owner acknowledges it to the cent,
+  except `GROUP_SETTLEMENT_OFF_LEDGER`, which is listed only; the summary
+  prints how many are still unacknowledged, per class and beside the verdict;
 - every unclassified disagreement: booking, identity, column figure, ledger
   figure and delta;
 - under the credit identity, #1620's internet-banking applied credit no Xero
@@ -1702,13 +1707,21 @@ a booking confirmed before it can carry settlement lines with no confirmation.
 That is the gap the back-post fills; any other finding is a poster bug to
 report with the figures the census prints. The gate opens on zero
 unclassified disagreements, zero coverage gaps, zero integrity findings and no
-booking in a class that holds it. Two classes follow the owner's decisions on
-#3583 and are one-line switches in `BOOKING_LEDGER_CENSUS_GATE_POLICY`
+unacknowledged class instance (design §6: every class is acknowledged by the
+owner on #3583, save the one the owner decided is listed only). Two classes follow the owner's
+decisions on #3583 and are one-line switches in
+`BOOKING_LEDGER_CENSUS_GATE_POLICY`
 (`src/lib/booking-ledger-projection-census-classes.ts`):
-`KNOWN_DEFECT_HISTORY` (bookings #3791, #3792 or #1641 damaged) holds the gate
+`KNOWN_DEFECT_HISTORY` (bookings #3791, #3792 or #1641's double-pay shape
+damaged — named by shape, since that path may still be live) holds the gate
 until each is corrected, or written off in the acknowledgement file, and
-`GROUP_SETTLEMENT_OFF_LEDGER` (children settled through the organiser's group
-settlement, whose poster is #3854) does not. The census takes no lock, so run it off-peak against
+`GROUP_SETTLEMENT_OFF_LEDGER` (children whose money moved only through the
+organiser's group settlement — no transaction, refund or credit row of their
+own, no credit, refund or change-fee figure — whose poster is #3854) is listed
+only. Every other class is an expected state, an in-flight refund among them:
+acknowledge each instance with its reference, and a figure that moves after
+sign-off goes stale and holds the gate again, so nothing stays "in flight"
+unseen. The census takes no lock, so run it off-peak against
 production; a whole history is read in one transaction, 500 bookings a page.
 
 ### Census the booking ledger identity (#3340)

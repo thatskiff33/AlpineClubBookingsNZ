@@ -6,7 +6,8 @@
   with both figures. Differences the club expects - a refund still on its way,
   a hand-back an officer has not yet made, a review charge the club kept - are
   named rather than reported as errors, but only when they explain the
-  difference to the cent. It reads one snapshot, changes nothing, and ends with
+  difference to the cent, and each still needs the owner's sign-off before
+  the verdict is clean. It reads one snapshot, changes nothing, and ends with
   a verdict: the ledger is not used for anything a member or officer sees until
   that verdict is clean. Bookings the owner has already dealt with can be
   listed in a file the census reads, to the cent, so they stop holding it up;

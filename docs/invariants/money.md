@@ -576,13 +576,13 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   removed, is a disagreement (`booking-ledger-projection-census.test.ts`).
 
   **The gate opens only on zero unclassified disagreements, coverage gaps and
-  integrity findings, and no booking in a class that holds it.** Coverage is
+  integrity findings, and every class instance acknowledged.** Coverage is
   money with no lines, a paid booking unconfirmed on the ledger, or an edit,
-  fee or credit row no line records. `KNOWN_DEFECT_HISTORY` holds the gate and
-  `GROUP_SETTLEMENT_OFF_LEDGER` does not (its poster is #3854), the owner's
-  decisions on #3583. The owner's `--acknowledged` file, kept outside the repository,
-  releases a finding it names to the cent; one whose figure has moved is stale
-  and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
+  fee, credit row, capture or refund no live line records. Every class holds
+  the gate until the owner's `--acknowledged` file, kept outside the
+  repository, names its instance to the cent — `KNOWN_DEFECT_HISTORY` too —
+  except `GROUP_SETTLEMENT_OFF_LEDGER`, listed only (the owner's decisions on
+  #3583; its poster is #3854). A moved figure is stale and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
   on bookings the real writers built.
 
 ## INV-MONEY-006

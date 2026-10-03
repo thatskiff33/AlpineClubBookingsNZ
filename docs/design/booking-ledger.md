@@ -474,8 +474,9 @@ Every line moves `owed(b)`, so a live booking's `owed(b)` is held against what
 its columns say is owed, and a missing credit line is coverage
 (`UNPOSTED_CREDIT`). A settle that wrote the credit mirror as price minus
 settlement can only differ from the applied rows when the money does not add
-up — #1641's double charge — so that shape is `KNOWN_DEFECT_HISTORY`, not a
-mirror class.
+up — #1641's double charge — so that shape is `KNOWN_DEFECT_HISTORY`, which
+holds the gate, not a mirror class. It is named by shape, not by date: the path
+that makes it may still be live.
 
 **The first identity as first written was wrong** (#3583's plan): it read
 `finalPriceCents == charged(b) + adjusted(b)`, but `charged(b)` includes the
@@ -491,7 +492,10 @@ reports, per identity, the count that applies, agrees, disagrees, is
 classified or is a coverage gap, and per disagreeing booking both figures and
 the delta — never a repair. It also reports **coverage** (bookings with money
 columns and no lines at all; paid bookings not confirmed on the ledger; edits,
-change fees and credit rows no line records), **integrity** (a reversal naming
+change fees and credit rows no line records; a captured transaction or a
+recorded refund with no live `capture:` / `refund:` line of its own,
+`UNPOSTED_SETTLEMENT`; and, on `owed(b)`, a legacy seed's refund or a V3
+hand-back no line can yet record, `UNPOSTED_LEGACY_REFUND`), **integrity** (a reversal naming
 no line or not its exact opposite, a second live night, an unknown key
 namespace or one on an anchor it never posts under, a live line its source row
 — or the CANCELLED event's frozen kept figure — no longer bears out) and a
@@ -501,14 +505,19 @@ verdict, `GATE_OPEN` or `GATE_CLOSED`.
 already expects — and the ones its children found — are classes in
 `booking-ledger-projection-census-classes.ts`, each computed from the
 booking's own rows — never from the delta — and matched to the delta to the
-cent: `NOTHING_CAPTURED`; `CREDIT_MIRROR_XERO_CAP`; the refunded
-residual's `REFUND_MIRROR_HAND_BACK`, `_CREDIT_ALLOCATION`, `_FAILED_REFUND` and
-`_LEGACY_SEED`, and `V3_LEGACY_HAND_BACK`; `CHANGE_FEE_REVERSED_BY_CANCELLATION`;
+cent: `NOTHING_CAPTURED` (a booking not paid whose payment is not captured);
+`CREDIT_MIRROR_XERO_CAP`; the refunded residual's `REFUND_MIRROR_HAND_BACK`,
+`_CREDIT_ALLOCATION`, `_FAILED_REFUND` (only where the refund's own line was
+posted and reversed) and `_LEGACY_SEED`, and `V3_LEGACY_HAND_BACK` — the last
+two on the refunded column only, since on `owed(b)` they are money the ledger
+is missing; `CHANGE_FEE_REVERSED_BY_CANCELLATION`;
 `RETAINED_REVIEW_SHARE` (§5.3); and a cancelled booking's `IN_FLIGHT_HAND_BACK`,
 `IN_FLIGHT_REFUND`, `V5_PLANNED_REFUND_SHORT` and `D2_DISMISSED_HAND_BACK`.
-`KNOWN_DEFECT_HISTORY` finds bookings #3791, #3792 or #1641 damaged, where the
-ledger is right, and `GROUP_SETTLEMENT_OFF_LEDGER` the group-settled children no
-poster reaches. The owner releases a finding from the gate by listing it, to the
+`KNOWN_DEFECT_HISTORY` finds bookings #3791, #3792 or #1641's shape damaged,
+where the ledger is right, and `GROUP_SETTLEMENT_OFF_LEDGER` the group-settled
+children no poster reaches — a child with no transaction, refund or credit row
+of its own and no credit, refund or change-fee figure, whose money moved only
+through the organiser's settlement. The owner releases a finding from the gate by listing it, to the
 cent, in an acknowledgement file the census reads; a figure that has moved since
 is reported stale and still holds.
 
@@ -518,7 +527,9 @@ back-post: every booking ever made, every event kind that has ever occurred,
 compared line-against-column. Zero disagreements and zero coverage gaps is
 what permits Release 2 — precisely, zero **unclassified** disagreements, zero
 coverage gaps, zero integrity findings and no booking in a class that holds
-the gate, every other class acknowledged by the owner on #3583, because a
+the gate, every other class acknowledged by the owner on #3583 — instance by
+instance, to the cent, in the acknowledgement file, save
+`GROUP_SETTLEMENT_OFF_LEDGER`, which the owner decided is listed only — because a
 literal zero is not reachable on a live history (in-flight refunds and the
 classes above are expected states). A disagreement is a poster bug, fixed and
 re-run. It
@@ -741,7 +752,7 @@ to bundle.
 | [#3581](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3581) | Settlement lines from payment rows — card capture, bank receipt, cash recorded, card refund, and their reversals — converging where the payment mirror is derived | lines nothing reads | High (money writers touched, no behaviour change) |
 | [#3599](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3599) | Settlement lines from account credit (applied, issued, restored) and the hand-back — split from #3581, whose chokepoint never sees them | lines nothing reads | High |
 | [#3582](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3582) | Posting from the edit, review-share, rebase and cancellation writers | lines nothing reads | High |
-| [#3583](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3583) | The back-post script for every existing booking, and `pnpm run booking-ledger:census`: the six identities, coverage, the invariant entry, the CI seed run | a dry-run report and a read-only census — **the cut-over gate** | High |
+| [#3583](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3583) | The back-post script for every existing booking, and `pnpm run booking-ledger:census`: the seven identities (§6), coverage, the invariant entry, the CI seed run | a dry-run report and a read-only census — **the cut-over gate** | High |
 | [#3584](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3584) | Reads switch, one surface per PR: statement, emails, history, reports, officer panel | member-visible figures from the ledger, census-proven equal | High |
 | [#3585](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3585) | Xero renderers read ledger slices; `settlementMethod` names the method on every credit note | Xero documents unchanged in content | High |
 | [#3586](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3586) | Contract: drop the six columns; delete the `INV-PAY-047` fences; retire §9's `P` rows | the mirror is gone | Critical |
@@ -785,7 +796,7 @@ rules apply to the column as they do to the guest row.
 
 **D-3532-1 — decided 23 Sep 2026: prove against history, then cut over fast.**
 No shadow period. Release 1 posts and back-posts, and the census proves the
-six identities over every booking ever made; Release 2 moves the reads as soon
+identities of §6 over every booking ever made; Release 2 moves the reads as soon
 as that is clean; Release 3 drops the columns on the owner's word. §7 carries
 the reasoning and the two rules that survive the compression.
 
