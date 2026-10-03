@@ -70,6 +70,14 @@ const tx = {
   memberCredit: {
     aggregate: (...a: unknown[]) => mocks.creditAggregate(...a),
   },
+  // `INV-PAY-115`: an appeal task's reopen re-reads the payment after the
+  // handed-back sums; echo whatever the task row carried.
+  payment: {
+    findUnique: async () => {
+      const task = (await mocks.findUnique.getMockImplementation()?.()) ?? null;
+      return (task as { payment?: unknown } | null)?.payment ?? null;
+    },
+  },
 };
 
 const DISMISSED_BY_OFFICER = {

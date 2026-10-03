@@ -3195,7 +3195,10 @@ does too, and both would post. So `resolveManualRefundTask` takes
   the cash already promised back (`refundableCashNetOfOpenHandBacks`); under
   `lock(1)` the completion cannot commit between the two reads. A reopen of
   one already holds `lock(1)` and is refused past that same net cash, and a
-  refund appeal's approval reads the same net cash under `lock(1)` and claims
+  refund appeal's approval reads ITS net cash (`INV-PAY-115`: every open
+  hand-back and the late-cash credit, `refundAppealHandedBackCents`, read
+  BEFORE the payment so a cancellation hand-back's lock-free completion in
+  between errs the cap low) under `lock(1)` and claims
   the request in that transaction, planning the card refund and raising the
   bank-transfer task for the rest there too, before its Stripe refund and Xero
   note (`PUT /api/admin/refund-requests/[id]#1`, `INV-LOCK-001`). A released

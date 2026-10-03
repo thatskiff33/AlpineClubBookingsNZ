@@ -379,8 +379,15 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       const lockSql = (mocks.executeRaw.mock.calls[0]?.[0] as TemplateStringsArray).join("?");
       expect(lockSql).toContain("pg_advisory_xact_lock(1)");
       const lockedAt = mocks.executeRaw.mock.invocationCallOrder[0];
-      expect(lockedAt).toBeLessThan(mocks.paymentFindUnique.mock.invocationCallOrder[0]);
       expect(lockedAt).toBeLessThan(mocks.manualRefundTaskAggregate.mock.invocationCallOrder[0]);
+      // `INV-PAY-115`: the handed-back sums are read BEFORE the payment, so a
+      // cancellation hand-back completing between them errs the cap low.
+      expect(mocks.manualRefundTaskAggregate.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.paymentFindUnique.mock.invocationCallOrder[0],
+      );
+      expect(mocks.memberCreditAggregate.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.paymentFindUnique.mock.invocationCallOrder[0],
+      );
       expect(mocks.manualRefundTaskAggregate.mock.invocationCallOrder[0]).toBeLessThan(
         mocks.refundRequestUpdateMany.mock.invocationCallOrder[0],
       );

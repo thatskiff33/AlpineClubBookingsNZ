@@ -220,22 +220,47 @@ export async function openHandBackCentsForRefundAppeal(
 }
 
 /**
- * #3827 (`INV-PAY-115`): THE MOST A REFUND APPEAL MAY PROMISE BACK. The
- * refundable cash, less every hand-back still open on the payment and less the
- * member credit already minted from its late cash - money the member already
- * holds or is already being sent, which `refundedAmountCents` does not show
- * (`refundAppealCeiling` says why each one is missing from it). The member's
- * request, the admin approval (under `lock(1)`, which every writer of those
- * tasks holds; the late-cash mint holds it too) and the reopen of a dismissed
- * appeal task all read this one figure.
+ * #3827 (`INV-PAY-115`): what a refund appeal must treat as ALREADY handed
+ * back, beyond `refundedAmountCents`: every hand-back still open on the
+ * payment and the member credit already minted from its late cash
+ * (`refundAppealCeiling` says why each one is missing from the mirror).
+ *
+ * READ THIS BEFORE THE PAYMENT. A cancellation's own hand-back completes
+ * without `lock(1)` (legacy kinds take none; it holds only the Payment row),
+ * moving the mirror and closing the task in one commit. Read in this order, a
+ * completion landing between the two reads is counted twice - the task still
+ * open here, its refund already in the payment read after - so the ceiling
+ * errs LOW, never high. The other order would count it nowhere. The late-cash
+ * mint and every non-cancellation hand-back hold `lock(1)`, as the approval
+ * does, so they cannot land in between at all.
+ */
+export async function refundAppealHandedBackCents(
+  db: RefundAppealCapDb,
+  payment: { id: string; bookingId: string },
+): Promise<number> {
+  return (
+    (await openHandBackCentsForRefundAppeal(db, payment.id)) +
+    (await sumInternetBankingMintedCentsForBookings(db, [payment.bookingId]))
+  );
+}
+
+/**
+ * #3827 (`INV-PAY-115`): THE MOST A REFUND APPEAL MAY PROMISE BACK, for a
+ * caller holding no lock (the member's advisory request): the refundable cash
+ * less `refundAppealHandedBackCents`, read before the payment. The admin
+ * approval and the reopen of a dismissed appeal task, which re-read the
+ * payment under `lock(1)`, call that function first and read the payment
+ * after it themselves.
  */
 export async function refundableCashForRefundAppeal(
-  db: RefundAppealCapDb,
-  payment: (BookingPaymentState & { id: string; bookingId: string }) | null | undefined,
+  db: RefundAppealCapDb & Pick<PrismaClient, "payment">,
+  payment: { id: string; bookingId: string } | null | undefined,
 ): Promise<number> {
-  if (getRemainingRefundableCents(payment) === 0 || !payment) return 0;
-  const promisedOrCredited =
-    (await openHandBackCentsForRefundAppeal(db, payment.id)) +
-    (await sumInternetBankingMintedCentsForBookings(db, [payment.bookingId]));
-  return getRemainingRefundableCentsNetOf(payment, promisedOrCredited);
+  if (!payment) return 0;
+  const handedBack = await refundAppealHandedBackCents(db, payment);
+  const fresh = await db.payment.findUnique({
+    where: { id: payment.id },
+    select: { status: true, amountCents: true, refundedAmountCents: true },
+  });
+  return getRemainingRefundableCentsNetOf(fresh, handedBack);
 }

@@ -21,8 +21,9 @@ import {
 import logger from "@/lib/logger";
 import {
   raiseRefundRequestHandBack,
-  refundableCashForRefundAppeal,
+  refundAppealHandedBackCents,
 } from "@/lib/edit-refund-hand-back";
+import { getRemainingRefundableCentsNetOf } from "@/lib/booking-payment-state";
 import { refundRequestHandBackOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 import {
   planStripeRefundAllocation,
@@ -143,18 +144,24 @@ export async function PUT(
     // figures holds; claimed in the same transaction.
     const capped = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      // What is already handed back is read BEFORE the payment, so a
+      // cancellation hand-back completing in between (it takes no `lock(1)`)
+      // is counted twice and the cap errs low, never high.
+      const handedBackCents = await refundAppealHandedBackCents(tx, {
+        id: payment.id,
+        bookingId: booking.id,
+      });
       const lockedPayment = await tx.payment.findUnique({
         where: { id: payment.id },
         select: {
           id: true,
-          bookingId: true,
           source: true,
           status: true,
           amountCents: true,
           refundedAmountCents: true,
         },
       });
-      const maxRefundable = await refundableCashForRefundAppeal(tx, lockedPayment);
+      const maxRefundable = getRemainingRefundableCentsNetOf(lockedPayment, handedBackCents);
       if (approvedAmountCents > maxRefundable) {
         return { kind: "exceeds" as const, maxRefundable };
       }

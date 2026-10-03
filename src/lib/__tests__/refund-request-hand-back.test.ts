@@ -215,16 +215,22 @@ describe("the refund appeal ceiling (INV-PAY-115)", () => {
   const lateCash = { amountCents: 3000, description: "Internet Banking payment credit for cancelled booking booking-" };
   const cancellationCredit = { amountCents: 2000, description: "Cancellation refund credit for booking booking-" };
 
-  function capStore(openCents: number | null, creditCents: number | null) {
+  function capStore(openCents: number | null, creditCents: number | null, fresh: object | null = payment) {
     return {
       manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: openCents } })) },
       memberCredit: { aggregate: vi.fn(async () => ({ _sum: { amountCents: creditCents } })) },
+      payment: { findUnique: vi.fn(async () => fresh) },
     };
   }
 
-  it("server: subtracts every open hand-back and the late-cash credit", async () => {
+  it("server: subtracts every open hand-back and the late-cash credit, read BEFORE the payment", async () => {
     const store = capStore(4000, 3000);
     await expect(refundableCashForRefundAppeal(store as never, payment)).resolves.toBe(3000);
+    // A cancellation hand-back completing between the reads (no lock(1)) is
+    // then counted twice - the cap errs low - never not at all.
+    const paymentRead = store.payment.findUnique.mock.invocationCallOrder[0];
+    expect(store.manualRefundTask.aggregate.mock.invocationCallOrder[0]).toBeLessThan(paymentRead);
+    expect(store.memberCredit.aggregate.mock.invocationCallOrder[0]).toBeLessThan(paymentRead);
     expect(store.manualRefundTask.aggregate).toHaveBeenCalledWith({
       where: { paymentId: "pay-1", status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK" },
       _sum: { amountCents: true },
@@ -239,12 +245,13 @@ describe("the refund appeal ceiling (INV-PAY-115)", () => {
     });
   });
 
-  it("server: never below zero, and zero for an uncaptured payment without reading anything", async () => {
+  it("server: never below zero; zero for an uncaptured or missing payment", async () => {
     await expect(refundableCashForRefundAppeal(capStore(9000, 9000) as never, payment)).resolves.toBe(0);
-    const store = capStore(0, 0);
     await expect(
-      refundableCashForRefundAppeal(store as never, { ...payment, status: "PENDING" }),
+      refundableCashForRefundAppeal(capStore(0, 0, { ...payment, status: "PENDING" }) as never, payment),
     ).resolves.toBe(0);
+    const store = capStore(0, 0);
+    await expect(refundableCashForRefundAppeal(store as never, null)).resolves.toBe(0);
     expect(store.manualRefundTask.aggregate).not.toHaveBeenCalled();
   });
 
