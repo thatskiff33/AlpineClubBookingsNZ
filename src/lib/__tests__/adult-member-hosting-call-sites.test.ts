@@ -1747,7 +1747,7 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
       "src/lib/xero-inbound/invoice-paid-effects.ts",
     );
     const xeroPaid = xeroInbound.slice(
-      xeroInbound.indexOf("await acquireLodgeCapacityLock(tx, fresh.booking.lodgeId)"),
+      xeroInbound.indexOf("await acquireLodgeCapacityLock(tx, lodgeTarget.booking.lodgeId)"),
       xeroInbound.indexOf(
         "await enqueueOwnHostingCoverageReevaluation(fresh.bookingId",
       ),
