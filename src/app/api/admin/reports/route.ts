@@ -144,7 +144,7 @@ export async function GET(request: NextRequest) {
         },
         orderBy: [{ checkIn: "asc" }, { id: "asc" }],
       }),
-      // #3372, owner decision A: Net Collected Cash reads its own payments -
+      // #3372, owner decision A: Net Collected reads its own payments -
       // every booking in the range and lodge, any status - not the cohort
       // above, whose status list and "deleted" view govern the other figures.
       // `summarizeCollectedCash` applies the one Net Collected booking scope
@@ -276,7 +276,7 @@ export async function GET(request: NextRequest) {
             additionalLedgerGap.additionalLedgerGapCents,
           netCollectedCents,
         },
-        "Admin Reports: payments record a collected additional payment with no captured ADDITIONAL PaymentTransaction behind it. Net Collected Cash may understate by additionalLedgerGapCents. Reconcile those payments' ledgers (reconcilePaymentAggregates) before trusting the collected figure.",
+        "Admin Reports: payments record a collected additional payment with no captured ADDITIONAL PaymentTransaction behind it. Net Collected may understate by additionalLedgerGapCents. Reconcile those payments' ledgers (reconcilePaymentAggregates) before trusting the collected figure.",
       );
     }
     // #2350: upward changes whose extra was never collected. This booking-level

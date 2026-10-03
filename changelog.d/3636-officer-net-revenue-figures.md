@@ -8,8 +8,8 @@
   payment counts in the month its record was created. When anything has been refunded or credited, the amount paid
   and the amount refunded or credited appear beneath it, in exact cents.
 
-  On the Payments page, the "Total Revenue" card is now **"Net Collected
-  Cash"**, the name Reports already uses for the same calculation. It used to
+  On the Payments page, the "Total Revenue" card is now **"Net
+  Collected"**, the name Reports uses for the same calculation. It used to
   add up every payment in the list at its full amount, including pending and
   failed ones. It now counts only payments that were actually taken, less
   their refunds and credits, so this figure can **go up or down**. Each money
@@ -18,10 +18,10 @@
   taken off may have gone back as account credit instead of to the card.
   When a payment the card counts records an addition as collected with no
   matching ledger record, a warning beneath the cards now says how much Net
-  Collected Cash may understate, the same warning Reports shows.
+  Collected may understate, the same warning Reports shows.
 
   All four "Net Collected" figures (the dashboard card, the Payments card,
-  Reports' Net Collected Cash and the Finance dashboard's card, #3637) now count the same bookings: every booking
+  Reports' Net Collected and the Finance dashboard's card, #3637) now count the same bookings: every booking
   that has not been deleted, whatever its status. A cancelled booking counts
   only what the club kept of what was actually paid on it: money not refunded,
   credited back or owed back by hand, plus any account credit the
@@ -35,7 +35,13 @@
   refund recorded against one payment never comes off another booking's
   money. When the dashboard card counts money owed back or credit kept, the
   line beneath it says so. Reports' other figures keep their booking list, and
-  its lodge and date filters still apply to Net Collected Cash.
+  its lodge and date filters still apply to Net Collected.
+
+  Reports' card, which was titled "Net Collected Cash", is now titled **"Net
+  Collected"**, like the Payments and Finance dashboard cards, because the
+  figure now includes account credit a cancellation kept as well as cash. The
+  breakdown line beneath the Payments and dashboard cards (paid, refunded or
+  credited, owed back, credit kept) is unchanged.
 
   The booking change requests panel shows a partly refunded payment at its net
   amount, with the amount paid and the amount refunded or credited underneath.

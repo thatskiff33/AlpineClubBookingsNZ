@@ -83,7 +83,7 @@ export function summarizeAdditionalLedgerGap(
 
 /**
  * #3372 / #3637: the shared Prisma select for a payment read behind a "Net
- * Collected Cash" figure and its ledger-gap warning, used by Reports and Finance.
+ * Collected" figure and its ledger-gap warning, used by Reports and Finance.
  * The payments board and the dashboard keep their own selects (the board loads
  * transactions of every kind for its list), and the compiler holds all of them
  * to the columns below - the columns

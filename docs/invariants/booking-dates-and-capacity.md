@@ -734,7 +734,7 @@ derivation).
   exact integer cents.
   Occupancy is the deliberate exception within the page: it stays limited to
   PAID/COMPLETED and continues to exclude custodian occupancy (#2286). Net
-  Collected Cash is the second: it counts bookings of any status and never a
+  Collected is the second: it counts bookings of any status and never a
   deleted one, through `isInNetCollectedBookingScope` (#3372 decision A). Each
   payment adds only money it took and still holds, so a cancelled booking never
   paid adds nil; a cancelled one also loses an open hand-back and adds credit it

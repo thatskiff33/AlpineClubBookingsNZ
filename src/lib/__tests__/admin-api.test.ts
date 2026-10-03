@@ -395,7 +395,7 @@ describe("Admin Payments API", () => {
   });
 
   /*
-    #3372 — the "Net Collected Cash" tile (once "Total Revenue"). It used to add gross `amountCents` for every
+    #3372 — the "Net Collected" tile (once "Total Revenue"). It used to add gross `amountCents` for every
     row the filter matched: a refund never subtracted, and under the default
     "all" status filter a PENDING or FAILED payment's amount counted as revenue.
     The tile is now net over CAPTURED payments through `summarizeCollectedCash`,
@@ -403,7 +403,7 @@ describe("Admin Payments API", () => {
     refunded (#773's exclusion is retired for this figure). This fixture is built so
     each exclusion moves the number.
   */
-  it("sums Net Collected Cash over captured payments only, net of refunds, cancelled bookings at what they paid and kept", async () => {
+  it("sums Net Collected over captured payments only, net of refunds, cancelled bookings at what they paid and kept", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
 
     const cancelledBooking = {
@@ -511,12 +511,12 @@ describe("Admin Payments API", () => {
   });
 
   /*
-    #3372 review: Reports warns that Net Collected Cash "may understate" when a
+    #3372 review: Reports warns that Net Collected "may understate" when a
     payment records a collected additional payment with no captured ADDITIONAL
     ledger row behind it (#2408). The tile carries the same figure, so the
     summary carries the same check, over the payments the tile counts.
   */
-  it("returns Reports' ledger-gap check over the payments Net Collected Cash counts", async () => {
+  it("returns Reports' ledger-gap check over the payments Net Collected counts", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
 
     vi.mocked(prisma.payment.findMany)

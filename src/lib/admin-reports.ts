@@ -32,7 +32,7 @@ export type RevenueGranularity = "daily" | "weekly" | "monthly";
  * BookingStatus values do not silently become revenue merely because they are
  * not CANCELLED/BUMPED (#2368).
  *
- * Net Collected Cash is NOT read over this population (#3372, owner decision
+ * Net Collected is NOT read over this population (#3372, owner decision
  * A): it is money the club has, so it uses the one Net Collected booking scope
  * beside `summarizeCollectedCash`, in which a cancelled booking counts only
  * what it kept of what was paid (`getNetCollectedPaymentParts`).

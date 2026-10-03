@@ -145,7 +145,7 @@ export async function buildBookingsDashboard(
         : undefined,
     },
     {
-      title: "Net Collected Cash",
+      title: "Net Collected",
       value: formatDollarsDisplay(metrics.paymentSummary.netCollectedCents, format),
       // #2408: one figure, counted once. The captured amount on a payment row
       // already includes any later price increase that was collected, so this
@@ -270,7 +270,7 @@ export async function buildBookingsDashboard(
       {
         label: "Payment cash",
         description:
-          "Net collected cash comes from local payment rows and remains separate from Xero revenue recognition.",
+          "Net Collected comes from local payment rows and remains separate from Xero revenue recognition.",
       },
     ],
     exportSections: [

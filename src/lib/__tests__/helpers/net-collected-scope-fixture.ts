@@ -1,8 +1,8 @@
 /**
  * #3372, owner decision A: ONE fixture for the one Net Collected booking scope,
  * handed to all four surfaces that show a "Net Collected" figure - the
- * dashboard card, the payments board tile, Reports' Net Collected Cash and the
- * Finance dashboard's "Net Collected Cash" (#3637) - so each surface's test
+ * dashboard card, the payments board tile, Reports' Net Collected and the
+ * Finance dashboard's "Net Collected" (#3637) - so each surface's test
  * asserts the SAME expected amount from the SAME payments.
  *
  * Five payments:

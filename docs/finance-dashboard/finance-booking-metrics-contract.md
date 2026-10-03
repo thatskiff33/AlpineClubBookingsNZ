@@ -144,7 +144,10 @@ The booking metrics response includes:
 - Booking and guest inclusion rules come from `docs/finance-dashboard/data-contracts.md`.
 - Collected cash is counted once (#2408). `Payment.amountCents` is the gross
   capture — the sum of every captured ledger row — so
-  `netCollectedCents = capturedGrossCents - refundedCents`, and
+  `netCollectedCents = capturedGrossCents - refundedCents - handBackOwedCents
+  + keptCreditCents` (the last two are zero except on a cancelled booking: a
+  refund still owed on an open hand-back task, and applied account credit the
+  cancellation kept; epic #3372, owner decision of 3 Oct 2026), and
   `capturedAdditionalCents` is a part of `capturedGrossCents` rather than
   something to add to it. `additionalLedgerGapCents` measures exactly the
   population where that containment cannot be proved from the ledger, and is

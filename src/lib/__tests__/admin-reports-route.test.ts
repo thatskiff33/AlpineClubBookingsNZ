@@ -37,7 +37,7 @@ const EXPECTED_REPORT_STATUS_VALUES = [
 const mockLodgeFindUnique = vi.fn();
 const mockPrisma = {
   booking: { findMany: vi.fn() },
-  // #3372: Net Collected Cash reads its own payments, in the one Net Collected
+  // #3372: Net Collected reads its own payments, in the one Net Collected
   // booking scope, not the report cohort's status list.
   payment: { findMany: vi.fn() },
   member: { count: vi.fn() },
@@ -156,7 +156,7 @@ function reportBooking(overrides: Record<string, unknown> = {}) {
 }
 
 /**
- * The payment rows Net Collected Cash reads for a set of report bookings: the
+ * The payment rows Net Collected reads for a set of report bookings: the
  * same payments, as the route's payment query returns them. A test whose
  * figure should come from bookings OUTSIDE the report cohort passes those too.
  */
@@ -268,7 +268,7 @@ describe("admin reports route", () => {
     });
     expect(mockPrisma.booking.findMany).toHaveBeenCalledTimes(1);
 
-    // #3372, owner decision A: Net Collected Cash reads the payments of every
+    // #3372, owner decision A: Net Collected reads the payments of every
     // booking in the range and lodge - no status list, no deleted view; the
     // one booking scope is applied by `summarizeCollectedCash` from the
     // booking's `deletedAt`.
@@ -402,7 +402,7 @@ describe("admin reports route", () => {
     const queryWhere = mockPrisma.booking.findMany.mock.calls[0][0].where;
     expect(queryWhere).toMatchObject({ lodgeId: "lodge-2" });
     expect(queryWhere).not.toHaveProperty("deletedAt");
-    // #3372 decision A: Net Collected Cash reads its own payments, and a
+    // #3372 decision A: Net Collected reads its own payments, and a
     // lodge-scoped report must scope that read to the lodge too.
     const paymentWhere = mockPrisma.payment.findMany.mock.calls[0][0].where;
     expect(paymentWhere.booking.is).toMatchObject({ lodgeId: "lodge-2" });
@@ -485,7 +485,7 @@ describe("admin reports route", () => {
         additionalLedgerGapCents: 2_100,
         netCollectedCents: 10_000,
       }),
-      expect.stringContaining("Net Collected Cash may understate"),
+      expect.stringContaining("Net Collected may understate"),
     );
   }, 15_000);
 
@@ -493,7 +493,7 @@ describe("admin reports route", () => {
     #3372, owner decision A: the one Net Collected booking scope. The shared
     fixture - a cancelled booking that kept a $50.00 fee, and a soft-deleted
     booking's $70.00 capture - reads $50.00 here, on the dashboard and on the
-    payments tile. Reports used to read Net Collected Cash over its status
+    payments tile. Reports used to read Net Collected over its status
     list, which leaves cancelled bookings out ($0.00). The other figures keep
     that list: the cancelled booking is in no count and no booked revenue.
   */
