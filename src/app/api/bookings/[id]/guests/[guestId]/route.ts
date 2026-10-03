@@ -306,7 +306,7 @@ export async function DELETE(
     // #3809: the one guest-removal Xero leg, shared with the consent doors.
     void queueGuestRemovalXeroSettlement(guestRemovalXeroSettlement(result), {
       createdByMemberId: session.user.id,
-      additionalPaymentIntentId,
+      additionalPaymentIntentId: additionalPaymentIntentId ?? null,
     }).catch((err) =>
       logger.error({ err, bookingId }, "Failed to queue Xero settlement for guest removal")
     );
