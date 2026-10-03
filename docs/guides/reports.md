@@ -98,8 +98,9 @@ bookings do not silently become revenue.
 **Net Collected Cash** is different: it is captured `Payment.amountCents` less
 refunds and credits for the overlapping bookings and is not allocated to individual nights.
 It does not use the status list above. It counts every overlapping booking in
-the chosen lodge whatever its status, so a cancelled booking counts the money
-paid on it that was not refunded or credited back (nothing at all if it was
+the chosen lodge whatever its status, so a cancelled booking counts what the
+club kept of what was paid on it: money not refunded, credited or owed back by
+hand, plus account credit the cancellation kept (nothing at all if it was
 cancelled before anything was paid), and it leaves deleted bookings out whichever
 **Deleted** view is chosen. All four Net Collected figures (this card, the
 dashboard's, the Payments page's and the Finance dashboard's Net Collected

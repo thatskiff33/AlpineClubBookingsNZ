@@ -518,7 +518,7 @@ describe("/admin/payments titles its revenue tile as net (#3372)", () => {
     const netCard = netTitle.parentElement?.parentElement;
     expect(netCard).toHaveTextContent("$65.00");
     expect(netCard).toHaveTextContent(
-      "Payments received, less refunds and credits. Cancelled bookings count only money paid and not refunded; deleted bookings are left out.",
+      "Payments received, less refunds and credits. Cancelled bookings count only what was kept of what was paid; deleted bookings are left out.",
     );
     const refundCard = screen.getByText("Refunded / Credited").parentElement
       ?.parentElement;

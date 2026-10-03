@@ -23,14 +23,18 @@
   All four "Net Collected" figures (the dashboard card, the Payments card,
   Reports' Net Collected Cash and the Finance dashboard's card, #3637) now count the same bookings: every booking
   that has not been deleted, whatever its status. A cancelled booking counts
-  only money that was actually paid on it and not refunded or credited back,
-  so **Reports and the Payments card now include money the club kept when a
-  booking was cancelled** (before, both left cancelled bookings out, and
-  Reports also left out bumped ones), and the dashboard card now leaves
-  deleted bookings out. A booking cancelled before anything was paid adds
-  nothing to any of the four, whatever its cancellation policy would charge,
-  and a refund recorded against one payment never comes off another booking's
-  money. Reports' other figures keep their booking list, and
+  only what the club kept of what was actually paid on it: money not refunded,
+  credited back or owed back by hand, plus any account credit the
+  cancellation kept. So **Reports and the Payments card now include money the
+  club kept when a booking was cancelled** (before, both left cancelled
+  bookings out, and Reports also left out bumped ones), and the dashboard card
+  now leaves deleted bookings out. A booking cancelled before anything was
+  paid adds nothing to any of the four, whatever its cancellation policy would
+  charge. When a booking paid by hand is cancelled, the refund the club still
+  owes is taken off straight away, before an officer marks it paid back. A
+  refund recorded against one payment never comes off another booking's
+  money. When the dashboard card counts money owed back or credit kept, the
+  line beneath it says so. Reports' other figures keep their booking list, and
   its lodge and date filters still apply to Net Collected Cash.
 
   The booking change requests panel shows a partly refunded payment at its net

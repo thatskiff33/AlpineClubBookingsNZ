@@ -1,7 +1,4 @@
 import type {
-  CreditType,
-  ManualRefundTaskKind,
-  ManualRefundTaskStatus,
   PaymentStatus,
   PaymentTransactionKind,
   Prisma,
@@ -29,6 +26,7 @@ import {
 import {
   getPaymentNetOfRefundsCents,
   sumRefundedAndCreditedCents,
+  type NetCollectedBookingFields,
 } from "@/lib/booking-payment-state";
 import logger from "@/lib/logger";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
@@ -182,22 +180,11 @@ type PaymentCandidate = {
     } | null;
     // #3369: the owner may be an Organisation; bookingOwner() reads both.
     organisation: { name: string; email: string | null } | null;
-    creditsFromCancellation: Array<{
-      type: CreditType;
-      amountCents: number;
-      restoredFromBookingId: string | null;
-      description: string | null;
-    }>;
-    // #3372, owner decision 3 Oct 2026: a cancelled booking's kept credit and
-    // owed hand-back (`getNetCollectedPaymentParts`).
-    creditsApplied: Array<{ type: CreditType; amountCents: number }>;
-    manualRefundTasks: Array<{
-      status: ManualRefundTaskStatus;
-      kind: ManualRefundTaskKind | null;
-      amountCents: number | null;
-      partPaymentReviewPaymentId: string | null;
-    }>;
-  };
+    // #3372: the Net Collected rule's rows, widened by the chip's description.
+    creditsFromCancellation: Array<
+      NetCollectedBookingFields["creditsFromCancellation"][number] & { description: string | null }
+    >;
+  } & Pick<NetCollectedBookingFields, "creditsApplied" | "manualRefundTasks">;
 };
 
 type EnrichedPaymentCandidate = PaymentCandidate & {
@@ -505,9 +492,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
           select: {
             id: true,
             checkIn: true,
-            // #3372: the Net Collected figure's booking fields, shared with
-            // Reports, Finance and the dashboard; widened by the description
-            // the settlement chip reads.
+            // #3372: the Net Collected booking fields shared by all four surfaces.
             ...netCollectedBookingSelect,
             creditsFromCancellation: {
               select: {

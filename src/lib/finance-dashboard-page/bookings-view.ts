@@ -154,7 +154,7 @@ export async function buildBookingsDashboard(
       // status, deleted ones left out), so it answers as the dashboard,
       // Payments and Reports do.
       description:
-        "Captured payments less refunds and credits for bookings in the range, including any collected price increase. Cancelled bookings count only money paid and not refunded; deleted bookings are left out.",
+        "Captured payments less refunds and credits for bookings in the range, including any collected price increase. Cancelled bookings count only what was kept of what was paid; deleted bookings are left out.",
       footnote:
         ledgerGapBookings > 0
           ? `May understate by ${formatCents(metrics.paymentSummary.additionalLedgerGapCents, format)} - see the warning above. Cash is local payment-derived and separate from Xero revenue.`

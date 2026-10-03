@@ -1086,12 +1086,12 @@ export default function PaymentsPage() {
             over a gross sum that also counted pending and failed payments. It
             takes Reports' name for the same derivation and its one booking
             scope (owner decision A): a cancelled booking counts only money paid
-            and not refunded (nil if never paid), a deleted booking not at all.
+            and kept, kept credit included (nil if never paid), deleted: none.
             The hints state the asymmetry: the refund tile counts every match. */}
         <SummaryCard
           title="Net Collected Cash"
           icon={DollarSign}
-          hint="Payments received, less refunds and credits. Cancelled bookings count only money paid and not refunded; deleted bookings are left out."
+          hint="Payments received, less refunds and credits. Cancelled bookings count only what was kept of what was paid; deleted bookings are left out."
         >
           {formatCents(summary.netCollectedCents, format)}
         </SummaryCard>

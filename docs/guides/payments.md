@@ -695,9 +695,11 @@ the card what it covers:
 
 - **Net Collected Cash** counts captured payments, less the refunds and
   account credits on them. A payment that is still pending or failed does not
-  count. A **cancelled** booking counts only what was paid on it less what was
-  refunded or credited back, so one cancelled before anything was paid adds
-  nothing, and a **deleted** booking does not count
+  count. A **cancelled** booking counts only what the club kept of what was
+  paid on it: money not refunded or credited back, less any refund still owed
+  on an open hand-back task, plus any account credit the cancellation kept. One
+  cancelled before anything was paid adds nothing, and a **deleted** booking
+  does not count
   at all, even though its row stays in the list. All four Net Collected
   figures (this card, the dashboard's, Reports' and the Finance dashboard's
   Net Collected Cash) use that same rule for which bookings count. It is worked out the same way as the Net Collected Cash card

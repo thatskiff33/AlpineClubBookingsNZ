@@ -55,9 +55,11 @@ The booking metrics response includes:
   (#3637, epic #3372 owner decision A). They, and the two ledger-gap fields
   that warn about them, count a different set of bookings from every other
   field here: every booking whose stay falls in a requested window, **whatever
-  its status**. So a cancelled booking counts the money paid on it that was not
-  refunded or credited back, and one cancelled before anything was paid counts
-  nothing (owner review on PR #3811). Every other field, `capturedAdditionalCents` included, counts the
+  its status**. So a cancelled booking counts only what the club kept of what
+  was paid on it: money not refunded, credited or owed back on an open
+  hand-back task, plus applied account credit it kept. One cancelled before
+  anything was paid counts nothing (owner review on PR #3811; owner decision
+  on #3372, 3 Oct 2026). Every other field, `capturedAdditionalCents` included, counts the
   contributing bookings above, which use the status lists
 - no field counts a soft-deleted booking (#3745): the booking read and the Net
   Collected scope both leave it out, the same as Reports' default view
@@ -102,11 +104,17 @@ The booking metrics response includes:
   captured payment's `refundedAmountCents` (card refunds and account credits
   alike), capped at what that payment took. A refund on a payment that never
   took money is not counted
-- `netCollectedCents`: each payment in that scope adds what it received and has
-  not refunded or credited back (`getRemainingRefundableCents`): never below
-  zero, and nothing for a payment that took no money, so a booking cancelled
-  before it was paid adds nothing (owner review on PR #3811). It equals
-  `capturedGrossCents - refundedCents` exactly.
+- `handBackOwedCents`: on cancelled bookings, the refund still owed on an open
+  `CANCELLED_BOOKING_HAND_BACK` task (`openCancellationHandBackOwedCents`),
+  taken off before the task is completed, capped at what is left of the payment
+- `keptCreditCents`: on cancelled bookings, applied account credit the
+  cancellation kept — the booking's `BOOKING_APPLIED` net less its restore row
+  (`cancelledBookingKeptCreditCents`). Never a live booking's credit
+- `netCollectedCents`: each payment in that scope adds what it took and still
+  holds (`getNetCollectedPaymentParts`): never below zero, nothing for a payment
+  that took no money, so a booking cancelled before it was paid adds nothing,
+  plus a cancelled booking's kept credit. It equals `capturedGrossCents -
+  refundedCents - handBackOwedCents + keptCreditCents` exactly.
   **Never** the sum of `capturedGrossCents` and `capturedAdditionalCents` — that
   was the #2408 double count, which reported a $121 booking with a collected $21
   increase as $142 collected

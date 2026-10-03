@@ -736,8 +736,9 @@ derivation).
   PAID/COMPLETED and continues to exclude custodian occupancy (#2286). Net
   Collected Cash is the second: it counts bookings of any status and never a
   deleted one, through `isInNetCollectedBookingScope` (#3372 decision A). Each
-  payment adds only money it took and has not refunded or credited back, so a
-  cancelled booking never paid adds nil (owner review, PR #3811).
+  payment adds only money it took and still holds, so a cancelled booking never
+  paid adds nil; a cancelled one also loses an open hand-back and adds credit it
+  kept (`getNetCollectedPaymentParts`; owner, PR #3811 and #3372).
 
 ## Capacity and allocation
 

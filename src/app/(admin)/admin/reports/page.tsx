@@ -613,7 +613,7 @@ export default function ReportsPage() {
               <StatCard
                 title="Net Collected Cash"
                 value={formatCents(data.summary.netCollectedCents, clubFormat)}
-                subtitle={`Captured payment cash less refunds and credits for overlapping bookings of any status, cancelled ones only for money paid and not refunded; not allocated by night${deleted === "hide" ? "" : ". Deleted bookings never count here"}`}
+                subtitle={`Captured payment cash less refunds and credits for overlapping bookings of any status, cancelled ones only for what was kept of what was paid; not allocated by night${deleted === "hide" ? "" : ". Deleted bookings never count here"}`}
                 icon={DollarSign}
               />
               <StatCard
