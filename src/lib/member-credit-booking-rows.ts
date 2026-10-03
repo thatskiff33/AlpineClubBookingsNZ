@@ -79,8 +79,14 @@ export type CreditRestoreEvidence = {
  * credit as credit the club kept.
  *
  * Readers: `cancelledBookingKeptCreditCents` below, the booking ledger's credit
- * line shape (`booking-ledger-credit-posting.ts`) and the cancellation
- * settlement breakdown (`payment-status-display.ts`).
+ * line shape (`booking-ledger-credit-posting.ts`), the cancellation settlement
+ * breakdown (`payment-status-display.ts`), and - as a query, through
+ * `cancellationCreditRestoreWhere` below - an edit review's netting of a share
+ * against the restore (`edit-financial-review-account-credit.ts`).
+ *
+ * One reader still asks the marker alone, deliberately:
+ * `ACCOUNT_CREDIT_DISPOSITION_WHERE` (`stripe-cash-refund-evidence.ts`) - see
+ * the stated limit there for why moving it would move money.
  */
 export function isCancellationCreditRestoreRow(row: CreditRestoreEvidence): boolean {
   // Present-or-absent, not `!== null`: a row read without the column selected
@@ -90,6 +96,25 @@ export function isCancellationCreditRestoreRow(row: CreditRestoreEvidence): bool
     row.type === CANCELLATION_REFUND_CREDIT_TYPE &&
     (row.description ?? "").startsWith(RESTORED_CREDIT_PREFIX)
   );
+}
+
+/**
+ * `isCancellationCreditRestoreRow` as a query, for ONE booking's restore rows:
+ * the marker naming the booking, or - for a restore written before the marker
+ * existed - type `CANCELLATION_REFUND`, the booking as source and the restore
+ * description. Built from the same constants, so the two cannot drift.
+ */
+export function cancellationCreditRestoreWhere(bookingId: string) {
+  return {
+    OR: [
+      { restoredFromBookingId: bookingId },
+      {
+        sourceBookingId: bookingId,
+        type: CANCELLATION_REFUND_CREDIT_TYPE,
+        description: { startsWith: RESTORED_CREDIT_PREFIX },
+      },
+    ],
+  } satisfies Prisma.MemberCreditWhereInput;
 }
 
 /** The `MemberCredit` fields `cancelledBookingKeptCreditCents` reads. */
