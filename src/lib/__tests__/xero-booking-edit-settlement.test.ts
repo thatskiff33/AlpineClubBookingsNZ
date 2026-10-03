@@ -477,6 +477,24 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
     expect(calls[0]).not.toHaveProperty("reviewTaskId");
   });
 
+  it("MUTATION (#3809 L1): a give-back beside a review task's note takes a scope of its own, never the review task's", async () => {
+    await queueXeroBookingEditSettlement({
+      bookingId: "booking_6",
+      bookingModificationId: "mod_6",
+      reviewTaskId: "task-9",
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -5000,
+      settlementMethod: "card",
+      settlementAmountCents: 5000,
+      appliedCreditGiveBackCents: 5000,
+      datesChanged: false,
+    });
+
+    const scopes = mocks.enqueueXeroModificationCreditNoteOperation.mock.calls.map((call) => call[0].reviewTaskId);
+    expect(scopes).toEqual(["task-9", "task-9:applied-credit-give-back"]);
+  });
+
   it("(#3809) applied credit given back with nothing else returned is one allocated note worded as account credit", () => {
     expect(
       classifyXeroBookingEditSettlement({

@@ -157,7 +157,9 @@ let observerClient: PrismaClient;
       if (shape !== "card-invoiced") {
         await prisma.memberCredit.updateMany({ where: { appliedToBookingId: BOOKING_ID, type: "BOOKING_APPLIED" }, data: { xeroCreditNoteId: CREDIT_NOTE_ID } });
       }
-      if (shape === "ib-allocated") {
+      // A bank-transfer booking's credit is allocated at creation (#1620), a card
+      // booking's after its capture (#1641): either way the same working slice.
+      if (shape === "ib-allocated" || mixed) {
         const { repairLegacyAppliedCreditNoteAllocationsForBooking } = await import("@/lib/xero-applied-credit-allocation-repair");
         await prisma.$transaction((tx) => repairLegacyAppliedCreditNoteAllocationsForBooking(BOOKING_ID, XERO_INVOICE_ID, tx, CLUB_FORMAT_TEST));
       }
@@ -210,7 +212,19 @@ let observerClient: PrismaClient;
     async function deallocationConverges() {
       const target = await deallocationTarget();
       if (target === null) return;
+      const slices = await prisma.memberCreditNoteAllocation.findMany({ where: { appliedToBookingId: BOOKING_ID }, select: { id: true } });
       await prisma.memberCreditNoteAllocation.updateMany({ where: { appliedToBookingId: BOOKING_ID }, data: { amountCents: target } });
+      // ...and its provenance, as the worker re-records it.
+      const links = await prisma.xeroObjectLink.findMany({
+        where: { localModel: "MemberCreditNoteAllocation", localId: { in: slices.map((slice) => slice.id) }, active: true },
+        select: { id: true, metadata: true },
+      });
+      for (const link of links) {
+        await prisma.xeroObjectLink.update({
+          where: { id: link.id },
+          data: { metadata: { ...(link.metadata as Record<string, unknown>), amountCents: target, rowTargetCents: target } },
+        });
+      }
       await prisma.xeroSyncOperation.updateMany({
         where: { localModel: "Payment", localId: PAYMENT_ID, queueType: "APPLIED_CREDIT_DEALLOCATION" },
         data: { status: "COMPLETED" },
@@ -350,7 +364,8 @@ let observerClient: PrismaClient;
     it.each([
       { tier: "100%", rule: TIERS[0]!.rule, cardCents: 10_000, givenBackCents: 5_000 },
       { tier: "50% with a $20 fee", rule: FIFTY_LESS_TWENTY, cardCents: 3_000, givenBackCents: 2_500 },
-    ])("finding 4: $100 by card and $100 by credit, the 15000-cent guest removed at $tier: $cardCents cents to the card and $givenBackCents cents of credit back, the all-card figure, in two allocated notes - one per method", async ({ rule, cardCents, givenBackCents }) => {
+      { tier: "0%", rule: TIERS[2]!.rule, cardCents: 0, givenBackCents: 0 },
+    ])("finding 4 and H1: 10000 cents by card and 10000 by credit (allocated in Xero, #1641), the 15000-cent guest removed at $tier: $cardCents to the card and $givenBackCents of credit back, the all-card figure; the allocation comes down by the give-back, Xero agrees with the app, and the inbound sync leaves the give-back where it is", async ({ rule, cardCents, givenBackCents }) => {
       await creditPaidBooking("card-and-credit", rule);
 
       const result = await removeLeavingGuest("card");
@@ -363,13 +378,41 @@ let observerClient: PrismaClient;
       expect(payment.creditAppliedCents).toBe(10_000 - givenBackCents);
       // Review low 2: one note names one method (INV-PAY-101), so the credit
       // given back is an allocated note of its own beside the card refund's.
-      expect(await queuedNotes(result.bookingModificationId)).toEqual(
-        expect.arrayContaining([
-          { queueType: "MODIFICATION_CREDIT_NOTE", cents: cardCents, refundMethod: "card" },
-          { queueType: "MODIFICATION_CREDIT_NOTE", cents: givenBackCents, refundMethod: "account-credit" },
-        ]),
-      );
-      expect(await queuedNotes(result.bookingModificationId)).toHaveLength(2);
+      const notes = await queuedNotes(result.bookingModificationId);
+      const expectedNotes = [
+        ...(cardCents > 0 ? [{ queueType: "MODIFICATION_CREDIT_NOTE", cents: cardCents, refundMethod: "card" }] : []),
+        ...(givenBackCents > 0 ? [{ queueType: "MODIFICATION_CREDIT_NOTE", cents: givenBackCents, refundMethod: "account-credit" }] : []),
+      ];
+      expect(notes).toEqual(expect.arrayContaining(expectedNotes));
+      expect(notes).toHaveLength(expectedNotes.length);
+
+      // H1: the card booking's credit is allocated (#1641), so the give-back
+      // deallocates it down to what is still applied, as a bank transfer's does.
+      const target = await deallocationTarget();
+      expect(target).toBe(givenBackCents > 0 ? 10_000 - givenBackCents : null);
+
+      // The three invariants, from the rows the app wrote. The card refund's note
+      // and the give-back's are both allocated against the invoice; the money
+      // the policy kept stays on it, as for any captured payment.
+      const allocatedCents = target ?? 10_000;
+      const invoiceNetCents = 20_000 - notes.reduce((sum, note) => sum + note.cents, 0);
+      const cashKeptCents = 10_000 - cardCents;
+      expect(invoiceNetCents, "(i) invoice net of its notes = the price plus what the policy kept").toBe(5_000 + result.policyRetainedAmountCents);
+      expect(invoiceNetCents - allocatedCents - cashKeptCents, "(ii) Xero's due = the app's owed").toBe(0);
+      expect(10_000 - allocatedCents, "(iii) the member's Xero credit = the app's").toBe(await credit.getMemberCreditBalance(MEMBER_ID));
+
+      // The inbound sync: fenced while Xero still shows the old allocation, then
+      // reading the converged one, it leaves the give-back exactly where it is.
+      const { repairAccountCreditAllocationBusinessState } = await import("@/lib/xero-inbound/credit-note-repairs");
+      if (target !== null) {
+        await expect(
+          repairAccountCreditAllocationBusinessState(CREDIT_NOTE_ID, [{ invoiceId: XERO_INVOICE_ID, amountCents: 10_000 }]),
+        ).rejects.toThrow(/converge it before changing applied credit/);
+        await deallocationConverges();
+      }
+      await repairAccountCreditAllocationBusinessState(CREDIT_NOTE_ID, [{ invoiceId: XERO_INVOICE_ID, amountCents: allocatedCents }]);
+      expect(await credit.deriveBookingAppliedCreditCents(BOOKING_ID)).toBe(10_000 - givenBackCents);
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(givenBackCents);
     });
 
     it.each([
@@ -407,6 +450,8 @@ let observerClient: PrismaClient;
       await creditPaidBooking("card-and-credit", TIERS[0]!.rule);
       const removed = await removeLeavingGuest("card");
       expect(removed.refundAmountCents).toBe(10_000);
+      // The give-back's deallocation (H1) lands before the cancel, which waits on it.
+      await deallocationConverges();
       // The route's Stripe refund, landed: the card is refunded whole.
       await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: 10_000, status: "REFUNDED" } });
       expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(5_000);

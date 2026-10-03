@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   xeroObjectLinkFindMany: vi.fn(),
   memberCreditFindMany: vi.fn(),
   notifyXeroSyncError: vi.fn(),
+  xeroSyncOperationFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -26,6 +27,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     memberCredit: {
       findMany: mocks.memberCreditFindMany,
+    },
+    xeroSyncOperation: {
+      findMany: mocks.xeroSyncOperationFindMany,
     },
   },
 }));
@@ -183,5 +187,56 @@ describe("repairRefundedPaymentBusinessState raise-only Stripe ledger floor (#13
     });
     expect(result).toEqual({ matchedPayments: 1, updatedPayments: 1 });
     expect(mocks.notifyXeroSyncError).toHaveBeenCalledTimes(1);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// #3809 (review M2): an edit's invoice-allocated note for applied credit GIVEN
+// BACK moves no cash. The inbound fold of modification notes into
+// `Payment.refundedAmountCents` (Xero-authoritative for internet banking) must
+// count only the notes that returned money - here the $30 bank hand-back of a
+// $100 bank + $100 credit booking reduced by $150 at 50% less $20, not the $25
+// of credit given back beside it.
+// -----------------------------------------------------------------------------
+describe("#3809: a give-back's account-credit note is not a cash refund", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.paymentUpdate.mockResolvedValue({});
+    mocks.paymentFindMany.mockResolvedValue([
+      payment({ source: PaymentSource.INTERNET_BANKING, refundedAmountCents: 3000, status: PaymentStatus.PARTIALLY_REFUNDED }),
+    ]);
+    mocks.xeroObjectLinkFindMany.mockImplementation(async ({ where }: { where: { role?: unknown; xeroObjectType?: string } }) => {
+      if (where.role === "MODIFICATION_CREDIT_NOTE_ALLOCATION") {
+        return [
+          { localId: "pay-1", xeroObjectId: "alloc-hand-back", metadata: { creditNoteId: "cn-hand-back", invoiceId: "inv-1", amountCents: 3000 } },
+          { localId: "pay-1", xeroObjectId: "alloc-give-back", metadata: { creditNoteId: "cn-give-back", invoiceId: "inv-1", amountCents: 2500 } },
+        ];
+      }
+      if (where.role === "MODIFICATION_CREDIT_NOTE") {
+        return [
+          { xeroObjectId: "cn-hand-back", metadata: { status: "AUTHORISED" } },
+          { xeroObjectId: "cn-give-back", metadata: { status: "AUTHORISED" } },
+        ];
+      }
+      return [];
+    });
+    mocks.xeroSyncOperationFindMany.mockResolvedValue([
+      { xeroObjectId: "cn-hand-back", requestPayload: { refundMethod: "internet-banking" } },
+      { xeroObjectId: "cn-give-back", requestPayload: { refundMethod: "account-credit", reviewTaskId: "applied-credit-give-back" } },
+    ]);
+  });
+
+  it("MUTATION: an unrelated inbound note leaves the bank payment's refunded total at the $30 actually handed back", async () => {
+    await repairRefundedPaymentBusinessState({
+      creditNoteId: "cn-current",
+      creditNote: { status: "AUTHORISED", total: 0 } as never,
+      directPaymentIds: [],
+      modificationRefundAmountsByPaymentId: new Map([["pay-1", 0]]),
+    });
+
+    // Before #3809's fix this wrote 5500: the $25 of credit folded in as cash.
+    expect(mocks.paymentUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ refundedAmountCents: 5500 }) }));
+    const writes = mocks.paymentUpdate.mock.calls.map((call) => call[0].data.refundedAmountCents).filter((cents) => cents !== undefined);
+    expect(writes.every((cents) => cents === 3000)).toBe(true);
   });
 });
