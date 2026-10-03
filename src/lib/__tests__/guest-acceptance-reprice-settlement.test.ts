@@ -1,0 +1,337 @@
+/**
+ * #3827, owner decision D-3813-5 (#3492): when a guest's acceptance lowers a
+ * paid booking, the FULL reduction goes back — no cancellation-policy tier —
+ * the way the booking was paid, and nobody is asked to choose. A code's free
+ * nights are used up only for what is actually returned.
+ *
+ * The pricing engine and the write-side helpers are stubbed: what is under test
+ * is the decision `repriceBookingAfterGuestAcceptance` makes about the money,
+ * through the REAL `applyPaymentAdjustments` and the real full-reduction
+ * settlement options, and what its after-commit half sends.
+ */
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const h = vi.hoisted(() => ({
+  priceStoredBookingPromotions: vi.fn(),
+  persistRepricedPromotions: vi.fn(),
+  applyLifecycleTransitions: vi.fn(),
+  deriveBookingAppliedCreditCents: vi.fn(),
+  createBookingModificationCredit: vi.fn(),
+  loadCancellationPolicy: vi.fn(),
+  executeBookingModificationRefund: vi.fn(),
+  queueXeroBookingEditSettlement: vi.fn(),
+  sendBookingModifiedEmail: vi.fn(),
+  logAudit: vi.fn(),
+}));
+
+vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+vi.mock("@/lib/logger", () => ({
+  default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("@/lib/booking-promotions", () => ({
+  priceStoredBookingPromotions: h.priceStoredBookingPromotions,
+  persistRepricedPromotions: h.persistRepricedPromotions,
+}));
+vi.mock("@/lib/booking-modify", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/booking-modify")),
+  applyLifecycleTransitions: h.applyLifecycleTransitions,
+  isQuotePricedBooking: vi.fn(async () => false),
+}));
+// D-3813-5: no policy tier. Reading the cancellation policy at all is a failure.
+vi.mock("@/lib/cancellation", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/cancellation")),
+  loadCancellationPolicy: h.loadCancellationPolicy,
+}));
+vi.mock("@/lib/edit-financial-review", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/edit-financial-review")),
+  assertNoPendingEditFinancialReview: vi.fn(async () => undefined),
+}));
+vi.mock("@/lib/night-adjustment-write", () => ({ recordBookingNightAdjustments: vi.fn() }));
+vi.mock("@/lib/booking-ledger-modification-sync", () => ({ postModificationLedgerLines: vi.fn() }));
+vi.mock("@/lib/booking-modification-pricing", () => ({
+  computeModificationPricing: vi.fn(async () => ({ priceLines: null, sides: null })),
+}));
+vi.mock("@/lib/member-credit", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-credit")),
+  deriveBookingAppliedCreditCents: h.deriveBookingAppliedCreditCents,
+  createBookingModificationCredit: h.createBookingModificationCredit,
+}));
+vi.mock("@/lib/booking-modification-settlement", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/booking-modification-settlement")),
+  executeBookingModificationRefund: h.executeBookingModificationRefund,
+  drainSupersededPrimaryIntents: vi.fn(),
+}));
+vi.mock("@/lib/xero-booking-edit-settlement", () => ({
+  queueXeroBookingEditSettlement: h.queueXeroBookingEditSettlement,
+}));
+vi.mock("@/lib/email/booking", () => ({ sendBookingModifiedEmail: h.sendBookingModifiedEmail }));
+vi.mock("@/lib/audit", () => ({ logAudit: h.logAudit }));
+vi.mock("@/lib/booking-modification-lines", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/booking-modification-lines")),
+  loadModificationLinesAuditFields: vi.fn(async () => ({})),
+}));
+
+import {
+  repriceBookingAfterGuestAcceptance,
+  settleGuestAcceptanceRepriceAfterCommit,
+} from "@/lib/booking-guest-acceptance-reprice";
+import { requireCalendarDate } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+
+const TODAY = requireCalendarDate("2026-07-01");
+const N1 = new Date("2026-08-01T00:00:00.000Z");
+const N2 = new Date("2026-08-02T00:00:00.000Z");
+
+/** Ann (two $100 nights) and Cara, who just accepted (two $60 nights): $320. */
+function booking(overrides: Record<string, unknown> = {}) {
+  const night = (stayDate: Date, priceCents: number) => ({ stayDate, priceCents, priceSource: "SOLD" });
+  return {
+    id: "booking-1",
+    status: "PAID",
+    deletedAt: null,
+    lodgeId: "lodge-1",
+    checkIn: N1,
+    checkOut: new Date("2026-08-03T00:00:00.000Z"),
+    totalPriceCents: 32000,
+    discountCents: 0,
+    promoAdjustmentCents: 0,
+    finalPriceCents: 32000,
+    nonMemberHoldUntil: null,
+    memberId: "ann",
+    member: { id: "ann", email: "ann@example.test", firstName: "Ann", lastName: "Owner" },
+    organisation: null,
+    guests: [
+      { id: "g-ann", memberId: "ann", isMember: true, consentStatus: null, priceCents: 20000, nights: [night(N1, 10000), night(N2, 10000)] },
+      { id: "g-cara", memberId: "cara", isMember: true, consentStatus: "CONFIRMED", priceCents: 12000, nights: [night(N1, 6000), night(N2, 6000)] },
+    ],
+    payment: {
+      id: "pay-1",
+      source: "STRIPE",
+      status: "SUCCEEDED",
+      amountCents: 32000,
+      refundedAmountCents: 0,
+      creditAppliedCents: 0,
+      xeroInvoiceId: null,
+    },
+    promoRedemptions: [
+      { id: "r1", promoCodeId: "p1", applicationOrder: 0, promoCode: { id: "p1", code: "CARA" }, guestTargets: [] },
+    ],
+    ...overrides,
+  };
+}
+
+function tx(loaded: ReturnType<typeof booking>) {
+  return {
+    booking: {
+      findUnique: vi.fn(async () => loaded),
+      update: vi.fn(async () => loaded),
+    },
+    bookingModification: { create: vi.fn(async () => ({ id: "mod-1" })) },
+    payment: { update: vi.fn() },
+  };
+}
+
+/** The engine's answer: Cara's code now takes $60 off. */
+function decides(priceAdjustmentCents: number) {
+  h.priceStoredBookingPromotions.mockResolvedValue({ params: {}, priced: { priceAdjustmentCents } });
+  h.persistRepricedPromotions.mockResolvedValue({
+    newDiscountCents: Math.max(0, -priceAdjustmentCents),
+    newPromoAdjustmentCents: priceAdjustmentCents,
+    promoRemoved: false,
+    releasedPromoCodes: [],
+    promoCoverage: null,
+    adjustmentTargets: [],
+    remainingPromoCodeLabel: "CARA",
+  });
+}
+
+async function accept(loaded: ReturnType<typeof booking>) {
+  return repriceBookingAfterGuestAcceptance(tx(loaded) as never, {
+    bookingId: "booking-1",
+    acceptedGuestId: "g-cara",
+    actorMemberId: "cara",
+    todayAtClub: TODAY,
+    format: CLUB_FORMAT_TEST,
+  });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  h.loadCancellationPolicy.mockRejectedValue(new Error("D-3813-5: no cancellation-policy tier applies"));
+  h.applyLifecycleTransitions.mockImplementation(async (_tx: unknown, args: { booking: { status: string } }) => ({
+    hasNonMembers: false,
+    newNonMemberHoldUntil: null,
+    newStatus: args.booking.status,
+    zeroDollarAutoPaid: false,
+    supersededPrimaryPaymentIntents: [],
+    appliedCreditCents: 0,
+    refundedExcessCreditCents: 0,
+    clearDraftExpiresAt: false,
+  }));
+  h.deriveBookingAppliedCreditCents.mockResolvedValue(0);
+  decides(-6000);
+});
+
+describe("the full reduction goes back the way it was paid (D-3813-5)", () => {
+  it("a card payment: the whole $60 refunded to the card, nothing kept under a policy", async () => {
+    const result = await accept(booking());
+    expect(result).toMatchObject({
+      repriced: true,
+      priceDiffCents: -6000,
+      refundAmountCents: 6000,
+      pendingRefundAmountCents: 6000,
+      accountCreditAmountCents: 0,
+      settlementMethod: "card",
+      hasSucceededPayment: true,
+    });
+    expect(h.loadCancellationPolicy).not.toHaveBeenCalled();
+    expect(h.createBookingModificationCredit).not.toHaveBeenCalled();
+  });
+
+  it("internet banking: the whole $60 goes back by the bank-transfer refund, not to a card", async () => {
+    const result = await accept(
+      booking({
+        payment: { ...booking().payment, source: "INTERNET_BANKING", xeroInvoiceId: "inv-1" },
+      }),
+    );
+    expect(result).toMatchObject({
+      repriced: true,
+      refundAmountCents: 6000,
+      // No Stripe refund: the club returns the money itself.
+      pendingRefundAmountCents: 0,
+      hasSucceededPayment: false,
+      settlementMethod: "card",
+      xeroRefundAmountCents: 6000,
+    });
+  });
+
+  it("account credit: the whole $60 goes back as credit", async () => {
+    h.deriveBookingAppliedCreditCents.mockResolvedValue(32000);
+    const result = await accept(
+      booking({ payment: { ...booking().payment, amountCents: 0, creditAppliedCents: 32000 } }),
+    );
+    expect(result).toMatchObject({
+      repriced: true,
+      refundAmountCents: 0,
+      accountCreditAmountCents: 6000,
+      settlementMethod: "credit",
+    });
+    expect(h.createBookingModificationCredit).toHaveBeenCalledWith(
+      "ann",
+      6000,
+      "booking-1",
+      "mod-1",
+      undefined,
+      expect.anything(),
+      "pay-1",
+    );
+  });
+
+  it("an organisation is refunded the way it paid, never refused for having no credit account", async () => {
+    const result = await accept(
+      booking({
+        memberId: null,
+        member: null,
+        organisation: { name: "Tokoroa High", email: "office@example.test" },
+        payment: { ...booking().payment, source: "INTERNET_BANKING", xeroInvoiceId: "inv-1" },
+      }),
+    );
+    expect(result).toMatchObject({ repriced: true, refundAmountCents: 6000, accountCreditAmountCents: 0 });
+  });
+
+  it("a booking not yet paid simply costs less: nothing to return", async () => {
+    const result = await accept(
+      booking({ status: "PAYMENT_PENDING", payment: { ...booking().payment, status: "PENDING" } }),
+    );
+    expect(result).toMatchObject({ repriced: true, priceDiffCents: -6000, refundAmountCents: 0, accountCreditAmountCents: 0 });
+  });
+});
+
+describe("free nights are used only for what is returned", () => {
+  it("a card payment with less left to refund than the reduction is not re-priced at all", async () => {
+    // $300 of the $320 was already refunded by an earlier change.
+    const result = await accept(booking({ payment: { ...booking().payment, refundedAmountCents: 30000 } }));
+    expect(result).toEqual({ repriced: false, reason: "REDUCTION_NOT_FULLY_RETURNABLE" });
+    expect(h.persistRepricedPromotions).not.toHaveBeenCalled();
+  });
+
+  it("a credit-paid booking whose reduction exceeds its applied credit is not re-priced", async () => {
+    h.deriveBookingAppliedCreditCents.mockResolvedValue(2000);
+    const result = await accept(
+      booking({ payment: { ...booking().payment, amountCents: 0, creditAppliedCents: 2000 } }),
+    );
+    expect(result).toEqual({ repriced: false, reason: "REDUCTION_NOT_FULLY_RETURNABLE" });
+    expect(h.persistRepricedPromotions).not.toHaveBeenCalled();
+  });
+});
+
+describe("a settled booking's price is never raised by an acceptance (A3)", () => {
+  it.each([
+    ["captured cash", {}],
+    ["paid with credit", { payment: { ...booking().payment, amountCents: 0, creditAppliedCents: 32000 } }],
+    ["settled at $0", { payment: { ...booking().payment, amountCents: 0 }, finalPriceCents: 0 }],
+  ])("%s", async (_label, overrides) => {
+    decides(2000);
+    const result = await accept(booking(overrides));
+    expect(result).toEqual({ repriced: false, reason: "INCREASE_NEEDS_COLLECTION" });
+    expect(h.persistRepricedPromotions).not.toHaveBeenCalled();
+  });
+});
+
+describe("only the member edit door for a stay yet to start re-prices (A4)", () => {
+  it.each([["AWAITING_REVIEW"], ["WAITLISTED"], ["WAITLIST_OFFERED"]])("%s is left alone", async (status) => {
+    expect(await accept(booking({ status }))).toEqual({ repriced: false, reason: "BOOKING_STATUS" });
+  });
+
+  it("a stay that has started is left alone", async () => {
+    expect(await accept(booking({ checkIn: new Date("2026-07-01T00:00:00.000Z") }))).toEqual({
+      repriced: false,
+      reason: "BOOKING_STATUS",
+    });
+  });
+});
+
+describe("after commit: the card refund, the Xero correction, the email and the audit row (A2)", () => {
+  it("does what an ordinary edit's reduction does", async () => {
+    const reprice = await accept(booking());
+    if (!reprice.repriced) throw new Error("expected a re-price");
+    h.executeBookingModificationRefund.mockResolvedValue("re_1");
+    h.sendBookingModifiedEmail.mockResolvedValue(undefined);
+
+    await settleGuestAcceptanceRepriceAfterCommit({
+      bookingId: "booking-1",
+      actorMemberId: "cara",
+      reprice,
+      format: CLUB_FORMAT_TEST,
+    });
+
+    expect(h.executeBookingModificationRefund).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking-1",
+        result: expect.objectContaining({ pendingRefundAmountCents: 6000, paymentId: "pay-1", bookingModificationId: "mod-1" }),
+      }),
+    );
+    expect(h.queueXeroBookingEditSettlement).toHaveBeenCalledWith(
+      expect.objectContaining({ settlementAmountCents: 0, settlementMethod: "card", refundedThroughStripe: true }),
+    );
+    expect(h.sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipientMemberId: "ann",
+        email: "ann@example.test",
+        oldFinalPriceCents: 32000,
+        newFinalPriceCents: 26000,
+        refundAmountCents: 6000,
+        accountCreditAmountCents: 0,
+      }),
+      CLUB_FORMAT_TEST,
+    );
+    expect(h.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.modify.promo_reprice",
+        category: "booking",
+        entityId: "mod-1",
+        subjectMemberId: "ann",
+      }),
+    );
+  });
+});
