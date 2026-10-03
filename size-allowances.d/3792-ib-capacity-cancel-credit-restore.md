@@ -7,7 +7,7 @@ the member's credit-ledger lock. Neither can move to a seam outside its
 transaction without losing the lock that makes it correct.
 
 file: src/lib/xero-inbound/invoice-paid-effects.ts
-lines: 1945
+lines: 1958
 reason: in the late-capacity cancel arm, under the lock(1) and lodge locks it
   already holds, the member credit-ledger lock and the applied-credit
   deallocation fence, then the full restore of the booking's applied credit,
@@ -31,7 +31,7 @@ reason: sendBookingCancelledEmail takes and passes on the restored-credit basis
   override-body message uses the template's shared sentence for it.
 
 file: src/lib/member-credit.ts
-lines: 1038
+lines: 1093
 reason: restoreCreditFromBooking takes the member credit-ledger lock before its
   read when it joins a transaction, so a restore in flight excludes the inbound
   credit-note sync; it has to sit inside the one function every restore path
@@ -45,7 +45,7 @@ reason: the paid and pending cancel claims take the member credit-ledger key
   lines and a comment in each claim, where the keys are taken.
 
 file: src/lib/payment-reconciliation.ts
-lines: 3073
+lines: 3076
 reason: the settle takes the member credit-ledger key after its lodge key and
   before the Payment upsert, so its capacity void's restore cannot deadlock
   against the inbound credit-note sync; the lock-target read also selects the
