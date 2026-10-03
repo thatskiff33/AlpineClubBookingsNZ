@@ -2333,6 +2333,11 @@ export async function approveBookingRequest(input: {
       // contact was substituted (issue #1255 residual-risk decision 1); drives a
       // post-commit admin alert.
       let ownerSubstitution: OwnerSubstitution | null = null;
+      // The party both branches capacity-check, with each linked member.
+      const capacityRanges = guests.map((_guest, index) => ({
+        stayStart: request.checkIn, stayEnd: request.checkOut,
+        memberId: linkedMembers.get(index) ?? null,
+      }));
 
       if (held) {
         // Re-validate the held owner at conversion (issue #1255 residual-risk
@@ -2385,27 +2390,13 @@ export async function approveBookingRequest(input: {
           };
         }
 
-        // Re-check per-night capacity for the NEW guest list before the swap,
-        // excluding the held booking's own guests (#3817 review), mirroring
-        // the school path's F6 re-check (#1352). The hold reserved its spaces
-        // for the guests it was written with; since "one person is one space"
-        // (`INV-DATE-030`), a guest row's `memberId` decides whether a ticked
-        // custodian's own space is waived, so a quote re-save that moves a
-        // guest's link off the custodian makes the custodian count again. On a
-        // full night that is one person more than the lodge holds. Runs under
-        // the global and per-lodge locks taken above; the sentinel aborts the
-        // transaction, so the APPROVED claim rolls back and the officer sees
-        // the same capacityExceeded outcome as the fresh-create branch below.
+        // Re-check the NEW guest list, excluding the held booking, before the
+        // swap (#3817 review; the school path's F6 re-check, #1352): a guest's
+        // `memberId` waives a ticked custodian's space (`INV-DATE-030`), so a
+        // re-quote moving that link off the custodian adds a person. Under the
+        // locks above; the sentinel rolls the APPROVED claim back.
         const heldCapacity = await checkCapacityForGuestRanges(
-          requestLodgeId,
-          request.checkIn,
-          request.checkOut,
-          guests.map((_guest, index) => ({
-            stayStart: request.checkIn, stayEnd: request.checkOut,
-            memberId: linkedMembers.get(index) ?? null,
-          })),
-          held.id,
-          tx
+          requestLodgeId, request.checkIn, request.checkOut, capacityRanges, held.id, tx
         );
         if (!heldCapacity.available) {
           capacityFullNights = getCapacityFullNights(heldCapacity.nightDetails);
@@ -2466,10 +2457,6 @@ export async function approveBookingRequest(input: {
         booking = { id: held.id };
         member = { id: ownerId };
       } else {
-        const capacityRanges = guests.map((_guest, index) => ({
-          stayStart: request.checkIn, stayEnd: request.checkOut,
-          memberId: linkedMembers.get(index) ?? null,
-        }));
         const capacity = await checkCapacityForGuestRanges(
           requestLodgeId,
           request.checkIn,

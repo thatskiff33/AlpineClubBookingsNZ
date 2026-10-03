@@ -1,6 +1,6 @@
 # File-size allowances for #3817 (hut-leader writers claim only stayed nights)
 
-Three already-oversized files grow. Two hut-leader files grow by a few lines
+Four already-oversized files grow. Two hut-leader files grow by a few lines
 each: the rule they implement (`INV-DATE-030`) lives in
 `src/lib/hut-leader-stayed-nights.ts`, and what remains here is the call at each
 decision point and the response it renders. The shared capacity calculation
@@ -37,10 +37,21 @@ reason: the owner's refusal offers "Change last night to …", so the page has t
   speaks of a bed depends on whether one is in play).
 
 file: src/lib/capacity.ts
-lines: 1163
+lines: 1165
 reason: one person is one space (owner decision on #3820) has to reach the
   booking being admitted, and the only place that sees both the night's
   counted guests and the party is THE occupancy calculation every engine
   shares (#2681). The census forbids a second copy of it, so the guest-member
   set, the party argument and the required CapacityProposedGuest type live
   beside it; the rule itself is one function in custodian-occupancy.ts.
+  The review round added the note that term 2 reads the bed-allocation flag on
+  the same client.
+
+file: src/lib/booking-request.ts
+lines: 3058
+reason: the review round found that approving a held request swapped its guest
+  rows with no capacity re-check, and a guest's member link now decides whether
+  a ticked custodian's space is waived. The re-check has to run inside the
+  approval's own locked transaction, between the owner re-validation and the
+  guest swap, exactly as the school path's does; both branches now share one
+  party list, so the growth is the call, its refusal and its reason.
