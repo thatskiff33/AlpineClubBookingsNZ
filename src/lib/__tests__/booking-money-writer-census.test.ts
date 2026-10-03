@@ -51,6 +51,9 @@ const REVIEWED_WRITERS = [
   "src/lib/booking-date-modification-service.ts|bookingGuest|update|priceCents|1",
   "src/lib/booking-date-modification-service.ts|bookingGuestNight|deleteMany,opaquePayload||4",
   "src/lib/booking-delete.ts|booking|delete||1",
+  // #3827 (D-3813-4): a guest's acceptance re-prices the booking's codes over
+  // its stored nights; one headline write on each of its two branches.
+  "src/lib/booking-guest-acceptance-reprice.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|2",
   "src/lib/booking-guest-removal-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|1",
   "src/lib/booking-guest-removal-service.ts|bookingGuest|delete,update|priceCents|2",
   "src/lib/booking-modify-plan.ts|bookingGuest|create,delete,update|priceCents|5",

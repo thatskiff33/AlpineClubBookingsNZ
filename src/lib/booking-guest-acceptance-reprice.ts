@@ -98,27 +98,6 @@ export type GuestAcceptanceReprice =
       supersededPrimaryPaymentIntentCount: number;
     };
 
-const ACCEPTANCE_BOOKING_INCLUDE = {
-  guests: {
-    include: {
-      nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
-    },
-  },
-  payment: true,
-  member: true,
-  organisation: { select: { name: true, email: true } },
-  promoRedemptions: {
-    include: {
-      guestTargets: { select: { bookingGuestId: true } },
-      promoCode: {
-        include: {
-          assignments: { select: { memberId: true } },
-          lodges: { select: { lodgeId: true } },
-        },
-      },
-    },
-  },
-} as const;
 
 export async function repriceBookingAfterGuestAcceptance(
   tx: Prisma.TransactionClient,
@@ -135,7 +114,27 @@ export async function repriceBookingAfterGuestAcceptance(
   const { bookingId, todayAtClub, format } = params;
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
-    include: ACCEPTANCE_BOOKING_INCLUDE,
+    include: {
+      guests: {
+        include: {
+          nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
+        },
+      },
+      payment: true,
+      member: true,
+      organisation: { select: { name: true, email: true } },
+      promoRedemptions: {
+        include: {
+          guestTargets: { select: { bookingGuestId: true } },
+          promoCode: {
+            include: {
+              assignments: { select: { memberId: true } },
+              lodges: { select: { lodgeId: true } },
+            },
+          },
+        },
+      },
+    },
   });
   if (!booking) return { repriced: false, reason: "BOOKING_STATUS" };
   const redemptions = bookingPromoRedemptions(booking).filter((redemption) => redemption.promoCode);
@@ -202,12 +201,20 @@ export async function repriceBookingAfterGuestAcceptance(
   });
 
   if (priceDiffCents === 0) {
-    if (promo.newDiscountCents !== booking.discountCents) {
-      await tx.booking.update({
-        where: { id: bookingId },
-        data: { discountCents: promo.newDiscountCents },
-      });
-    }
+    // The codes were re-decided and the price did not move; the discount half
+    // of the headline may still have (a raise and a cut cancelling).
+    await tx.booking.update({
+      where: { id: bookingId },
+      data: {
+        totalPriceCents: booking.totalPriceCents,
+        discountCents: promo.newDiscountCents,
+        promoAdjustmentCents: promo.newPromoAdjustmentCents,
+        finalPriceCents: bookingFinalPriceCents({
+          totalPriceCents: booking.totalPriceCents,
+          promoAdjustmentCents: promo.newPromoAdjustmentCents,
+        }),
+      },
+    });
     return {
       repriced: true,
       bookingModificationId: null,
@@ -251,9 +258,13 @@ export async function repriceBookingAfterGuestAcceptance(
   await tx.booking.update({
     where: { id: bookingId },
     data: {
+      totalPriceCents: booking.totalPriceCents,
       discountCents: promo.newDiscountCents,
-      promoAdjustmentCents: newPromoAdjustmentCents,
-      finalPriceCents: newFinalPriceCents,
+      promoAdjustmentCents: promo.newPromoAdjustmentCents,
+      finalPriceCents: bookingFinalPriceCents({
+        totalPriceCents: booking.totalPriceCents,
+        promoAdjustmentCents: promo.newPromoAdjustmentCents,
+      }),
       hasNonMembers: lifecycle.hasNonMembers,
       nonMemberHoldUntil: lifecycle.newNonMemberHoldUntil,
       status: lifecycle.newStatus,

@@ -6,7 +6,7 @@
 
 import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { applyBookingPromotions, repriceBookingPromotions } from "@/lib/booking-promotions";
-import { multiPromoCodesEnabled, writePromoApplicationOrder } from "@/lib/promo-redemption-slot";
+import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import {
   AdminReviewStatus,
   BookingStatus,
@@ -91,6 +91,7 @@ import {
   releasePromoRedemptions,
   replacePromoRedemptionAllocations,
   shouldPersistPromoRedemption,
+  writePromoApplicationOrder,
 } from "@/lib/promo";
 import type { PromoAdjustmentTarget } from "@/lib/night-adjustment-write";
 import {

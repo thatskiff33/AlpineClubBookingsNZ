@@ -353,6 +353,10 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       skipAuthorization: isOnBehalf,
     });
 
+    let discountCents = 0;
+
+    let promoAdjustmentCents = 0;
+
     const promoSources = await resolveEffectivePromoSources(tx, {
       promoCodes: promoCodeRequestsOf(input),
       workPartyEventId,
@@ -372,7 +376,10 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       lodgeId: bookingLodgeId,
       todayAtClub,
     });
-    const { discountCents, promoAdjustmentCents } = promotions;
+    // The booking's headline pair, from the one resolution (INV-MONEY-031's
+    // paired-assignment shape): Σ over the codes, each its own integer cents.
+    discountCents = promotions.discountCents;
+    promoAdjustmentCents = promotions.promoAdjustmentCents;
 
     const finalPriceCents = bookingFinalPriceCents({
       totalPriceCents: price.totalPriceCents,
@@ -901,6 +908,10 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         skipAuthorization: isOnBehalf,
       });
 
+      let discountCents = 0;
+
+      let promoAdjustmentCents = 0;
+
       const promoSources = await resolveEffectivePromoSources(tx, {
         promoCodes: primaryPromoCodes,
         workPartyEventId,
@@ -920,7 +931,10 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         lodgeId: bookingLodgeId,
         todayAtClub,
       });
-      const { discountCents, promoAdjustmentCents } = promotions;
+      // The booking's headline pair, from the one resolution (INV-MONEY-031's
+      // paired-assignment shape): Σ over the codes, each its own integer cents.
+      discountCents = promotions.discountCents;
+      promoAdjustmentCents = promotions.promoAdjustmentCents;
 
       const finalPriceCents = bookingFinalPriceCents({
         totalPriceCents: price.totalPriceCents,
@@ -1793,6 +1807,8 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
   // Priced BEFORE the transaction, unlocked, as the waitlisted create always
   // has: a waitlisted booking consumes no use until it is offered, and the
   // offer re-prices every code under its locks (`recalculateBookingPromo`).
+  let discountCents = 0;
+  let promoAdjustmentCents = 0;
   const promoSources = await resolveEffectivePromoSources(prisma, {
     promoCodes: promoCodeRequestsOf(input),
     workPartyEventId,
@@ -1824,7 +1840,10 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     lodgeId: waitlistLodgeId,
     todayAtClub,
   });
-  const { discountCents, promoAdjustmentCents } = promotions;
+  // The booking's headline pair, from the one resolution (INV-MONEY-031's
+  // paired-assignment shape): Σ over the codes, each its own integer cents.
+  discountCents = promotions.discountCents;
+  promoAdjustmentCents = promotions.promoAdjustmentCents;
 
   const finalPriceCents = bookingFinalPriceCents({
     totalPriceCents: price.totalPriceCents,

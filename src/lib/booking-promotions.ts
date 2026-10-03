@@ -1,5 +1,6 @@
 import type { MemberGuestConsentStatus, Prisma } from "@prisma/client";
 
+import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { calendarDateOfDateOnlyInstant, type CalendarDate } from "@/lib/club-time";
 import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
 import type { PromoAdjustmentTarget } from "@/lib/night-adjustment-write";
@@ -257,9 +258,16 @@ export async function applyBookingPromotions<A extends PromotionApplicationInput
       {
         memberId: context.memberId,
         bookingCheckIn: context.bookingCheckIn,
-        // What is left to discount after the earlier codes: the engine's
+        // What is left to discount after the earlier codes — the booking's
+        // final-price relation over the codes applied so far — as the engine's
         // safety cap, so codes together never take the booking below zero.
-        totalPriceCents: Math.max(0, context.totalPriceCents + priceAdjustmentCents),
+        totalPriceCents: Math.max(
+          0,
+          bookingFinalPriceCents({
+            totalPriceCents: context.totalPriceCents,
+            promoAdjustmentCents: priceAdjustmentCents,
+          }),
+        ),
         guests: view,
       },
       application.assignedMemberIds,

@@ -1204,7 +1204,6 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   "src/lib/bed-allocation-move.ts": 1,
   "src/lib/bed-allocation-removal.ts": 1,
   "src/lib/requested-room-write.ts": 1,
-  "src/lib/booking-create-promo.ts": 1,
   // Promo usage caps (#2299): `lockPromoCodeRowsForUpdate` takes a
   // `SELECT 1 … FOR UPDATE` on the promo row for the modification paths,
   // which can now RELEASE a cap slot as well as take one. One raw statement
@@ -1214,11 +1213,12 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // re-reads `currentRedemptions` under the lock. That wrapper has four call
   // sites, not three: the batch path also calls it on its no-swap reprice
   // branch, where the lock is already held and the refreshed counter is the
-  // point. Booking creation takes its own lock in booking-create-promo.ts
-  // above, which since #2289 also selects a constant and reads the promo back
-  // through `tx.promoCode.findUnique` — it used to `SELECT *` and read the raw
-  // row, and that unchecked cast is what silently disabled a redemption cap and
-  // a FREE_NIGHTS discount. Ids are sorted and locked one
+  // point. Since #3827 booking creation takes the SAME statement too: it used
+  // to lock its own row by the mutable `code` in booking-create-promo.ts, and
+  // now resolves ids unlocked, locks them here in sorted order and re-reads by
+  // id, so a two-code create orders its rows like every other writer. (#2289:
+  // the read was always typed — a raw `SELECT *` cast is what once silently
+  // disabled a redemption cap and a FREE_NIGHTS discount.) Ids are sorted and locked one
   // statement at a time so a promo swap (outgoing + incoming code in one
   // transaction) can never build a lock cycle with another swap; callers hold
   // the per-lodge capacity lock first, so the order stays lodge -> promo row.

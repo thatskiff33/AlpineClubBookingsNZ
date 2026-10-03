@@ -1957,3 +1957,24 @@ export async function releasePromoRedemptions(
     await deletePromoRedemptionAndAdjustCount(tx, redemption);
   }
 }
+
+/**
+ * Record the booker's order for a booking's codes (#3827, D-3813-2: "the order
+ * is stored with the booking and can be changed"). Writes only the rows whose
+ * position moved, and only `applicationOrder` — a column the
+ * `PromoRedemption_sync_allocation_update` trigger does not watch (it fires on
+ * `promoCodeId`, `bookingId`, `memberId`, `discountCents`, `freeNightsUsed`), so
+ * a reorder can never re-create the booker allocation row INV-MONEY-005 removes.
+ */
+export async function writePromoApplicationOrder(
+  tx: PrismaTx,
+  rows: ReadonlyArray<{ id: string; applicationOrder: number; nextOrder: number }>,
+): Promise<void> {
+  for (const row of rows) {
+    if (row.applicationOrder === row.nextOrder) continue;
+    await tx.promoRedemption.update({
+      where: { id: row.id },
+      data: { applicationOrder: row.nextOrder },
+    });
+  }
+}
