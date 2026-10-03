@@ -738,6 +738,23 @@ describe("deployment image contracts", () => {
       }
     });
 
+    // #3843: the advisory `dependency-review` job judges the same report the
+    // same way as the required job, through the one canonical wrapper. Run bare,
+    // `pnpm audit` would disagree with the required gate over a MITIGATED record.
+    it("routes the advisory dependency-review audit through the same wrapper (#3843)", () => {
+      const workflow = readRepoFile(".github/workflows/ci.yml");
+      const job = directivesOnly(
+        workflow.slice(
+          workflow.indexOf("  dependency-review:"),
+          workflow.indexOf("  dependency-audit:"),
+        ),
+      );
+      expect(job.length).toBeGreaterThan(0);
+      expect(job).toMatch(/^ +run: node scripts\/ci\/audit-dependencies\.mjs$/m);
+      expect(job).not.toContain("pnpm audit");
+      expect(job).not.toContain("continue-on-error");
+    });
+
     // The generalisation of the two job-level assertions above, applied to every
     // required check at once (#2946). A skipped job REPORTS a status and GitHub
     // counts a skipped required check as SATISFYING branch protection, so a
@@ -1002,6 +1019,14 @@ describe("package manager contract (#3673)", () => {
     expect(dockerfile).not.toMatch(/pnpm@\d/);
     expect(dockerfile).toMatch(/^COPY package\.json pnpm-lock\.yaml pnpm-workspace\.yaml \.\/$/m);
     expect(dockerfile).toContain("pnpm install --frozen-lockfile");
+    // #3843: the lockfile records each `patchedDependencies` patch's hash, so
+    // the reviewed patches must reach the deps stage before its frozen install.
+    const deps = dockerfile.slice(
+      dockerfile.indexOf("FROM base AS deps"),
+      dockerfile.indexOf("FROM base AS builder"),
+    );
+    expect(deps).toMatch(/^COPY patches \.\/patches\/$/m);
+    expect(deps.indexOf("COPY patches")).toBeLessThan(deps.indexOf("pnpm install --frozen-lockfile"));
     expect(dockerfile).not.toMatch(/\bnpm ci\b|package-lock\.json/);
     // npm is used once, to install pnpm, and then removed in the SAME layer, so
     // the builder and migrate images carry pnpm and no npm/npx.

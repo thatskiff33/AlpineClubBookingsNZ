@@ -61,8 +61,16 @@ jobs:
 
       # Lockfile-only, like the required `Dependency audit` job below: `pnpm
       # audit` reads `pnpm-lock.yaml` and needs no install, so no store cache.
+      #
+      # #3843: the same canonical wrapper the required job runs, so both jobs
+      # judge one report one way — same `high` threshold, same outage and
+      # unreadable-report failures, and the same MITIGATED verdict (never
+      # CLEAN) only under a reviewed, expiring record in
+      # `dependency-mitigations.d/`. Run bare, `pnpm audit` would stay red over
+      # a mitigation the required gate accepts, and a check that is always red
+      # is a check nobody reads.
       - name: Audit dependency graph
-        run: pnpm audit --audit-level=high
+        run: node scripts/ci/audit-dependencies.mjs
 
   # #2946: THE DEPENDENCY AUDIT IS A JOB OF ITS OWN, AND IT MUST STAY ONE.
   #
@@ -102,6 +110,12 @@ jobs:
   # wrapper around it, for the reasons written at the step itself. The audit
   # semantics are unchanged: same `--audit-level=high` threshold, same
   # lockfile-only, install-free reading of the tree.
+  #
+  # Since #3843 the wrapper has one more passing verdict, MITIGATED — NOT
+  # CLEAN: exactly one reviewed high advisory, a reviewed patch and dependency
+  # inputs matching the SHA256 digests in an owner-approved record in
+  # `dependency-mitigations.d/`, before that record's expiry. Anything else
+  # about the report keeps the job red. See that directory's README.
   #
   # This does NOT duplicate the `dependency-review` job above, and neither
   # replaces the other. That one is pull-request-only — it carries a job-level
