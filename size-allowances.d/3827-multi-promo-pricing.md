@@ -51,29 +51,41 @@ reason: the Booking Modified sender takes the required bank-transfer flag and
   itself lives in booking-modified-email-copy.ts.
 
 file: src/app/(admin)/admin/refund-requests/page.tsx
-lines: 884
+lines: 885
 reason: the appeal review's ceiling is the approve route's net-of-open-edit-
   refunds figure (INV-PAY-114); the page carries the loaded rows' type and one
   shared helper call, the arithmetic lives in manual-refund-task-settlement-rules.ts.
 
 file: src/app/api/admin/refund-requests/[id]/route.ts
-lines: 536
+lines: 608
 reason: the approval's cap and its claim must share one transaction under
   lock(1) (INV-PAY-114) so the figure checked is the figure approved; moving
   the claim out of the handler would split the #818 single-flight claim from
   the money it guards. D-3813-7 (INV-PAY-115) plans the card refund and
   raises the bank-transfer task in that same transaction, and a released
-  claim takes its task with it under the same lock.
+  claim takes its task with it under the same lock. Only an internet-banking
+  payment raises one (a card shortfall stays logged drift), and a task that
+  cannot be raised rolls the claim back - both decided inside that same
+  transaction, so they cannot move out of it either.
 
 file: src/app/api/bookings/[id]/refund-request/route.ts
-lines: 276
-reason: the appeal request refuses past the cash net of open edit refunds and
-  says plainly when all of it is already being refunded by bank transfer
-  (INV-PAY-114); both are refusals beside the existing ones they extend.
+lines: 283
+reason: the appeal request refuses past the cash net of open hand-backs and
+  late-cash credit and says plainly when all of it is already being returned
+  (INV-PAY-114, INV-PAY-115); both are refusals beside the existing ones they
+  extend.
 
 file: src/lib/email-message-registry.ts
-lines: 2193
+lines: 2199
 reason: the approved appeal's email names how the refund comes back (D-3813-7);
-  its composed {{refundSentence}} token is registered, sampled and kept beside
+  its composed {{refundSentence}} token is registered, sampled, required (so
+  an override saved from the old card-only wording is flagged) and kept beside
   {{amount}} for saved overrides, in the one registry every template token
   lives in.
+
+file: src/lib/email-message-renderer.ts
+lines: 952
+reason: a required token needs its plain-English guidance in the one table the
+  validator reads (REQUIRED_TOKEN_GUIDANCE); {{refundSentence}} became required
+  for the approved-appeal email (#3827, D-3813-7), so its sentence joins the
+  two already there rather than living in a second table.
