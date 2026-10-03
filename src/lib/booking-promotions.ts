@@ -405,51 +405,48 @@ export interface BookingPromotionsReprice {
   remainingPromoCodeLabel: string | null;
 }
 
+/** The inputs of a re-price, as every re-price path holds them. */
+export interface RepriceBookingPromotionsParams {
+  bookingId: string;
+  /** In application order (`bookingPromoRedemptions`). */
+  redemptions: readonly RepricedRedemption[];
+  memberId: string | null;
+  bookingCheckIn?: Date;
+  totalPriceCents: number;
+  guests: readonly PromotionGuest[];
+  lodgeId: string | null;
+  todayAtClub: CalendarDate;
+}
+
+type RepriceApplication = PromotionApplicationInput & { redemption: RepricedRedemption };
+
+/** A re-price decided under the locks and not yet written (`persistRepricedPromotions`). */
+export interface PricedBookingPromotions {
+  params: RepriceBookingPromotionsParams;
+  priced: BookingPromotionsResult<RepriceApplication>;
+}
+
 /**
- * Re-price every code a booking already carries, in its stored order, and
- * persist the answer (INV-MONEY-024 per code). Shared by every re-price path —
- * adding or removing guests, a date change, the waitlist offer, the review
- * re-base and a guest's acceptance — so none of them prices a code its own way.
+ * Decide a re-price of every code a booking carries, in its stored order,
+ * WITHOUT writing it (#3827). The caller that must weigh the answer before
+ * committing to it — a guest's acceptance, which re-prices only where the
+ * ordinary edit machinery can settle the result — reads this first and then
+ * persists it; every other caller uses `repriceBookingPromotions`.
  *
  * LOCKS (INV-MONEY-023): every code row in ONE sorted call
- * (`lockPromoCodeRowsForUpdate`), together with any code the caller is about to
- * bring in (`additionalLockIds`), then each code's counter re-read under that
+ * (`lockPromoCodeRowsForUpdate`), then each code's counter re-read under that
  * lock and validated against the re-read object. Callers already hold the
- * per-lodge capacity lock, so the order stays lodge -> promo rows.
- *
- * A code that no longer applies — its holder left, its nights are now another
- * code's, its window closed — is released on its own
- * (`deletePromoRedemptionAndAdjustCount`); the others are re-priced in place.
+ * per-lodge capacity lock, so the order stays lodge -> promo rows. Every read
+ * the decision makes — the protected set (INV-MONEY-024) included — happens
+ * here, before any redemption write.
  */
-export async function repriceBookingPromotions(
+export async function priceStoredBookingPromotions(
   tx: Prisma.TransactionClient,
-  params: {
-    bookingId: string;
-    /** In application order (`bookingPromoRedemptions`). */
-    redemptions: readonly RepricedRedemption[];
-    memberId: string | null;
-    bookingCheckIn?: Date;
-    totalPriceCents: number;
-    guests: readonly PromotionGuest[];
-    lodgeId: string | null;
-    todayAtClub: CalendarDate;
-  },
-): Promise<BookingPromotionsReprice> {
+  params: RepriceBookingPromotionsParams,
+): Promise<PricedBookingPromotions> {
   const { bookingId, redemptions, guests } = params;
-  if (redemptions.length === 0) {
-    return {
-      newDiscountCents: 0,
-      newPromoAdjustmentCents: 0,
-      promoRemoved: false,
-      releasedPromoCodes: [],
-      promoCoverage: null,
-      adjustmentTargets: [],
-      remainingPromoCodeLabel: null,
-    };
-  }
-
   await lockPromoCodeRowsForUpdate(tx, redemptions.map((redemption) => redemption.promoCodeId));
-  const applications = [];
+  const applications: RepriceApplication[] = [];
   for (const redemption of redemptions) {
     // Re-read the counter under the lock just taken (INV-MONEY-023); the
     // snapshot came with the booking, before it.
@@ -461,10 +458,9 @@ export async function repriceBookingPromotions(
       assignedMemberIds:
         promo.assignments.length > 0 ? promo.assignments.map((assignment) => assignment.memberId) : null,
       selectedGuestIndexes: selectedIndexesForStoredGuestTargets(redemption, [...guests]),
-      capOverflow: "coverExisting" as const,
+      capOverflow: "coverExisting",
     });
   }
-
   const priced = await applyBookingPromotions(applications, {
     memberId: params.memberId,
     bookingCheckIn: params.bookingCheckIn,
@@ -475,8 +471,20 @@ export async function repriceBookingPromotions(
     todayAtClub: params.todayAtClub,
     excludeBookingId: bookingId,
   });
+  return { params, priced };
+}
 
-  const several = redemptions.length > 1;
+/**
+ * Write a decided re-price: a code that no longer applies — its holder left,
+ * its nights are now another code's, its window closed — is released on its
+ * own (`deletePromoRedemptionAndAdjustCount`); the others are re-priced in
+ * place (`replacePromoRedemptionAllocations`).
+ */
+export async function persistRepricedPromotions(
+  tx: Prisma.TransactionClient,
+  { params, priced }: PricedBookingPromotions,
+): Promise<BookingPromotionsReprice> {
+  const several = params.redemptions.length > 1;
   const notices: Array<PromoCoverageNotice | null> = [];
   const released: string[] = [];
   const kept: string[] = [];
@@ -507,7 +515,7 @@ export async function repriceBookingPromotions(
       discount.freeNightsUsed,
       discount.eligibleGuestCount,
       discount.allocations,
-      targetBookingGuestIdsForSelectedIndexes([...guests], result.selectedGuestIndexes),
+      targetBookingGuestIdsForSelectedIndexes([...params.guests], result.selectedGuestIndexes),
     );
   }
 
@@ -520,4 +528,29 @@ export async function repriceBookingPromotions(
     adjustmentTargets: priced.adjustmentTargets,
     remainingPromoCodeLabel: kept.length > 0 ? kept.join(", ") : null,
   };
+}
+
+/**
+ * Re-price every code a booking already carries, in its stored order, and
+ * persist the answer (INV-MONEY-024 per code). Shared by every re-price path —
+ * adding or removing guests, a date change, the waitlist offer, the review
+ * re-base and an edit that keeps its codes — so none of them prices a code its
+ * own way. Locks as `priceStoredBookingPromotions` states.
+ */
+export async function repriceBookingPromotions(
+  tx: Prisma.TransactionClient,
+  params: RepriceBookingPromotionsParams,
+): Promise<BookingPromotionsReprice> {
+  if (params.redemptions.length === 0) {
+    return {
+      newDiscountCents: 0,
+      newPromoAdjustmentCents: 0,
+      promoRemoved: false,
+      releasedPromoCodes: [],
+      promoCoverage: null,
+      adjustmentTargets: [],
+      remainingPromoCodeLabel: null,
+    };
+  }
+  return persistRepricedPromotions(tx, await priceStoredBookingPromotions(tx, params));
 }

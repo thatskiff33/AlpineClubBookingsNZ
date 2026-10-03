@@ -7,6 +7,12 @@ import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import {
+  repriceBookingAfterGuestAcceptance,
+  type GuestAcceptanceReprice,
+} from "@/lib/booking-guest-acceptance-reprice";
+import { drainSupersededPrimaryIntents } from "@/lib/booking-modification-settlement";
+import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
+import {
   BookingGuestRemovalError,
   removeBookingGuestInTransaction,
 } from "@/lib/booking-guest-removal-service";
@@ -96,7 +102,11 @@ export type MemberGuestConsentBlockedReason =
   | "OTHER";
 
 export type MemberGuestConsentOutcome =
-  | { outcome: "APPROVED" }
+  | {
+      outcome: "APPROVED";
+      /** #3827: what the acceptance did to the booking's promo codes, if anything. */
+      reprice?: GuestAcceptanceReprice;
+    }
   /**
    * `creditCents` is what the reduction actually settled as account credit, read
    * off the shared removal path's own result rather than recomputed. The outcome
@@ -515,9 +525,8 @@ export async function respondToMemberGuestConsent(params: {
   // RUNTIME reader, not the server binding: this module is reached from
   // `instrumentation.node.ts` through `cron-member-guest-consent-expiry`, where
   // `server-only` is a bare throw at import.
-  const clubTodayDateOnly = dateOnlyInstantOf(
-    clubToday(await readClubTimeZoneOutsideRequest()),
-  );
+  const clubTodayCalendar = clubToday(await readClubTimeZoneOutsideRequest());
+  const clubTodayDateOnly = dateOnlyInstantOf(clubTodayCalendar);
   // #3029 S5 — the dietary seeding toggle, read here for the same reason. A
   // member guest's profile note is NOT copied onto the row while their consent
   // is pending; granting it below fills the row, if still empty (`INV-MOD-059`).
@@ -570,7 +579,17 @@ export async function respondToMemberGuestConsent(params: {
             actorMemberId,
           },
         );
-        return { outcome: "APPROVED" } as const;
+        // #3827 (D-3813-4): the guest is staying now, so the codes the booking
+        // carries are re-priced under the ordinary edit rules — under the
+        // global and per-lodge locks this transaction already holds.
+        const reprice = await repriceBookingAfterGuestAcceptance(tx, {
+          bookingId,
+          acceptedGuestId: guestId,
+          actorMemberId,
+          todayAtClub: clubTodayCalendar,
+          format,
+        });
+        return { outcome: "APPROVED", reprice } as const;
       }
 
       const claimed = await claimConsentTransition(
@@ -824,6 +843,14 @@ export async function finaliseMemberGuestConsentTransition(params: {
     // The claim was lost. No email, no removal, no bed write, no audit entry —
     // the winner already wrote all of them, and a second set would be a lie.
     return;
+  }
+
+  if (outcome.outcome === "APPROVED" && outcome.reprice?.repriced) {
+    await settleGuestAcceptanceRepriceAfterCommit({
+      bookingId,
+      actorMemberId,
+      reprice: outcome.reprice,
+    });
   }
 
   if (outcome.outcome === "APPROVED") {
@@ -1272,6 +1299,51 @@ async function notifyMemberGuestConsentOutcome(params: {
     logger.error(
       { err, bookingId, guestId },
       "Failed to load booking context for a member-guest consent notification",
+    );
+  }
+}
+
+/**
+ * The after-commit half of a guest-acceptance re-price (#3827), as the guest
+ * routes run theirs: cancel any primary intent a zero-dollar auto-pay
+ * superseded, and queue the Xero correction of an issued invoice. Best-effort
+ * for the reason every such drain is: the booking is committed, and the
+ * recovery sweep and the Xero outbox are the authority on completion.
+ */
+async function settleGuestAcceptanceRepriceAfterCommit(params: {
+  bookingId: string;
+  actorMemberId: string | null;
+  reprice: Extract<GuestAcceptanceReprice, { repriced: true }>;
+}): Promise<void> {
+  const { bookingId, reprice } = params;
+  if (reprice.bookingModificationId === null) return;
+  await drainSupersededPrimaryIntents({
+    bookingId,
+    supersededPrimaryPaymentIntents: { length: reprice.supersededPrimaryPaymentIntentCount },
+  });
+  try {
+    await queueXeroBookingEditSettlement({
+      bookingId,
+      bookingModificationId: reprice.bookingModificationId,
+      ...(params.actorMemberId ? { createdByMemberId: params.actorMemberId } : {}),
+      hasIssuedXeroInvoice: reprice.hasIssuedXeroInvoice,
+      originalPaymentStatus: reprice.paymentStatus,
+      priceDiffCents: reprice.priceDiffCents,
+      changeFeeCents: 0,
+      datesChanged: false,
+      settlementAmountCents: reprice.xeroRefundAmountCents,
+      settlementMethod: reprice.settlementMethod,
+      refundedThroughStripe: reprice.hasSucceededPayment,
+      // An acceptance never raises a paid or invoiced booking's price (see
+      // `repriceBookingAfterGuestAcceptance`), so there is no Stripe ask to wait on.
+      requiresAdditionalStripePayment: false,
+      additionalPaymentIntentId: null,
+      createPrimaryInvoiceWhenMissing: reprice.zeroDollarAutoPaid && !reprice.hasIssuedXeroInvoice,
+    });
+  } catch (err) {
+    logger.error(
+      { err, bookingId },
+      "Failed to queue the Xero settlement for a guest-acceptance re-price",
     );
   }
 }
