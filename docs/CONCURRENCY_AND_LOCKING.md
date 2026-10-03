@@ -3193,7 +3193,11 @@ written under `lock(1)` - the cancel's CANCELLED event, the sibling reviews'
 claims, their refund debts, `BANK_REFUND` lines and minted credit - read under
 the completion's own `lock(1)`: before the claim on the card and hand-back
 routes, which plan, cap and record the netted figure there, and after the
-re-price on the minted-credit route. The Stripe call stays after the commit
+re-price on the minted-credit route. The applied-credit part of that figure
+goes back through `giveBackAppliedCredit` on every one of those routes, so it
+takes the per-member credit-ledger lock after `lock(1)` and the claim - the
+order #3791's give-back already uses. The card cap also counts the
+cancellation's and earlier reviews' card refunds not yet made. The Stripe call stays after the commit
 (`edit-financial-review-captured-cancel.realdb.test.ts`).
 
 Registered in `advisory-lock-guard.test.ts` as `resolveManualRefundTask#1`

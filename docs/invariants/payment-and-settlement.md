@@ -1599,12 +1599,12 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     reverses (`agreedGiveBackKey`).
   - **Unpaid** - credit short of the price beyond earlier review give-backs:
     no more given back than the booking's review re-prices removed.
-  - **Cancelled first**, on every route (#3835: card, bank-transfer hand-back,
-    minted credit): netted cumulatively against what the cancellation
-    returned, from figures frozen on its CANCELLED event; refused, task OPEN,
-    where the tier does not reproduce them. Money, Xero and ledger follow the
-    netted figure. $200, $50 share: $200 back at 100%, $105 at 50% less $20,
-    $50 at 0%, either order.
+  - **Cancelled first**, every route (#3835): netted cumulatively against
+    what the cancellation returned, from what its CANCELLED event froze (tier
+    method, base, reviews already settled); refused, task OPEN, where the tier
+    does not reproduce it. The capture gets only its own part, never the
+    credit's, which is applied credit given back. $200, $50 share: $200 back at
+    100%, $105 at 50% less $20, $50 at 0%.
   - Home: `edit-financial-review-account-credit.ts`,
     `edit-financial-review-cancel-netting.ts`,
     `dispatchEditReviewAccountCreditXero`; proven by

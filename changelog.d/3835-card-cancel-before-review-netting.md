@@ -16,6 +16,10 @@
   completing, the settle dialog shows what is still owed - "Only $25.00 of the
   $50.00 share is still owed after the booking's cancellation - hand back
   $25.00" - so a bank transfer is made for the right amount.
+  What is still owed goes back the way it was paid: the part that came out of
+  the member's account credit is given back as credit, and only the rest goes
+  to the card or by bank transfer, so the card is never asked for more than it
+  took.
   Where the current cancellation policy no longer reproduces what the
   cancellation returned, the review is refused and stays open for the officer
   to settle by hand. This applies the rule #3791 introduced for credit-paid

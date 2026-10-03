@@ -673,7 +673,9 @@ it under the amount box, for example "Only $25.00 of the $50.00 share is still
 owed after the booking's cancellation - hand back $25.00, not the full share".
 That matters most on a bank-transfer hand-back, where the officer moves the
 money themselves before completing; on the card and minted-credit routes it
-says what will be refunded or credited. Nothing is printed when the whole share
+says what will be refunded or credited. Where part of what is owed came out of
+the member's applied credit, that part goes back as account credit and the line
+says so ("$25.00 to the card and $25.00 as account credit"). Nothing is printed when the whole share
 is still owed; when nothing is, it says so (and, on a hand-back, not to hand
 anything back); a share the completion would refuse shows that refusal. The
 line is a live region, mounted empty; the dialog's view-only gating is
