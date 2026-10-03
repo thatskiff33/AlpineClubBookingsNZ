@@ -1112,6 +1112,15 @@ Verified controls already present and intentionally preserved:
   as `0` and a non-numeric one as `NaN`, and `NaN > 0` is `false`, so a future
   report-shape change would otherwise turn this required gate green everywhere,
   permanently and silently.
+- The audit's only other passing verdict is MITIGATED, never CLEAN (#3843). It
+  starts from a VULNERABILITY FOUND result and requires pnpm's exit 1, the exact
+  reviewed report shape with exactly one high and nothing else, the recorded
+  GHSA/version/path, a reviewed patch and `pnpm-workspace.yaml` /
+  `pnpm-lock.yaml` matching SHA256 digests in an owner-approved record in
+  `dependency-mitigations.d/`, and an unexpired approval (the clock is injected
+  in tests). It covers only the copy the audit can see; the bundled copies it
+  cannot reach are listed on every run. See `docs/MAINTENANCE.md` ->
+  "Mitigated advisories".
 - The secret scan reads merge commits. `git log -p` emits no patch for a merge
   commit, and roughly a third of this repository's 7,510 commits are merges, so
   a scan without `--diff-merges=first-parent` never looked at them — and a

@@ -51,7 +51,11 @@ the live configuration rather than trusting a document:
   "the advisory service was unreachable" and "this branch ships a
   vulnerability" are told apart on the first line of the output rather than
   looking identical. An unreachable service is retried and then still fails
-  (#3254): green means the audit really ran. It used to be a step inside `verify`, where a published
+  (#3254): green means the audit really ran. Its one non-clean pass is
+  MITIGATED (#3843): a single reviewed, unfixed high advisory whose reviewed
+  patch and exact dependency inputs match an expiring owner-approved record in
+  `dependency-mitigations.d/`; the advisory stays printed and the verdict never
+  says CLEAN. It used to be a step inside `verify`, where a published
   advisory in a transitive dependency skipped every gate behind it — lint, the
   file-size ratchet, `prisma generate`, typecheck, knip, `npm test` and the
   build — on every branch, while the other required checks stayed green (#2945,
