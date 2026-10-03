@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   createAuditLog: vi.fn(),
   executeRaw: vi.fn(),
   aggregate: vi.fn(),
+  creditAggregate: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -66,6 +67,9 @@ const tx = {
     },
     aggregate: (...a: unknown[]) => mocks.aggregate(...a),
   },
+  memberCredit: {
+    aggregate: (...a: unknown[]) => mocks.creditAggregate(...a),
+  },
 };
 
 const DISMISSED_BY_OFFICER = {
@@ -99,6 +103,7 @@ beforeEach(() => {
   mocks.findUnique.mockResolvedValue(DISMISSED_BY_OFFICER);
   mocks.updateMany.mockResolvedValue({ count: 1 });
   mocks.aggregate.mockResolvedValue({ _sum: { amountCents: null } });
+  mocks.creditAggregate.mockResolvedValue({ _sum: { amountCents: null } });
 });
 
 describe("reopening a dismissed money task (#3498 D2)", () => {
@@ -362,7 +367,7 @@ describe("reopening a dismissed refund APPEAL hand-back (#3827, D-3813-7, INV-PA
       occurrenceKey: "refund-request-hand-back:req-1",
       amountCents: 10000,
       raisedAmountCents: 10000,
-      payment: { id: "pay-1", status: "PARTIALLY_REFUNDED", ...payment },
+      payment: { id: "pay-1", bookingId: "booking-1", status: "PARTIALLY_REFUNDED", ...payment },
       booking: { memberId: "member-1", status: "CANCELLED", organisation: null },
     };
   }
@@ -377,6 +382,27 @@ describe("reopening a dismissed refund APPEAL hand-back (#3827, D-3813-7, INV-PA
   it("refuses once a later appeal has promised that cash back", async () => {
     mocks.findUnique.mockResolvedValue(dismissedAppeal({ amountCents: 20000, refundedAmountCents: 10000 }));
     mocks.aggregate.mockResolvedValue({ _sum: { amountCents: 10000 } });
+
+    await expect(reopen()).rejects.toMatchObject({ message: REOPEN_EDIT_REFUND_EXCEEDS_CASH_MESSAGE });
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  // `INV-PAY-115`: an appeal's task is measured by the APPEAL's ceiling - every
+  // open hand-back (a cancellation's own included) and the late-cash credit.
+  it("measures it against every open hand-back, any kind", async () => {
+    mocks.findUnique.mockResolvedValue(dismissedAppeal({ amountCents: 20000, refundedAmountCents: 10000 }));
+
+    await reopen();
+
+    expect(mocks.aggregate).toHaveBeenCalledWith({
+      where: { paymentId: "pay-1", status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK" },
+      _sum: { amountCents: true },
+    });
+  });
+
+  it("refuses once the member already holds that cash as late-cash credit", async () => {
+    mocks.findUnique.mockResolvedValue(dismissedAppeal({ amountCents: 20000, refundedAmountCents: 10000 }));
+    mocks.creditAggregate.mockResolvedValue({ _sum: { amountCents: 5000 } });
 
     await expect(reopen()).rejects.toMatchObject({ message: REOPEN_EDIT_REFUND_EXCEEDS_CASH_MESSAGE });
     expect(mocks.updateMany).not.toHaveBeenCalled();

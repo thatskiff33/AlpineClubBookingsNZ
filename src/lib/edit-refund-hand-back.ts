@@ -11,9 +11,11 @@ import {
 } from "@/lib/booking-payment-state";
 import {
   editRefundHandBackOccurrenceKey,
+  OPEN_HAND_BACKS_FOR_REFUND_APPEAL_SELECT,
   OPEN_NON_CANCELLATION_HAND_BACKS_SELECT,
   refundRequestHandBackOccurrenceKey,
 } from "@/lib/manual-refund-task-settlement-rules";
+import { sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 
 /**
@@ -195,4 +197,45 @@ export async function refundableCashNetOfOpenHandBacks(
     payment,
     await openNonCancellationHandBackCents(db, payment.id),
   );
+}
+
+/** What a refund appeal's cap reads: hand-back tasks and member credit. */
+export type RefundAppealCapDb = Pick<PrismaClient, "manualRefundTask" | "memberCredit">;
+
+/**
+ * #3827 (`INV-PAY-115`): the sum of EVERY open hand-back on one payment - any
+ * kind, the cancellation's own included. Only a refund appeal's cap reads
+ * this; an edit or a cancel reads `openNonCancellationHandBackCents`, which
+ * leaves the cancellation's task out by design.
+ */
+export async function openHandBackCentsForRefundAppeal(
+  db: Pick<PrismaClient, "manualRefundTask">,
+  paymentId: string,
+): Promise<number> {
+  const open = await db.manualRefundTask.aggregate({
+    where: { paymentId, ...OPEN_HAND_BACKS_FOR_REFUND_APPEAL_SELECT.where },
+    _sum: { amountCents: true },
+  });
+  return open._sum.amountCents ?? 0;
+}
+
+/**
+ * #3827 (`INV-PAY-115`): THE MOST A REFUND APPEAL MAY PROMISE BACK. The
+ * refundable cash, less every hand-back still open on the payment and less the
+ * member credit already minted from its late cash - money the member already
+ * holds or is already being sent, which `refundedAmountCents` does not show
+ * (`refundAppealCeiling` says why each one is missing from it). The member's
+ * request, the admin approval (under `lock(1)`, which every writer of those
+ * tasks holds; the late-cash mint holds it too) and the reopen of a dismissed
+ * appeal task all read this one figure.
+ */
+export async function refundableCashForRefundAppeal(
+  db: RefundAppealCapDb,
+  payment: (BookingPaymentState & { id: string; bookingId: string }) | null | undefined,
+): Promise<number> {
+  if (getRemainingRefundableCents(payment) === 0 || !payment) return 0;
+  const promisedOrCredited =
+    (await openHandBackCentsForRefundAppeal(db, payment.id)) +
+    (await sumInternetBankingMintedCentsForBookings(db, [payment.bookingId]));
+  return getRemainingRefundableCentsNetOf(payment, promisedOrCredited);
 }

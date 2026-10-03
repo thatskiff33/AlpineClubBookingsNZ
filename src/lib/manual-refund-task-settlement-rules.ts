@@ -4,6 +4,7 @@ import {
   getRemainingRefundableCentsNetOf,
   type BookingPaymentState,
 } from "@/lib/booking-payment-state";
+import { sumInternetBankingLateCashCreditCents } from "@/lib/internet-banking-late-cash-credit";
 
 /**
  * #3213 (epic #2797): WHICH FINANCE-QUEUE ITEMS CAN BE SETTLED AT ALL, and the
@@ -191,10 +192,10 @@ export const NON_CANCELLATION_HAND_BACK_WHERE = {
 
 /**
  * #3827 (`INV-PAY-114`): the OPEN non-cancellation hand-backs on a payment, as a
- * relation fragment for a read that loads the payment anyway (the booking
- * page, the refund-appeal queue). Paired with `sumOpenNonCancellationHandBackCents`
- * and `getRemainingRefundableCentsNetOf`, it gives a screen the same ceiling
- * the server's `refundableCashNetOfOpenHandBacks` enforces.
+ * relation fragment for a read that loads the payment anyway (the cancel
+ * preview). Paired with `sumOpenNonCancellationHandBackCents`
+ * and `getRemainingRefundableCentsNetOf`, it gives a reader the same figure the
+ * server's `refundableCashNetOfOpenHandBacks` enforces.
  */
 export const OPEN_NON_CANCELLATION_HAND_BACKS_SELECT = {
   where: { status: "OPEN", ...NON_CANCELLATION_HAND_BACK_WHERE },
@@ -209,18 +210,44 @@ export function sumOpenNonCancellationHandBackCents(
 }
 
 /**
- * The refund ceiling a screen shows from a payment loaded with that fragment:
- * the remaining refundable cash less those rows (`INV-PAY-114`).
+ * #3827 (`INV-PAY-115`): WHAT A REFUND APPEAL MAY STILL PROMISE. An appeal is
+ * sized from the payment's refundable cash, which two other hand-backs leave
+ * overstated, so its ceiling subtracts both - and only an appeal's does:
+ *
+ * - EVERY open hand-back on the payment, of any kind. The edit and earlier
+ *   appeals' (as `INV-PAY-114`), and also a CANCELLATION's own - the hand-back
+ *   an organisation's late bank transfer raises (#3369), whose money moves
+ *   `refundedAmountCents` only when it is paid back. An edit or a cancel sizes
+ *   its refund EXCLUDING the cancellation's task, by design: that task is the
+ *   cancellation's own refund. An appeal comes after it and must not repeat it.
+ * - the member credit already minted from the payment's late cash
+ *   (`internet-banking-late-cash-credit.ts`), which never moves
+ *   `refundedAmountCents` at all.
+ *
+ * The relation fragment below is the first half for a read that loads the
+ * payment anyway; the booking's `creditsFromCancellation` is the second.
+ * `refundableCashForRefundAppeal` is the server's figure; this is the screen's.
  */
-export function refundCeilingNetOfOpenHandBacks(
+export const OPEN_HAND_BACKS_FOR_REFUND_APPEAL_SELECT = {
+  where: { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK" satisfies ManualRefundTaskKind },
+  select: { amountCents: true },
+} as const;
+
+/** A screen's refund-appeal ceiling (`INV-PAY-115`), from those two reads. */
+export function refundAppealCeiling(
   payment:
     | (BookingPaymentState & { manualRefundTasks?: readonly { amountCents: number | null }[] })
+    | null
+    | undefined,
+  creditsFromCancellation:
+    | readonly { amountCents: number; description: string | null; type?: string | null }[]
     | null
     | undefined,
 ): number {
   return getRemainingRefundableCentsNetOf(
     payment,
-    sumOpenNonCancellationHandBackCents(payment?.manualRefundTasks),
+    sumOpenNonCancellationHandBackCents(payment?.manualRefundTasks) +
+      sumInternetBankingLateCashCreditCents(creditsFromCancellation),
   );
 }
 

@@ -150,6 +150,23 @@ refunds this by bank transfer". The approval already queued the appeal's Xero
 refund credit note, so treat these tasks exactly like the edit tasks above, and
 on the previous colour a second note would sit beside the appeal's own.
 
+### Re-save a customised "refund appeal approved" email (#3827)
+
+**What changes.** The built-in "Refund appeal approved" email now says how the
+refund reaches the member through one token, `{{refundSentence}}`: back to
+their card, or by bank transfer from the club for a booking paid by internet
+banking. The old wording, "processed to your original payment method", is gone.
+
+**Who must act.** Only a club that saved its own copy of this email under
+**Admin → Email messages**. A saved copy keeps its own wording, so it still
+tells an internet-banking member their refund went back to a payment method
+that cannot take one.
+
+**What to do.** Open the email in **Email messages**. The editor marks it as
+needing attention because `{{refundSentence}}` is now required. Replace your
+sentence about the refund with `{{refundSentence}}`, or reset to the built-in
+wording, and save. The editor will not save a copy without the token.
+
 ### You must declare whether this deployment is the live site (#3034, epic #2986)
 
 **Do this before you deploy, or the deploy will refuse to run.** Add one line to

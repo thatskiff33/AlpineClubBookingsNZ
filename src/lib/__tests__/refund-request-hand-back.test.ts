@@ -6,7 +6,15 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-import { raiseRefundRequestHandBack } from "@/lib/edit-refund-hand-back";
+import {
+  openNonCancellationHandBackCents,
+  raiseRefundRequestHandBack,
+  refundableCashForRefundAppeal,
+} from "@/lib/edit-refund-hand-back";
+import {
+  isInternetBankingLateCashCredit,
+  sumInternetBankingLateCashCreditCents,
+} from "@/lib/internet-banking-late-cash-credit";
 import {
   isEditRefundHandBackTask,
   isNonCancellationHandBackCompletedEvent,
@@ -14,6 +22,7 @@ import {
   isRefundRequestHandBackTask,
   NON_CANCELLATION_HAND_BACK_WHERE,
   nonCancellationHandBackCompletedSnapshot,
+  refundAppealCeiling,
   refundRequestHandBackOccurrenceKey,
 } from "@/lib/manual-refund-task-settlement-rules";
 import { isRefundOutsideBookingSettlement } from "@/lib/refund-event-outside-settlement";
@@ -192,5 +201,85 @@ describe("the queue payload marks an appeal's hand-back for the card", () => {
     const editPayload = toOpenManualRefundTaskPayload({ ...row, occurrenceKey: "edit-refund-hand-back:m" }, null, []);
     expect(editPayload.refundRequestHandBack).toBe(false);
     expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null, []).refundRequestHandBack).toBe(false);
+  });
+});
+
+/**
+ * #3827 (`INV-PAY-115`): the appeal's ceiling nets the money already returned
+ * through the two channels that never move `refundedAmountCents` - every open
+ * hand-back on the payment (a cancellation's own included) and the member
+ * credit minted from late cash - on the server and on the screens alike.
+ */
+describe("the refund appeal ceiling (INV-PAY-115)", () => {
+  const payment = { id: "pay-1", bookingId: "booking-1", status: "SUCCEEDED", amountCents: 10000, refundedAmountCents: 0 };
+  const lateCash = { amountCents: 3000, description: "Internet Banking payment credit for cancelled booking booking-" };
+  const cancellationCredit = { amountCents: 2000, description: "Cancellation refund credit for booking booking-" };
+
+  function capStore(openCents: number | null, creditCents: number | null) {
+    return {
+      manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: openCents } })) },
+      memberCredit: { aggregate: vi.fn(async () => ({ _sum: { amountCents: creditCents } })) },
+    };
+  }
+
+  it("server: subtracts every open hand-back and the late-cash credit", async () => {
+    const store = capStore(4000, 3000);
+    await expect(refundableCashForRefundAppeal(store as never, payment)).resolves.toBe(3000);
+    expect(store.manualRefundTask.aggregate).toHaveBeenCalledWith({
+      where: { paymentId: "pay-1", status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK" },
+      _sum: { amountCents: true },
+    });
+    expect(store.memberCredit.aggregate).toHaveBeenCalledWith({
+      where: {
+        sourceBookingId: { in: ["booking-1"] },
+        type: "CANCELLATION_REFUND",
+        description: { startsWith: "Internet Banking payment credit for " },
+      },
+      _sum: { amountCents: true },
+    });
+  });
+
+  it("server: never below zero, and zero for an uncaptured payment without reading anything", async () => {
+    await expect(refundableCashForRefundAppeal(capStore(9000, 9000) as never, payment)).resolves.toBe(0);
+    const store = capStore(0, 0);
+    await expect(
+      refundableCashForRefundAppeal(store as never, { ...payment, status: "PENDING" }),
+    ).resolves.toBe(0);
+    expect(store.manualRefundTask.aggregate).not.toHaveBeenCalled();
+  });
+
+  it("screen: the same figure from the loaded rows, counting only the late-cash credit", () => {
+    expect(
+      refundAppealCeiling(
+        { ...payment, manualRefundTasks: [{ amountCents: 4000 }, { amountCents: null }] },
+        [lateCash, cancellationCredit],
+      ),
+    ).toBe(3000);
+    expect(refundAppealCeiling({ ...payment, manualRefundTasks: [] }, null)).toBe(10000);
+    expect(refundAppealCeiling(null, [lateCash])).toBe(0);
+  });
+
+  it("the late-cash predicate keys on the pipeline's prefix and type, never on amount", () => {
+    expect(isInternetBankingLateCashCredit(lateCash)).toBe(true);
+    expect(isInternetBankingLateCashCredit({ description: "Internet Banking payment credit for booking abc" })).toBe(true);
+    expect(isInternetBankingLateCashCredit(cancellationCredit)).toBe(false);
+    expect(isInternetBankingLateCashCredit({ ...lateCash, type: "BOOKING_MODIFICATION_REFUND" })).toBe(false);
+    expect(isInternetBankingLateCashCredit({ description: null })).toBe(false);
+    expect(sumInternetBankingLateCashCreditCents([lateCash, lateCash, cancellationCredit])).toBe(6000);
+  });
+
+  it("an edit or a cancel keeps EXCLUDING the cancellation's own task (by design)", async () => {
+    const store = capStore(4000, 3000);
+    await openNonCancellationHandBackCents(store as never, "pay-1");
+    expect(store.manualRefundTask.aggregate).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        OR: [
+          { occurrenceKey: { startsWith: "edit-refund-hand-back:" } },
+          { occurrenceKey: { startsWith: "refund-request-hand-back:" } },
+        ],
+      }),
+      _sum: { amountCents: true },
+    });
+    expect(store.memberCredit.aggregate).not.toHaveBeenCalled();
   });
 });

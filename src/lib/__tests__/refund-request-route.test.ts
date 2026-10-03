@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   refundRequestFindFirst: vi.fn(),
   refundRequestCreate: vi.fn(),
   manualRefundTaskAggregate: vi.fn(),
+  memberCreditAggregate: vi.fn(),
   logAudit: vi.fn(),
   sendAdminRefundRequestAlert: vi.fn(),
 }));
@@ -31,6 +32,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     manualRefundTask: {
       aggregate: (...args: unknown[]) => mocks.manualRefundTaskAggregate(...args),
+    },
+    memberCredit: {
+      aggregate: (...args: unknown[]) => mocks.memberCreditAggregate(...args),
     },
   },
 }));
@@ -56,6 +60,7 @@ describe("POST /api/bookings/[id]/refund-request", () => {
     mocks.refundRequestCreate.mockResolvedValue({ id: "rr-1" });
     mocks.sendAdminRefundRequestAlert.mockResolvedValue(undefined);
     mocks.manualRefundTaskAggregate.mockResolvedValue({ _sum: { amountCents: null } });
+    mocks.memberCreditAggregate.mockResolvedValue({ _sum: { amountCents: null } });
   });
 
   it("rejects appeals when no successful payment was captured", async () => {
@@ -156,6 +161,7 @@ describe("POST /api/bookings/[id]/refund-request", () => {
       checkOut: new Date("2026-07-03"),
       payment: {
         id: "payment-1",
+        bookingId: "booking-1",
         amountCents: 20000,
         refundedAmountCents: 7500,
         status: "PARTIALLY_REFUNDED",
@@ -192,11 +198,8 @@ describe("POST /api/bookings/[id]/refund-request", () => {
       where: {
         paymentId: "payment-1",
         status: "OPEN",
+        // `INV-PAY-115`: every open hand-back, of any kind.
         kind: "CANCELLED_BOOKING_HAND_BACK",
-        OR: [
-          { occurrenceKey: { startsWith: "edit-refund-hand-back:" } },
-          { occurrenceKey: { startsWith: "refund-request-hand-back:" } },
-        ],
       },
       _sum: { amountCents: true },
     });
@@ -221,7 +224,46 @@ describe("POST /api/bookings/[id]/refund-request", () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
       error:
-        "Everything still refundable on this booking is already being refunded to you by bank transfer, so there is nothing further to appeal for.",
+        "Everything still refundable on this booking is already being returned to you, by bank transfer or as account credit, so there is nothing further to appeal for.",
+    });
+    expect(mocks.refundRequestCreate).not.toHaveBeenCalled();
+  });
+
+  // M1(a), `INV-PAY-115`: a bank transfer that arrived after the cancel was
+  // handed back as account credit without moving `refundedAmountCents`, so the
+  // member may not appeal for it again.
+  it("nets the credit already minted from late cash (#3827)", async () => {
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "CANCELLED",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      payment: {
+        id: "payment-1",
+        bookingId: "booking-1",
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+      },
+      member: { firstName: "Alex", lastName: "Example" },
+    });
+    mocks.memberCreditAggregate.mockResolvedValue({ _sum: { amountCents: 10000 } });
+
+    const response = await appealFor(100);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error:
+        "Everything still refundable on this booking is already being returned to you, by bank transfer or as account credit, so there is nothing further to appeal for.",
+    });
+    expect(mocks.memberCreditAggregate).toHaveBeenCalledWith({
+      where: {
+        sourceBookingId: { in: ["booking-1"] },
+        type: "CANCELLATION_REFUND",
+        description: { startsWith: "Internet Banking payment credit for " },
+      },
+      _sum: { amountCents: true },
     });
     expect(mocks.refundRequestCreate).not.toHaveBeenCalled();
   });

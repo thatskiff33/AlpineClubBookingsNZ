@@ -459,6 +459,12 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
     "checkIn",
     "checkOut",
   ],
+  // #3827 (D-3813-7): an approved appeal is refunded to the card OR promised
+  // by bank transfer, and only {{refundSentence}} says which. An override
+  // saved from the old default ("processed to your original payment method"
+  // around {{amount}}) would tell an internet-banking member the wrong thing,
+  // so the editor flags it as stale and a re-save must put the token back.
+  "refund-request-approved": ["refundSentence"],
   "password-reset": ["token"],
   "admin-password-reset": ["token"],
   "member-setup-invite": ["token"],

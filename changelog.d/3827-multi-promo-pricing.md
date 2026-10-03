@@ -47,8 +47,14 @@
   **Money to settle** for the amount no card refund can carry, the member's
   email says the club **will** refund them by bank transfer, and marking the
   task paid back records the refund. Until then the amount counts as already
-  promised, so a further appeal can be approved only for what is left. Card
-  appeals are unaffected.
+  promised, so a further appeal can be approved only for what is left. An
+  appeal also cannot ask for, or be approved for, money already returned
+  another way: an open refund task on the booking's payment of any kind, or
+  account credit already given for a bank transfer that arrived after the
+  booking was cancelled. Card appeals are unaffected. A club that saved its
+  own copy of the "refund appeal approved" email must re-save it with
+  `{{refundSentence}}`, which says card or bank transfer
+  (`docs/UPGRADING.md`).
 
   **Deploy note:** do not mark these refund tasks (the edit ones above, or
   the appeal ones) paid back until cutover

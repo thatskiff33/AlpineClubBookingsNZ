@@ -3,11 +3,15 @@ import "server-only";
 import { BookingStatus, ManualRefundTaskStatus } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
-import { refundableCashNetOfOpenHandBacks } from "@/lib/edit-refund-hand-back";
+import {
+  refundableCashForRefundAppeal,
+  refundableCashNetOfOpenHandBacks,
+} from "@/lib/edit-refund-hand-back";
 import {
   EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE,
   isEditRefundHandBackTask,
   isNonCancellationHandBackTask,
+  isRefundRequestHandBackTask,
 } from "@/lib/manual-refund-task-settlement-rules";
 import { recordManualRefundTaskReopenAudit } from "@/lib/manual-refund-task-reopen-audit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -193,7 +197,7 @@ export async function reopenManualRefundTask({
         kind: true,
         // #3827: an edit refund hand-back's marker and the cash behind it.
         occurrenceKey: true,
-        payment: { select: { id: true, status: true, amountCents: true, refundedAmountCents: true } },
+        payment: { select: { id: true, bookingId: true, status: true, amountCents: true, refundedAmountCents: true } },
         status: true,
         amountCents: true,
         raisedAmountCents: true,
@@ -226,11 +230,16 @@ export async function reopenManualRefundTask({
       throw new ManualBookingPaymentError(EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE, 409);
     }
     // #3827 (`INV-PAY-114`): never promise back more cash than was taken - for
-    // an edit's refund and (D-3813-7) an approved appeal's alike. Read under
-    // lock(1), which every edit, acceptance, paid cancel and approval holds.
+    // an edit's refund and (D-3813-7) an approved appeal's alike, an appeal's
+    // measured by the appeal's own ceiling (`INV-PAY-115`: every open
+    // hand-back and the late-cash credit too). Read under lock(1), which every
+    // edit, acceptance, paid cancel and approval holds.
     if (
       isNonCancellationHandBackTask(task) &&
-      (task.amountCents ?? 0) > (await refundableCashNetOfOpenHandBacks(tx, task.payment))
+      (task.amountCents ?? 0) >
+        (isRefundRequestHandBackTask(task)
+          ? await refundableCashForRefundAppeal(tx, task.payment)
+          : await refundableCashNetOfOpenHandBacks(tx, task.payment))
     ) {
       throw new ManualBookingPaymentError(REOPEN_EDIT_REFUND_EXCEEDS_CASH_MESSAGE, 409);
     }

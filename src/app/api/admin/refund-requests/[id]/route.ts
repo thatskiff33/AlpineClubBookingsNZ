@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { PaymentSource } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -20,7 +21,7 @@ import {
 import logger from "@/lib/logger";
 import {
   raiseRefundRequestHandBack,
-  refundableCashNetOfOpenHandBacks,
+  refundableCashForRefundAppeal,
 } from "@/lib/edit-refund-hand-back";
 import { refundRequestHandBackOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 import {
@@ -34,6 +35,9 @@ import { calendarDateOfDateOnlyInstant, formatClubDate } from "@/lib/club-time";
 import { clubFormat } from "@/lib/club-format-server";
 import { renderEmailHtml } from "@/lib/email-theme";
 import { refundRequestApprovedRefundSentence } from "@/lib/booking-modified-email-copy";
+
+/** #3827 (`INV-PAY-115`): thrown inside the approval to roll its claim back. */
+class RefundRequestHandBackNotRaisedError extends Error {}
 
 const reviewSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
@@ -113,32 +117,44 @@ export async function PUT(
     // avoid. Refuse and point at the flow that can actually return the money.
     //
     // #3827 (D-3813-7) does NOT lift this, though an approval can now raise a
-    // bank-transfer task: such a booking's cancellation raised its own
-    // cancellation hand-back, whose money is neither in `refundedAmountCents`
-    // nor netted as a promised refund (`INV-PAY-114` nets only the
-    // non-cancellation kinds), so an appeal here could re-promise it.
+    // bank-transfer task and its cap nets the cancellation's own open
+    // hand-back (`INV-PAY-115`): once that task is paid it moves
+    // `refundedAmountCents`, but a dismissed one (the club decided to keep the
+    // money) reads as refundable again, so an appeal here could re-promise
+    // money the treasurer already decided on. Kept for the owner to revisit.
+    // An appeal exists only on a cancelled booking, so the message must not
+    // tell the officer to cancel it.
     if (payment.manuallyMarkedPaidAt) {
       return NextResponse.json(
         {
           error:
-            "This booking was paid in cash or by an off-Xero bank transfer, so there is no card payment to refund. Cancel the booking to raise a manual refund task, then pay the member back and close the task on the payments board.",
+            "This booking was paid in cash or by an off-Xero bank transfer, so there is no card payment to refund and this appeal cannot be approved here. Its cancellation already raised a refund task on the payments board for the money the cancellation policy returns; settle any further refund with the treasurer.",
         },
         { status: 409 }
       );
     }
 
-    // #3827 (`INV-PAY-114`): cap at the refundable cash NET of refunds still
-    // promised back by bank transfer - an edit's, or an earlier approved
-    // appeal's (D-3813-7) - or an appeal re-promises them (paid 200, an edit
-    // to 150 leaves a 50 task OPEN). Read under `lock(1)`, which every writer
-    // of those figures holds; claimed in the same transaction.
+    // #3827 (`INV-PAY-115`): cap at the refundable cash NET of every refund
+    // still promised back by bank transfer - an edit's, an earlier approved
+    // appeal's (D-3813-7), or a cancellation's own hand-back - and of the
+    // account credit already minted from late cash, or an appeal re-promises
+    // money the member holds or is being sent (paid 200, an edit to 150 leaves
+    // a 50 task OPEN). Read under `lock(1)`, which every writer of those
+    // figures holds; claimed in the same transaction.
     const capped = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       const lockedPayment = await tx.payment.findUnique({
         where: { id: payment.id },
-        select: { id: true, status: true, amountCents: true, refundedAmountCents: true },
+        select: {
+          id: true,
+          bookingId: true,
+          source: true,
+          status: true,
+          amountCents: true,
+          refundedAmountCents: true,
+        },
       });
-      const maxRefundable = await refundableCashNetOfOpenHandBacks(tx, lockedPayment);
+      const maxRefundable = await refundableCashForRefundAppeal(tx, lockedPayment);
       if (approvedAmountCents > maxRefundable) {
         return { kind: "exceeds" as const, maxRefundable };
       }
@@ -177,25 +193,43 @@ export async function PUT(
         store: tx,
       });
 
-      // #3827 (owner decision D-3813-7, `INV-PAY-115`): what no card refund can
-      // carry (all of it, on a booking paid by internet banking) goes back by
-      // bank transfer. ONE officer task, raised here so it is netted from the
-      // refundable cash before the lock is released - a second appeal cannot be
-      // approved against the same money - and keyed on this request, so it can
-      // never be raised twice.
-      const bankTransferCents = approvedAmountCents - plan.plannedAmountCents;
-      await raiseRefundRequestHandBack(tx, {
-        bookingId: booking.id,
-        paymentId: payment.id,
-        refundRequestId: id,
-        amountCents: bankTransferCents,
-      });
+      // #3827 (owner decision D-3813-7, `INV-PAY-115`): on a booking paid by
+      // internet banking, what no card refund can carry (normally all of it)
+      // goes back by bank transfer. ONE officer task, raised here so it is
+      // netted from the refundable cash before the lock is released - a second
+      // appeal cannot be approved against the same money - and keyed on this
+      // request, so it can never be raised twice. Only for that source: a card
+      // payment whose ledger plans short of the approved amount is ledger
+      // drift, logged after the commit and refunded as far as the plan goes,
+      // exactly as before - never turned into a bank transfer nobody chose.
+      const bankTransferCents =
+        lockedPayment?.source === PaymentSource.INTERNET_BANKING
+          ? Math.max(approvedAmountCents - plan.plannedAmountCents, 0)
+          : 0;
+      if (bankTransferCents > 0) {
+        const raised = await raiseRefundRequestHandBack(tx, {
+          bookingId: booking.id,
+          paymentId: payment.id,
+          refundRequestId: id,
+          amountCents: bankTransferCents,
+        });
+        // A row already holds this request's key (left by an earlier approval
+        // of it), so nobody would be asked to send this money. Refuse rather
+        // than promise a transfer with no task behind it; the throw rolls the
+        // claim back with it.
+        if (raised === 0) throw new RefundRequestHandBackNotRaisedError();
+      }
       return {
         kind: "claimed" as const,
         refundPlan: plan.slices,
         plannedAmountCents: plan.plannedAmountCents,
-        bankTransferCents: Math.max(bankTransferCents, 0),
+        bankTransferCents,
       };
+    }).catch((err: unknown) => {
+      if (err instanceof RefundRequestHandBackNotRaisedError) {
+        return { kind: "handBackNotRaised" as const };
+      }
+      throw err;
     });
 
     if (capped.kind === "exceeds") {
@@ -214,7 +248,38 @@ export async function PUT(
       );
     }
 
+    if (capped.kind === "handBackNotRaised") {
+      logger.error(
+        { refundRequestId: id, paymentId: payment.id },
+        "Refund appeal not approved: a bank-transfer task already holds this request's key, so no new task could be raised (#3827)"
+      );
+      return NextResponse.json(
+        {
+          error:
+            "This appeal already has a bank-transfer refund task from an earlier approval, so it was not approved again. Check the payments board before approving it.",
+        },
+        { status: 409 }
+      );
+    }
+
     const { refundPlan, plannedAmountCents, bankTransferCents } = capped;
+
+    if (bankTransferCents === 0 && plannedAmountCents < approvedAmountCents) {
+      // A card payment whose ledger shows less Stripe-refundable than the
+      // approved amount (e.g. a mixed Stripe + Internet Banking payment, whose
+      // IB portion is settled by the Xero credit note below, not Stripe):
+      // refund what the ledger shows Stripe-refundable, mirroring the
+      // booking-cancel drift log (#1349).
+      logger.error(
+        {
+          refundRequestId: id,
+          paymentId: payment.id,
+          approvedAmountCents,
+          plannedAmountCents,
+        },
+        "Approved refund appeal plan covers less than the approved amount; refunding what the payment ledger shows Stripe-refundable"
+      );
+    }
 
     try {
       await refundPaymentTransactions({
