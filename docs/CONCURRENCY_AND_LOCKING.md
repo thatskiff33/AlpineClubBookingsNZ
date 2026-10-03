@@ -3191,7 +3191,7 @@ does too, and both would post. So `resolveManualRefundTask` takes
   `kind` and `occurrenceKey`. Its completion moves the payment's
   `refundedAmountCents` and closes the task in one commit, and every edit,
   acceptance and paid cancel reads those two separately to size a refund net of
-  the cash already promised back (`refundableCashNetOfOpenEditRefunds`); under
+  the cash already promised back (`refundableCashNetOfOpenHandBacks`); under
   `lock(1)` the completion cannot commit between the two reads. A reopen of
   one already holds `lock(1)` and is refused past that same net cash, and a
   refund appeal's approval reads the same net cash under `lock(1)` and claims

@@ -46,7 +46,7 @@ import {
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   isPartPaymentReviewTask,
-  NOT_EDIT_REFUND_HAND_BACK_WHERE,
+  NOT_NON_CANCELLATION_HAND_BACK_WHERE,
 } from "@/lib/manual-refund-task-settlement-rules";
 import { refundPaymentLinkWhere } from "@/lib/xero-refund-note-settlement";
 
@@ -403,7 +403,7 @@ export async function loadAuditData(
             // A part-payment review is not cash that arrived (below).
             partPaymentReviewPaymentId: null,
             // #3827 (`INV-PAY-114`): nor is an edit's refund hand-back.
-            ...NOT_EDIT_REFUND_HAND_BACK_WHERE,
+            ...NOT_NON_CANCELLATION_HAND_BACK_WHERE,
           },
           select: { bookingId: true, paymentId: true },
         })

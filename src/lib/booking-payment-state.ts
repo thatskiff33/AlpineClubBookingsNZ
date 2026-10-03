@@ -160,9 +160,9 @@ export function getRemainingRefundableCents(
 /**
  * #3827 (`INV-PAY-114`): the remaining refundable cash LESS the edit refunds
  * the club has promised back by bank transfer and not yet sent. The one
- * arithmetic for the server cap (`refundableCashNetOfOpenEditRefunds`, which
+ * arithmetic for the server cap (`refundableCashNetOfOpenHandBacks`, which
  * reads the promised sum) and the screens that show that cap from a loaded
- * row (`sumOpenEditRefundHandBackCents`), so the ceiling a screen offers is
+ * row (`sumOpenNonCancellationHandBackCents`), so the ceiling a screen offers is
  * the ceiling the route enforces.
  */
 export function getRemainingRefundableCentsNetOf(
@@ -185,7 +185,7 @@ export function getRemainingRefundableCentsNetOf(
  * would (#3640).
  *
  * #3827 (`INV-PAY-114`): "not yet handed back" also excludes the edit refunds
- * already PROMISED back by hand (`openEditRefundHandBackCents`, the sum of the
+ * already PROMISED back by hand (`openNonCancellationHandBackCents`, the sum of the
  * payment's open edit refund hand-backs), REQUIRED so no caller can forget it:
  * a cancellation must not refund or credit cash the treasurer still owes on an
  * earlier edit's task.
@@ -193,12 +193,12 @@ export function getRemainingRefundableCentsNetOf(
 export function cancelRefundableBaseCents(input: {
   amountCents: number;
   refundedAmountCents: number;
-  openEditRefundHandBackCents: number;
+  openNonCancellationHandBackCents: number;
   finalPriceCents: number;
   changeFeeCents: number;
 }): number {
   const paidAmountCents =
-    input.amountCents - input.refundedAmountCents - input.openEditRefundHandBackCents;
+    input.amountCents - input.refundedAmountCents - input.openNonCancellationHandBackCents;
   return (
     Math.min(paidAmountCents, input.finalPriceCents + input.changeFeeCents) -
     input.changeFeeCents

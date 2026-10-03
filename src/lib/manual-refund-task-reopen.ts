@@ -3,7 +3,7 @@ import "server-only";
 import { BookingStatus, ManualRefundTaskStatus } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
-import { refundableCashNetOfOpenEditRefunds } from "@/lib/edit-refund-hand-back";
+import { refundableCashNetOfOpenHandBacks } from "@/lib/edit-refund-hand-back";
 import {
   EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE,
   isEditRefundHandBackTask,
@@ -228,7 +228,7 @@ export async function reopenManualRefundTask({
     // under lock(1), which every edit, acceptance and paid cancel also holds.
     if (
       isEditRefundHandBackTask(task) &&
-      (task.amountCents ?? 0) > (await refundableCashNetOfOpenEditRefunds(tx, task.payment))
+      (task.amountCents ?? 0) > (await refundableCashNetOfOpenHandBacks(tx, task.payment))
     ) {
       throw new ManualBookingPaymentError(REOPEN_EDIT_REFUND_EXCEEDS_CASH_MESSAGE, 409);
     }

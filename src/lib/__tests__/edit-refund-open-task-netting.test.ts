@@ -20,8 +20,8 @@ import {
 } from "@/lib/booking-modify-settlement";
 import { requireCalendarDate } from "@/lib/club-time";
 import {
-  openEditRefundHandBackCents,
-  refundableCashNetOfOpenEditRefunds,
+  openNonCancellationHandBackCents,
+  refundableCashNetOfOpenHandBacks,
 } from "@/lib/edit-refund-hand-back";
 import { paidCancellationMoney } from "@/lib/paid-cancellation-money";
 import { calculateCancellationPreview } from "@/lib/policies/booking-route-decisions";
@@ -67,7 +67,7 @@ function paidBooking(finalPriceCents: number, payment = ibPayment()) {
 describe("the money already promised back by hand", () => {
   it("is the sum of the payment's OPEN edit refund hand-backs, by kind and key prefix", async () => {
     const db = store(20000);
-    expect(await openEditRefundHandBackCents(db as never, "pay-1")).toBe(20000);
+    expect(await openNonCancellationHandBackCents(db as never, "pay-1")).toBe(20000);
     expect(db.manualRefundTask.aggregate).toHaveBeenCalledWith({
       where: {
         paymentId: "pay-1",
@@ -81,16 +81,16 @@ describe("the money already promised back by hand", () => {
 
   it("is zero with no payment, and with no task on file", async () => {
     const db = store(null);
-    expect(await openEditRefundHandBackCents(db as never, null)).toBe(0);
+    expect(await openNonCancellationHandBackCents(db as never, null)).toBe(0);
     expect(db.manualRefundTask.aggregate).not.toHaveBeenCalled();
-    expect(await openEditRefundHandBackCents(db as never, "pay-1")).toBe(0);
+    expect(await openNonCancellationHandBackCents(db as never, "pay-1")).toBe(0);
   });
 
   it("comes off the refundable cash, never below zero", async () => {
-    expect(await refundableCashNetOfOpenEditRefunds(store(20000) as never, ibPayment())).toBe(10000);
-    expect(await refundableCashNetOfOpenEditRefunds(store(40000) as never, ibPayment())).toBe(0);
+    expect(await refundableCashNetOfOpenHandBacks(store(20000) as never, ibPayment())).toBe(10000);
+    expect(await refundableCashNetOfOpenHandBacks(store(40000) as never, ibPayment())).toBe(0);
     expect(
-      await refundableCashNetOfOpenEditRefunds(store(5000) as never, ibPayment({ refundedAmountCents: 10000 })),
+      await refundableCashNetOfOpenHandBacks(store(5000) as never, ibPayment({ refundedAmountCents: 10000 })),
     ).toBe(15000);
   });
 });
@@ -142,7 +142,7 @@ describe("a cancellation after an open task refunds or credits only the rest (sc
   it("the executed cancel's refundable base is $150, not $200", () => {
     const money = paidCancellationMoney({
       payment,
-      openEditRefundHandBackCents: 5000,
+      openNonCancellationHandBackCents: 5000,
       finalPriceCents: 25000,
       appliedCreditCents: 10000,
       restoresToMemberLedger: true,
@@ -159,7 +159,7 @@ describe("a cancellation after an open task refunds or credits only the rest (sc
   it("the preview a member sees agrees", () => {
     const preview = calculateCancellationPreview({
       payment,
-      openEditRefundHandBackCents: 5000,
+      openNonCancellationHandBackCents: 5000,
       finalPriceCents: 25000,
       checkIn: new Date("2026-08-01T00:00:00.000Z"),
       policyRules: FULL_REFUND,

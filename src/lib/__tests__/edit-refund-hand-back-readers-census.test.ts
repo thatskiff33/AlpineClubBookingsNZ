@@ -4,10 +4,10 @@
  * selects a CANCELLATION's hand-backs by kind alone would count an edit's as
  * one (the repair tool's late-cash evidence, the organisation hand-back's
  * duplicate check). Every production read that filters on that kind must also
- * spread `NOT_EDIT_REFUND_HAND_BACK_WHERE`, the one spelling of the exclusion.
+ * spread `NOT_NON_CANCELLATION_HAND_BACK_WHERE`, the one spelling of the exclusion.
  *
- * A reader OF the edit hand-backs (`openEditRefundHandBackCents`) spreads the
- * positive `EDIT_REFUND_HAND_BACK_WHERE` instead, so it names no kind here.
+ * A reader OF the edit hand-backs (`openNonCancellationHandBackCents`) spreads the
+ * positive `NON_CANCELLATION_HAND_BACK_WHERE` instead, so it names no kind here.
  *
  * Reads the source from disk: no import edge reaches these files.
  */
@@ -50,7 +50,7 @@ describe("INV-PAY-114: a cancellation hand-back reader excludes an edit's refund
     for (const call of readCalls(source)) {
       if (!call.includes("CANCELLED_BOOKING_HAND_BACK")) continue;
       readersByKind += 1;
-      if (!call.includes("...NOT_EDIT_REFUND_HAND_BACK_WHERE")) {
+      if (!call.includes("...NOT_NON_CANCELLATION_HAND_BACK_WHERE")) {
         offenders.push(`${path.relative(ROOT, file)}: ${call.slice(0, 80)}`);
       }
     }
@@ -61,6 +61,6 @@ describe("INV-PAY-114: a cancellation hand-back reader excludes an edit's refund
   });
 
   it("every one spreads the exclusion", () => {
-    expect(offenders, "INV-PAY-114: spread NOT_EDIT_REFUND_HAND_BACK_WHERE beside the kind").toEqual([]);
+    expect(offenders, "INV-PAY-114: spread NOT_NON_CANCELLATION_HAND_BACK_WHERE beside the kind").toEqual([]);
   });
 });

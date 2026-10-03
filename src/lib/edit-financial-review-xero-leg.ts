@@ -108,7 +108,7 @@ export async function dispatchEditReviewXeroSettlement({
   hasIssuedXeroInvoice,
   bookingPaymentStatus,
   cancellationHandBackInvoiceId,
-  editRefundHandBack,
+  nonCancellationHandBack,
   additionalPaymentIntentId,
   format,
 }: {
@@ -119,7 +119,7 @@ export async function dispatchEditReviewXeroSettlement({
    * completion sends Xero nothing more - a second note would correct the same
    * money twice.
    */
-  editRefundHandBack: boolean;
+  nonCancellationHandBack: boolean;
   bookingId: string;
   taskId: string;
   /**
@@ -165,7 +165,7 @@ export async function dispatchEditReviewXeroSettlement({
    * Best-effort and after the commit, matching every other caller: a Xero outage
    * must not undo a completion whose money has already moved.
    */
-  if (editRefundHandBack) return;
+  if (nonCancellationHandBack) return;
   const isCharge = route?.kind === "additional-charge";
   // Captured outside the dispatch closure: `isCharge` is a boolean and does not
   // narrow `route` inside a `.then`.

@@ -11,7 +11,7 @@ import {
 } from "@/lib/booking-payment-state";
 import {
   editRefundHandBackOccurrenceKey,
-  OPEN_EDIT_REFUND_HAND_BACKS_SELECT,
+  OPEN_NON_CANCELLATION_HAND_BACKS_SELECT,
 } from "@/lib/manual-refund-task-settlement-rules";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 
@@ -96,7 +96,7 @@ export async function raiseEditRefundHandBackIfOwed(
  * aggregate `ManualRefundTask`. A transaction under the caller's locks, or the
  * pooled client for an advisory quote that holds none.
  */
-export type OpenEditRefundHandBackDb = Pick<PrismaClient, "manualRefundTask">;
+export type OpenNonCancellationHandBackDb = Pick<PrismaClient, "manualRefundTask">;
 
 /**
  * #3827 (`INV-PAY-114`): MONEY ALREADY PROMISED BACK, NOT YET SENT.
@@ -111,13 +111,13 @@ export type OpenEditRefundHandBackDb = Pick<PrismaClient, "manualRefundTask">;
  * one has moved `refundedAmountCents` and drops out here as it does; a dismissed
  * one was never sent, so its money is refundable again.
  */
-export async function openEditRefundHandBackCents(
-  db: OpenEditRefundHandBackDb,
+export async function openNonCancellationHandBackCents(
+  db: OpenNonCancellationHandBackDb,
   paymentId: string | null | undefined,
 ): Promise<number> {
   if (!paymentId) return 0;
   const open = await db.manualRefundTask.aggregate({
-    where: { paymentId, ...OPEN_EDIT_REFUND_HAND_BACKS_SELECT.where },
+    where: { paymentId, ...OPEN_NON_CANCELLATION_HAND_BACKS_SELECT.where },
     _sum: { amountCents: true },
   });
   return open._sum.amountCents ?? 0;
@@ -132,13 +132,13 @@ export async function openEditRefundHandBackCents(
  * raise of such a task also holds, so no task can appear between this read and
  * the caller's own raise.
  */
-export async function refundableCashNetOfOpenEditRefunds(
-  db: OpenEditRefundHandBackDb,
+export async function refundableCashNetOfOpenHandBacks(
+  db: OpenNonCancellationHandBackDb,
   payment: (BookingPaymentState & { id: string }) | null | undefined,
 ): Promise<number> {
   if (getRemainingRefundableCents(payment) === 0 || !payment) return 0;
   return getRemainingRefundableCentsNetOf(
     payment,
-    await openEditRefundHandBackCents(db, payment.id),
+    await openNonCancellationHandBackCents(db, payment.id),
   );
 }

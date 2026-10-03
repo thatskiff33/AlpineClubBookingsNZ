@@ -158,7 +158,7 @@ export async function resolveManualRefundTask(
     // completion moves `refundedAmountCents` and closes the task in one commit,
     // and every edit, acceptance and paid cancel reads those two separately to
     // size a refund net of what is already promised back
-    // (`refundableCashNetOfOpenEditRefunds`). Under `lock(1)` the completion
+    // (`refundableCashNetOfOpenHandBacks`). Under `lock(1)` the completion
     // cannot commit between the two reads, which would count the same money
     // as neither refunded nor promised. Its occurrence key, like its kind, is
     // written once at creation and never again.
@@ -628,7 +628,7 @@ export async function resolveManualRefundTask(
        * invoice. The ONE fence: the dispatch returns before reading anything
        * else, the cancellation invoice above included.
        */
-      editRefundHandBack: isEditRefundHandBackTask(task),
+      nonCancellationHandBack: isEditRefundHandBackTask(task),
       status:
         resolution === "completed"
           ? ManualRefundTaskStatus.COMPLETED
@@ -646,7 +646,7 @@ export async function resolveManualRefundTask(
       reason: "manual_refund_completed",
       // #3827 (`INV-PAY-114`): an edit's refund, on a live booking - marked so
       // the narrative never reads it as a later cancellation's settlement.
-      ...(result.editRefundHandBack
+      ...(result.nonCancellationHandBack
         ? { snapshot: editRefundHandBackCompletedSnapshot(result.taskId) }
         : {}),
     });
@@ -670,7 +670,7 @@ export async function resolveManualRefundTask(
       hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
       bookingPaymentStatus: result.bookingPaymentStatus,
       cancellationHandBackInvoiceId: result.cancellationHandBackInvoiceId,
-      editRefundHandBack: result.editRefundHandBack,
+      nonCancellationHandBack: result.nonCancellationHandBack,
       format,
     });
 

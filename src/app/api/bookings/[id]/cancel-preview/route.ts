@@ -9,8 +9,8 @@ import { calculateCancellationPreview } from "@/lib/policies/booking-route-decis
 import { clubTime } from "@/lib/club-time/server";
 import { paymentEligibleForPaidCancelPath } from "@/lib/booking-cancel";
 import {
-  OPEN_EDIT_REFUND_HAND_BACKS_SELECT,
-  sumOpenEditRefundHandBackCents,
+  OPEN_NON_CANCELLATION_HAND_BACKS_SELECT,
+  sumOpenNonCancellationHandBackCents,
 } from "@/lib/manual-refund-task-settlement-rules";
 import { memberCancelRefusal } from "@/lib/booking-cancel-eligibility";
 import logger from "@/lib/logger";
@@ -52,7 +52,7 @@ export async function GET(
       // promised. Stated limit: Prisma may still issue the relation as a
       // separate statement under its relation-load strategy. The preview is
       // advisory; the cancel recomputes both under `lock(1)`.
-      include: { payment: { include: { manualRefundTasks: OPEN_EDIT_REFUND_HAND_BACKS_SELECT } } },
+      include: { payment: { include: { manualRefundTasks: OPEN_NON_CANCELLATION_HAND_BACKS_SELECT } } },
     });
 
     if (!booking) {
@@ -157,7 +157,7 @@ export async function GET(
         ? { ...booking.payment, amountCents: partPayment.paidCents, refundedAmountCents: 0 }
         : booking.payment,
       // #3827 (`INV-PAY-114`): cash an earlier edit already promised back by hand.
-      openEditRefundHandBackCents: sumOpenEditRefundHandBackCents(booking.payment.manualRefundTasks),
+      openNonCancellationHandBackCents: sumOpenNonCancellationHandBackCents(booking.payment.manualRefundTasks),
       finalPriceCents: booking.finalPriceCents,
       checkIn: booking.checkIn,
       policyRules: policy,

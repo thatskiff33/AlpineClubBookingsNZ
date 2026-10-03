@@ -27,7 +27,7 @@ export type PaidCancellationMoney = {
   /**
    * Money taken for the booking, net of earlier refunds and of edit refunds
    * already promised back by hand (`amountCents - refundedAmountCents -
-   * openEditRefundHandBackCents`, `INV-PAY-114`).
+   * openNonCancellationHandBackCents`, `INV-PAY-114`).
    */
   paidAmountCents: number;
   /** The slice the tier applies to: paid, capped at price plus change fee, less the change fee. */
@@ -74,7 +74,7 @@ export function cancellationKeptCents({
 
 export function paidCancellationMoney({
   payment,
-  openEditRefundHandBackCents,
+  openNonCancellationHandBackCents,
   finalPriceCents,
   appliedCreditCents,
   restoresToMemberLedger,
@@ -89,11 +89,11 @@ export function paidCancellationMoney({
     creditAppliedCents: number;
   };
   /**
-   * The payment's open edit refund hand-backs (`openEditRefundHandBackCents`,
+   * The payment's open edit refund hand-backs (`openNonCancellationHandBackCents`,
    * #3827 `INV-PAY-114`), read under the cancel's locks: cash promised back on an
    * earlier edit that this cancellation must not refund or credit a second time.
    */
-  openEditRefundHandBackCents: number;
+  openNonCancellationHandBackCents: number;
   finalPriceCents: number;
   /** The credit the booking's applied rows actually hold (`deriveBookingAppliedCreditCents`). */
   appliedCreditCents: number;
@@ -104,10 +104,10 @@ export function paidCancellationMoney({
   refundMethod: "card" | "credit";
 }): PaidCancellationMoney {
   const paidAmountCents =
-    payment.amountCents - payment.refundedAmountCents - openEditRefundHandBackCents;
+    payment.amountCents - payment.refundedAmountCents - openNonCancellationHandBackCents;
   const refundableBaseCents = cancelRefundableBaseCents({
     ...payment,
-    openEditRefundHandBackCents,
+    openNonCancellationHandBackCents,
     finalPriceCents,
   });
   const creditToRestoreCents =

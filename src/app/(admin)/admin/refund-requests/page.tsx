@@ -29,7 +29,7 @@ import {
 } from "@/hooks/use-admin-area-edit-access"
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice"
 import { getCancellationSettlementBreakdown } from "@/lib/payment-status-display"
-import { refundCeilingNetOfOpenEditRefunds } from "@/lib/manual-refund-task-settlement-rules"
+import { refundCeilingNetOfOpenHandBacks } from "@/lib/manual-refund-task-settlement-rules"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { useClubTime } from "@/components/club-time-provider"
 import { parseInstant, type BoundClubTime, type ClubDateFormat } from "@/lib/club-time"
@@ -381,7 +381,7 @@ export default function RefundRequestsPage() {
     // of the edit refunds still promised back (`INV-PAY-114`) - and there is
     // an ELSE: a request whose booking has no captured payment used to leave
     // the amount prefilled for the request viewed before it (#2932 review).
-    const max = refundCeilingNetOfOpenEditRefunds(req.booking.payment)
+    const max = refundCeilingNetOfOpenHandBacks(req.booking.payment)
     const requested = req.requestedAmountCents
     setApprovedAmount(max > 0 ? formatCentsPlain(Math.min(requested || max, max)) : "")
   }
@@ -467,7 +467,7 @@ export default function RefundRequestsPage() {
                         req.booking.creditsFromCancellation
                       )
                     : null
-                  const maxRefundable = refundCeilingNetOfOpenEditRefunds(payment)
+                  const maxRefundable = refundCeilingNetOfOpenHandBacks(payment)
                   const isReviewing = reviewingRefundId === req.id
 
                   return (

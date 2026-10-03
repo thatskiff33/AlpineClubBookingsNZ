@@ -84,7 +84,7 @@ export function isEditRefundHandBackTask(task: {
  * #3827 (`INV-PAY-114`): AN EDIT REFUND HAND-BACK ON A CANCELLED BOOKING IS
  * SETTLED BY PAYING IT, NEVER BY CHANGING ITS STATE THE OTHER WAY. A paid
  * cancellation sizes its refund and the club's kept figure from the cash net of
- * the edit refunds still OPEN (`refundableCashNetOfOpenEditRefunds`): an open
+ * the edit refunds still OPEN (`refundableCashNetOfOpenHandBacks`): an open
  * one is money the cancellation counted as going back, a dismissed one money it
  * counted as never owed. Dismissing the first, or reopening the second, after
  * the cancel would leave the cancellation's kept figure and ledger lines saying
@@ -103,7 +103,7 @@ export const EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE =
  * readers that select a CANCELLATION's hand-backs by kind and must not count an
  * edit's. Spread into a `ManualRefundTask` where clause beside the kind.
  */
-export const NOT_EDIT_REFUND_HAND_BACK_WHERE = {
+export const NOT_NON_CANCELLATION_HAND_BACK_WHERE = {
   OR: [
     { occurrenceKey: null },
     { NOT: { occurrenceKey: { startsWith: EDIT_REFUND_HAND_BACK_KEY_PREFIX } } },
@@ -113,10 +113,10 @@ export const NOT_EDIT_REFUND_HAND_BACK_WHERE = {
 /**
  * #3827 (`INV-PAY-114`): the POSITIVE form - the edit refund hand-backs
  * themselves, for a reader that sizes money already promised back by hand
- * (`openEditRefundHandBackCents`). The kind and the key prefix together, as
+ * (`openNonCancellationHandBackCents`). The kind and the key prefix together, as
  * `isEditRefundHandBackTask` asks them.
  */
-export const EDIT_REFUND_HAND_BACK_WHERE = {
+export const NON_CANCELLATION_HAND_BACK_WHERE = {
   kind: "CANCELLED_BOOKING_HAND_BACK" satisfies ManualRefundTaskKind,
   occurrenceKey: { startsWith: EDIT_REFUND_HAND_BACK_KEY_PREFIX },
 } as const;
@@ -124,17 +124,17 @@ export const EDIT_REFUND_HAND_BACK_WHERE = {
 /**
  * #3827 (`INV-PAY-114`): the OPEN edit refund hand-backs on a payment, as a
  * relation fragment for a read that loads the payment anyway (the booking
- * page, the refund-appeal queue). Paired with `sumOpenEditRefundHandBackCents`
+ * page, the refund-appeal queue). Paired with `sumOpenNonCancellationHandBackCents`
  * and `getRemainingRefundableCentsNetOf`, it gives a screen the same ceiling
- * the server's `refundableCashNetOfOpenEditRefunds` enforces.
+ * the server's `refundableCashNetOfOpenHandBacks` enforces.
  */
-export const OPEN_EDIT_REFUND_HAND_BACKS_SELECT = {
-  where: { status: "OPEN", ...EDIT_REFUND_HAND_BACK_WHERE },
+export const OPEN_NON_CANCELLATION_HAND_BACKS_SELECT = {
+  where: { status: "OPEN", ...NON_CANCELLATION_HAND_BACK_WHERE },
   select: { amountCents: true },
 } as const;
 
 /** The money those rows promise back, in cents. Unpriced rows count as zero. */
-export function sumOpenEditRefundHandBackCents(
+export function sumOpenNonCancellationHandBackCents(
   tasks: readonly { amountCents: number | null }[] | null | undefined,
 ): number {
   return (tasks ?? []).reduce((sum, task) => sum + (task.amountCents ?? 0), 0);
@@ -144,7 +144,7 @@ export function sumOpenEditRefundHandBackCents(
  * The refund ceiling a screen shows from a payment loaded with that fragment:
  * the remaining refundable cash less those rows (`INV-PAY-114`).
  */
-export function refundCeilingNetOfOpenEditRefunds(
+export function refundCeilingNetOfOpenHandBacks(
   payment:
     | (BookingPaymentState & { manualRefundTasks?: readonly { amountCents: number | null }[] })
     | null
@@ -152,7 +152,7 @@ export function refundCeilingNetOfOpenEditRefunds(
 ): number {
   return getRemainingRefundableCentsNetOf(
     payment,
-    sumOpenEditRefundHandBackCents(payment?.manualRefundTasks),
+    sumOpenNonCancellationHandBackCents(payment?.manualRefundTasks),
   );
 }
 
@@ -177,7 +177,7 @@ export function editRefundHandBackCompletedSnapshot(manualRefundTaskId: string):
 }
 
 /** Is this booking event an edit refund hand-back's completion? */
-export function isEditRefundHandBackCompletedEvent(event: { type: string; snapshot: unknown }): boolean {
+export function isNonCancellationHandBackCompletedEvent(event: { type: string; snapshot: unknown }): boolean {
   return (
     event.type === "REFUNDED" &&
     typeof event.snapshot === "object" &&

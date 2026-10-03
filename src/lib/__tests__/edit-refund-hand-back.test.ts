@@ -14,7 +14,7 @@ import {
   EDIT_REFUND_HAND_BACK_KEY_PREFIX,
   editRefundHandBackOccurrenceKey,
   isEditRefundHandBackTask,
-  NOT_EDIT_REFUND_HAND_BACK_WHERE,
+  NOT_NON_CANCELLATION_HAND_BACK_WHERE,
 } from "@/lib/manual-refund-task-settlement-rules";
 import { bookingModifiedRefundSentence } from "@/lib/booking-modified-email-copy";
 
@@ -92,7 +92,7 @@ describe("telling an edit refund hand-back from a cancellation's (INV-PAY-114)",
   });
 
   it("the query fragment keeps a cancellation's (no key) and drops an edit's", () => {
-    expect(NOT_EDIT_REFUND_HAND_BACK_WHERE).toEqual({
+    expect(NOT_NON_CANCELLATION_HAND_BACK_WHERE).toEqual({
       OR: [
         { occurrenceKey: null },
         { NOT: { occurrenceKey: { startsWith: EDIT_REFUND_HAND_BACK_KEY_PREFIX } } },

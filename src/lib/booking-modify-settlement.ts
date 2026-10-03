@@ -47,8 +47,8 @@ import {
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import {
-  refundableCashNetOfOpenEditRefunds,
-  type OpenEditRefundHandBackDb,
+  refundableCashNetOfOpenHandBacks,
+  type OpenNonCancellationHandBackDb,
 } from "@/lib/edit-refund-hand-back";
 
 export type BookingModificationSettlementOptions = {
@@ -113,7 +113,7 @@ export async function calculateModificationSettlementOptions({
    * Also reads the payment's OPEN edit refund hand-backs (#3827,
    * `INV-PAY-114`), so a reduction is sized off cash not already promised back.
    */
-  db: CancellationPolicyDb & OpenEditRefundHandBackDb;
+  db: CancellationPolicyDb & OpenNonCancellationHandBackDb;
   /**
    * The club's own calendar day (`INV-CONFIG-002`), resolved outside this
    * transaction. It feeds `daysUntilDate` below, which is the refund-tier
@@ -125,7 +125,7 @@ export async function calculateModificationSettlementOptions({
   const basisAmountCents = settlementBasisCents(
     booking,
     netChargeCents,
-    await refundableCashNetOfOpenEditRefunds(db, booking.payment),
+    await refundableCashNetOfOpenHandBacks(db, booking.payment),
   );
   if (basisAmountCents === null) return null;
 
@@ -157,7 +157,7 @@ export async function calculateModificationSettlementOptions({
  * policy-tiered options above and the untiered ones below.
  *
  * `refundableCashCents` is REQUIRED and is
- * `refundableCashNetOfOpenEditRefunds` (#3827, `INV-PAY-114`): the captured
+ * `refundableCashNetOfOpenHandBacks` (#3827, `INV-PAY-114`): the captured
  * cash not yet refunded AND not already promised back by an open edit refund
  * hand-back.
  */
@@ -188,7 +188,7 @@ export function calculateFullReductionSettlementOptions({
 }: {
   booking: Pick<LoadedBookingForModify, "checkIn" | "status" | "payment">;
   netChargeCents: number;
-  /** `refundableCashNetOfOpenEditRefunds`, read by the caller under its locks (`INV-PAY-114`). */
+  /** `refundableCashNetOfOpenHandBacks`, read by the caller under its locks (`INV-PAY-114`). */
   refundableCashCents: number;
   todayAtClub: CalendarDate;
 }): BookingModificationSettlementOptions | null {
@@ -277,7 +277,7 @@ export async function applyPaymentAdjustments(
     hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
   // #3827 (`INV-PAY-114`): net of edit refunds already promised back by hand.
-  const remainingRefundableCents = await refundableCashNetOfOpenEditRefunds(tx, booking.payment);
+  const remainingRefundableCents = await refundableCashNetOfOpenHandBacks(tx, booking.payment);
 
   const netAmountCents = priceDiffCents + changeFeeCents;
   const selectedSettlement = resolveSelectedSettlementAmount({

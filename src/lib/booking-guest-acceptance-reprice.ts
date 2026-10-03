@@ -48,7 +48,7 @@ import { sendBookingModifiedEmail } from "@/lib/email/booking";
 import {
   editRefundGoesBackByHand,
   raiseEditRefundHandBackIfOwed,
-  refundableCashNetOfOpenEditRefunds,
+  refundableCashNetOfOpenHandBacks,
 } from "@/lib/edit-refund-hand-back";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import logger from "@/lib/logger";
@@ -545,7 +545,7 @@ async function fullReductionReturnRoute(
     ? calculateFullReductionSettlementOptions({
         booking: loaded,
         netChargeCents: priceDiffCents,
-        refundableCashCents: await refundableCashNetOfOpenEditRefunds(tx, booking.payment),
+        refundableCashCents: await refundableCashNetOfOpenHandBacks(tx, booking.payment),
         todayAtClub,
       })
     : null;

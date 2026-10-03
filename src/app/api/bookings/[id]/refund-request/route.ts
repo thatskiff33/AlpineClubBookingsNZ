@@ -7,7 +7,7 @@ import { z } from "zod";
 import { logAudit } from "@/lib/audit";
 import { sendAdminRefundRequestAlert } from "@/lib/email";
 import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
-import { refundableCashNetOfOpenEditRefunds } from "@/lib/edit-refund-hand-back";
+import { refundableCashNetOfOpenHandBacks } from "@/lib/edit-refund-hand-back";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { deletedBookingRefusalResponse } from "@/lib/deleted-booking-refusal";
 import { clubFormat } from "@/lib/club-format-server";
@@ -151,7 +151,7 @@ export async function POST(
   // transfer and not yet sent - the same figure the approval caps at. Advisory
   // here and read without a lock: an appeal moves no money, and the approval
   // re-reads both under `lock(1)` before anything is approved.
-  const maxRefundable = await refundableCashNetOfOpenEditRefunds(prisma, booking.payment);
+  const maxRefundable = await refundableCashNetOfOpenHandBacks(prisma, booking.payment);
   if (maxRefundable <= 0) {
     return NextResponse.json(
       {

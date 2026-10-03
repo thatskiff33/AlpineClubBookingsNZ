@@ -18,7 +18,7 @@ import {
   composeOptionalEmailLine,
 } from "@/lib/email-message-notes";
 import logger from "@/lib/logger";
-import { refundableCashNetOfOpenEditRefunds } from "@/lib/edit-refund-hand-back";
+import { refundableCashNetOfOpenHandBacks } from "@/lib/edit-refund-hand-back";
 import {
   planStripeRefundAllocation,
   refundPaymentTransactions,
@@ -126,7 +126,7 @@ export async function PUT(
         where: { id: payment.id },
         select: { id: true, status: true, amountCents: true, refundedAmountCents: true },
       });
-      const maxRefundable = await refundableCashNetOfOpenEditRefunds(tx, lockedPayment);
+      const maxRefundable = await refundableCashNetOfOpenHandBacks(tx, lockedPayment);
       if (approvedAmountCents > maxRefundable) {
         return { kind: "exceeds" as const, maxRefundable };
       }

@@ -1735,7 +1735,7 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     edit.
   - **Kind `CANCELLED_BOOKING_HAND_BACK`, marked by that key**, reused (as
     #3639 and #3643 do) so the previous app version reads it as a hand-back.
-    `isEditRefundHandBackTask` and `NOT_EDIT_REFUND_HAND_BACK_WHERE`
+    `isEditRefundHandBackTask` and `NOT_NON_CANCELLATION_HAND_BACK_WHERE`
     (`manual-refund-task-settlement-rules.ts`) are the one spelling; every
     reader selecting a cancellation's hand-backs by kind spreads the
     exclusion (`edit-refund-hand-back-readers-census.test.ts`).
@@ -1746,7 +1746,7 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     cancellation's. It queues NO Xero document: the edit's credit note stands.
   - **Promised cash is not refundable twice.** Until it closes, later edits,
     acceptances, paid cancels and refund appeals size refunds off captured
-    cash less the open tasks (`refundableCashNetOfOpenEditRefunds`), and a
+    cash less the open tasks (`refundableCashNetOfOpenHandBacks`), and a
     reopen is refused past that cash. Completing one, or approving an appeal,
     takes `lock(1)`. Once the booking is cancelled it is only paid: the
     cancel counted it.

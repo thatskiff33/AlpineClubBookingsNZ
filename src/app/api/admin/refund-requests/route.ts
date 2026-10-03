@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
-import { OPEN_EDIT_REFUND_HAND_BACKS_SELECT } from "@/lib/manual-refund-task-settlement-rules";
+import { OPEN_NON_CANCELLATION_HAND_BACKS_SELECT } from "@/lib/manual-refund-task-settlement-rules";
 
 const querySchema = z.object({
   status: z.enum(["PENDING", "APPROVED", "REJECTED", "ALL"]).optional().default("PENDING"),
@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
                 amountCents: true,
                 refundedAmountCents: true,
                 stripePaymentIntentId: true,
-                manualRefundTasks: OPEN_EDIT_REFUND_HAND_BACKS_SELECT,
+                manualRefundTasks: OPEN_NON_CANCELLATION_HAND_BACKS_SELECT,
               },
             },
           },

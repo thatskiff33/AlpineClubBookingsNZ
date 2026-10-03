@@ -16,7 +16,7 @@
  * import it without pulling the database client into its bundle.
  */
 import { isDuplicateCaptureRefundEvent } from "@/lib/duplicate-capture-refund-event";
-import { isEditRefundHandBackCompletedEvent } from "@/lib/manual-refund-task-settlement-rules";
+import { isNonCancellationHandBackCompletedEvent } from "@/lib/manual-refund-task-settlement-rules";
 import { isSupersededAdditionalRefundEvent } from "@/lib/superseded-additional-refund-event";
 
 type RefundEvent = Parameters<typeof isDuplicateCaptureRefundEvent>[0] &
@@ -26,6 +26,6 @@ export function isRefundOutsideBookingSettlement(event: RefundEvent): boolean {
   return (
     isDuplicateCaptureRefundEvent(event) ||
     isSupersededAdditionalRefundEvent(event) ||
-    isEditRefundHandBackCompletedEvent(event)
+    isNonCancellationHandBackCompletedEvent(event)
   );
 }
