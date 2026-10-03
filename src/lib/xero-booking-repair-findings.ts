@@ -15,7 +15,7 @@ import type {
 } from "./xero-booking-repair-types";
 import { buildMemberName } from "./xero-booking-repair-analysis";
 import {
-  getOperationQueueTypeHint,
+  isAdmissibleRepairOperation,
   isSuccessfulXeroOperation,
   readStoredXeroAmountCents,
   toIsoDate,
@@ -195,7 +195,7 @@ function collectXeroAmountEvidence(params: {
       // #1427: an op of a DIFFERENT queueType is another money object's
       // ledger (e.g. an account-credit note beside the invoice-applied
       // note) — it must not pollute this object's evidence.
-      !operationQueueTypeCompatible(operation, params.payloadQueueType)
+      !isAdmissibleRepairOperation(operation, params.payloadQueueType)
     ) {
       continue;
     }
@@ -220,27 +220,6 @@ function collectXeroAmountEvidence(params: {
   }
 
   return evidence;
-}
-
-// #1427: is this operation the queueType we are recovering evidence for? A
-// DIFFERENT queueType belongs to another money object (a modification holds
-// BOTH an invoice-applied credit-note op and an account-credit-note op —
-// same entityType and operationType, different amounts) and must never be
-// read as this object's evidence. getOperationQueueTypeHint resolves the
-// kind across every ledger era (column, payload, correlation-key segment —
-// executors overwrite payloads at dispatch and the #1347 column backfill
-// copied from those overwritten payloads, so the key segment is decisive
-// for pre-column executed rows). Rows carrying no hint at all stay
-// admissible.
-function operationQueueTypeCompatible(
-  operation: XeroOperationRecord,
-  payloadQueueType: string | undefined
-): boolean {
-  if (!payloadQueueType) {
-    return true;
-  }
-  const queueType = getOperationQueueTypeHint(operation);
-  return queueType === null || queueType === payloadQueueType;
 }
 
 // #1427: recover the amount a Xero money object was actually enqueued or
@@ -291,7 +270,7 @@ export function recoverStoredXeroAmountCents(params: {
         (!params.objectId ||
           !operation.xeroObjectId ||
           operation.xeroObjectId === params.objectId) &&
-        operationQueueTypeCompatible(operation, params.payloadQueueType)
+        isAdmissibleRepairOperation(operation, params.payloadQueueType)
     )
     .sort((a, b) => {
       const aExact = params.objectId && a.xeroObjectId === params.objectId ? 0 : 1;

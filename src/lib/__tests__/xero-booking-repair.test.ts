@@ -6652,3 +6652,120 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
     expect(keys).not.toContain("retry:operation_old_resolved");
   });
 });
+
+/**
+ * #3827 review F1 (`INV-PAY-116`): a refund request's OWN note is never "the"
+ * payment's refund note. Before the fix its succeeded create was a candidate,
+ * so the tool proposed (auto-apply) pointing `xeroRefundCreditNoteId` at it -
+ * after which the cancellation's note was absorbed as "already linked" - read
+ * it as a conflict beside the real note, and hid a missing cancellation note.
+ */
+describe("a refund request's own note never answers for the payment's refund note (#3827)", () => {
+  const cancelledInternetBanking = () =>
+    makeBooking({
+      status: "CANCELLED",
+      payment: {
+        ...makeBooking().payment,
+        source: "INTERNET_BANKING",
+        stripePaymentIntentId: null,
+        stripePaymentMethodId: null,
+        stripeCustomerId: null,
+        refundedAmountCents: 10000,
+        status: "REFUNDED",
+      },
+    });
+  const requestNote = (overrides: Record<string, unknown> = {}) =>
+    makeOperation({
+      id: "operation_request_note",
+      localModel: "Payment",
+      localId: "payment_1",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      status: "SUCCEEDED",
+      queueType: "REFUND_CREDIT_NOTE",
+      correlationKey: "payment:payment_1:refund-request-credit-note:rr_1:v1",
+      idempotencyKey: "payment:payment_1:refund-request-credit-note:rr_1:v1",
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: "cn_request",
+      requestPayload: {
+        queueType: "REFUND_CREDIT_NOTE",
+        refundAmountCents: 3000,
+        refundMethod: "internet-banking",
+        refundRequestId: "rr_1",
+      },
+      ...overrides,
+    });
+  const requestLink = paymentLink({
+    id: "link_request_note",
+    xeroObjectType: "CREDIT_NOTE",
+    xeroObjectId: "cn_request",
+    role: "REFUND_REQUEST_CREDIT_NOTE",
+    metadata: { amountCents: 3000, refundRequestId: "rr_1" },
+  });
+  // The request's note may still be read back and settled as itself
+  // (`unsettledRefundNoteRows`); no OTHER action may name it.
+  const actionsNamingRequestNote = (actions: Array<{ type: string }>) =>
+    actions.filter(
+      (action) => action.type !== "SETTLE_REFUND_CREDIT_NOTE" && JSON.stringify(action).includes("cn_request")
+    );
+  const run = async (state: { operations: any[]; links?: any[]; payment?: Record<string, unknown> }) => {
+    const booking = cancelledInternetBanking();
+    Object.assign(booking.payment, state.payment ?? {});
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [booking],
+        links: state.links ?? [requestLink],
+        operations: [makePrimaryInvoiceCreateOperation(), ...state.operations],
+      }),
+      scope: { all: true },
+    });
+    return report.passes[0].bookings[0];
+  };
+
+  it("proposes nothing for the request's note, and reports the cancellation's note missing for review", async () => {
+    const booking = await run({ operations: [requestNote()] });
+    expect(booking.actions.map((action) => action.type)).not.toContain(
+      "SYNC_PAYMENT_REFUND_CREDIT_NOTE_FIELD"
+    );
+    expect(actionsNamingRequestNote(booking.actions)).toEqual([]);
+    expect(booking.findings.map((finding) => finding.summary)).not.toContain(
+      "Refund credit note references conflict across local fields, links, or past operations."
+    );
+    // Not hidden, and not auto-sized: the refunded total holds the request's
+    // refund too, so the cancellation note's amount goes to a person.
+    expect(booking.findings).toContainEqual(
+      expect.objectContaining({
+        code: "MANUAL_REVIEW_REQUIRED",
+        summary: expect.stringContaining("missing Xero refund note amount cannot be derived"),
+      })
+    );
+    expect(booking.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
+  });
+
+  it("is no conflict beside the payment's real refund note", async () => {
+    const booking = await run({
+      operations: [requestNote()],
+      payment: { xeroRefundCreditNoteId: "cn_cancel" },
+      links: [
+        requestLink,
+        paymentLink({
+          id: "link_cancel_note",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_cancel",
+          role: "REFUND_CREDIT_NOTE",
+        }),
+      ],
+    });
+    expect(booking.findings.map((finding) => finding.summary)).not.toContain(
+      "Refund credit note references conflict across local fields, links, or past operations."
+    );
+    expect(booking.actions.map((action) => action.type)).not.toContain(
+      "SYNC_PAYMENT_REFUND_CREDIT_NOTE_FIELD"
+    );
+  });
+
+  it("names a request's row from its key alone when the payload is gone", async () => {
+    const booking = await run({ operations: [requestNote({ requestPayload: null })] });
+    expect(actionsNamingRequestNote(booking.actions)).toEqual([]);
+  });
+});

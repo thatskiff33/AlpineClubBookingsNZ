@@ -13,6 +13,7 @@ import {
   readJsonString,
 } from "./xero-booking-repair-utils";
 import { bookingOwner } from "@/lib/booking-owner";
+import { isRefundRequestNoteOperation } from "@/lib/refund-request-credit-note";
 import { getCancellationCreditCents } from "@/lib/cancellation-settled-money";
 import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
 
@@ -192,8 +193,22 @@ export function getUnpaidCancellationClearingAmountCents(
   });
 }
 
-export function getCashCancellationRefundCandidateCents(booking: BookingRepairRecord) {
+/**
+ * The cash a cancellation's refund note should answer, from the refunded
+ * total, or null when that total holds refunds the tool cannot separate out
+ * (an edit's, or - #3827, `INV-PAY-116` - a refund request's, whose own note is
+ * a separate document). Null sends the arm to manual review, never a
+ * wrong-sized auto-applied note. `paymentOperations` is required so no caller
+ * can size the note without asking.
+ */
+export function getCashCancellationRefundCandidateCents(
+  booking: BookingRepairRecord,
+  paymentOperations: XeroOperationRecord[]
+) {
   if (!booking.payment) {
+    return null;
+  }
+  if (paymentOperations.some(isRefundRequestNoteOperation)) {
     return null;
   }
 

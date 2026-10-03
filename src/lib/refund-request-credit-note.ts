@@ -28,3 +28,23 @@ export function readRefundRequestIdFromPayload(payload: unknown): string | null 
   const value = (payload as Record<string, unknown>).refundRequestId;
   return typeof value === "string" && value.length > 0 ? value : null;
 }
+
+/**
+ * #3827 (`INV-PAY-116`): is this outbox row a refund request's OWN note? Read
+ * from the payload (`refundRequestId`, on the queued and the executed shape)
+ * or, for a row whose payload was lost, the key's `refund-request-credit-note`
+ * segment (`refundRequestCreditNoteKey`; no executor rewrites a key). Every
+ * reader that resolves THE payment's refund note - the booking repair tool,
+ * the failed-operations heuristic - leaves these rows out, so a request's note
+ * is never taken for the cancellation's and its failure is never hidden.
+ */
+export function isRefundRequestNoteOperation(operation: {
+  requestPayload: unknown;
+  correlationKey?: string | null;
+  idempotencyKey?: string | null;
+}): boolean {
+  if (readRefundRequestIdFromPayload(operation.requestPayload) !== null) return true;
+  return [operation.correlationKey, operation.idempotencyKey].some(
+    (key) => typeof key === "string" && key.split(":").includes("refund-request-credit-note")
+  );
+}
