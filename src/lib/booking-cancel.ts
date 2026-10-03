@@ -100,8 +100,8 @@ import {
 // CANCELLED with no refund and no external-provider (Stripe/Xero) work. A strict
 // subset of CANCELLABLE_BOOKING_STATUSES. This is the exact WHERE set for the
 // #1311 status-guarded claim-first: a booking that has left this set under the
-// advisory lock (e.g. a concurrent quote-accept converting AWAITING_REVIEW ->
-// PENDING) must NOT be clobbered to CANCELLED.
+// advisory lock (e.g. a concurrent officer approval converting AWAITING_REVIEW
+// -> PENDING) must NOT be clobbered to CANCELLED.
 const NO_PAYMENT_CANCELLABLE_STATUSES: readonly string[] = [
   "WAITLISTED",
   "WAITLIST_OFFERED",
@@ -640,8 +640,8 @@ async function performBookingCancellation(
     },
       });
       // Race loser / retry: under the lock the booking has left the no-payment
-      // set (a concurrent quote-accept converted it, or another cancel already
-      // claimed it). Do NOT flip status, detach, reconcile, or run any side
+      // set (a concurrent officer approval converted it, or another cancel
+      // already claimed it). Do NOT flip status, detach, reconcile, or run any side
       // effects.
       if (!fresh || !NO_PAYMENT_CANCELLABLE_STATUSES.includes(fresh.status)) {
         return { claimed: false as const };

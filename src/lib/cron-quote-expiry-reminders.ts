@@ -236,8 +236,9 @@ async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
 
         // Re-read under the lock: only act while the request still points at
         // this exact hold and the hold is still an unaccepted AWAITING_REVIEW
-        // row. An accept converts it to PENDING (and the quote to ACCEPTED), so
-        // we must never cancel that live booking.
+        // row. An accept marks the request and quote ACCEPTED and keeps the
+        // hold for officer review (#3415); approval later converts it to
+        // PENDING. We must never cancel either.
         const request = await tx.bookingRequest.findUnique({
           where: { id: quote.bookingRequestId },
           select: { heldBookingId: true, status: true, acceptedQuoteId: true },

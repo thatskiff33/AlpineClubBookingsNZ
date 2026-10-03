@@ -81,7 +81,7 @@ is what CI enforces and this page is the defect.
 
 Many writers do both tiers at once: a Stripe capture claims capacity **and**
 moves money; a date modification reprices/refunds **and** re-checks capacity; a
-quote-accept flips booking status **and** holds a bed. Every such writer:
+request approval converts a held booking **and** claims its beds. Every such writer:
 
 1. takes the **global `lock(1)` FIRST**, then
 2. takes the **per-lodge lock**.
@@ -3658,13 +3658,13 @@ The Stripe capture (`markBookingPaymentSucceeded`), the confirm-pending-guests
 zero-dollar and charge branches, the `charge-saved-method` claim and release
 (#3267), the waitlist-confirm $0 PAID claim, the admin
 return-to-waitlist repair (#2649), the
-switch-to-internet-banking hold, the quote-accept conversion
+switch-to-internet-banking hold, the officer's held-request conversion
 (`approveBookingRequest`), and every booking modification service
 (batch/date/guest-removal) take **`lock(1)` first, then the per-lodge lock**.
 `xero-inbound/invoice-paid-effects.ts` is the in-tree precedent for this
 composition.
 
-Generic quote acceptance pre-reads only the held booking's immutable concrete
+Officer approval of a held generic request pre-reads only the held booking's immutable concrete
 `lodgeId`, then takes global -> that lodge and fully re-reads both request and
 hold. It rejects an explicit request/hold lodge mismatch and carries the same
 concrete lodge into policy and email context. A null request lodge is never

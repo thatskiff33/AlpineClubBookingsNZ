@@ -419,17 +419,18 @@ requester-cancel `CANCELLED`). Because `loadSentQuoteByToken` requires
 (accept / modify / query / cancel) on a still-live link, and the pre-expiry
 reminder cron (which selects only `SENT` quotes) skips the declined request
 instead of nudging it. As defence-in-depth against a request finalised between a
-requester POST's token load and its write, the accept re-arm, the modify/query
-re-status, and the losing-accept capacity revert are each status-guarded with
-`status notIn [DECLINED, CANCELLED]`: a late accept or modify/query `409`s (no
-new booking, Payment, or PaymentLink; no resurrection to
-`MODIFICATION_REQUESTED`/`QUERY_PENDING`), and the revert simply does not
-un-decline the request. The guards still permit a re-arm from
-`CONVERTED`/`APPROVED`, preserving approve's `convertedBookingId` idempotency
-(#1232 double-accept returns the one existing booking). Per-teacher hut-leader records are always created fresh. The held owner is re-validated at conversion:
-if a previously mapped contact is no longer a valid non-login contact by the time
-the requester accepts (login enabled, archived, deactivated, role changed), the
-accept still succeeds — a fresh non-login contact is substituted and both a
+requester POST's token load and its write, acceptance and the modify/query
+re-status each claim the exact `SENT` quote and `QUOTE_SENT` request under the
+global lock (#3415): a late accept or modify/query `409`s (no new booking,
+Payment, or PaymentLink; no resurrection to
+`MODIFICATION_REQUESTED`/`QUERY_PENDING`). Approve's `convertedBookingId`
+idempotency returns the one existing booking (#1232). Per-teacher hut-leader
+records, when the school policy creates them (#3416), are always created fresh.
+The held owner is
+re-validated at officer approval's conversion:
+if a previously mapped contact is no longer a valid non-login contact by then
+(login enabled, archived, deactivated, role changed), the
+approval still succeeds — a fresh non-login contact is substituted and both a
 durable admin-attention audit row (`booking_request.owner_substituted`) and an
 active `admin-owner-substitution` admin email alert (gated by the
 `adminXeroSyncError` preference, F20 residual #2 / #1377) are raised post-commit

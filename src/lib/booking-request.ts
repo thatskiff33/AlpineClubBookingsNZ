@@ -1257,7 +1257,7 @@ export async function priceBookingRequest(input: {
 /**
  * Decline a held/editor booking request (any of
  * DECLINABLE_BOOKING_REQUEST_STATUSES — VERIFIED, PRICED, QUOTED, QUOTE_SENT,
- * QUERY_PENDING, MODIFICATION_REQUESTED), release any live capacity hold, and
+ * ACCEPTED, QUERY_PENDING, MODIFICATION_REQUESTED), release any live capacity hold, and
  * email the requester (#1423 broadened this from VERIFIED/PRICED only).
  */
 export async function declineBookingRequest(input: {
@@ -2219,10 +2219,10 @@ export async function approveBookingRequest(input: {
       }
 
       // Idempotency (#1232 double-charge guard): a prior approve for this
-      // request — a concurrent double-accept, or a retry whose caller re-armed
-      // the request to PRICED after it had already converted (line ~729 of
-      // booking-request-quotes.ts overwrites CONVERTED->PRICED but never clears
-      // convertedBookingId) — already created the booking. Under the advisory
+      // request — a concurrent double-approve, or (before #3415) a requester
+      // accept retry that re-armed a converted request to PRICED without
+      // clearing convertedBookingId; acceptance no longer writes a converted
+      // request — already created the booking. Under the advisory
       // lock we now observe its committed convertedBookingId, so return that
       // booking instead of creating a second one.
       const alreadyConverted = await claimAlreadyConvertedBookingRequest(

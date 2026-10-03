@@ -539,14 +539,17 @@ Cancelling a no-payment booking (`WAITLISTED`, `WAITLIST_OFFERED`,
 `AWAITING_REVIEW`) is likewise status-guarded claim-first under the SAME global
 booking advisory lock (#1311). This path takes no Stripe/Xero call, so the only
 hazard is a state clobber, not a double money-move: a held `AWAITING_REVIEW`
-booking can be converted to `PENDING` by a concurrent quote-accept, which holds
-that lock and re-writes the held booking by id only. The cancel therefore takes
+booking can be converted to `PENDING` by a concurrent officer approval
+(`approveBookingRequest`), which holds that lock and re-writes the held booking
+by id only. The cancel therefore takes
 the same lock, re-reads the status under it, and flips to `CANCELLED` only while
-the status is still one of the three no-payment states; if a concurrent accept
+the status is still one of the three no-payment states; if a concurrent approval
 (or another cancel) has moved it out of that set the loser returns HTTP 409 and
 runs no side effects (no status flip, pointer detach, bed reconcile, audit,
-email, or waitlist re-process), so a just-accepted booking is never clobbered
-back to `CANCELLED`.
+email, or waitlist re-process), so a just-converted booking is never clobbered
+back to `CANCELLED`. Requester acceptance (#3415) keeps the hold
+`AWAITING_REVIEW`; the same under-lock re-read refuses a hold whose request is
+`ACCEPTED`.
 
 The linked provisional-child sweep triggered by a successful parent cancel is
 also claim-first (#1881 residual). A pre-lock `PENDING` child is only a
@@ -561,12 +564,12 @@ under-lock read, but the cancel *dispatches its branch* from an earlier OUTER,
 un-locked read. So the two callers that exist to release a held request — the
 admin **Release hold** route and the decline path — pass a `requireRequestHold`
 flag: if that outer read already shows the hold has left `AWAITING_REVIEW` (e.g.
-a concurrent quote-accept flipped it to `PENDING`), the cancel refuses with HTTP
-409 and takes no side effect, rather than dispatching into the generic `PENDING`
-cancel branch and cancelling the just-accepted booking / revoking its brand-new
-payment links (#1406). The two guards close the race together: the flag covers
-an accept that commits before the outer read, the under-lock re-read covers one
-that commits after it. Callers cancelling a genuine member-created `PENDING`
+a concurrent officer approval converted it to `PENDING`), the cancel refuses with
+HTTP 409 and takes no side effect, rather than dispatching into the generic
+`PENDING` cancel branch and cancelling the just-converted booking / revoking its
+brand-new payment links (#1406). The two guards close the race together: the flag
+covers a conversion that commits before the outer read, the under-lock re-read
+covers one that commits after it. Callers cancelling a genuine member-created `PENDING`
 booking (member self-cancel, account-deletion cleanup) never set the flag and
 are unaffected.
 
@@ -1317,22 +1320,21 @@ Token-link outcomes the requester can see:
 - Accepted quote: a durable read-only confirmation shows the accepted stay and total, including after the original token expires; the officer later approves or declines it.
 - Replaced or requester-cancelled quote: a named terminal response points to the club or the most recent quote.
 - Past expiry: `410` "This quote has expired." with a recover-by-contacting-the-club path.
-- Accept after the lodge fills: the request reverts to `QUOTE_SENT`, the link stays
-  active, and the requester is told which nights are now full.
 - Any action after an admin declined the request (#1423): the decline retired the
   quote (`SENT` -> `SUPERSEDED`), so the link now returns the `409` "This quote is
   no longer active." above for accept / modify / query / cancel alike. In the rare
   case a requester POST loaded the still-`SENT` quote a moment before the
-  retirement committed, the status-guarded re-arm / re-status is the backstop and
-  `409`s ("...has been declined or cancelled."), creating no booking and never
-  resurrecting the request.
+  retirement committed, the exact `SENT`/`QUOTE_SENT` claim under the global lock
+  is the backstop and `409`s, creating no booking and never resurrecting the
+  request (#3415).
 - Accept racing the expiry / hold-release cron (owner-ratified, #1317): harmless.
   The accept and the cron both serialize on the booking advisory lock, so at most
   one side wins; the loser gets a safe conflict response it can retry, the quote
   link stays active, and no double-booking or data loss occurs.
 
-Every requester transition (accept, cancel, modification request, question) and the
-capacity-blocked accept revert is written to AuditLog with `actor: "requester"`. The
+Every requester transition (accept, cancel, modification request, question) is
+written to AuditLog with `actor: "requester"`. Acceptance holds no new beds: the
+quote's `AWAITING_REVIEW` hold already holds them, so it has no capacity revert. The
 parent `BookingRequest` moves NEW -> VERIFIED -> QUOTED -> QUOTE_SENT -> ACCEPTED
 (requester accept), then APPROVED/CONVERTED only after officer review; it may instead move to
 CANCELLED (cancel), MODIFICATION_REQUESTED, or QUERY_PENDING. When an admin

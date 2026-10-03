@@ -132,9 +132,9 @@ file; the checker treats an absent register as "no exceptions, no debt".
 | `INV-OPS-001` | 408 |
 | `INV-HOST-028` | 404 |
 | `INV-HOST-033` | 396 |
-| `INV-ADDPAY-011` | 395 |
 | `INV-REQ-007` | 391 |
 | `INV-MOD-005` | 381 |
+| `INV-ADDPAY-011` | 380 |
 | `INV-CAP-023` | 360 |
 | `INV-PAY-058` | 363 |
 | `INV-LIFE-050` | 359 |

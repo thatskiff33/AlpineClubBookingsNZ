@@ -127,9 +127,11 @@ export async function reconcileCorrectedRequestHold(params: {
       // booking: the requester hears about this when the corrected quote
       // arrives, not as a cancellation notice for beds they never knew about.
       suppressCustomerNotification: true,
-      // A requester accept can convert this hold to a live PENDING booking
-      // between the claim above and here. The opt-in guard makes the shared
-      // cancel path refuse rather than clobber it.
+      // The hold can leave AWAITING_REVIEW between the claim above and here
+      // (an officer Release hold or direct cancel). Requester acceptance never
+      // does: it keeps the hold, and an ACCEPTED request is not correctable
+      // (#3415). The opt-in guard makes the shared cancel path refuse rather
+      // than clobber a hold that has moved on.
       requireRequestHold: true,
     },
   );

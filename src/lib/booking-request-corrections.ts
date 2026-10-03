@@ -170,9 +170,10 @@ import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
  * NEW is excluded because the requester has not confirmed their own email
  * address yet, so there is no one to have asked for the correction; every
  * terminal and converted state is excluded because there is nothing left to
- * correct. That this is the same six states a request can be DECLINED in is a
- * consequence of both rules meaning "live and undecided", not a shared list —
- * so it is written out rather than borrowed.
+ * correct. ACCEPTED is excluded because the requester has agreed the quote:
+ * the officer approves or declines it instead (#3415). Decline therefore takes
+ * these six states plus ACCEPTED — the two lists differ, so this one is
+ * written out rather than borrowed.
  */
 export const CORRECTABLE_BOOKING_REQUEST_STATUSES = [
   BookingRequestStatus.VERIFIED,
