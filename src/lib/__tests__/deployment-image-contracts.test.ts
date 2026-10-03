@@ -1027,6 +1027,10 @@ describe("package manager contract (#3673)", () => {
     );
     expect(deps).toMatch(/^COPY patches \.\/patches\/$/m);
     expect(deps.indexOf("COPY patches")).toBeLessThan(deps.indexOf("pnpm install --frozen-lockfile"));
+    // Git does not track an empty directory, so once the last patch is retired
+    // `COPY patches` would fail on a missing source. The tracked placeholder
+    // keeps the directory, and the image build, whole with no patch in it.
+    expect(readdirSync(path.join(process.cwd(), "patches"))).toContain(".gitkeep");
     expect(dockerfile).not.toMatch(/\bnpm ci\b|package-lock\.json/);
     // npm is used once, to install pnpm, and then removed in the SAME layer, so
     // the builder and migrate images carry pnpm and no npm/npx.

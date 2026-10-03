@@ -24,7 +24,8 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 # The reviewed runtime patches pnpm applies at install (`patchedDependencies` in
 # pnpm-workspace.yaml, #3843). The lockfile records each patch's hash, so the
-# frozen install below fails without them.
+# frozen install below fails without them. `patches/.gitkeep` keeps the
+# directory, and so this COPY, valid when no patch is registered.
 COPY patches ./patches/
 COPY prisma ./prisma/
 COPY prisma.config.ts ./
