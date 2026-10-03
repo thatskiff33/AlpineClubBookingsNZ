@@ -217,6 +217,33 @@ nothing. The price stays as it was until the booking is next edited when:
 - an edit is still under financial review, the booking is waiting for officer
   review or on the waitlist, or the stay has started.
 
+#### How the booker chooses the codes: guest chips
+
+On the booking's review step, on its edit panel, and on Admin → Book on
+Behalf, the booker sees each code they could use as a **chip** (#3492):
+
+- **Their own codes**, as before.
+- **Their guests' codes**, grouped under each guest's name and marked
+  "applies to *name* only". Only a guest member's codes that are assigned to
+  them, active, and allowed at this lodge are offered.
+
+Nothing is applied until the booker presses a chip or types a code. With the
+module on they can add several and change their order with **Move earlier**
+and **Move later** beside each code; every amount on the review step is the
+amount in that order. Editing a booking saves the whole list, in its new
+order. With the module **off**, the chips are still offered but a booking takes
+one code, exactly as before.
+
+**Whose codes are shown is a privacy decision.** A guest's codes appear only
+when the guest is in the booker's family, or is a member from outside the
+family who has already **accepted** their place on the booking. A guest who is
+still pending, or who declined, never shows a chip. So on a new booking only
+family guests' codes appear; a friend's appear on the booking's edit panel once
+they have accepted. The booker sees only each code and what it gives — not the
+description you wrote for it, not how much of it is used. Every lookup is
+written to the audit log as `promo_code.guest_lookup` (see the
+[audit log guide](audit-log.md#guest-promo-code-lookups-3492)).
+
 ## Settings reference
 
 | Setting | What it controls | Default | Notes / constraints |
@@ -268,6 +295,9 @@ That is the intended correction, not a fault.
 | A code gave a guest's nights nothing | The guest is still pending acceptance; no code discounts their nights until they accept | Nothing to do — the codes are applied again when they accept |
 | A guest accepted but the price did not drop | The booking's lower price could not all go back the way it was paid, or the booking was under review, waitlisted or already under way | Edit the booking: the ordinary edit re-prices its codes |
 | "Only one promo code can be used on a booking" | The **Several promo codes on one booking** module is off | Turn it on (Admin → Modules) once the upgrade that added it has fully cut over |
+| A guest's code does not appear as a chip | The guest is from outside the booker's family and has not accepted yet (on a new booking, no outside guest's codes appear at all), or the code is inactive, expired, used up, or not allowed at this lodge | Ask the guest to accept their place; the chip then appears on the booking's edit panel. Check the code's settings otherwise |
+| The booker cannot add a second chip | The **Several promo codes on one booking** module is off, so a booking takes one code | Turn it on (Admin → Modules) once the upgrade that added it has fully cut over |
+| "Too many requests" while choosing codes | The guest-code lookup is limited to 30 a quarter-hour per member | Wait a few minutes; an ordinary booking uses a handful |
 
 ## Related links
 

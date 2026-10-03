@@ -141,6 +141,17 @@ the same provisional-guests note. See
 for the money side, and the
 [booking lifecycle](../STATE_MACHINES.md#booking-lifecycle) for the states.
 
+**Promo codes on the review step.** Any promo codes assigned to you appear as
+chips. So do your **family guests'** codes, grouped under each guest's name and
+marked "applies to *name* only", because a guest's code only discounts that
+guest's nights. Nothing is applied until you press a chip or type a code. If
+your club allows several codes on one booking you can add more than one and
+use **Move earlier** / **Move later** to choose their order — where two codes
+could cover the same night, the earlier one does — and the summary shows one
+line per code. A guest from outside your family only gets their codes offered
+after the booking exists and they have accepted their place; you will then see
+them when you edit the booking. You only ever see a code and what it gives.
+
 ### 4. Pay (or wait for review)
 
 - If money is due and you are paying by card, the **Pay** step takes payment
