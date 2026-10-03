@@ -54,6 +54,7 @@ import {
 } from "@/lib/member-credit";
 import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
 import { prisma } from "@/lib/prisma";
+import { formatCents } from "@/lib/utils";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 
 /**
@@ -354,7 +355,7 @@ export async function repriceBookingAfterGuestAcceptance(
     );
     if (clamp.refundedExcessCents !== returnRoute.amountCents) {
       throw new Error(
-        `INV-MONEY-037 (D-3813-5): a guest's acceptance would return ${clamp.refundedExcessCents} cents of credit for a ${returnRoute.amountCents}-cent reduction on booking ${bookingId} (#3827).`,
+        `INV-MONEY-037 (D-3813-5): a guest's acceptance would return ${formatCents(clamp.refundedExcessCents, format)} of credit for a ${formatCents(returnRoute.amountCents, format)} reduction on booking ${bookingId} (#3827).`,
       );
     }
     if (booking.payment) {
