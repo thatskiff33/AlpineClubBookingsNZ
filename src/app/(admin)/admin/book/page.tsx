@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { BookingCalendar } from "@/components/booking-calendar";
 import { useLodgeCapacitySettingsHref } from "@/components/admin/lodge-capacity-settings-link";
 import { GuestForm, type GuestData } from "@/components/guest-form";
+import { partyNeedsSupervisionJustification } from "@/app/(authenticated)/book/_components/member-guest-preview";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -652,14 +653,10 @@ export default function AdminBookPage() {
     }
   }
 
-  const requiresAdminReviewLocal = (() => {
-    if (guests.length === 0) return false;
-    const hasAdult = guests.some((g) => g.ageTier === "ADULT");
-    const hasMinor = guests.some(
-      (g) => g.ageTier === "YOUTH" || g.ageTier === "CHILD" || g.ageTier === "INFANT",
-    );
-    return hasMinor && !hasAdult;
-  })();
+  // The server's adult-supervision rule (#3770). An officer's add is written
+  // consent-free and CONFIRMED, so every adult on this page counts — the same
+  // answer the server gives an on-behalf create.
+  const requiresAdminReviewLocal = partyNeedsSupervisionJustification(guests);
 
   // Internet Banking is an optional module; only offer it when it's on.
   useEffect(() => {

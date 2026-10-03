@@ -19,6 +19,7 @@ import {
   type CalendarDate,
 } from "@/lib/club-time";
 import { addDaysDateOnly } from "@/lib/date-only";
+import { guestConsentStatus } from "@/lib/member-guest-consent";
 import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import type { GuestNightInput } from "@/lib/booking-guest-stay-ranges";
 import {
@@ -66,7 +67,13 @@ export function resolveAdminReviewFields(args: {
   adminReviewedAt: Date | null;
   blockForReview: boolean;
 } {
-  const flagged = requiresAdultSupervisionReview(args.guests);
+  // The planned party: a cross-family row carries its planned consent (#3770).
+  const flagged = requiresAdultSupervisionReview(
+    args.guests.map((guest) => ({
+      ageTier: guest.ageTier,
+      consentStatus: guestConsentStatus(guest),
+    })),
+  );
   if (!flagged) {
     return {
       requiresAdminReview: false,

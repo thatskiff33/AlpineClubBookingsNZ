@@ -109,6 +109,17 @@ src/lib/config-transfer/import-types.ts text eol=lf diff
 # are already LF, so this only stops Windows re-materialising them as CRLF.
 *.sh text eol=lf
 
+# #3843: the reviewed runtime patches pnpm applies (`patchedDependencies`).
+# pnpm records each patch's hash in pnpm-lock.yaml, and the dependency audit's
+# mitigation record binds the SHA256 of these exact bytes, so a CRLF checkout
+# would fail the frozen install and refuse the mitigation on Windows only.
+# `-whitespace` because a patch's context lines must stay byte-exact, trailing
+# spaces included.
+patches/*.patch text eol=lf -whitespace
+# The dependency-mitigation tests' synthetic copies of those inputs: the fixture
+# record binds their SHA256, so they need the same byte-exact checkout.
+scripts/ci/fixtures/dependency-mitigation/** text eol=lf -whitespace
+
 # The blue/green migration-safety ledger is the fifth instance of the same
 # class, and the one where byte-level trust matters most: every row is parsed by
 # `scripts/check-migration-safety-coverage.sh` and hand-audited, and its whole

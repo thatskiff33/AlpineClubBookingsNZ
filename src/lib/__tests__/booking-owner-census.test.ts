@@ -457,7 +457,7 @@ describe("#3368: the three families stage 4 (#3369) has to answer for", () => {
 
 /** Measured, not counted by hand. Re-measure by running this test. */
 const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
-  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts:228",
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts:230",
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer.ts:38",
   "src/app/(authenticated)/bookings/[id]/page.tsx:201",
   "src/app/(authenticated)/bookings/page.tsx:183",
@@ -473,8 +473,8 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/confirm-draft/route.ts:95",
   "src/app/api/bookings/[id]/confirm-modification-payment/route.ts:69",
   "src/app/api/bookings/[id]/confirm-payment/route.ts:84",
-  "src/app/api/bookings/[id]/exception-requests/route.ts:134",
-  "src/app/api/bookings/[id]/guests/route.ts:342",
+  "src/app/api/bookings/[id]/exception-requests/route.ts:142",
+  "src/app/api/bookings/[id]/guests/route.ts:345",
   "src/app/api/bookings/[id]/modify-quote/route.ts:344",
   "src/app/api/bookings/[id]/notes/route.ts:48",
   "src/app/api/bookings/[id]/refund-request/route.ts:227",
@@ -494,7 +494,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/booking-guest-removal-service.ts:456",
   "src/lib/booking-guest-removal-service.ts:792",
   "src/lib/booking-linked-date-move-service.ts:240",
-  "src/lib/booking-member-night-conflicts.ts:365",
+  "src/lib/booking-member-night-conflicts.ts:369",
   "src/lib/booking-modify-validation.ts:535",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:274",

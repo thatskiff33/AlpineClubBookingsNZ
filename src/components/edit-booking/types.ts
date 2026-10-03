@@ -1,4 +1,4 @@
-import type { AgeTier } from "@prisma/client";
+import type { AgeTier, MemberGuestConsentStatus } from "@prisma/client";
 import type { MinimumStayViolation } from "@/lib/booking-policies";
 import type { AggregatedPolicyExceptions } from "@/lib/booking-policy-exceptions";
 
@@ -23,6 +23,12 @@ export interface Guest {
   stayEnd?: string | null;
   nights?: string[] | null;
   priceCents: number;
+  /**
+   * The row's stored member-guest consent (#3770): the edit panel's
+   * adult-supervision check counts an outsider adult only once agreed, as the
+   * server does. Null for family and non-member rows; optional for fixtures.
+   */
+  consentStatus?: MemberGuestConsentStatus | null;
   /**
    * Other Lodges epic: true when this NON-MEMBER guest is priced at the club's
    * own member rate as a recognised member of the booking's partner lodge.

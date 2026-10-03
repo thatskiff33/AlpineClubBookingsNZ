@@ -394,6 +394,58 @@ export function calculateBookingHoldDecision(input: {
   };
 }
 
+/**
+ * Split-booking decision (#738), and with it WHICH ROWS COUNT FOR CAPACITY — the
+ * one definition the create service and the create route's full-lodge pre-flight
+ * both read (#3770, `INV-SSOT-001`).
+ *
+ * A mixed member/non-member party that is not flagged becomes two linked
+ * bookings: the member portion is charged up front and holds capacity (the
+ * parent), while the non-member portion is a provisional PENDING child that holds
+ * nothing (resolved at the hold window). The flagged "only book if my guests can
+ * come" path stays a single provisional PENDING booking holding nothing. Pure
+ * parties stay a single booking. A booking held for admin review is never split —
+ * the whole party waits in AWAITING_REVIEW. `primaryGuests` is the booking that
+ * holds capacity: the member half of a split, otherwise the whole party.
+ */
+export function decideBookingSplit<Guest extends { isMember: boolean }>(
+  guests: readonly Guest[],
+  input: {
+    shouldBePending: boolean;
+    cancelIfGuestsBumped?: boolean;
+    blockForReview: boolean;
+  },
+): {
+  memberGuests: Guest[];
+  nonMemberGuests: Guest[];
+  flaggedProvisional: boolean;
+  splitBooking: boolean;
+  primaryGuests: Guest[];
+} {
+  const memberGuests = guests.filter((g) => g.isMember);
+  const nonMemberGuests = guests.filter((g) => !g.isMember);
+  const hasMemberGuests = memberGuests.length > 0;
+  const hasNonMemberGuests = nonMemberGuests.length > 0;
+  const flaggedProvisional =
+    input.shouldBePending &&
+    (input.cancelIfGuestsBumped ?? false) &&
+    hasNonMemberGuests &&
+    !input.blockForReview;
+  const splitBooking =
+    hasMemberGuests &&
+    hasNonMemberGuests &&
+    input.shouldBePending &&
+    !flaggedProvisional &&
+    !input.blockForReview;
+  return {
+    memberGuests,
+    nonMemberGuests,
+    flaggedProvisional,
+    splitBooking,
+    primaryGuests: splitBooking ? memberGuests : [...guests],
+  };
+}
+
 export function calculateBookingCreditApplication(input: {
   requestedCreditCents: number;
   creditBalanceCents: number;

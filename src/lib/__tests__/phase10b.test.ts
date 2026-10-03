@@ -96,6 +96,9 @@ vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 
 vi.mock("@/lib/audit", () => ({
   logAudit: vi.fn(),
+  // #3454: the erasure's two-factor clear records itself in the transaction.
+  createAuditLog: vi.fn(),
+  getAuditRequestContext: () => ({ id: null, ipAddress: null, userAgent: null }),
 }));
 
 vi.mock("@/lib/email", () => ({

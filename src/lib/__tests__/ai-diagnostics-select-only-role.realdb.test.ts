@@ -1129,8 +1129,9 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
     it.each([
       // The two credential surfaces, named individually because they are the ones
       // ADR-007 §1 puts permanently out of scope. `IntegrationCredential` holds
-      // encrypted provider secrets; `XeroToken` holds PLAINTEXT Xero OAuth access
-      // and refresh tokens. No tool pack may ever grant either.
+      // encrypted provider secrets and, since #3454, the Xero OAuth token set;
+      // `XeroToken` holds the same tokens, encrypted, for the blue-green window.
+      // No tool pack may ever grant either.
       ["IntegrationCredential", `SELECT * FROM public."IntegrationCredential" LIMIT 1`],
       ["XeroToken", `SELECT * FROM public."XeroToken" LIMIT 1`],
     ])("cannot read the credential store %s", async (_label, sql) => {
