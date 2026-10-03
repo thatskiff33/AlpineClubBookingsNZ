@@ -100,6 +100,11 @@ const ADDITIVE_ARTIFACTS: readonly AdditiveArtifact[] = [
     why: "Every lane that grows a file past its budget adds one allowance, and no lane reads another's.",
   },
   {
+    path: "dependency-mitigations.d",
+    remedy: "fragment-directory",
+    why: "Each owner-approved, expiring dependency-audit mitigation is one record file (#3843); records for different advisories are independent, and the audit wrapper reads every file in the directory.",
+  },
+  {
     path: "CHANGELOG.md",
     remedy: "union-merge",
     why: "A flat bullet list of released entries (#2451). Union is right here precisely because the entries are unrelated lines rather than sections of an argument.",

@@ -841,25 +841,26 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 ## INV-PAY-019
 
 - Applied account credit is conserved across cancellation (#1547): EVERY
-  `cancelBooking` branch — and the Internet-Banking hold-expiry release
-  (`internet-banking-payment-cron.ts`), the one automatic cancel outside
-  `cancelBooking` — reverses the negative `BOOKING_APPLIED` ledger rows. The
-  never-captured / no-refund branches and the `PENDING` / no-payment branches
+  `cancelBooking` branch — and the automatic cancels (Internet-Banking
+  hold-expiry release, `internet-banking-payment-cron.ts`, and both capacity
+  cancels, #3792) — reverses the negative `BOOKING_APPLIED` ledger rows. The
+  never-captured / no-refund, `PENDING` / no-payment and automatic cancels
   restore at **100%**; the paid path restores the applied slice at the
   cancellation tier (#1164 / D7). Restore idempotency is STRUCTURAL, not
   lock-dependent (#1636): the restore row carries a nullable-unique
-  `restoredFromBookingId`, so at most one restore row per booking can exist
-  regardless of caller lock granularity — a duplicate insert is a
-  `skipDuplicates` no-op. This is a restore-specific key, NOT a unique over
+  `restoredFromBookingId`, so at most one restore row per booking can exist —
+  a duplicate insert is a `skipDuplicates` no-op. This is a restore-specific key, NOT a unique over
   `(sourceBookingId, type=CANCELLATION_REFUND)`, because three legitimate paths
   (`restoreCreditFromBooking`, `createCancellationCredit`'s held-as-credit
   refund, and the Xero inbound late-cash credit) all write that shape for one
-  booking. Each branch's atomic status flip remains the primary single-flight — the never-captured and `PENDING` branches are status-guarded claim-first under the booking advisory lock too — but the unique key removes the cross-path lock-granularity dependence, so moving a credit-restoring path off the shared `lock(1)` (e.g. a per-lodge release lock) can no longer double a restore.
+  booking. Each branch's atomic status flip remains the primary single-flight (the never-captured and `PENDING` branches claim first under the booking advisory lock), but the unique key removes the cross-path lock-granularity dependence, so moving a credit-restoring path off the shared `lock(1)` can no longer double a restore. The inbound
+  credit-note sync leaves a restored booking's ledger alone, alerting instead
+  (#3792).
   A CANCELLED booking may legitimately hold consumed credit with NO restore row
   only when its payment captured money (0%-tier paid cancels write no restore
   row; held-as-credit refunds keep the applied rows) or settled without cash
   (the fully-credit-covered $0 SUCCEEDED payment takes the paid path). The daily
-  credit-reconciliation cron alerts (alert-only, no auto-heal) on any CANCELLED
+  credit-reconciliation cron alerts (no auto-heal) on any CANCELLED
   booking still holding orphaned applied credit, and
   `scripts/backfill-orphaned-applied-credits.ts` heals pre-fix orphans. The
   cancelled-booking delete guard mirrors this: fully-reversed applied credit
@@ -1555,7 +1556,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   canonical Stripe refund for a card capture, made AFTER the commit; the local
   ledger allocation for an internet-banking hand-back; or
   `createBookingModificationCredit` where nothing was captured, whose
-  exactly-once key is the `BookingModification` id. **Which one is a question
+  exactly-once key is the `BookingModification` id; there a share is first
+  applied credit given back (`INV-PAY-113`). **Which one is a question
   about the booking, asked at completion** (#3194): a task carrying no payment id
   re-reads the booking's own payment through `editReviewSettlementPayment`, the
   single derivation the raise sites use too (`editReviewSettlementPaymentId`). A
@@ -1573,6 +1575,38 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   `lock(1)` is taken and released inside the transaction;
   `docs/CONCURRENCY_AND_LOCKING.md`), so the status claim is the whole
   single-flight guarantee across it.
+
+## INV-PAY-113
+
+- **A review share on a booking with nothing captured is that booking's applied
+  credit coming back, once** (#3791, owner decisions of 2 October 2026; Xero
+  per the orchestrator's reading of decision 1).
+  - **One give-back.** `giveBackAppliedCredit` (`member-credit.ts`) is the
+    clamp's mechanism and the share's: the credit-ledger lock, the
+    deallocation fence, a positive `BOOKING_APPLIED` row (a review's names the
+    booking in `sourceBookingId`) and the deallocation of an internet-banking
+    invoice's excess credit. The share lowers the mirror a cancellation tiers.
+  - **Xero agrees with the app**, for an issued invoice: invoice less its
+    reduction notes is the booking's price, Xero's due is the app's owed, and
+    the member's Xero credit, counting noteless rows minted when spent, is the
+    app's. So an invoice-ALLOCATED note takes off the whole reduction
+    (`reviewInvoiceReductionCents`); minted credit takes the unallocated note;
+    a cancelled booking is left alone except for that minted note. Notes are
+    scoped to the review task and wait for the deallocation, failing for an
+    operator retry when it FAILED. A captured payment's share keeps the
+    document rule.
+  - **The ledger posts what was credited**, none at zero; on a covered booking
+    the give-back beyond the re-price is an agreed reduction no re-price
+    reverses (`agreedGiveBackKey`).
+  - **Unpaid** - credit short of the price beyond earlier review give-backs:
+    no more given back than the booking's review re-prices removed.
+  - **Cancelled first**: netted cumulatively against the restore from figures
+    frozen at the cancellation, the tier re-run and refused, task OPEN, where
+    it does not reproduce the restore. $200 credit-paid, $50 share: $200 back
+    at 100%, $105 at 50% less $20, either order.
+  - Home: `edit-financial-review-account-credit.ts`,
+    `dispatchEditReviewAccountCreditXero`; proven by
+    `edit-financial-review-races.realdb.test.ts`.
 
 ## INV-PAY-069
 

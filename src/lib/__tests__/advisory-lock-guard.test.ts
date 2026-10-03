@@ -493,7 +493,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "resolveManualRefundTask#1",
     tier: "GLOBAL",
     reason:
-      "#3582: an EDIT_FINANCIAL_REVIEW closure posts booking-ledger lines, and whether the booking is confirmed on the ledger must be asked under the key the settle asks it under, or a closure and a first settle could both see 'not yet' and both post. Taken only for that task kind, as the transaction's first lock — before the claim, the payment-row allocation and the re-price's promotion key — so it orders global before anything narrower as every edit door does; the Stripe refund and the Xero leg run after the commit, so it is never held across a provider round trip.",
+      "#3582: an EDIT_FINANCIAL_REVIEW closure posts booking-ledger lines, and whether the booking is confirmed on the ledger must be asked under the key the settle asks it under, or a closure and a first settle could both see 'not yet' and both post. Taken only for that task kind, as the transaction's first lock — before the claim, the payment-row allocation and the re-price's promotion key — so it orders global before anything narrower as every edit door does; the Stripe refund and the Xero leg run after the commit, so it is never held across a provider round trip. Order: global → member-credit (#3791, account-credit route only).",
     invariant: "INV-LOCK-002",
   },
   {
