@@ -13,6 +13,8 @@
  * owner signed it off is looked at again. One that matches nothing is listed
  * as unmatched. The file is the owner's and never lives in the repository.
  */
+import { z } from "zod";
+
 import {
   BOOKING_LEDGER_IDENTITIES,
   BOOKING_LEDGER_INTEGRITY_KINDS,
@@ -43,7 +45,8 @@ export type BookingLedgerAcknowledgement = {
   reference: string;
 };
 
-type Instance = { bookingId: string; identity: BookingLedgerIdentity | null; cents: number; detail?: string };
+/** One class instance; `acknowledged` once an entry in the owner's file matched it to the cent. */
+type Instance = { bookingId: string; identity: BookingLedgerIdentity | null; cents: number; detail?: string; acknowledged: boolean };
 type Strand = { bookings: number; cents: number; items: Array<{ bookingId: string; cents: number }> };
 
 export type BookingLedgerCensusReport = {
@@ -128,7 +131,7 @@ export function summarizeBookingLedgerCensus(
     unkeyedLines += evaluation.info.unkeyedLines;
     for (const kind of evaluation.coverage) coverage[kind].push(evaluation.bookingId);
     if (evaluation.bookingClass) {
-      classes[evaluation.bookingClass].instances.push({ bookingId: evaluation.bookingId, identity: null, cents: 0 });
+      classes[evaluation.bookingClass].instances.push({ bookingId: evaluation.bookingId, identity: null, cents: 0, acknowledged: false });
     }
     for (const identity of evaluation.identities) {
       if (identity.status === "NOT_APPLICABLE") continue;
@@ -154,6 +157,7 @@ export function summarizeBookingLedgerCensus(
           identity: identity.identity,
           cents: component.cents,
           ...(component.detail ? { detail: component.detail } : {}),
+          acknowledged: false,
         });
       }
     }
@@ -194,6 +198,7 @@ export function summarizeBookingLedgerCensus(
     const exact = candidates.find((instance) => instance.cents === entry.cents);
     if (exact) {
       acknowledgedInstances.add(exact);
+      exact.acknowledged = true;
       acknowledged.matched.push({ ...entry, matched: "CLASS" });
     } else if (candidates.length > 0) {
       acknowledged.stale.push({ ...entry, foundCents: candidates.map((instance) => instance.cents) });
@@ -241,4 +246,63 @@ export function summarizeBookingLedgerCensus(
     gateClosedBecause,
     unacknowledgedClassInstances,
   };
+}
+
+// ---------------------------------------------------------------------------
+// The owner's acknowledgement file, and a draft of it
+// ---------------------------------------------------------------------------
+
+/** The acknowledgement file's format: what `--acknowledged` reads and `--write-acknowledgement-draft` writes. */
+export const BOOKING_LEDGER_ACKNOWLEDGEMENT_FILE = z.array(
+  z
+    .object({
+      bookingId: z.string().min(1),
+      identity: z.enum(BOOKING_LEDGER_IDENTITIES).optional(),
+      class: z.enum(BOOKING_LEDGER_CENSUS_CLASSES).optional(),
+      cents: z.number().int(),
+      reference: z.string().min(1),
+    })
+    .strict()
+    .refine((entry) => (entry.identity === undefined) !== (entry.class === undefined), {
+      message: "each entry names exactly one of identity or class",
+    }),
+);
+
+/** Classes a draft never writes off, and why. */
+const NEVER_DRAFTED: Partial<Record<BookingLedgerCensusClass, string>> = {
+  KNOWN_DEFECT_HISTORY:
+    "owner decision 1 on #3583: each booking is corrected by an officer or written off deliberately on #3583, never in bulk",
+};
+
+export type BookingLedgerAcknowledgementDraft = {
+  entries: BookingLedgerAcknowledgement[];
+  excluded: Array<{ class: BookingLedgerCensusClass; instances: number; bookings: number; reason: string }>;
+};
+
+/**
+ * A DRAFT of the owner's acknowledgement file: one entry, to the cent, per
+ * class instance still holding the gate for want of acknowledgement. It never
+ * contains a disagreement, a coverage gap or an integrity finding — those hold
+ * until fixed — nor a `KNOWN_DEFECT_HISTORY` instance (`NEVER_DRAFTED`), which
+ * it counts as left out instead. Every entry's reference says it is a draft:
+ * the owner reviews each line before it releases anything.
+ */
+export function draftBookingLedgerAcknowledgements(report: BookingLedgerCensusReport): BookingLedgerAcknowledgementDraft {
+  const draft: BookingLedgerAcknowledgementDraft = { entries: [], excluded: [] };
+  for (const name of BOOKING_LEDGER_CENSUS_CLASSES) {
+    const entry = report.classes[name];
+    if (!entry.holdsGate) continue;
+    const pending = entry.instances.filter((instance) => !instance.acknowledged);
+    if (pending.length === 0) continue;
+    const reason = NEVER_DRAFTED[name];
+    if (reason !== undefined) {
+      draft.excluded.push({ class: name, instances: pending.length, bookings: new Set(pending.map((instance) => instance.bookingId)).size, reason });
+      continue;
+    }
+    for (const instance of pending) {
+      const where = [instance.identity ?? "booking", instance.detail].filter(Boolean).join(", ");
+      draft.entries.push({ bookingId: instance.bookingId, class: name, cents: instance.cents, reference: `DRAFT, review before signing off: ${name} on ${where}` });
+    }
+  }
+  return draft;
 }

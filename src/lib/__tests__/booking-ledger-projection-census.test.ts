@@ -17,7 +17,11 @@ import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-p
 import { planCreditLines, planHandBackLine } from "@/lib/booking-ledger-credit-posting";
 import { planAgreedAdjustmentLine, planModificationChargeLines } from "@/lib/booking-ledger-modification-posting";
 import { evaluateBookingLedgerIdentities, type BookingLedgerIdentity } from "@/lib/booking-ledger-projection-census";
-import { summarizeBookingLedgerCensus } from "@/lib/booking-ledger-projection-census-report";
+import {
+  BOOKING_LEDGER_ACKNOWLEDGEMENT_FILE,
+  draftBookingLedgerAcknowledgements,
+  summarizeBookingLedgerCensus,
+} from "@/lib/booking-ledger-projection-census-report";
 import { evaluateBookingLedgerPages } from "@/lib/booking-ledger-projection-census-store";
 import {
   BOOKING_LEDGER_CENSUS_GATE_POLICY,
@@ -1148,5 +1152,57 @@ describe("the verdict", () => {
       realized: { bookings: 0, cents: 0, items: [] },
       pending: { bookings: 1, cents: 4_000, items: [{ bookingId: B, cents: 4_000 }] },
     });
+  });
+});
+
+describe("the acknowledgement draft (--write-acknowledgement-draft)", () => {
+  /** Each fixture under its own booking id, so one report holds them side by side. */
+  const as = (bookingId: string, subject: BookingLedgerCensusRow) => ({ ...evaluateBookingLedgerIdentities(subject), bookingId });
+  const evaluations = () => [
+    as("in-flight", cashCancelled("OPEN")),
+    as("unpaid", nothingCaptured()),
+    as("defect", defect3791()),
+    as("drifted", bumpPayment(cardPaid(), "amountCents")),
+    as("no-lines", row({ lines: [], transactions: [txn("t1", 19_000)] })),
+    as("group", row({ lines: [], booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: true, finalPriceCents: 19_000 } })),
+  ];
+  const census = (acknowledgements: Parameters<typeof summarizeBookingLedgerCensus>[2] = []) => summarizeBookingLedgerCensus(evaluations(), null, acknowledgements);
+
+  it("drafts one entry per unacknowledged class instance, to the cent, in the format --acknowledged reads", () => {
+    const draft = draftBookingLedgerAcknowledgements(census());
+    expect(draft.entries.map(({ bookingId, class: name, cents }) => [bookingId, name, cents])).toEqual([
+      ["unpaid", "NOTHING_CAPTURED", 19_000],
+      ["unpaid", "NOTHING_CAPTURED", -19_000],
+      ["in-flight", "IN_FLIGHT_HAND_BACK", 9_500],
+    ]);
+    expect(BOOKING_LEDGER_ACKNOWLEDGEMENT_FILE.parse(JSON.parse(JSON.stringify(draft.entries)))).toEqual(draft.entries);
+    expect(draft.entries.every((entry) => entry.reference.startsWith("DRAFT"))).toBe(true);
+  });
+
+  it("leaves out KNOWN_DEFECT_HISTORY, naming how many and why, and every disagreement, coverage gap and integrity finding", () => {
+    const draft = draftBookingLedgerAcknowledgements(census());
+    expect(draft.entries.some((entry) => entry.class === "KNOWN_DEFECT_HISTORY")).toBe(false);
+    expect(draft.excluded).toEqual([{ class: "KNOWN_DEFECT_HISTORY", instances: 1, bookings: 1, reason: expect.stringContaining("owner decision 1") }]);
+    expect(draft.entries.some((entry) => ["drifted", "no-lines", "group", "defect"].includes(entry.bookingId))).toBe(false);
+    expect(draft.entries.every((entry) => entry.identity === undefined && entry.class !== undefined)).toBe(true);
+  });
+
+  it("round-trips: fed back, it releases exactly those instances; the rest still hold, and a moved figure goes stale", () => {
+    const draft = draftBookingLedgerAcknowledgements(census());
+    const signed = census(draft.entries);
+    expect(signed.acknowledged.matched).toHaveLength(draft.entries.length);
+    expect(signed.acknowledged.stale).toEqual([]);
+    expect(signed.unacknowledgedClassInstances).toBe(1); // the KNOWN_DEFECT_HISTORY instance
+    // What a draft can never release still holds: the disagreement, the coverage gap, the defect.
+    expect(signed.verdict).toBe("GATE_CLOSED");
+    expect(signed.disagreements.map((row) => row.bookingId)).toContain("drifted");
+    expect(signed.coverage.NO_LINES).toEqual(["no-lines"]);
+    expect(signed.gateClosedBecause.some((reason) => reason.includes("NOTHING_CAPTURED") || reason.includes("IN_FLIGHT_HAND_BACK"))).toBe(false);
+    expect(signed.gateClosedBecause).toContain("1 booking(s) in KNOWN_DEFECT_HISTORY, which holds the gate");
+    expect(draftBookingLedgerAcknowledgements(signed).entries).toEqual([]);
+
+    const moved = census(draft.entries.map((entry) => (entry.class === "IN_FLIGHT_HAND_BACK" ? { ...entry, cents: entry.cents - 500 } : entry)));
+    expect(moved.acknowledged.stale).toEqual([expect.objectContaining({ class: "IN_FLIGHT_HAND_BACK", cents: 9_000, foundCents: [9_500] })]);
+    expect(moved.gateClosedBecause.some((reason) => reason.includes("IN_FLIGHT_HAND_BACK"))).toBe(true);
   });
 });

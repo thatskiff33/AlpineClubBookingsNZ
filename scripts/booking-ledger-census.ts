@@ -10,24 +10,32 @@
  *   pnpm run booking-ledger:census --json          # the whole report as JSON
  *   pnpm run booking-ledger:census --fail-on-gap   # exit 2 unless GATE_OPEN
  *   pnpm run booking-ledger:census --acknowledged <owner-file.json>
+ *   pnpm run booking-ledger:census --write-acknowledgement-draft <new-file.json>
+ *
+ * The draft is the one thing this command writes, and only to a local file it
+ * creates (never over an existing one); the database snapshot is unchanged.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import process from "node:process";
 
 import { Prisma } from "@prisma/client";
-import { z } from "zod";
 
 import type { ClubFormat } from "../src/lib/club-format";
 import { getClubFormat } from "../src/lib/club-format-settings";
-import { BOOKING_LEDGER_IDENTITIES } from "../src/lib/booking-ledger-projection-census";
-import { BOOKING_LEDGER_CENSUS_CLASSES } from "../src/lib/booking-ledger-projection-census-classes";
-import type { BookingLedgerAcknowledgement, BookingLedgerCensusReport } from "../src/lib/booking-ledger-projection-census-report";
+import {
+  BOOKING_LEDGER_ACKNOWLEDGEMENT_FILE,
+  draftBookingLedgerAcknowledgements,
+  type BookingLedgerAcknowledgement,
+  type BookingLedgerAcknowledgementDraft,
+  type BookingLedgerCensusReport,
+} from "../src/lib/booking-ledger-projection-census-report";
 import { censusBookingLedgerProjection } from "../src/lib/booking-ledger-projection-census-store";
 import { prisma } from "../src/lib/prisma";
 import { formatCents, formatSignedCents } from "../src/lib/utils";
 
 const USAGE = `Usage:
   pnpm run booking-ledger:census [--json] [--fail-on-gap] [--acknowledged <file.json>]
+                                 [--write-acknowledgement-draft <new-file.json>]
 
   --json                 Print the whole report (every disagreement, class
                          instance, coverage gap and integrity finding) as JSON.
@@ -37,31 +45,34 @@ const USAGE = `Usage:
                          entry matching a disagreement or class instance to the
                          cent no longer holds the gate; a mismatched one is
                          reported stale and still holds it.
+  --write-acknowledgement-draft <file>
+                         Write a DRAFT acknowledgement file, in the format
+                         --acknowledged reads: one entry, to the cent, per
+                         class instance not yet acknowledged. It leaves out
+                         KNOWN_DEFECT_HISTORY (each is dealt with on #3583)
+                         and every disagreement, coverage gap and integrity
+                         finding. Refuses to overwrite an existing file.
   --help, -h      Show this help.
 
 Read-only: one snapshot, no writes, no provider calls.`;
 
-const ACKNOWLEDGEMENT_FILE = z.array(
-  z
-    .object({
-      bookingId: z.string().min(1),
-      identity: z.enum(BOOKING_LEDGER_IDENTITIES).optional(),
-      class: z.enum(BOOKING_LEDGER_CENSUS_CLASSES).optional(),
-      cents: z.number().int(),
-      reference: z.string().min(1),
-    })
-    .strict()
-    .refine((entry) => (entry.identity === undefined) !== (entry.class === undefined), {
-      message: "each entry names exactly one of identity or class",
-    }),
-);
-
 function readAcknowledgements(path: string): BookingLedgerAcknowledgement[] {
-  return ACKNOWLEDGEMENT_FILE.parse(JSON.parse(readFileSync(path, "utf8")));
+  return BOOKING_LEDGER_ACKNOWLEDGEMENT_FILE.parse(JSON.parse(readFileSync(path, "utf8")));
 }
 
-function parseArgs(argv: readonly string[]): { json: boolean; failOnGap: boolean; acknowledged: string | null } {
-  const options = { json: false, failOnGap: false, acknowledged: null as string | null };
+/** Local output only; `wx` refuses an existing file even if one appeared mid-run. */
+function writeDraft(path: string, draft: BookingLedgerAcknowledgementDraft): string {
+  writeFileSync(path, `${JSON.stringify(draft.entries, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+  const lines = [`Draft acknowledgement file written to ${path}: ${draft.entries.length} entr${draft.entries.length === 1 ? "y" : "ies"}. Review every line before passing it to --acknowledged.`];
+  for (const left of draft.excluded) {
+    lines.push(`  Left out: ${left.instances} ${left.class} instance(s) on ${left.bookings} booking(s): ${left.reason}.`);
+  }
+  lines.push("  Never drafted: disagreements, coverage gaps and integrity findings, which hold the gate until fixed.");
+  return lines.join("\n");
+}
+
+function parseArgs(argv: readonly string[]): { json: boolean; failOnGap: boolean; acknowledged: string | null; draft: string | null } {
+  const options = { json: false, failOnGap: false, acknowledged: null as string | null, draft: null as string | null };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
     if (arg === "--help" || arg === "-h") {
@@ -71,6 +82,7 @@ function parseArgs(argv: readonly string[]): { json: boolean; failOnGap: boolean
     if (arg === "--json") options.json = true;
     else if (arg === "--fail-on-gap") options.failOnGap = true;
     else if (arg === "--acknowledged" && argv[index + 1]) options.acknowledged = argv[(index += 1)]!;
+    else if (arg === "--write-acknowledgement-draft" && argv[index + 1]) options.draft = argv[(index += 1)]!;
     else throw new Error(`Unknown argument: ${arg}\n\n${USAGE}`);
   }
   return options;
@@ -141,11 +153,14 @@ function summary(report: BookingLedgerCensusReport, format: ClubFormat): string 
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+  // Refuse before reading anything; the write itself refuses again (`wx`).
+  if (options.draft && existsSync(options.draft)) throw new Error(`Refusing to overwrite ${options.draft}: write the draft to a new file.`);
   // The club's currency (#3565), read once, outside the snapshot. JSON keeps integer cents.
   const format = await getClubFormat();
   const acknowledgements = options.acknowledged ? readAcknowledgements(options.acknowledged) : [];
   const report = await censusBookingLedgerProjection(prisma, { acknowledgements });
   process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : `${summary(report, format)}\n`);
+  if (options.draft) process.stderr.write(`${writeDraft(options.draft, draftBookingLedgerAcknowledgements(report))}\n`);
   if (options.failOnGap && report.verdict !== "GATE_OPEN") process.exitCode = 2;
 }
 

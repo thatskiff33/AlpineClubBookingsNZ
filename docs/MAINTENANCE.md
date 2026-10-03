@@ -1677,7 +1677,29 @@ DATABASE_URL=<non-prod copy, or production under a SELECT-only role> pnpm run bo
 DATABASE_URL=<...> pnpm run booking-ledger:census --json          # every list in full
 DATABASE_URL=<...> pnpm run booking-ledger:census --fail-on-gap   # exit 2 unless GATE_OPEN
 DATABASE_URL=<...> pnpm run booking-ledger:census --acknowledged <owner-file.json>
+DATABASE_URL=<...> pnpm run booking-ledger:census --write-acknowledgement-draft <new-file.json>
 ```
+
+**The owner's workflow for the class lists.** Every class instance needs its own
+entry, so on a real history the file is long; the census drafts it rather than
+anyone typing it:
+
+1. Run the census and read the summary.
+2. Write the draft: `--write-acknowledgement-draft <new-file.json>`. It writes
+   one entry, to the cent, per class instance not yet acknowledged, in exactly
+   the format `--acknowledged` reads, each with a reference beginning `DRAFT`.
+   It refuses to overwrite an existing file, and the database is only read —
+   the file is the one thing written, locally.
+3. Review the draft line by line: delete any entry that is not an expected
+   state, and replace each `DRAFT` reference with your own.
+4. Deal with each `KNOWN_DEFECT_HISTORY` booking on #3583. The draft never
+   contains them — it says how many it left out and why — because owner
+   decision 1 requires each to be corrected by an officer or written off
+   deliberately; a write-off is an entry you add by hand. Nor does it ever
+   contain a disagreement, a coverage gap or an integrity finding: those hold
+   the gate until fixed.
+5. Re-run with `--acknowledged <the reviewed file>`. A figure that moved since
+   the draft is reported stale and holds the gate again.
 
 **Releasing a finding: the acknowledgement file.** The owner keeps it, outside
 the repository (it names real bookings). It is a JSON array, one entry per
