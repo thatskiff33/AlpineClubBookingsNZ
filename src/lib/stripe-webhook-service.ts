@@ -74,10 +74,6 @@ function jsonResult(body: unknown, init?: ResponseInit): JsonRouteResult {
   return { body, init };
 }
 
-function isCapturedAdditionalPaymentTransaction(status: PaymentStatus) {
-  return isCapturedTransactionStatus(status);
-}
-
 // F16 (#1887): the ProcessedWebhookEvent claim is a processing LEASE. A
 // PROCESSING claim older than this window is treated as a crashed prior
 // attempt and taken over; a fresher one forces a provider retry. Sized well
@@ -897,7 +893,7 @@ async function handleAdditionalModificationPaymentSucceeded(
     return;
   }
 
-  if (isCapturedAdditionalPaymentTransaction(paymentTransaction.status)) {
+  if (isCapturedTransactionStatus(paymentTransaction.status)) {
     const released = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
       paymentIntent.id
     );
@@ -1442,7 +1438,7 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
   // captured. Record the capture before refunding (the refund allocates
   // against a captured transaction). Skipped on replays where the row is
   // already captured/refunded so a completed refund is not flipped back.
-  if (!isCapturedAdditionalPaymentTransaction(paymentTransaction.status)) {
+  if (!isCapturedTransactionStatus(paymentTransaction.status)) {
     await markPaymentIntentTransactionSucceeded({
       paymentIntentId: paymentIntent.id,
       amountCents: paymentIntent.amount,
