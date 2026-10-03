@@ -56,14 +56,15 @@ export function hutLeaderStayBookingWhere(input: {
 }): Prisma.BookingWhereInput {
   return {
     deletedAt: null,
-    lodgeId:
-      typeof input.lodgeId === "string"
-        ? input.lodgeId
-        : { in: [...input.lodgeId] },
+    lodgeId: isLodgeIdList(input.lodgeId) ? { in: [...input.lodgeId] } : input.lodgeId,
     status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
     checkIn: { lte: input.rangeEnd },
     checkOut: { gt: input.rangeStart },
   };
+}
+
+function isLodgeIdList(lodgeId: string | readonly string[]): lodgeId is readonly string[] {
+  return Array.isArray(lodgeId);
 }
 
 /** Every night key the stays cover, de-duplicated and sorted. */
