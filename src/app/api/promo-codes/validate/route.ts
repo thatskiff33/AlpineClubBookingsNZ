@@ -309,20 +309,25 @@ export async function POST(req: NextRequest) {
     // (`planMemberGuestConsentWrites`) — so the preview prices a guest awaiting
     // acceptance the way the save will. The client's `awaitingAcceptance` can
     // only add to that answer, never take a pending guest out of it.
-    const consentPlan = planMemberGuestConsentWrites({
-      guests,
-      boundary: await computeMemberGuestBoundary(
-        prisma,
-        effectiveMemberId,
-        [...new Set(guests.flatMap((guest) => (guest.memberId?.trim() ? [guest.memberId.trim()] : [])))],
-      ),
-      actor: isAuthorizedOnBehalf
-        ? { kind: "ADMIN", adminMemberId: session.user.id }
-        : { kind: "MEMBER" },
-      now: new Date(),
-      bookingCheckIn: checkIn,
-      policy: await loadMemberGuestAddPolicy(),
-    });
+    // With the member-guest module off nobody awaits acceptance, so the family
+    // is not read at all.
+    const memberGuestPolicy = await loadMemberGuestAddPolicy();
+    const consentPlan = memberGuestPolicy.wideningEnabled
+      ? planMemberGuestConsentWrites({
+          guests,
+          boundary: await computeMemberGuestBoundary(
+            prisma,
+            effectiveMemberId,
+            [...new Set(guests.flatMap((guest) => (guest.memberId?.trim() ? [guest.memberId.trim()] : [])))],
+          ),
+          actor: isAuthorizedOnBehalf
+            ? { kind: "ADMIN", adminMemberId: session.user.id }
+            : { kind: "MEMBER" },
+          now: new Date(),
+          bookingCheckIn: checkIn,
+          policy: memberGuestPolicy,
+        })
+      : null;
 
     // Walked over the guests the pricing pass was GIVEN, each paired with the
     // row that priced it, rather than over the breakdown with the input read
@@ -347,7 +352,9 @@ export async function POST(req: NextRequest) {
         firstNight: guest.stayStart ?? checkIn,
         consentStatus: guest.awaitingAcceptance
           ? ("PENDING" as const)
-          : guestConsentStatus(consentPlan.guests[index]!),
+          : consentPlan
+            ? guestConsentStatus(consentPlan.guests[index]!)
+            : null,
       };
     });
 

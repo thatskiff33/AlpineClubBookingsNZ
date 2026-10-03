@@ -55,6 +55,17 @@ vi.mock("@/lib/rate-limit", () => ({
   rateLimiters: { bookingQuery: {} },
 }));
 
+// #3827: the route works out who awaits acceptance from the club's member-guest
+// policy; with the module off (the default) nobody does.
+vi.mock("@/lib/member-guest-add-policy", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-guest-add-policy")),
+  loadMemberGuestAddPolicy: vi.fn(async () => ({
+    wideningEnabled: false,
+    approvalRequired: true,
+    pendingHoldExpiryDays: 0,
+  })),
+}));
+
 import { POST } from "@/app/api/promo-codes/validate/route";
 
 function request(body: Record<string, unknown>) {
