@@ -14,6 +14,13 @@ export type CalendarTone = "red" | "amber" | "orange" | "green" | "violet";
 // night with no guests reads as quiet history rather than an active state.
 export type CalendarOverlayEmphasis = "fill" | "ring";
 
+/**
+ * One line of an overlay badge. A string is shown whole; `{ text, suffix }`
+ * shows `suffix` only from the `sm` breakpoint up, so a phone-width cell keeps
+ * the part that matters (#3818: "AM · Smith" survives, " until midday" goes).
+ */
+export type CalendarOverlayLine = string | { text: string; suffix: string };
+
 export type CalendarOverlayValue = {
   tone: CalendarTone;
   /** The cell's text, and what a screen reader hears after the date. */
@@ -23,9 +30,9 @@ export type CalendarOverlayValue = {
    * Optional: paint the badge as these separate lines instead of `label`
    * (#3818 — a hut-leader changeover day shows its morning and afternoon
    * leaders one above the other). `label` stays the accessible text, so a
-   * caller sets it to the same lines joined.
+   * caller sets it to the same lines, in full, joined.
    */
-  lines?: readonly string[];
+  lines?: readonly CalendarOverlayLine[];
 };
 
 // Static class table so Tailwind sees every class literally (no dynamic class

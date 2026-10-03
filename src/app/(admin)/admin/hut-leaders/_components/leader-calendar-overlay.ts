@@ -1,4 +1,7 @@
-import type { CalendarOverlayValue } from "@/components/admin/occupancy-calendar";
+import type {
+  CalendarOverlayLine,
+  CalendarOverlayValue,
+} from "@/components/admin/occupancy-calendar-tones";
 import {
   addCalendarDays,
   calendarDateOfDateOnlyInstant,
@@ -6,10 +9,11 @@ import {
 } from "@/lib/club-time";
 import {
   deriveHutLeaderDayHalves,
-  hutLeaderAfternoonLabel,
-  hutLeaderMorningLabel,
+  hutLeaderAfternoonLine,
+  hutLeaderLineText,
+  hutLeaderMorningLine,
   joinHutLeaderNames,
-  NO_HUT_LEADER_TONIGHT_LABEL,
+  noHutLeaderTonightLabel,
   type HutLeaderOnNight,
 } from "@/lib/hut-leader-handover";
 
@@ -38,14 +42,17 @@ export function shortLeaderLabel(memberName: string) {
  * and `redDates` are the nights with guests and no valid shift. This only paints
  * them, with each day read as two halves (`deriveHutLeaderDayHalves`):
  *
- *  - a night with guests and no valid shift: "No leader tonight", preceded by
- *    "AM · <leader of the night before> until midday" when someone is finishing
- *    that morning;
- *  - a day whose morning and afternoon leaders differ: "AM · <night D − 1>
- *    until midday" and/or "PM · <night D> from midday";
+ *  - a night with guests and no valid shift: "No <label> tonight" in the
+ *    club's own word for the role, preceded by "AM · <leader of the night
+ *    before> until midday" when someone is finishing that morning;
+ *  - a day whose leaders change: "AM · <who finishes> until midday" and/or
+ *    "PM · <who starts> from midday", with anyone on duty in both halves
+ *    named plainly first (a one-night overlap never reads as a departure);
  *  - otherwise, a covered night shows its leader as before.
  *
- * A covered night with no guests is painted as a quiet ring, as before.
+ * A covered night with no guests is painted as a quiet ring, as before. Each
+ * value's `label` is its lines in full, for screen readers; a phone-width cell
+ * drops the " until midday" / " from midday" suffix, never the name.
  */
 export function buildLeaderCalendarOverlay(input: {
   monthStart: Date;
@@ -54,11 +61,15 @@ export function buildLeaderCalendarOverlay(input: {
   coveredNights: ReadonlyMap<string, readonly HutLeaderOnNight[]>;
   redDates: readonly string[];
   guestNights?: ReadonlySet<string>;
+  /** The club's configured hut-leader label (`useClubIdentity`). */
+  hutLeaderLabel: string;
 }): Record<string, CalendarOverlayValue> {
   const overlay: Record<string, CalendarOverlayValue> = {};
   const red = new Set(input.redDates);
   const names = (leaders: readonly HutLeaderOnNight[]) =>
     joinHutLeaderNames(leaders, shortLeaderLabel);
+  const labelOf = (lines: readonly CalendarOverlayLine[]) =>
+    lines.map(hutLeaderLineText).join(", ");
 
   const last = calendarDateOfDateOnlyInstant(input.monthEnd);
   for (
@@ -74,28 +85,29 @@ export function buildLeaderCalendarOverlay(input: {
     const emphasis = input.guestNights?.has(date) ? "fill" : "ring";
 
     if (red.has(date)) {
-      const lines = [
-        ...(halves.morning.length > 0
-          ? [hutLeaderMorningLabel(names(halves.morning))]
+      const lines: CalendarOverlayLine[] = [
+        ...(halves.leaving.length > 0
+          ? [hutLeaderMorningLine(names(halves.leaving))]
           : []),
-        NO_HUT_LEADER_TONIGHT_LABEL,
+        noHutLeaderTonightLabel(input.hutLeaderLabel),
       ];
-      overlay[date] = { tone: "red", label: lines.join(", "), lines };
+      overlay[date] = { tone: "red", label: labelOf(lines), lines };
       continue;
     }
 
     if (halves.changes) {
-      const lines = [
-        ...(halves.morning.length > 0
-          ? [hutLeaderMorningLabel(names(halves.morning))]
+      const lines: CalendarOverlayLine[] = [
+        ...(halves.continuing.length > 0 ? [names(halves.continuing)] : []),
+        ...(halves.leaving.length > 0
+          ? [hutLeaderMorningLine(names(halves.leaving))]
           : []),
-        ...(halves.afternoon.length > 0
-          ? [hutLeaderAfternoonLabel(names(halves.afternoon))]
+        ...(halves.arriving.length > 0
+          ? [hutLeaderAfternoonLine(names(halves.arriving))]
           : []),
       ];
       overlay[date] = {
         tone: "violet",
-        label: lines.join(", "),
+        label: labelOf(lines),
         lines,
         emphasis,
       };

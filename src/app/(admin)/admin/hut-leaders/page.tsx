@@ -279,7 +279,7 @@ export default function HutLeadersPage() {
     }
   }, [lodgeScopeReady, scopedLodgeId]);
 
-  // Default lookahead window — feeds the amber "Upcoming Dates Without…" card.
+  // Default lookahead window — feeds the amber "Upcoming nights with no … staying" card.
   // Intentionally the un-windowed variant so that card is byte-for-byte unchanged.
   const fetchUnassignedDates = useCallback(async () => {
     if (!lodgeScopeReady) {
@@ -640,6 +640,10 @@ export default function HutLeadersPage() {
       setOverCapacity(null);
       setHoldAmendment(null);
       fetchAssignments();
+      // A held bed is presence (#3818, INV-DATE-030), so setting or releasing
+      // one changes which nights are covered: the amber list must move with
+      // the calendar, as it does after a create or a delete.
+      fetchUnassignedDates();
       refreshOverlay(visibleMonthKey);
     } finally {
       if (activeLodgeIdRef.current === requestedLodgeId) {
@@ -741,8 +745,9 @@ export default function HutLeadersPage() {
       coveredNights: coveredNightsByMonth[visibleMonthKey] ?? new Map(),
       redDates: redDatesByMonth[visibleMonthKey] ?? [],
       guestNights: guestNightsByMonth[visibleMonthKey],
+      hutLeaderLabel,
     });
-  }, [coveredNightsByMonth, redDatesByMonth, guestNightsByMonth, visibleMonthKey]);
+  }, [coveredNightsByMonth, redDatesByMonth, guestNightsByMonth, visibleMonthKey, hutLeaderLabel]);
 
   const overlayLegend = useMemo<Array<{ tone: CalendarTone; label: string }>>(
     () => [
@@ -874,7 +879,7 @@ export default function HutLeadersPage() {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-base text-warning">
               <CalendarDays className="h-5 w-5" />
-              Upcoming Dates Without {hutLeaderLabel} ({unassignedDates.length})
+              Upcoming nights with no {hutLeaderLabel.toLowerCase()} staying ({unassignedDates.length})
             </CardTitle>
           </CardHeader>
           <CardContent>

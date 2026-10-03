@@ -11,7 +11,8 @@ import type { HutLeaderHandover } from "@/lib/hut-leader-night-cover";
 
 /**
  * "Handovers this week" on the admin dashboard (#3818): each day in the coming
- * week on which one hut leader hands over to another at midday. The handovers
+ * week on which a hut leader finishes at midday and another is on duty from
+ * midday (`from` names only who finishes). The handovers
  * come from the presence-aware cover (`INV-DATE-030`), so a leader who is not
  * staying is never shown handing over. Renders nothing when there are none.
  *
@@ -43,7 +44,11 @@ export function HutLeaderHandoversCard({
                   <span className="font-medium">
                     {formatClubDayMonth(requireCalendarDate(handover.date), format)}
                   </span>
-                  {` · ${joinHutLeaderNames(handover.from)} → ${joinHutLeaderNames(handover.to)} at midday`}
+                  {` · ${joinHutLeaderNames(handover.from)} `}
+                  {/* The arrow is drawn, and "to" is what a screen reader says. */}
+                  <span aria-hidden="true">→</span>
+                  <span className="sr-only">to</span>
+                  {` ${joinHutLeaderNames(handover.to)} at midday`}
                   {lodgeLabel ? ` (${lodgeLabel})` : ""}
                 </li>
               );

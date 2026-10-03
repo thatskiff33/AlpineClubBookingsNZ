@@ -28,9 +28,18 @@ export type HutLeaderDayHalves = {
    * also when one half has nobody (a stint starting or ending that day).
    */
   changes: boolean;
+  /** Morning leaders who are not on duty in the afternoon: they finish at midday. */
+  leaving: readonly HutLeaderOnNight[];
+  /** Afternoon leaders who were not on duty in the morning: they start at midday. */
+  arriving: readonly HutLeaderOnNight[];
+  /** Leaders on duty in both halves: nothing changes for them that day. */
+  continuing: readonly HutLeaderOnNight[];
   /**
-   * A HANDOVER: someone hands over to someone else — both halves have a
-   * leader, and they differ.
+   * A HANDOVER: somebody finishes at midday and somebody is on duty from
+   * midday. A day on which a second leader only JOINS a leader who stays on
+   * is not one, so a one-night overlap (A's last night is B's first) is a
+   * single handover, on the day A leaves, rather than two that each list A on
+   * both sides.
    */
   isHandover: boolean;
 };
@@ -54,12 +63,17 @@ export function deriveHutLeaderDayHalves(
   leadersOfNight: readonly HutLeaderOnNight[],
 ): HutLeaderDayHalves {
   const changes = !sameLeaders(leadersOfPreviousNight, leadersOfNight);
+  const morningIds = new Set(leadersOfPreviousNight.map((leader) => leader.memberId));
+  const afternoonIds = new Set(leadersOfNight.map((leader) => leader.memberId));
+  const leaving = leadersOfPreviousNight.filter((leader) => !afternoonIds.has(leader.memberId));
   return {
     morning: leadersOfPreviousNight,
     afternoon: leadersOfNight,
     changes,
-    isHandover:
-      changes && leadersOfPreviousNight.length > 0 && leadersOfNight.length > 0,
+    leaving,
+    arriving: leadersOfNight.filter((leader) => !morningIds.has(leader.memberId)),
+    continuing: leadersOfNight.filter((leader) => morningIds.has(leader.memberId)),
+    isHandover: leaving.length > 0 && leadersOfNight.length > 0,
   };
 }
 
@@ -78,15 +92,32 @@ export function joinHutLeaderNames(
   return names.join(" / ");
 }
 
+/**
+ * One half's label in two parts: `text` carries the half and the names, so it
+ * survives a narrow calendar cell; `suffix` is the wording a phone-width cell
+ * drops. The full label is the two joined (`hutLeaderLineText`).
+ */
+export type HutLeaderLine = { text: string; suffix: string };
+
 /** "AM · Smith until midday" — the morning half's label. */
-export function hutLeaderMorningLabel(names: string): string {
-  return `AM · ${names} until midday`;
+export function hutLeaderMorningLine(names: string): HutLeaderLine {
+  return { text: `AM · ${names}`, suffix: " until midday" };
 }
 
 /** "PM · Jones from midday" — the afternoon half's label. */
-export function hutLeaderAfternoonLabel(names: string): string {
-  return `PM · ${names} from midday`;
+export function hutLeaderAfternoonLine(names: string): HutLeaderLine {
+  return { text: `PM · ${names}`, suffix: " from midday" };
 }
 
-/** The label for a night with guests and no valid shift. */
-export const NO_HUT_LEADER_TONIGHT_LABEL = "No leader tonight";
+/** A line's full wording, as a screen reader hears it. */
+export function hutLeaderLineText(line: HutLeaderLine | string): string {
+  return typeof line === "string" ? line : `${line.text}${line.suffix}`;
+}
+
+/**
+ * The label for a night with guests and no valid shift, in the club's own word
+ * for the role ("No hut leader tonight", "No warden tonight"; #1320).
+ */
+export function noHutLeaderTonightLabel(hutLeaderLabel: string): string {
+  return `No ${hutLeaderLabel.toLowerCase()} tonight`;
+}
