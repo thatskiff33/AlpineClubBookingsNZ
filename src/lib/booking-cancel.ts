@@ -172,10 +172,9 @@ type CancelBookingResponse =
  * `options.requireRequestHold` (#1406): when `true`, the caller asserts it is
  * releasing a held booking-request slot that MUST still be AWAITING_REVIEW (the
  * admin "Release hold" route and `declineBookingRequest`). If the outer read
- * finds any other status — e.g. a concurrent officer approval
- * (`approveBookingRequest`) already converted the hold AWAITING_REVIEW ->
- * PENDING; requester acceptance never moves it (#3415) — cancel refuses with a
- * 409 BEFORE branch dispatch and takes no side effect, so a just-converted booking is never routed
+ * finds any other status — e.g. officer approval (`approveBookingRequest`, not
+ * requester acceptance, #3415) already converted it to PENDING — cancel refuses
+ * with a 409 BEFORE branch dispatch and no side effect, so a just-converted booking is never routed
  * into the generic PENDING branch and clobbered (its brand-new payment links
  * revoked). This guard stays ESSENTIAL even though the PENDING branch is now
  * itself status-guarded claim-first under lock(1) (#1547): that branch only
@@ -575,12 +574,11 @@ async function performBookingCancellation(
   //
   // The admin "Release hold" route and `declineBookingRequest` release a held
   // booking-request slot they expect to still be AWAITING_REVIEW. This OUTER
-  // read is UN-locked, so a concurrent officer approval
-  // (`approveBookingRequest`) can convert the hold AWAITING_REVIEW -> PENDING
-  // before it runs; requester acceptance keeps the hold (#3415). Without this
-  // guard the PENDING snapshot would be dispatched straight into the generic
-  // PENDING branch below and clobber the just-converted booking to CANCELLED
-  // and revoke its brand-new payment links.
+  // read is UN-locked, so officer approval (`approveBookingRequest`; requester
+  // acceptance keeps the hold, #3415) can convert it to PENDING before it runs.
+  // Without this guard the PENDING snapshot would be dispatched straight into
+  // the generic PENDING branch below and clobber the just-converted booking to
+  // CANCELLED and revoke its brand-new payment links.
   // The PENDING branch is now itself status-guarded claim-first under lock(1)
   // (#1547), but that only rejects a booking that has LEFT PENDING; a
   // just-converted booking genuinely IS PENDING, so it passes the branch's own
@@ -611,14 +609,13 @@ async function performBookingCancellation(
     // call, so the only hazard is a state CLOBBER, not a double money-move —
     // the "claim-first without durable recovery inverts a crash into money
     // LOSS" caveat does not apply here. The clobber: a held AWAITING_REVIEW
-    // booking can be converted to PENDING by a concurrent officer approval
-    // (`approveBookingRequest` in booking-request.ts; requester acceptance keeps
-    // the hold, #3415). Under the two-tier lock protocol (#1881) that approval
-    // takes the GLOBAL `pg_advisory_xact_lock(1)` FIRST (then the per-lodge
-    // lock) and status-guards its AWAITING_REVIEW → PENDING flip. This branch
-    // takes the SAME global lock(1) and both the under-lock re-read gate below
-    // AND a status-guarded `updateMany` on the CANCELLED flip, so cancel and
-    // approval mutually exclude on the shared key
+    // booking can be converted to PENDING by officer approval
+    // (`approveBookingRequest`; acceptance keeps the hold, #3415). Under the
+    // two-tier protocol (#1881) approval takes the GLOBAL `pg_advisory_xact_lock(1)`
+    // FIRST (then the per-lodge lock) and status-guards its AWAITING_REVIEW →
+    // PENDING flip. This branch takes the SAME global lock(1) and both the
+    // under-lock re-read gate below AND a status-guarded `updateMany` on the
+    // CANCELLED flip, so cancel and approval mutually exclude on the shared key
     // and neither can clobber the other: the race loser observes a
     // non-cancellable status (re-read gate or count 0) and aborts cleanly with a
     // 409, running none of the side effects below. This mirrors the paid
