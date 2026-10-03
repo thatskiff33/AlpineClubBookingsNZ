@@ -274,9 +274,9 @@ export async function buildBookingsDashboard(
           "Guest nights, occupancy, and booked revenue come from local booking and guest-night rows.",
       },
       {
-        label: "Payment cash",
+        label: "Net Collected",
         description:
-          "Net Collected comes from local payment rows and remains separate from Xero revenue recognition.",
+          "Net Collected comes from local payment, account credit and refund-task rows and remains separate from Xero revenue recognition.",
       },
     ],
     exportSections: [
