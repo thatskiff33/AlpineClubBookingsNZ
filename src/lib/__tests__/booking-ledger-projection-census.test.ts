@@ -24,11 +24,8 @@ import {
   summarizeBookingLedgerCensus,
 } from "@/lib/booking-ledger-projection-census-report";
 import { evaluateBookingLedgerPages } from "@/lib/booking-ledger-projection-census-store";
-import {
-  BOOKING_LEDGER_CENSUS_GATE_POLICY,
-  type BookingLedgerCensusRow,
-  type CensusLedgerLine,
-} from "@/lib/booking-ledger-projection-census-classes";
+import { BOOKING_LEDGER_CENSUS_GATE_POLICY } from "@/lib/booking-ledger-projection-census-classes";
+import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
 import { planSettlementLines, type PostedSettlementLine } from "@/lib/booking-ledger-settlement-posting";
 import { buildBookingLedgerRows, type BookingLedgerPosting } from "@/lib/booking-ledger-write";
 import type { ModificationPricingSide } from "@/lib/booking-modification-lines";

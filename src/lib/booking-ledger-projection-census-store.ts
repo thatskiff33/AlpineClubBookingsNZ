@@ -21,7 +21,7 @@ import {
   type BookingLedgerCensusReport,
   type LedgerTableStatistics,
 } from "@/lib/booking-ledger-projection-census-report";
-import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-classes";
+import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-row";
 import { bookingIdOfCreditRow, bookingsCreditRowsWhere } from "@/lib/member-credit-booking-rows";
 import { decodeRawRows } from "@/lib/raw-sql-rows";
 

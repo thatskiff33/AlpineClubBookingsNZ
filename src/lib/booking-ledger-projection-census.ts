@@ -66,11 +66,10 @@ import {
   unpostedCredits,
   unpostedSettlements,
   type BookingLedgerCensusClass,
-  type BookingLedgerCensusRow,
   type BookingLedgerCoverageKind,
-  type CensusLedgerLine,
   type ResidualComponent,
 } from "@/lib/booking-ledger-projection-census-classes";
+import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
 import { reviewAdjustmentEvidence, type ReviewAdjustmentEvidence } from "@/lib/booking-ledger-projection-census-review-adjustments";
 
 /**

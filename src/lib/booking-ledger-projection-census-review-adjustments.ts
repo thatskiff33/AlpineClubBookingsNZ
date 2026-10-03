@@ -21,7 +21,7 @@
  */
 import { liveLines } from "@/lib/booking-ledger-modification-posting";
 import { isAgreedGiveBackKey } from "@/lib/booking-ledger-posting-keys";
-import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-classes";
+import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
 import { editReviewSettlementSign } from "@/lib/edit-financial-review-charge-shape";
 
 export type ReviewAdjustmentEvidence = {
