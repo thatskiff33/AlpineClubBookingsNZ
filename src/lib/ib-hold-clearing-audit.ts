@@ -10,6 +10,7 @@ import {
   CreditType,
   PaymentSource,
   PaymentStatus,
+  PaymentTransactionKind,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
@@ -50,10 +51,18 @@ export interface IbAppliedCreditStrandRow {
   bookingId: string;
   bookingStatus: string;
   paymentStatus: string;
-  /** Durable settlement evidence. Aggregate `Payment.status` is a mutable
-   * mirror and may show REFUNDED after an inbound Xero credit-note repair on an
-   * Internet-Banking payment that never captured cash (INV-PAY-018). */
-  transactions: Array<{ status: PaymentStatus }>;
+  /** The invoice the current Internet-Banking PRIMARY receipt must name. */
+  xeroInvoiceId: string | null;
+  /** Durable manual-settlement provenance (INV-PAY-001). */
+  manuallyMarkedPaidAt: Date | null;
+  /** A historical Stripe PRIMARY or ADDITIONAL capture does not prove this
+   * Internet-Banking payment's current primary invoice was paid. */
+  transactions: Array<{
+    status: PaymentStatus;
+    source: PaymentSource;
+    kind: PaymentTransactionKind;
+    xeroInvoiceId: string | null;
+  }>;
   /** payment.amountCents mirror. */
   amountCents: number;
   /** payment.creditAppliedCents mirror (0 on a card-origin switched payment,
@@ -77,10 +86,11 @@ export interface IbAppliedCreditStrandFinding {
   paymentId: string;
   bookingStatus: string;
   paymentStatus: string;
-  /** true once the payment captured cash: the member has already double-paid.
+  /** true once the current IB receipt or manual settlement proves cash arrived.
    * Repair is a LOCAL credit restore (a Xero credit note does not refund cash a
    * member already sent). */
   realized: boolean;
+  settlementEvidence: "xero-primary-receipt" | "manual-settlement" | "unverified";
   amountCents: number;
   creditAppliedCents: number;
   finalPriceCents: number;
@@ -125,10 +135,26 @@ export interface IbAppliedCreditStrandAuditResult {
   scannedInternetBankingPayments: number;
   /** Payments that captured cash while holding applied credit — double-paid. */
   realized: IbAppliedCreditStrandFinding[];
-  /** Payments not yet captured — credit still recoverable before they pay. */
-  pending: IbAppliedCreditStrandFinding[];
+  /** Local history cannot prove these rows are unpaid. */
+  unverified: IbAppliedCreditStrandFinding[];
   realizedStrandedCents: number;
-  pendingExposureCents: number;
+  unverifiedExposureCents: number;
+}
+
+function ibSettlementEvidence(
+  row: IbAppliedCreditStrandRow,
+): IbAppliedCreditStrandFinding["settlementEvidence"] {
+  if (row.manuallyMarkedPaidAt) return "manual-settlement";
+  return row.transactions.some(
+    (transaction) =>
+      transaction.source === PaymentSource.INTERNET_BANKING &&
+      transaction.kind === PaymentTransactionKind.PRIMARY &&
+      transaction.xeroInvoiceId === row.xeroInvoiceId &&
+      row.xeroInvoiceId !== null &&
+      isCapturedTransactionStatus(transaction.status),
+  )
+    ? "xero-primary-receipt"
+    : "unverified";
 }
 
 /**
@@ -142,14 +168,14 @@ export function deriveIbAppliedCreditStrandFinding(
     return null;
   }
 
+  const settlementEvidence = ibSettlementEvidence(row);
   return {
     bookingId: row.bookingId,
     paymentId: row.paymentId,
     bookingStatus: row.bookingStatus,
     paymentStatus: row.paymentStatus,
-    realized: row.transactions.some((transaction) =>
-      isCapturedTransactionStatus(transaction.status),
-    ),
+    realized: settlementEvidence !== "unverified",
+    settlementEvidence,
     amountCents: row.amountCents,
     creditAppliedCents: row.creditAppliedCents,
     finalPriceCents: row.finalPriceCents,
@@ -187,11 +213,13 @@ export async function auditIbAppliedCreditStrands(options?: {
       bookingId: true,
       amountCents: true,
       creditAppliedCents: true,
+      xeroInvoiceId: true,
       status: true,
+      manuallyMarkedPaidAt: true,
       // #2397: the generalised mirror's third term.
       additionalAmountCents: true,
       additionalPaymentStatus: true,
-      transactions: { select: { status: true } },
+      transactions: { select: { status: true, source: true, kind: true, xeroInvoiceId: true } },
       booking: { select: { finalPriceCents: true, status: true } },
     },
     orderBy: { createdAt: "asc" },
@@ -200,9 +228,9 @@ export async function auditIbAppliedCreditStrands(options?: {
   const result: IbAppliedCreditStrandAuditResult = {
     scannedInternetBankingPayments: payments.length,
     realized: [],
-    pending: [],
+    unverified: [],
     realizedStrandedCents: 0,
-    pendingExposureCents: 0,
+    unverifiedExposureCents: 0,
   };
 
   for (const payment of payments) {
@@ -225,6 +253,8 @@ export async function auditIbAppliedCreditStrands(options?: {
       bookingId: payment.bookingId,
       bookingStatus: payment.booking.status,
       paymentStatus: payment.status,
+      xeroInvoiceId: payment.xeroInvoiceId,
+      manuallyMarkedPaidAt: payment.manuallyMarkedPaidAt,
       transactions: payment.transactions,
       amountCents: payment.amountCents,
       creditAppliedCents: payment.creditAppliedCents,
@@ -241,8 +271,8 @@ export async function auditIbAppliedCreditStrands(options?: {
       result.realized.push(finding);
       result.realizedStrandedCents += finding.strandExposureCents;
     } else {
-      result.pending.push(finding);
-      result.pendingExposureCents += finding.strandExposureCents;
+      result.unverified.push(finding);
+      result.unverifiedExposureCents += finding.strandExposureCents;
     }
   }
 
@@ -257,6 +287,7 @@ function formatIbAppliedCreditStrandRow(
   lines.push(`- booking ${finding.bookingId} (payment ${finding.paymentId})`);
   lines.push(`    booking status:    ${finding.bookingStatus}`);
   lines.push(`    payment status:    ${finding.paymentStatus}`);
+  lines.push(`    settlement evidence: ${finding.settlementEvidence}`);
   lines.push(`    final price:       ${formatCents(finding.finalPriceCents, format)}`);
   lines.push(`    amountCents:       ${formatCents(finding.amountCents, format)}`);
   lines.push(`    creditApplied (mirror): ${formatCents(finding.creditAppliedCents, format)}`);
@@ -300,14 +331,14 @@ export function formatIbAppliedCreditStrandReport(
     `  credit already lost:                 ${formatCents(result.realizedStrandedCents, format)}`,
   );
   lines.push(
-    `PENDING strands (not yet paid):        ${result.pending.length}`,
+    `UNVERIFIED strands:                    ${result.unverified.length}`,
   );
   lines.push(
-    `  credit at risk:                      ${formatCents(result.pendingExposureCents, format)}`,
+    `  exposure requiring review:           ${formatCents(result.unverifiedExposureCents, format)}`,
   );
   lines.push("");
 
-  if (result.realized.length === 0 && result.pending.length === 0) {
+  if (result.realized.length === 0 && result.unverified.length === 0) {
     lines.push("No Internet-Banking payment carries applied credit. Nothing to size.");
     return lines.join("\n");
   }
@@ -329,16 +360,16 @@ export function formatIbAppliedCreditStrandReport(
     lines.push("");
   }
 
-  if (result.pending.length > 0) {
+  if (result.unverified.length > 0) {
     lines.push(
-      "PENDING — not yet captured. These are fixed forward by the chosen #1620",
+      "UNVERIFIED — no current IB PRIMARY receipt or manual-settlement stamp",
     );
     lines.push(
-      "remedy (reduce the outstanding invoice to effective, or restore + re-bill)",
+      "proves whether cash arrived. Check the current Xero invoice or manual",
     );
-    lines.push("before the member pays; no realized loss yet.");
+    lines.push("record before changing credit; do not call these rows definitely unpaid.");
     lines.push("");
-    for (const finding of result.pending) {
+    for (const finding of result.unverified) {
       lines.push(...formatIbAppliedCreditStrandRow(finding, format));
     }
   }

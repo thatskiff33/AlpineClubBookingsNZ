@@ -71,25 +71,47 @@ function handwrittenCapturedTransactionStatusLists(files: readonly SourceFile[])
   });
 }
 
-function wrongStatusAuthorityInTransactionReaders(files: readonly SourceFile[]): string[] {
-  // These files read a PaymentTransaction status and have no aggregate Payment
-  // capture reader. Other modules can legitimately need both authorities.
-  const transactionOnlyReaders = new Set([
-    "src/lib/additional-ledger-gap.ts",
-    "src/app/api/bookings/[id]/confirm-modification-payment/route.ts",
-  ]);
+const AGGREGATE_CAPTURED_STATUS_AUTHORITY_READERS = new Set([
+  "src/app/api/bookings/[id]/guests/route.ts",
+  "src/lib/additional-payment-ask.ts",
+  "src/lib/admin-reports.ts",
+  "src/lib/booking-delete.ts",
+  "src/lib/finance-booking-metrics.ts",
+  "src/lib/xero-booking-edit-conditions.ts",
+  "src/lib/xero-booking-invoices.ts",
+]);
+
+function unregisteredAggregateCapturedStatusReaders(files: readonly SourceFile[]): string[] {
+  // This is a complete measured registry of production importers of the
+  // aggregate authority. It permits modules that legitimately read both
+  // aggregate and transaction status, while an arbitrary new transaction
+  // reader cannot silently import the wrong home.
   return files
     .filter(({ file, source }) =>
-      transactionOnlyReaders.has(file.replaceAll("\\", "/")) &&
-      /\b(?:isCapturedPaymentStatus|CAPTURED_PAYMENT_STATUS_LIST)\b/.test(stripComments(source)),
+      file.replaceAll("\\", "/") !== "src/lib/booking-payment-state.ts" &&
+      /\b(?:isCapturedPaymentStatus|CAPTURED_PAYMENT_STATUS_LIST)\b/.test(stripComments(source)) &&
+      !AGGREGATE_CAPTURED_STATUS_AUTHORITY_READERS.has(file.replaceAll("\\", "/")),
     )
     .map(({ file }) => file);
 }
 
+function aggregateCapturedStatusAuthorityReaders(files: readonly SourceFile[]): string[] {
+  return files
+    .filter(({ file, source }) =>
+      file.replaceAll("\\", "/") !== "src/lib/booking-payment-state.ts" &&
+      /\b(?:isCapturedPaymentStatus|CAPTURED_PAYMENT_STATUS_LIST)\b/.test(stripComments(source)),
+    )
+    .map(({ file }) => file.replaceAll("\\", "/"))
+    .sort();
+}
+
 describe("INV-SSOT: captured Payment and PaymentTransaction status guard (#3606, #3632)", () => {
-  it("rejects handwritten captured triples and wrong authority in transaction-only readers", () => {
+  it("rejects handwritten captured triples and unregistered aggregate authority readers", () => {
     expect(handwrittenCapturedTransactionStatusLists(productionSourceFiles())).toEqual([]);
-    expect(wrongStatusAuthorityInTransactionReaders(productionSourceFiles())).toEqual([]);
+    expect(aggregateCapturedStatusAuthorityReaders(productionSourceFiles())).toEqual(
+      [...AGGREGATE_CAPTURED_STATUS_AUTHORITY_READERS].sort(),
+    );
+    expect(unregisteredAggregateCapturedStatusReaders(productionSourceFiles())).toEqual([]);
   }, 15000);
 
   it("fails new hand-written captured transaction readers", () => {
@@ -165,12 +187,27 @@ describe("INV-SSOT: captured Payment and PaymentTransaction status guard (#3606,
     }
   });
 
-  it("rejects aggregate authority in a transaction-only reader", () => {
-    expect(wrongStatusAuthorityInTransactionReaders([
+  it("rejects aggregate authority in an arbitrary transaction reader written to disk", () => {
+    const directory = mkdtempSync(join(tmpdir(), "aggregate-status-authority-"));
+    try {
+      writeFileSync(
+        join(directory, "third-transaction-reader.ts"),
+        "import { isCapturedPaymentStatus } from '@/lib/booking-payment-state'; export const captured = (transaction: { status: string }) => isCapturedPaymentStatus(transaction.status);",
+      );
+      expect(unregisteredAggregateCapturedStatusReaders(productionSourceFiles(directory))).toEqual([
+        relative(process.cwd(), join(directory, "third-transaction-reader.ts")),
+      ]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("permits an explicitly registered module that reads both authorities", () => {
+    expect(unregisteredAggregateCapturedStatusReaders([
       {
-        file: "src/lib/additional-ledger-gap.ts",
-        source: "import { isCapturedPaymentStatus } from '@/lib/booking-payment-state';",
+        file: "src/lib/admin-reports.ts",
+        source: "import { isCapturedPaymentStatus } from '@/lib/booking-payment-state'; import { isCapturedTransactionStatus } from '@/lib/payment-transaction-status';",
       },
-    ])).toEqual(["src/lib/additional-ledger-gap.ts"]);
+    ])).toEqual([]);
   });
 });
