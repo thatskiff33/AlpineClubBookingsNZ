@@ -18,13 +18,14 @@ reason: the create request accepts the booker's code list beside the legacy sing
   (#3770's shape); the ordering itself lives in booking-create-promo.ts.
 
 file: src/app/api/promo-codes/validate/route.ts
-lines: 450
-reason: the preview accepts a code list and a per-guest awaiting-acceptance flag and
-  prices its single code through the one orchestrator; the several-code half
-  is in promo-codes-preview.ts, leaving only the schema and the hand-off here.
+lines: 483
+reason: the preview accepts a code list, works out which guests await acceptance
+  through the create's own consent planner, and prices its single code through
+  the one orchestrator; the several-code half is in promo-codes-preview.ts,
+  leaving only the schema and the hand-off here.
 
 file: src/lib/member-guest-consent-service.ts
-lines: 1312
+lines: 1313
 reason: an acceptance re-prices the booking's codes inside the consent transaction
   that already holds the locks it needs (D-3813-4), and its after-commit half
   runs from the one finalise step; the re-price itself is in

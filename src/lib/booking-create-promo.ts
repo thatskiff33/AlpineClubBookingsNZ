@@ -303,12 +303,11 @@ export function orderedPromoCodeRequests(body: {
     }));
 }
 
-// The stored spelling of a typed code and the code-list refusals live in the
-// leaf `promo-code-list-rules.ts` (#3827), re-exported here for this module's
+// The code-list refusals live in the leaf `promo-code-list-rules.ts` (#3827),
+// with the stored spelling of a typed code; re-exported here for this module's
 // importers.
 export {
   DUPLICATE_PROMO_CODE_MESSAGE,
-  normalizePromoCodeInput,
   ONE_PROMO_CODE_PER_BOOKING_MESSAGE,
 } from "@/lib/promo-code-list-rules";
 

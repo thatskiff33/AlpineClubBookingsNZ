@@ -7,7 +7,7 @@ would be a refactor of its own; the later children of the epic rewrite the
 pricing and invoice sites these lines touch.
 
 file: src/app/api/bookings/[id]/modify-quote/route.ts
-lines: 2518
+lines: 2522
 reason: the quote preview reads the booking's one promo redemption through
   soleBookingPromoRedemption (#3826); one import and one guarded read where
   the booking is loaded, ahead of epic #3813 C2 widening the preview.
@@ -39,7 +39,7 @@ reason: the delete audit snapshot must record every redemption a booking carries
   helper sits beside the one snapshot it builds.
 
 file: src/lib/booking-modify-plan.ts
-lines: 3253
+lines: 3258
 reason: the promo change step reads the booking's one promo redemption through
   soleBookingPromoRedemption (#3826); one import and one guarded read inside
   applyPromoCodeChanges, which epic #3813 C2 rewrites.
