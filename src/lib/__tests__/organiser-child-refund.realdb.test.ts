@@ -77,9 +77,16 @@ export function assertSafeOrganiserChildRefundDbUrl(url: string): void {
   }
 }
 
-/** An in-memory Stripe: refunds by idempotency key, listable by intent. */
+/**
+ * An in-memory Stripe: refunds by idempotency key, listable by intent. A
+ * repeated key answers with the ORIGINAL response, as Stripe does for 24 hours;
+ * reading a refund back (retrieve, list) sees its live status.
+ */
 function fakeStripe() {
   const byKey = new Map<string, Stripe.Refund>();
+  const liveStatus = new Map<string, string>();
+  const live = (refund: Stripe.Refund) =>
+    ({ ...refund, status: liveStatus.get(refund.id) ?? refund.status }) as Stripe.Refund;
   let seq = 0;
   let loseNextResponse = false;
   let failNextCall = false;
@@ -93,14 +100,13 @@ function fakeStripe() {
     },
     /** Stripe later moves a refund on - how a pending refund fails. */
     setStatus(refundId: string, status: string) {
-      const refund = [...byKey.values()].find((candidate) => candidate.id === refundId);
-      if (!refund) throw new Error(`No refund ${refundId}`);
-      (refund as { status: string }).status = status;
+      if (![...byKey.values()].some((candidate) => candidate.id === refundId)) throw new Error(`No refund ${refundId}`);
+      liveStatus.set(refundId, status);
     },
     async retrieveRefund(refundId: string) {
       const refund = [...byKey.values()].find((candidate) => candidate.id === refundId);
       if (!refund) throw new Error(`No such refund: ${refundId}`);
-      return { ...refund } as Stripe.Refund;
+      return live(refund);
     },
     loseNextResponse() {
       loseNextResponse = true;
@@ -144,7 +150,7 @@ function fakeStripe() {
       return refund;
     },
     async listRefundsForPaymentIntent(paymentIntentId: string) {
-      return [...byKey.values()].filter((refund) => refund.payment_intent === paymentIntentId);
+      return [...byKey.values()].filter((refund) => refund.payment_intent === paymentIntentId).map(live);
     },
   };
   return stripe;
@@ -516,10 +522,11 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
       // Still spoken for: 5000 captured, 2000 owed again, so 4000 cannot fit.
       await expect(reserveFor(target, `${P}-c-mod-2`, 4_000)).rejects.toBeInstanceOf(core.OrganiserChildRefundRefusedError);
 
-      // A replay inside Stripe's key window reads back the failed refund: the
-      // debt stays owed and nothing is recorded twice. A second sweep finds
-      // nothing left to take back.
-      await expect(run(debt!.id)).rejects.toThrow("failed");
+      // A replay inside Stripe's key window is answered with the ORIGINAL
+      // `pending` response; the refund row knows it failed, so the debt stays
+      // owed and nothing is recorded twice. A second sweep finds nothing left
+      // to take back.
+      await expect(run(debt!.id)).rejects.toThrow("is recorded as failed");
       expect(await prisma.paymentRefund.count({ where: { paymentId: C.payment } })).toBe(1);
       expect((await executor.reconcilePendingOrganiserChildRefunds(stripe)).reversed).toBe(0);
     });
