@@ -14,6 +14,7 @@ import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-a
 import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { formatCents } from "@/lib/utils";
+import { EXCLUDED_LEDGER_REFUND_STATUSES } from "@/lib/payment-transaction-status";
 
 const APPLIED_CREDIT_ALLOCATION_ROLES = [
   "APPLIED_CREDIT_ALLOCATION",
@@ -182,6 +183,7 @@ export async function repairRefundedPaymentBusinessState(input: {
       status: true,
       // F5 (#1353): Stripe payments get a raise-only ledger floor below.
       source: true,
+      booking: { select: { organiserSettled: true } },
     },
   });
   if (payments.length === 0) {
@@ -403,6 +405,25 @@ export async function repairRefundedPaymentBusinessState(input: {
         errorMessage: `Xero-derived refund total (${formatCents(nextRefundedTotalCents, format)}) for payment ${payment.id} is below the local Stripe refund ledger (${formatCents(payment.refundedAmountCents, format)}). The local ledger was kept (raise-only floor, #1353). Likely causes: a missing refund-delta credit note in Xero, or a refund credit note voided in Xero after Stripe paid the refund out.`,
       });
       effectiveRefundedTotalCents = payment.refundedAmountCents;
+    }
+    // #3653 (`INV-PAY-111`): an organiser-settled child's cash comes back only
+    // through a refund of the group's combined payment, recorded against the
+    // child by Stripe's own refund id. A Xero note is not that evidence, so it
+    // may not raise the child's mirror past what Stripe has recorded - a raised
+    // mirror would shrink what a later cancellation returns to the organiser.
+    if (isStripePayment && payment.booking.organiserSettled) {
+      const recorded = await prisma.paymentRefund.aggregate({
+        where: { paymentId: payment.id, status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES } },
+        _sum: { amountCents: true },
+      });
+      const backedCents = Math.max(payment.refundedAmountCents, recorded._sum.amountCents ?? 0);
+      if (effectiveRefundedTotalCents > backedCents) {
+        logger.warn(
+          { creditNoteId: input.creditNoteId, paymentId: payment.id, backedCents, xeroDerivedRefundedTotalCents: effectiveRefundedTotalCents },
+          "Xero-derived refund total exceeds the organiser child's Stripe refunds; not raising the mirror (#3653)"
+        );
+        effectiveRefundedTotalCents = backedCents;
+      }
     }
 
     let nextStatus = getNextRefundedPaymentStatus(

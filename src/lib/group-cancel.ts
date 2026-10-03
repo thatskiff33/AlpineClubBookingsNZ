@@ -17,12 +17,14 @@
  *     their beds, and — for a group that was already settled — refunds the
  *     organiser.
  *
- * The settlement is a single Stripe PaymentIntent for the combined total, so the
- * refund is one Stripe refund. The refund amount follows the *same* date-based
- * cancellation policy as the organiser's own booking and every normal booking
- * (calculateRefundAmount), applied per paid child so each child's Xero refund
- * credit note (allocated against that child's own settlement invoice) sums
- * exactly to the single Stripe refund.
+ * The settlement is a single Stripe PaymentIntent for the combined total. Since
+ * #3653 (`INV-PAY-111`) each paid child is refunded by its OWN Stripe refund
+ * against that intent, sized by the same date-based cancellation policy as every
+ * normal booking applied to what remains of the child's payment after any
+ * edit's refund, and recorded against the child before its mirror or Xero note
+ * moves (`organiser-child-refund.ts`). A plan frozen before #3653 - one refund
+ * for the whole group - is still finished the old way; the paragraphs below
+ * describe that legacy path.
  *
  * Conventions match group-booking.ts: integer cents, NZ date-only booking dates,
  * Stripe/Xero calls run outside the database transaction. Everything here is
@@ -66,6 +68,7 @@ import {
   BookingStatus,
   GroupBookingPaymentMode,
   GroupBookingStatus,
+  PaymentRecoveryOperationStatus,
   PaymentStatus,
   Prisma,
 } from "@prisma/client";
@@ -78,6 +81,7 @@ import {
 } from "./cancellation";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "./bed-allocation-lifecycle";
 import { bookingOwner } from "@/lib/booking-owner";
+import { cancelRefundableBaseCents, hasCapturedPayment } from "@/lib/booking-payment-state";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { formatCents } from "@/lib/utils";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
@@ -102,10 +106,16 @@ import { isXeroConnected } from "./xero";
 import {
   enqueueGroupSettlementRefundRecovery,
   markGroupSettlementRefundRecoverySucceeded,
+  runPaymentRecoveryOperationNow,
 } from "@/lib/payment-recovery";
+import {
+  planOrganiserCancelChildRefunds,
+  readPerChildRefundPlan,
+} from "@/lib/organiser-child-refund";
+import { buildOrganiserChildCancellationRefundKey } from "@/lib/payment-recovery-keys";
 import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 import logger from "@/lib/logger";
-import { clubToday } from "@/lib/club-time";
+import { clubToday, type CalendarDate } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -157,6 +167,55 @@ function deserializeRefundPlan(value: unknown): Map<string, number> {
     }
   }
   return plan;
+}
+
+/**
+ * #3653: plan (or read back) one refund per paid child and run each now. Returns
+ * the cents each child's refund has ACTUALLY returned - a debt still owed after
+ * this run (Stripe failed, or another worker holds it) reads as nothing yet,
+ * exactly as the legacy path zeroes its view when its refund fails. The debts
+ * stay owed; the recovery cron completes them and alerts on exhaustion.
+ */
+async function refundOrganiserCancelChildren({
+  settlementId,
+  organiserBookingId,
+  firstChild,
+  todayAtClub,
+  format,
+}: {
+  settlementId: string;
+  organiserBookingId: string;
+  firstChild: { checkIn: Date; lodgeId: string } | null;
+  todayAtClub: CalendarDate;
+  format: ClubFormat;
+}): Promise<Map<string, number>> {
+  // All children share the organiser's lodge (one booking = one lodge,
+  // ADR-001). Read OUTSIDE the plan's lock(1) transaction (`INV-LOCK-004`).
+  const policy = firstChild
+    ? await loadCancellationPolicy(firstChild.checkIn, firstChild.lodgeId)
+    : [];
+  const plan = await planOrganiserCancelChildRefunds({
+    settlementId,
+    organiserBookingId,
+    activeChildStatuses: ACTIVE_CHILD_STATUSES,
+    daysUntilCheckIn: firstChild ? daysUntilDate(firstChild.checkIn, todayAtClub) : 0,
+    policy,
+  });
+  const refunded = new Map<string, number>();
+  for (const [childId, cents] of plan) {
+    const key = buildOrganiserChildCancellationRefundKey(settlementId, childId);
+    const debt = await prisma.paymentRecoveryOperation.findUnique({ where: { idempotencyKey: key } });
+    if (!debt) continue;
+    if (debt.status !== PaymentRecoveryOperationStatus.SUCCEEDED) {
+      await runPaymentRecoveryOperationNow(debt.id, format);
+    }
+    const after = await prisma.paymentRecoveryOperation.findUnique({
+      where: { idempotencyKey: key },
+      select: { status: true },
+    });
+    if (after?.status === PaymentRecoveryOperationStatus.SUCCEEDED) refunded.set(childId, cents);
+  }
+  return refunded;
 }
 
 async function markGroupCancelled(groupBookingId: string): Promise<void> {
@@ -329,74 +388,62 @@ export async function settleGroupBookingOnOrganiserCancel(
     }
   }
 
-  // Refund the organiser when the group was already settled. Only genuinely PAID
-  // children were charged (a member could have joined after settlement and still
-  // be unpaid), so the policy refund is computed per paid child and summed.
-  //
-  // The plan is reconstructed UNCONDITIONALLY from any persisted refundPlan: a
-  // previous (crash-interrupted) run flips the settlement to REFUNDED before the
-  // child-loop finishes, so gating the reconstruct on `settled` would lose the
-  // plan and cancel the remaining paid children WITHOUT their refund mirror.
-  // Reconstruct never recomputes — see the header (tier drift on a >24h re-drive).
+  // Refund the organiser when the group was already settled (#3653). A CARD
+  // settlement refunds each paid child with its OWN refund out of the combined
+  // intent, sized from what remains of its payment after any edit's refund - one
+  // debt per child, frozen with the settlement's plan under lock(1) before any
+  // provider call; a re-drive replays the frozen debts rather than re-tiering
+  // them (`organiser-child-refund.ts`). Two cases keep the `{childId: cents}`
+  // plan whose mirrors and notes this function writes itself (`mirrorPlan`): a
+  // plan frozen before #3653 (one Stripe refund for the whole group, finished
+  // the way it started), and an Internet Banking settlement, whose refund the
+  // club pays by hand and which no Stripe refund can back.
   const settled = settlement?.status === PaymentStatus.SUCCEEDED;
   let refundByChildId = new Map<string, number>();
   let totalRefundCents = 0;
+  const mirrorPlan =
+    settlement != null &&
+    readPerChildRefundPlan(settlement.refundPlan) === null &&
+    (settlement.refundPlan != null || !settlement.stripePaymentIntentId);
 
-  if (settlement?.refundPlan != null) {
+  if (settlement && mirrorPlan && settlement.refundPlan != null) {
     // A previous (crash-interrupted) run already computed + persisted the plan.
     // Reuse it verbatim; NEVER recompute.
     refundByChildId = deserializeRefundPlan(settlement.refundPlan);
-    for (const cents of refundByChildId.values()) {
-      totalRefundCents += cents;
-    }
-  } else if (settled && children.length > 0) {
-    // `children.length > 0` is checked in this same condition; a missing
-    // first child here would be a real bug in that count, so this fails
-    // loudly rather than silently computing zero refunds for paid children.
+  } else if (settlement && mirrorPlan && settled && children[0]) {
     const [firstChild] = children;
-    if (!firstChild) {
-      throw new Error("Group booking settlement has children but the first child could not be read");
-    }
-    const checkIn = firstChild.checkIn;
-    const days = daysUntilDate(checkIn, todayAtClub);
-    // All children of a group booking share the organiser's lodge (one
-    // booking = one lodge, ADR-001), so the first child's lodge is the group's.
-    const policy = await loadCancellationPolicy(checkIn, firstChild.lodgeId);
+    const days = daysUntilDate(firstChild.checkIn, todayAtClub);
+    const policy = await loadCancellationPolicy(firstChild.checkIn, firstChild.lodgeId);
     for (const child of children) {
-      // #3632: SUCCEEDED-only on purpose, not `isCapturedPaymentStatus`. The
-      // plan sizes from `finalPriceCents` (no refunded mirror) and is replayed
-      // verbatim, so admitting a part-refunded organiser-settled child would
-      // refund it twice. #3653 owns that child's remaining-value plan.
-      const isPaid =
-        child.status === BookingStatus.PAID &&
-        child.payment?.status === PaymentStatus.SUCCEEDED;
-      if (!isPaid) {
-        continue;
-      }
+      // What remains of the child's payment, less its change fee (`INV-PAY-018`).
+      if (child.status !== BookingStatus.PAID || !child.payment || !hasCapturedPayment(child.payment)) continue;
       const { refundAmountCents } = calculateRefundAmount(
-        child.finalPriceCents,
+        cancelRefundableBaseCents({ ...child.payment, finalPriceCents: child.finalPriceCents }),
         days,
         policy,
         "card"
       );
-      if (refundAmountCents > 0) {
-        refundByChildId.set(child.id, refundAmountCents);
-        totalRefundCents += refundAmountCents;
-      }
+      if (refundAmountCents > 0) refundByChildId.set(child.id, refundAmountCents);
     }
-
-    // Persist the plan BEFORE the refund + flip so a crash anywhere downstream
-    // re-drives with the RECORDED per-child amounts instead of recomputing.
-    if (totalRefundCents > 0) {
+    // Persist the plan BEFORE the flip so a crash anywhere downstream re-drives
+    // with the RECORDED per-child amounts instead of recomputing.
+    if (refundByChildId.size > 0) {
       await prisma.groupBookingSettlement.update({
-        where: { id: settlement!.id },
-        data: {
-          refundPlan: Object.fromEntries(
-            refundByChildId
-          ) as unknown as Prisma.InputJsonValue,
-        },
+        where: { id: settlement.id },
+        data: { refundPlan: Object.fromEntries(refundByChildId) as unknown as Prisma.InputJsonValue },
       });
     }
+  } else if (settlement?.stripePaymentIntentId) {
+    refundByChildId = await refundOrganiserCancelChildren({
+      settlementId: settlement.id,
+      organiserBookingId,
+      firstChild: children[0] ?? null,
+      todayAtClub,
+      format,
+    });
+  }
+  for (const cents of refundByChildId.values()) {
+    totalRefundCents += cents;
   }
 
   // Refund + settlement flip, guarded on SUCCEEDED so it fires exactly once
@@ -404,6 +451,7 @@ export async function settleGroupBookingOnOrganiserCancel(
   // skips this block and only applies the reconstructed mirror below (crash after
   // flip). The Stripe idempotency key dedups a crash between refund and flip.
   if (
+    mirrorPlan &&
     totalRefundCents > 0 &&
     settlement?.stripePaymentIntentId &&
     // #1881 — the SAME fresh-status value the plan was computed from, so the
@@ -556,7 +604,8 @@ export async function settleGroupBookingOnOrganiserCancel(
           previousRange: { checkIn: child.checkIn, checkOut: child.checkOut },
         });
         await revokePaymentLinksForBooking(child.id, tx);
-        if (refundForChild > 0 && child.payment) {
+        // #3653: a per-child refund's mirror and note are its executor's.
+        if (mirrorPlan && refundForChild > 0 && child.payment) {
           // Ledger bypass is acceptable here: these organiser-settled child
           // payments have no PaymentTransaction rows (they were paid via the
           // combined settlement PI, not per-child intents), so there is no
@@ -681,11 +730,13 @@ export async function settleGroupBookingOnOrganiserCancel(
       ipAddress,
     });
 
+    // #3653: a per-child refund recorded its own REFUNDED event.
+    const refundEvent = mirrorPlan && refundForChild > 0;
     await recordBookingEvent({
       bookingId: child.id,
-      type: refundForChild > 0 ? BookingEventType.REFUNDED : BookingEventType.CANCELLED,
+      type: refundEvent ? BookingEventType.REFUNDED : BookingEventType.CANCELLED,
       actorMemberId: sessionUserId,
-      amountCents: refundForChild > 0 ? refundForChild : undefined,
+      amountCents: refundEvent ? refundForChild : undefined,
       reason:
         refundForChild > 0
           ? "Group organiser cancelled the booking; the settled beds were refunded to the organiser."
@@ -760,7 +811,8 @@ export type GroupSettlementRefundReplayResult = {
 
 /**
  * Replay an organiser-cancel settlement refund from the settlement's
- * PERSISTED refund plan (F3, #1351). Invoked by the payment-recovery cron for
+ * PERSISTED refund plan (F3, #1351). Only a plan frozen before #3653 reaches
+ * here; a per-child plan reads as empty and moves nothing. Invoked by the payment-recovery cron for
  * `group_settlement_refund_recovery_<settlementId>` operations after the
  * inline refund failed or the process died mid-cancel.
  *
