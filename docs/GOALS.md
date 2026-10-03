@@ -25,9 +25,7 @@ next so the pilot club has something stable to install from.
 
 The risk: Goal 1's finish line is "zero open issues", and each sweep repeats
 "until clean". Anything filed along the way counts, so the finish line can keep
-moving — and Goals 2 and 3 wait on it. Watch for this; if Goal 1 keeps
-growing instead of shrinking, that is a signal to revisit scope, not to keep
-sweeping silently.
+moving — and Goals 2 and 3 wait on it.
 
 ## Goal 1: Robustness
 
@@ -111,9 +109,6 @@ Alongside the issue count, ask three questions:
 - Are changes easy to make without breaking things?
 - Are problems staying fixed?
 - Are we confident the agent understands a change's impact?
-
-If the answers are trending towards "yes", Goal 1 is working even while the
-count moves.
 
 ### Out of scope
 
