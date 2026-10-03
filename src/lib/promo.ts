@@ -44,6 +44,26 @@ import {
 export const PROMO_LODGE_RESTRICTION_MESSAGE =
   "This promo code cannot be used at this lodge.";
 
+export const GUEST_SELECTION_REQUIRED_MESSAGE =
+  "Choose which guests should receive this promo code";
+
+/**
+ * The optional per-lodge restriction (PromoCodeLodge junction, ADR-001 resolved
+ * question 4), in one place: no rows means redeemable at every lodge; rows
+ * present restrict redemption to the listed lodges. Shared by the rules, the
+ * application and the create route's pre-check (#3770).
+ */
+export function promoLodgeRestrictionRefusal(
+  promoCode: { lodges?: ReadonlyArray<{ lodgeId: string }> | null },
+  lodgeId: string | null | undefined,
+): string | null {
+  return promoCode.lodges &&
+    promoCode.lodges.length > 0 &&
+    (!lodgeId || !promoCode.lodges.some((row) => row.lodgeId === lodgeId))
+    ? PROMO_LODGE_RESTRICTION_MESSAGE
+    : null;
+}
+
 type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 export interface PromoValidationResult {
@@ -837,12 +857,9 @@ export function validatePromoCodeRules(
     return "This promo code is no longer active";
   }
 
-  if (
-    promoCode.lodges &&
-    promoCode.lodges.length > 0 &&
-    (!lodgeId || !promoCode.lodges.some((row) => row.lodgeId === lodgeId))
-  ) {
-    return PROMO_LODGE_RESTRICTION_MESSAGE;
+  const lodgeRefusal = promoLodgeRestrictionRefusal(promoCode, lodgeId);
+  if (lodgeRefusal) {
+    return lodgeRefusal;
   }
 
   // BOTH SIDES OF THIS COMPARISON ARE ZONE-FREE CALENDAR DAYS (#3123).
@@ -1033,13 +1050,10 @@ export async function validateAndCalculatePromoDiscount(
   // question 4): no rows means redeemable at every lodge; rows present
   // restrict redemption to the listed lodges. Checked up front, before any
   // usage lookups, so a lodge-restricted code fails fast.
-  if (
-    promoCode.lodges &&
-    promoCode.lodges.length > 0 &&
-    (!options.lodgeId || !promoCode.lodges.some((row) => row.lodgeId === options.lodgeId))
-  ) {
+  const lodgeRefusal = promoLodgeRestrictionRefusal(promoCode, options.lodgeId);
+  if (lodgeRefusal) {
     return {
-      error: PROMO_LODGE_RESTRICTION_MESSAGE,
+      error: lodgeRefusal,
       beneficiaryMemberIds: [],
     };
   }
@@ -1140,7 +1154,7 @@ export async function validateAndCalculatePromoDiscount(
   if (requiresGuestSelection) {
     if (!options.selectedGuestIndexes || selectedGuestIndexes.indexes.length === 0) {
       return {
-        error: "Choose which guests should receive this promo code",
+        error: GUEST_SELECTION_REQUIRED_MESSAGE,
         requiresGuestSelection: true,
         selectableGuestIndexes,
         beneficiaryMemberIds: [],

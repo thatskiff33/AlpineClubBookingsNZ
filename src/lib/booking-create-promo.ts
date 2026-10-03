@@ -10,10 +10,17 @@ import { prisma } from "@/lib/prisma";
 import type { CalendarDate } from "@/lib/club-time";
 import type { PromoAdjustmentTarget } from "@/lib/night-adjustment-write";
 import {
+  GUEST_SELECTION_REQUIRED_MESSAGE,
+  promoLodgeRestrictionRefusal,
   shouldPersistPromoRedemption,
   validateAndCalculatePromoDiscount,
+  validatePromoCodeRules,
   type PromoBeneficiaryAllocation,
 } from "@/lib/promo";
+import {
+  assignmentRequiresAssignedBooker,
+  assignmentRequiresGuestSelection,
+} from "@/lib/promo-guest-scope";
 import { resolveWorkPartyEventPromoForBooking } from "@/lib/work-party";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { type BookingGuestInput, BookingPromoError } from "./booking-create-types";
@@ -127,7 +134,7 @@ export async function resolvePromoInTransaction(
     lodgeId,
     todayAtClub,
   } = options;
-  const normalizedCode = promoCodeStr.toUpperCase().trim();
+  const normalizedCode = normalizePromoCodeInput(promoCodeStr);
 
   // LOCK RAW, READ TYPED (#2289). The raw statement exists ONLY to take the row
   // lock, so it selects a constant, returns an affected-row count through
@@ -182,8 +189,9 @@ export async function resolvePromoInTransaction(
       ? await tx.promoCode.findUnique({ where: { code: normalizedCode } })
       : null;
 
-  if (promoCode?.internal && !allowInternal) {
-    throw new BookingPromoError("Promo code not found");
+  const hidden = promoCodeVisibilityRefusal(promoCode, allowInternal ?? false);
+  if (hidden) {
+    throw new BookingPromoError(hidden);
   }
 
   let assignedMemberIds: string[] | null = null;
@@ -252,6 +260,79 @@ export async function resolvePromoInTransaction(
     promoShouldPersist: shouldPersistPromoRedemption(promoResult),
     promoCodeRecord: promoCode,
   };
+}
+
+/** ONE spelling of a typed promo code as it is stored (#3770, `INV-SSOT-001`). */
+export function normalizePromoCodeInput(code: string): string {
+  return code.toUpperCase().trim();
+}
+
+/**
+ * An internal (working-bee) code is "not found" to anyone who typed it; only the
+ * working-bee path may redeem one. The one spelling of that rule (#3770).
+ */
+export function promoCodeVisibilityRefusal(
+  promoCode: { internal: boolean } | null,
+  allowInternal: boolean,
+): string | null {
+  return promoCode?.internal && !allowInternal ? "Promo code not found" : null;
+}
+
+/**
+ * The refusal a promo code earns from the REQUEST and the BOOKER alone, or null
+ * (#3770).
+ *
+ * The create route asks this before its member lookup, so the answer is the same
+ * whether a member id in the party is real or not. It is a pre-check, not the
+ * decision: {@link resolvePromoInTransaction} re-reads the code under its row
+ * lock and refuses authoritatively. Its order is the application's
+ * (`validateAndCalculatePromoDiscount`): visibility, existence, the lodge, the
+ * missing guest selection, then the rules. Left to the services, because they
+ * read the priced, resolved party: which selected guests may use the code and
+ * how many may, whether an assigned member is staying, and every usage cap (the
+ * booker is a beneficiary only when the priced party selects somebody).
+ */
+export async function promoCodeRequestRefusal(options: {
+  promoCodeStr: string;
+  allowInternal: boolean;
+  memberId: string;
+  checkIn: Date;
+  lodgeId: string;
+  promoGuestIndexes?: number[];
+  todayAtClub: CalendarDate;
+}): Promise<string | null> {
+  const promoCode = await prisma.promoCode.findUnique({
+    where: { code: normalizePromoCodeInput(options.promoCodeStr) },
+    include: {
+      assignments: { select: { memberId: true } },
+      lodges: { select: { lodgeId: true } },
+    },
+  });
+  const hidden = promoCodeVisibilityRefusal(promoCode, options.allowInternal);
+  if (hidden || !promoCode) return hidden ?? "Promo code not found";
+  const lodgeRefusal = promoLodgeRestrictionRefusal(promoCode, options.lodgeId);
+  if (lodgeRefusal) return lodgeRefusal;
+  const assignedMemberIds = promoCode.assignments.length
+    ? promoCode.assignments.map((assignment) => assignment.memberId)
+    : null;
+  if (
+    assignmentRequiresGuestSelection(promoCode, assignedMemberIds) &&
+    (options.promoGuestIndexes?.length ?? 0) === 0
+  ) {
+    return GUEST_SELECTION_REQUIRED_MESSAGE;
+  }
+  return validatePromoCodeRules(
+    promoCode,
+    { memberId: options.memberId, bookingCheckIn: options.checkIn },
+    options.todayAtClub,
+    { capsResolvedByBeneficiaryTrim: true },
+    // "Not assigned to you" reads only the booker when the code needs an
+    // assigned booker; the application passes the same expression.
+    assignmentRequiresAssignedBooker(promoCode, assignedMemberIds)
+      ? assignedMemberIds
+      : null,
+    options.lodgeId,
+  );
 }
 
 const PROMO_WORK_PARTY_EXCLUSION_MESSAGE =

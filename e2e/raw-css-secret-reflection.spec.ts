@@ -162,6 +162,10 @@ test.describe("kiosk PIN entry under administrator Raw CSS", () => {
     const field = page.locator("input#hut-leader-pin");
     await expect(field).toBeVisible();
 
+    // Masked by default (#3460): rendered glyphs are a channel a font could
+    // measure, so the field is a password field until the visitor asks.
+    await expect(field).toHaveAttribute("type", "password");
+
     // Positive control FIRST. If Raw CSS were not reaching this page, every
     // assertion after it would be meaningless.
     expect((await observe(page)).outlineColor).toBe(CONTROL_OUTLINE);
@@ -208,6 +212,29 @@ test.describe("kiosk PIN entry under administrator Raw CSS", () => {
     await page.keyboard.press("Backspace");
     await expectNoSelectableSecret(page, `${PIN.slice(0, 3)}${PIN.slice(4)}`);
     await page.keyboard.type(PIN[3] as string);
+    await expectNoSelectableSecret(page, PIN);
+
+    // The show/hide toggle (#3460). Asserted: it is a `type="button"` (so it
+    // cannot submit), the submit control still reads its idle label right after
+    // each toggle (a submit would flip it to "Checking..." synchronously), the
+    // field is `text` ONLY while shown, and nothing is selectable while shown,
+    // including across a Backspace and a retyped digit.
+    const toggle = page.getByRole("button", { name: "Show PIN" });
+    await expect(toggle).toHaveAttribute("type", "button");
+    await toggle.focus();
+    await page.keyboard.press("Enter");
+    await expect(field).toHaveAttribute("type", "text");
+    await expect(submit).toHaveText("View instructions");
+    await expectNoSelectableSecret(page, PIN);
+    await field.click();
+    await page.keyboard.press("End");
+    await page.keyboard.press("Backspace");
+    await expectNoSelectableSecret(page, PIN.slice(0, -1));
+    await page.keyboard.type(PIN.slice(-1));
+    await expectNoSelectableSecret(page, PIN);
+    await page.getByRole("button", { name: "Hide PIN" }).click();
+    await expect(field).toHaveAttribute("type", "password");
+    await expect(submit).toHaveText("View instructions");
     await expectNoSelectableSecret(page, PIN);
 
     // Submit: the reference is not a real assignment, so the API refuses and the
