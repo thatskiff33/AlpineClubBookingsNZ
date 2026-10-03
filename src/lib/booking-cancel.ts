@@ -172,9 +172,10 @@ type CancelBookingResponse =
  * `options.requireRequestHold` (#1406): when `true`, the caller asserts it is
  * releasing a held booking-request slot that MUST still be AWAITING_REVIEW (the
  * admin "Release hold" route and `declineBookingRequest`). If the outer read
- * finds any other status — e.g. a concurrent quote-accept already flipped the
- * hold AWAITING_REVIEW -> PENDING — cancel refuses with a 409 BEFORE branch
- * dispatch and takes no side effect, so a just-accepted booking is never routed
+ * finds any other status — e.g. a concurrent officer approval
+ * (`approveBookingRequest`) already converted the hold AWAITING_REVIEW ->
+ * PENDING; requester acceptance never moves it (#3415) — cancel refuses with a
+ * 409 BEFORE branch dispatch and takes no side effect, so a just-converted booking is never routed
  * into the generic PENDING branch and clobbered (its brand-new payment links
  * revoked). This guard stays ESSENTIAL even though the PENDING branch is now
  * itself status-guarded claim-first under lock(1) (#1547): that branch only
@@ -574,18 +575,19 @@ async function performBookingCancellation(
   //
   // The admin "Release hold" route and `declineBookingRequest` release a held
   // booking-request slot they expect to still be AWAITING_REVIEW. This OUTER
-  // read is UN-locked, so a concurrent quote-accept
-  // (`convertBookingRequestToBooking`) can flip the hold AWAITING_REVIEW ->
-  // PENDING before it runs. Without this guard the PENDING snapshot would be
-  // dispatched straight into the generic PENDING branch below and clobber the
-  // just-accepted booking to CANCELLED and revoke its brand-new payment links.
+  // read is UN-locked, so a concurrent officer approval
+  // (`approveBookingRequest`) can convert the hold AWAITING_REVIEW -> PENDING
+  // before it runs; requester acceptance keeps the hold (#3415). Without this
+  // guard the PENDING snapshot would be dispatched straight into the generic
+  // PENDING branch below and clobber the just-converted booking to CANCELLED
+  // and revoke its brand-new payment links.
   // The PENDING branch is now itself status-guarded claim-first under lock(1)
   // (#1547), but that only rejects a booking that has LEFT PENDING; a
-  // just-accepted booking genuinely IS PENDING, so it passes the branch's own
+  // just-converted booking genuinely IS PENDING, so it passes the branch's own
   // under-lock guard. This pre-dispatch check therefore remains the ONLY
-  // protection for the accept-then-release race. Refuse with a 409 loser (NO
+  // protection for the approve-then-release race. Refuse with a 409 loser (NO
   // side effect) BEFORE branch dispatch so a now-PENDING booking is never
-  // cancelled by a hold-release. An accept that commits AFTER this read but
+  // cancelled by a hold-release. An approval that commits AFTER this read but
   // BEFORE the AWAITING_REVIEW branch takes pg_advisory_xact_lock(1) is caught
   // by that branch's under-lock re-read (the NO_PAYMENT_CANCELLABLE_STATUSES
   // guard) — the two together fully close the race. Opt-in only: callers
@@ -609,13 +611,14 @@ async function performBookingCancellation(
     // call, so the only hazard is a state CLOBBER, not a double money-move —
     // the "claim-first without durable recovery inverts a crash into money
     // LOSS" caveat does not apply here. The clobber: a held AWAITING_REVIEW
-    // booking can be converted to PENDING by a concurrent quote-accept
-    // (`approveBookingRequest` in booking-request.ts). Under the two-tier lock
-    // protocol (#1881) that accept takes the GLOBAL `pg_advisory_xact_lock(1)`
-    // FIRST (then the per-lodge lock) and status-guards its AWAITING_REVIEW →
-    // PENDING flip. This branch takes the SAME global lock(1) and both the
-    // under-lock re-read gate below AND a status-guarded `updateMany` on the
-    // CANCELLED flip, so cancel and accept mutually exclude on the shared key
+    // booking can be converted to PENDING by a concurrent officer approval
+    // (`approveBookingRequest` in booking-request.ts; requester acceptance keeps
+    // the hold, #3415). Under the two-tier lock protocol (#1881) that approval
+    // takes the GLOBAL `pg_advisory_xact_lock(1)` FIRST (then the per-lodge
+    // lock) and status-guards its AWAITING_REVIEW → PENDING flip. This branch
+    // takes the SAME global lock(1) and both the under-lock re-read gate below
+    // AND a status-guarded `updateMany` on the CANCELLED flip, so cancel and
+    // approval mutually exclude on the shared key
     // and neither can clobber the other: the race loser observes a
     // non-cancellable status (re-read gate or count 0) and aborts cleanly with a
     // 409, running none of the side effects below. This mirrors the paid
@@ -745,9 +748,9 @@ async function performBookingCancellation(
     });
 
     // Loser contract (mirrors the paid single-flight path, #1160): a concurrent
-    // quote-accept / cancel that transitioned the row out of the no-payment set
-    // gets a real 409. This MUST be non-200 so a caller never treats a clobbered
-    // accept as a successful cancel. Every cancelBooking caller forwards this
+    // officer approval / cancel that transitioned the row out of the no-payment
+    // set gets a real 409. This MUST be non-200 so a caller never treats a
+    // clobbered conversion as a successful cancel. Every cancelBooking caller forwards this
     // 409 (release-hold, member cancel, admin review-reject) or aborts safely
     // (deletion-requests, which never passes a no-payment-holding status).
     if (!claim.claimed) {

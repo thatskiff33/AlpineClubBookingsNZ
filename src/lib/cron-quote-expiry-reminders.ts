@@ -203,11 +203,12 @@ export async function sendQuoteExpiryReminders(): Promise<{
  * Free the AWAITING_REVIEW hold behind any SENT quote whose response token has
  * expired (issue #1254). Idempotent and concurrency-safe: each release runs
  * under the GLOBAL booking advisory lock (`pg_advisory_xact_lock(1)`) — the
- * same lock the quote-accept now takes FIRST under the two-tier protocol
- * (#1881; booking-request.ts, before its per-lodge lock) — re-verifies under
- * it, and status-guards the CANCELLED flip. So a race with a late accept
- * (quote → ACCEPTED, held row → PENDING) or a requester cancel is a no-op
- * rather than cancelling a live booking.
+ * same lock requester acceptance takes, and that officer approval takes FIRST
+ * under the two-tier protocol (#1881; booking-request.ts, before its per-lodge
+ * lock) — re-verifies under it, and status-guards the CANCELLED flip. So a race
+ * with a late accept (request and quote → ACCEPTED, hold kept AWAITING_REVIEW
+ * for officer review, #3415), an approval's conversion (held row → PENDING) or
+ * a requester cancel is a no-op rather than cancelling a booking still wanted.
  */
 async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
   const expiredHeldQuotes = await prisma.bookingRequestQuote.findMany({
@@ -360,8 +361,8 @@ const SWEEPABLE_HELD_STATUSES = [
  * undoes a deliberate re-hold (#1296).
  *
  * Idempotent and concurrency-safe: each release runs under the GLOBAL booking
- * advisory lock (`pg_advisory_xact_lock(1)`) — the same lock the quote-accept
- * takes FIRST under the two-tier protocol (#1881) — re-verifies the request is
+ * advisory lock (`pg_advisory_xact_lock(1)`) — the same lock officer approval's
+ * conversion takes FIRST under the two-tier protocol (#1881) — re-verifies the request is
  * still in a modify/query state with no SENT quote and a live AWAITING_REVIEW
  * hold, and status-guards the CANCELLED flip, so a race with a re-quote or an
  * accept is a no-op rather than cancelling a live booking.

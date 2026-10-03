@@ -138,7 +138,7 @@ export async function reconcileCorrectedRequestHold(params: {
 
   if (result.status === 409) {
     throw new BookingRequestCorrectionCommittedError(
-      "The correction was saved, but this request's held beds could not be released — the hold may have just been accepted. Open the request and check it before quoting again.",
+      "The correction was saved, but this request's held beds could not be released — the hold was already released, cancelled or changed by someone else. Open the request and check it before quoting again.",
       409,
       false,
     );
