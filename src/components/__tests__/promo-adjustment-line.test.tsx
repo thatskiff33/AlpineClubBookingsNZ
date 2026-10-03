@@ -37,6 +37,10 @@ describe("promo adjustment line", () => {
   it("PromoCodeCard shows the kept promo's signed adjustment", () => {
     render(
       <PromoCodeCard
+        bookingId="booking-1"
+        appliedPromoList={null}
+        onPromoListChange={vi.fn()}
+        onKeepPromoList={vi.fn()}
         promo={{ code: "SAVE", type: "PERCENT", description: null }}
         promoAdjustmentCents={-6000}
         promoAction={{ type: "keep" }}

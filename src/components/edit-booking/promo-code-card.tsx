@@ -13,6 +13,30 @@ import type {
   QuoteResult,
 } from "@/components/edit-booking/types";
 import { useClubFormat } from "@/components/club-format-provider";
+import { PromoCodeList, type GuestPromoChipGroup } from "@/components/promo-code-list";
+import { useGuestPromoCodes, validatePromoCodeList } from "@/components/promo-code-list-client";
+
+type StoredPromoLine = PromoInfo & { amountCents: number };
+
+/** The booking's own codes as list entries, in its stored order (working bee aside). */
+function storedPromoList(
+  promo: PromoInfo | null,
+  promoLines: StoredPromoLine[] | undefined,
+  promoAdjustmentCents: number,
+): PromoResult[] {
+  const lines = promoLines ?? (promo ? [{ ...promo, amountCents: promoAdjustmentCents }] : []);
+  return lines
+    .filter((line) => !line.workPartyEventName)
+    .map((line) => ({
+      code: line.code,
+      description: line.description,
+      type: line.type,
+      discountCents: 0,
+      promoAdjustmentCents: line.amountCents,
+      totalPriceCents: 0,
+      finalPriceCents: 0,
+    }));
+}
 
 /**
  * The booking's promo code: keep it, drop it, or apply a different one.
@@ -29,7 +53,12 @@ import { useClubFormat } from "@/components/club-format-provider";
  * payload.
  */
 export function PromoCodeCard({
+  bookingId,
   promo,
+  promoLines,
+  appliedPromoList,
+  onPromoListChange,
+  onKeepPromoList,
   promoAdjustmentCents,
   promoAction,
   availablePromoCodes,
@@ -50,7 +79,14 @@ export function PromoCodeCard({
   onPrefillCode,
   onPromoApplied,
 }: {
+  bookingId: string;
   promo: PromoInfo | null;
+  /** #3828: one row per code on a booking carrying several. */
+  promoLines?: StoredPromoLine[];
+  /** #3492: the list being edited, or null for the booking's stored codes. */
+  appliedPromoList: PromoResult[] | null;
+  onPromoListChange: (next: PromoResult[]) => void;
+  onKeepPromoList: () => void;
   promoAdjustmentCents: number;
   promoAction: PromoAction;
   availablePromoCodes: AvailablePromoCode[];
@@ -72,6 +108,117 @@ export function PromoCodeCard({
   onPromoApplied: (result: PromoResult | null) => void;
 }) {
   const format = useClubFormat();
+  // #3492: the booking's staying guest members' codes (the server reads the
+  // guests itself and offers only family or accepted guests), and the club's
+  // `multiPromoCodes` switch, which decides which editor this card shows.
+  const guestCodes = useGuestPromoCodes({ bookingId });
+  const guestNameById = new Map(
+    remainingGuests.map((guest) => [guest.id, [guest.firstName, guest.lastName].filter(Boolean).join(" ")]),
+  );
+  const guestGroups: GuestPromoChipGroup[] = guestCodes.groups.flatMap((group) => {
+    const guestName = guestNameById.get(group.guestRef);
+    return guestName
+      ? [{ guestName, codes: group.codes.map((chip) => ({ code: chip.code, detail: chip.benefit })) }]
+      : [];
+  });
+  const partyGuests = [
+    ...remainingGuests.map((g) => ({
+      firstName: g.firstName,
+      lastName: g.lastName,
+      ageTier: g.ageTier,
+      isMember: g.isMember,
+      memberId: g.memberId ?? undefined,
+      ...(perGuestDatesEnabled && !isInProgressEdit ? getExistingGuestRange(g) : {}),
+    })),
+    ...addedGuests.map((g) => ({
+      firstName: g.firstName,
+      lastName: g.lastName,
+      ageTier: g.ageTier as string,
+      isMember: g.isMember,
+      memberId: g.memberId,
+      ...(perGuestDatesEnabled && !isInProgressEdit && g.stayStart && g.stayEnd
+        ? { stayStart: g.stayStart, stayEnd: g.stayEnd }
+        : {}),
+    })),
+  ];
+  const stored = storedPromoList(promo, promoLines, promoAdjustmentCents);
+  const shownList = appliedPromoList ?? stored;
+  const workPartyName =
+    promo?.workPartyEventName ?? promoLines?.find((line) => line.workPartyEventName)?.workPartyEventName;
+  const quoteRefusal =
+    (promoAction.type === "new" || promoAction.type === "list") &&
+    quote?.promoValidation &&
+    !quote.promoValidation.valid
+      ? quote.promoValidation.error
+      : null;
+
+  if (guestCodes.multiPromoCodes === true) {
+    const storedByCode = new Map(stored.map((entry) => [entry.code, entry]));
+    const shownByCode = new Map(shownList.map((entry) => [entry.code, entry]));
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Promo Codes</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {workPartyName && (
+            <p className="text-sm text-success-11">Working bee: {workPartyName} (stays on the booking)</p>
+          )}
+          <PromoCodeList
+            applied={shownList}
+            onChange={onPromoListChange}
+            multiPromoCodes
+            ownCodes={availablePromoCodes.map((pc) => ({ code: pc.code, detail: pc.description }))}
+            guestGroups={guestGroups}
+            guestLabel={(index) => {
+              const guest = partyGuests[index];
+              const name = [guest?.firstName, guest?.lastName].filter(Boolean).join(" ").trim();
+              return `${name || `Guest ${index + 1}`}${guest?.isMember ? " (member)" : ""}`;
+            }}
+            // The edit's own quote (modify-quote) prices the whole list in
+            // order; the amount shown is the summary's, never a per-code guess.
+            showAmounts={false}
+            validate={async (entries, appliesTo) => {
+              // A code the booking already carries is kept and re-priced by the
+              // save; only a code being added is checked here.
+              const fresh = entries.filter(
+                (entry) => !storedByCode.has(entry.code) || entry.promoGuestIndexes?.length,
+              );
+              const checked = fresh.length
+                ? await validatePromoCodeList({
+                    entries: fresh,
+                    appliesTo,
+                    checkIn,
+                    checkOut,
+                    guests: partyGuests,
+                    lodgeId,
+                    forMemberId,
+                    forBookingEdit: true,
+                  })
+                : { ok: true as const, applied: [] };
+              if (!checked.ok) return checked;
+              return {
+                ok: true,
+                applied: entries.map(
+                  (entry) =>
+                    checked.applied.find((result) => result.code === entry.code) ??
+                    shownByCode.get(entry.code) ??
+                    storedByCode.get(entry.code)!,
+                ),
+              };
+            }}
+          />
+          {promoAction.type === "list" && (
+            <Button variant="outline" size="sm" onClick={onKeepPromoList}>
+              Undo promo code changes
+            </Button>
+          )}
+          {quoteRefusal && <p className="text-sm text-danger-11">{quoteRefusal}</p>}
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -153,6 +300,28 @@ export function PromoCodeCard({
                 </div>
               </div>
             )}
+            {guestGroups.length > 0 && !appliedNewPromo && (
+              <div className="app-callout-brand space-y-2 p-4">
+                <p className="text-sm font-medium text-foreground">
+                  Your guests have promo codes. Each one covers only that guest&apos;s nights:
+                </p>
+                {guestGroups.map((group) =>
+                  group.codes.map((chip) => (
+                    <button
+                      key={`${group.guestName}:${chip.code}`}
+                      type="button"
+                      onClick={() => onPrefillCode(chip.code)}
+                      className="app-chip-brand mr-2 font-mono"
+                    >
+                      {chip.code}
+                      <span className="font-sans font-normal text-brand-charcoal">
+                        {chip.detail ? ` — ${chip.detail}` : ""} (applies to {group.guestName} only)
+                      </span>
+                    </button>
+                  )),
+                )}
+              </div>
+            )}
             <PromoCodeInput
               // #2770 (INV-MOD-026): this widget is on an EDIT, so the
               // validator must consult the club's `applyToEdits` switch. Left
@@ -162,31 +331,7 @@ export function PromoCodeCard({
               forBookingEdit
               checkIn={checkIn}
               checkOut={checkOut}
-              guests={[
-                ...remainingGuests.map((g) => ({
-                  firstName: g.firstName,
-                  lastName: g.lastName,
-                  ageTier: g.ageTier,
-                  isMember: g.isMember,
-                  memberId: g.memberId ?? undefined,
-                  ...(perGuestDatesEnabled && !isInProgressEdit
-                    ? getExistingGuestRange(g)
-                    : {}),
-                })),
-                ...addedGuests.map((g) => ({
-                  firstName: g.firstName,
-                  lastName: g.lastName,
-                  ageTier: g.ageTier as string,
-                  isMember: g.isMember,
-                  memberId: g.memberId,
-                  ...(perGuestDatesEnabled &&
-                  !isInProgressEdit &&
-                  g.stayStart &&
-                  g.stayEnd
-                    ? { stayStart: g.stayStart, stayEnd: g.stayEnd }
-                    : {}),
-                })),
-              ]}
+              guests={partyGuests}
               onPromoApplied={onPromoApplied}
               appliedPromo={appliedNewPromo}
               forMemberId={forMemberId}
@@ -196,13 +341,7 @@ export function PromoCodeCard({
             {/* The booking-aware re-validation (modify-quote) can refuse a
                 code the standalone validator accepted (e.g. already redeemed
                 against this booking's dates); surface that honestly. */}
-            {promoAction.type === "new" &&
-              quote?.promoValidation &&
-              !quote.promoValidation.valid && (
-                <p className="text-sm text-danger-11">
-                  {quote.promoValidation.error}
-                </p>
-              )}
+            {quoteRefusal && <p className="text-sm text-danger-11">{quoteRefusal}</p>}
           </div>
         )}
       </CardContent>

@@ -94,6 +94,9 @@ export interface BookingData {
   discountCents: number;
   promoAdjustmentCents: number;
   promo: PromoInfo | null;
+  // #3828: a booking carrying several codes, one row per code in the booker's
+  // order (`promo` is then null). #3492's list editor starts from it.
+  promoLines?: Array<PromoInfo & { amountCents: number }>;
   canEditNonMemberGuestNames: boolean;
   // Fully paid: only an identity-preserving spelling correction is allowed on a
   // free-text non-member guest (#1386). The server enforces the similarity guard.

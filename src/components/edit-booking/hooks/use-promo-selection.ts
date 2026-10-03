@@ -11,7 +11,65 @@ export type PromoAction =
   // #2266: guestIndexes carries a guest-targeted code's beneficiary
   // selection (from the shared PromoCodeInput), positional over
   // [remaining guests..., added guests...] — the order the server prices.
-  | { type: "new"; code: string; guestIndexes?: number[] };
+  | { type: "new"; code: string; guestIndexes?: number[] }
+  // #3492: the COMPLETE list of codes the booking should carry after the edit,
+  // in the booker's order (D-3813-2), sent as `promoCodes` — while the club's
+  // `multiPromoCodes` switch is on. A code without guest indexes that the
+  // booking already carries is kept and re-priced; positional indexes as above.
+  | { type: "list"; codes: Array<{ code: string; guestIndexes?: number[] }> };
+
+type PromoGuestTargetFields = { promoGuestIds?: string[]; promoAddedGuestIndexes?: number[] };
+
+/**
+ * #2266 (MED-4): a guest-targeted code's beneficiaries, positional over
+ * [remaining guests..., added guests...], bound the way the server binds them:
+ * EXISTING guests by bookingGuestId, so a concurrent edit refuses loudly instead
+ * of redeeming the discount for the wrong guest; only TO-BE-ADDED guests (no id
+ * yet) stay positional, relative to this request's addGuests array.
+ */
+function promoGuestTargets(
+  guestIndexes: readonly number[] | undefined,
+  remainingGuests: readonly Pick<Guest, "id">[],
+): PromoGuestTargetFields {
+  if (!guestIndexes?.length) return {};
+  const promoGuestIds: string[] = [];
+  const promoAddedGuestIndexes: number[] = [];
+  for (const index of guestIndexes) {
+    if (index < remainingGuests.length) {
+      const guest = remainingGuests[index];
+      if (guest) promoGuestIds.push(guest.id);
+    } else {
+      promoAddedGuestIndexes.push(index - remainingGuests.length);
+    }
+  }
+  return {
+    ...(promoGuestIds.length ? { promoGuestIds } : {}),
+    ...(promoAddedGuestIndexes.length ? { promoAddedGuestIndexes } : {}),
+  };
+}
+
+/** The modify request's promo fields for this edit's promo choice. */
+export function promoActionPayload(
+  promoAction: PromoAction,
+  remainingGuests: readonly Pick<Guest, "id">[],
+): Record<string, unknown> {
+  if (promoAction.type === "remove") return { removePromoCode: true };
+  if (promoAction.type === "new") {
+    return {
+      promoCode: promoAction.code,
+      ...promoGuestTargets(promoAction.guestIndexes, remainingGuests),
+    };
+  }
+  if (promoAction.type === "list") {
+    return {
+      promoCodes: promoAction.codes.map((entry) => ({
+        code: entry.code,
+        ...promoGuestTargets(entry.guestIndexes, remainingGuests),
+      })),
+    };
+  }
+  return {};
+}
 
 /**
  * The promo choice this edit is making.
@@ -37,6 +95,9 @@ export function usePromoSelectionState() {
   const [prefillPromoCode, setPrefillPromoCode] = useState<string | undefined>(
     undefined,
   );
+  // #3492: the codes shown while a `list` edit is in progress (null = the
+  // booking's stored codes, untouched).
+  const [appliedPromoList, setAppliedPromoList] = useState<PromoResult[] | null>(null);
 
   /**
    * Drop the applied code and fall back to the stored promo.
@@ -49,6 +110,7 @@ export function usePromoSelectionState() {
    */
   const retirePromoSelection = useCallback(() => {
     setAppliedNewPromo(null);
+    setAppliedPromoList(null);
     setPromoAction({ type: "keep" });
   }, []);
 
@@ -59,6 +121,8 @@ export function usePromoSelectionState() {
     setAppliedNewPromo,
     prefillPromoCode,
     setPrefillPromoCode,
+    appliedPromoList,
+    setAppliedPromoList,
     retirePromoSelection,
   };
 }
@@ -104,7 +168,12 @@ export function usePromoBeneficiaryReset({
   );
   const appliedPromoGuestSignatureRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!(promoAction.type === "new" && promoAction.guestIndexes?.length)) {
+    const targetsGuests =
+      promoAction.type === "new"
+        ? Boolean(promoAction.guestIndexes?.length)
+        : promoAction.type === "list" &&
+          promoAction.codes.some((entry) => entry.guestIndexes?.length);
+    if (!targetsGuests) {
       appliedPromoGuestSignatureRef.current = null;
       return;
     }
