@@ -140,6 +140,9 @@ beforeEach(() => {
       priceAdjustmentCents: -1000,
       freeNightsUsed: 0,
       eligibleGuestCount: 2,
+      // The engine always states what it took off each target (#3276); the
+      // several-code orchestrator maps them to the caller's guests (#3827).
+      adjustmentTargets: [],
     },
   });
 });

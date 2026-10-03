@@ -20,7 +20,9 @@ const promoMocks = vi.hoisted(() => ({
   lockPromoCodeRowsForUpdate: vi.fn(),
 }));
 
-vi.mock("@/lib/promo", () => ({
+vi.mock("@/lib/promo", async (importOriginal) => ({
+  // #3827: partial, so the orchestrator's other imports stay real.
+  ...((await importOriginal()) as typeof import("@/lib/promo")),
   validateAndCalculatePromoDiscount: promoMocks.validateAndCalculatePromoDiscount,
   redeemPromoCode: promoMocks.redeemPromoCode,
   deletePromoRedemptionAndAdjustCount:
@@ -119,22 +121,25 @@ describe("resolvePromoBeneficiarySelection (#2266 MED-4)", () => {
 });
 
 describe("applyPromoCodeChanges — beneficiary binding at apply time (#2266 MED-4)", () => {
+  const MATES50 = {
+    id: "promo-1",
+    code: "MATES50",
+    internal: false,
+    assignments: [],
+    lodges: [],
+  };
   const tx = {
+    // #3827: the incoming code is resolved by code unlocked, then re-read by
+    // id under the lock.
     promoCode: {
-      findUnique: vi.fn(),
+      findMany: vi.fn(),
     },
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
     promoMocks.shouldPersistPromoRedemption.mockReturnValue(false);
-    tx.promoCode.findUnique.mockResolvedValue({
-      id: "promo-1",
-      code: "MATES50",
-      internal: false,
-      assignments: [],
-      lodges: [],
-    });
+    tx.promoCode.findMany.mockResolvedValue([MATES50]);
   });
 
   function baseArgs(input: Record<string, unknown>) {
@@ -150,8 +155,8 @@ describe("applyPromoCodeChanges — beneficiary binding at apply time (#2266 MED
       newCheckIn: new Date("2026-09-14T00:00:00.000Z"),
       newTotalPriceCents: 20_000,
       guestNightRates: [
-        { bookingGuestId: "g1", memberId: "m1", isMember: true, perNightRates: [10_000], nightDates: [] },
-        { bookingGuestId: "g2", memberId: null, isMember: false, perNightRates: [10_000], nightDates: [] },
+        { bookingGuestId: "g1", memberId: "m1", isMember: true, perNightRates: [10_000], nightDates: [], consentStatus: null },
+        { bookingGuestId: "g2", memberId: null, isMember: false, perNightRates: [10_000], nightDates: [], consentStatus: null },
       ],
       todayAtClub: CLUB_TODAY_FOR_TEST,
     };
@@ -178,6 +183,7 @@ promoCode: "MATES50", promoGuestIds: ["g-gone"] }),
         freeNightsUsed: 0,
         eligibleGuestCount: 1,
         allocations: [],
+        adjustmentTargets: [],
       },
       selectedGuestIndexes: [1],
     });

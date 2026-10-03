@@ -36,9 +36,13 @@ import {
   isMemberWholeLodgeBooking,
   isQuotePricedBooking,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
+} from "@/lib/booking-modify";
+// Pure readers of the request, imported from their home rather than the barrel
+// so a test that stubs the barrel's pipeline still reads the request for real.
+import {
   requestChangesPromoCodes,
   requestedPromoCodeChange,
-} from "@/lib/booking-modify";
+} from "@/lib/booking-modify-validation";
 import {
   OtherLodgeRateAmountUnderReviewError,
   requestCarriesOtherLodgeElection,

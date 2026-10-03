@@ -1385,54 +1385,55 @@ function readSource(relativePath: string) {
   return readFileSync(join(process.cwd(), relativePath), "utf8");
 }
 
-const REPRICE_CALL_SITES: Array<[string, string]> = [
+// #3827: the re-price paths hand their booking to the ONE re-price
+// (`repriceBookingPromotions`), which asks for partial coverage on every code
+// the booking already carries. The paths that apply codes themselves — the
+// batch save and the edit preview — mark a KEPT code `coverExisting` and a NEW
+// one `reject`, each in exactly one place.
+const SHARED_REPRICE = "src/lib/booking-promotions.ts";
+const SHARED_REPRICE_SITES: Array<[string, string]> = [
   ["adding guests", "src/app/api/bookings/[id]/guests/route.ts"],
   ["changing dates", "src/lib/booking-date-modification-service.ts"],
   ["removing guests", "src/lib/booking-guest-removal-service.ts"],
   ["batch modification", "src/lib/booking-modify-plan.ts"],
-  ["the edit preview", "src/app/api/bookings/[id]/modify-quote/route.ts"],
 ];
+const occurrences = (source: string, text: string) => source.split(text).length - 1;
 
 describe("every reprice path — and the preview — asks for partial coverage", () => {
-  it.each(REPRICE_CALL_SITES)(
-    "%s passes capOverflow: coverExisting",
-    (_name, path) => {
-      // Without it the path falls back to refusing, which each one turns into
-      // deleting the redemption — the whole booking's discount stripped and
-      // billed back because one added guest did not fit.
-      expect(readSource(path)).toContain('capOverflow: "coverExisting"');
+  it.each(SHARED_REPRICE_SITES)("%s re-prices through the shared re-price", (_name, path) => {
+    expect(readSource(path)).toContain("repriceBookingPromotions(tx, {");
+  });
+
+  it("the shared re-price asks for partial coverage on every stored code", () => {
+    // Without it every path falls back to refusing, which each one turns into
+    // deleting the redemption — the whole booking's discount stripped and
+    // billed back because one added guest did not fit.
+    const source = readSource(SHARED_REPRICE);
+    const priceStored = source.slice(source.indexOf("export async function priceStoredBookingPromotions("));
+    expect(priceStored.slice(0, priceStored.indexOf("\n}\n"))).toContain('capOverflow: "coverExisting"');
+  });
+
+  it("the preview and the save mark a kept code coverExisting and a new one reject, once each", () => {
+    for (const path of [
+      "src/app/api/bookings/[id]/modify-quote/route.ts",
+      "src/lib/booking-modify-plan.ts",
+    ]) {
+      const source = readSource(path);
+      expect(occurrences(source, 'capOverflow: "coverExisting"'), path).toBe(1);
+      expect(occurrences(source, 'capOverflow: "reject"'), path).toBe(1);
     }
-  );
-
-  it("the preview and the save both ask for it, so they cannot disagree", () => {
-    const quote = readSource("src/app/api/bookings/[id]/modify-quote/route.ts");
-    const save = readSource("src/lib/booking-modify-plan.ts");
-    const occurrences = (source: string) =>
-      source.split('capOverflow: "coverExisting"').length - 1;
-    // Exactly one reprice branch each: the quote's keep-existing branch and the
-    // plan's no-swap branch. A second would mean the "apply a new code" branch
-    // had quietly acquired it.
-    expect(occurrences(quote)).toBe(1);
-    expect(occurrences(save)).toBe(1);
   });
 
-  it("applying a NEW code still refuses a full promotion", () => {
+  it("applying a NEW code on an edit still refuses a full promotion", () => {
     const source = readSource("src/lib/booking-modify-plan.ts");
-    const applyStart = source.indexOf(
-      "if (input.promoCode && !input.removePromoCode) {"
-    );
-    const applyBranch = source.slice(
-      applyStart,
-      source.indexOf("} else if (", applyStart)
-    );
-    expect(applyBranch).not.toContain("capOverflow");
-    expect(applyBranch).toContain(
-      'throw new ApiError(application.error ?? "Promo code could not be applied", 400)'
+    expect(source).toContain(
+      'throw new ApiError(result.error ?? "Promo code could not be applied", 400)',
     );
   });
 
-  it("booking creation is untouched", () => {
+  it("booking creation refuses at a cap rather than narrowing", () => {
     const source = readSource("src/lib/booking-create-promo.ts");
-    expect(source).not.toContain("capOverflow");
+    expect(source).not.toContain('capOverflow: "coverExisting"');
+    expect(source).toContain('capOverflow: "reject"');
   });
 });

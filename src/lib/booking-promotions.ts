@@ -445,7 +445,12 @@ export async function priceStoredBookingPromotions(
   params: RepriceBookingPromotionsParams,
 ): Promise<PricedBookingPromotions> {
   const { bookingId, redemptions, guests } = params;
-  await lockPromoCodeRowsForUpdate(tx, redemptions.map((redemption) => redemption.promoCodeId));
+  // One code: `lockAndRefreshPromoCodeUsage` below takes its lock, exactly the
+  // statements a single-code re-price always issued. Several: every row first,
+  // in one sorted pass, so the re-reads below re-lock rows already held.
+  if (redemptions.length > 1) {
+    await lockPromoCodeRowsForUpdate(tx, redemptions.map((redemption) => redemption.promoCodeId));
+  }
   const applications: RepriceApplication[] = [];
   for (const redemption of redemptions) {
     // Re-read the counter under the lock just taken (INV-MONEY-023); the

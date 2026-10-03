@@ -543,9 +543,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       delete: vi.fn().mockResolvedValue(undefined),
       update: vi.fn().mockResolvedValue(undefined),
     },
-    promoCode: {
-      update: vi.fn().mockResolvedValue(undefined),
-      findUnique: vi.fn().mockResolvedValue({
+    promoCode: (() => {
+      const FREE100 = {
         id: "promo_1",
         code: "FREE100",
         type: "PERCENTAGE",
@@ -560,8 +559,15 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
         membersOnly: false,
         singleUse: false,
         assignments: [],
-      }),
-    },
+      };
+      return {
+        update: vi.fn().mockResolvedValue(undefined),
+        findUnique: vi.fn().mockResolvedValue(FREE100),
+        // #3827: an applied code is resolved by code, then re-read by id under
+        // its lock — both reads answer with the same row here.
+        findMany: vi.fn().mockResolvedValue([FREE100]),
+      };
+    })(),
     choreAssignment: {
       findMany: vi.fn().mockResolvedValue([]),
       delete: vi.fn().mockResolvedValue(undefined),

@@ -70,6 +70,12 @@ import {
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
+// Pure readers of the request, from their home rather than the barrel (#3827).
+import {
+  requestChangesPromoCodes,
+  requestedPromoCodeChange,
+  requestedPromoCodeList,
+} from "@/lib/booking-modify-validation";
 import {
   describePromoChangeNotApplied,
   type PromoChangeNotAppliedNotice,
@@ -140,9 +146,6 @@ import {
   isMemberWholeLodgeBooking,
   isQuotePricedBooking,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
-  requestChangesPromoCodes,
-  requestedPromoCodeChange,
-  requestedPromoCodeList,
   resolvePartnerSharedCapacity,
   resolvePromoBeneficiarySelection,
 } from "@/lib/booking-modify";

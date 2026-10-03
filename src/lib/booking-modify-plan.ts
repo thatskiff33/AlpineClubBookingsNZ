@@ -2364,9 +2364,8 @@ export async function applyPromoCodeChanges(
   }
 
   // #3827: every code the booking carries, in its stored order.
-  const existing = bookingPromoRedemptions(booking).filter(
-    (redemption) => redemption.promoCode,
-  );
+  const stored = bookingPromoRedemptions(booking);
+  const existing = stored.filter((redemption) => redemption.promoCode);
   const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
   const requested = requestedPromoCodeList(input);
 
@@ -2425,13 +2424,15 @@ export async function applyPromoCodeChanges(
       })
     : [];
   await lockPromoCodeRowsForUpdate(tx, [
-    ...existing.map((redemption) => redemption.promoCodeId),
+    ...stored.map((redemption) => redemption.promoCodeId),
     ...incomingIds.map((row) => row.id),
   ]);
 
   // Release what the booker took off — or re-applies fresh — first, so a code
   // applied again is validated with its own slot given back, as before.
-  const released = existing.filter((redemption) => !kept.has(redemption.promoCode.code));
+  const released = stored.filter(
+    (redemption) => !redemption.promoCode || !kept.has(redemption.promoCode.code),
+  );
   await releasePromoRedemptions(tx, released);
   let promoRemoved = released.length > 0;
 

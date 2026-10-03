@@ -36,7 +36,7 @@ const h = vi.hoisted(() => ({
   getXeroLockDates: vi.fn(),
   validateMinimumStay: vi.fn(),
   getMemberCreditBalance: vi.fn(),
-  validatePromoCodeFull: vi.fn(),
+  promoCodeFindUnique: vi.fn(),
   validateAndCalculatePromoDiscount: vi.fn(),
   findUnpaidMemberGuestNames: vi.fn(),
 }));
@@ -55,6 +55,8 @@ vi.mock("@/lib/prisma", () => ({
     // it asserted before.
     manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
     booking: { findUnique: h.bookingFindUnique },
+    // #3827: the preview reads a typed code itself, as the save does.
+    promoCode: { findUnique: h.promoCodeFindUnique },
     season: { findMany: h.seasonFindMany },
     groupDiscountSetting: { findUnique: h.groupDiscountFindUnique },
     bookingRequest: { findFirst: h.bookingRequestFindFirst },
@@ -195,8 +197,11 @@ vi.mock("@/lib/member-credit", () => ({
     return memberId;
   },
 }));
-vi.mock("@/lib/promo", () => ({
-  validatePromoCodeFull: h.validatePromoCodeFull,
+// #3827: the preview prices through the several-code orchestrator, which runs
+// the single-code engine once per code — so the engine is what is stubbed, and
+// every other export (the guest-count refusal it reads) stays real.
+vi.mock("@/lib/promo", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/promo")),
   validateAndCalculatePromoDiscount: h.validateAndCalculatePromoDiscount,
 }));
 vi.mock("@/lib/logger", () => ({
@@ -368,13 +373,31 @@ describe("POST /api/bookings/[id]/modify-quote — credit surfacing (#2266)", ()
   });
 });
 
+/** The typed code as the preview reads it (#3827). */
+const MATES50_ROW = {
+  id: "promo-mates50",
+  code: "MATES50",
+  internal: false,
+  type: "PERCENTAGE",
+  assignments: [],
+  lodges: [],
+};
+
 describe("POST /api/bookings/[id]/modify-quote — promo guest targeting (#2266)", () => {
   it("resolves promoGuestIds to indexes and threads them into the promo validator", async () => {
-    h.validatePromoCodeFull.mockResolvedValue({
-      valid: true,
-      promoCode: { code: "MATES50" },
-      discountCents: 5_000,
-      promoAdjustmentCents: -5_000,
+    h.promoCodeFindUnique.mockResolvedValue(MATES50_ROW);
+    h.validateAndCalculatePromoDiscount.mockResolvedValue({
+      beneficiaryMemberIds: [],
+      selectedGuestIndexes: [0],
+      discount: {
+        discountCents: 5_000,
+        priceAdjustmentCents: -5_000,
+        freeNightsUsed: 0,
+        eligibleGuestCount: 1,
+        allocations: [],
+        targets: [],
+        adjustmentTargets: [],
+      },
     });
 
     const res = await POST(
@@ -387,29 +410,28 @@ describe("POST /api/bookings/[id]/modify-quote — promo guest targeting (#2266)
     expect(body.promoValidation).toMatchObject({ valid: true, code: "MATES50" });
     expect(body.newPromoAdjustmentCents).toBe(-5_000);
 
-    expect(h.validatePromoCodeFull).toHaveBeenCalledTimes(1);
-    const call = h.validatePromoCodeFull.mock.calls[0];
-    expect(call[0]).toBe("MATES50");
-    // #3123 — the CLUB's calendar day, third and REQUIRED, ahead of the two
-    // optional positionals it now precedes. The route resolves ONE day for the
-    // whole quote and threads it here, into the change fee's `daysUntilDate`
-    // and into the reduction refund's settlement tier, so the three cannot
-    // disagree across club midnight.
-    //
-    // WHAT THIS LEG DOES AND DOES NOT PROVE, stated rather than implied. This
-    // suite pins its own instant (`NOW`, 2026-08-01T06:00:00Z) and under it the
-    // persisted `America/Denver` and the environment's Pacific/Auckland happen
-    // to agree on the day, so the value below cannot tell the two apart. It pins
-    // the ARGUMENT POSITION — which is what the positional insertion could get
-    // wrong and what `tsc` cannot see through a `vi.fn()`. WHICH zone the day
-    // came from is proven in
+    expect(h.validateAndCalculatePromoDiscount).toHaveBeenCalledTimes(1);
+    const [subject, details, assigned, options] =
+      h.validateAndCalculatePromoDiscount.mock.calls[0]!;
+    expect(subject).toMatchObject({ code: "MATES50" });
+    expect(assigned).toBeNull();
+    // #3827: the preview now dates the code's booking window from the new
+    // check-in, exactly as the save does — the retired validator did not.
+    expect(details).toMatchObject({ memberId: expect.any(String) });
+    // #3123 — the CLUB's calendar day. This suite pins its own instant (`NOW`,
+    // 2026-08-01T06:00:00Z) and under it the persisted `America/Denver` and the
+    // environment's Pacific/Auckland happen to agree on the day, so the value
+    // below cannot tell the two apart: WHICH zone the day came from is proven in
     // `src/lib/__tests__/promo-validity-window-club-day.test.ts` and
-    // `src/app/api/bookings/[id]/cancel-preview/__tests__/club-time-authority.test.ts`,
-    // where the two zones deliberately disagree.
-    expect(call[2]).toBe("2026-08-01");
-    expect(call[3]).toBe("b1"); // excludeBookingId: this booking
-    expect(call[4]).toBe("lodge-1");
-    expect(call[5]).toEqual({ selectedGuestIndexes: [0] });
+    // `src/app/api/bookings/[id]/cancel-preview/__tests__/club-time-authority.test.ts`.
+    expect(options).toMatchObject({
+      todayAtClub: "2026-08-01",
+      excludeBookingId: "b1", // this booking
+      lodgeId: "lodge-1",
+      selectedGuestIndexes: [0],
+      // A code applied now refuses at its cap: nobody holds it yet.
+      capOverflow: "reject",
+    });
   });
 
   it("400s a stale promoGuestId (the concurrent-edit drift scenario) instead of re-pointing it", async () => {
@@ -421,7 +443,7 @@ describe("POST /api/bookings/[id]/modify-quote — promo guest targeting (#2266)
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/no longer on this booking/);
-    expect(h.validatePromoCodeFull).not.toHaveBeenCalled();
+    expect(h.validateAndCalculatePromoDiscount).not.toHaveBeenCalled();
   });
 
   it("surfaces a selection-needed refusal as its plain error text (INFO-9)", async () => {
@@ -429,9 +451,11 @@ describe("POST /api/bookings/[id]/modify-quote — promo guest targeting (#2266)
     // PromoCodeInput owns selection via /api/promo-codes/validate and the
     // panel resets an applied code when the guest set changes — so the quote
     // carries no requiresGuestSelection machinery, only the honest error.
-    h.validatePromoCodeFull.mockResolvedValue({
-      valid: false,
+    h.promoCodeFindUnique.mockResolvedValue(MATES50_ROW);
+    h.validateAndCalculatePromoDiscount.mockResolvedValue({
       error: "Choose which guests should receive this promo code",
+      requiresGuestSelection: true,
+      beneficiaryMemberIds: [],
     });
 
     const res = await POST(req({ promoCode: "MATES50" }), { params });

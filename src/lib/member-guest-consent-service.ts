@@ -589,7 +589,15 @@ export async function respondToMemberGuestConsent(params: {
           todayAtClub: clubTodayCalendar,
           format,
         });
-        return { outcome: "APPROVED", reprice } as const;
+        if (!reprice.repriced && reprice.reason !== "NO_PROMOTION") {
+          logger.info(
+            { bookingId, guestId, reason: reprice.reason },
+            "A guest's acceptance left the booking's promo codes as they were (#3827)",
+          );
+        }
+        return reprice.repriced
+          ? ({ outcome: "APPROVED", reprice } as const)
+          : ({ outcome: "APPROVED" } as const);
       }
 
       const claimed = await claimConsentTransition(

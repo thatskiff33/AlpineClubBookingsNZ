@@ -84,8 +84,15 @@ vi.mock("@/lib/membership-type-policy", () => ({
 }))
 
 vi.mock("@/lib/booking-create-promo", () => ({
-  resolveEffectivePromoSource: vi.fn().mockResolvedValue(null),
-  resolvePromoInTransaction: vi.fn(),
+  // #3827: the plural resolution; no codes, so no promotion.
+  promoCodeRequestsOf: vi.fn().mockReturnValue([]),
+  resolveEffectivePromoSources: vi.fn().mockResolvedValue([]),
+  resolvePromotionsInTransaction: vi.fn().mockResolvedValue({
+    discountCents: 0,
+    promoAdjustmentCents: 0,
+    promoAdjustmentTargets: [],
+    redemptions: [],
+  }),
   getPromoTargetBookingGuestIds: vi.fn().mockReturnValue([]),
   remapPromoIndexesToSubset: vi.fn().mockReturnValue([]),
 }))

@@ -45,6 +45,16 @@ function makeTx(promoRows: Record<string, Record<string, unknown>>) {
         );
         return row ?? null;
       }),
+      // #3827: the incoming codes are resolved by code unlocked, then re-read
+      // by id under the lock — two `findMany`s around the lock.
+      findMany: vi.fn(async ({ where }: { where: { code?: { in: string[] }; id?: { in: string[] } } }) => {
+        calls.push({ op: where.id ? "promoCode.read-by-id" : "promoCode.resolve-by-code" });
+        return Object.values(promoRows).filter(
+          (candidate) =>
+            where.code?.in.includes(candidate.code as string) ||
+            where.id?.in.includes(candidate.id as string),
+        );
+      }),
       update: vi.fn(async ({ where }: { where: { id: string } }) => {
         calls.push({ op: "promoCode.update", id: where.id });
         return {};
@@ -176,9 +186,9 @@ describe("applyPromoCodeChanges promo row locking (#2299)", () => {
 
     // The id-only pre-lookup, then the lock, then the authoritative read.
     const ops = calls.map((call) => call.op);
-    const firstLookup = ops.indexOf("promoCode.findUnique");
+    const firstLookup = ops.indexOf("promoCode.resolve-by-code");
     const lastLock = ops.lastIndexOf("lock");
-    const lockedRead = ops.indexOf("promoCode.findUnique", lastLock);
+    const lockedRead = ops.indexOf("promoCode.read-by-id", lastLock);
     expect(firstLookup).toBeLessThan(lastLock);
     expect(lockedRead).toBeGreaterThan(lastLock);
   });
