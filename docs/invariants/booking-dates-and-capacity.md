@@ -288,6 +288,38 @@ derivation).
     time-of-day instant in this area would silently shift that weekday for
     hosts behind UTC.
 
+### INV-DATE-030
+
+A hut-leader assignment's `startDate`..`endDate` are lodge nights, inclusive
+(`INV-DATE-002`), and every writer stores only nights its member stays (#3817,
+owner decisions on #3820):
+
+- The auto-assign cron writes the run of consecutive stayed nights containing
+  the night it is deciding: it ends on `checkOut - 1`, never the check-out day,
+  and a split stay gets one row per run.
+- The manual create and edit refuse a role-only assignment that claims a night
+  the member does not stay at that lodge, with no override. Staying means a
+  consented guest row on a PAID or COMPLETED, not soft-deleted booking; owning
+  a booking one is not on does not count (owner decision, 3 Oct 2026). The
+  nightly auto-assign reads the same booking definition
+  (`hutLeaderStayBookingWhere`).
+- Exempt: a custodian occupancy (`isCustodianOccupancy`: a held bed,
+  `INV-LIFE-062`, or the "Custodian (lives on site)" tick) and a school
+  teacher's row. An edit that removes the exemption — unticking, or Release
+  bed — is checked like a date move.
+- A ticked custodian takes one space off the lodge's capacity on each covered
+  night, as a held bed does, counted once if it also holds a bed. One person is
+  one space (owner decision, 3 Oct 2026): on a night a custodian is a counted
+  guest there, or in the party being admitted, only the guest counts
+  (`custodianOccupancyTakesSpace`), unless they hold a bed while bed allocation
+  is on, which allocators keep the guest off.
+- Sign-in, kiosk access and the dietary grant run from the day before the first
+  night to the day after the last, `[startDate - 1, endDate + 1]`, judged on the
+  club's calendar day (`INV-CONFIG-002`); the instructions reader and nav link
+  stay open from any time before the stay until that window closes. The one
+  definition is `src/lib/hut-leader-access-window.ts`, and every access reader
+  routes through it.
+
 ### INV-DATE-010
 
 - **Storage encoding, not semantics.** A stored lodge night is a club calendar
@@ -366,7 +398,7 @@ derivation).
   Lodge access itself is decided by `getKioskAccessTier`
   (`src/lib/kiosk-access.ts`), which derives the day from
   `getTodayDateOnly()` and already implemented `[checkIn-1, checkOut]` for a stay
-  and `[startDate-1, endDate]` for a hut-leader assignment;
+  and the hut-leader access window (`INV-DATE-030`);
   every `/api/lodge/*` route enforces it, `src/lib/lodge-auth.ts` re-derives the
   same pair, and both dashboard buttons and the nav link point at
   `/lodge/kiosk`. #2838 fixed **three** such constructions feeding **five**
@@ -1532,16 +1564,17 @@ capacity or double-booking violation.
   is identically `lodgeCapacity` for every input. **A future change that makes a
   held night's numbers move is a change to this invariant, not an
   implementation of it.**
-- **Coverage is DERIVED at read time, never stored.** ONE predicate,
-  `isCustodianHeldBedNight` (`custodian-occupancy.ts`), and every view subtracts
-  through it: `wholeLodgeHoldOccupiedBedNightsForPlanner` and
-  `findWholeLodgeHoldAmendments` per bed-night,
-  `wholeLodgeHoldRepresentedBeds` (`capacity.ts`) in count shape. Never a second
-  inventory.
+- **Coverage is DERIVED at read time, never stored, never a second
+  inventory.** Per bed-night:
+  `isCustodianHeldBedNight`, read by the planner and
+  `findWholeLodgeHoldAmendments`. Per night: `wholeLodgeHoldRepresentedBeds`
+  subtracts `findCustodianOccupancies`, which also counts a bedless ticked
+  custodian (#3817), so a held night's planner gives the hold one bed more
+  (stated limit; admission unchanged).
 - **Whole-lodge flat pricing does not change because a represented bed set
   narrows**: `priceWholeLodgeFlat` never reads a bed count.
 - **Only one direction asks.** Setting a hold over a custodian's nights is
-  correct by construction. A custodian bed landing on an existing hold's nights
+  correct by construction. A custodian landing on an existing hold's nights
   narrows that booking's sole occupancy, so the hut-leaders `POST` and `PUT`
   refuse it — `409 CUSTODIAN_OVERLAPS_WHOLE_LODGE_HOLD`, naming the affected
   nights and holding bookings and nothing more (`INV-PRIV`) — until the officer
@@ -1556,32 +1589,29 @@ capacity or double-booking violation.
 - Guards: `exclusive-hold-planner-occupancy.test.ts`,
   `custodian-assignment-validation.test.ts`,
   `custodian-hut-leaders-route.test.ts`,
-  `lodge-admission-lock-contract.test.ts`. Narrative, the deliberately
-  out-of-scope write-time re-checks, the capped-capacity case and what an
-  acceptance records: `docs/CAPACITY_MODEL.md` "The custodian's bed sits
-  outside the held pool", #2698.
+  `lodge-admission-lock-contract.test.ts`. Narrative:
+  `docs/CAPACITY_MODEL.md` "The custodian's bed sits outside the held pool".
 
 ### INV-LIFE-062
 
 A `HutLeaderAssignment` may additionally hold ONE bed (`bedId`), which makes it
 a **custodian occupancy** (#2286). The invariants:
 
-- **Optional and inert by default.** `bedId = null` is a role only and has zero
-  capacity effect — the pre-#2286 behaviour, and what every
-  `hut-leader-auto-assign` cron row is. Only a bed-holding assignment reaches a
-  capacity or allocation consumer.
+- **Optional and inert by default.** With no bed and no custodian tick an
+  assignment is a role only, with zero capacity effect — every cron row. A
+  ticked bedless custodian is counted (`INV-DATE-030`); only a held bed reaches
+  an allocation consumer.
 - **One explicit lodge owns the interactive workflow.** The hut-leader admin
-  assignment list, uncovered dates, occupancy overlay, eligible guests/owners,
+  assignment list, uncovered dates, occupancy overlay, eligible guests,
   existing coverage and create all carry the same validated lodge id. The create
   refuses an omitted lodge before member lookup. Club-wide dashboard coverage is
   still valid, but its caller must opt into an explicit `all` scope rather than
   obtaining it by omission.
 - **Inclusive night semantics.** The hold covers the night of every date from
   `startDate` to `endDate` **inclusive**, never the half-open booking envelope.
-  The bed is bookable again for the night after `endDate`. (This is the
-  custodian exception the stay-boundary invariant in "Booking Dates And
-  Capacity" names deliberately: an assignment's `endDate` is a covered day,
-  not a departure morning.)
+  The bed is bookable again for the night after `endDate`. (The custodian
+  exception `INV-DATE-009` names; the held bed is the stay, so `INV-DATE-030`'s
+  refusal does not apply.)
 - **Counted as an occupant, never as a smaller lodge.** The capacity engines add
   the per-night custodian **count** to `occupiedBeds` rather than reducing
   `lodgeCapacity`, so `occupiedBeds + availableBeds === lodgeCapacity` still

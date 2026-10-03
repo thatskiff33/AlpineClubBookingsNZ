@@ -317,7 +317,59 @@ is a **custodian bed hold**: for the night of every covered date that bed is out
 of the bookable pool and out of the allocatable pool, with **no `Booking` and no
 `BedAllocation` row anywhere**. Without one — including every row the
 `hut-leader-auto-assign` cron creates — the assignment is a role only and has
-**zero** capacity effect.
+**zero** capacity effect, **unless it is ticked "Custodian (lives on site)"**.
+
+**The custodian tick (#3817, owner decision on #3820, 3 Oct 2026).**
+`HutLeaderAssignment.isCustodian` marks a custodian who lives on site. A ticked
+assignment takes **one space** off the lodge on every covered night exactly as a
+held bed does — with or without a bed, and whether or not the `bedAllocation`
+module is on. A custodian who also holds a bed is one assignment and counts
+**once**. The count's one source is `findCustodianOccupancies`
+(`src/lib/custodian-occupancy.ts`, bed **or** tick), which feeds the single
+per-night counter every engine reads; `findCustodianBedHolds` stays bed-only,
+because the allocation consumers ask which *bed* is held and a bedless custodian
+has none. Turning the tick on runs the bed path's own checks under the same
+lodge capacity lock: the over-capacity warn-and-confirm when the lodge is
+already full on those nights, and the whole-lodge hold question (`INV-CAP-038`)
+before narrowing another booking's sole occupancy, taking the global cohort key
+first only when the officer accepts it. Only the officer's manual create and edit
+set the tick (the form, or the row's Custodian button); the cron and the school
+writer never do.
+
+**One person is one space (owner decision on #3820, 3 Oct 2026).** A ticked
+custodian with no bed who is also a guest at the lodge is counted once. The one
+rule is `custodianOccupancyTakesSpace`: a custodian takes no space of their own
+on a night their member is among the night's guest members, unless they hold a
+bed while the `bedAllocation` module is on. Then the held bed is kept out of the
+pool and every allocator refuses the guest row on it, so the guest needs another
+bed: two spaces. With the module off nothing keeps the guest off the held bed,
+so it counts like the tick. The flag is read on the caller's transaction through
+`isEffectiveModuleEnabled`, only when a counted custodian holds a bed. `computeNightOccupancy` builds that set from term 1's
+own guest list, so the custodian is de-duplicated against exactly the guests
+counted, plus the party being admitted. That second half is what reaches the
+booking being admitted: every admission passes each night's party members
+(`checkCapacityForGuestRanges` and the partner-shared check from their guests,
+`checkCapacity` through `partyMemberIds`), and `CapacityProposedGuest` makes
+`memberId` required so no admission caller can omit it. The booking wizard's
+advisory (`/api/availability/check`) passes the asking member, so a custodian
+booking themselves is not sent to the waitlist; it can show one space more when
+they book only for others, and the admission decides. Display-only readers (the
+dashboard, the officer's hold preview, diagnostics) pass no party. The custodian writer's
+over-capacity warning and whole-lodge question ask the same rule of the
+assignment being written. Two guest rows for one member are still two guests;
+only the tick is given back.
+
+One stated limit of the tick, which moves no admission number in the wrong
+direction silently:
+
+- *Planner versus count on a whole-lodge-held night.* The count subtracts a
+  bedless ticked custodian from what the hold represents; the bed planner
+  (`wholeLodgeHoldOccupiedBedNightsForPlanner`) has no bed to skip for them, so
+  it still emits every active bed for the hold. A held night is pinned to the
+  full lodge either way (`INV-CAP-038`), and outside held nights admission is
+  capped at capacity less the custodian, so the planner only ever sees one spare
+  bed. A custodian who is a guest of the held booking that night is not
+  subtracted at all, and the planner places them as a guest.
 
 **Night semantics.** The hold covers `startDate <= night <= endDate`,
 **inclusive** — matching the existing hut-leader coverage semantics. This is
@@ -343,7 +395,7 @@ two custodians handing over on the same night, on different beds, subtract two.
 |---|---|---|
 | `checkCapacity`, `checkCapacityForGuestRanges`, `checkCapacityForPartnerSharedAdmission`, `getMonthAvailability` | **Yes** | Every admission path and both calendars must see the bed as taken |
 | Capacity-warnings cron | **Yes** | Its whole job is fullness; excluding the hold would under-fire the warning all season |
-| Custodian bed-hold write path (`validateCustodianBedHold`) | **Yes**, other custodians only | The hold being created or edited is excluded and added once as `+ 1`, so a handover never double-counts one bed |
+| Custodian bed-hold write path (`validateCustodianBedHold`) | **Yes**, other custodians only | The hold being created or edited is excluded and added once as `+ 1` (not at all on a night a bedless tick's member is a counted guest), so a handover never double-counts one bed |
 | Admin reports `occupancyByDate` | **No** | Utilisation measures *booked* usage, so the report reads slightly low during custodian season. Stated here so the gap is a decision, not a bug |
 
 Since #2681 the first three rows — six surfaces in all, since the first row

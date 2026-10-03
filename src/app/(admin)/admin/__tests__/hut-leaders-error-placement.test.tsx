@@ -201,6 +201,8 @@ describe("custodian bed hold controls (#2286)", () => {
       ok: true,
       body: {},
     },
+    // #3817: the list route says whether bed allocation is on.
+    bedAllocationEnabled = true,
   ) {
     const putQueue = Array.isArray(putResponse) ? putResponse : [putResponse];
     let putCount = 0;
@@ -245,7 +247,10 @@ describe("custodian bed hold controls (#2286)", () => {
       if (url.startsWith("/api/admin/hut-leaders?lodgeId=")) {
         return {
           ok: true,
-          json: async () => ({ assignments: [ASSIGNMENT_WITH_BED] }),
+          json: async () => ({
+            assignments: [ASSIGNMENT_WITH_BED],
+            bedAllocationEnabled,
+          }),
         };
       }
       return { ok: true, json: async () => ({}) };
@@ -294,6 +299,10 @@ describe("custodian bed hold controls (#2286)", () => {
       expect(card).toHaveFocus();
     });
     expect(card).toHaveTextContent("2099-07-11");
+    // #3817: Release bed leaves no bed in play, so the card does not talk
+    // about holding one.
+    expect(card).toHaveTextContent("Counting this custodian puts the lodge over capacity");
+    expect(card).not.toHaveTextContent(/holding that bed/i);
 
     // #2286 review M5: the per-night figures count only capacity-HOLDING
     // bookings, so the overridden booking that will settle onto these nights is
@@ -327,6 +336,16 @@ describe("custodian bed hold controls (#2286)", () => {
     expect(await screen.findByTestId("bed-picker-a1")).toBeInTheDocument();
   });
 
+  it("offers no Hold/Change bed while bed allocation is off, but keeps Release bed (#3817)", async () => {
+    stubWithAssignment(undefined, undefined, false);
+    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
+      .default;
+    render(<HutLeadersPage />);
+
+    expect(await screen.findByRole("button", { name: /release bed/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /change bed|hold a bed/i })).not.toBeInTheDocument();
+  });
+
   /*
    * #2698 — the ordering case. Holding this bed narrows an existing
    * whole-lodge hold, so the officer is asked rather than told afterwards.
@@ -349,9 +368,14 @@ describe("custodian bed hold controls (#2286)", () => {
       .default;
     render(<HutLeadersPage />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /release bed/i }));
+    // The row's Custodian toggle on a bed-holding row: a bed is in play, so
+    // the card speaks of holding it (#3817).
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Custodian (lives on site)" }),
+    );
 
     const card = await screen.findByTestId("custodian-hold-amendment-confirm");
+    expect(card).toHaveTextContent(/holding this bed/i);
     expect(card).toHaveAttribute("role", "alert");
     await waitFor(() => {
       expect(card).toHaveFocus();
@@ -376,6 +400,21 @@ describe("custodian bed hold controls (#2286)", () => {
         ),
       ).toHaveLength(1);
     });
+  });
+
+  it("words the whole-lodge question for the custodian tick when no bed is in play (#3817)", async () => {
+    stubWithAssignment({ ok: false, body: HOLD_AMENDMENT_BODY });
+    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page"))
+      .default;
+    render(<HutLeadersPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /release bed/i }));
+
+    const card = await screen.findByTestId("custodian-hold-amendment-confirm");
+    expect(card).toHaveTextContent(/as a custodian \(lives on site\) takes one space/i);
+    expect(card).not.toHaveTextContent(/holding this bed/i);
+    expect(screen.getByRole("button", { name: /^accept and save$/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /accept and hold the bed/i })).not.toBeInTheDocument();
   });
 
   it("replaces the over-capacity card rather than stacking a second alert on it", async () => {

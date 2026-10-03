@@ -70,7 +70,7 @@ import {
   wholeLodgeHoldOccupiedBedNightsForPlanner,
 } from "@/lib/exclusive-hold-occupancy";
 import {
-  buildCustodianNightIndex,
+  buildLodgeCustodianNightCounter,
   custodianOccupiedBedNightsForPlanner,
   type CustodianBedHold,
 } from "@/lib/custodian-occupancy";
@@ -85,6 +85,32 @@ const LODGE = "lodge-1";
  * contrast to it.
  */
 const NO_CUSTODIAN_HOLDS: CustodianBedHold[] = [];
+
+/**
+ * The capacity engine's custodian count for `holds` on one night, read through
+ * the engine's own counter (`buildLodgeCustodianNightCounter`, the one source
+ * `computeNightOccupancy` reads) over a stub client that returns those holds,
+ * with no guest on the night.
+ */
+async function engineCustodianBeds(
+  holds: readonly CustodianBedHold[],
+  night: Date,
+): Promise<number> {
+  const rows = holds.map((hold) => ({
+    id: hold.assignmentId,
+    memberId: hold.memberId,
+    bedId: hold.bedId,
+    startDate: parseDateOnly(hold.startDate),
+    endDate: parseDateOnly(hold.endDate),
+  }));
+  const count = await buildLodgeCustodianNightCounter({
+    lodgeId: LODGE,
+    from: night,
+    toExclusive: new Date(night.getTime() + 24 * 60 * 60 * 1000),
+    db: { hutLeaderAssignment: { findMany: async () => rows } } as never,
+  });
+  return count(night, new Set());
+}
 
 /** A custodian bed hold, inclusive-inclusive covered days (#2286). */
 function custodianHold(
@@ -556,7 +582,7 @@ describe("the synthesised rows are unattributed and non-displaceable", () => {
      * pin is what stops a future change re-claiming the custodian's bed, and
      * nothing else would notice.
      */
-    it("agrees bed-for-bed with the capacity engine's represented-bed count", () => {
+    it("agrees bed-for-bed with the capacity engine's represented-bed count", async () => {
       const lodgeCapacity = ROOM.beds.length;
       const holds = [
         custodianHold({ bedId: "bed-a1", startDate: "2026-07-01", endDate: "2026-07-01" }),
@@ -565,7 +591,7 @@ describe("the synthesised rows are unattributed and non-displaceable", () => {
 
       for (const nightKey of ["2026-07-01", "2026-07-02"]) {
         const night = parseDateOnly(nightKey);
-        const custodianBeds = buildCustodianNightIndex(holds, [night]).get(nightKey) ?? 0;
+        const custodianBeds = await engineCustodianBeds(holds, night);
         const plannerRows = wholeLodgeHoldOccupiedBedNightsForPlanner(
           spans,
           [ROOM],
@@ -608,15 +634,14 @@ describe("the synthesised rows are unattributed and non-displaceable", () => {
      * the same reason: the planner's stock shrank, the recorded capacity did
      * not.
      */
-    it("records that engine and planner DIVERGE in a capped-capacity lodge", () => {
+    it("records that engine and planner DIVERGE in a capped-capacity lodge", async () => {
       // 2 active beds, licence cap 1 — `capped_beds`.
       const cappedCapacity = ROOM.beds.length - 1;
       const holds = [
         custodianHold({ bedId: "bed-a1", startDate: "2026-07-01", endDate: "2026-07-01" }),
       ];
       const night = parseDateOnly("2026-07-01");
-      const custodianBeds =
-        buildCustodianNightIndex(holds, [night]).get("2026-07-01") ?? 0;
+      const custodianBeds = await engineCustodianBeds(holds, night);
       const plannerRows = wholeLodgeHoldOccupiedBedNightsForPlanner(
         toWholeLodgeHoldSpans([holdBooking()]),
         [ROOM],

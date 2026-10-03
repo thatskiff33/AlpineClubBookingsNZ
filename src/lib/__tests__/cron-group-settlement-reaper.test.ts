@@ -80,7 +80,10 @@ vi.mock("@/lib/xero-group-settlement-invoice-voids", () => ({
   readGroupSettlementInvoiceState: mocks.readInvoiceState,
   describeGroupSettlementInvoiceMoney: () => "$500.00 paid",
 }));
-vi.mock("@/lib/module-settings", () => ({
+// Partial: `admin-modules` (reached through the capacity counter since the
+// #3817 one-space rule) reads `normalizeClubModuleSettings` at import time.
+vi.mock("@/lib/module-settings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/module-settings")),
   loadEffectiveModuleFlags: mocks.loadModuleFlags,
 }));
 // The 24-hour invoice alert is mocked; #3635's once-ever started-stay alert is

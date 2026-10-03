@@ -1843,7 +1843,17 @@ describe("approveBookingRequest", () => {
     expect(
       vi.mocked(prisma.$executeRaw).mock.invocationCallOrder[0]
     ).toBeLessThan(mockedAcquireLodgeCapacityLock.mock.invocationCallOrder[0]);
-    expect(mockedCheckCapacity).not.toHaveBeenCalled();
+    // #3817 review: the held branch re-checks the new guest list against the
+    // held booking's own LOCKED lodge, excluding the held booking itself.
+    expect(mockedCheckCapacity).toHaveBeenCalledTimes(1);
+    expect(mockedCheckCapacity).toHaveBeenCalledWith(
+      "held-lodge",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      "held-1",
+      prisma
+    );
     expect(mockedSendApproved).toHaveBeenCalledWith(
       expect.objectContaining({ lodgeId: "held-lodge" }),
       CLUB_FORMAT_TEST,
@@ -1855,6 +1865,119 @@ describe("approveBookingRequest", () => {
     expect(mockedBookingFindUnique).toHaveBeenNthCalledWith(2, {
       where: { id: "held-1" },
       select: { id: true, lodgeId: true, memberId: true, status: true },
+    });
+  });
+
+  describe("held branch re-checks capacity for the new guest list (#3817 review)", () => {
+    // A 10-space lodge on a night that already holds nine other guests plus a
+    // ticked custodian ("custodian-1") with no bed. The held booking's one
+    // guest was quoted as the custodian, so under "one person is one space"
+    // (INV-DATE-030) the custodian's tick is waived and the night is exactly
+    // full. A quote re-save then moves the guest's link to somebody else; the
+    // custodian counts again, and converting would admit 11 on a 10-bed night.
+    // The stub applies the engine's rule to the ranges it is handed, so it
+    // only says "full" when the approval passes the moved link through.
+    function stubEngineWithTickedCustodian() {
+      mockedCheckCapacity.mockImplementation((async (
+        _lodgeId: string,
+        _checkIn: Date,
+        _checkOut: Date,
+        ranges: Array<{ memberId?: string | null }>,
+      ) => {
+        const tickWaived = ranges.some((range) => range.memberId === "custodian-1");
+        const availableBeds = 10 - (9 + (tickWaived ? 0 : 1) + ranges.length);
+        return {
+          available: availableBeds >= 0,
+          minAvailable: availableBeds,
+          nightDetails: [
+            { date: new Date("2026-08-01T00:00:00.000Z"), availableBeds },
+            { date: new Date("2026-08-02T00:00:00.000Z"), availableBeds },
+          ],
+        };
+      }) as never);
+    }
+
+    // `vi.clearAllMocks` keeps implementations, so hand later tests back the
+    // permissive default rather than this night's full lodge.
+    afterEach(() => {
+      mockedCheckCapacity.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      } as never);
+    });
+
+    function arrangeHeld(linkedMemberId: string) {
+      mockedFindUnique.mockResolvedValue(
+        baseRequest({
+          status: BookingRequestStatus.PRICED,
+          priceCents: 12000,
+          lodgeId: "held-lodge",
+          heldBookingId: "held-1",
+          linkedGuestMembers: [{ guestIndex: 0, memberId: linkedMemberId }],
+        }) as never
+      );
+      mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+      mockedBookingFindUnique
+        .mockResolvedValueOnce({ lodgeId: "held-lodge" } as never)
+        .mockResolvedValueOnce({
+          id: "held-1",
+          lodgeId: "held-lodge",
+          memberId: "held-member",
+          status: BookingStatus.AWAITING_REVIEW,
+        } as never);
+      vi.mocked(prisma.member.findUnique).mockResolvedValue({
+        id: "held-member",
+        canLogin: false,
+        role: "NON_MEMBER",
+        archivedAt: null,
+        active: true,
+      } as never);
+      vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([{ id: "g1" }] as never);
+      vi.mocked(prisma.bookingGuest.update).mockResolvedValue({} as never);
+      vi.mocked(prisma.booking.updateMany).mockResolvedValue({ count: 1 } as never);
+      vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
+      vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
+      vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+      stubEngineWithTickedCustodian();
+    }
+
+    it("refuses the conversion when the link moved off the custodian on a full night", async () => {
+      arrangeHeld("member-other");
+
+      const result = await approveBookingRequest({
+        requestId: "req-1",
+        adminMemberId: "admin-1",
+      });
+
+      expect(result).toEqual({
+        type: "capacityExceeded",
+        fullNights: ["2026-08-01", "2026-08-02"],
+      });
+      expect(mockedCheckCapacity).toHaveBeenCalledWith(
+        "held-lodge",
+        expect.anything(),
+        expect.anything(),
+        [expect.objectContaining({ memberId: "member-other" })],
+        "held-1",
+        prisma
+      );
+      // Refused BEFORE the guest swap and the status flip.
+      expect(prisma.bookingGuest.update).not.toHaveBeenCalled();
+      expect(prisma.booking.updateMany).not.toHaveBeenCalled();
+      expect(mockedSendApproved).not.toHaveBeenCalled();
+    });
+
+    it("converts when the guest is still the custodian (one person, one space)", async () => {
+      arrangeHeld("custodian-1");
+
+      const result = await approveBookingRequest({
+        requestId: "req-1",
+        adminMemberId: "admin-1",
+      });
+
+      expect(result).toMatchObject({ type: "approved", bookingId: "held-1" });
+      expect(prisma.booking.updateMany).toHaveBeenCalled();
     });
   });
 

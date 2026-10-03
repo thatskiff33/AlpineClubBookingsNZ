@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Check, CalendarDays, Users, UserSearch } from "lucide-react";
 import {
   OccupancyCalendar,
@@ -56,6 +57,17 @@ export interface AssignmentSummary {
 
 type MemberTab = "staying" | "any";
 
+/**
+ * An error the form shows. `correctedEndDate` is set only for the #3817 stay
+ * refusal, when the start night is stayed: the form then offers to change the
+ * last night to it.
+ */
+export interface HutLeaderFormError {
+  message: string;
+  memberId: string | null;
+  correctedEndDate?: string | null;
+}
+
 interface AssignmentFormProps {
   hutLeaderLabel: string;
   /**
@@ -82,8 +94,14 @@ interface AssignmentFormProps {
   // Step 3
   summary: AssignmentSummary | null;
   creating: boolean;
-  error: { message: string; memberId: string | null } | null;
+  error: HutLeaderFormError | null;
   onConfirm: () => void;
+  /**
+   * #3817: the server refused nights the member is not staying and named the
+   * last night they do stay from the start date. Adopting it keeps the member
+   * and changes only the end date.
+   */
+  onChangeLastNight: (endDate: string) => void;
   // Lodge edit gating (#1940): a lodge:view admin can view the picker but the
   // Confirm-assignment write is disabled.
   canEdit: boolean | undefined;
@@ -103,6 +121,14 @@ interface AssignmentFormProps {
   // chosen after the person and before the confirm. The form stays purely
   // presentational — the parent owns the selection and sends it with the POST.
   bedPicker?: ReactNode;
+  /**
+   * #3817 (owner decision on #3820): the "Custodian (lives on site)" tick. A
+   * custodian counts as present on every night covered, with no booking or bed
+   * needed, so it is offered whether or not bed allocation is on. View-only
+   * admins see it disabled, like every other edit affordance on this form.
+   */
+  isCustodian: boolean;
+  onCustodianChange: (isCustodian: boolean) => void;
 }
 
 export function AssignmentForm({
@@ -124,10 +150,13 @@ export function AssignmentForm({
   creating,
   error,
   onConfirm,
+  onChangeLastNight,
   canEdit,
   renderViewOnlyBanner = true,
   lodgeSelector,
   bedPicker,
+  isCustodian,
+  onCustodianChange,
 }: AssignmentFormProps) {
   const label = hutLeaderLabel.toLowerCase();
   const datesSelected = Boolean(
@@ -196,7 +225,8 @@ export function AssignmentForm({
               />
             </div>
             <div>
-              <Label htmlFor="endDate">End Date</Label>
+              {/* #3817: an assignment's end is the last NIGHT covered, never the leave day. */}
+              <Label htmlFor="endDate">Last night</Label>
               <Input
                 id="endDate"
                 type="date"
@@ -353,8 +383,30 @@ export function AssignmentForm({
           )}
         </div>
 
-        {/* Optional custodian bed hold (#2286) — only meaningful once both the
-            nights and the person are settled, so it sits between steps 2 and 3. */}
+        {/* The custodian tick (#3817) and the optional custodian bed hold
+            (#2286) — only meaningful once both the nights and the person are
+            settled, so they sit between steps 2 and 3. */}
+        {datesSelected && target ? (
+          <div className="border-t border-border pt-4">
+            <div className="flex items-start gap-2">
+              <Checkbox
+                id="hut-leader-is-custodian"
+                checked={isCustodian}
+                disabled={!canEdit || creating}
+                onCheckedChange={onCustodianChange}
+                aria-describedby="hut-leader-is-custodian-hint"
+                className="mt-0.5"
+              />
+              <div>
+                <Label htmlFor="hut-leader-is-custodian">Custodian (lives on site)</Label>
+                <p id="hut-leader-is-custodian-hint" className="text-xs text-muted-foreground">
+                  Counts as staying every night covered, with no booking needed.
+                  Otherwise the {label} must be staying every night they cover.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : null}
         {bedPicker && datesSelected && target ? (
           <div className="border-t border-border pt-4">{bedPicker}</div>
         ) : null}
@@ -391,7 +443,18 @@ export function AssignmentForm({
             )}
             {error && !hasConflict && (
               <div className="rounded-md border border-danger/20 bg-danger-muted px-3 py-2 text-sm text-danger">
-                {error.message}
+                <p>{error.message}</p>
+                {error.correctedEndDate && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => onChangeLastNight(error.correctedEndDate as string)}
+                  >
+                    Change last night to {error.correctedEndDate}
+                  </Button>
+                )}
               </div>
             )}
             <ViewOnlyActionButton

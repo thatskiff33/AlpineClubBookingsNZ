@@ -75,6 +75,14 @@ function persistClubZone(timeZone: string) {
   });
 }
 
+/**
+ * The hut-leader access window runs to the day AFTER the last night (#3817), so
+ * "current or upcoming" is `endDate >= clubDay - 1`. The two hut-leader bounds
+ * below are therefore one day before the day they are judged on.
+ */
+const CLUB_DAY_ACCESS_BOUND = "2026-06-29T00:00:00.000Z";
+const ENVIRONMENT_DAY_ACCESS_BOUND = "2026-06-30T00:00:00.000Z";
+
 /** The `endDate` bound the subject handed the assignment count. */
 function assignmentBound(): Date {
   const call = mocks.hutLeaderAssignmentCount.mock.calls.at(-1)?.[0] as {
@@ -101,7 +109,7 @@ describe("the club's day comes from the club, not the container (#3123)", () => 
     it("bounds the assignment window on the club's day, at UTC midnight", async () => {
       await hasActiveHutLeaderAssignment("member-1");
 
-      expect(assignmentBound().toISOString()).toBe(CLUB_DAY);
+      expect(assignmentBound().toISOString()).toBe(CLUB_DAY_ACCESS_BOUND);
     });
 
     it("moves the bound when the persisted zone moves", async () => {
@@ -109,11 +117,11 @@ describe("the club's day comes from the club, not the container (#3123)", () => 
       // `Pacific/Auckland`. Same clock, same call; only the stored zone differs.
       persistClubZone("Pacific/Kiritimati"); // UTC+14 — 1 July
       await hasActiveHutLeaderAssignment("member-1");
-      expect(assignmentBound().toISOString()).toBe(ENVIRONMENT_DAY);
+      expect(assignmentBound().toISOString()).toBe(ENVIRONMENT_DAY_ACCESS_BOUND);
 
       persistClubZone("Pacific/Pago_Pago"); // UTC-11 — still 30 June
       await hasActiveHutLeaderAssignment("member-1");
-      expect(assignmentBound().toISOString()).toBe(CLUB_DAY);
+      expect(assignmentBound().toISOString()).toBe(CLUB_DAY_ACCESS_BOUND);
     });
 
     it("really asks the ClubTimeSettings row for the zone", async () => {
@@ -131,7 +139,7 @@ describe("the club's day comes from the club, not the container (#3123)", () => 
       // operational documents while they are still on duty.
       await canReadLodgeInstructions("member-1", { canLogin: true, accessRoles: [] });
 
-      expect(assignmentBound().toISOString()).toBe(CLUB_DAY);
+      expect(assignmentBound().toISOString()).toBe(CLUB_DAY_ACCESS_BOUND);
     });
 
     it("agrees with hut-leader.ts, which its own comment requires", async () => {

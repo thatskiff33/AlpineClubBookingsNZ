@@ -5,6 +5,7 @@ import {
   getSanitizedLodgeInstructions,
 } from "@/lib/lodge-instructions";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
+import { hutLeaderAccessWindowNotClosedByWhere } from "@/lib/hut-leader-access-window";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
@@ -28,7 +29,9 @@ async function getMemberInstructionLodgeIds(
   */
   const today = await clubTodayDateOnlyInstant();
   const assignments = await prisma.hutLeaderAssignment.findMany({
-    where: { memberId, endDate: { gte: today } },
+    // Current or upcoming: the access window (to the departure day, #3817)
+    // has not closed — the same rule canReadLodgeInstructions applies.
+    where: { memberId, ...hutLeaderAccessWindowNotClosedByWhere(today) },
     select: { lodgeId: true },
   });
 

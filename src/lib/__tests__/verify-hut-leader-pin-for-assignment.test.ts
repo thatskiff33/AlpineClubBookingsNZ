@@ -9,6 +9,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { verifyHutLeaderPinForAssignment } from "@/lib/lodge-pin-session";
+import { addDaysDateOnly } from "@/lib/date-only";
 
 const PIN = "654321";
 /**
@@ -38,12 +39,14 @@ describe("verifyHutLeaderPinForAssignment (#1642)", () => {
     const result = await verifyHutLeaderPinForAssignment("assign-1", PIN, CLUB_TODAY);
     expect(result).not.toBeNull();
     expect(result?.lodgeId).toBe("lodge-b");
-    // The query is scoped by id and endDate>=today (current or upcoming).
+    // The query is scoped by id and by an access window that has not closed
+    // (current or upcoming): it runs to the departure day, the day after the
+    // last night, so `endDate >= today - 1` (#3817).
     const where = mocks.findFirst.mock.calls[0][0].where;
     expect(where.id).toBe("assign-1");
-    // #3123 - and it is the CLUB's day that bounds it, byte-for-byte the value
+    // #3123 - and it is the CLUB's day that bounds it, derived from the value
     // this caller supplied, never a day the module resolved for itself.
-    expect(where.endDate.gte).toEqual(CLUB_TODAY);
+    expect(where.endDate.gte).toEqual(addDaysDateOnly(CLUB_TODAY, -1));
   });
 
   it("returns null for a wrong PIN", async () => {

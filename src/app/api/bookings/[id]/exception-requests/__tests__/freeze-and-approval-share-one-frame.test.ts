@@ -384,7 +384,7 @@ describe("exception freeze and approval replay share one date frame (CT-4, #2870
 
     const [lodgeId, checkIn, checkOut, ranges] = mocks.checkCapacity.mock.calls.at(
       -1,
-    ) as [string, Date, Date, { nights: string[] }[]];
+    ) as [string, Date, Date, { nights: string[]; memberId: string | null }[]];
 
     expect(lodgeId).toBe("lodge_1");
     // Read in UTC, which is the correct reading of a UTC-midnight column
@@ -392,8 +392,10 @@ describe("exception freeze and approval replay share one date frame (CT-4, #2870
     // it ends the morning after the last night (INV-DATE-003).
     expect(formatDateOnly(checkIn)).toBe(STORED_CHECK_IN);
     expect(formatDateOnly(checkOut)).toBe(REQUESTED_CHECK_OUT);
+    // The member travels with the nights, so a ticked custodian in the party
+    // is one space (#3817).
     expect(ranges).toEqual([
-      { nights: ["2026-07-04", "2026-07-05", "2026-07-06"] },
+      { nights: ["2026-07-04", "2026-07-05", "2026-07-06"], memberId: "m1" },
     ]);
   });
 

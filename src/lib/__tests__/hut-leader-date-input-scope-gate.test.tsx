@@ -104,7 +104,7 @@ describe("hut-leader date inputs and the lodge-scope settle (#2887)", () => {
     // so "operator enters dates, a settle then clears them" cannot begin.
     await act(async () => {});
     expect(screen.queryByLabelText("Start Date")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("End Date")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Last night")).not.toBeInTheDocument();
 
     await act(async () => {
       releaseLodges();
@@ -117,7 +117,7 @@ describe("hut-leader date inputs and the lodge-scope settle (#2887)", () => {
     fireEvent.change(screen.getByLabelText("Start Date"), {
       target: { value: "2099-07-10" },
     });
-    fireEvent.change(screen.getByLabelText("End Date"), {
+    fireEvent.change(screen.getByLabelText("Last night"), {
       target: { value: "2099-07-12" },
     });
 
@@ -127,6 +127,6 @@ describe("hut-leader date inputs and the lodge-scope settle (#2887)", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
     expect(screen.getByLabelText("Start Date")).toHaveValue("2099-07-10");
-    expect(screen.getByLabelText("End Date")).toHaveValue("2099-07-12");
+    expect(screen.getByLabelText("Last night")).toHaveValue("2099-07-12");
   });
 });

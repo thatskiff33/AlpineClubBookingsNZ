@@ -1131,7 +1131,6 @@ const DATE_FNS_ADAPTER_FILES = [
   "src/components/admin/member-password-action-button.tsx",
   "src/lib/admin-dataset-reset-state.ts",
   "src/lib/admin-reports.ts",
-  "src/lib/cron-hut-leader-auto-assign.ts",
 ];
 
 export const DATE_FNS_ADAPTERS = [
@@ -1164,12 +1163,6 @@ export const DATE_FNS_ADAPTERS = [
     uses: "endOfMonth, format, startOfMonth, subMonths",
     reason:
       "Month windows for the dataset-reset screen, sharing the report residual's shape and blocked on the same decision about bucket boundaries.",
-  },
-  {
-    file: "src/lib/cron-hut-leader-auto-assign.ts",
-    uses: "addDays, eachDayOfInterval",
-    reason:
-      "The lookahead window over which the job scans for uncovered nights. It reads a club `today` from the kernel and then steps it with host-local helpers, so the LAST day of a long lookahead can shift by one across a daylight-saving transition. Narrow and inside a cron, but real; it is the cheapest of the seven to move and the one to take next.",
   },
 ];
 

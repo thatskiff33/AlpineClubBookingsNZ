@@ -31,11 +31,13 @@ describe("hut-leader assignment audit detail (#2698)", () => {
     lodgeId: "lodge-1",
     startDate: new Date("2026-07-01T00:00:00.000Z"),
     endDate: new Date("2026-07-05T00:00:00.000Z"),
+    isCustodian: false,
   };
   const PREVIOUS = {
     lodgeId: "lodge-1",
     startDate: BASE.startDate,
     endDate: BASE.endDate,
+    isCustodian: false,
   };
 
   beforeEach(() => {
@@ -113,5 +115,43 @@ describe("hut-leader assignment audit detail (#2698)", () => {
     });
     expect(details).toContain("was holding a bed");
     expect(createAuditLog.mock.calls[0][0].severity).toBe("important");
+  });
+});
+
+describe("hut-leader assignment audit records the custodian tick (#3817)", () => {
+  const BASE = {
+    actorMemberId: "officer-1",
+    subjectMemberId: "member-1",
+    assignmentId: "a1",
+    lodgeId: "lodge-1",
+    startDate: new Date("2026-07-01T00:00:00.000Z"),
+    endDate: new Date("2026-07-05T00:00:00.000Z"),
+    bedId: null,
+  };
+
+  beforeEach(() => {
+    createAuditLog.mockReset();
+    createAuditLog.mockResolvedValue(undefined);
+  });
+
+  it("records a ticked bedless custodian as a capacity event with the tick in metadata", async () => {
+    await recordHutLeaderAssignmentAudit({} as never, { ...BASE, event: "created", isCustodian: true });
+    const row = createAuditLog.mock.calls[0][0];
+    expect(row.metadata).toMatchObject({ isCustodian: true, bedId: null });
+    expect(row.severity).toBe("important");
+    expect(row.details).toContain("takes one space off the lodge's capacity");
+    expect(row.details).not.toContain("no capacity effect");
+  });
+
+  it("records the tick being taken away, with both sides in metadata", async () => {
+    await recordHutLeaderAssignmentAudit({} as never, {
+      ...BASE,
+      event: "updated",
+      isCustodian: false,
+      previous: { lodgeId: "lodge-1", startDate: BASE.startDate, endDate: BASE.endDate, bedId: null, isCustodian: true },
+    });
+    const row = createAuditLog.mock.calls[0][0];
+    expect(row.metadata).toMatchObject({ isCustodian: false, previousIsCustodian: true });
+    expect(row.details).toContain("no longer marked as a custodian");
   });
 });

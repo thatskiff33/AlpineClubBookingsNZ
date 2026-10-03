@@ -159,18 +159,26 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
     // asserting a flag. Both conjuncts are pinned as the literal expression,
     // because dropping either one is a one-token edit that changes no test
     // outcome anywhere else.
+    //
+    // #3817 (owner decision on #3820, 3 Oct 2026): a ticked custodian takes a
+    // space out of a hold's set exactly as a bed does, so "an occupant is
+    // involved" is now a bed OR the custodian tick. A role-only, unticked
+    // assignment still cannot take the club-wide key. Both ask the one
+    // definition, `isCustodianOccupancy` (INV-SSOT, #3817 review D5).
     for (const [route, gate] of [
       [
         "src/app/api/admin/hut-leaders/route.ts",
-        "parsed.data.amendOverlappingHolds === true && bedId !== null;",
+        "parsed.data.amendOverlappingHolds === true && isCustodianOccupancy({ bedId, isCustodian });",
       ],
       [
         "src/app/api/admin/hut-leaders/[id]/route.ts",
-        "parsed.data.amendOverlappingHolds === true && Boolean(requestedBedId);",
+        "const amendRequested = parsed.data.amendOverlappingHolds === true && isCustodianOccupancy({ bedId: requestedBedId, isCustodian: parsed.data.isCustodian ?? existing.isCustodian, });",
       ],
     ] as const) {
+      // Whitespace-normalised, so a line break inside the expression cannot
+      // drop a conjunct out of the pinned literal (#3817 review).
       expect(
-        source(route),
+        source(route).replace(/\s+/g, " "),
         `${route}: the global cohort key must be gated on the officer's acceptance AND on a bed being involved (INV-LOCK-002, INV-CAP-038)`,
       ).toContain(gate);
     }
@@ -217,7 +225,10 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
     }
     // Every lodge-scoped read in the job carries the scope; a club-wide one
     // suppressed valid auto-assignments at other lodges and raced the routes.
-    expect(cron.match(/lodgeNullTolerantScope\(lodge\.id\)/g) ?? []).toHaveLength(3);
+    // #3817: the booking read is scoped through the shared stay definition,
+    // which carries the same lodge, so two literal scopes plus that one.
+    expect(cron.match(/lodgeNullTolerantScope\(lodge\.id\)/g) ?? []).toHaveLength(2);
+    expect(cron).toContain("...hutLeaderStayBookingWhere({ lodgeId: lodge.id,");
     // And the per-lodge decision replaced the club-wide adult count.
     // #2915's loop decides per (lodge, night); the count is per lodge because
     // the booking read above it is scoped to `lodge.id`.
@@ -331,7 +342,7 @@ describe("lodge admission and assignment lock topology (#2701)", () => {
       "const lockedLodgeId = await resolveOptionalActiveLodgeId(",
       "const lockedMember = await tx.member.findUnique(",
       "await findHutLeaderOverlapRefusal(tx, {",
-      "if (bedId) {",
+      "if (isCustodianOccupancy({ bedId, isCustodian })) {",
       "await validateCustodianBedHoldAndHoldAmendment(tx, {",
       "const assignment = await tx.hutLeaderAssignment.create(",
     ]);

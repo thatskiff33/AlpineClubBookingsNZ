@@ -1,3 +1,5 @@
+import type { Prisma } from "@prisma/client";
+import { isEffectiveModuleEnabled } from "./admin-modules";
 import { isMinorAgeTier } from "./display-name-granularity";
 import { prisma } from "./prisma";
 import { formatDateOnly, parseDateOnly } from "./date-only";
@@ -5,12 +7,17 @@ import { lodgeNullTolerantScope } from "./lodges";
 
 /**
  * Custodian occupancy (#2286, epic #2245) — THE single source of truth for
- * "which bed-nights are held by a custodian".
+ * "which bed-nights are held by a custodian" and, since #3817, for "which
+ * assignments are present without a stay" ({@link isCustodianOccupancy}).
  *
  * A `HutLeaderAssignment` with a `bedId` is a **custodian bed hold**: for the
  * night of every covered date the bed is out of the bookable pool and out of
  * the allocatable pool, with no `Booking` and no `BedAllocation` row anywhere.
- * An assignment WITHOUT a bed — including every row
+ * An assignment ticked **"Custodian (lives on site)"** (#3817) takes one space
+ * off capacity on every covered night too, with or without a bed, but holds no
+ * BED, so it reaches the per-night COUNT ({@link findCustodianOccupancies})
+ * and never a bed-identity consumer ({@link findCustodianBedHolds}). An
+ * assignment with neither — including every row
  * `cron-hut-leader-auto-assign.ts` creates — is a role only and has zero
  * capacity effect, exactly as before this feature existed.
  *
@@ -67,6 +74,31 @@ import { lodgeNullTolerantScope } from "./lodges";
 
 type PrismaClient = typeof prisma;
 type CustodianDb = Pick<PrismaClient, "hutLeaderAssignment">;
+/** A client the module-settings reader accepts — the caller's transaction. */
+type CustodianModuleDb = NonNullable<Parameters<typeof isEffectiveModuleEnabled>[1]>;
+
+/**
+ * Is this hut-leader assignment a custodian OCCUPANCY — present at the lodge
+ * on every night it covers without a stay (#3817)? It is when it holds a bed
+ * (`INV-LIFE-062`) or is ticked "Custodian (lives on site)" (owner decision on
+ * #3820, 3 Oct 2026), or both. THE one definition: the stay check's exemption,
+ * the capacity count's loader ({@link CUSTODIAN_OCCUPANCY_WHERE}) and the
+ * minor-custodian warning all ask it here (`INV-SSOT`).
+ */
+export function isCustodianOccupancy(assignment: {
+  bedId: string | null | undefined;
+  isCustodian: boolean | null | undefined;
+}): boolean {
+  return Boolean(assignment.bedId) || assignment.isCustodian === true;
+}
+
+/**
+ * {@link isCustodianOccupancy} as a Prisma filter. Spread it into a
+ * `hutLeaderAssignment` where clause that has no `OR` of its own.
+ */
+export const CUSTODIAN_OCCUPANCY_WHERE = {
+  OR: [{ bedId: { not: null } }, { isCustodian: true }],
+} satisfies Prisma.HutLeaderAssignmentWhereInput;
 
 /** A bed-holding hut-leader assignment, resolved for capacity/allocation use. */
 export interface CustodianBedHold {
@@ -170,10 +202,16 @@ export function holdCoversNight(
  *   already holds, because that one left the set when it was first created.
  *
  * The capacity engines work in per-night COUNTS rather than bed sets, so they
- * subtract the same fact through the same loaded holds in its count shape —
- * `buildCustodianNightIndex` / `buildLodgeCustodianNightCounter` above, fed to
- * `wholeLodgeHoldRepresentedBeds` in `capacity.ts`. One source
- * (`findCustodianBedHolds` + {@link holdCoversNight}), two views of it; never a
+ * subtract the custodians in count shape — `buildLodgeCustodianNightCounter`,
+ * fed to `wholeLodgeHoldRepresentedBeds` in `capacity.ts`. Two loaders, one per question, both keyed by the same
+ * inclusive {@link holdCoversNight}: the COUNT reads
+ * {@link findCustodianOccupancies} (a held bed or the custodian tick, #3817),
+ * the BED views read {@link findCustodianBedHolds} (a held bed only). A ticked
+ * custodian with no bed is therefore in the count and in no bed set: on a
+ * whole-lodge-held night the count says the hold represents one bed fewer,
+ * while the planner, which has no bed to skip, still emits every active bed
+ * for the hold. No admission number moves (the held night is pinned to the
+ * full lodge either way); it is a stated limit in `INV-CAP-038`. Never a
  * second inventory of which beds a custodian has.
  *
  * No lodge argument: a bed belongs to exactly one lodge and `bedId` is unique,
@@ -196,8 +234,10 @@ export function isCustodianHeldBedNight(
  * `[checkIn, checkOut)` window they already hold; the inclusive-endDate
  * semantics are handled here.
  *
- * Only rows with a bed are returned — a bed-less assignment is not an
- * occupancy and must never influence capacity or allocation.
+ * Only rows with a bed are returned: this answers "which BED is held", for
+ * the allocation and bed-identity consumers. A bedless assignment holds no
+ * bed and never reaches them. A bedless custodian (the #3817 tick) still takes
+ * a capacity space, through {@link findCustodianOccupancies}, not this.
  */
 export async function findCustodianBedHolds(input: {
   lodgeId?: string;
@@ -215,8 +255,8 @@ export async function findCustodianBedHolds(input: {
 
   const rows = await db.hutLeaderAssignment.findMany({
     where: {
-      // `not: null` is the whole feature gate: a role-only assignment can
-      // never reach a capacity or allocation consumer.
+      // `not: null` is the whole feature gate: a bedless assignment never
+      // reaches a bed-identity consumer (the count is a separate loader).
       bedId: input.bedIds ? { in: input.bedIds } : { not: null },
       // Inclusive endDate vs exclusive window end, as documented above.
       startDate: { lt: toExclusive },
@@ -269,33 +309,116 @@ export async function findCustodianBedHolds(input: {
 }
 
 /**
- * Per-night custodian head COUNT for a set of holds.
- *
- * A count, not a flag: two custodians handing over on the same night hold two
- * beds and subtract two. Keys are `YYYY-MM-DD`; nights with no hold are absent
- * from the map (callers use `?? 0`).
+ * One custodian occupancy for COUNTING (#3817): an assignment that holds a bed,
+ * is ticked "Custodian (lives on site)", or both.
  */
-export function buildCustodianNightIndex(
-  holds: readonly Pick<CustodianBedHold, "startDate" | "endDate">[],
-  nights: readonly Date[],
-): Map<string, number> {
-  const index = new Map<string, number>();
-  if (holds.length === 0) return index;
-  for (const night of nights) {
-    const key = formatDateOnly(night);
-    let count = 0;
-    for (const hold of holds) {
-      if (holdCoversNight(hold, key)) count += 1;
-    }
-    if (count > 0) index.set(key, count);
-  }
-  return index;
+export interface CustodianOccupancy {
+  assignmentId: string;
+  /** The custodian, so a tick can be matched to the same member's guest row. */
+  memberId: string;
+  /** The held bed, or null for a ticked custodian with no bed. */
+  bedId: string | null;
+  /** Inclusive first night, `YYYY-MM-DD`. */
+  startDate: string;
+  /** Inclusive last night, `YYYY-MM-DD`. */
+  endDate: string;
 }
 
 /**
- * The custodian head count on one night for a lodge, as a ready-to-use
- * `(night) => number` closure. The four admission/availability engines and the
- * capacity-warnings cron all add this to `occupiedBeds`.
+ * Load every custodian OCCUPANCY overlapping a half-open window — the capacity
+ * count's one source (#3817, owner decision "Yes, one space per night" on
+ * #3820, 3 Oct 2026).
+ *
+ * A ticked custodian takes one space off the lodge on every night covered,
+ * exactly as a held bed does, and does so whether or not bed allocation is on.
+ * An assignment that both holds a bed and is ticked is ONE row here, so it is
+ * counted once. This is deliberately a different question from
+ * {@link findCustodianBedHolds}: that one answers "which BED is held", which a
+ * bedless custodian has no answer to, and every allocation consumer keeps
+ * reading it. Only the per-night COUNT reads this.
+ */
+export async function findCustodianOccupancies(input: {
+  lodgeId: string;
+  from: Date;
+  toExclusive: Date;
+  db?: CustodianDb;
+}): Promise<CustodianOccupancy[]> {
+  const db = input.db ?? prisma;
+  const from = truncateToDateOnly(input.from);
+  const toExclusive = truncateToDateOnly(input.toExclusive);
+  if (from >= toExclusive) return [];
+
+  const rows = await db.hutLeaderAssignment.findMany({
+    where: {
+      // A role-only, unticked assignment still never reaches capacity.
+      ...CUSTODIAN_OCCUPANCY_WHERE,
+      startDate: { lt: toExclusive },
+      endDate: { gte: from },
+      ...lodgeNullTolerantScope(input.lodgeId),
+    },
+    select: { id: true, memberId: true, bedId: true, startDate: true, endDate: true },
+    orderBy: [{ startDate: "asc" }, { id: "asc" }],
+  });
+  return rows.map((row) => ({
+    assignmentId: row.id,
+    memberId: row.memberId,
+    bedId: row.bedId,
+    startDate: formatDateOnly(row.startDate),
+    endDate: formatDateOnly(row.endDate),
+  }));
+}
+
+/**
+ * Does this custodian occupancy take its OWN space on a night? THE rule for
+ * "one person is one space" (owner decisions on #3820, 3 Oct 2026). A custodian
+ * who is not counted on the night as a guest at the lodge always does. One who
+ * is takes no space of their own — the guest row is their space — unless they
+ * hold a bed while the `bedAllocation` module is on: then the held bed is
+ * physically kept out of the pool and every allocator refuses to put their
+ * guest row on it, so the guest needs a second bed and the two are two
+ * spaces. With the module off nothing keeps the guest off the held bed, so a
+ * held bed is counted like a tick. `guestMemberIds` is every member counted
+ * that night: existing guest rows (the occupancy count's own population, never
+ * a second definition) plus the party being admitted. `bedAllocationEnabled`
+ * is read by the caller through `isEffectiveModuleEnabled` on its own client,
+ * and only matters for an occupancy with a bed. The counter below, the
+ * admission engines through it, and the custodian writer's warning all ask it
+ * here (`INV-SSOT`).
+ */
+export function custodianOccupancyTakesSpace(
+  occupancy: { bedId: string | null | undefined; memberId: string },
+  guestMemberIds: ReadonlySet<string>,
+  bedAllocationEnabled: boolean,
+): boolean {
+  if (!guestMemberIds.has(occupancy.memberId)) return true;
+  return Boolean(occupancy.bedId) && bedAllocationEnabled;
+}
+
+/**
+ * Is the `bedAllocation` module on, as {@link custodianOccupancyTakesSpace}
+ * needs it — read on the caller's client (`INV-LOCK-004`) through the one
+ * module-settings reader, and only when an occupancy holds a bed, because a
+ * bedless tick's answer never depends on it.
+ */
+export async function custodianBedAllocationEnabled(
+  occupancies: readonly { bedId: string | null | undefined }[],
+  db: CustodianModuleDb | undefined,
+): Promise<boolean> {
+  if (!occupancies.some((occupancy) => occupancy.bedId)) return false;
+  return isEffectiveModuleEnabled("bedAllocation", db);
+}
+
+/**
+ * The custodian space count on one night for a lodge, as a ready-to-use
+ * `(night, guestMemberIds) => number` closure. The four admission/availability
+ * engines and the capacity-warnings cron all add this to `occupiedBeds`
+ * through `computeNightOccupancy`. It counts every custodian OCCUPANCY — a held
+ * bed or the custodian tick, once per assignment
+ * ({@link findCustodianOccupancies}, #3817) — less one whose member is in
+ * `guestMemberIds` (the guests counted that night plus the party being
+ * admitted), so the custodian is never counted twice on a create or an edit
+ * ({@link custodianOccupancyTakesSpace}; a held bed keeps its own space only
+ * while bed allocation is on).
  *
  * Counted as an OCCUPANT rather than as a reduction of `lodgeCapacity`: the
  * arithmetic for `availableBeds` is identical, but it preserves
@@ -309,8 +432,8 @@ export async function buildLodgeCustodianNightCounter(input: {
   lodgeId: string;
   from: Date;
   toExclusive: Date;
-  nights: readonly Date[];
-  db?: CustodianDb;
+  /** Also answers the module flag when a counted occupancy holds a bed. */
+  db?: CustodianDb & CustodianModuleDb;
   /**
    * Ignore one assignment's own hold — used when the caller is evaluating what
    * occupancy would be with that assignment counted exactly once, by itself
@@ -319,19 +442,34 @@ export async function buildLodgeCustodianNightCounter(input: {
    * caller concern, not part of the "which beds are held" query.
    */
   excludeAssignmentId?: string;
-}): Promise<(night: Date) => number> {
-  const loaded = await findCustodianBedHolds({
+}): Promise<(night: Date, guestMemberIds: ReadonlySet<string>) => number> {
+  const loaded = await findCustodianOccupancies({
     lodgeId: input.lodgeId,
     from: input.from,
     toExclusive: input.toExclusive,
     db: input.db,
   });
-  const holds = input.excludeAssignmentId
+  const occupancies = input.excludeAssignmentId
     ? loaded.filter((hold) => hold.assignmentId !== input.excludeAssignmentId)
     : loaded;
-  const index = buildCustodianNightIndex(holds, input.nights);
-  if (index.size === 0) return () => 0;
-  return (night: Date) => index.get(formatDateOnly(night)) ?? 0;
+  if (occupancies.length === 0) return () => 0;
+  const bedAllocationEnabled = await custodianBedAllocationEnabled(
+    occupancies,
+    input.db,
+  );
+  return (night, guestMemberIds) => {
+    const key = formatDateOnly(night);
+    let count = 0;
+    for (const occupancy of occupancies) {
+      if (
+        holdCoversNight(occupancy, key) &&
+        custodianOccupancyTakesSpace(occupancy, guestMemberIds, bedAllocationEnabled)
+      ) {
+        count += 1;
+      }
+    }
+    return count;
+  };
 }
 
 /**

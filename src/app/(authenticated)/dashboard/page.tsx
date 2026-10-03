@@ -175,7 +175,8 @@ export default async function DashboardPage() {
   // WHAT THAT COST WAS VISIBILITY, NOT PERMISSION. `getKioskAccessTier`
   // (`src/lib/kiosk-access.ts:31-81`) is the authority on lodge access, derives
   // its day from the club's own calendar, and already implemented
-  // `[checkIn-1, checkOut]` and `[startDate-1, endDate]`; every `/api/lodge/*`
+  // `[checkIn-1, checkOut]` and the hut-leader access window (since #3817
+  // `[startDate-1, endDate+1]`, `hut-leader-access-window.ts`); every `/api/lodge/*`
   // route enforces it, and both buttons below just link to `/lodge/kiosk`. So on
   // the day BEFORE check-in the member's access already worked and only the
   // button was missing, and on the day AFTER check-out the button that survived
@@ -229,12 +230,11 @@ export default async function DashboardPage() {
   });
   const isStayingGuest = !!stayingGuestBooking;
 
-  // Check if member has an active hut leader assignment (day-before access)
+  // Is the member inside a hut-leader access window today — the day before
+  // the first night through the departure day (#3817)? `isHutLeader` owns the
+  // window, so this asks once, about today.
   const isHutLeaderActive = hasAccessRole(session.user, "USER")
-    ? await isHutLeader(memberId, tomorrow).then(async (dayBefore) => {
-        if (dayBefore) return true;
-        return isHutLeader(memberId, today);
-      })
+    ? await isHutLeader(memberId, today)
     : false;
 
   const [

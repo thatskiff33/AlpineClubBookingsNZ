@@ -7,8 +7,11 @@ import {
 } from "@/lib/capacity";
 import {
   custodianHeldNightsForBed,
+  custodianBedAllocationEnabled,
+  custodianOccupancyTakesSpace,
   findCustodianBedHolds,
   isCustodianHeldBedNight,
+  isCustodianOccupancy,
 } from "@/lib/custodian-occupancy";
 import {
   findBlockingWholeLodgeHolds,
@@ -107,7 +110,7 @@ export class CustodianOverCapacityConfirmationRequiredError extends Error {
     readonly nonHoldingBookings: CustodianOverCapacityBooking[] = [],
   ) {
     super(
-      "Holding that bed puts the lodge over capacity on at least one night. Confirm to proceed.",
+      "This custodian assignment puts the lodge over capacity on at least one night. Confirm to proceed.",
     );
     this.name = "CustodianOverCapacityConfirmationRequiredError";
   }
@@ -189,79 +192,90 @@ export async function validateCustodianBedHold(input: {
   assignmentId?: string;
   /** #1668-style explicit override of the over-capacity warning. */
   confirmOverCapacity?: boolean;
+  /**
+   * The "Custodian (lives on site)" tick (#3817). A ticked custodian takes one
+   * space off capacity on every covered night exactly as a held bed does, so it
+   * gets the same over-capacity warn-and-confirm even with no bed. The bed
+   * refusals below still apply only to a bed.
+   */
+  isCustodian?: boolean;
+  /** The custodian: a bedless tick adds no space on their guest nights (#3817). */
+  memberId: string;
   db: CustodianAssignmentDb;
 }): Promise<void> {
   const { bedId, lodgeId, startDate, endDate, db } = input;
-  // No bed = role only = exactly the behaviour that existed before #2286. Every
-  // row the auto-assign cron creates lands here.
-  if (!bedId) return;
+  // No bed and no custodian tick = role only = exactly the behaviour that
+  // existed before #2286. Every row the auto-assign cron creates lands here.
+  if (!isCustodianOccupancy({ bedId, isCustodian: input.isCustodian })) return;
 
   const nights = custodianAssignmentNights(startDate, endDate);
   if (nights.length === 0) return;
   const toExclusive = addDaysDateOnly(endDate, 1);
 
-  const bed = await db.lodgeBed.findUnique({
-    where: { id: bedId },
-    select: {
-      id: true,
-      name: true,
-      active: true,
-      room: { select: { id: true, name: true, active: true, lodgeId: true } },
-    },
-  });
-  if (!bed || !bed.active || !bed.room.active) {
-    throw new CustodianBedHoldError(
-      "That bed was not found, or it (or its room) is not active.",
-      404,
-      "BED_NOT_FOUND",
-    );
-  }
-  if (bed.room.lodgeId !== lodgeId) {
-    // Also the refusal an admin hits when they try to move an assignment to
-    // another lodge without clearing the bed first — the message says so.
-    throw new CustodianBedHoldError(
-      "That bed belongs to a different lodge. Clear the bed before changing the lodge, then pick a bed at the new lodge.",
-      400,
-      "BED_WRONG_LODGE",
-    );
-  }
+  if (bedId) {
+    const bed = await db.lodgeBed.findUnique({
+      where: { id: bedId },
+      select: {
+        id: true,
+        name: true,
+        active: true,
+        room: { select: { id: true, name: true, active: true, lodgeId: true } },
+      },
+    });
+    if (!bed || !bed.active || !bed.room.active) {
+      throw new CustodianBedHoldError(
+        "That bed was not found, or it (or its room) is not active.",
+        404,
+        "BED_NOT_FOUND",
+      );
+    }
+    if (bed.room.lodgeId !== lodgeId) {
+      // Also the refusal an admin hits when they try to move an assignment to
+      // another lodge without clearing the bed first — the message says so.
+      throw new CustodianBedHoldError(
+        "That bed belongs to a different lodge. Clear the bed before changing the lodge, then pick a bed at the new lodge.",
+        400,
+        "BED_WRONG_LODGE",
+      );
+    }
 
-  // Another custodian on the SAME bed on any covered night. The one-day
-  // handover overlap assignments already allow is fine — but only on different
-  // beds; two people cannot sleep in one bed on handover night.
-  const clashingNights = await custodianHeldNightsForBed({
-    bedId,
-    stayDates: nights,
-    excludeAssignmentId: input.assignmentId,
-    db,
-  });
-  if (clashingNights.length > 0) {
-    throw new CustodianBedHoldError(
-      `That bed is already held by another hut-leader assignment on ${clashingNights.join(", ")}. A handover overlap is allowed, but only on different beds.`,
-      409,
-      "BED_HELD_BY_ANOTHER_CUSTODIAN",
-      clashingNights,
-    );
-  }
+    // Another custodian on the SAME bed on any covered night. The one-day
+    // handover overlap assignments already allow is fine — but only on different
+    // beds; two people cannot sleep in one bed on handover night.
+    const clashingNights = await custodianHeldNightsForBed({
+      bedId,
+      stayDates: nights,
+      excludeAssignmentId: input.assignmentId,
+      db,
+    });
+    if (clashingNights.length > 0) {
+      throw new CustodianBedHoldError(
+        `That bed is already held by another hut-leader assignment on ${clashingNights.join(", ")}. A handover overlap is allowed, but only on different beds.`,
+        409,
+        "BED_HELD_BY_ANOTHER_CUSTODIAN",
+        clashingNights,
+      );
+    }
 
-  // Existing guest allocations on the bed inside the range: a HARD refusal, not
-  // an eviction. Displacing a guest a human already placed is not this form's
-  // decision to make — the admin clears those nights on the board first.
-  const allocations = await db.bedAllocation.findMany({
-    where: { bedId, stayDate: { gte: startDate, lte: endDate } },
-    select: { stayDate: true },
-    orderBy: { stayDate: "asc" },
-  });
-  if (allocations.length > 0) {
-    const dates = [
-      ...new Set(allocations.map((row) => formatDateOnly(row.stayDate))),
-    ];
-    throw new CustodianBedHoldError(
-      `That bed already has guests allocated on ${dates.join(", ")}. Clear those nights on the bed allocation page first.`,
-      409,
-      "BED_HAS_ALLOCATIONS",
-      dates,
-    );
+    // Existing guest allocations on the bed inside the range: a HARD refusal, not
+    // an eviction. Displacing a guest a human already placed is not this form's
+    // decision to make — the admin clears those nights on the board first.
+    const allocations = await db.bedAllocation.findMany({
+      where: { bedId, stayDate: { gte: startDate, lte: endDate } },
+      select: { stayDate: true },
+      orderBy: { stayDate: "asc" },
+    });
+    if (allocations.length > 0) {
+      const dates = [
+        ...new Set(allocations.map((row) => formatDateOnly(row.stayDate))),
+      ];
+      throw new CustodianBedHoldError(
+        `That bed already has guests allocated on ${dates.join(", ")}. Clear those nights on the bed allocation page first.`,
+        409,
+        "BED_HAS_ALLOCATIONS",
+        dates,
+      );
+    }
   }
 
   if (input.confirmOverCapacity) return;
@@ -312,9 +326,17 @@ export async function validateCustodianBedHold(input: {
   });
 
   const overCapacity: CustodianOverCapacityNight[] = [];
+  const own = { bedId, memberId: input.memberId };
+  const bedAllocationEnabled = await custodianBedAllocationEnabled([own], db);
   for (const night of nights) {
-    // + 1 for the hold being created/edited.
-    const occupiedBeds = occupancy(night).occupiedBeds + 1;
+    // + 1 for the hold being created/edited, by the counter's own rule (#3817):
+    // it adds nothing on a night its member is a counted guest, unless it holds
+    // a bed while bed allocation is on.
+    const reading = occupancy(night);
+    if (!custodianOccupancyTakesSpace(own, reading.guestMemberIds, bedAllocationEnabled)) {
+      continue;
+    }
+    const occupiedBeds = reading.occupiedBeds + 1;
     if (occupiedBeds > capacity) {
       overCapacity.push({ date: formatDateOnly(night), occupiedBeds, capacity });
     }
@@ -381,7 +403,11 @@ export async function validateCustodianBedHold(input: {
  * case and costs one indexed query.
  */
 export async function findWholeLodgeHoldAmendments(input: {
-  bedId: string;
+  /**
+   * The bed being held, or null for a ticked custodian with no bed (#3817),
+   * who takes one space out of the hold's represented set just as a bed does.
+   */
+  bedId: string | null;
   lodgeId: string;
   /** Inclusive first covered date. */
   startDate: Date;
@@ -389,6 +415,16 @@ export async function findWholeLodgeHoldAmendments(input: {
   endDate: Date;
   /** Present when editing, so nights this assignment already holds do not re-prompt. */
   assignmentId?: string;
+  /**
+   * Editing: the nights this assignment ALREADY counted as a custodian before
+   * this edit (its previous range, when it was ticked or held a bed), which
+   * left the hold's set when they were first written. Honoured with or
+   * without a bed (#3817 review), so adding, changing or releasing a bed on
+   * those nights does not re-ask about a narrowing already accepted.
+   */
+  previouslyCounted?: { startDate: Date; endDate: Date } | null;
+  /** The custodian: a bedless tick narrows nothing on their guest nights (#3817). */
+  memberId: string;
   db: CustodianAssignmentDb;
 }): Promise<WholeLodgeHoldAmendment[]> {
   const nights = custodianAssignmentNights(input.startDate, input.endDate);
@@ -407,7 +443,7 @@ export async function findWholeLodgeHoldAmendments(input: {
   // own coverage only. Another custodian's hold on the same bed is impossible
   // on a night this one covers (validateCustodianBedHold refuses it), so the
   // filter is exact rather than approximate.
-  const ownHolds = input.assignmentId
+  const ownHolds = input.assignmentId && input.bedId
     ? (
         await findCustodianBedHolds({
           bedIds: [input.bedId],
@@ -418,14 +454,38 @@ export async function findWholeLodgeHoldAmendments(input: {
       ).filter((hold) => hold.assignmentId === input.assignmentId)
     : [];
 
+  // A bedless tick asks the counter's own question (#3817): on a night its
+  // member is a counted guest, it takes no space and narrows no hold.
+  const occupancy = input.bedId
+    ? null
+    : await computeNightOccupancy({
+        lodgeId: input.lodgeId,
+        from: input.startDate,
+        toExclusive,
+        nights,
+        db: input.db,
+      });
+
   const amendments: WholeLodgeHoldAmendment[] = [];
   for (const hold of holds) {
     const affected: string[] = [];
     for (const night of nights) {
       const nightKey = formatDateOnly(night);
       if (!wholeLodgeHoldCoversNight(hold, nightKey)) continue;
+      const own = { bedId: null, memberId: input.memberId };
+      // A bedless tick's answer never reads the module flag, so `false`.
+      if (occupancy && !custodianOccupancyTakesSpace(own, occupancy(night).guestMemberIds, false)) {
+        continue;
+      }
       // Already outside this hold's set, so nothing changes tonight.
-      if (isCustodianHeldBedNight(ownHolds, input.bedId, nightKey)) continue;
+      if (input.bedId && isCustodianHeldBedNight(ownHolds, input.bedId, nightKey)) continue;
+      if (
+        input.previouslyCounted &&
+        formatDateOnly(input.previouslyCounted.startDate) <= nightKey &&
+        nightKey <= formatDateOnly(input.previouslyCounted.endDate)
+      ) {
+        continue;
+      }
       affected.push(nightKey);
     }
     if (affected.length > 0) {
@@ -474,7 +534,8 @@ export async function recordWholeLodgeHoldAmendment(
     actorMemberId: string;
     assignmentId: string;
     lodgeId: string;
-    bedId: string;
+    /** The held bed, or null for a ticked custodian with no bed (#3817). */
+    bedId: string | null;
     amendments: readonly WholeLodgeHoldAmendment[];
     requestId?: string | null;
     ipAddress?: string | null;
@@ -493,9 +554,12 @@ export async function recordWholeLodgeHoldAmendment(
       category: "booking",
       severity: "important",
       outcome: "success",
-      summary: "Whole-lodge hold narrowed for a custodian bed",
-      details:
-        "An officer accepted that holding a bed for a hut leader takes that bed out of an existing whole-lodge hold's sole occupancy on the nights listed. The holding booking's nights, price and every other booking on the lodge are unchanged.",
+      summary: input.bedId
+        ? "Whole-lodge hold narrowed for a custodian bed"
+        : "Whole-lodge hold narrowed for a custodian",
+      details: input.bedId
+        ? "An officer accepted that holding a bed for a hut leader takes that bed out of an existing whole-lodge hold's sole occupancy on the nights listed. The holding booking's nights, price and every other booking on the lodge are unchanged."
+        : "An officer accepted that a custodian living on site takes one space out of an existing whole-lodge hold's sole occupancy on the nights listed. The holding booking's nights, price and every other booking on the lodge are unchanged.",
       metadata: {
         lodgeId: input.lodgeId,
         bedId: input.bedId,

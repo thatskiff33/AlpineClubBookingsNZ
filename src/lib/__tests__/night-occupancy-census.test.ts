@@ -60,14 +60,16 @@ const OCCUPANCY_TERMS = [
     evidence: [
       "capacityHoldingBookingFilter()",
       "guests: { include: { nights: true } }",
-      "getOccupiedBedsForNightFromIndex(night, occupancyIndex)",
+      "getCountedGuestsForNightFromIndex(night, occupancyIndex)",
     ],
   },
   {
     id: "custodian-bed-holds",
     issue: "#2286",
     what: "a bed held for a season by a hut-leader assignment, which has no booking and no guest row",
-    evidence: ["buildLodgeCustodianNightCounter(", "custodianCount(night)"],
+    // Read with the night's guest members, so a ticked custodian who is also
+    // a counted guest (or in the party being admitted) is one space (#3817).
+    evidence: ["buildLodgeCustodianNightCounter(", "custodianCount(night, guestMemberIds)"],
   },
   {
     id: "policy-exception-reservations",
@@ -89,15 +91,15 @@ const OCCUPANCY_TERMS = [
 /**
  * The symbols that implement an occupancy term. A file naming one of these is
  * either the module that defines it, or `capacity.ts`, or a seventh copy.
- * Matched on word boundaries so `getOccupiedBedsForNightFromIndex` does not
- * count as a mention of `getOccupiedBedsForNight`.
+ * Matched on word boundaries so `getCountedGuestsForNightFromIndex` and
+ * `getOccupiedBedsForNight` are never read as mentions of one another.
  */
 const TERM_SYMBOLS = [
   "buildLodgeCustodianNightCounter",
   "buildLodgePolicyExceptionReservationCounter",
   "buildWholeLodgeHoldIndex",
   "isNightWholeLodgeHeld",
-  "getOccupiedBedsForNightFromIndex",
+  "getCountedGuestsForNightFromIndex",
   "getOccupiedBedsForNight",
 ] as const;
 
@@ -289,7 +291,7 @@ describe("#2681 night-occupancy census: one calculation, every term", () => {
       "the policy-exception reservation term (#2525) must be summed in exactly one place — computeNightOccupancy",
     ).toBe(1);
     expect(
-      countOf("getOccupiedBedsForNightFromIndex(night, occupancyIndex)"),
+      countOf("getCountedGuestsForNightFromIndex(night, occupancyIndex)"),
       "the booked-guest-nights term (#713) must be summed in exactly one place — computeNightOccupancy",
     ).toBe(1);
 

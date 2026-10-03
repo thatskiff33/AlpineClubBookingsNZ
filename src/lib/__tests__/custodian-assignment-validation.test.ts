@@ -30,6 +30,9 @@ const mocks = vi.hoisted(() => ({
   // each case sets stays exactly what it was.
   holdBookingFindMany: vi.fn(),
   getLodgeCapacity: vi.fn(),
+  // #3817 review: the one-space rule reads the bed-allocation module flag on
+  // the caller's client when a custodian holds a bed.
+  clubModuleSettingsFindUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
@@ -54,6 +57,7 @@ function db() {
     hutLeaderAssignment: { findMany: mocks.hutLeaderAssignmentFindMany },
     lodgeBed: { findUnique: mocks.lodgeBedFindUnique },
     bedAllocation: { findMany: mocks.bedAllocationFindMany },
+    clubModuleSettings: { findUnique: mocks.clubModuleSettingsFindUnique },
     booking: {
       findMany: (args: { where?: Record<string, unknown> }) => {
         if (args?.where && "capacityOverriddenAt" in args.where) {
@@ -85,6 +89,7 @@ function bed(overrides: Partial<{ active: boolean; roomActive: boolean; lodgeId:
 function validate(overrides: Record<string, unknown> = {}) {
   return validateCustodianBedHold({
     bedId: "bed-1",
+    memberId: "member-1",
     lodgeId: LODGE,
     startDate: parseDateOnly("2026-07-02"),
     endDate: parseDateOnly("2026-07-04"),
@@ -95,6 +100,7 @@ function validate(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
   mocks.lodgeBedFindUnique.mockResolvedValue(bed());
   mocks.hutLeaderAssignmentFindMany.mockResolvedValue([]);
   mocks.bedAllocationFindMany.mockResolvedValue([]);
@@ -393,6 +399,7 @@ describe("findWholeLodgeHoldAmendments (#2698)", () => {
   function findAmendments(overrides: Record<string, unknown> = {}) {
     return findWholeLodgeHoldAmendments({
       bedId: "bed-1",
+      memberId: "member-1",
       lodgeId: LODGE,
       startDate: parseDateOnly("2026-07-02"),
       endDate: parseDateOnly("2026-07-04"),
@@ -513,5 +520,188 @@ describe("wholeLodgeHoldAmendmentNights", () => {
         { bookingId: "b2", nights: ["2026-07-03", "2026-07-05"] },
       ]),
     ).toEqual(["2026-07-02", "2026-07-03", "2026-07-05"]);
+  });
+});
+
+/**
+ * #3817 (owner decisions on #3820, 3 Oct 2026): a ticked custodian with NO bed
+ * takes one space off capacity exactly as a held bed does, so it gets the same
+ * over-capacity warn-and-confirm and the same whole-lodge hold question — and
+ * none of the bed refusals, because there is no bed (bed allocation may be off).
+ */
+describe("a ticked custodian with no bed (#3817)", () => {
+  function fullNight() {
+    mocks.getLodgeCapacity.mockResolvedValue(1);
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        checkIn: parseDateOnly("2026-07-02"),
+        checkOut: parseDateOnly("2026-07-03"),
+        guests: [
+          {
+            stayStart: parseDateOnly("2026-07-02"),
+            stayEnd: parseDateOnly("2026-07-03"),
+            nights: [],
+          },
+        ],
+      },
+    ]);
+  }
+
+  it("asks for confirmation when the tick tips a full lodge over, without reading any bed", async () => {
+    fullNight();
+    await expect(validate({ bedId: null, isCustodian: true })).rejects.toBeInstanceOf(
+      CustodianOverCapacityConfirmationRequiredError,
+    );
+    expect(mocks.lodgeBedFindUnique).not.toHaveBeenCalled();
+    expect(mocks.bedAllocationFindMany).not.toHaveBeenCalled();
+  });
+
+  it("proceeds once the officer confirms", async () => {
+    fullNight();
+    await expect(
+      validate({ bedId: null, isCustodian: true, confirmOverCapacity: true }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("does not warn when the guest filling that night IS the custodian: one person, one space", async () => {
+    fullNight();
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        checkIn: parseDateOnly("2026-07-02"),
+        checkOut: parseDateOnly("2026-07-03"),
+        guests: [
+          {
+            memberId: "member-1",
+            stayStart: parseDateOnly("2026-07-02"),
+            stayEnd: parseDateOnly("2026-07-03"),
+            nights: [],
+          },
+        ],
+      },
+    ]);
+    await expect(validate({ bedId: null, isCustodian: true })).resolves.toBeUndefined();
+    // Someone else's tick on that night would still tip it over.
+    await expect(
+      validate({ bedId: null, isCustodian: true, memberId: "member-2" }),
+    ).rejects.toBeInstanceOf(CustodianOverCapacityConfirmationRequiredError);
+    // And a held bed is its own bed, whoever the guest is, while bed
+    // allocation is on (the allocators keep the guest row off it)...
+    await expect(validate({ bedId: "bed-1", isCustodian: true })).rejects.toBeInstanceOf(
+      CustodianOverCapacityConfirmationRequiredError,
+    );
+    // ...and is counted like the tick while it is off, when nothing does.
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: false });
+    await expect(validate({ bedId: "bed-1", isCustodian: true })).resolves.toBeUndefined();
+    await expect(
+      validate({ bedId: "bed-1", isCustodian: true, memberId: "member-2" }),
+    ).rejects.toBeInstanceOf(CustodianOverCapacityConfirmationRequiredError);
+  });
+
+  it("asks nothing of an unticked role-only assignment, however full the lodge", async () => {
+    fullNight();
+    await expect(validate({ bedId: null, isCustodian: false })).resolves.toBeUndefined();
+  });
+
+  it("asks the whole-lodge hold question for a bedless custodian, skipping nights it already counted", async () => {
+    mocks.holdBookingFindMany.mockResolvedValue([
+      {
+        id: "booking-hold",
+        status: "PAID",
+        checkIn: parseDateOnly("2026-07-01"),
+        checkOut: parseDateOnly("2026-07-06"),
+        lodgeId: LODGE,
+        wholeLodgeHold: true,
+        originBookingRequest: null,
+        adminCapacityHoldAt: null,
+      },
+    ]);
+    await expect(
+      findWholeLodgeHoldAmendments({
+        bedId: null,
+        memberId: "member-1",
+        lodgeId: LODGE,
+        startDate: parseDateOnly("2026-07-02"),
+        endDate: parseDateOnly("2026-07-04"),
+        previouslyCounted: {
+          startDate: parseDateOnly("2026-07-02"),
+          endDate: parseDateOnly("2026-07-02"),
+        },
+        db: db(),
+      }),
+    ).resolves.toEqual([
+      { bookingId: "booking-hold", nights: ["2026-07-03", "2026-07-04"] },
+    ]);
+  });
+
+  it("does not ask a bedless custodian about a hold they are a guest on: they narrow nothing", async () => {
+    const hold = {
+      id: "booking-hold",
+      status: "PAID",
+      checkIn: parseDateOnly("2026-07-01"),
+      checkOut: parseDateOnly("2026-07-06"),
+      lodgeId: LODGE,
+      wholeLodgeHold: true,
+      originBookingRequest: null,
+      adminCapacityHoldAt: null,
+    };
+    mocks.holdBookingFindMany.mockResolvedValue([hold]);
+    // The held booking has the custodian as a guest on 07-02 and 07-03 only.
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        ...hold,
+        guests: [
+          {
+            memberId: "member-1",
+            stayStart: parseDateOnly("2026-07-02"),
+            stayEnd: parseDateOnly("2026-07-04"),
+            nights: [],
+          },
+        ],
+      },
+    ]);
+    await expect(
+      findWholeLodgeHoldAmendments({
+        bedId: null,
+        memberId: "member-1",
+        lodgeId: LODGE,
+        startDate: parseDateOnly("2026-07-02"),
+        endDate: parseDateOnly("2026-07-04"),
+        db: db(),
+      }),
+    ).resolves.toEqual([{ bookingId: "booking-hold", nights: ["2026-07-04"] }]);
+  });
+
+  it("does not re-ask a ticked custodian who now ADDS a bed about nights it already counted", async () => {
+    // F4 (#3817 review): the row is ticked with no bed, so the new bed has no
+    // own hold yet; what it already counted is `previouslyCounted`, honoured
+    // with a bed as well as without.
+    mocks.holdBookingFindMany.mockResolvedValue([
+      {
+        id: "booking-hold",
+        status: "PAID",
+        checkIn: parseDateOnly("2026-07-01"),
+        checkOut: parseDateOnly("2026-07-06"),
+        lodgeId: LODGE,
+        wholeLodgeHold: true,
+        originBookingRequest: null,
+        adminCapacityHoldAt: null,
+      },
+    ]);
+    mocks.hutLeaderAssignmentFindMany.mockResolvedValue([]);
+    await expect(
+      findWholeLodgeHoldAmendments({
+        bedId: "bed-1",
+        assignmentId: "assignment-1",
+        memberId: "member-1",
+        lodgeId: LODGE,
+        startDate: parseDateOnly("2026-07-02"),
+        endDate: parseDateOnly("2026-07-04"),
+        previouslyCounted: {
+          startDate: parseDateOnly("2026-07-02"),
+          endDate: parseDateOnly("2026-07-03"),
+        },
+        db: db(),
+      }),
+    ).resolves.toEqual([{ bookingId: "booking-hold", nights: ["2026-07-04"] }]);
   });
 });

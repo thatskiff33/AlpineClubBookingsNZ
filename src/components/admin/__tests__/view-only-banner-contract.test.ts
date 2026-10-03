@@ -342,8 +342,11 @@ const FIGURES = {
    *
    * 367 -> 368 (#3407): the lodge setup wizard's new Capacity step adds its
    * Save and continue. Back and Skip are plain Buttons. MEASURED.
+   *
+   * 368 -> 369 (#3817): the hut-leaders table's per-row Custodian (lives on
+   * site) toggle. MEASURED.
     */
-   callSites: 368,
+   callSites: 369,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -371,8 +374,9 @@ const FIGURES = {
    *
    * 311 -> 312 (#3462): so does the Xero operations panel's Mark failed.
    * 312 -> 313 (#3407): so does the setup wizard's Capacity Save and continue.
+   * 313 -> 314 (#3817): so does the hut-leaders row Custodian toggle.
    */
-  optOuts: 313,
+  optOuts: 314,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -432,8 +436,10 @@ const FIGURES = {
    * 278 -> 279 (#3407): the setup wizard's Capacity Save and continue sits in
    * the same file as the wizard's own banner, beside its sibling steps' static
    * opt-outs.
+   * 279 -> 280 (#3817): the hut-leaders row Custodian toggle sits in the same
+   * file as the page's own banner, beside Release bed and Change bed.
    */
-  staticOptOuts: 279,
+  staticOptOuts: 280,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *

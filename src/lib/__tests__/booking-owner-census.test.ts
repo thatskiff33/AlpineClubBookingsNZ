@@ -498,7 +498,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/booking-modify-validation.ts:535",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:274",
-  "src/lib/kiosk-access.ts:232",
+  "src/lib/kiosk-access.ts:230",
   "src/lib/manual-refund-task-queue-payload.ts:225",
   "src/lib/requested-room-write.ts:62",
   "src/lib/waitlist-cross-lodge.ts:342",
