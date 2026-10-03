@@ -48,6 +48,6 @@ Each issue can include:
 {
   "title": "[Security] Review route guards",
   "body": "Issue body...",
-  "labels": ["codex-ready", "workstream:security", "risk:high"]
+  "labels": ["agent-ready", "workstream:security", "risk:high"]
 }
 ```
