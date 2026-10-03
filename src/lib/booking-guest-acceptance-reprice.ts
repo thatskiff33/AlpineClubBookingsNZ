@@ -45,6 +45,10 @@ import {
   EditFinancialReviewPendingError,
 } from "@/lib/edit-financial-review";
 import { sendBookingModifiedEmail } from "@/lib/email/booking";
+import {
+  editRefundGoesBackByHand,
+  raiseEditRefundHandBackIfOwed,
+} from "@/lib/edit-refund-hand-back";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import logger from "@/lib/logger";
 import {
@@ -71,25 +75,31 @@ import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settleme
  * THE MONEY GOES BACK IN FULL, THE WAY IT WAS PAID (D-3813-5). An acceptance
  * re-price is not a cancellation, so no cancellation-policy tier applies and
  * nobody is asked to choose:
- * - a captured card or internet-banking payment gets the whole reduction back
- *   through the ordinary edit's "money back" arm (`applyPaymentAdjustments` with
- *   `calculateFullReductionSettlementOptions`) — a Stripe refund after commit,
- *   or the bank-transfer refund credit note an internet-banking edit raises;
- * - a booking paid wholly with account credit gets it back as account credit,
- *   the way an edit returns over-applied credit (`clampAppliedCreditToBookingPrice`,
- *   INV-MOD-012);
- * - a booking not yet paid simply costs less (`applyLifecycleTransitions`
- *   returns any over-applied credit and settles a $0 booking, as an edit does).
+ * - captured cash goes back first, up to what is still refundable, through the
+ *   ordinary edit's "money back" arm (`applyPaymentAdjustments` with
+ *   `calculateFullReductionSettlementOptions`): a Stripe refund after commit for
+ *   a card, and for internet banking (or cash) an officer refund task in the
+ *   money-to-settle queue (D-3813-6, `INV-PAY-113`) beside the Xero credit note;
+ * - whatever the cash cannot cover went on account credit and goes back as
+ *   account credit, the way an edit returns over-applied credit
+ *   (`clampAppliedCreditToBookingPrice`, INV-MOD-012) — the whole reduction for
+ *   a booking paid wholly with credit, the remainder for a split payment;
+ * - a booking whose payment has not been captured simply costs less. In
+ *   PENDING or PAYMENT_PENDING `applyLifecycleTransitions` also nets any
+ *   over-applied credit down and settles a $0 booking, as an edit does; a
+ *   CONFIRMED booking (its invoice issued, nothing yet paid) has the invoice
+ *   corrected for the whole reduction and its applied credit left as it was,
+ *   exactly as an ordinary edit of a CONFIRMED booking leaves it.
  * The ledger posting, the history row, the Xero correction (queued after commit
  * by `settleGuestAcceptanceRepriceAfterCommit`), the member's email and the
  * audit row are the ordinary edit's own.
  *
  * FREE NIGHTS ARE USED ONLY FOR WHAT IS RETURNED. The re-price is decided under
  * the locks and WRITTEN only once the settlement above is known to return the
- * whole reduction; where it cannot — the captured payment has less left to give
- * back than the reduction, or a booking with no captured cash was not paid
- * wholly with credit (a split payment, or a slice an earlier edit kept) — the
- * re-price is not written at all, so no code's allocation moves.
+ * whole reduction; where it cannot — the refundable cash and the credit applied
+ * do not add up to the price (a slice an earlier edit kept, or a payment only
+ * part made) — the re-price is not written at all, so no code's allocation
+ * moves.
  *
  * WHEN IT DOES NOT RE-PRICE, and the booking keeps the figures it had, to be
  * re-priced by its next ordinary edit — the same outcome a parked edit has:
@@ -341,21 +351,24 @@ export async function repriceBookingAfterGuestAcceptance(
       ? { settlementOptions: returnRoute.settlementOptions, settlementMethod: "card" as const }
       : {}),
   });
-  // A credit-paid booking captured no cash, so the arm above returns nothing
-  // and corrects an issued invoice for the full reduction, as it does for any
-  // booking with no captured payment. Its credit goes back the way an edit
-  // returns over-applied credit (INV-MOD-012): the applied credit is netted
-  // down to the new price, the member's balance regains the reduction, and an
-  // Internet-Banking invoice's credit allocation is reduced to match.
+  // What the cash arm above could not return went on account credit, and goes
+  // back the way an edit returns over-applied credit (INV-MOD-012): the applied
+  // credit is netted down to the new price, the member's balance regains it,
+  // and an Internet-Banking invoice's credit allocation is reduced to match. A
+  // booking paid wholly with credit captured no cash, so the arm above returns
+  // nothing and corrects an issued invoice for the full reduction, as it does
+  // for any booking with no captured payment; a split payment's cash went back
+  // first, so this nets the credit down by exactly the remainder.
   let paymentImpact: typeof adjusted = adjusted;
-  if (returnRoute.kind === "account-credit") {
+  const creditReturn = returnRoute.kind === "account-credit" ? returnRoute : returnRoute.kind === "money-back" ? returnRoute.creditRemainder : null;
+  if (creditReturn) {
     const clamp = await clampAppliedCreditToBookingPrice(
-      { memberId: returnRoute.memberId, bookingId, newFinalPriceCents, format },
+      { memberId: creditReturn.memberId, bookingId, newFinalPriceCents, format },
       tx,
     );
-    if (clamp.refundedExcessCents !== returnRoute.amountCents) {
+    if (clamp.refundedExcessCents !== creditReturn.amountCents) {
       throw new Error(
-        `INV-MONEY-037 (D-3813-5): a guest's acceptance would return ${formatCents(clamp.refundedExcessCents, format)} of credit for a ${formatCents(returnRoute.amountCents, format)} reduction on booking ${bookingId} (#3827).`,
+        `INV-MONEY-037 (D-3813-5): a guest's acceptance would return ${formatCents(clamp.refundedExcessCents, format)} of credit for ${formatCents(creditReturn.amountCents, format)} of a reduction paid with credit on booking ${bookingId} (#3827).`,
       );
     }
     if (booking.payment) {
@@ -449,6 +462,15 @@ export async function repriceBookingAfterGuestAcceptance(
     sides,
     site: "guest-acceptance",
   });
+  // D-3813-6 (`INV-PAY-113`): the cash share of a reduction on a booking paid
+  // by internet banking or by hand is the treasurer's to send back.
+  await raiseEditRefundHandBackIfOwed(tx, {
+    bookingId,
+    paymentId: booking.payment?.id ?? null,
+    bookingModificationId: bookingModification.id,
+    adjusted: paymentImpact,
+    editLabel: "guest's acceptance re-price",
+  });
 
   return {
     repriced: true,
@@ -472,16 +494,30 @@ export async function repriceBookingAfterGuestAcceptance(
   };
 }
 
+type CreditReturn = { amountCents: number; memberId: string };
+
 type FullReductionReturnRoute =
   | { kind: "none" }
-  | { kind: "money-back"; settlementOptions: BookingModificationSettlementOptions }
-  | { kind: "account-credit"; amountCents: number; memberId: string };
+  | {
+      kind: "money-back";
+      settlementOptions: BookingModificationSettlementOptions;
+      /** The part of the reduction the cash could not cover, paid with credit (D-3813-5). */
+      creditRemainder: CreditReturn | null;
+    }
+  | ({ kind: "account-credit" } & CreditReturn);
 
 /**
- * D-3813-5: the one way the whole of a reduction can go back, or null when it
- * cannot go back in full by the way the booking was paid. `none` is a booking
- * whose price is not settled (nothing was paid, so it simply costs less) and
- * every non-reduction.
+ * D-3813-5: how the whole of a reduction goes back the way the booking was
+ * paid, or null when it cannot go back in full. `none` is a booking whose
+ * payment is not captured (it simply costs less) and every non-reduction.
+ *
+ * Cash first, up to what is still refundable, then credit for the rest. The
+ * credit share is returned by netting the applied credit down to the new price
+ * (`clampAppliedCreditToBookingPrice`), which gives back exactly the remainder
+ * only when the refundable cash and the credit applied together ARE the price
+ * — so that is the test, read under the member's ledger lock, which the return
+ * then re-takes, so the two agree. An organisation holds no credit, so a
+ * reduction its cash cannot cover cannot go back at all.
  */
 async function fullReductionReturnRoute(
   tx: Prisma.TransactionClient,
@@ -497,32 +533,27 @@ async function fullReductionReturnRoute(
 ): Promise<FullReductionReturnRoute | null> {
   const reductionCents = Math.max(0, -priceDiffCents);
   if (reductionCents === 0) return { kind: "none" };
-  if (isSettledBookingStatus(booking.status) && hasCapturedPayment(booking.payment)) {
-    // Captured cash: the edit's money-back arm, at 100% and never above what
-    // is still refundable (`calculateFullReductionSettlementOptions`).
-    const settlementOptions = calculateFullReductionSettlementOptions({
-      booking: loaded,
-      netChargeCents: priceDiffCents,
-      todayAtClub,
-    });
-    return settlementOptions?.basisAmountCents === reductionCents
-      ? { kind: "money-back", settlementOptions }
-      : null;
+  const capturedCash = isSettledBookingStatus(booking.status) && hasCapturedPayment(booking.payment);
+  if (!capturedCash && !isPaidLikeBookingStatus(booking.status)) return { kind: "none" };
+  // Captured cash: the edit's money-back arm, at 100% and never above what is
+  // still refundable (`calculateFullReductionSettlementOptions`); null once a
+  // card has been refunded in full.
+  const settlementOptions = capturedCash
+    ? calculateFullReductionSettlementOptions({ booking: loaded, netChargeCents: priceDiffCents, todayAtClub })
+    : null;
+  const cashCents = settlementOptions?.basisAmountCents ?? 0;
+  if (settlementOptions && cashCents === reductionCents) {
+    return { kind: "money-back", settlementOptions, creditRemainder: null };
   }
-  if (!isPaidLikeBookingStatus(booking.status)) return { kind: "none" };
-  // Paid with no captured cash: paid wholly with account credit. It goes back
-  // as credit, by returning the over-applied slice exactly as an edit returns
-  // it (`clampAppliedCreditToBookingPrice`) — which gives back precisely the
-  // reduction only when the credit applied IS the price. Read under the
-  // member's ledger lock, which the return then re-takes, so the two agree.
-  // An organisation holds no credit, so it never paid with any.
   const creditHolder = bookingOwner(loaded).memberId;
   if (creditHolder === null) return null;
   await lockMemberCreditLedger(creditHolder, tx);
   const appliedCreditCents = await deriveBookingAppliedCreditCents(booking.id, tx);
-  return appliedCreditCents === booking.finalPriceCents
-    ? { kind: "account-credit", amountCents: reductionCents, memberId: creditHolder }
-    : null;
+  if (appliedCreditCents + cashCents !== booking.finalPriceCents) return null;
+  const creditReturn = { amountCents: reductionCents - cashCents, memberId: creditHolder };
+  return settlementOptions
+    ? { kind: "money-back", settlementOptions, creditRemainder: creditReturn }
+    : { kind: "account-credit", ...creditReturn };
 }
 
 /**
@@ -646,6 +677,8 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       // The re-price is applied only where its money is decided in full, and
       // a booking under an open financial review is never re-priced.
       financialReviewPending: false,
+      // D-3813-6: an internet-banking refund is the club's to send.
+      refundByBankTransfer: editRefundGoesBackByHand(reprice),
       lodgeId: reprice.lodgeId,
       additionalAmountCents: 0,
     },
