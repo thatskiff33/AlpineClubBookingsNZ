@@ -57,7 +57,7 @@ reason: the appeal review's ceiling is the approve route's net-of-open-edit-
   shared helper call, the arithmetic lives in manual-refund-task-settlement-rules.ts.
 
 file: src/app/api/admin/refund-requests/[id]/route.ts
-lines: 608
+lines: 610
 reason: the approval's cap and its claim must share one transaction under
   lock(1) (INV-PAY-114) so the figure checked is the figure approved; moving
   the claim out of the handler would split the #818 single-flight claim from
@@ -89,3 +89,28 @@ reason: a required token needs its plain-English guidance in the one table the
   validator reads (REQUIRED_TOKEN_GUIDANCE); {{refundSentence}} became required
   for the approved-appeal email (#3827, D-3813-7), so its sentence joins the
   two already there rather than living in a second table.
+
+file: src/lib/xero-credit-notes.ts
+lines: 1201
+reason: owner decision D-3813-8 (INV-PAY-115) - the refund-note builder raises
+  a refund request's own note: keyed by the request, linked under its own role,
+  never per-delta and never the payment's pointer. Those are branches inside
+  the one builder every refund note goes through (its #3548 crash-window
+  recording, settlement and completion), so a second builder would fork that.
+
+file: src/lib/xero-operation-outbox.ts
+lines: 3247
+reason: the refund-note dispatch passes the request id through (D-3813-8); the
+  enqueue itself lives in xero-refund-request-credit-note-outbox.ts.
+
+file: src/lib/xero-operation-retry.ts
+lines: 1844
+reason: the retry and repair legs keep a refund request's note its own role,
+  never re-enter it as per-delta, and never move the payment's pointer to it
+  (D-3813-8) - conditions on the existing legs, not a new leg.
+
+file: src/lib/xero-sync.ts
+lines: 1008
+reason: findCanonicalPaymentRefundCreditNote leaves refund-request notes out of
+  its fallbacks (D-3813-8) so a cancellation's note is never absorbed into a
+  request's; the exclusion belongs in the one finder every reader uses.

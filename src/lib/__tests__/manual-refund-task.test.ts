@@ -147,10 +147,12 @@ vi.mock("@/lib/xero-booking-edit-settlement", () => ({
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroRefundCreditNoteOperation: (...a: unknown[]) =>
     mocks.enqueueXeroRefundCreditNoteOperation(...a),
-  enqueueXeroRefundRequestCreditNoteOperation: (...a: unknown[]) =>
-    mocks.enqueueXeroRefundRequestCreditNoteOperation(...a),
   kickQueuedXeroOutboxOperationsIfConnected: (...a: unknown[]) =>
     mocks.kickQueuedXeroOutboxOperationsIfConnected(...a),
+}));
+vi.mock("@/lib/xero-refund-request-credit-note-outbox", () => ({
+  enqueueXeroRefundRequestCreditNoteOperation: (...a: unknown[]) =>
+    mocks.enqueueXeroRefundRequestCreditNoteOperation(...a),
 }));
 vi.mock("@/lib/audit", () => ({
   createAuditLog: (...a: unknown[]) => mocks.createAuditLog(...a),

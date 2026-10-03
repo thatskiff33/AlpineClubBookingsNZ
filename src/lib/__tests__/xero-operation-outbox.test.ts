@@ -282,12 +282,12 @@ import {
   enqueueXeroModificationAccountCreditNoteOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroRefundCreditNoteOperation,
-  enqueueXeroRefundRequestCreditNoteOperation,
   enqueueXeroSupplementaryInvoiceOperation,
   processQueuedXeroOutboxOperations,
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
   restatePendingSupplementaryInvoiceAmount,
 } from "@/lib/xero-operation-outbox";
+import { enqueueXeroRefundRequestCreditNoteOperation } from "@/lib/xero-refund-request-credit-note-outbox";
 import {
   attachRecoveredIntentToWaitingSupplementaryInvoice,
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
@@ -2276,6 +2276,36 @@ describe("processQueuedXeroOutboxOperations", () => {
       createdByMemberId: "admin_1",
       syncOperationId: "op_credit_note_1",
       watermarkCents: 8000,
+    });
+  });
+
+  // #3827 (D-3813-8): a refund request's own note reaches the builder as that
+  // request's note - no watermark, the request id forwarded.
+  it("dispatches a refund request's own note with its request id and no watermark", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_request_note_1",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "REFUND_CREDIT_NOTE",
+          refundAmountCents: 4000,
+          refundMethod: "internet-banking",
+          refundRequestId: "req_1",
+        },
+      },
+    ]);
+    mocks.createXeroCreditNote.mockResolvedValue("cn_req_1");
+
+    await processQueuedXeroOutboxOperations({ limit: 5 });
+
+    expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("payment_1", 4000, {
+      createdByMemberId: "admin_1",
+      syncOperationId: "op_request_note_1",
+      watermarkCents: undefined,
+      refundMethod: "internet-banking",
+      refundRequestId: "req_1",
     });
   });
 

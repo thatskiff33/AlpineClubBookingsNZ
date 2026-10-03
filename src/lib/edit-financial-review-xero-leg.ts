@@ -9,9 +9,9 @@ import logger from "@/lib/logger";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import {
   enqueueXeroRefundCreditNoteOperation,
-  enqueueXeroRefundRequestCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
+import { enqueueXeroRefundRequestCreditNoteOperation } from "@/lib/xero-refund-request-credit-note-outbox";
 import type { RefundMethod } from "@/lib/xero-refund-method";
 import type { ClubFormat } from "@/lib/club-format";
 

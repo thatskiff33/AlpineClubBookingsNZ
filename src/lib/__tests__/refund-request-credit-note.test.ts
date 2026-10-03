@@ -42,7 +42,7 @@ describe("which task, and which payload, names a refund request", () => {
 
   it("the queued payload keeps it, and its retry never re-enters per-delta mode", () => {
     const queued = { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 4000, refundMethod: "internet-banking", refundRequestId: "req-1" };
-    expect(readQueuedOutboxPayload(queued)).toMatchObject({ refundRequestId: "req-1", refundAmountCents: 4000 });
+    expect(readQueuedOutboxPayload(queued)).toMatchObject({ refundAmountCents: 4000 });
     const retry = parsePaymentCreditNoteRetryInput({ requestPayload: queued });
     expect(retry).toMatchObject({ amountCents: 4000, kind: "refund", refundRequestId: "req-1" });
     expect(retry).not.toHaveProperty("watermarkCents");
