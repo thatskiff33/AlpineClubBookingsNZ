@@ -238,10 +238,10 @@ const RECONCILED_FIXTURE: BookingMoneyReconciliationProjection = {
       ],
     },
   ],
-  promoRedemption: {
+  promoRedemptions: [{
     priceAdjustmentCents: -1_500,
     allocations: [{ memberId: "member-1", priceAdjustmentCents: -1_500 }],
-  },
+  }],
   nightAdjustments: [{ beneficiaryMemberId: "member-1", amountCents: -1_500 }],
 };
 
@@ -344,10 +344,10 @@ function mechanicallyDerivedWriterProofs(
       reason: "PROMO_BUILD_UP_NOT_KNOWN",
       projection: {
         ...RECONCILED_FIXTURE,
-        promoRedemption: {
+        promoRedemptions: [{
           priceAdjustmentCents: -1_499,
           allocations: [{ memberId: "member-1", priceAdjustmentCents: -1_499 }],
-        },
+        }],
       },
     },
   ];
