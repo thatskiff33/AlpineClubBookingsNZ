@@ -81,6 +81,21 @@ export function agreedAdjustmentKey(manualRefundTaskId: string): string {
 }
 
 /**
+ * #3791: the agreed price reduction a review's give-back of applied credit
+ * made on a booking its credit covered - the share beyond what the re-price
+ * removed. Its own key, because unlike a stand-in it is never superseded by a
+ * later re-price: the strands do not carry it, and Xero's invoice already took
+ * it off (`reviewInvoiceReductionCents`).
+ */
+const AGREED_GIVE_BACK_KEY_PREFIX = "agreed-give-back:";
+export function agreedGiveBackKey(manualRefundTaskId: string): string {
+  return `${AGREED_GIVE_BACK_KEY_PREFIX}${manualRefundTaskId}`;
+}
+export function isAgreedGiveBackKey(postingKey: string | null): boolean {
+  return postingKey?.startsWith(AGREED_GIVE_BACK_KEY_PREFIX) ?? false;
+}
+
+/**
  * The reversal of a line, keyed by the REVERSED LINE'S ID rather than its key:
  * every line has an id, but a line posted before #3595 has no key. Keyed this
  * way, a second reversal of the same line always carries the same key as the
