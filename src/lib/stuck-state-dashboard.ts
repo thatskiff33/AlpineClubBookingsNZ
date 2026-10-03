@@ -779,7 +779,7 @@ async function addLodgeItems(
     summary: `${unassignedDates.length} upcoming ${plural(
       unassignedDates.length,
       unassignedNoun,
-    )} in the next ${hutLeaderLookaheadDays} days with bookings have no ${CLUB_HUT_LEADER_LABEL.toLowerCase()} assigned.`,
+    )} in the next ${hutLeaderLookaheadDays} days with guests have no ${CLUB_HUT_LEADER_LABEL.toLowerCase()} staying.`,
   });
   addItem(items, {
     id: "lodge-open-issue-reports",

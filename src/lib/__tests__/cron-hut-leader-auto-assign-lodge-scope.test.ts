@@ -12,6 +12,8 @@ const { mockPrisma, mockFlags, mockLookahead } = vi.hoisted(() => ({
   mockPrisma: {
     lodge: { findMany: vi.fn() },
     booking: { findMany: vi.fn() },
+    // #3818: the already-covered probe reads the assigned leaders' stays.
+    bookingGuest: { findMany: vi.fn() },
     hutLeaderAssignment: {
       findFirst: vi.fn(),
       findMany: vi.fn(),
@@ -76,6 +78,7 @@ describe("autoAssignHutLeaders lodge scoping (#2915)", () => {
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
     mockPrisma.hutLeaderAssignment.create.mockResolvedValue({ id: "assignment-1" });
     mockPrisma.booking.findMany.mockResolvedValue([]);
+    mockPrisma.bookingGuest.findMany.mockResolvedValue([]);
     mockPrisma.$transaction.mockImplementation(async (arg: unknown) =>
       typeof arg === "function"
         ? (arg as (tx: typeof mockPrisma) => unknown)(mockPrisma)
@@ -88,11 +91,36 @@ describe("autoAssignHutLeaders lodge scoping (#2915)", () => {
     // Lodge A is already covered; lodge B is not. Modelled the way the database
     // would answer: only a query asking for lodge B misses. An UNSCOPED query
     // still finds lodge A's row — which is precisely the bug, so the mock must
-    // return it rather than null, or this test passes without the guard.
-    mockPrisma.hutLeaderAssignment.findFirst.mockImplementation(
+    // return it rather than nothing, or this test passes without the guard.
+    // #3818: the probe is the shared presence-aware helper, so lodge A's leader
+    // is staying at lodge A that night too.
+    const night = new Date("2026-07-01T00:00:00.000Z");
+    const morningAfter = new Date("2026-07-02T00:00:00.000Z");
+    mockPrisma.hutLeaderAssignment.findMany.mockImplementation(
       async ({ where }: { where: { lodgeId?: string } }) =>
-        where.lodgeId === "lodge-b" ? null : { id: "existing-a" },
+        where.lodgeId === "lodge-b"
+          ? []
+          : [
+              {
+                id: "existing-a",
+                memberId: "leader-a",
+                lodgeId: "lodge-a",
+                startDate: night,
+                endDate: night,
+                source: "MANUAL",
+                bedId: null,
+              },
+            ],
     );
+    mockPrisma.bookingGuest.findMany.mockResolvedValue([
+      {
+        memberId: "leader-a",
+        stayStart: night,
+        stayEnd: morningAfter,
+        nights: [],
+        booking: { lodgeId: "lodge-a", checkIn: night, checkOut: morningAfter },
+      },
+    ]);
     mockPrisma.booking.findMany.mockImplementation(
       async ({ where }: { where: { lodgeId?: string } }) =>
         where.lodgeId === "lodge-b" ? [bookingWithOneAdult("member-b")] : [],

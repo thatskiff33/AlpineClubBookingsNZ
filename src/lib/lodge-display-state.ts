@@ -31,6 +31,7 @@ import {
 } from "./club-theme-schema";
 import { getSanitizedLodgeInstructions } from "./lodge-instructions";
 import { DISPLAY_RELEVANT_MODULE_KEYS } from "./lodge-display/conditions";
+import { CUSTODIAN_OCCUPANCY_WHERE } from "./custodian-occupancy";
 import { lodgeNullTolerantScope } from "./lodges";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "./member-guest-consent";
 import { loadEffectiveModuleFlags } from "./module-settings";
@@ -202,12 +203,12 @@ export interface DisplayState {
   /**
    * The custodian(s) in residence today (#2286), or null when there is none.
    *
-   * ONLY a bed-holding hut-leader assignment produces this slot: a role-only
-   * assignment is not an occupancy and does not appear. The custodian is not a
+   * ONLY a custodian occupancy — a held bed or the tick, #3818 — produces this
+   * slot; a role-only assignment is not an occupancy. The custodian is not a
    * BookingGuest, so their exclusion from the occupancy counts, the booking
    * rows and the chore roster is structural — there is nothing to filter.
    *
-   * `count` is how many bed-holding custodians are in residence tonight. It is
+   * `count` is custodians in residence tonight, one per assignment. It is
    * a COUNT, not a flag, because a handover night legitimately has two people
    * on two different beds — the previous shape (one `findFirst`) silently named
    * one of them and hid the other, which is the one thing a "who is here" slot
@@ -851,8 +852,7 @@ export async function buildDisplayState(
 
   // Custodian in residence (#2286). Scoped to this lodge and to the window's
   // CURRENT day — the wall answers "who is here now", not "who will be here on
-  // Thursday". `bedId: not null` is the whole gate: a role-only assignment is
-  // not an occupancy and never renders a slot.
+  // Thursday". `CUSTODIAN_OCCUPANCY_WHERE` (bed or tick, #3818) is the gate.
   //
   // Gated on the hutLeaders module like every other module-owned read in this
   // builder (`flags.bedAllocation` for rooms, `flags.chores` for the roster): a
@@ -867,7 +867,7 @@ export async function buildDisplayState(
   const custodianAssignments = flags.hutLeaders
     ? await prisma.hutLeaderAssignment.findMany({
         where: {
-          bedId: { not: null },
+          ...CUSTODIAN_OCCUPANCY_WHERE,
           startDate: { lte: startDate },
           endDate: { gte: startDate },
           ...lodgeNullTolerantScope(lodgeId),

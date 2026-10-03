@@ -8,6 +8,14 @@ import {
   type LodgeSettingsReader,
 } from "@/lib/lodge-settings";
 import { prisma } from "@/lib/prisma";
+import {
+  listHutLeaderHandovers,
+  loadHutLeaderNightCover,
+  type HutLeaderHandover,
+  type HutLeaderNightCover,
+  type HutLeaderNightCoverDb,
+  type HutLeaderNightCoverScope,
+} from "@/lib/hut-leader-night-cover";
 // Ordinal, never `localeCompare`: a locale must not be able to reorder an API
 // response, and an ICU build difference between two servers would do exactly
 // that. One home for that rule (`INV-SSOT-001`, #3252).
@@ -70,20 +78,34 @@ type HutLeaderBooking = {
   };
 };
 
-type HutLeaderCoverageDb = LodgeSettingsReader & {
-  booking: {
-    findMany(args: unknown): Promise<HutLeaderBooking[]>;
+type HutLeaderCoverageDb = LodgeSettingsReader &
+  HutLeaderNightCoverDb & {
+    booking: {
+      findMany(args: unknown): Promise<HutLeaderBooking[]>;
+    };
   };
-  hutLeaderAssignment: {
-    findMany(args: unknown): Promise<
-      Array<{ lodgeId: string | null; startDate: Date; endDate: Date }>
-    >;
-  };
-};
 
-export type HutLeaderCoverageScope =
-  | { kind: "lodge"; lodgeId: string }
-  | { kind: "all" };
+export type HutLeaderCoverageScope = HutLeaderNightCoverScope;
+
+/**
+ * The inclusive night window a coverage read answers: the explicit
+ * `{from, to}` when BOTH are supplied, otherwise today → today + lookahead.
+ */
+async function resolveCoverageWindow(
+  db: LodgeSettingsReader,
+  input: { today?: Date; from?: Date; to?: Date; lookAheadDays?: number },
+): Promise<{ windowStart: Date; endDate: Date }> {
+  if (input.from != null && input.to != null) {
+    return { windowStart: input.from, endDate: input.to };
+  }
+  const today = input.today ?? (await clubTodayDateOnlyInstant());
+  const lookAheadDays =
+    input.lookAheadDays ?? (await loadHutLeaderLookaheadDays(db));
+  return {
+    windowStart: today,
+    endDate: addDaysDateOnly(today, normalizeHutLeaderLookaheadDays(lookAheadDays)),
+  };
+}
 
 export async function getUnassignedHutLeaderDates(input: {
   db?: HutLeaderCoverageDb;
@@ -97,37 +119,28 @@ export async function getUnassignedHutLeaderDates(input: {
   // Interactive pages must name one lodge. Club dashboards opt into `all`
   // explicitly, so omission can never widen a lodge read by accident.
   scope: HutLeaderCoverageScope;
+  /**
+   * A cover the caller already loaded for the same scope over (at least) the
+   * resolved window, so one request reads assignments and stays once (#3818
+   * review). Omitted, the cover is loaded here.
+   */
+  cover?: HutLeaderNightCover;
 }): Promise<UnassignedHutLeaderDate[]> {
   const db = input.db ?? (prisma as unknown as HutLeaderCoverageDb);
-  const today = input.today ?? (await clubTodayDateOnlyInstant());
+  const { windowStart, endDate } = await resolveCoverageWindow(db, input);
 
-  const hasWindow = input.from != null && input.to != null;
-  let windowStart: Date;
-  let endDate: Date;
-  if (hasWindow) {
-    windowStart = input!.from!;
-    endDate = input!.to!;
-  } else {
-    const lookAheadDays =
-      input.lookAheadDays ?? (await loadHutLeaderLookaheadDays(db));
-    windowStart = today;
-    endDate = addDaysDateOnly(
-      today,
-      normalizeHutLeaderLookaheadDays(lookAheadDays),
-    );
-  }
-
-  const [assignments, bookings] = await Promise.all([
-    db.hutLeaderAssignment.findMany({
-      where: {
-        ...(input.scope.kind === "lodge"
-          ? { lodgeId: input.scope.lodgeId }
-          : {}),
-        startDate: { lte: endDate },
-        endDate: { gte: windowStart },
-      },
-      select: { lodgeId: true, startDate: true, endDate: true },
-    }),
+  const [cover, bookings] = await Promise.all([
+    // #3818: a night is covered only when an assignment claims it AND its
+    // leader is in the lodge that night — `hut-leader-night-cover.ts` is the
+    // one definition (`INV-DATE-031`). Assignment dates alone are no longer an
+    // answer, which is what lets a cron row stamped through the checkout day
+    // stop "covering" the night after its leader left, with no backfill.
+    input.cover ??
+      loadHutLeaderNightCover(db, {
+        scope: input.scope,
+        from: windowStart,
+        to: endDate,
+      }),
     db.booking.findMany({
       where: {
         // A club-wide read is deliberately NOT filtered to active lodges
@@ -169,15 +182,6 @@ export async function getUnassignedHutLeaderDates(input: {
     }),
   ]);
 
-  function isDateCovered(date: Date, lodgeId: string | null): boolean {
-    return assignments.some(
-      (assignment) =>
-        assignment.lodgeId === lodgeId &&
-        assignment.startDate.getTime() <= date.getTime() &&
-        assignment.endDate.getTime() >= date.getTime(),
-    );
-  }
-
   type LodgeNightStats = {
     lodgeId: string | null;
     lodgeName: string | null;
@@ -189,9 +193,9 @@ export async function getUnassignedHutLeaderDates(input: {
   /**
    * The uncovered lodges on one night, keyed by lodge.
    *
-   * The trigger condition per lodge is UNCHANGED from the club-wide version: an
-   * operational booking occupying that night, at a lodge with no assignment
-   * covering it, carrying at least one guest active on that night —
+   * The trigger condition per lodge: an operational booking occupying that
+   * night, at a lodge with no leader validly covering it (assigned AND staying,
+   * #3818), carrying at least one guest active on that night —
    * `countActiveGuestsForNight`, i.e. `isGuestActiveOnNight`. Only the grouping
    * changed: the counts are now banked per lodge instead of summed across all of
    * them.
@@ -209,7 +213,7 @@ export async function getUnassignedHutLeaderDates(input: {
     const byLodge = new Map<string, LodgeNightStats>();
 
     for (const booking of bookings) {
-      if (isDateCovered(date, booking.lodgeId)) {
+      if (cover.isCovered(booking.lodgeId, date)) {
         continue;
       }
       if (
@@ -292,12 +296,27 @@ export async function getUnassignedHutLeaderDates(input: {
  */
 export function coverageNeedsLodgeContext(input: {
   activeLodgeCount: number;
-  rows: readonly UnassignedHutLeaderDate[];
+  rows: ReadonlyArray<Pick<UnassignedHutLeaderDate, "lodgeActive">>;
 }): boolean {
   return (
     input.activeLodgeCount > 1 ||
     input.rows.some((row) => row.lodgeActive === false)
   );
+}
+
+/**
+ * One uncovered night as the dashboard lists it (#3818): the night and how many
+ * guests are on site with no leader staying, plus the lodge when
+ * `coverageNeedsLodgeContext` says the club needs it named.
+ */
+export function uncoveredNightLabel(
+  row: UnassignedHutLeaderDate,
+  nameLodge: boolean,
+  formatDate: (date: string) => string = (date) => date,
+): string {
+  const night = `${formatDate(row.date)} · ${row.guestCount} guest${row.guestCount === 1 ? "" : "s"}`;
+  const lodgeLabel = nameLodge ? coverageLodgeLabel(row) : null;
+  return lodgeLabel ? `${night} (${lodgeLabel})` : night;
 }
 
 /**
@@ -308,9 +327,60 @@ export function coverageNeedsLodgeContext(input: {
  * bare name they cannot find in the selector would think the dashboard was
  * wrong. Callers apply it only when `coverageNeedsLodgeContext` is true.
  */
-export function coverageLodgeLabel(row: UnassignedHutLeaderDate): string | null {
+export function coverageLodgeLabel<
+  Row extends Pick<UnassignedHutLeaderDate, "lodgeName" | "lodgeActive">,
+>(row: Row): string | null {
   if (!row.lodgeName) return null;
   return row.lodgeActive === false
     ? `${row.lodgeName}, archived`
     : row.lodgeName;
+}
+
+/**
+ * The admin dashboard's two hut-leader reads from ONE cover (#3818): the
+ * uncovered nights over today → today + lookahead (the amber card), and, when
+ * `handovers` is given, the handovers on each day of THAT window ("Handovers
+ * this week") — days on which somebody finishes at midday and somebody is on
+ * duty from midday, both validly on duty. Pass `handovers: null` when the
+ * viewer cannot see that card, and the names are not read at all.
+ *
+ * The cover reaches back to the night before the handover window, because the
+ * morning of its first day belongs to that night, and forward to whichever
+ * window ends later.
+ */
+export async function getHutLeaderDashboardCoverage(input: {
+  db?: HutLeaderCoverageDb;
+  scope: HutLeaderCoverageScope;
+  today: Date;
+  handovers: { from: Date; to: Date } | null;
+}): Promise<{
+  unassignedDates: UnassignedHutLeaderDate[];
+  handovers: HutLeaderHandover[];
+}> {
+  const db = input.db ?? (prisma as unknown as HutLeaderCoverageDb);
+  const { windowStart, endDate } = await resolveCoverageWindow(db, {
+    today: input.today,
+  });
+  const handoverWindow = input.handovers;
+  const earliest = (a: Date, b: Date) => (a.getTime() <= b.getTime() ? a : b);
+  const latest = (a: Date, b: Date) => (a.getTime() >= b.getTime() ? a : b);
+  const cover = await loadHutLeaderNightCover(db, {
+    scope: input.scope,
+    from: handoverWindow
+      ? earliest(windowStart, addDaysDateOnly(handoverWindow.from, -1))
+      : windowStart,
+    to: handoverWindow ? latest(endDate, handoverWindow.to) : endDate,
+    withNames: handoverWindow !== null,
+  });
+  const unassignedDates = await getUnassignedHutLeaderDates({
+    db,
+    scope: input.scope,
+    from: windowStart,
+    to: endDate,
+    cover,
+  });
+  return {
+    unassignedDates,
+    handovers: handoverWindow ? listHutLeaderHandovers(cover, handoverWindow) : [],
+  };
 }

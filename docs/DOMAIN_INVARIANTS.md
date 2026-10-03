@@ -141,6 +141,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-DATE-020` | One expander turns a stay into nights; its envelope branch stays half-open |
 | `INV-DATE-021` | Kiosk attendance is one current state per stay, re-read per segment |
 | `INV-DATE-022` | SQL stay filters are coarse; kiosk writes decide over night rows |
+| `INV-DATE-031` | A hut-leader night is covered only when its leader is staying |
 | `INV-DATE-006` | The lobby wall is deliberately mixed, on its own fenced path |
 | `INV-DATE-023` | The lobby wall's night count is derived independently of what it shows |
 | `INV-DATE-007` | Departing lodge A and arriving at lodge B same date is legal |

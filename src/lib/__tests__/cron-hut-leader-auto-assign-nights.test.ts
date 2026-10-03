@@ -17,10 +17,10 @@ const { mockPrisma, mockFlags, mockLookahead } = vi.hoisted(() => ({
     lodge: { findMany: vi.fn() },
     booking: { findMany: vi.fn() },
     hutLeaderAssignment: {
-      findFirst: vi.fn(),
       findMany: vi.fn(),
       create: vi.fn(),
     },
+    bookingGuest: { findMany: vi.fn() },
     $executeRaw: vi.fn(async () => 0),
     $transaction: vi.fn(),
   },
@@ -73,6 +73,17 @@ function guest(memberId: string, checkIn: string, checkOut: string, nights: stri
 
 /** Serve bookings the way the job's per-day envelope query would. */
 function withGuests(guests: Guest[]) {
+  // The presence-aware cover (#3818) reads the leaders' stays: every guest
+  // here is at lodge-a, so it sees the same stays the job does.
+  mockPrisma.bookingGuest.findMany.mockResolvedValue(
+    guests.map((g) => ({
+      memberId: g.memberId,
+      stayStart: g.stayStart,
+      stayEnd: g.stayEnd,
+      nights: g.nights,
+      booking: { lodgeId: "lodge-a", checkIn: g.stayStart, checkOut: g.stayEnd },
+    })),
+  );
   mockPrisma.booking.findMany.mockImplementation(
     async ({ where }: { where: { checkIn: { lte: Date } } }) => {
       const asked = where.checkIn.lte;
@@ -92,7 +103,7 @@ function written() {
 
 describe("autoAssignHutLeaders writes stayed nights (#3817)", () => {
   /** Assignments written so far, so the job's own coverage probe sees them. */
-  let rows: Array<{ startDate: Date; endDate: Date }> = [];
+  let rows: Array<{ memberId: string; startDate: Date; endDate: Date }> = [];
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -100,15 +111,29 @@ describe("autoAssignHutLeaders writes stayed nights (#3817)", () => {
     mockFlags.mockResolvedValue({ hutLeaders: true });
     mockLookahead.mockResolvedValue(14);
     mockPrisma.lodge.findMany.mockResolvedValue([{ id: "lodge-a" }]);
-    mockPrisma.hutLeaderAssignment.findFirst.mockImplementation(
-      async ({ where }: { where: { startDate: { lte: Date }; endDate: { gte: Date } } }) =>
-        rows.find((r) => r.startDate <= where.startDate.lte && r.endDate >= where.endDate.gte) ??
-        null,
+    mockPrisma.bookingGuest.findMany.mockResolvedValue([]);
+    // The coverage cover's read (it selects `source`) sees the rows written so
+    // far; the overlap guard's read refuses nothing, as before.
+    mockPrisma.hutLeaderAssignment.findMany.mockImplementation(
+      async (args: { select?: { source?: true }; where: { startDate: { lte: Date }; endDate: { gte: Date } } }) =>
+        args.select?.source
+          ? rows
+              .filter((r) => r.startDate <= args.where.startDate.lte && r.endDate >= args.where.endDate.gte)
+              .map((r, index) => ({
+                id: `row-${index + 1}`,
+                memberId: r.memberId,
+                lodgeId: "lodge-a",
+                startDate: r.startDate,
+                endDate: r.endDate,
+                source: "CRON",
+                bedId: null,
+                isCustodian: false,
+              }))
+          : [],
     );
-    mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
     mockPrisma.hutLeaderAssignment.create.mockImplementation(
-      async ({ data }: { data: { startDate: Date; endDate: Date } }) => {
-        rows.push({ startDate: data.startDate, endDate: data.endDate });
+      async ({ data }: { data: { memberId: string; startDate: Date; endDate: Date } }) => {
+        rows.push({ memberId: data.memberId, startDate: data.startDate, endDate: data.endDate });
         return { id: `row-${rows.length}` };
       },
     );
@@ -206,8 +231,9 @@ describe("autoAssignHutLeaders writes stayed nights (#3817)", () => {
       await autoAssignHutLeaders();
 
       expect(written()).toEqual([]);
-      const asked = mockPrisma.hutLeaderAssignment.findFirst.mock.calls.map(
-        ([args]) => (args as { where: { startDate: { lte: Date } } }).where.startDate.lte,
+      // The nights the job asked bookings for (one per uncovered night).
+      const asked = mockPrisma.booking.findMany.mock.calls.map(
+        ([args]) => (args as { where: { checkIn: { lte: Date } } }).where.checkIn.lte,
       );
       expect(asked.map(iso)).toEqual(["2026-07-01"]);
       // Every asked day is a stored calendar day: a UTC-midnight instant.

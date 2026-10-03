@@ -44,22 +44,27 @@ export type HutLeaderMemberStay = {
  * range — THE one definition of "a booking that is a stay" for hut leaders
  * (`INV-SSOT`). The manual create/edit stay check, the eligible-members
  * suggestions and the nightly auto-assign's candidate query route here, so
- * they cannot disagree about which bookings count. The presence-aware coverage
- * reader (#3818) is meant to route here too and does not yet. A soft-deleted
- * booking is not a stay, whatever its status.
+ * they cannot disagree about which bookings count; so does the presence-aware
+ * coverage reader (`hut-leader-night-cover.ts`, #3818), which asks for several
+ * lodges at once and so passes a list. A soft-deleted booking is not a stay,
+ * whatever its status.
  */
 export function hutLeaderStayBookingWhere(input: {
-  lodgeId: string;
+  lodgeId: string | readonly string[];
   rangeStart: Date;
   rangeEnd: Date;
 }): Prisma.BookingWhereInput {
   return {
     deletedAt: null,
-    lodgeId: input.lodgeId,
+    lodgeId: isLodgeIdList(input.lodgeId) ? { in: [...input.lodgeId] } : input.lodgeId,
     status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
     checkIn: { lte: input.rangeEnd },
     checkOut: { gt: input.rangeStart },
   };
+}
+
+function isLodgeIdList(lodgeId: string | readonly string[]): lodgeId is readonly string[] {
+  return Array.isArray(lodgeId);
 }
 
 /** Every night key the stays cover, de-duplicated and sorted. */

@@ -536,13 +536,21 @@ export function OccupancyCalendar({
                   {night?.guestCount}
                 </span>
               )}
-              {overlay && (
-                <span
-                  className={`mt-1 block truncate rounded px-1 py-0.5 text-[10px] font-medium leading-tight ${CALENDAR_TONE_CLASSES[overlay.tone].badge}`}
-                >
-                  {overlay.label}
-                </span>
-              )}
+              {overlay &&
+                (overlay.lines ?? [overlay.label]).map((line) => {
+                  const text = typeof line === "string" ? line : line.text;
+                  const suffix = typeof line === "string" ? "" : line.suffix;
+                  return (
+                    <span
+                      key={text}
+                      title={`${text}${suffix}`}
+                      className={`mt-1 block truncate rounded px-1 py-0.5 text-[10px] font-medium leading-tight ${CALENDAR_TONE_CLASSES[overlay.tone].badge}`}
+                    >
+                      {text}
+                      {suffix && <span className="hidden sm:inline">{suffix}</span>}
+                    </span>
+                  );
+                })}
             </button>
           );
         })}

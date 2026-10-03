@@ -601,7 +601,7 @@ describe("the date-fns guard closes the class no selector can see", () => {
       "src/lib/x.ts",
       HOST_CLOCK_PREFIX,
     );
-    // Two of the seven remaining callers use only `formatDistanceToNow`, which
+    // Two of the five remaining callers use only `formatDistanceToNow`, which
     // is a duration and genuinely zone-free. A message that did not say so would
     // send them to rewrite correct code.
     expect(message).toContain("formatDistanceToNow");

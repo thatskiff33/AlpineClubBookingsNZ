@@ -107,6 +107,9 @@ type Assignment = {
 function stubFetch(opts: {
   assignments?: Assignment[];
   monthRed?: Array<{ date: string; bookingCount: number; guestCount: number }>;
+  // #3818: who validly covers each night (assigned AND staying), from the
+  // same windowed response — what the violet overlay is painted from now.
+  monthCovered?: Array<{ date: string; leaders: Array<{ memberId: string; name: string }> }>;
   // When set, the windowed red-date endpoint returns THIS body verbatim —
   // for pinning the malformed-shape tolerance (#2286 review; the round's one
   // real CI failure was this mapping crashing the page from inside a state
@@ -116,6 +119,7 @@ function stubFetch(opts: {
 }) {
   const assignments = opts.assignments ?? [];
   const monthRed = opts.monthRed ?? [];
+  const monthCovered = opts.monthCovered ?? [];
   const occupancyNights = opts.occupancyNights ?? [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -132,7 +136,7 @@ function stubFetch(opts: {
         json: async () =>
           opts.monthRedRawBody !== undefined
             ? opts.monthRedRawBody
-            : { unassignedDates: monthRed },
+            : { unassignedDates: monthRed, coveredNights: monthCovered },
       };
     }
     if (url.startsWith("/api/admin/hut-leaders/unassigned-dates?lodgeId=")) {
@@ -244,6 +248,10 @@ describe("hut leaders redesign — calendar-painted 3-step flow", () => {
         },
       ],
       monthRed: [{ date: "2099-07-20", bookingCount: 1, guestCount: 2 }],
+      monthCovered: ["2099-07-15", "2099-07-16", "2099-07-17"].map((date) => ({
+        date,
+        leaders: [{ memberId: "m9", name: "Bob Jones" }],
+      })),
       occupancyNights: [{ date: "2099-07-15", guestCount: 3 }],
     });
     const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page")).default;
@@ -291,7 +299,14 @@ describe("hut leaders redesign — calendar-painted 3-step flow", () => {
           createdAt: "2026-01-01T00:00:00.000Z",
         },
       ],
-      monthRedRawBody: { unassignedDates: "corrupt — not an array" },
+      monthRedRawBody: {
+        unassignedDates: "corrupt — not an array",
+        coveredNights: [
+          { date: "2099-07-15", leaders: [{ memberId: "m9", name: "Bob Jones" }] },
+          // A malformed covered row is dropped, never thrown on.
+          { date: "not-a-date", leaders: "corrupt" },
+        ],
+      },
       occupancyNights: [{ date: "2099-07-15", guestCount: 3 }],
     });
     const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page")).default;

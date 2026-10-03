@@ -5,6 +5,7 @@ import { addDaysDateOnly, formatDateOnly, isDateOnlyString, parseDateOnly } from
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { getGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
+import { loadHutLeaderNightCover } from "@/lib/hut-leader-night-cover";
 import {
   hutLeaderStayBookingWhere,
   hutLeaderStayNightKeys,
@@ -169,23 +170,21 @@ export async function GET(req: NextRequest) {
   const coverageWindowEnd =
     latestStayEnd.getTime() > rangeEnd.getTime() ? latestStayEnd : rangeEnd;
 
-  // Existing hut-leader assignments overlapping the widened window. We reuse the
-  // inclusive covered model from getUnassignedHutLeaderDates (the amber "Upcoming
-  // Dates Without…" panel) so suggestions never point at a night that already has
-  // a leader. Suggested ranges therefore abut existing assignments (never overlap
-  // by more than the 1-day handover boundary the POST route already allows), so
-  // they are always safely POST-able.
-  const coverageAssignments = await prisma.hutLeaderAssignment.findMany({
-    where: { lodgeId, startDate: { lte: coverageWindowEnd }, endDate: { gte: coverageWindowStart } },
-    select: { startDate: true, endDate: true },
+  // Which nights in the widened window already have a leader, read through the
+  // ONE coverage helper the amber "Upcoming nights with no … staying" panel
+  // uses (#3818, `INV-DATE-031`): a night is covered when an assignment claims it AND its
+  // leader is staying that night. Suggestions therefore never point at a night
+  // that already has a leader on site. A night whose assignment's leader is not
+  // there (a row stamped through its leader's checkout day) reads as uncovered,
+  // so a suggestion may start on it. For that common shape the overlap is the
+  // one handover day the POST route allows; a longer stale row is still refused
+  // by the POST route's overlap check, which stays the authority.
+  const coverage = await loadHutLeaderNightCover(prisma, {
+    scope: { kind: "lodge", lodgeId },
+    from: coverageWindowStart,
+    to: coverageWindowEnd,
   });
-
-  // Inclusive covered-night predicate — matches isDateCovered in
-  // src/lib/hut-leader-coverage.ts.
-  const isNightCovered = (d: Date) =>
-    coverageAssignments.some(
-      (a) => a.startDate.getTime() <= d.getTime() && a.endDate.getTime() >= d.getTime(),
-    );
+  const isNightCovered = (d: Date) => coverage.isCovered(lodgeId, d);
 
   const members = Array.from(memberBookings.values())
     .map((m) => {
@@ -198,7 +197,8 @@ export async function GET(req: NextRequest) {
       // half-open [checkIn, checkOut) day range of each booking. checkOut is the
       // departure morning, NOT an occupied night — this matches every occupancy
       // computation in the repo (getBookingStatsByLodge / getUnassignedHutLeaderDates,
-      // which feed the amber "Upcoming Dates Without…" panel on this same page).
+      // which feed the amber "Upcoming nights with no … staying" panel on this
+      // same page).
       // Only real stay nights count — gap nights between two disjoint bookings do not.
       const stayNights = hutLeaderStayNightKeys(m.bookings).map(parseDateOnly);
 

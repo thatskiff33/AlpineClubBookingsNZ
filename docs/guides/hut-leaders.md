@@ -35,17 +35,21 @@ lodges clears the previous results while the new lodge loads. If the lodge list
 cannot be loaded, the page explains the failure, offers **Try again**, and sends
 no hut-leader request or assignment write until a real lodge returns.
 
-1. Go to **Admin → Lodge Operations → Hut Leaders**. The amber **Upcoming Dates
-   Without …** card lists booked nights with no leader; the calendar paints
-   **Needs a Hut Leader** (red) and **Has a Hut Leader** (violet) nights.
+1. Go to **Admin → Lodge Operations → Hut Leaders**. The amber **Upcoming
+   nights with no hut leader staying** card lists the coming nights that have
+   guests but no leader staying; the calendar paints **Guests, no hut leader
+   staying** (red, labelled **No hut leader tonight**) and **Hut Leader
+   staying** (violet) nights. Every one of these uses your club's own word for
+   the role, set under **Admin → Club identity**.
 
    A night "needs a leader" **at one lodge**: it has a booking with at least one
-   guest staying, and no assignment covering it at that lodge. Every lodge runs
-   its own leader, so the same night can need one at Lodge A and be covered at
-   Lodge B. This card is scoped to the lodge in the selector above it, so it only
-   ever describes that one lodge.
+   guest staying, and no leader **assigned to that night and staying that night**
+   at that lodge. Every lodge runs its own leader, so the same night can need one
+   at Lodge A and be covered at Lodge B. This card is scoped to the lodge in the
+   selector above it, so it only ever describes that one lodge. See
+   [What counts as a covered night](#what-counts-as-a-covered-night) below.
 
-   ![Hut Leader Assignments page showing the pick-the-nights calendar with "Needs leader" nights, the choose-the-leader step, and the assignments table](../images/admin/admin-hut-leaders.png)
+   ![Hut Leader Assignments page showing the pick-the-nights calendar with nights that need a leader, the choose-the-leader step, and the assignments table](../images/admin/admin-hut-leaders.png)
 
 2. **Pick the nights to cover** — set the **Start Date** and **Last night**, or click
    **Assign** on an upcoming-date card to pre-fill a single night.
@@ -77,6 +81,49 @@ no hut-leader request or assignment write until a real lodge returns.
    leader across a school group's nights, so if you want one there it has to be
    you who puts it there.
 
+### What counts as a covered night
+
+A hut leader's duty is one **night**: from midday on that day to midday the next
+morning, the same boundary a guest's stay uses. A night is covered only when
+both of these are true:
+
+- an assignment includes the night, **and**
+- the person on it is **in the lodge that night**.
+
+"In the lodge" means different things for different assignments:
+
+| Assignment | Counts as in the lodge on… |
+| --- | --- |
+| An ordinary member (assigned by hand or automatically) | the nights of their own paid stay at **this** lodge. A cancelled, bumped, archived or unpaid stay counts for nothing, and neither does a stay at another lodge, or a stay as another member's guest that they have not yet confirmed |
+| A custodian — ticked **Custodian (lives on site)**, or holding a bed | every night the assignment covers. They live in the lodge, so no booking is needed |
+| A school group's teacher | the assignment's own dates, arrival to the night before departure, as recorded when the school booking was approved. These assignments are not linked back to the booking: if the school booking is later cancelled or moved, its teachers still count on the original nights until you delete or change their assignments here |
+
+An assignment for someone who is neither a custodian nor staying covers nothing,
+and the page refuses to save one.
+
+So an assignment that runs past the leader's departure does **not** cover the
+nights after they leave. Older automatic assignments were recorded through the
+leader's check-out day; those check-out nights now show red if other guests are
+still staying, with no clean-up needed — the assignment itself is unchanged.
+
+The calendar shows who is on duty each half of a changeover day:
+
+- **AM · Smith until midday** — a leader of the night before finishes at
+  midday.
+- **PM · Jones from midday** — a leader of tonight starts at midday.
+- **No hut leader tonight** — guests are staying and nobody is assigned and
+  staying.
+
+A day shows the AM/PM lines only when the two nights have different leaders,
+including the first and last day of a stint. A plain surname means a leader on
+duty all day: on a one-night overlap, the leader who stays on is shown plainly
+beside the one arriving or leaving, never as leaving. On a phone the lines drop
+"until midday" / "from midday" so the name still fits; a screen reader always
+hears the full wording. The admin dashboard lists the coming week's handovers —
+a day on which a leader finishes at midday and another is on duty from midday —
+under **Handovers this week**, and its **Nights without a hut leader staying**
+card gives each uncovered night with its guest count.
+
 ### Assign a custodian
 
 Some clubs keep someone on site for a whole season — a custodian who lives in
@@ -87,6 +134,9 @@ the lodge without ever making a booking.
    the assignment covers, with no booking, and takes **one space** off the
    lodge's capacity on each of those nights — members see one fewer space on the
    calendar. The tick is there whether or not your club uses bed allocation.
+   A ticked custodian, with or without a bed, is named on the lodge lobby screen
+   and on members' **Who's at the lodge** list, once each; a custodian who is a minor
+   is never named.
 3. If your club uses bed allocation, you can also **hold a bed** for them (below)
    so the allocation board shows which bed is theirs. A custodian with a bed
    still takes only one space.
@@ -130,14 +180,15 @@ handed back.
 What a held bed does, and does not, do:
 
 - **Members** simply see one fewer bed on the availability calendar for those
-  nights. There is deliberately no custodian label on any member-facing screen.
+  nights. The calendar carries no custodian label; the roster (below) does.
 - The **allocation board** draws a hatched *Custodian* band across the bed's
   cells. It is not a drop target, and the server refuses any placement onto it.
-- The **lodge screen** shows a `Custodian` line in its footer while the
-  assignment is running — the fixed word for every club, whatever your club
-  calls the role in the admin area. On a handover night, when two people hold two
-  beds, it reads `Custodians` with both names or, if either of them may not be
-  named, with the count. A minor-age custodian is never named there at any
+- The **lodge screen** and the members' **Who's at the lodge** roster show
+  every custodian — ticked, holding a bed, or both, counted once — while the
+  assignment is running. The screen's footer line reads `Custodian`, the fixed
+  word for every club, whatever your club calls the role in the admin area. On
+  a handover night, with two custodians, it reads `Custodians` with both names
+  or, if either of them may not be named, with the count. A minor-age custodian is never named there at any
   name-display setting, and neither is anyone else once a minor is among them —
   naming one of two would identify the other by elimination.
 - The custodian is **not a guest**: no chore-roster entry, no booking row, no
@@ -251,6 +302,7 @@ away.
 | Holding a bed says the lodge is exclusively held on some nights | Another booking has taken the whole lodge for those nights, so holding this bed takes one bed off them | Read the nights listed. **Accept and hold the bed** (or **Accept and save**, when it is the custodian tick and no bed) does both changes together and records them; **Cancel** leaves everything exactly as it was. If the other booking should not have the lodge to itself, clear its whole-lodge hold on the booking first and try again |
 | The lodge list could not be loaded | The page cannot prove which lodge its reads or writes belong to | Press **Try again**. Assignment controls remain hidden until a real lodge returns |
 | The dashboard says more uncovered nights than this page lists | Expected on a club with more than one lodge. The dashboard and the sidebar badge count **lodge-nights** across the whole club — one night with two uncovered lodges is two — while this page shows only the lodge in its selector. On a club with more than one lodge the dashboard names the lodge beside every date, so you can see where the extra ones are. A club with one lodge sees the same number in both places, with no lodge names | Switch lodges here to see the rest, or read the dashboard's dates, which name the lodge each belongs to |
+| A night shows red although it is inside an assignment | The assigned leader is not staying that night — they left that morning, their stay was cancelled or moved, or they are staying at a different lodge. A night is covered only when its leader is assigned **and** staying | Assign someone who is staying that night, or correct the leader's booking. If the assignment is an older automatic one ending on its leader's check-out day, nothing needs fixing: the check-out night was never theirs |
 | The dashboard lists an uncovered night at a lodge you have archived, shown as "*Lodge name*, archived" | Archiving a lodge stops new bookings but does not cancel the ones it already had. Those guests still arrive and still need a leader, so the night is still counted and is labelled archived. It will not clear itself: the nightly automatic assignment only ever assigns at active lodges | Decide which of the two you meant. To cover it, make the lodge active again (**Admin → Lodges**), assign a leader here, and archive it again afterwards. To be rid of it, cancel or move the remaining bookings at that lodge — the row goes when the last one does |
 | Hut Leaders is missing from the sidebar / 404s | The `hutLeaders` module is off | Enable it under **Admin → Setup → Modules** — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
 | Everything is read-only ("… can view … but cannot change them") | Your admin role has lodge view but not edit | Ask a full admin for **lodge edit** access |

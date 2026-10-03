@@ -34,6 +34,7 @@ import {
   canViewAdminHrefWithMatrix,
   emptyAdminPermissionMatrix,
   getAdminPermissionMatrix,
+  type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import { clubFormat } from "@/lib/club-format-server";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
@@ -51,16 +52,18 @@ import {
   dateOnlyInstantOf,
   daysInCalendarMonth,
   formatClubDayMonth,
+  requireCalendarDate,
 } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { countRosterDaysNeedingChores } from "@/lib/roster-status";
 import { countGuestsAwaitingBed } from "@/lib/bed-allocation-board";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
-  coverageLodgeLabel,
   coverageNeedsLodgeContext,
-  getUnassignedHutLeaderDates,
+  getHutLeaderDashboardCoverage,
+  uncoveredNightLabel,
 } from "@/lib/hut-leader-coverage";
+import { HutLeaderHandoversCard } from "@/components/admin/hut-leader-handovers-card";
 import { countActiveLodges } from "@/lib/lodges";
 import { OPEN_DELETION_REQUEST_STATUSES } from "@/lib/deletion-request-decision";
 import {
@@ -81,7 +84,7 @@ import {
 // shape takes none. Reading them through APP_TIME_ZONE was a projection that
 // named the night before for any club behind UTC (INV-DATE-019).
 
-async function getStats() {
+async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
   // CT-4 (#2870): every derivation below now starts from the club's PERSISTED
   // timezone rather than `APP_TIME_ZONE` (INV-CONFIG-002), and the month bounds
   // are calendar arithmetic on a `CalendarDate` rather than string slicing plus
@@ -127,7 +130,7 @@ async function getStats() {
     pendingDeletionRequests,
     pendingBookingReviews,
     pendingBookingChangeRequests,
-    unassignedHutLeaderDates,
+    { unassignedDates: unassignedHutLeaderDates, handovers: hutLeaderHandovers },
     activeLodgeCount,
     rosterDaysNeedingChores,
     bedGuestsAwaiting,
@@ -239,7 +242,20 @@ async function getStats() {
     // is the same defect CT-4 (#2870) found here wearing a different cause. It
     // also saves the extra settings read the fallback would perform
     // (INV-CONFIG-002).
-    getUnassignedHutLeaderDates({ scope: { kind: "all" }, today }),
+    //
+    // #3818: the amber card and "Handovers this week" (today and the six days
+    // after it) read ONE cover. The handovers, and the names they need, are
+    // read only when the actor can see that card — the same gate the page
+    // applies when rendering it.
+    permissionMatrix.then((matrix) =>
+      getHutLeaderDashboardCoverage({
+        scope: { kind: "all" },
+        today,
+        handovers: canViewAdminHrefWithMatrix(matrix, "/admin/hut-leaders")
+          ? { from: today, to: dateOnlyInstantOf(addCalendarDays(todayKey, 6)) }
+          : null,
+      }),
+    ),
     // Whether this club is multi-lodge, for the ADR-002 Presentation Rule below.
     // Keyed on the CLUB, not on how many lodges happen to be uncovered (#2917
     // review): a two-lodge club whose gaps all sit at one lodge must still be
@@ -290,13 +306,12 @@ async function getStats() {
     // has more than one active lodge, per the Presentation Rule (ADR-002), so a
     // single-lodge club sees the same bare dates and count as before while a
     // multi-lodge club is never handed a date it cannot place.
-    unassignedDatesWithBookings: unassignedHutLeaderDates.map((item) => {
-      const lodgeLabel = unassignedNamesLodges
-        ? coverageLodgeLabel(item)
-        : null;
-      return lodgeLabel ? `${item.date} (${lodgeLabel})` : item.date;
-    }),
+    // #3818: each entry is a night with no leader STAYING, with its guest
+    // count; the page labels them with the club's date format.
+    unassignedHutLeaderDates,
     unassignedNamesLodges,
+    hutLeaderHandovers,
+    handoversNameLodges: coverageNeedsLodgeContext({ activeLodgeCount, rows: hutLeaderHandovers }),
     pendingRefundAppeals,
     pendingCreditApprovals,
     pendingMembershipCancellations,
@@ -335,11 +350,19 @@ async function getPermissionMatrix() {
 export default async function AdminDashboardPage() {
   // Resolve the stats batch and the actor's permission matrix concurrently —
   // the auth() + member lookup no longer waits on the stats round-trip (#2091).
+  // The matrix promise is shared, so the hut-leader read inside getStats can
+  // skip what this actor cannot see without serialising the two.
+  const permissionMatrixPromise = getPermissionMatrix();
   const [stats, permissionMatrix, money] = await Promise.all([
-    getStats(),
-    getPermissionMatrix(),
+    getStats(permissionMatrixPromise),
+    permissionMatrixPromise,
     clubFormat(),
   ]);
+  const unassignedDatesWithBookings = stats.unassignedHutLeaderDates.map((item) =>
+    uncoveredNightLabel(item, stats.unassignedNamesLodges, (date) =>
+      formatClubDayMonth(requireCalendarDate(date), money.format),
+    ),
+  );
 
   const canViewBookings = canViewAdminHrefWithMatrix(
     permissionMatrix,
@@ -546,24 +569,28 @@ export default async function AdminDashboardPage() {
       )}
 
       {/* Hut Leader warning */}
-      {stats.unassignedDatesWithBookings.length > 0 && (
+      {unassignedDatesWithBookings.length > 0 && (
         <Link href="/admin/hut-leaders">
           <Card className="border-warning-6 bg-warning-3 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
               <AlertTriangle className="h-5 w-5 text-warning-11 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="font-medium text-warning-11">{CLUB_HUT_LEADER_LABEL} Assignment Required</p>
+                <p className="font-medium text-warning-11">{stats.unassignedNamesLodges ? "Lodge-nights" : "Nights"} without a {CLUB_HUT_LEADER_LABEL.toLowerCase()} staying</p>
                 <p className="text-sm text-warning-11 mt-1">
-                  {stats.unassignedDatesWithBookings.length} upcoming{" "}
-                  {stats.unassignedNamesLodges ? "lodge-night" : "date"}
-                  {stats.unassignedDatesWithBookings.length !== 1 ? "s" : ""} with bookings but no {CLUB_HUT_LEADER_LABEL.toLowerCase()} assigned:{" "}
-                  {stats.unassignedDatesWithBookings.slice(0, 5).join(", ")}
-                  {stats.unassignedDatesWithBookings.length > 5 ? ` and ${stats.unassignedDatesWithBookings.length - 5} more` : ""}
+                  {unassignedDatesWithBookings.length} upcoming{" "}
+                  {stats.unassignedNamesLodges ? "lodge-night" : "night"}
+                  {unassignedDatesWithBookings.length !== 1 ? "s" : ""} with guests but no {CLUB_HUT_LEADER_LABEL.toLowerCase()} staying:{" "}
+                  {unassignedDatesWithBookings.slice(0, 5).join("; ")}
+                  {unassignedDatesWithBookings.length > 5 ? ` and ${unassignedDatesWithBookings.length - 5} more` : ""}
                 </p>
               </div>
             </CardContent>
           </Card>
         </Link>
+      )}
+
+      {canViewHutLeaders && (
+        <HutLeaderHandoversCard handovers={stats.hutLeaderHandovers} nameLodges={stats.handoversNameLodges} format={money.format} />
       )}
 
       {/* Bookings-officer key cards (#2091, D-E1/D-E2): the four surfaces a
@@ -603,16 +630,16 @@ export default async function AdminDashboardPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="text-3xl font-bold">
-                    {stats.unassignedDatesWithBookings.length}
+                    {unassignedDatesWithBookings.length}
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
                     upcoming{" "}
                     {stats.unassignedNamesLodges ? "lodge-night" : "night"}
-                    {stats.unassignedDatesWithBookings.length === 1
+                    {unassignedDatesWithBookings.length === 1
                       ? ""
                       : "s"}{" "}
-                    with bookings but no{" "}
-                    {CLUB_HUT_LEADER_LABEL.toLowerCase()} assigned
+                    with guests but no{" "}
+                    {CLUB_HUT_LEADER_LABEL.toLowerCase()} staying
                   </p>
                 </CardContent>
               </Card>

@@ -200,6 +200,38 @@ derivation).
   acceptance agree by construction, but a stale page or a direct call bypasses
   the offer.
 
+### INV-DATE-031
+
+**A hut-leader night is covered only when its leader is assigned to it AND in
+the lodge that night** (#3818). One night is one duty shift, midday to midday
+(`INV-DATE-002`). An assignment's dates alone never answer "is night D
+covered?": many rows were stamped through the leader's check-out day.
+
+- **One definition.** `src/lib/hut-leader-night-cover.ts` is the only home.
+  The dashboard card, the sidebar badge, the stuck-state tile, the hut-leaders
+  calendar, the eligible-members suggestions and the auto-assign cron's
+  already-covered probe all read it; `hut-leader-night-cover-census.test.ts`
+  fails a reader that reads assignment dates as coverage itself.
+- **Presence, per row.** An ordinary member is present on a night of their own
+  stay at the same lodge, as a guest — a booking matching the writers'
+  `hutLeaderStayBookingWhere` (`INV-DATE-030`), consent operationally present,
+  judged by `isGuestActiveOnNight` (`INV-DATE-005`), never a restated range. A
+  custodian — holding a bed or ticked, `isCustodianOccupancy` — is present on
+  every night the assignment covers (`INV-LIFE-062`). A school teacher row is present on its OWN dates,
+  `startDate` to `endDate − 1`: the school writer stamps the booking's stay,
+  check-out day included, and the census pins that stamp. The row has no
+  booking key, so a school booking cancelled or re-dated afterwards still
+  covers its original nights until an officer changes the rows — a stated
+  limit that #3819, which replaces this one branch with the per-lodge setting,
+  inherits.
+- **Readers heal rows; nothing is backfilled.** A row ending on its leader's
+  check-out day stops covering that night by being read correctly. The row is
+  never rewritten by this rule.
+- **Changeover labels are derived, never stored.** Day D's morning belongs to
+  night D − 1's leader and its afternoon to night D's (`INV-DATE-004`);
+  `src/lib/hut-leader-handover.ts` lines the two up for the calendar's AM/PM
+  labels and the dashboard's handovers.
+
 ### INV-DATE-006
 
 - **The lobby wall is deliberately mixed and stays fenced** (issue #58): it asks
@@ -659,7 +691,7 @@ owner decisions on #3820):
   through the host's clock face — `getFullYear`/`getMonth`/`getDate` and their
   `set*` counterparts, plain and computed — and ban importing `date-fns`, which
   performs the identical read inside `node_modules`. The host-clock arm ships
-  with NO exemption; `date-fns` keeps a seven-file ratchet, each entry naming
+  with NO exemption; `date-fns` keeps a five-file ratchet, each entry naming
   what it uses and what blocks it. `club-time-boundary-guard.test.ts` proves
   both arms twice — that they RESOLVE at every production path, and that they
   REPORT a violation there — with a clean control at each path so the ban is

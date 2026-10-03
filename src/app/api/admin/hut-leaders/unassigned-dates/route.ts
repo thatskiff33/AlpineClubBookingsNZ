@@ -5,6 +5,10 @@ import { parseOccupancyMonth } from "@/lib/admin-occupancy";
 import { addDaysDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
+import {
+  listHutLeaderNightLeaders,
+  loadHutLeaderNightCover,
+} from "@/lib/hut-leader-night-cover";
 
 /**
  * GET /api/admin/hut-leaders/unassigned-dates
@@ -25,6 +29,13 @@ import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
  *   ?month=YYYY-MM                — first→last day of that calendar month
  *   ?from=YYYY-MM-DD&to=YYYY-MM-DD — an explicit inclusive date-only window
  * Bad input returns 400.
+ *
+ * A windowed request also returns `coveredNights` (#3818): every night from the
+ * day BEFORE the window to its end that a leader validly covers — assigned and
+ * staying, read through the one coverage helper — with who covers it. The
+ * calendar derives its "AM · … until midday" / "PM · … from midday" changeover
+ * labels from consecutive nights, and the morning of the window's first day
+ * belongs to the night before it, hence the extra night.
  */
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
@@ -68,10 +79,28 @@ export async function GET(req: NextRequest) {
     window = { from: parseDateOnly(from), to: parseDateOnly(to) };
   }
 
+  const scope = { kind: "lodge", lodgeId } as const;
+  if (!window) {
+    return NextResponse.json({
+      unassignedDates: await getUnassignedHutLeaderDates({ scope }),
+    });
+  }
+
+  // ONE cover per request, reaching back one night for the labels and lent to
+  // the uncovered-night read, which therefore reads only the bookings.
+  const coverFrom = addDaysDateOnly(window.from, -1);
+  const cover = await loadHutLeaderNightCover(prisma, {
+    scope,
+    from: coverFrom,
+    to: window.to,
+    withNames: true,
+  });
+  const unassignedDates = await getUnassignedHutLeaderDates({ ...window, scope, cover });
   return NextResponse.json({
-    unassignedDates: await getUnassignedHutLeaderDates({
-      ...window,
-      scope: { kind: "lodge", lodgeId },
-    }),
+    unassignedDates,
+    coveredNights: listHutLeaderNightLeaders(cover, {
+      from: coverFrom,
+      to: window.to,
+    }).map(({ date, leaders }) => ({ date, leaders })),
   });
 }
