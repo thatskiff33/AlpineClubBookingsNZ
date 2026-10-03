@@ -19,6 +19,7 @@
  * transition is never rolled back purely because its narrative event failed.
  */
 import { BookingEventType, Prisma } from "@prisma/client";
+import type { CancellationLedgerSnapshot } from "@/lib/paid-cancellation-event";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import {
@@ -48,6 +49,12 @@ export interface CancellationEventSnapshot {
   retainedAmountCents: number;
   /** Non-refundable change fees folded into the retained amount, if any. */
   changeFeeCents?: number;
+  /**
+   * #3611: what the booking ledger was told the club keeps
+   * (`retainedAmountCents` plus applied credit not restored, design §5.1), and
+   * the credit figures it rests on. Absent on cancellations before #3611.
+   */
+  ledger?: CancellationLedgerSnapshot;
 }
 
 /** Frozen bump facts stored on a BUMPED event. */

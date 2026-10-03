@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   failXeroSyncOperation: vi.fn(),
   getRetryMeta: vi.fn(),
   retryXeroSyncOperation: vi.fn(),
+  retryAbandonedItsClaim: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -48,6 +49,7 @@ vi.mock("@/lib/xero-operation-retry", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/xero-operation-retry")),
   getXeroOperationRetryMeta: mocks.getRetryMeta,
   retryXeroSyncOperation: mocks.retryXeroSyncOperation,
+  retryAbandonedItsClaim: mocks.retryAbandonedItsClaim,
 }));
 
 import {
@@ -198,6 +200,7 @@ describe("processQueuedXeroOperationRetries", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+    mocks.retryAbandonedItsClaim.mockReturnValue(false);
   });
 
   it("claims and completes queued retry rows", async () => {
@@ -285,6 +288,73 @@ describe("processQueuedXeroOperationRetries", () => {
       expect.objectContaining({
         name: "XeroOperationRetryError",
       })
+    );
+  });
+
+  it("fails the REQUEUE row naming the original and saying it is back to FAILED (#3462)", async () => {
+    mocks.findManyQueued.mockResolvedValue([makeQueuedOperation()]);
+    const refusal = new Error("Matched Xero contact is already linked to another member.");
+    mocks.retryXeroSyncOperation.mockRejectedValue(refusal);
+    // The original as the retry left it: its claim abandoned back to FAILED.
+    mocks.retryAbandonedItsClaim.mockImplementation((error: unknown) => error === refusal);
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({ status: "FAILED" })
+    );
+
+    await expect(processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).resolves.toMatchObject({
+      failed: 1,
+    });
+
+    expect(mocks.findUniqueOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "op_123" } })
+    );
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith("queue_1", refusal, undefined, {
+      lastErrorMessage:
+        "Retry of Xero operation op_123 (INVOICE CREATE) failed: Matched Xero contact is already linked to another member. The original operation is back to FAILED — fix the cause and requeue it again.",
+    });
+  });
+
+  it("says a FAILED original the retry never claimed is FAILED, not back to FAILED (#3462)", async () => {
+    mocks.findManyQueued.mockResolvedValue([makeQueuedOperation()]);
+    mocks.retryXeroSyncOperation.mockRejectedValue(
+      new Error("Booking modification no longer has a billable Xero delta.")
+    );
+    mocks.retryAbandonedItsClaim.mockReturnValue(false);
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation({ status: "FAILED" }));
+
+    await processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST);
+
+    expect(mocks.failXeroSyncOperation.mock.calls[0][3].lastErrorMessage).toBe(
+      "Retry of Xero operation op_123 (INVOICE CREATE) failed: Booking modification no longer has a billable Xero delta. The original operation is FAILED; fix the cause, then requeue it.",
+    );
+  });
+
+  it.each([
+    ["RUNNING", "is still RUNNING; if it stays RUNNING past 15 minutes, use Mark failed on it"],
+    ["SUCCEEDED", "is now SUCCEEDED."],
+    ["PARTIAL", "is still PARTIAL — fix the cause and requeue it again."],
+  ])("says where an original left %s actually stands (#3462)", async (status, expected) => {
+    mocks.findManyQueued.mockResolvedValue([makeQueuedOperation()]);
+    mocks.retryXeroSyncOperation.mockRejectedValue(new Error("boom"));
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation({ status }));
+
+    await processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST);
+
+    const options = mocks.failXeroSyncOperation.mock.calls[0][3];
+    expect(options.lastErrorMessage).toContain("Retry of Xero operation op_123");
+    expect(options.lastErrorMessage).toContain(expected);
+    expect(options.lastErrorMessage).not.toContain("back to FAILED");
+  });
+
+  it("still fails the REQUEUE row when the original cannot be read (#3462)", async () => {
+    mocks.findManyQueued.mockResolvedValue([makeQueuedOperation()]);
+    mocks.retryXeroSyncOperation.mockRejectedValue(new Error("boom"));
+    mocks.findUniqueOperation.mockRejectedValue(new Error("database unavailable"));
+
+    await processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST);
+
+    expect(mocks.failXeroSyncOperation.mock.calls[0][3].lastErrorMessage).toBe(
+      "Retry of Xero operation op_123 failed: boom. The original operation could not be read; find it in the operations list before requeueing.",
     );
   });
 

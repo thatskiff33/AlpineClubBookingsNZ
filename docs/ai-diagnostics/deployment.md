@@ -385,8 +385,9 @@ public."FamilyGroup": id, name
 <!-- ai-diagnostics-exact-grants:end -->
 
 Every other relation in the schema is unreadable — including `IntegrationCredential`
-(encrypted provider secrets), `XeroToken`, which stores **plaintext** Xero OAuth
-access and refresh tokens, and `FamilyGroupJoinRequest`, which carries requester
+(encrypted provider secrets, and since #3454 the Xero OAuth token set), `XeroToken`,
+which holds the same Xero OAuth access and refresh tokens, encrypted, for the
+blue-green window, and `FamilyGroupJoinRequest`, which carries requester
 free text and children's dates of birth. The first two are permanently out of scope
 under ADR-007 §1 and no tool pack may grant them.
 

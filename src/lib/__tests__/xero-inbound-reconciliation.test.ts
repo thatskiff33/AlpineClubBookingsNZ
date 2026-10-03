@@ -23,6 +23,10 @@ const mocks = vi.hoisted(() => ({
   memberCreditAggregate: vi.fn(),
   memberCreditCreate: vi.fn(),
   memberCreditFindMany: vi.fn(),
+  // #3792: the late capacity cancel's restore of the booking's applied credit.
+  memberCreditCreateMany: vi.fn(),
+  // #3792: the inbound sync's restore-row read.
+  memberCreditFindUnique: vi.fn(),
   memberCreditUpdate: vi.fn(),
   memberCreditUpdateMany: vi.fn(),
   memberCreditNoteAllocationAggregate: vi.fn(),
@@ -96,6 +100,12 @@ const syncCredits = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock("@/lib/booking-ledger-credit-sync", () => ({
   syncBookingLedgerCredits: syncCredits,
 }));
+
+// #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
+const cancellationLedger = vi.hoisted(() => ({
+  postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}),
+}));
+vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -458,6 +468,7 @@ describe("processStoredXeroInboundEvents", () => {
         memberCredit: {
           findFirst: mocks.memberCreditFindFirst,
           findMany: mocks.memberCreditFindMany,
+          findUnique: mocks.memberCreditFindUnique,
           create: mocks.memberCreditCreate,
           update: mocks.memberCreditUpdate,
           updateMany: mocks.memberCreditUpdateMany,
@@ -526,6 +537,8 @@ describe("processStoredXeroInboundEvents", () => {
     });
     mocks.memberCreditCreate.mockResolvedValue({ id: "credit_1" });
     mocks.memberCreditFindMany.mockResolvedValue([]);
+    mocks.memberCreditCreateMany.mockResolvedValue({ count: 1 });
+    mocks.memberCreditFindUnique.mockResolvedValue(null);
     mocks.linkFindMany.mockResolvedValue([]);
     mocks.linkFindFirst.mockResolvedValue(null);
     mocks.memberCreditUpdate.mockResolvedValue({ id: "credit_1" });
@@ -1261,7 +1274,9 @@ describe("processStoredXeroInboundEvents", () => {
         draftExpiresAt: null,
       },
     });
-    // The inbound path reads the payment twice. The booking ledger's
+    // The inbound path reads the payment three times: the lodge key only, then
+    // (#3792) the full snapshot after the lodge key, then the capacity re-read.
+    // The booking ledger's
     // settlement sync (#3581) adds its own two reads — the owner, then the
     // rows it posts from — which are counted separately so this still pins
     // what it always pinned.
@@ -1273,7 +1288,7 @@ describe("processStoredXeroInboundEvents", () => {
       );
     expect(
       mocks.paymentFindUnique.mock.calls.filter(([args]) => !ledgerSyncRead(args)),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(
       mocks.paymentFindUnique.mock.calls.filter(([args]) => ledgerSyncRead(args)),
     ).toHaveLength(2);
@@ -1286,9 +1301,13 @@ describe("processStoredXeroInboundEvents", () => {
     // now sit between the first read and the lock, right after the receipt
     // row they post from — correct, since the receipt stands even if the
     // capacity check below cancels the booking.
-    const postLockReread = mocks.paymentFindUnique.mock.calls
+    const ownReads = mocks.paymentFindUnique.mock.calls
       .map(([args], index) => ({ args, order: mocks.paymentFindUnique.mock.invocationCallOrder[index]! }))
-      .filter(({ args }) => !ledgerSyncRead(args))[1]!.order;
+      .filter(({ args }) => !ledgerSyncRead(args));
+    const postLockReread = ownReads[2]!.order;
+    // #3792: the owner the member key is taken on is read after the lodge key.
+    expect(ownReads[0]!.order).toBeLessThan(mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]);
+    expect(mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]).toBeLessThan(ownReads[1]!.order);
     expect(mocks.acquireLodgeCapacityLock.mock.invocationCallOrder[0]).toBeLessThan(postLockReread);
     expect(postLockReread).toBeLessThan(
       mocks.bookingUpdateMany.mock.invocationCallOrder.at(-1)!,
@@ -1697,6 +1716,9 @@ describe("processStoredXeroInboundEvents", () => {
             findFirst: mocks.memberCreditFindFirst,
             create: mocks.memberCreditCreate,
             aggregate: mocks.memberCreditAggregate,
+            // #3792: read and written by the applied-credit restore.
+            findMany: mocks.memberCreditFindMany,
+            createMany: mocks.memberCreditCreateMany,
           },
           // #3369: the durable record of money the system cannot move itself.
           manualRefundTask: {
@@ -1909,9 +1931,130 @@ describe("processStoredXeroInboundEvents", () => {
     );
     // The enqueue's dedup lookups went through the transaction client.
     expect(mocks.txLinkFindFirst).toHaveBeenCalledTimes(1);
-    expect(mocks.txOperationFindFirst).toHaveBeenCalledTimes(1);
+    // #3792: plus the applied-credit deallocation fence the cancel reads first.
+    expect(mocks.txOperationFindFirst).toHaveBeenCalledTimes(2);
     // Not the paid path.
     expect(sendBookingConfirmedEmail).not.toHaveBeenCalled();
+    // #3611: the cancel posts its ledger reversals in its own claim, keeping nothing.
+    expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "booking_ib_cap", keptCents: 0, site: "xero-inbound:late-capacity-cancel" }),
+    );
+  });
+
+  // #3792: the issue's worked example. $80 of account credit applied, a $120
+  // (here $123.45) Internet Banking payment arriving after capacity is gone: the
+  // cash is minted as credit AND the applied $80 is restored, in full, by the
+  // same helper the settle's capacity void uses, before the cancellation posts.
+  it("restores the booking's applied account credit in full when a late Internet Banking payment lands after capacity is gone (#3792)", async () => {
+    const txRef = mockCapacityFailInboundEvent();
+    mocks.memberCreditFindMany.mockResolvedValue([
+      { id: "credit_applied_cap", memberId: "mem_cap", type: "BOOKING_APPLIED", amountCents: -8000, appliedToBookingId: "booking_ib_cap" },
+    ]);
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    expect(mocks.memberCreditCreateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.memberCreditCreateMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          memberId: "mem_cap",
+          amountCents: 8000,
+          type: "CANCELLATION_REFUND",
+          sourceBookingId: "booking_ib_cap",
+          restoredFromBookingId: "booking_ib_cap",
+        }),
+      ],
+      skipDuplicates: true,
+    });
+    // The cash is still minted, unchanged.
+    expect(mocks.memberCreditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ memberId: "mem_cap", amountCents: 12345, type: "CANCELLATION_REFUND" }),
+    });
+    // The restore posts its ledger line in the cancel's own transaction, and
+    // lands before the cancellation's lines, as at the settle's capacity void.
+    expect(syncCredits).toHaveBeenCalledWith({ bookingId: "booking_ib_cap", store: txRef.current });
+    expect(mocks.memberCreditCreateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      cancellationLedger.postCancellationLedgerLines.mock.invocationCallOrder[0],
+    );
+    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "booking_ib_cap", type: "CREDITED", amountCents: 8000 }),
+    );
+    // The member is told about the restored credit, and so is the admin.
+    expect(sendBookingCancelledEmail).toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+      12345, expect.anything(), "credit", 8000, expect.anything(), "in-full",
+    );
+    expect(sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ errorMessage: expect.stringContaining("credit the booking had applied was restored to the member in full") }),
+      expect.anything(),
+    );
+  });
+
+  // #3792: the restore runs under the per-member credit-ledger lock, taken
+  // third (global -> lodge -> member), and behind the deallocation fence.
+  it("takes the member credit-ledger lock before the restore on the late capacity cancel (#3792)", async () => {
+    mockCapacityFailInboundEvent();
+    mocks.memberCreditFindMany.mockResolvedValue([
+      { id: "credit_applied_cap", memberId: "mem_cap", type: "BOOKING_APPLIED", amountCents: -8000, appliedToBookingId: "booking_ib_cap" },
+    ]);
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    const memberLockCall = mocks.txExecuteRaw.mock.calls.findIndex((call: unknown[]) =>
+      call.includes("member-credit-ledger") && call.includes("mem_cap"),
+    );
+    expect(memberLockCall).toBeGreaterThanOrEqual(0);
+    expect(mocks.txExecuteRaw.mock.invocationCallOrder[memberLockCall]).toBeLessThan(
+      mocks.memberCreditCreateMany.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("refuses the late capacity cancel while an applied-credit deallocation has not converged, so the event retries (#3792)", async () => {
+    mockCapacityFailInboundEvent();
+    mocks.txOperationFindFirst.mockImplementation(async (args?: { where?: { queueType?: string } }) =>
+      args?.where?.queueType === "APPLIED_CREDIT_DEALLOCATION" ? { id: "dealloc-1", status: "FAILED" } : null,
+    );
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 0, failed: 1 });
+
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "CANCELLED" }) }),
+    );
+    expect(mocks.memberCreditCreateMany).not.toHaveBeenCalled();
+    expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+    expect(sendBookingCancelledEmail).not.toHaveBeenCalled();
+  });
+
+  it("restores nothing on an organisation-owned booking: there is no member credit ledger to restore into (#3792, #3369)", async () => {
+    mockCapacityFailInboundEvent();
+    const memberOwned = await mocks.paymentFindUnique();
+    mocks.paymentFindUnique.mockResolvedValue({
+      ...memberOwned,
+      booking: { ...memberOwned.booking, memberId: null, member: null, organisationId: "org_cap", organisation: { name: "Cap School", email: "office@example.com" } },
+    });
+    mocks.memberCreditFindMany.mockResolvedValue([
+      { id: "credit_applied_cap", memberId: "mem_cap", type: "BOOKING_APPLIED", amountCents: -8000, appliedToBookingId: "booking_ib_cap" },
+    ]);
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    expect(mocks.memberCreditCreateMany).not.toHaveBeenCalled();
+    expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores nothing on a cash-only booking: the late capacity cancel mints the cash and writes no restore row (#3792)", async () => {
+    mockCapacityFailInboundEvent();
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+
+    expect(mocks.memberCreditCreateMany).not.toHaveBeenCalled();
+    expect(mocks.memberCreditCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CREDITED", amountCents: 8000 }),
+    );
+    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CREDITED", amountCents: 12345 }),
+    );
   });
 
   // #1771 — a PAYMENT_PENDING Internet Banking booking deliberately admitted
@@ -2396,7 +2539,8 @@ describe("processStoredXeroInboundEvents", () => {
       CLUB_FORMAT_TEST,
       "credit",
       0,
-      "lodge_ib_cap"
+      "lodge_ib_cap",
+      "in-full",
     );
     // #19: the late-capacity-failure waitlist re-processing is scoped to the
     // cancelled booking's own lodge, not the default lodge.

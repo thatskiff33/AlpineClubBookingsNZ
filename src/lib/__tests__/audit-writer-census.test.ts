@@ -1348,7 +1348,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 344 -> 345 (#3371): the carried-unpaid-balance record, declared as
     // `recordCarriedEditReviewChargeBalance` in
     // `edit-financial-review-carried-balance.ts` and called post-commit from
-    // `edit-financial-review-charge.ts` - not from
+    // `edit-financial-review-charge-sync.ts` - not from
     // `edit-financial-review-charge-request.ts`, which imports only the pure
     // `measureCarriedAskShortfall`. Categorised `payment` at the site and
     // named in none of the four per-site maps, so it lands unpinned.
@@ -1406,7 +1406,13 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // `payment`. RE-MEASURED with `npm run audit:census`.
     // 365 -> 364 (#3415): the accept-time capacity-block/revert writer retired.
     // 364 -> 365 (#3413): pending-adult identity resolution is classified.
-    ).toEqual({ pinned: 128, unpinned: 365 });
+    // 365 -> 366 (#3462): the Xero operation Mark failed record, unpinned
+    // `xero`. RE-MEASURED with `pnpm run audit:census`.
+    // 366 -> 367 (#3454): the two-factor enrolment / erasure-clear record,
+    // unpinned `security`. RE-MEASURED with `pnpm run audit:census`.
+    // 367 -> 368 (#3792): the refused restored-booking allocation change
+    // record, unpinned `xero`. RE-MEASURED with `pnpm run audit:census`.
+    ).toEqual({ pinned: 128, unpinned: 368 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

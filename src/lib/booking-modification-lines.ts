@@ -135,16 +135,39 @@ export type DiffBookingPricingResult =
       linesSumCents?: number;
     };
 
+type PricingSideGuest = ModificationPricingSide["guests"][number];
+
+/** One guest's nights that an edit took away and gave, before any folding. */
+export type GuestNightChange = {
+  guestKey: string;
+  /** The guest as the BEFORE side held it; a removed night was sold under this shape. */
+  before: PricingSideGuest | undefined;
+  /** The guest as the AFTER side holds it; an added night is sold under this shape. */
+  after: PricingSideGuest | undefined;
+  /** Nights only before, or repriced, or re-sold under a new category - at the BEFORE price. */
+  removed: Array<{ stayDate: Date; priceCents: number }>;
+  /** Nights only after, or repriced, or re-sold under a new category - at the AFTER price. */
+  added: Array<{ stayDate: Date; priceCents: number }>;
+};
+
+export type DiffGuestNightsResult =
+  | { kind: "nights"; guests: GuestNightChange[] }
+  | { kind: "none"; reason: "UNPRICED_NIGHT" | "INEXACT_STORED_NIGHT_PRICE" };
+
 /**
- * The signed lines from `before` to `after`, or why there are none.
- * `expectedDeltaCents` is the caller's own `priceDiffCents`, the figure it
- * settles on; the lines are stored only when they explain exactly that.
+ * THE PER-NIGHT STEP OF AN EDIT'S DIFF (#3582), before anything is folded.
+ *
+ * Extracted from `diffBookingPricing` so the two readers of an edit's nights -
+ * the folded Xero/history lines below and the booking ledger's per-night
+ * postings (`booking-ledger-modification-posting.ts`) - read ONE differ
+ * (`INV-SSOT`). Every rule in this module's header that is about a NIGHT lives
+ * here: the unpriced refusal, the inexact-provenance refusal, the category
+ * judgement, and "a repriced night is one removed and one added, never netted".
  */
-export function diffBookingPricing(
+export function diffGuestNights(
   before: ModificationPricingSide,
   after: ModificationPricingSide,
-  expectedDeltaCents: number,
-): DiffBookingPricingResult {
+): DiffGuestNightsResult {
   for (const guest of before.guests) {
     for (const night of guest.nights) {
       if (typeof night.priceCents !== "number") {
@@ -163,9 +186,7 @@ export function diffBookingPricing(
   const beforeByKey = new Map(before.guests.map((guest) => [guest.guestKey, guest]));
   const afterByKey = new Map(after.guests.map((guest) => [guest.guestKey, guest]));
   const keys = [...new Set([...beforeByKey.keys(), ...afterByKey.keys()])];
-
-  type Folded = Extract<ModificationLine, { kind: "GUEST_NIGHTS" }>;
-  const folded = new Map<string, Folded>();
+  const changes: GuestNightChange[] = [];
 
   for (const key of keys) {
     const beforeGuest = beforeByKey.get(key);
@@ -174,8 +195,7 @@ export function diffBookingPricing(
     // guest; a kept guest is named by its AFTER shape, which is what the edit
     // sold. (A category change on a kept guest is a reprice: every night is
     // removed at the old shape and added at the new one, below.)
-    const identity = afterGuest ?? beforeGuest;
-    if (!identity) continue;
+    if (!beforeGuest && !afterGuest) continue;
 
     const beforeNights = new Map(
       (beforeGuest?.nights ?? []).map((night) => [
@@ -228,13 +248,50 @@ export function diffBookingPricing(
       if (sameShape && beforeNights.get(day) === priceCents) continue;
       added.push({ stayDate: parseDay(day), priceCents });
     }
+    changes.push({ guestKey: key, before: beforeGuest, after: afterGuest, removed, added });
+  }
+  return { kind: "nights", guests: changes };
+}
 
+/**
+ * A side's promotion figure; a non-number (a legacy row read without the column)
+ * counts as zero. Every caller's sum still holds against its real delta.
+ */
+export function normalisedPromoCents(promoAdjustmentCents: number): number {
+  return Number.isFinite(promoAdjustmentCents) ? promoAdjustmentCents : 0;
+}
+
+/** The signed change in the promotion adjustment, each side normalised. */
+export function modificationPromoDeltaCents(
+  before: Pick<ModificationPricingSide, "promoAdjustmentCents">,
+  after: Pick<ModificationPricingSide, "promoAdjustmentCents">,
+): number {
+  return normalisedPromoCents(after.promoAdjustmentCents) - normalisedPromoCents(before.promoAdjustmentCents);
+}
+
+/**
+ * The signed lines from `before` to `after`, or why there are none.
+ * `expectedDeltaCents` is the caller's own `priceDiffCents`, the figure it
+ * settles on; the lines are stored only when they explain exactly that.
+ */
+export function diffBookingPricing(
+  before: ModificationPricingSide,
+  after: ModificationPricingSide,
+  expectedDeltaCents: number,
+): DiffBookingPricingResult {
+  const nights = diffGuestNights(before, after);
+  if (nights.kind === "none") return nights;
+
+  type Folded = Extract<ModificationLine, { kind: "GUEST_NIGHTS" }>;
+  const folded = new Map<string, Folded>();
+
+  for (const change of nights.guests) {
     const fold = (
       sign: ModificationLineSign,
-      nights: Array<{ stayDate: Date; priceCents: number }>,
-      shape: NonNullable<typeof identity>,
+      nightsToFold: Array<{ stayDate: Date; priceCents: number }>,
+      shape: PricingSideGuest,
     ) => {
-      for (const run of splitNightsIntoPriceRuns(nights)) {
+      for (const run of splitNightsIntoPriceRuns(nightsToFold)) {
         const startDate = formatDateOnly(run.startDate);
         const foldKey = [
           sign,
@@ -273,18 +330,13 @@ export function diffBookingPricing(
     };
     // A removed night is named by the shape it was sold under; an added one by
     // the shape it is sold under now.
-    if (beforeGuest) fold(-1, removed, beforeGuest);
-    if (afterGuest) fold(1, added, afterGuest);
+    if (change.before) fold(-1, change.removed, change.before);
+    if (change.after) fold(1, change.added, change.after);
   }
 
   const lines: ModificationLine[] = [...folded.values()].sort(orderLines);
 
-  // A promotion figure that is not a number (a legacy row read without the
-  // column) counts as zero; the sum postcondition below still has to hold
-  // against the caller's real delta, so a coerced zero can hide nothing.
-  const promoDeltaCents =
-    (Number.isFinite(after.promoAdjustmentCents) ? after.promoAdjustmentCents : 0) -
-    (Number.isFinite(before.promoAdjustmentCents) ? before.promoAdjustmentCents : 0);
+  const promoDeltaCents = modificationPromoDeltaCents(before, after);
   if (promoDeltaCents !== 0) {
     lines.push({
       v: MODIFICATION_LINES_VERSION,

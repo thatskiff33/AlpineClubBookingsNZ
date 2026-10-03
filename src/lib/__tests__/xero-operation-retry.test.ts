@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   findUniqueBooking: vi.fn(),
   findFirstPaymentTransaction: vi.fn(),
   completeXeroSyncOperation: vi.fn(),
+  failXeroSyncOperation: vi.fn(),
   buildXeroContactUpdatePayload: vi.fn(),
   shouldRepairXeroContactNameOrder: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
@@ -116,11 +117,13 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
   return {
     ...actual,
     completeXeroSyncOperation: mocks.completeXeroSyncOperation,
+    failXeroSyncOperation: mocks.failXeroSyncOperation,
   };
 });
 
 import {
   getXeroOperationRetryMeta,
+  retryAbandonedItsClaim,
   retryXeroSyncOperation,
   XeroOperationResolvedInXeroError,
   XeroOperationRetryError,
@@ -748,6 +751,74 @@ describe("retryXeroSyncOperation", () => {
       message: expect.stringContaining("already claimed"),
     });
     expect(mocks.createXeroInvoiceForBooking).not.toHaveBeenCalled();
+  });
+
+  it("returns the claimed original to FAILED when the invoice handler throws before it owns completion (#3462)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation());
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+    const refusal = new Error("Matched Xero contact is already linked to another member");
+    // The clock moves while the handler runs, as it does in production: the
+    // frozen clock would otherwise make a fresh `new Date()` at abandon time
+    // indistinguishable from the claim's own stamp.
+    mocks.createXeroInvoiceForBooking.mockImplementation(async () => {
+      vi.setSystemTime(new Date(Date.now() + 1_000));
+      throw refusal;
+    });
+    mocks.failXeroSyncOperation.mockResolvedValue({ id: "op_123", status: "FAILED" });
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).rejects.toBe(refusal);
+
+    // The abandon is guarded on THIS claim: still RUNNING, still the instant
+    // the claim stamped - so a row the handler already completed stays put.
+    const claimData = mocks.updateManyOperation.mock.calls[0][0].data;
+    expect(claimData.status).toBe("RUNNING");
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalledTimes(1);
+    const [abandonedId, abandonedError, , abandonOptions] =
+      mocks.failXeroSyncOperation.mock.calls[0];
+    expect(abandonedId).toBe("op_123");
+    expect(abandonedError).toBe(refusal);
+    expect(abandonOptions).toEqual({ onlyIfRunningSince: claimData.startedAt });
+    expect(abandonOptions.onlyIfRunningSince).toBe(claimData.startedAt);
+    expect(abandonOptions.onlyIfRunningSince.getTime()).toBeLessThan(Date.now());
+    // ...and the REQUEUE drain may say the original is back to FAILED.
+    expect(retryAbandonedItsClaim(refusal)).toBe(true);
+  });
+
+  it("does not report an abandon that matched nothing (#3462)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation());
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+    const refusal = new Error("Handler closed the row itself, then threw");
+    mocks.createXeroInvoiceForBooking.mockRejectedValue(refusal);
+    // The guarded abandon found the row no longer this RUNNING claim.
+    mocks.failXeroSyncOperation.mockResolvedValue(null);
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).rejects.toBe(refusal);
+    expect(retryAbandonedItsClaim(refusal)).toBe(false);
+  });
+
+  it("still reports the handler's own error when the abandon write itself fails (#3462)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation());
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+    const refusal = new Error("Missing hut fees account code");
+    mocks.createXeroInvoiceForBooking.mockRejectedValue(refusal);
+    mocks.failXeroSyncOperation.mockRejectedValue(new Error("database unavailable"));
+
+    await expect(
+      retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" })
+    ).rejects.toBe(refusal);
+  });
+
+  it("does not abandon anything when the invoice handler completes (#3462)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(makeOperation());
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+    mocks.createXeroInvoiceForBooking.mockResolvedValue("inv_1");
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
   });
 
   it("reports the manual mark-paid abandon honestly instead of a false 'Retried' success (#2262 H3)", async () => {
@@ -1604,6 +1675,66 @@ describe("retryXeroSyncOperation", () => {
       createdByMemberId: "admin_1",
       repairExistingLink: true,
     });
+  });
+
+  it("MUTATION: #3791 - rebuilds a review task's share under its own task-scoped keys", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_review",
+        requestPayload: {
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          bookingId: "book_123",
+          refundAmountCents: 1000,
+          bookingModificationId: "mod_review",
+          reviewTaskId: "task_7",
+          refundMethod: "account-credit",
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: -2500,
+      changeFeeCents: 0,
+    });
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 1000, reviewTaskId: "task_7", refundMethod: "account-credit" }),
+    );
+  });
+
+  it("MUTATION: #3791 - retries a FAILED review account note on a PARKED anchor from its executed payload, never from the anchor's zero net", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_parked",
+        queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+        // The shape `createUnappliedXeroCreditNote` leaves after it ran.
+        requestPayload: {
+          creditNotes: [{ type: "ACCRECCREDIT" }],
+          refundAmountCents: 2500,
+          queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+          bookingId: "book_123",
+          paymentId: "pay_123",
+          bookingModificationId: "mod_parked",
+          reviewTaskId: "task_9",
+        },
+      })
+    );
+    // The parked edit moved no money of its own.
+    mocks.findUniqueBookingModification.mockResolvedValue({ bookingId: "book_123", priceDiffCents: 0, changeFeeCents: 0 });
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createUnappliedXeroCreditNoteForModification).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "pay_123", refundAmountCents: 2500, bookingModificationId: "mod_parked", reviewTaskId: "task_9" }),
+    );
   });
 
   it("refuses to rebuild a modification credit note when the signed net is not a reduction (#1356)", async () => {

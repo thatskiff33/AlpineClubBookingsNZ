@@ -72,12 +72,13 @@ import { prisma } from "@/lib/prisma";
  * ## IT TAKES `pg_advisory_xact_lock(1)`, AND THE CLOSURE PATH'S REASONS FOR NOT
  * TAKING ONE DO NOT TRANSFER
  *
- * `resolveManualRefundTask` holds no advisory key, and that is deliberate and
- * documented: serialising it against the Stripe webhook would mean holding the
- * global key across a provider round trip, which the bounded-exception rule in
- * `docs/CONCURRENCY_AND_LOCKING.md` forbids outright. Reopening makes NO PROVIDER
- * CALL at all, so that exception has nothing to apply to - and the two transitions
- * are not mirror images in the way that phrasing suggests.
+ * `resolveManualRefundTask` holds no advisory key ACROSS ITS PROVIDER CALL, and
+ * that is deliberate: holding the global key across a Stripe round trip is what
+ * the bounded-exception rule in `docs/CONCURRENCY_AND_LOCKING.md` forbids (since
+ * #3582 an edit review's closure takes `lock(1)` inside its transaction only,
+ * released before the call; legacy kinds take none). Reopening makes NO PROVIDER
+ * CALL at all, so that exception has nothing to apply to - and the two
+ * transitions are not mirror images in the way that phrasing suggests.
  *
  * A closure moves `OPEN -> terminal`, which only RELAXES
  * `assertNoPendingEditFinancialReview`: an edit that read the fence and proceeded

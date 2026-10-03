@@ -14,6 +14,8 @@ const CLUB_ZONE = "Pacific/Auckland";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
+  // #3792: the settle's member credit-ledger key.
+  lockMemberCreditLedger: vi.fn(),
   // #3580: the ledger's one write delegate, so a settle's charge lines are
   // observable here.
   ledgerCreateMany: vi.fn(),
@@ -64,6 +66,12 @@ vi.mock("@/lib/audit", () => ({
   createAuditLog: (...args: unknown[]) => mocks.createAuditLog(...args),
 }));
 
+// #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
+const cancellationLedger = vi.hoisted(() => ({
+  postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}),
+}));
+vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (...args: unknown[]) => mocks.transaction(...args),
@@ -97,6 +105,8 @@ vi.mock("@/lib/payment-recovery", () => ({
 vi.mock("@/lib/member-credit", () => ({
   restoreCreditFromBooking: (...args: unknown[]) =>
     mocks.restoreCreditFromBooking(...args),
+  // #3792: the settle takes the member credit-ledger key after its lodge key.
+  lockMemberCreditLedger: (...args: unknown[]) => mocks.lockMemberCreditLedger(...args),
   deriveBookingAppliedCreditCents: (...args: unknown[]) =>
     mocks.deriveBookingAppliedCreditCents(...args),
   getMemberCreditBalance: (...args: unknown[]) =>
@@ -608,6 +618,14 @@ describe("markBookingPaymentSucceeded", () => {
       globalIdx,
       "global lock(1) acquired before the per-lodge lock"
     ).toBeLessThan(lodgeIdx);
+    // #3792: then the member credit-ledger key, before the Payment upsert.
+    expect(mocks.lockMemberCreditLedger).toHaveBeenCalledTimes(1);
+    expect(mocks.executeRaw.mock.invocationCallOrder[lodgeIdx]).toBeLessThan(
+      mocks.lockMemberCreditLedger.mock.invocationCallOrder[0],
+    );
+    expect(mocks.lockMemberCreditLedger.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.paymentUpsert.mock.invocationCallOrder[0],
+    );
   });
 
   // #1764 — pay-while-held. An admin capacity hold makes the booking part of
@@ -779,7 +797,9 @@ describe("markBookingPaymentSucceeded", () => {
     });
 
     expect(result.outcome).toBe("paid");
-    // Pre-lock read selects only the lock key.
+    // Pre-lock read selects only the immutable lodge key. The owner the member
+    // credit-ledger key is taken on is NOT immutable (member merge re-points it
+    // under the lodge key), so it comes from the post-lock re-read (#3792).
     expect(mocks.bookingFindUnique).toHaveBeenNthCalledWith(1, {
       where: { id: "booking-1" },
       select: { lodgeId: true },
@@ -999,6 +1019,10 @@ describe("markBookingPaymentSucceeded", () => {
         })
       );
       expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalled();
+      // #3611: the cancel posts its ledger reversals in its own claim, keeping nothing.
+      expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: "booking-1", keptCents: 0, site: "settle:capacity-void" }),
+      );
     });
 
     it("executes the inline refund from the frozen plan under the shared capacity_claim_failed Stripe key prefix and closes the pre-persisted operation on success", async () => {

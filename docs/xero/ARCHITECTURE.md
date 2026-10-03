@@ -597,7 +597,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-config` | Resolves the operational connection **from the encrypted DB store** (#2079): client id/secret and webhook key via `IntegrationCredential`, the redirect URI from `NEXTAUTH_URL`, and the auto-generated wrapped token-encryption key. No `XERO_*` credential env vars are read; legacy vars are detected and flagged. |
 | `xero-oauth` | Consent URL, OAuth callback (`handleXeroCallback`), client construction, disconnect (revoke + clear tokens). |
 | `xero-oauth-state` | CSRF state cookie for the OAuth round-trip. |
-| `xero-token-store` | AES-encrypted token persistence (`XeroToken` row), connection status, and the **refresh lease** (`claimXeroTokenRefreshLease`) so concurrent serverless instances don't double-refresh; losers wait for the lease deadline and re-read. |
+| `xero-token-store` | Token persistence: the authoritative copy in the encrypted credential store (`xero-oauth` / `token-set`, #3454) with the `XeroToken` row written beside it for the blue-green window; connection status; and the **refresh lease** (`claimXeroTokenRefreshLease`) so concurrent instances — and an older deployed colour — don't double-refresh; losers wait for the lease deadline and re-read. |
 | `xero-api-client` | `getAuthenticatedXeroClient` (refreshes under lease), `callXeroApi` (meters every call into `XeroApiUsageDaily`/`XeroApiUsageEvent`, observes the daily budget and process-local rate-limit cool-downs), `withXeroRetry` (in-process retry for 429/5xx/408), `XeroDailyLimitError`, `XeroTransientOutageError`. |
 | `xero-api-usage` | Daily budget constant and usage recording/summary. |
 | `xero-api-errors`, `xero-error-shape` | Error classification helpers (status code, body message, headers). |
@@ -711,9 +711,9 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
   module is off. `credit-sync` (#2501) additionally self-throttles: a completed
   pass suppresses further Xero reads for ~20h, so bundling it into a frequent
   `all` cannot burn the daily Xero quota.
-- ~38 admin routes under `/api/admin/xero/**` and `/api/admin/members/[id]/xero-*`
+- The admin routes under `/api/admin/xero/**` and `/api/admin/members/[id]/xero-*`
   — OAuth connect/callback/disconnect, status/health/usage, operations list +
-  retry/requeue/resolve/mark-non-replayable/reset-stale-running, inbound-events
+  retry/requeue/resolve/mark-non-replayable/mark-failed/reset-stale-running, inbound-events
   list + replay, contact tooling (search/import/sync/duplicates/mismatches),
   mappings, record activity.
 
@@ -721,7 +721,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 
 | Table | Role |
 | --- | --- |
-| `XeroToken` | Single-row encrypted OAuth token set + `refreshInProgressUntil` lease. |
+| `XeroToken` | Single-row encrypted OAuth token set + `refreshInProgressUntil` lease. Since #3454 a **mirror** of the credential-store copy, kept for the blue-green window, and still the connection row and the lease row (see "OAuth and token lifecycle"). |
 | `XeroSyncOperation` | The ledger. `direction` INBOUND/OUTBOUND, `entityType`, `operationType`, optional `localModel`/`localId`, `idempotencyKey`, `correlationKey`, `replayable`, error fields, redacted request/response payloads, resulting Xero object identity, manual-resolution override fields, and `queueType` (a denormalized, indexed copy of `requestPayload.queueType` set at enqueue — canonical value still lives in the payload; #1271). **Status machine:** `PENDING → RUNNING → SUCCEEDED | FAILED`, plus `WAITING_PAYMENT → PENDING` for supplementary invoices held until their Stripe payment settles. Claims are optimistic `updateMany` transitions, so concurrent workers cannot double-run a row. |
 | `XeroObjectLink` | Local record ⇄ Xero object links with a `role` (e.g. `PRIMARY_INVOICE`, `REFUND_CREDIT_NOTE`, `CONTACT`, `ENTRANCE_FEE_INVOICE`) and `active` flag; unique on (local, xero, role). Canonical single-active scopes are enforced on upsert. |
 | `XeroInboundEvent` | Stored webhook/admin events. **Status machine:** `RECEIVED → PROCESSING → PROCESSED | FAILED` (FAILED retried after a backoff; stale PROCESSING is operator-replayable). Unique `correlationKey` makes webhook delivery idempotent. |
@@ -783,6 +783,40 @@ deallocation, membership-cancellation credit note, membership-cancellation
 contact update, group-settlement invoice, group-settlement invoice void,
 membership subscription invoice, and kept late-capture invoice (#3635).
 
+**An applied-credit deallocation has one producer**: `giveBackAppliedCredit`
+(`member-credit.ts`), the give-back of applied credit that the pre-payment
+clamp and a credit-paid booking's financial-review share both go through
+(#3791, `INV-PAY-113`). Where an internet-banking booking's credit is allocated
+against its invoice beyond the new applied figure, it queues the deallocation in
+the same transaction as the ledger row, and the PENDING row fences the inbound
+applied-credit repair until it converges, so an inbound sync cannot pull the
+given-back credit back up to Xero's figure. It never deallocates on a CANCELLED
+booking, whose invoice must not reopen. A review share then reaches Xero the way
+an ordinary price reduction does (`dispatchEditReviewAccountCreditXero`), held
+to three invariants for an issued invoice: the invoice less its reduction notes
+is the booking's price, Xero's due is the app's owed, and the member's Xero
+credit (counting noteless rows minted when spent, #2717) is the app's. So an
+invoice-allocated modification credit note takes off the whole reduction
+(`reviewInvoiceReductionCents`: the re-price's drop on an unpaid booking, the
+agreed share on a covered one), the unallocated account note is raised only for
+minted credit, and on a cancelled booking nothing but that minted note is sent:
+given-back credit there is a noteless row, as the cancellation's own restore is.
+Each note's correlation and Xero idempotency keys carry the review task
+(`reviewTaskKeyParts`), so sibling reviews of one edit raise a note each, and a
+review's allocated note waits, returned to PENDING with the reason kept in
+`lastErrorMessage`, while the payment's deallocation is PENDING or RUNNING. A
+FAILED or PARTIAL deallocation only moves on an operator retry, so the note
+fails instead, naming it: retry the deallocation, then the note.
+
+**Deploy note (blue/green, #3791).** A review's note carries `reviewTaskId` in
+its outbox payload, which the previous release ignores: it would raise the note
+under the anchor's unscoped keys and without waiting for the deallocation.
+Before the old colour's workers stop, drain or pause the outbox's modification
+credit-note rows written by the new release (or stop the old workers before the
+new release completes its first financial review). The outbox claim filters on
+known queue types only, so the alternative is a queue type of its own for review
+notes; that was not added.
+
 **Retry taxonomy** (each layer is distinct — do not conflate when changing):
 
 1. **Transport** — `withXeroRetry` retries 429/5xx/408 in-process with backoff;
@@ -801,6 +835,47 @@ membership subscription invoice, and kept late-capture invoice (#3635).
    work that never reached Xero. Otherwise the first failing operation of a
    batch armed the breaker and condemned operations 2..N of that same batch,
    un-attempted, to wait for an admin's Requeue.
+
+   **A retry that claims the original must give it back (#3462).** A retry
+   branch that has to stay visible to the settle-time fences while it runs
+   (the booking invoice, #2262 H3) claims the original row FAILED/PARTIAL →
+   RUNNING through `runWithClaimedOriginal`, the one place that claims and
+   abandons. From then on the handler owns completion. If it throws before it
+   records an outcome — a contact refusal, a missing account mapping — the
+   claim is abandoned: `failXeroSyncOperation(..., { onlyIfRunningSince })`
+   returns the row to FAILED with the run's error, guarded on the claim itself
+   (still RUNNING, still this run's `startedAt`), so a row the handler already
+   completed is never overwritten. Before this, such a throw left the original
+   RUNNING for ever, where neither Retry nor Requeue applies. The REQUEUE row's
+   own failure names the original and reads its status after the attempt. It
+   says "back to FAILED" only when this retry claimed the original and the
+   abandon really wrote (`retryAbandonedItsClaim`); a branch that never claimed
+   it gets "is FAILED; fix the cause, then requeue it". A REQUEUE row is never
+   replayable itself, because replaying a replay compounds the state.
+
+   **Stuck RUNNING rows.** A row RUNNING longer than
+   `STALE_RUNNING_XERO_OPERATION_MINUTES` (15) is stale (`xero-stale-operations.ts`).
+   `isStaleRunningXeroOperation` takes the row and checks RUNNING itself,
+   because completing a row never clears its `startedAt`; the list route, the
+   booking page, the resolve refusal and Mark failed all read it.
+   The operations list flags it (`staleRunning`) and the panel offers a per-row
+   **Mark failed** (`POST /api/admin/xero/operations/[id]/mark-failed`,
+   finance:edit, reason required, audited `xero.operation.marked_failed` in
+   category `xero`). The gate is plain staleness, not "stale and carrying an
+   earlier error": a row whose worker died on its first attempt is stuck the
+   same way and needs the same remedy. The write is
+   `markStaleRunningXeroOperationFailed`, guarded on the claim it read, and it
+   keeps any earlier error in the new message. When that error is itself an
+   earlier stale reset, only the cause inside it is carried, so repeated cycles
+   never nest the prefix. It and the bulk **Reset stale running** share one
+   write, `writeStaleRunningXeroOperationReset`, which stamps
+   `ORPHANED_STALE_RUNNING` and leaves the response payload and Xero object
+   identity alone. Mark failed, the bulk reset and mark non-replayable each
+   write their audit row inside the state change's transaction, so a failed
+   audit rolls the change back instead of leaving an unattributed override.
+   (Resolve cannot: its fence needs the mark committed and visible to the drain
+   before it checks for an overlapping retry.) Once FAILED, the ordinary
+   Retry / Requeue applies.
 4. **Inbound event retry** — FAILED `XeroInboundEvent` rows are re-swept after
    `XERO_INBOUND_FAILED_RETRY_BACKOFF_MS`; stale PROCESSING rows are
    operator-replayable.
@@ -830,7 +905,14 @@ cash NOT already minted for the other (a defensive invariant — no app flow
 produces that shape; the remaining-cash read-back happens inside each payment's
 reconcile transaction under the shared advisory lock, so it stays idempotent
 under retry, and a capped mint raises the same loud alert, never a silent
-overmint).
+overmint). The late-capacity-failure cancel also restores the booking's applied
+account credit in full, under the per-member credit-ledger lock and only once
+no applied-credit deallocation is unconverged (#3792). The inbound credit-note
+sync then leaves that booking's member ledger alone: a later de-allocation or
+raise in Xero on a booking with a restore row writes nothing, raises
+`applied-credit-restored-booking-allocation-change` through
+`notifyXeroSyncError`, and records a critical `xero` audit row, which survives
+that alert's one-an-hour throttle (`INV-PAY-019`).
 
 ```mermaid
 sequenceDiagram
@@ -1383,17 +1465,71 @@ was true when the money was invoiced.
 1. Admin hits `/api/admin/xero/connect` → consent URL with a signed state
    cookie (`xero-oauth-state`).
 2. Xero redirects to `/api/admin/xero/callback` → `handleXeroCallback`
-   validates state, exchanges the code, and `saveXeroTokens` encrypts
-   access/refresh tokens with the auto-generated, HKDF-wrapped token key from the
-   encrypted credential store (#2079) into the single `XeroToken` row (tenant id
-   included).
+   validates state, exchanges the code, and `saveXeroTokens` stores the token
+   set, recorded as the connecting administrator's act (#3454).
 3. Every worker call goes through `getAuthenticatedXeroClient`: if the access
    token is near expiry it claims the refresh lease
    (`refreshInProgressUntil`); the winner refreshes and persists, losers wait
-   out the lease and re-read. This keeps serverless concurrency from burning
-   refresh tokens.
-4. `/api/admin/xero/disconnect` revokes and deletes tokens; workers then
-   short-circuit via `isXeroConnected()` (cron records SKIPPED).
+   out the lease and re-read. This keeps concurrency from burning refresh
+   tokens. A refresh is recorded as the named `xero-token-refresh` job.
+4. `/api/admin/xero/disconnect` revokes and deletes tokens, recorded as the
+   administrator's act; workers then short-circuit via `isXeroConnected()` (cron
+   records SKIPPED). Saving a Xero client id or secret deletes the tokens too
+   (the verify-reset), in the **same transaction** as the credential write.
+
+### Where the tokens are stored (#3454)
+
+**The authoritative copy** is one row of the encrypted integration-credential
+store, provider `xero-oauth`, key `token-set`: a JSON token set encrypted under
+the store's own key derivation. Every write therefore names its actor, commits
+its `integration.credential.*` audit row in the same transaction, and declares
+what it expected to find (`INV-PRIV-020`).
+
+**The `XeroToken` row is still written, in the same transaction, in the format
+older code reads.** A blue-green deploy runs the previous colour beside the new
+one for a while, and the previous colour reads and refreshes only that row.
+Xero refresh tokens rotate — each is spendable once — so a copy the old code
+could not see would split the connection and strand one side on a spent token.
+Three rules keep it whole:
+
+- **Both copies or neither.** Connect, refresh, disconnect and verify-reset
+  each write both copies in one transaction.
+- **One lease.** The refresh lease stays on `XeroToken.refreshInProgressUntil`,
+  the one the previous colour claims, so at most one process of either colour
+  spends a given refresh token. A refresh's save is fenced twice: the lease
+  guard on the `XeroToken` update, and a compare-and-set on the store copy's
+  version. The claim takes the lease FIRST and reads both copies after, under
+  that row's lock, so the version is the one that belongs to the tokens it hands
+  over. Either fence failing rolls both copies back. Before calling Xero, the
+  refresh checks that its save can succeed (the auth-secret gate and the token
+  key) and refuses without spending the token if not.
+- **A fingerprint, not a clock, decides which copy is current.** The store copy
+  records a hash of the `XeroToken` ciphertext written beside it. A row that no
+  longer matches was rewritten by code that writes only that row — the previous
+  colour — and is the newer copy, so it is read instead; the next write here
+  re-converges them. `updatedAt` was rejected: each container stamps it from its
+  own clock. A lease claim changes only `refreshInProgressUntil`, so it does not
+  move the fingerprint. A read takes the store row FIRST: every writer rewrites
+  or deletes the `XeroToken` row, so a write landing between the two reads
+  always leaves the second read the newer one.
+
+While both colours can run, the `XeroToken` row is also the **connection row**:
+no row means not connected. The table has no singleton constraint, so two
+simultaneous first connects can leave two rows; every reader that does not
+hold a row's lock takes the most recently written one (`XERO_TOKEN_ROW_ORDER`),
+and a won refresh claim reads the row it locked by id. If the auth secret no
+longer passes the capture gate, the refresh refuses before spending the token,
+alerts as "Token Store Unavailable", and the status page reports Xero as not
+connected rather than "Connected". `isXeroConnected` and the readers that need only the
+tenant id or expiry read it, and every write keeps those columns exact.
+
+**The token copy is never served from the credential store's cache.** That
+cache holds a provider's rows for up to 45 seconds; a refresh token another
+container rotated a moment ago would be dead in it. The token store reads the
+row through the database on its own (or the lease transaction's) client.
+
+Retiring `XeroToken` — moving the lease and the connection row to a home with no
+secret in it, then dropping the secret columns — is a separate, later change.
 
 ## Guided setup wizard (#2080)
 

@@ -13,6 +13,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { XERO_TOKEN_ROW_ORDER } from "@/lib/xero-token-row-order";
 
 import {
   DEFAULT_FINANCIAL_YEAR_END_MONTH,
@@ -116,6 +117,7 @@ export async function getStoredFinancialYearResolution(
   const connectedTenant = await db.xeroToken.findFirst({
     where: { tenantId: { not: null } },
     select: { id: true },
+    orderBy: XERO_TOKEN_ROW_ORDER,
   });
   return connectedTenant
     ? { ok: false, reason: "connected_xero_month_not_stored" }

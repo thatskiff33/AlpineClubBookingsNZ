@@ -23,6 +23,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -38,7 +39,7 @@ import { useClubTime } from "@/components/club-time-provider";
 import { formatStayDate } from "@/lib/club-time";
 import { countNightsDateOnly } from "@/lib/date-only";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { ResolvePendingSchoolAdults } from "@/components/admin/booking-requests/resolve-pending-school-adults";
 import {
@@ -907,7 +908,7 @@ export function PublicBookingRequestsPanel({
   }
 
   // #2685: the canonical exact parser. `null` already reaches the officer as a
-  // thrown "Enter a valid …" message below, and now covers a malformed suffix or
+  // thrown format-specific message below, and now covers a malformed suffix or
   // a third decimal place rather than silently keeping the leading digits.
   function dollarsToCents(raw: string) {
     return parseDecimalDollarsToCents(raw);
@@ -927,7 +928,7 @@ export function PublicBookingRequestsPanel({
         if (pricingMode === "OVERALL_TOTAL") {
           const totalCents = dollarsToCents(optionTotalInputValue(request, optionId));
           if (totalCents == null) {
-            throw new Error(`Enter a valid ${optionLabel(optionId).toLowerCase()} total`);
+            throw new Error(`Enter ${optionLabel(optionId).toLowerCase()} total in dollars and cents, up to 2 decimal places`);
           }
           return {
             id: optionId,
@@ -945,7 +946,7 @@ export function PublicBookingRequestsPanel({
           );
           if (rateCents == null) {
             throw new Error(
-              `Enter a valid ${optionLabel(optionId).toLowerCase()} ${combo.ageTier} ${combo.isMember ? "member" : "non-member"} rate`
+              `Enter ${optionLabel(optionId).toLowerCase()} ${combo.ageTier} ${combo.isMember ? "member" : "non-member"} rate in dollars and cents, up to 2 decimal places`
             );
           }
           return { ...combo, rateCents };
@@ -2089,17 +2090,16 @@ export function PublicBookingRequestsPanel({
                                     <Label htmlFor={`price-${request.id}-${optionId}`}>
                                       Total ({currencyCode})
                                     </Label>
-                                    <Input
+                                    <MoneyInput
                                       id={`price-${request.id}-${optionId}`}
-                                      {...MONEY_INPUT_PROPS}
                                       className="w-32"
                                       disabled={actionsBlocked}
                                       value={optionTotalInputValue(request, optionId)}
-                                      onChange={(event) =>
+                                      onValueChange={(value) =>
                                         setPriceInputs((prev) => ({
                                           ...prev,
                                           [priceInputKey(request.id, optionId)]:
-                                            event.target.value,
+                                            value,
                                         }))
                                       }
                                     />
@@ -2130,19 +2130,18 @@ export function PublicBookingRequestsPanel({
                                           {combo.ageTier}{" "}
                                           {combo.isMember ? "member" : "non-member"}
                                         </Label>
-                                        <Input
+                                        <MoneyInput
                                           id={key}
-                                          {...MONEY_INPUT_PROPS}
                                           className="w-32"
                                           disabled={actionsBlocked}
                                           value={
                                             rateInputs[key] ??
                                             suggestedRateDollars(request, combo)
                                           }
-                                          onChange={(event) =>
+                                          onValueChange={(value) =>
                                             setRateInputs((prev) => ({
                                               ...prev,
-                                              [key]: event.target.value,
+                                              [key]: value,
                                             }))
                                           }
                                         />

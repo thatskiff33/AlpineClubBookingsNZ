@@ -476,6 +476,12 @@ const TRANSACTION_OPENERS = [
   "withOptionalTransaction(",
   "withBoundedReadOnlyTransaction(",
   "withStoreTransaction(",
+  // #3462: Mark failed runs its caller's audit callback inside its transaction.
+  "markStaleRunningXeroOperationFailed(",
+  // #3454: the credential store's composition point, and the Xero verify-reset
+  // that composes a credential write with the token destruction it causes.
+  "withCredentialTransaction(",
+  "withXeroVerifyReset(",
 ] as const;
 
 /**

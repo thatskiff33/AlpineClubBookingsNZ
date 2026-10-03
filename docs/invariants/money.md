@@ -68,8 +68,8 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   grammar, and **that `null` must reach the person as a validation error**: no
   caller may substitute a zero, a `null` payload field, or a previous value
   silently. A money box is therefore spelled `type="text"` with
-  `inputMode="decimal"` — `MONEY_INPUT_PROPS` from the same module (owner
-  decision 14 Aug 2026): a `type="number"` control's value-sanitization strips
+  `inputMode="decimal"` via shared `MoneyInput` (owner decision 13 Sep 2026):
+  a `type="number"` control's value-sanitization strips
   anything that is not a floating-point number to `""` before any handler runs,
   so the parser never saw `"50abc"`, `"$45.00"` or `"1,000.00"` and the box read
   as deliberately cleared. An amount an accounting provider has ALREADY parsed into a number —
@@ -540,6 +540,19 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   card payment, whose refund posts from its refund row.
   `booking-ledger-credit-sync.realdb.test.ts` proves the `member-credit.ts`
   writers and the real resolver.
+
+## INV-MONEY-036
+
+- **An edit posts its own lines, per guest-night, or none; a review closure
+  records one parked edit's money once** (#3582). Rule and reason: design
+  `booking-ledger.md` §5.1 (edits: reversal plus re-post per night, sum or
+  nothing, only on a booking confirmed on the ledger, asked under `lock(1)`;
+  a parked edit posts nothing, `INV-MOD-040`) and §5.3 (a closure's share,
+  decided at booking grain). No review share posts a settlement line
+  (`INV-MONEY-034`, `INV-MONEY-035`). Pins:
+  `booking-ledger-modification-posting.test.ts`,
+  `booking-ledger-modification-sync.test.ts` (two-sibling fixtures per
+  direction), `booking-ledger-modification.realdb.test.ts`.
 
 ## INV-MONEY-006
 

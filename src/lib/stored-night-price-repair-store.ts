@@ -1,9 +1,10 @@
 import "server-only";
-import { Prisma, type BookingGuestNightPriceSource } from "@prisma/client";
+import { Prisma, type BookingGuestNightPriceSource, type ManualRefundTaskDirection } from "@prisma/client";
 
 import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
+import { postReviewClosureLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { editReviewSettlementIssuesXeroDocument } from "@/lib/edit-financial-review-xero-leg";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -26,6 +27,7 @@ import {
   rebaseDivergesFromIssuedInvoice,
   rebaseChangedTheBooking,
   recordBookingPriceRebaseHistory,
+  type BookingPriceRebase,
 } from "@/lib/booking-review-price-rebase";
 
 /**
@@ -73,10 +75,11 @@ import {
  * for the same reason. `applyStoredNightPriceRepair` runs AFTER the claim, on
  * that same transaction, so a lost claim writes no prices.
  *
- * NO ADVISORY LOCK IS TAKEN, matching the completion path this rides on, which
- * `docs/CONCURRENCY_AND_LOCKING.md` records as deliberately holding none. The
- * single-flight guarantee is the task's own status claim; the fences above are
- * what make a concurrent booking edit a loud refusal instead of a lost update.
+ * NO ADVISORY LOCK IS TAKEN HERE. The single-flight guarantee is the task's own
+ * status claim; the fences above are what make a concurrent booking edit a loud
+ * refusal instead of a lost update. Since #3582 the completion this rides on
+ * holds `pg_advisory_xact_lock(1)` from before its claim, because the closure
+ * posts booking-ledger lines (`docs/CONCURRENCY_AND_LOCKING.md`).
  */
 
 /**
@@ -121,6 +124,8 @@ export async function recordReviewClosurePricing({
   hasIssuedXeroInvoice,
   settlementRoute,
   settlementAmountCents,
+  settlementDirection,
+  settleAgainstRebase,
   store,
   format,
 }: {
@@ -131,7 +136,7 @@ export async function recordReviewClosurePricing({
    */
   plans: readonly StoredNightPriceRepairPlan[];
   /** The booking OWNER is null when it is owned by an Organisation (#3369). */
-  task: { id: string; bookingId: string; booking: { memberId: string | null } };
+  task: { id: string; bookingId: string; booking: { memberId: string | null; lodgeId: string } };
   actingMemberId: string;
   resolution: "completed" | "dismissed";
   note: string | null;
@@ -157,6 +162,25 @@ export async function recordReviewClosurePricing({
   settlementRoute: Pick<EditReviewSettlementRoute, "bookingModificationId"> | null;
   /** This task's own settled share, or null where nothing was settled. */
   settlementAmountCents: number | null;
+  /** #3582: which way that share went, or null where nothing was settled. */
+  settlementDirection: ManualRefundTaskDirection | null;
+  /**
+   * #3791: a settlement whose figure depends on this re-price - the
+   * account-credit route, which gives back applied credit only up to what the
+   * booking's re-prices removed on an unpaid booking. Run straight after the
+   * re-base and before anything reads the settled amount, and it answers what
+   * the member was actually credited - the ledger stand-in posts that, none at
+   * zero - and what its Xero note takes off the invoice, which the
+   * invoice-divergence check compares with the re-price. Null on every other
+   * closure.
+   */
+  settleAgainstRebase:
+    | ((rebase: BookingPriceRebase | null) => Promise<{
+        creditedCents: number;
+        invoiceReductionCents: number | null;
+        agreedGiveBackCents: number | null;
+      }>)
+    | null;
   store: Prisma.TransactionClient;
   /** The club's format (#3565), resolved by the caller before any transaction. */
   format: ClubFormat;
@@ -193,16 +217,26 @@ export async function recordReviewClosurePricing({
     store,
   });
   const rebase = outcome.rebased ? outcome.rebase : null;
-  const xeroInvoiceDiverged =
-    rebase !== null &&
-    rebaseDivergesFromIssuedInvoice({
-      rebase,
-      hasIssuedXeroInvoice,
-      settlementIssuesXeroDocument: editReviewSettlementIssuesXeroDocument({
+  const settled = settleAgainstRebase ? await settleAgainstRebase(rebase) : null;
+  const creditedCents = settled?.creditedCents ?? null;
+  const xeroInvoiceDiverged = rebaseDivergesFromIssuedInvoice({
+    rebase,
+    hasIssuedXeroInvoice,
+    // A captured payment's account-credit share (null) is judged by the
+    // document rule every other route is (#3791 F1).
+    settlement: {
+      invoiceReductionCents: settled?.invoiceReductionCents ?? null,
+      issuesXeroDocument: editReviewSettlementIssuesXeroDocument({
         route: settlementRoute,
         xeroAmountCents: settlementAmountCents,
       }),
-    });
+    },
+  });
+  // #3791: the share as it was actually settled - an account-credit share
+  // netted against a cancellation's restore can credit less than was typed, or
+  // nothing, and the ledger's stand-in has to say the same.
+  const settledAmountCents = creditedCents ?? settlementAmountCents;
+  let rebaseHistoryId: string | null = null;
   if (rebase !== null && rebaseChangedTheBooking(rebase)) {
     // D1's second consequence: a member can now be refunded less than they paid
     // from an action they never saw, so the reason goes in the BOOKING'S OWN
@@ -213,7 +247,7 @@ export async function recordReviewClosurePricing({
     // row would be noise. A promotion REMOVED with the four columns unmoved IS a
     // change, and this row carries the only sentence saying so. The audit entry
     // below records the closure either way.
-    await recordBookingPriceRebaseHistory({
+    ({ id: rebaseHistoryId } = await recordBookingPriceRebaseHistory({
       bookingId: task.bookingId,
       actingMemberId,
       taskId: task.id,
@@ -222,8 +256,27 @@ export async function recordReviewClosurePricing({
       moneyBuildUpSelection: outcome.moneyBuildUpSelection,
       xeroInvoiceDiverged,
       store,
-    });
+    }));
   }
+  // #3582: the closure on the booking ledger — the re-price's lines under that
+  // history row, and a share only as a stand-in the charges do not carry,
+  // decided at booking grain: design `booking-ledger.md` §5.3.
+  // Under the `lock(1)` the completion took before its claim.
+  await postReviewClosureLedgerLines({
+    store,
+    bookingId: task.bookingId,
+    lodgeId: task.booking.lodgeId,
+    manualRefundTaskId: task.id,
+    rebase,
+    rebaseHistoryId,
+    settlement:
+      resolution === "completed" && settledAmountCents !== null && settledAmountCents > 0 && settlementDirection !== null
+        ? { direction: settlementDirection, amountCents: settledAmountCents }
+        : null,
+    note,
+    officerMemberId: actingMemberId,
+    agreedGiveBackCents: settled?.agreedGiveBackCents ?? null,
+  });
   await createAuditLog(
     {
       // #3257: two actions from one write site, because the two closures are

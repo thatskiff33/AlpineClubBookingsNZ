@@ -13,7 +13,7 @@ import {
   type ConflictingRetry,
 } from "@/lib/xero-operation-resolve-guards";
 
-function retryRunning(retry: { startedAt: Date | null } | null) {
+function retryRunning(retry: { status: string; startedAt: Date | null } | null) {
   return NextResponse.json({ error: retryRunningRefusal(retry) }, { status: 409 });
 }
 

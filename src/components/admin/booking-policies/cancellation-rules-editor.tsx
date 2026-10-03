@@ -3,8 +3,9 @@
 import { useEffect, useId, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { MoneyInput } from "@/components/ui/money-input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input"
+import { parseDecimalDollarsToCents } from "@/lib/money-input"
 import { formatCentsPlain } from "@/lib/utils"
 import type { PolicyRule } from "./types"
 
@@ -220,10 +221,9 @@ export function CancellationRulesEditor({
               <TableCell>
                 <div className="flex items-center space-x-2">
                   <span className="text-sm text-muted-foreground">$</span>
-                  <Input
-                    {...MONEY_INPUT_PROPS}
+                  <MoneyInput
                     value={feeValue(index, "fixedFeeCents")}
-                    onChange={(e) => handleFeeChange(index, "fixedFeeCents", e.target.value)}
+                    onValueChange={(value) => handleFeeChange(index, "fixedFeeCents", value)}
                     aria-invalid={feeErrors[feeKey(index, "fixedFeeCents")] ? true : undefined}
                     aria-describedby={
                       feeErrors[feeKey(index, "fixedFeeCents")]
@@ -247,11 +247,10 @@ export function CancellationRulesEditor({
               <TableCell>
                 <div className="flex items-center space-x-2">
                   <span className="text-sm text-muted-foreground">$</span>
-                  <Input
-                    {...MONEY_INPUT_PROPS}
+                  <MoneyInput
                     value={feeValue(index, "creditFixedFeeCents")}
-                    onChange={(e) =>
-                      handleFeeChange(index, "creditFixedFeeCents", e.target.value)
+                    onValueChange={(value) =>
+                      handleFeeChange(index, "creditFixedFeeCents", value)
                     }
                     aria-invalid={
                       feeErrors[feeKey(index, "creditFixedFeeCents")] ? true : undefined
