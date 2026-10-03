@@ -190,7 +190,7 @@ describe("capacity queries count admin-held bookings (issue #1764)", () => {
 
   it("checkCapacityForGuestRanges counts admin-held PAYMENT_PENDING holds", async () => {
     await checkCapacityForGuestRanges("lodge-1", checkIn, checkOut, [
-      { stayStart: checkIn, stayEnd: checkOut },
+      { memberId: null, stayStart: checkIn, stayEnd: checkOut },
     ]);
     expectsAdminHeldPaymentPendingHold(whereOf());
   });
@@ -219,7 +219,7 @@ describe("capacity queries count admin-held bookings (issue #1764)", () => {
       "lodge-1",
       checkIn,
       checkOut,
-      [{ stayStart: checkIn, stayEnd: checkOut }],
+      [{ memberId: null, stayStart: checkIn, stayEnd: checkOut }],
     );
 
     expect(result.available).toBe(false);

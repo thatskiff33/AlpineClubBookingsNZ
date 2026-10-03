@@ -145,18 +145,22 @@ describe("custodian bed holds reduce bookable capacity", () => {
       {
         stayStart: parseDateOnly("2026-07-02"),
         stayEnd: parseDateOnly("2026-07-04"),
+        memberId: null,
       },
       {
         stayStart: parseDateOnly("2026-07-02"),
         stayEnd: parseDateOnly("2026-07-04"),
+        memberId: null,
       },
       {
         stayStart: parseDateOnly("2026-07-02"),
         stayEnd: parseDateOnly("2026-07-04"),
+        memberId: null,
       },
       {
         stayStart: parseDateOnly("2026-07-02"),
         stayEnd: parseDateOnly("2026-07-04"),
+        memberId: null,
       },
     ];
 

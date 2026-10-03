@@ -85,6 +85,7 @@ function bed(overrides: Partial<{ active: boolean; roomActive: boolean; lodgeId:
 function validate(overrides: Record<string, unknown> = {}) {
   return validateCustodianBedHold({
     bedId: "bed-1",
+    memberId: "member-1",
     lodgeId: LODGE,
     startDate: parseDateOnly("2026-07-02"),
     endDate: parseDateOnly("2026-07-04"),
@@ -393,6 +394,7 @@ describe("findWholeLodgeHoldAmendments (#2698)", () => {
   function findAmendments(overrides: Record<string, unknown> = {}) {
     return findWholeLodgeHoldAmendments({
       bedId: "bed-1",
+      memberId: "member-1",
       lodgeId: LODGE,
       startDate: parseDateOnly("2026-07-02"),
       endDate: parseDateOnly("2026-07-04"),
@@ -577,6 +579,7 @@ describe("a ticked custodian with no bed (#3817)", () => {
     await expect(
       findWholeLodgeHoldAmendments({
         bedId: null,
+        memberId: "member-1",
         lodgeId: LODGE,
         startDate: parseDateOnly("2026-07-02"),
         endDate: parseDateOnly("2026-07-04"),
@@ -612,6 +615,7 @@ describe("a ticked custodian with no bed (#3817)", () => {
       findWholeLodgeHoldAmendments({
         bedId: "bed-1",
         assignmentId: "assignment-1",
+        memberId: "member-1",
         lodgeId: LODGE,
         startDate: parseDateOnly("2026-07-02"),
         endDate: parseDateOnly("2026-07-04"),

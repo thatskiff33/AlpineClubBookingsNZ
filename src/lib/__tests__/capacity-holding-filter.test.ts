@@ -162,7 +162,7 @@ describe("capacity queries apply capacityHoldingBookingFilter (issue #1254)", ()
 
   it("checkCapacityForGuestRanges counts request-converted PENDING holds", async () => {
     await checkCapacityForGuestRanges("lodge-1", checkIn, checkOut, [
-      { stayStart: checkIn, stayEnd: checkOut },
+      { memberId: null, stayStart: checkIn, stayEnd: checkOut },
     ]);
     expectsRequestConvertedPendingHold(whereOf());
   });

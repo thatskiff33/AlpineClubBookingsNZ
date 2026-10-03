@@ -129,6 +129,7 @@ function nightGuests(count: number) {
   return Array.from({ length: count }, () => ({
     stayStart: CHECK_IN,
     stayEnd: CHECK_OUT,
+    memberId: null,
   }));
 }
 
@@ -289,7 +290,7 @@ describe("checkCapacityForPartnerSharedAdmission", () => {
       LODGE,
       CHECK_IN,
       CHECK_OUT,
-      [{ stayStart: CHECK_IN, stayEnd: CHECK_OUT }],
+      [{ memberId: null, stayStart: CHECK_IN, stayEnd: CHECK_OUT }],
       [],
       undefined,
       db,
@@ -716,7 +717,7 @@ describe("#2307 partner-shared admission freeze: a PENDING guest still occupies 
       // One ordinary (non-sharing) guest alongside the sharer: with the pending
       // guest counted the lodge is over its base ceiling and the ordinary guest
       // cannot be seated, which is the honest answer.
-      [{ stayStart: CHECK_IN, stayEnd: CHECK_OUT }],
+      [{ memberId: null, stayStart: CHECK_IN, stayEnd: CHECK_OUT }],
       [sharerFullStay],
       undefined,
       db,

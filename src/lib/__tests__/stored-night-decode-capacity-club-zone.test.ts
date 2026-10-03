@@ -65,6 +65,7 @@ vi.mock("@/lib/prisma", () => ({
 import { AgeTier } from "@prisma/client";
 import {
   checkCapacityForGuestRanges,
+  type CapacityProposedGuest,
   type NightAvailability,
 } from "@/lib/capacity";
 import {
@@ -105,8 +106,11 @@ function beds(nights: NightAvailability[]): number[] {
   return nights.map((night) => night.occupiedBeds);
 }
 
-function proposal(nights: GuestStayRange["nights"]): GuestStayRange[] {
-  return [{ nights }, { nights }];
+function proposal(nights: GuestStayRange["nights"]): CapacityProposedGuest[] {
+  return [
+    { nights, memberId: null },
+    { nights, memberId: null },
+  ];
 }
 
 /** The `yyyy-mm-dd` day a returned bound or night carries, read in UTC. */
@@ -232,8 +236,8 @@ describe("#3107 the capacity admission check counts the proposal's beds", () => 
       PROPOSAL_CHECK_IN,
       PROPOSAL_CHECK_OUT,
       [
-        { stayStart: day("2026-07-04"), stayEnd: day("2026-07-07") },
-        { stayStart: day("2026-07-04"), stayEnd: day("2026-07-07") },
+        { memberId: null, stayStart: day("2026-07-04"), stayEnd: day("2026-07-07") },
+        { memberId: null, stayStart: day("2026-07-04"), stayEnd: day("2026-07-07") },
       ],
     );
     expect(beds(envelope.nightDetails)).toEqual([2, 2, 2]);
