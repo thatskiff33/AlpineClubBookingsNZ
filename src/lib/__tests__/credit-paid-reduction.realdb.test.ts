@@ -427,6 +427,21 @@ let observerClient: PrismaClient;
       expect(10_000 + 5_000 + creditBackCents).toBe(15_000 + allCardCancel);
     });
 
+    it("F2, owner decision of 4 Oct 2026: the same booking reduced BEFORE this release (card refunded whole, no credit given back) keeps main's full restore at 50% less $20 - never short", async () => {
+      await creditPaidBooking("card-and-credit", FIFTY_LESS_TWENTY);
+      // The pre-release shape: $150 off, the card refunded whole, nothing given back, no history row.
+      await prisma.booking.update({ where: { id: BOOKING_ID }, data: { totalPriceCents: 5_000, finalPriceCents: 5_000 } });
+      await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: 10_000, status: "REFUNDED" } });
+      const { refundedPaymentCreditRestore } = await import("@/lib/cancel-refunded-payment-credit");
+      const booking = await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
+      expect(await refundedPaymentCreditRestore(prisma, { bookingId: BOOKING_ID, booking: { ...booking, payment: booking.payment! }, todayAtClub: "2026-07-01" as never })).toBeNull();
+
+      await cancelAt(FIFTY_LESS_TWENTY);
+
+      // Main's figure: all $100 still applied comes back ($200 in all), not the tiered $30 ($130, short of all-card's $155).
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(10_000);
+    });
+
     it("FORCES the lock order: the removal queues on the member's credit-ledger key holding NO lock on the Payment row, and completes once the key is released", async () => {
       await creditPaidBooking("ib-allocated", TIERS[0]!.rule);
       const release = deferred();

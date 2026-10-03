@@ -26,12 +26,13 @@
   at 100% and $80 at 50% with a $20 fee for a $200 credit-paid booking reduced
   to $150 - so nobody is left short; no existing data changes.
 - **Credit on a booking whose card was refunded in full is now tiered on
-  cancellation** (#3809). When a reduction refunded the whole card payment, a
-  later cancellation restored the remaining account credit in full whatever the
-  policy said. It is now tiered like any paid booking's: $100 by card and $100
-  by credit on a $200 booking, $150 removed at 100%, then cancelled at 0%, the
-  member gets $150 in all, as an all-card booking would (was $200). A booking
-  that never took any money still gets its credit back in full.
+  cancellation, for reductions from this release on** (#3809). When a reduction
+  refunded the whole card payment, a later cancellation restored the remaining
+  account credit in full whatever the policy said. It is now tiered like any
+  paid booking's: $100 by card and $100 by credit on a $200 booking, $150
+  removed at 100%, then cancelled at 0%, the member gets $150 in all, as an
+  all-card booking would (was $200). A booking reduced before this release, or
+  one that never took any money, still gets its credit back in full.
 - **Xero hears of every guest removal, including a member guest's declined or
   lapsed consent** (#3809). Those removals repriced the booking but queued no
   Xero document, so the invoice kept the old price. In Xero, credit given back

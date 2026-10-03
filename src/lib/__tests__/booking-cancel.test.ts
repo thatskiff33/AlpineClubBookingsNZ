@@ -32,6 +32,8 @@ const mocks = vi.hoisted(() => {
   prismaTransaction: vi.fn(),
   // #3639: the paid path writes its CANCELLED event inside the claim.
   txBookingEventCreate: vi.fn().mockResolvedValue({}),
+  // #3809: whether an edit of the booking ran through the give-back; none by default.
+  txBookingModificationFindFirst: vi.fn().mockResolvedValue(null),
   calculateRefundAmount: vi.fn(),
   calculateAppliedCreditRestore: vi.fn(),
   daysUntilDate: vi.fn(),
@@ -343,8 +345,7 @@ describe("cancelBooking credit refunds", () => {
           );
           const mockTx = {
             bookingEvent: { create: mocks.txBookingEventCreate },
-            // #3809: no edit of these bookings ran through the give-back, so no cap.
-            bookingModification: { findFirst: vi.fn().mockResolvedValue(null) },
+            bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
@@ -3019,7 +3020,47 @@ describe("cancelBooking credit refunds", () => {
       expect(mocks.revokePaymentLinksForBooking).not.toHaveBeenCalled();
     });
 
-    it("#3809 (F2): tiers the credit of a fully-REFUNDED captured payment, does NOT flatten it, and enqueues no clearing note", async () => {
+    it("still restores credit (100%) but does NOT flatten a fully-REFUNDED captured payment, and enqueues no clearing note", async () => {
+      const booking = neverCapturedBooking(
+        { finalPriceCents: 7000 },
+        {
+          amountCents: 10000,
+          refundedAmountCents: 10000,
+          status: "REFUNDED",
+          source: "STRIPE",
+          xeroInvoiceId: "inv_fr2",
+        }
+      );
+      mocks.bookingFindUnique.mockResolvedValueOnce(booking);
+      mocks.txBookingFindUnique.mockResolvedValueOnce(booking);
+      // Capture evidence is the STRIPE refund mirror; leave the ledger empty.
+      mocks.txPaymentTransactionFindFirst.mockResolvedValueOnce(null);
+      mocks.restoreCreditFromBooking.mockResolvedValue(2000);
+
+      const result = await cancelBooking(
+        "bk_nc",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        CLUB_FORMAT_TEST,
+        "card"
+      );
+
+      expect(result.status).toBe(200);
+      // Restore still ran at 100% (no override), but the captured payment's
+      // status is preserved and no invoice-clearing note is queued. #3809: no
+      // edit of this booking ran through the give-back, so it keeps main's
+      // full restore (owner decision of 4 Oct 2026: never short).
+      expect(mocks.restoreCreditFromBooking).toHaveBeenCalledTimes(1);
+      expect(mocks.restoreCreditFromBooking.mock.calls[0]).toHaveLength(3);
+      expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+      expect(
+        mocks.enqueueXeroModificationCreditNoteOperation
+      ).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION #3809 (F2): tiers the credit of a fully-REFUNDED captured payment reduced through the give-back, without flattening it", async () => {
+      mocks.txBookingModificationFindFirst.mockResolvedValueOnce({ id: "mod_give_back" });
       const booking = neverCapturedBooking(
         { finalPriceCents: 7000 },
         {
@@ -3728,8 +3769,7 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
           );
           const mockTx = {
             bookingEvent: { create: mocks.txBookingEventCreate },
-            // #3809: no edit of these bookings ran through the give-back, so no cap.
-            bookingModification: { findFirst: vi.fn().mockResolvedValue(null) },
+            bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
@@ -3894,8 +3934,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
           );
           const mockTx = {
             bookingEvent: { create: mocks.txBookingEventCreate },
-            // #3809: no edit of these bookings ran through the give-back, so no cap.
-            bookingModification: { findFirst: vi.fn().mockResolvedValue(null) },
+            bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
@@ -4187,8 +4226,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
           );
           const mockTx = {
             bookingEvent: { create: mocks.txBookingEventCreate },
-            // #3809: no edit of these bookings ran through the give-back, so no cap.
-            bookingModification: { findFirst: vi.fn().mockResolvedValue(null) },
+            bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so

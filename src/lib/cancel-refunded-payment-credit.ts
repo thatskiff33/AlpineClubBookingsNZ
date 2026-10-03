@@ -23,11 +23,13 @@ export type RefundedPaymentCreditRestore = {
  *
  * Where money WAS captured (`paymentHasCaptureEvidence`, the caller's test) the
  * credit is tiered as the paid path tiers it: the card tier, no card slice,
- * on `cancelAppliedCreditBaseCents` - capped at what the booking is worth only
- * where it was reduced through #3809's settlement (`INV-PAY-114`, owner
- * decision "Cap new reductions only"). A never-captured booking does not come
- * here and keeps its full restore. Null where there is no applied credit on the
- * payment's mirror, which also leaves the full restore.
+ * on `cancelAppliedCreditBaseCents`, capped at what the booking is worth - but
+ * ONLY where the booking was reduced through #3809's settlement (`INV-PAY-114`,
+ * owner decision of 4 Oct 2026, "Cap new reductions only"). A booking reduced
+ * before that release keeps main's full restore: tiering it could leave the
+ * member short (its earlier reduction gave no credit back), and the decision
+ * says such a booking is never short. A never-captured booking does not come
+ * here and keeps its full restore too. Null in every case that keeps it.
  *
  * Inside the cancel's claim, under `lock(1)` and the member key; reads only.
  */
@@ -50,10 +52,11 @@ export async function refundedPaymentCreditRestore(
   },
 ): Promise<RefundedPaymentCreditRestore | null> {
   if (booking.payment.creditAppliedCents <= 0) return null;
+  if (!(await bookingReducedThroughCreditGiveBack(bookingId, tx))) return null;
   const appliedCreditBaseCents = cancelAppliedCreditBaseCents({
     ...booking.payment,
     finalPriceCents: booking.finalPriceCents,
-    capAtWorth: await bookingReducedThroughCreditGiveBack(bookingId, tx),
+    capAtWorth: true,
   });
   const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, tx);
   const { creditRestoredCents } = calculateAppliedCreditRestore(

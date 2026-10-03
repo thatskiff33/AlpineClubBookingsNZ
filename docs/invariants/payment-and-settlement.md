@@ -1629,8 +1629,9 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     more than an all-card member at partial tiers. No data change.
   - **A captured payment the cancel cannot refund** - a reduction refunded the
     card whole - has its credit tiered the same way, with no card slice, not
-    restored whole (`refundedPaymentCreditRestore`); a never-captured booking
-    still restores it whole.
+    restored whole (`refundedPaymentCreditRestore`), on a booking reduced
+    through that settlement. Before it, or never captured, it is restored
+    whole, as on main.
   - The executed cancel, the member's preview and the review's netting
     (`INV-PAY-113`) use one base; the CANCELLED event freezes it
     (`appliedCreditBaseCents`), capped or not. Credit kept above the cap counts
