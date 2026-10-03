@@ -10,3 +10,27 @@ export function bookingModifiedRefundSentence(amount: string, refundByBankTransf
     ? `The club will refund ${amount} to you by bank transfer.`
     : `A refund of ${amount} has been processed to your original payment method.`;
 }
+
+/**
+ * #3827 (owner decision D-3813-7, `INV-PAY-114`): the refund sentence of a
+ * "Refund Appeal Approved" email, ONE wording for the HTML template and the
+ * admin-editable body's `{{refundSentence}}` (`INV-SSOT`). The part a card
+ * refund carries is on its way; the part the club sends by bank transfer is an
+ * officer task still to be done, so it is promised, the same way as an edit's.
+ * `bankTransferCents` is the part of `approvedCents` the club sends by hand
+ * (0 when the card carries it all).
+ */
+export function refundRequestApprovedRefundSentence(
+  approvedCents: number,
+  bankTransferCents: number,
+  formatAmount: (cents: number) => string,
+): string {
+  const cardCents = approvedCents - bankTransferCents;
+  if (bankTransferCents <= 0) {
+    return `A refund of ${formatAmount(approvedCents)} will be processed to your original payment method.`;
+  }
+  if (cardCents <= 0) {
+    return `The club will refund ${formatAmount(bankTransferCents)} to you by bank transfer.`;
+  }
+  return `A refund of ${formatAmount(cardCents)} will be processed to your original payment method, and the club will refund the remaining ${formatAmount(bankTransferCents)} to you by bank transfer.`;
+}

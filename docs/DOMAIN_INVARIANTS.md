@@ -274,6 +274,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-100` | Work-item grain follows the moved strands; the lead absorbs the settlement |
 | `INV-PAY-101` | Refund documents name the method from the settlement decision, never the source |
 | `INV-PAY-114` | A by-hand edit refund raises one officer refund task |
+| `INV-PAY-115` | An approved appeal's non-card part raises one officer refund task |
 | `INV-PAY-111` | A refund note's own operation completes only with its payment or skip |
 | `INV-PAY-070` | Xero leg bills the total on one invoice per edit, anchor-locked |
 | `INV-PAY-063` | Recorded shortfalls are billed on a second invoice; sent invoices only |

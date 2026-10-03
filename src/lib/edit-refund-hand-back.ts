@@ -12,6 +12,7 @@ import {
 import {
   editRefundHandBackOccurrenceKey,
   OPEN_NON_CANCELLATION_HAND_BACKS_SELECT,
+  refundRequestHandBackOccurrenceKey,
 } from "@/lib/manual-refund-task-settlement-rules";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 
@@ -92,6 +93,55 @@ export async function raiseEditRefundHandBackIfOwed(
 }
 
 /**
+ * #3827 (owner decision D-3813-7, `INV-PAY-115`): AN APPROVED REFUND REQUEST'S
+ * REFUND THAT THE CLUB SENDS BACK BY HAND.
+ *
+ * Approving an appeal refunds through Stripe whatever the payment's card
+ * ledger can carry. Before this, the rest - all of it, on a booking paid by
+ * internet banking - was answered with a Xero credit note and nothing else:
+ * `refundedAmountCents` never moved, nobody was asked to send the money, and a
+ * second appeal could be approved against the same cash. Now that remainder
+ * raises ONE officer task in the money-to-settle queue, inside the approval's
+ * own transaction under `lock(1)`, and is netted from refundable cash until the
+ * treasurer marks it paid back (which records the refund on the payment).
+ *
+ * IDEMPOTENT PER REFUND REQUEST, as the edit's is per modification: the
+ * occurrence key is unique and the insert is `ON CONFLICT DO NOTHING`. The
+ * amount is fixed at creation. Returns how many rows it inserted (0 or 1).
+ */
+export async function raiseRefundRequestHandBack(
+  tx: Prisma.TransactionClient,
+  params: {
+    bookingId: string;
+    paymentId: string;
+    refundRequestId: string;
+    /** The approved amount no card refund carries; nothing is raised at 0. */
+    amountCents: number;
+  },
+): Promise<number> {
+  const { bookingId, paymentId, refundRequestId, amountCents } = params;
+  if (amountCents <= 0) return 0;
+  const raised = await tx.manualRefundTask.createMany({
+    data: [
+      {
+        bookingId,
+        paymentId,
+        amountCents,
+        raisedAmountCents: amountCents,
+        kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+        occurrenceKey: refundRequestHandBackOccurrenceKey(refundRequestId),
+        reason: `Refund appeal approved on booking ${bookingId}; not paid by card, so the club refunds this by bank transfer (#3827).`.slice(
+          0,
+          MANUAL_REFUND_TASK_REASON_MAX,
+        ),
+      },
+    ],
+    skipDuplicates: true,
+  });
+  return raised.count;
+}
+
+/**
  * The one read a refund sizer needs for the money below: a client that can
  * aggregate `ManualRefundTask`. A transaction under the caller's locks, or the
  * pooled client for an advisory quote that holds none.
@@ -107,9 +157,12 @@ export type OpenNonCancellationHandBackDb = Pick<PrismaClient, "manualRefundTask
  * reduction, a guest's acceptance or a cancellation would size its own refund
  * off cash the club has already promised - $250 of tasks against $200 taken.
  *
- * This is the sum of the OPEN edit refund hand-backs on one payment. A completed
- * one has moved `refundedAmountCents` and drops out here as it does; a dismissed
- * one was never sent, so its money is refundable again.
+ * This is the sum of the OPEN edit refund hand-backs on one payment - and,
+ * since D-3813-7, of the OPEN refund-request hand-backs, which an approved
+ * appeal on an internet-banking booking raises on the same terms (without them
+ * a second appeal could be approved against the cash the first one promised).
+ * A completed one has moved `refundedAmountCents` and drops out here as it
+ * does; a dismissed one was never sent, so its money is refundable again.
  */
 export async function openNonCancellationHandBackCents(
   db: OpenNonCancellationHandBackDb,
@@ -124,13 +177,14 @@ export async function openNonCancellationHandBackCents(
 }
 
 /**
- * #3827 (`INV-PAY-114`): THE REFUNDABLE CASH ON A PAYMENT, NET OF EDIT REFUNDS
- * ALREADY PROMISED BACK BY HAND. The one figure an edit, a guest's acceptance
- * and a cancellation size their refund from, so what the club promises back
+ * #3827 (`INV-PAY-114`): THE REFUNDABLE CASH ON A PAYMENT, NET OF REFUNDS
+ * ALREADY PROMISED BACK BY HAND (an edit's, or an approved refund request's).
+ * The one figure an edit, a guest's acceptance, a cancellation and a refund
+ * appeal's approval size their refund from, so what the club promises back
  * never exceeds what it took. Read under the locks the caller already holds
- * (the global cohort key on every edit, acceptance and paid cancel), which every
- * raise of such a task also holds, so no task can appear between this read and
- * the caller's own raise.
+ * (the global cohort key on every edit, acceptance, paid cancel and appeal
+ * approval), which every raise of such a task also holds, so no task can
+ * appear between this read and the caller's own raise.
  */
 export async function refundableCashNetOfOpenHandBacks(
   db: OpenNonCancellationHandBackDb,

@@ -1746,12 +1746,40 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     cancellation's. It queues NO Xero document: the edit's credit note stands.
   - **Promised cash is not refundable twice.** Until it closes, later edits,
     acceptances, paid cancels and refund appeals size refunds off captured
-    cash less the open tasks (`refundableCashNetOfOpenHandBacks`), and a
-    reopen is refused past that cash. Completing one, or approving an appeal,
+    cash less the open tasks, `INV-PAY-115`'s included
+    (`refundableCashNetOfOpenHandBacks`), and a reopen is refused past that cash. Completing one, or approving an appeal,
     takes `lock(1)`. Once the booking is cancelled it is only paid: the
     cancel counted it.
   - **The member is told the club WILL refund by bank transfer**, never that a
     refund "has been processed" (`bookingModifiedRefundSentence`).
+
+## INV-PAY-115
+
+- **An approved refund appeal's non-card part raises ONE officer refund task**
+  (#3827; owner decision D-3813-7 on #3492). Approving a refund request plans
+  the Stripe refund inside the approval's own transaction, under `lock(1)`;
+  whatever that plan cannot carry (all of it, for internet banking) raises a
+  `ManualRefundTask` in the same transaction through
+  `raiseRefundRequestHandBack` (`src/lib/edit-refund-hand-back.ts`), so it is
+  netted (`INV-PAY-114`) before the lock is released and a second appeal
+  cannot be approved against the same cash.
+  - **One task per request**: occurrence key
+    `refund-request-hand-back:<RefundRequest id>`, unique, inserted
+    `ON CONFLICT DO NOTHING`. If the approval's claim is released (Stripe and
+    its recovery enqueue both failed), the OPEN task is deleted in the same
+    locked transaction.
+  - **The same kind and marker as an edit's.** `isNonCancellationHandBackTask`
+    and `NOT_NON_CANCELLATION_HAND_BACK_WHERE` cover both. Completion records
+    the refund on the payment, the bank-refund ledger line and a `REFUNDED`
+    event marked `refund_request_hand_back_completed`, outside the narrative's
+    settlement; it queues NO Xero document, because the approval queued the
+    refund credit note for the whole approved amount.
+  - **Dismissal stays open**, unlike an edit's after a cancel: an appeal
+    exists only on a cancelled booking, so the cancel never counted it.
+  - **A cash-settled payment is still refused**: its cancellation hand-back
+    is not netted, so an appeal could re-promise it.
+  - **The member is told the club WILL refund by bank transfer**
+    (`refundRequestApprovedRefundSentence`); card wording is unchanged.
 
 ## INV-PAY-070
 

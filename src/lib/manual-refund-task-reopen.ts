@@ -7,6 +7,7 @@ import { refundableCashNetOfOpenHandBacks } from "@/lib/edit-refund-hand-back";
 import {
   EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE,
   isEditRefundHandBackTask,
+  isNonCancellationHandBackTask,
 } from "@/lib/manual-refund-task-settlement-rules";
 import { recordManualRefundTaskReopenAudit } from "@/lib/manual-refund-task-reopen-audit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -224,10 +225,11 @@ export async function reopenManualRefundTask({
     if (isEditRefundHandBackTask(task) && task.booking.status === BookingStatus.CANCELLED) {
       throw new ManualBookingPaymentError(EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE, 409);
     }
-    // #3827 (`INV-PAY-114`): never promise back more cash than was taken. Read
-    // under lock(1), which every edit, acceptance and paid cancel also holds.
+    // #3827 (`INV-PAY-114`): never promise back more cash than was taken - for
+    // an edit's refund and (D-3813-7) an approved appeal's alike. Read under
+    // lock(1), which every edit, acceptance, paid cancel and approval holds.
     if (
-      isEditRefundHandBackTask(task) &&
+      isNonCancellationHandBackTask(task) &&
       (task.amountCents ?? 0) > (await refundableCashNetOfOpenHandBacks(tx, task.payment))
     ) {
       throw new ManualBookingPaymentError(REOPEN_EDIT_REFUND_EXCEEDS_CASH_MESSAGE, 409);

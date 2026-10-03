@@ -1,8 +1,8 @@
 /**
- * #3827 (`INV-PAY-114`): an edit's refund hand-back is a
- * `CANCELLED_BOOKING_HAND_BACK` marked by its occurrence key, so a reader that
- * selects a CANCELLATION's hand-backs by kind alone would count an edit's as
- * one (the repair tool's late-cash evidence, the organisation hand-back's
+ * #3827 (`INV-PAY-114`): an edit's refund hand-back, and (D-3813-7) an
+ * approved refund request's, is a `CANCELLED_BOOKING_HAND_BACK` marked by its
+ * occurrence key, so a reader that selects a CANCELLATION's hand-backs by kind
+ * alone would count one (the repair tool's late-cash evidence, the organisation hand-back's
  * duplicate check). Every production read that filters on that kind must also
  * spread `NOT_NON_CANCELLATION_HAND_BACK_WHERE`, the one spelling of the exclusion.
  *

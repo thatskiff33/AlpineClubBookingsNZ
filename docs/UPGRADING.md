@@ -143,6 +143,13 @@ window, open the booking's invoice in Xero. Look for two refund credit notes
 for that amount, the change's own note and a second one dated when the task was
 completed. Void the second one by hand.
 
+**The same applies to an approved refund appeal's task (D-3813-7).** Approving
+an appeal on a booking paid by internet banking now raises a task whose reason
+reads "Refund appeal approved on booking …; not paid by card, so the club
+refunds this by bank transfer". The approval already queued the appeal's Xero
+refund credit note, so treat these tasks exactly like the edit tasks above, and
+on the previous colour a second note would sit beside the appeal's own.
+
 ### You must declare whether this deployment is the live site (#3034, epic #2986)
 
 **Do this before you deploy, or the deploy will refuse to run.** Add one line to

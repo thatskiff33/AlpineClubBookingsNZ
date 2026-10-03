@@ -1914,6 +1914,16 @@ and cancellations refund only what is left, and a DISMISSED one cannot be
 reopened past that. See
 [`INV-PAY-114`](invariants/payment-and-settlement.md#inv-pay-114).
 
+**#3827 (owner decision D-3813-7): so does an approved refund appeal's.**
+Approving a refund request raises the task OPEN for the part of the approved
+amount no card refund carries, inside the approval's transaction under
+`lock(1)`, keyed one per `RefundRequest`, and nets it as above. Its completion
+queues no Xero document either (the approval queued the credit note), and its
+`REFUNDED` event is marked the same way. It may be DISMISSED with a note even
+though the booking is cancelled, because the cancel came first and never
+counted it. See
+[`INV-PAY-115`](invariants/payment-and-settlement.md#inv-pay-115).
+
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED
 row can be put back OPEN by an officer, which is the arm above; a COMPLETED row
 cannot. Nothing about the RAISE changed with it - the raise still never reopens,
@@ -2244,6 +2254,7 @@ Known refund request statuses: `PENDING`, `APPROVED`, `REJECTED`.
 
 ```text
 refund requested -> approved/rejected -> Stripe refund or Xero credit/member credit
+approved, not by card -> OPEN officer refund task -> COMPLETED records the refund (#3827, D-3813-7)
 admin credit requested -> approved/rejected -> MemberCredit created/applied
 MemberCredit available -> applied to booking -> ledger remains linked
 ```

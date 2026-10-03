@@ -36,9 +36,10 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 import {
   EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE,
-  editRefundHandBackCompletedSnapshot,
   isEditRefundHandBackTask,
+  isNonCancellationHandBackTask,
   isPartPaymentReviewTask,
+  nonCancellationHandBackCompletedSnapshot,
   manualRefundTaskSettlementRefusal,
 } from "@/lib/manual-refund-task-settlement-rules";
 // #3498: what a settle MAY repair is the plan module's; the writes are the store's.
@@ -154,7 +155,8 @@ export async function resolveManualRefundTask(
     // and only then reads what picks its money route, so nothing that route
     // depends on is stale. Why: docs/CONCURRENCY_AND_LOCKING.md.
     //
-    // #3827 (`INV-PAY-114`): an EDIT REFUND HAND-BACK takes the same key. Its
+    // #3827 (`INV-PAY-114`): an EDIT REFUND HAND-BACK takes the same key, and
+    // so (D-3813-7) does an approved refund request's. Its
     // completion moves `refundedAmountCents` and closes the task in one commit,
     // and every edit, acceptance and paid cancel reads those two separately to
     // size a refund net of what is already promised back
@@ -168,7 +170,7 @@ export async function resolveManualRefundTask(
     });
     if (
       head?.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW ||
-      (head !== null && isEditRefundHandBackTask(head))
+      (head !== null && isNonCancellationHandBackTask(head))
     ) {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     }
@@ -625,10 +627,15 @@ export async function resolveManualRefundTask(
       /**
        * #3827 (`INV-PAY-114`): the Xero leg owes nothing for an edit refund
        * hand-back - its edit already queued the credit note that corrects the
-       * invoice. The ONE fence: the dispatch returns before reading anything
-       * else, the cancellation invoice above included.
+       * invoice - nor (D-3813-7) for a refund request's, whose approval queued
+       * the refund credit note. The ONE fence: the dispatch returns before
+       * reading anything else, the cancellation invoice above included.
        */
-      nonCancellationHandBack: isEditRefundHandBackTask(task),
+      nonCancellationHandBack: isNonCancellationHandBackTask(task),
+      /** The REFUNDED event's marker for those two (`INV-PAY-114`), else null. */
+      nonCancellationHandBackSnapshot: isNonCancellationHandBackTask(task)
+        ? nonCancellationHandBackCompletedSnapshot({ id: task.id, kind: task.kind, occurrenceKey: task.occurrenceKey })
+        : null,
       status:
         resolution === "completed"
           ? ManualRefundTaskStatus.COMPLETED
@@ -644,10 +651,11 @@ export async function resolveManualRefundTask(
       actorMemberId: actingMemberId,
       amountCents: result.recordedRefund.amountCents,
       reason: "manual_refund_completed",
-      // #3827 (`INV-PAY-114`): an edit's refund, on a live booking - marked so
-      // the narrative never reads it as a later cancellation's settlement.
-      ...(result.nonCancellationHandBack
-        ? { snapshot: editRefundHandBackCompletedSnapshot(result.taskId) }
+      // #3827 (`INV-PAY-114`): an edit's refund on a live booking, or an
+      // appeal's decided after the cancel - marked so the narrative never reads
+      // it as the cancellation's settlement.
+      ...(result.nonCancellationHandBackSnapshot
+        ? { snapshot: result.nonCancellationHandBackSnapshot }
         : {}),
     });
   }

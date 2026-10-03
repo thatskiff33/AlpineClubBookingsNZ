@@ -7,6 +7,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import {
   isEditRefundHandBackTask,
   isPartPaymentReviewTask,
+  isRefundRequestHandBackTask,
 } from "@/lib/manual-refund-task-settlement-rules";
 import type { QueueRepairableStrand } from "@/lib/stored-night-price-repair-queue";
 
@@ -129,6 +130,13 @@ export type OpenManualRefundTaskPayload = {
    */
   editRefundHandBack: boolean;
   /**
+   * #3827 (owner decision D-3813-7, `INV-PAY-114`): an approved refund appeal
+   * on a booking not paid by card, which the club refunds by bank transfer.
+   * The booking was cancelled before the appeal, but the money is the
+   * appeal's, so neither the cancellation nor the edit sentence fits it.
+   */
+  refundRequestHandBack: boolean;
+  /**
    * #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): on a review, when the inbound
    * Xero sync learned the invoice was reported PAID and the invoice's cash then.
    * Nothing was credited or handed back for it; the treasurer decides. The
@@ -204,6 +212,7 @@ export function toOpenManualRefundTaskPayload(
     awaitingLateCaptureApproval: task.lateCaptureApprovalIntentId !== null,
     partPaymentReview: isPartPaymentReviewTask(task),
     editRefundHandBack: isEditRefundHandBackTask(task),
+    refundRequestHandBack: isRefundRequestHandBackTask(task),
     partPaymentReviewXeroPaid:
       isPartPaymentReviewTask(task) &&
       task.partPaymentReviewXeroPaidAt &&

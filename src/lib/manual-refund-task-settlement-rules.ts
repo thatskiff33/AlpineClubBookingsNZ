@@ -61,6 +61,35 @@ export function editRefundHandBackOccurrenceKey(bookingModificationId: string): 
 }
 
 /**
+ * #3827 (owner decision D-3813-7, `INV-PAY-114`): THE OCCURRENCE-KEY PREFIX of
+ * a refund-request hand-back - the task an approved refund request (appeal)
+ * raises for the part of its amount no card refund can carry, so the treasurer
+ * sends it by bank transfer. One per `RefundRequest`: the key is the duplicate
+ * fence and, with the kind, the marker.
+ */
+export const REFUND_REQUEST_HAND_BACK_KEY_PREFIX = "refund-request-hand-back:";
+
+/** The one occurrence key of one refund request's hand-back (`INV-PAY-114`). */
+export function refundRequestHandBackOccurrenceKey(refundRequestId: string): string {
+  return `${REFUND_REQUEST_HAND_BACK_KEY_PREFIX}${refundRequestId}`;
+}
+
+/**
+ * #3827 (`INV-PAY-114`): the key prefixes of every hand-back that is NOT a
+ * cancellation's - money promised back by bank transfer on a decision other
+ * than a cancel (an edit's reduction, an approved refund request). The one
+ * list the predicate and both query fragments below are built from.
+ */
+const NON_CANCELLATION_HAND_BACK_KEY_PREFIXES = [
+  EDIT_REFUND_HAND_BACK_KEY_PREFIX,
+  REFUND_REQUEST_HAND_BACK_KEY_PREFIX,
+] as const;
+
+function hasKeyPrefix(occurrenceKey: string | null, prefix: string): boolean {
+  return occurrenceKey?.startsWith(prefix) ?? false;
+}
+
+/**
  * #3827 (`INV-PAY-114`): IS THIS TASK AN EDIT REFUND HAND-BACK? It is a
  * `CANCELLED_BOOKING_HAND_BACK` — reused rather than a new label for the reason
  * #3639 and #3643 give: the previous app version cannot read a label it does
@@ -76,8 +105,35 @@ export function isEditRefundHandBackTask(task: {
 }): boolean {
   return (
     task.kind === "CANCELLED_BOOKING_HAND_BACK" &&
-    (task.occurrenceKey?.startsWith(EDIT_REFUND_HAND_BACK_KEY_PREFIX) ?? false)
+    hasKeyPrefix(task.occurrenceKey, EDIT_REFUND_HAND_BACK_KEY_PREFIX)
   );
+}
+
+/** #3827 (D-3813-7): is this task an approved refund request's hand-back? */
+export function isRefundRequestHandBackTask(task: {
+  kind: ManualRefundTaskKind | string | null;
+  occurrenceKey: string | null;
+}): boolean {
+  return (
+    task.kind === "CANCELLED_BOOKING_HAND_BACK" &&
+    hasKeyPrefix(task.occurrenceKey, REFUND_REQUEST_HAND_BACK_KEY_PREFIX)
+  );
+}
+
+/**
+ * #3827 (`INV-PAY-114`): IS THIS HAND-BACK SOMETHING OTHER THAN A
+ * CANCELLATION'S - an edit's refund or an approved refund request's? Both are
+ * money promised back by bank transfer whose `refundedAmountCents` moves only
+ * when the treasurer marks the task paid back, both take `lock(1)` to close,
+ * both are netted from refundable cash while open, and neither owes Xero a
+ * second note on completion (the edit or the approval queued it). Every server
+ * reader that asks "is this a CANCELLATION's hand-back?" asks this.
+ */
+export function isNonCancellationHandBackTask(task: {
+  kind: ManualRefundTaskKind | string | null;
+  occurrenceKey: string | null;
+}): boolean {
+  return isEditRefundHandBackTask(task) || isRefundRequestHandBackTask(task);
 }
 
 /**
@@ -91,6 +147,11 @@ export function isEditRefundHandBackTask(task: {
  * the opposite of what happened - and let a refund appeal re-promise the same
  * money. So both are refused once the booking is cancelled; completing an open
  * one is untouched. One sentence each, for the doors that throw them.
+ *
+ * NOT a refund-request hand-back (D-3813-7). An appeal exists only on a
+ * cancelled booking, so its task is always raised AFTER the cancel, which
+ * never counted it; dismissing one (with its required note) releases the cash
+ * for a later appeal, and reopening one is capped at the net cash like any.
  */
 export const EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE =
   "This booking has been cancelled since this edit refund was raised, and the cancellation's refund was worked out on the basis that this money goes back to the member. Send it and mark it paid back. If the club has decided not to pay it, that changes the cancellation's own figures, so take it to the treasurer to correct the cancelled booking rather than dismissing the task here.";
@@ -101,28 +162,35 @@ export const EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE =
 /**
  * #3827 (`INV-PAY-114`): the same question as a query fragment, for the server
  * readers that select a CANCELLATION's hand-backs by kind and must not count an
- * edit's. Spread into a `ManualRefundTask` where clause beside the kind.
+ * edit's or an approved refund request's. Spread into a `ManualRefundTask`
+ * where clause beside the kind.
  */
 export const NOT_NON_CANCELLATION_HAND_BACK_WHERE = {
   OR: [
     { occurrenceKey: null },
-    { NOT: { occurrenceKey: { startsWith: EDIT_REFUND_HAND_BACK_KEY_PREFIX } } },
+    {
+      AND: NON_CANCELLATION_HAND_BACK_KEY_PREFIXES.map((prefix) => ({
+        NOT: { occurrenceKey: { startsWith: prefix } },
+      })),
+    },
   ],
 };
 
 /**
- * #3827 (`INV-PAY-114`): the POSITIVE form - the edit refund hand-backs
+ * #3827 (`INV-PAY-114`): the POSITIVE form - the non-cancellation hand-backs
  * themselves, for a reader that sizes money already promised back by hand
- * (`openNonCancellationHandBackCents`). The kind and the key prefix together, as
- * `isEditRefundHandBackTask` asks them.
+ * (`openNonCancellationHandBackCents`). The kind and the key prefixes together,
+ * as `isNonCancellationHandBackTask` asks them.
  */
 export const NON_CANCELLATION_HAND_BACK_WHERE = {
   kind: "CANCELLED_BOOKING_HAND_BACK" satisfies ManualRefundTaskKind,
-  occurrenceKey: { startsWith: EDIT_REFUND_HAND_BACK_KEY_PREFIX },
+  OR: NON_CANCELLATION_HAND_BACK_KEY_PREFIXES.map((prefix) => ({
+    occurrenceKey: { startsWith: prefix },
+  })),
 } as const;
 
 /**
- * #3827 (`INV-PAY-114`): the OPEN edit refund hand-backs on a payment, as a
+ * #3827 (`INV-PAY-114`): the OPEN non-cancellation hand-backs on a payment, as a
  * relation fragment for a read that loads the payment anyway (the booking
  * page, the refund-appeal queue). Paired with `sumOpenNonCancellationHandBackCents`
  * and `getRemainingRefundableCentsNetOf`, it gives a screen the same ceiling
@@ -176,13 +244,37 @@ export function editRefundHandBackCompletedSnapshot(manualRefundTaskId: string):
   return { kind: EDIT_REFUND_HAND_BACK_COMPLETED_EVENT_KIND, manualRefundTaskId };
 }
 
-/** Is this booking event an edit refund hand-back's completion? */
+/**
+ * #3827 (D-3813-7): the same discriminator for a refund-request hand-back's
+ * completion. The booking is already cancelled, but this money is the
+ * appeal's, decided after the cancel, so it is not the cancellation's
+ * settlement either - a Stripe appeal refund writes no booking event at all.
+ */
+export const REFUND_REQUEST_HAND_BACK_COMPLETED_EVENT_KIND = "refund_request_hand_back_completed" as const;
+
+/** The snapshot a non-cancellation hand-back's completion event carries. */
+export function nonCancellationHandBackCompletedSnapshot(task: {
+  id: string;
+  kind: ManualRefundTaskKind | string | null;
+  occurrenceKey: string | null;
+}): {
+  kind: typeof EDIT_REFUND_HAND_BACK_COMPLETED_EVENT_KIND | typeof REFUND_REQUEST_HAND_BACK_COMPLETED_EVENT_KIND;
+  manualRefundTaskId: string;
+} {
+  return isRefundRequestHandBackTask(task)
+    ? { kind: REFUND_REQUEST_HAND_BACK_COMPLETED_EVENT_KIND, manualRefundTaskId: task.id }
+    : editRefundHandBackCompletedSnapshot(task.id);
+}
+
+/** Is this booking event a non-cancellation hand-back's completion? */
 export function isNonCancellationHandBackCompletedEvent(event: { type: string; snapshot: unknown }): boolean {
+  if (event.type !== "REFUNDED" || typeof event.snapshot !== "object" || event.snapshot === null) {
+    return false;
+  }
+  const kind = (event.snapshot as { kind?: unknown }).kind;
   return (
-    event.type === "REFUNDED" &&
-    typeof event.snapshot === "object" &&
-    event.snapshot !== null &&
-    (event.snapshot as { kind?: unknown }).kind === EDIT_REFUND_HAND_BACK_COMPLETED_EVENT_KIND
+    kind === EDIT_REFUND_HAND_BACK_COMPLETED_EVENT_KIND ||
+    kind === REFUND_REQUEST_HAND_BACK_COMPLETED_EVENT_KIND
   );
 }
 

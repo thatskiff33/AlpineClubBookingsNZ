@@ -122,6 +122,13 @@ card (see the [payments guide](payments.md#pay-back-a-refund-for-a-cash-booking)
 (#3827). A reduction that goes back partly to the card and partly as account
 credit names both.
 
+`{{refundSentence}}` on the **Refund Appeal Approved** message works the same
+way. A card refund reads "A refund of $X will be processed to your original
+payment method."; on a booking paid by internet banking it reads "The club will
+refund $X to you by bank transfer.", and a booking paid partly by card names
+both parts (#3827). `{{amount}}` is still available to a saved override, but it
+cannot say which way the money goes, so use `{{refundSentence}}`.
+
 One of these blocks is several lines at once: **`{{ical}}`** on the Booking
 Confirmed message renders a short add-to-calendar section — a link that
 downloads the stay as a calendar file (`.ics`), plus links for Google Calendar

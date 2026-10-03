@@ -38,6 +38,19 @@
   cancelled the task can only be marked paid back — it cannot be dismissed,
   and a dismissed one cannot be reopened.
 
-  **Deploy note:** do not mark these refund tasks paid back until cutover
+- **Approved refund appeals on internet-banking bookings now ask the
+  treasurer to send the money (#3827, owner decision D-3813-7). A behaviour
+  change for every club.** Until now, approving an appeal on a booking paid
+  by internet banking queued a Xero credit note but never recorded the refund
+  on the payment or asked anybody to send it, so a second appeal could be
+  approved against the same money. Now the approval raises one task in
+  **Money to settle** for the amount no card refund can carry, the member's
+  email says the club **will** refund them by bank transfer, and marking the
+  task paid back records the refund. Until then the amount counts as already
+  promised, so a further appeal can be approved only for what is left. Card
+  appeals are unaffected.
+
+  **Deploy note:** do not mark these refund tasks (the edit ones above, or
+  the appeal ones) paid back until cutover
   completes. The previous version would also queue a second Xero refund
   credit note (`docs/UPGRADING.md`).

@@ -60,6 +60,19 @@ change and not yet sent ([Payments](payments.md)).
    queue on **Admin → Finance → Payments** (`/admin/payments`); complete the
    task there once the club has actually paid the member back (or dismiss it,
    with a note, if the member declined or it was settled another way).
+
+   **Internet banking bookings get a bank-transfer task (#3827).** When the
+   booking was paid by internet banking (reconciled in Xero), there is no card
+   to refund either, but approving works: the approved amount, or the part of
+   it a card refund cannot carry on a booking paid partly by card, raises one
+   **refund task** in the queue on **Admin → Finance → Payments**, and the
+   member's email says the club **will** refund them by bank transfer. Send the
+   money, then mark the task paid back there; that is when the payment records
+   the refund. The Xero credit note for the whole approved amount is queued at
+   approval, so marking the task paid back sends nothing further to Xero. Until
+   the task is done its amount counts as already promised, so a second appeal
+   on the same booking can only be approved for what is left. See
+   [Payments](payments.md#pay-back-a-refund-for-a-cash-booking).
 3. The settlement shows how much went **to card** versus **as credit**, including
    any restored prior credit.
 
@@ -92,7 +105,7 @@ governed by the [cancellation policy](../CANCELLATIONS.md#refund-policy).
 | --- | --- | --- |
 | Everything is read-only ("… can view refund appeals and credit approvals but cannot approve, reject, or process them") | Your finance role is view-only | Ask a finance-edit admin |
 | A credit approval is disabled for me | You raised it — the two-person rule needs a different reviewer | Ask another admin to review it |
-| The refund amount won't go above a certain figure | It is capped at the remaining refundable amount (paid minus already refunded, minus any booking-change refund still waiting to be sent by bank transfer) | Refund up to that cap; the rest may already be refunded or promised back |
+| The refund amount won't go above a certain figure | It is capped at the remaining refundable amount (paid minus already refunded, minus any booking-change or approved-appeal refund still waiting to be sent by bank transfer) | Refund up to that cap; the rest may already be refunded or promised back |
 | The queue is empty | The status filter excludes the request | Switch to **All** to see approved/rejected items |
 
 ## Related links

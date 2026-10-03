@@ -213,6 +213,17 @@ a dismissed one cannot be reopened. If the club decides not to pay an open one
 after all, that changes the cancellation's own figures: take it to the
 treasurer rather than dismissing it.
 
+**The same task for an approved refund appeal (#3827).** Approving a refund
+appeal on a booking paid by internet banking raises one of these tasks for the
+approved amount (on a booking paid partly by card, for the part the card
+refund cannot carry), and the member's email says the club **will** refund
+them by bank transfer. Pay it and mark it paid back exactly as above; the Xero
+credit note was queued when the appeal was approved, so nothing further goes
+to Xero. While it is open its amount counts as already promised, so a second
+appeal can only be approved for what is left. Because an appeal is only ever
+made after the booking is cancelled, the cancellation never counted this task,
+and it can be dismissed (with a note) if the club settles it another way.
+
 The card holds several kinds of row and says which is which: a cash hand-back
 (above), a part payment settled in Xero (next), a booking change to price
 ("Decide a booking change the system would not price"), an amount the club may
