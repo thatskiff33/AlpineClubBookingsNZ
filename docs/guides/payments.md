@@ -189,6 +189,18 @@ member is told the club will arrange their refund.
 3. If the member declined the refund, or it was settled another way, click
    **Dismiss** and say which. A note is required.
 
+**The same task for a booking change (#3827).** When a member or an officer
+changes a booking that was paid by internet banking or in cash, and the change
+lowers the price (fewer nights, a guest removed, a promo code re-applied when a
+guest accepts their place), the money back has no card to go to either. The
+change raises one of these tasks for the refund amount, and the member's email
+says the club **will** refund them by bank transfer. Pay it and mark it paid
+back exactly as above. The Xero credit note for the change is raised with the
+change itself, so marking the task paid back sends nothing further to Xero: in
+Xero, record the refund against that credit note. Each change raises at most
+one task. A card-paid booking is refunded to the card automatically and raises
+none.
+
 The card holds several kinds of row and says which is which: a cash hand-back
 (above), a part payment settled in Xero (next), a booking change to price
 ("Decide a booking change the system would not price"), an amount the club may
@@ -678,7 +690,7 @@ Payments is a read-only ledger (aside from Generate Invoice). Its controls:
 | Reset | Restore filters, sort, and page | rolling three-month Updated range through today | Disabled while the ledger is already at its defaults |
 | Generate Invoice | Create a Xero invoice for a succeeded payment | — | Needs finance **edit**; only for succeeded, non-Internet-Banking payments with no invoice. Never offered for a manually recorded cash payment — no invoice is expected for one |
 | Record / Reverse manual payment | Record a cash or off-Xero bank-transfer settlement on a booking, or undo one | — | On the booking page, not here. Needs finance **edit**. Never contacts Xero |
-| Mark paid back / Dismiss | Close a hand-back task for a cancelled cash booking | — | Needs finance **edit**. "Mark paid back" writes the refund into the ledger; "Dismiss" needs a note |
+| Mark paid back / Dismiss | Close a hand-back task for a cancelled cash booking, or for a price cut on a booking paid by internet banking or cash | — | Needs finance **edit**. "Mark paid back" writes the refund into the ledger; "Dismiss" needs a note |
 | Refund to card / Close without refunding | Decide a card payment that went through after its booking was cancelled and was held for a treasurer's approval | — | Needs finance **edit**. "Refund to card" refunds the card through Stripe now; "Close without refunding" refunds nothing and needs a note. Only appears on a payment held for approval, which stays held if the club later switches back to automatic refunds |
 | Record the adjustment / No adjustment | Close a booking change the system would not price | — | Needs finance **edit**. "Record the adjustment" is disabled until an amount has been confirmed; "No adjustment" closes the review as looked-at with nothing due, moves no money, and needs a note |
 | Refunded automatically — nothing to pay back | Read-only record of a payment Stripe returned by itself, because the booking had already been cancelled — the booking's own payment or one for a change to it | last 30 days | No controls at all: the money has already gone back. Every such refund of the last 30 days is listed, grouped into bookings that were deleted (worth a look) and bookings still on file (normally nothing to do); the audit log holds anything older. A capture you had already paid back by hand is not refunded again and is not listed here — you are emailed instead |

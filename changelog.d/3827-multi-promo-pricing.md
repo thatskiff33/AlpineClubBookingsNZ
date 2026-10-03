@@ -7,16 +7,29 @@
   discount is refused as "already covered", and removing a guest removes only
   their code. Each code keeps its own usage limits. Booking, editing and
   previewing accept a list of codes (`promoCodes`); the single `promoCode`
-  field still works, and an edit through it keeps a working-bee discount
-  rather than dropping it. While the module is off, a second code — or a code
-  beside a working-bee discount — is refused.
+  field still works; with the module on, an edit through it keeps a
+  working-bee discount rather than dropping it. While the module is off,
+  nothing changes for a single-code club: a second code is refused, and a code
+  entered on a booking with a working-bee discount replaces it as before.
 
   **A deliberate tightening, for every booking:** a guest added from outside
   the booker's family who has **not yet accepted** their place now gets no
   promo discount — not even from a code typed at booking, which used to
   discount their nights too. When they accept, the booking's codes are applied
   again; on a paid booking the whole reduction goes back, with no
-  cancellation-policy percentage, the way it was paid (card refund, bank
-  transfer, or account credit), and the owner is emailed. If it cannot all go
+  cancellation-policy percentage, the way it was paid (the card or bank
+  transfer first, then account credit for any part paid with credit), and the
+  owner is emailed. If it cannot all go
   back that way the price is left for the next edit and the codes use nothing.
   A decline uses up nothing.
+
+- **Internet-banking refunds on a booking change now ask the treasurer to send
+  them (#3827, owner decision D-3813-6). A behaviour change for every club.**
+  Until now, when a change lowered the price of a booking paid by internet
+  banking or in cash, the app recorded a refund, raised the Xero credit note
+  and emailed the member that the refund "has been processed" — but asked
+  nobody to send the money. Now the change raises a task in **Money to settle**
+  on the Payments page for the refund amount (one per change), the member's
+  email says the club **will** refund them by bank transfer, and marking the
+  task paid back records the refund. The Xero credit note is unchanged. Card
+  refunds are unaffected.

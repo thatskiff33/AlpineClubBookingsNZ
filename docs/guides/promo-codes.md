@@ -205,13 +205,15 @@ Until then no code — not even one typed at booking — discounts their nights.
 When they accept, the booking's codes are applied again over their nights. On a
 paid booking the **whole** reduction goes back — this is not a cancellation, so
 no cancellation-policy percentage applies — and it goes back **the way the
-booking was paid**: to the card, by bank transfer for internet banking (the
-usual refund credit note in Xero), or as account credit. Nobody is asked to
-choose. The owner gets the usual booking-changed email. A decline uses up
+booking was paid**: cash first — to the card, or for internet banking a bank
+transfer the treasurer sends from the **Money to settle** card (beside the usual
+refund credit note in Xero) — and whatever the cash cannot cover goes back as
+the account credit it was paid with. Nobody is asked to choose. The owner gets the usual booking-changed email. A decline uses up
 nothing. The price stays as it was until the booking is next edited when:
 - a paid or invoiced booking's price would *rise*;
-- the reduction cannot all go back the way it was paid (for example a card
-  payment already mostly refunded) — the codes then use nothing;
+- the reduction cannot all go back the way it was paid (the cash still
+  refundable and the credit applied do not add up to the price, for example
+  after an earlier change kept part of a payment) — the codes then use nothing;
 - an edit is still under financial review, the booking is waiting for officer
   review or on the waitlist, or the stay has started.
 
@@ -231,7 +233,7 @@ nothing. The price stays as it was until the booking is next edited when:
 | Xero Item Code / Account Code | Post the discount line to a specific Xero item/account | none | Item's mapped account wins over the account code |
 | Restrict to Lodges | Limit redemption to chosen lodges | all lodges | Multi-lodge only |
 | Assign to Specific Members | Limit use to named members, with a scope choice | none | Own-nights-only or whole booking |
-| Several promo codes on one booking (Admin → Modules) | Whether one booking may carry more than one code | off | A rollout switch (#3826): while off, a second code on a booking is refused. Turn it on only after the upgrade that added it has fully cut over |
+| Several promo codes on one booking (Admin → Modules) | Whether one booking may carry more than one code | off | A rollout switch (#3826): while off, a second code on a booking is refused and a code entered on a booking with a working-bee discount replaces it, as before. Turn it on only after the upgrade that added it has fully cut over |
 
 ## After upgrading to this release
 

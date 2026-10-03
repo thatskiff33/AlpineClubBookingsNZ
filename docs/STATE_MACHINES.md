@@ -1902,6 +1902,14 @@ DISMISSED -> OPEN   (#3643, orchestrator decision 3: the inbound Xero sync,
                      See `INV-PAY-108`.)
 ```
 
+**#3827 (owner decision D-3813-6): an edit's refund hand-back follows this
+lifecycle unchanged.** A price reduction on a booking not paid through Stripe
+raises the task OPEN, inside the edit's transaction, keyed one per
+`BookingModification`; it is completed or dismissed exactly as a cancellation's
+hand-back, except that its completion queues no Xero document, because the
+edit's own credit note already corrects the invoice. See
+[`INV-PAY-113`](invariants/payment-and-settlement.md#inv-pay-113).
+
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED
 row can be put back OPEN by an officer, which is the arm above; a COMPLETED row
 cannot. Nothing about the RAISE changed with it - the raise still never reopens,
