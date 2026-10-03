@@ -523,15 +523,19 @@ that omits the settlement election is rejected rather than defaulted, so a
 body-less self-removal cannot silently settle the booking owner's money; the
 owner or an admin makes the election through the batch edit flow.
 
-A booking paid entirely with account credit - PAID or COMPLETED, nothing
-captured - is held to the same tier (#3809, owner decision A): `min(reduction,
-applied credit)`, tiered by the card tier as a cancellation tiers applied credit
-(`calculateAppliedCreditRestore`), comes back as applied credit through
-`giveBackAppliedCredit` (`INV-PAY-113`), with no election, since there is no
-card. The member's credit-ledger key is taken before any `Payment` row write,
-and the applied-credit mirror then falls to the ledger's figure. The edit's
-invoice-allocated Xero note is the give-back, worded as account credit, and
-waits for the deallocation. A booking still owing (CONFIRMED or
+Applied credit is held to the same tier (#3809, owner decision A). On a PAID
+or COMPLETED booking, the part of the reduction the captured money's basis
+cannot return - all of it with nothing captured - is given back from the
+applied credit, capped at it, tiered by the card tier with the fixed fee once,
+card-first (`calculateAppliedCreditRestore`), through `giveBackAppliedCredit`
+(`INV-PAY-113`), with no election. A booking paid by card and credit gets what
+an all-card one would. The member's credit-ledger key is taken before any
+`Payment` row write; the mirror then falls to the ledger's figure. In Xero the
+give-back is invoice-allocated: the edit's note (worded as account credit when
+nothing else is refunded), or a note beside a credit election's unallocated
+one; edit notes wait for the deallocation. Every guest-removal door, the
+consent decline and expiry included, queues that Xero leg. The quote and the
+"Booking Modified" email state the amount. A booking still owing (CONFIRMED or
 PAYMENT_PENDING) gives nothing back: its reduction lowers what it owes.
 
 ## INV-MOD-012

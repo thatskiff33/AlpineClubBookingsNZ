@@ -272,15 +272,17 @@ computed them:
 ```
 retainedAmountCents = max(paid − refund, 0)             (the CANCELLED event; the member's narrative)
 ledgerKeptCents     = retainedAmountCents + (applied − restored)
-policyKeptCents     = (refundableBase − refund) + changeFee + (mirrorApplied − restored)
-ledgerKeptCents − policyKeptCents = paidAboveRefundable + (applied − mirrorApplied)
+policyKeptCents     = (refundableBase − refund) + changeFee + (creditBase − restored)
+ledgerKeptCents − policyKeptCents = paidAboveRefundable + (applied − mirrorApplied) + (mirrorApplied − creditBase)
 ```
 
 **The ledger's figure can hold more than the policy decided** (review D1), and
 says so. Paid money above price plus change fee — an edit's kept-back
 reduction, a captured `CHARGE_TO_MEMBER` share, a legacy double payment — and
-applied rows the mirror never counted are outside the refundable base, so no
-tier refunds them, even at 100%. The ledger keeps them so `owed(b)` reaches
+applied rows the mirror never counted, and applied credit above what the
+booking is now worth (`creditBase`, capped with the money paid at the price
+like the card slice, #3809: a credit-paid reduction's kept-back share), are
+outside the refundable base, so no tier refunds them, even at 100%. The ledger keeps them so `owed(b)` reaches
 zero; the claim logs a warning naming both components, the line's narration
 stops calling them a fee, and the snapshot freezes the difference. Whether that
 money deserves a line of its own is the Xero rendering's question (C6, #3585).
@@ -289,7 +291,7 @@ money deserves a line of its own is the Xero rendering's question (C6, #3585).
 the credit the booking's applied rows actually hold, which the mirror can
 disagree with. Only the paid `cancelBooking` branch keeps anything; every other
 cancel keeps nothing. The CANCELLED snapshot freezes `ledger: { keptCents,
-policyKeptCents, keptBeyondPolicyCents, appliedCreditCents, creditRestoredCents }`
+policyKeptCents, keptBeyondPolicyCents, appliedCreditCents, creditRestoredCents, appliedCreditBaseCents }`
 in the same claim, so #3583's
 back-post replays the figure instead of re-deriving it from a mirror that keeps
 moving. A booking cancelled with no such snapshot kept nothing. Once the

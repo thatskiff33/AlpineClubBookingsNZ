@@ -1602,12 +1602,30 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     no more given back than the booking's review re-prices removed.
   - **Cancelled first**: netted cumulatively against the restore from figures
     frozen at the cancellation, the tier re-run and refused, task OPEN, where
-    it does not reproduce the restore. $200 credit-paid, $50 share: $200 back
+    it does not reproduce the restore, on the cap the cancellation froze
+    (`appliedCreditBaseCents`, #3809). $200 credit-paid, $50 share: $200 back
     at 100%, $105 at 50% less $20, either order.
   - Home: `edit-financial-review-account-credit.ts`,
     `dispatchEditReviewAccountCreditXero`; proven by
     `edit-financial-review-races.realdb.test.ts`.
 
+
+## INV-PAY-114
+
+- **A cancellation tiers applied credit capped at what the booking is now worth,
+  money paid first** (#3809, owner decision A: credit-paid members are treated
+  the same as card-paid ones). The card slice's base caps money paid at price
+  plus change fee (`cancelRefundableBaseCents`); the credit slice is what the
+  same cap leaves of the applied credit (`cancelAppliedCreditBaseCents`, the
+  difference of two such bases), tiered by `calculateAppliedCreditRestore`.
+  Credit left applied above the price - a reduction's policy-kept share - is
+  not restored, as paid money above the price is not refunded: $200
+  credit-paid, $5 back on a $50 reduction at 50% less $20, then a cancel at the
+  same tier restores $55, $60 in all, the card-paid figure. The executed cancel
+  (`paidCancellationMoney`) and the member's preview
+  (`calculateCancellationPreview`) use the one base; the CANCELLED event freezes
+  it (`appliedCreditBaseCents`) for a later review's netting (`INV-PAY-113`). The
+  kept-back credit counts as kept beyond the policy (design §5.1).
 ## INV-PAY-069
 
 - **A completion states WHICH WAY the money goes, and the row records it**

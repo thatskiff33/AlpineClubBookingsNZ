@@ -808,13 +808,18 @@ review's allocated note waits, returned to PENDING with the reason kept in
 `lastErrorMessage`, while the payment's deallocation is PENDING or RUNNING. A
 FAILED or PARTIAL deallocation only moves on an operator retry, so the note
 fails instead, naming it: retry the deallocation, then the note. Since #3809 an
-edit's own modification note waits the same way: a credit-paid booking's price
-reduction gives back through the same deallocation, and its invoice-allocated
-note is the give-back (as a card reduction's is the refund), worded as account
-credit, so the invoice reopened by the deallocation is closed again and no
-unallocated account note is raised. A card-path booking paid by credit has no
-allocation to release (#3836); there the note alone takes the give-back off
-the invoice.
+edit's own modification note waits the same way: a paid booking's price
+reduction gives back applied credit through the same deallocation - all of a
+credit-paid booking's tiered reduction, or what a card-and-credit booking's
+card basis could not return - and `queueXeroBookingEditSettlement` takes it as
+`appliedCreditGiveBackCents`: folded into the edit's invoice-allocated note
+(worded as account credit where nothing else was refunded), or, beside a credit
+election's unallocated account note, as an allocated note of its own. So the
+invoice reopened by the deallocation is closed again and no unallocated note is
+raised for it. A card-path booking paid by credit has no allocation to release
+(#3836); there the note alone takes the give-back off the invoice. Every
+guest-removal door queues this leg through `queueGuestRemovalXeroSettlement`,
+the consent decline and expiry included, which before #3809 queued nothing.
 
 **Deploy note (blue/green, #3791).** A review's note carries `reviewTaskId` in
 its outbox payload, which the previous release ignores: it would raise the note

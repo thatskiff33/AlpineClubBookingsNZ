@@ -298,6 +298,11 @@ Two consequences worth knowing before you edit one:
   how each guest's line is laid out, because the editor has no way to repeat a
   row. If a club needs a different per-guest layout, that is a change to the
   template engine, not something an override can do.
+- **`{{paymentNote}}` on Booking Modified carries every money sentence for the
+  change.** A refund, account credit added, account credit the booking had used
+  being returned to the member (a reduction on a booking paid with credit), an
+  amount still to pay — whichever apply, already worded and with the amount in
+  them. Keep it on a line of its own, with no `$` or label in front.
 - **The pre-arrival reminder's chore sentence only appears for clubs that run a
   roster.** `{{checkoutChoreNote}}` on **Pre-arrival Information** produces the
   whole sentence — that guests are on the chore roster on the morning they check
