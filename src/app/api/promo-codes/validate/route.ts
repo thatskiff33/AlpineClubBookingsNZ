@@ -41,6 +41,10 @@ import {
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { workPartyWindowOverlapsStay } from "@/lib/work-party";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { normalizePromoCodeInput } from "@/lib/promo-code-list-rules";
+import { computeMemberGuestBoundary } from "@/lib/booking-guests";
+import { loadMemberGuestAddPolicy, planMemberGuestConsentWrites } from "@/lib/member-guest-add-policy";
+import { guestConsentStatus } from "@/lib/member-guest-consent";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -63,9 +67,9 @@ const validateSchema = z
           memberId: z.string().min(1).optional(),
           stayStart: z.string().optional(),
           stayEnd: z.string().optional(),
-          // #3827 (D-3813-4): a cross-family member guest the booker is adding,
-          // whose place stays PENDING until they accept. Their nights take no
-          // code, so the preview leaves them out exactly as the save will.
+          // #3827 (D-3813-4): optional, and it can only make a guest MORE
+          // pending. Whether a guest awaits acceptance is decided server-side
+          // below, the way the create decides it; no client sends this today.
           awaitingAcceptance: z.boolean().optional(),
         })
       )
@@ -221,7 +225,7 @@ export async function POST(req: NextRequest) {
       discountPercent: event.discountPercent,
     };
   } else if (code && !parsed.data.codes) {
-    const normalizedCode = code.toUpperCase().trim();
+    const normalizedCode = normalizePromoCodeInput(code);
     const found = await prisma.promoCode.findUnique({
       where: { code: normalizedCode },
       include: {
@@ -300,6 +304,26 @@ export async function POST(req: NextRequest) {
       groupDiscount,
     });
 
+    // D-3813-4, decided HERE exactly as the create decides it — the booker's
+    // family boundary, the club's member-guest policy and who is acting
+    // (`planMemberGuestConsentWrites`) — so the preview prices a guest awaiting
+    // acceptance the way the save will. The client's `awaitingAcceptance` can
+    // only add to that answer, never take a pending guest out of it.
+    const consentPlan = planMemberGuestConsentWrites({
+      guests,
+      boundary: await computeMemberGuestBoundary(
+        prisma,
+        effectiveMemberId,
+        [...new Set(guests.flatMap((guest) => (guest.memberId?.trim() ? [guest.memberId.trim()] : [])))],
+      ),
+      actor: isAuthorizedOnBehalf
+        ? { kind: "ADMIN", adminMemberId: session.user.id }
+        : { kind: "MEMBER" },
+      now: new Date(),
+      bookingCheckIn: checkIn,
+      policy: await loadMemberGuestAddPolicy(),
+    });
+
     // Walked over the guests the pricing pass was GIVEN, each paired with the
     // row that priced it, rather than over the breakdown with the input read
     // back by position (#2801). The engine returns one row per input guest, but
@@ -321,7 +345,9 @@ export async function POST(req: NextRequest) {
         // Dates the positional rates so internal work-party promos restrict
         // the discount to the event's night window.
         firstNight: guest.stayStart ?? checkIn,
-        consentStatus: guest.awaitingAcceptance ? ("PENDING" as const) : null,
+        consentStatus: guest.awaitingAcceptance
+          ? ("PENDING" as const)
+          : guestConsentStatus(consentPlan.guests[index]!),
       };
     });
 
