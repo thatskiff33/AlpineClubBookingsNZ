@@ -187,8 +187,7 @@ function buildWholeLodgeHoldIndex(
 
 /**
  * How many beds a whole-lodge hold REPRESENTS on one night (`INV-CAP-038`,
- * #2698): the lodge's capacity less that night's custodian occupancies — a
- * held bed or, since #3817, the "Custodian (lives on site)" tick with no bed.
+ * #2698): capacity less that night's custodians (held bed or #3817 tick).
  *
  * ADR-001 gives the holding group sole occupancy of the lodge, and until #2698
  * that was read as every bed without exception — including the one the
@@ -208,13 +207,9 @@ function buildWholeLodgeHoldIndex(
  * the officer to confirm — and a hold cannot represent a negative number of
  * beds.
  *
- * The per-BED shape of the same rule, for the callers that hold a bed set
- * rather than a count, is `isCustodianHeldBedNight` in
- * `custodian-occupancy.ts`. The two read different loaders on purpose: this
- * count comes from `findCustodianOccupancies` (bed or tick), the bed shape from
- * `findCustodianBedHolds` (bed only), because a bedless custodian has no bed
- * for a planner to skip. That disagreement on a held night moves no admission
- * number and is stated in `INV-CAP-038`.
+ * The per-BED shape, `isCustodianHeldBedNight`, reads `findCustodianBedHolds`
+ * (bed only); this count reads `findCustodianOccupancies` (bed or tick), as a
+ * bedless custodian has no bed to skip. Stated limit in `INV-CAP-038`.
  */
 export function wholeLodgeHoldRepresentedBeds(
   lodgeCapacity: number,
