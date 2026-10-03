@@ -3612,8 +3612,10 @@ describe("PUT /api/bookings/[id]/modify", () => {
         bookingId: "bk1",
         refundAmountCents: 5000,
         bookingModificationId: "mod_1",
-        // `INV-PAY-101`: an unpaid invoice corrected for the delta refunds nothing through Stripe; until the owner names a wording for a bare correction (#3536) it carries the bank-transfer one, never the card one.
-        refundMethod: "internet-banking",
+        // `INV-PAY-101` (#3536): an unpaid invoice corrected for the delta refunds
+        // nothing, so the note reads "Invoice correction — nothing refunded" and
+        // names no refund method at all, never the card or bank-transfer one.
+        noteWording: "invoice-correction",
       },
       {
         createdByMemberId: "m1",
