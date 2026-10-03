@@ -53,15 +53,20 @@ CI also runs independent static and container checks:
 - `pnpm run audit:deps` (`scripts/ci/audit-dependencies.mjs`) in its own blocking
   `Dependency audit` job, on pull requests and on pushes to `main`. It runs
   `pnpm audit --audit-level=high --json` and reports which of three things
-  happened — see "When the advisory service is down" below. It runs from a bare
+  happened — see "When the advisory service is down" below — plus a fourth
+  passing verdict, MITIGATED (never CLEAN), for one reviewed unfixed advisory
+  under an expiring owner-approved record (#3843; see "Mitigated advisories"
+  below). It runs from a bare
   checkout with no install: measured on npm 11.16.0 / Node 24 the audit built
   its tree from `package-lock.json` and returned the same verdict with or without
   `node_modules`, and `pnpm audit` likewise reads `pnpm-lock.yaml` alone (#3673).
   Skipping the install keeps a required supply-chain gate
   from reddening for anything except an advisory
-- `pnpm audit --audit-level=high` again in the advisory,
-  pull-request-only `dependency-review` job. That one carries a job-level `if:`,
-  which is exactly why it can never be a required check
+- the same wrapper again in the advisory, pull-request-only
+  `dependency-review` job (since #3843; it used to run the bare
+  `pnpm audit --audit-level=high`, which would stay red over a mitigation the
+  required job accepts). That one carries a job-level `if:`, which is exactly
+  why it can never be a required check
 - Semgrep with Next.js, TypeScript, JavaScript and React registry rules, **plus
   the repository's own rules in `.semgrep/rules/`** for the two boundaries no
   registry pack can know about — a `"use client"` module importing server-only
@@ -130,7 +135,8 @@ output names the case**:
 | First line | What it means | What to do |
 | --- | --- | --- |
 | `Dependency audit: CLEAN - ...` | The advisory service answered and this branch has nothing at high or above. | Nothing. The job exits 0. |
-| `Dependency audit: FAILED - VULNERABILITY FOUND ...` | A real finding. The service answered; the packages are listed underneath. | Upgrade the dependency, or add a deliberate override with its reasoning to the register above. **Re-running will not help.** |
+| `Dependency audit: MITIGATED — NOT CLEAN ...` | One reviewed, unfixed high advisory is still reported, and an owner-approved record in `dependency-mitigations.d/` says a reviewed patch covers the copy the audit sees. The raw advisory, the record's scope (including copies it does **not** cover) and the unfiltered pnpm report are printed underneath. | Nothing until the record expires or a fixed release ships; then retire it ([`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md) -> "Retiring a record"). The job exits 0 and raises a warning annotation. |
+| `Dependency audit: FAILED - VULNERABILITY FOUND ...` | A real finding. The service answered; the packages are listed underneath. When a mitigation record exists but does not apply, each reason is printed as `Mitigation record NOT applied: ...`. | Upgrade the dependency, or add a deliberate override with its reasoning to the register above. When a record was refused (expired, or its patch or dependency inputs changed), extend or retire it per [`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md). **Re-running will not help.** |
 | `Dependency audit: FAILED - ADVISORY SERVICE UNREACHABLE ...` | npmjs.org did not answer, after four attempts. Nothing is known to be wrong with the branch - but it has not been cleared either. | Check <https://status.npmjs.org>, then re-run the job once the service has recovered. |
 | `Dependency audit: FAILED - THE AUDIT COULD NOT RUN ...` | pnpm answered with something that is not a readable audit report - usually a missing or malformed `pnpm-lock.yaml`, or a report whose severity counts are missing or non-numeric. | Read the pnpm output above the verdict. The verdict names which severities it could not read when that is the cause. |
 
@@ -154,8 +160,40 @@ counts as unreachable, so it is retried and then named as an outage.
 **The accepted cost.** A sustained npmjs.org outage blocks every merge. That is
 the deliberate trade recorded on #3254: a required security gate that could not
 do its job does not get to report success, so green keeps meaning "the audit
-really ran and found nothing". Passing with a loud warning was considered and
+really ran and found nothing" - or, printed as MITIGATED and never as CLEAN,
+"the audit really ran and found only the one reviewed advisory an unexpired
+owner-approved record covers". Passing with a loud warning was considered and
 rejected - a green tick is what people read, not the summary underneath it.
+
+### Mitigated advisories
+
+**Audience: developer, operator.**
+
+Some advisories have no fixed release and cannot be overridden away. For those,
+and only with the owner's approval on the repository, the required audit can
+report **MITIGATED** instead of VULNERABILITY FOUND (#3843). It is never CLEAN:
+the advisory stays in the output with the unfiltered pnpm report, and the job
+goes red again the moment anything the approval relied on changes.
+
+The pieces, all in one reviewed pull request:
+
+- a reviewed patch under `patches/`, registered for exactly the affected
+  `package@version` in `patchedDependencies` in `pnpm-workspace.yaml` (pnpm
+  records its hash in `pnpm-lock.yaml`), and copied into the Docker `deps`
+  stage before its frozen install;
+- one record in [`dependency-mitigations.d/`](../dependency-mitigations.d/README.md)
+  binding the GHSA, version, dependency path, the owner-decision comment URLs,
+  an expiry, the patch's SHA256, and the SHA256 of the exact reviewed
+  `pnpm-workspace.yaml` and `pnpm-lock.yaml`.
+
+Exactly when the wrapper accepts a record, who authorises one, the 14-day
+expiry cap, the warning annotation a MITIGATED pass raises, and the retirement
+checklist are all stated once, in
+[`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md).
+Any dependency change at all - a Dependabot bump included - invalidates the
+acceptance until the advisory is re-reviewed against the new tree and the owner
+approves new digests. The live records, with their scope and their retirement
+issue, are listed in that README's "Current records" table, not here.
 
 ### Why a stale override is not harmless
 
@@ -711,7 +749,8 @@ Accepted residual risk:
   image provenance is currently the commit-SHA tag, protected PR checks, and the
   GHCR package publish job.
 - The `pnpm audit --audit-level=high` gate keeps high/critical npm advisories
-  blocking, while lower severity advisories remain review-driven.
+  blocking, while lower severity advisories remain review-driven. The one
+  exception is a MITIGATED record (#3843, "Mitigated advisories" above).
 - A sustained npmjs.org advisory outage blocks every merge, by deliberate
   decision (#3254). See "When the advisory service is down" above.
 - Until `Dependency audit` is added to branch protection it is a red check
