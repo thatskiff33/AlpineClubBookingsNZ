@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Prisma } from "@prisma/client";
+import type { MemberGuestConsentStatus, Prisma } from "@prisma/client";
 
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import type { BookingPriceRebaseDeclineReason } from "@/lib/booking-money-reconciliation";
@@ -289,6 +289,8 @@ const REBASE_BOOKING_INCLUDE = {
       priceCents: true,
       memberId: true,
       isMember: true,
+      // #3827 (D-3813-4): a guest still awaiting acceptance takes no code.
+      consentStatus: true,
       nights: { select: { stayDate: true, priceCents: true } },
     },
   },
@@ -299,6 +301,7 @@ type RebaseStrand = {
   priceCents: number;
   memberId: string | null;
   isMember: boolean;
+  consentStatus: MemberGuestConsentStatus | null;
   nights: ReadonlyArray<{ stayDate: Date; priceCents: number | null }>;
 };
 
@@ -306,6 +309,7 @@ type StrandNightPrices = {
   bookingGuestId: string;
   memberId: string | null;
   isMember: boolean;
+  consentStatus: MemberGuestConsentStatus | null;
   perNightRates: number[];
   nightDates: Date[];
 };
@@ -363,6 +367,7 @@ function readStrandNightPrices(
       bookingGuestId: guest.id,
       memberId: guest.memberId,
       isMember: guest.isMember,
+      consentStatus: guest.consentStatus,
       perNightRates,
       nightDates,
     });
@@ -497,6 +502,7 @@ export async function rebaseBookingPriceFromStrands({
       // Every promo window on this booking dates from the stay start, exactly as
       // the removal and waitlist repricings pass it.
       firstNight: booking.checkIn,
+      consentStatus: strand.consentStatus,
     })),
     todayAtClub,
   });

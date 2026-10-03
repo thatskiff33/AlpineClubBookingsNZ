@@ -255,6 +255,8 @@ async function repriceWaitlistCandidate(
         perNightRates: priced.perNightCents,
         nightDates: priced.nightDates,
         firstNight: candidate.checkIn,
+        // #3827 (D-3813-4): a guest still awaiting acceptance takes no code.
+        consentStatus: candidate.guests[index]!.consentStatus,
       };
     });
     const promoResult = await recalculateBookingPromo({
