@@ -75,7 +75,7 @@ import {
   requestChangesPromoCodes,
   requestedPromoCodeChange,
   requestedPromoCodeListFor,
-} from "@/lib/booking-modify-validation";
+} from "@/lib/booking-modify-promo-request";
 import {
   describePromoChangeNotApplied,
   type PromoChangeNotAppliedNotice,

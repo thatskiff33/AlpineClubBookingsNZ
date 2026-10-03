@@ -24,7 +24,7 @@ import {
 import { validateAndCalculatePromoDiscount, type PromoApplicationSubject } from "../promo";
 import { resolvePromotionsInTransaction } from "../booking-create-promo";
 import { applyPromoCodeChanges } from "../booking-modify-plan";
-import { requestedPromoCodeListFor } from "../booking-modify-validation";
+import { requestedPromoCodeListFor } from "../booking-modify-promo-request";
 import { requireCalendarDate } from "@/lib/club-time";
 
 const TODAY = requireCalendarDate("2026-07-01");

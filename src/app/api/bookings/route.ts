@@ -90,8 +90,8 @@ import {
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import {
+  orderedPromoCodeRequests,
   promoCodeRequestRefusal,
-  promoCodeRequestsOf,
   resolveEffectivePromoSources,
 } from "@/lib/booking-create-promo";
 import { resolveBookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
@@ -793,27 +793,18 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // #3827: the codes this request carries, in the booker's order — the
-  // plural list, or the legacy single code with its guest choice.
+  // #3827: the codes this request carries, in the booker's order.
   if (requestedPromoCodes && promoCodeStr) {
     return NextResponse.json(
       { error: "Send promoCode or promoCodes, not both" },
       { status: 400 },
     );
   }
-  const promoCodes = requestedPromoCodes
-    ? requestedPromoCodes
-        .map((entry, position) => ({ entry, position }))
-        .sort(
-          (a, b) =>
-            (a.entry.order ?? a.position) - (b.entry.order ?? b.position) ||
-            a.position - b.position,
-        )
-        .map(({ entry }) => ({
-          code: entry.code,
-          ...(entry.promoGuestIndexes ? { promoGuestIndexes: entry.promoGuestIndexes } : {}),
-        }))
-    : promoCodeRequestsOf({ promoCodeStr, promoGuestIndexes });
+  const promoCodes = orderedPromoCodeRequests({
+    promoCodes: requestedPromoCodes,
+    promoCodeStr,
+    promoGuestIndexes,
+  });
 
   // A working-bee id or promo code that cannot apply to this request (#3770).
   // The create services re-run all of this authoritatively, under their lock;

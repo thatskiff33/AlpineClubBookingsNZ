@@ -8,10 +8,9 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import {
   repriceBookingAfterGuestAcceptance,
+  settleGuestAcceptanceRepriceAfterCommit,
   type GuestAcceptanceReprice,
 } from "@/lib/booking-guest-acceptance-reprice";
-import { drainSupersededPrimaryIntents } from "@/lib/booking-modification-settlement";
-import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import {
   BookingGuestRemovalError,
   removeBookingGuestInTransaction,
@@ -1311,47 +1310,3 @@ async function notifyMemberGuestConsentOutcome(params: {
   }
 }
 
-/**
- * The after-commit half of a guest-acceptance re-price (#3827), as the guest
- * routes run theirs: cancel any primary intent a zero-dollar auto-pay
- * superseded, and queue the Xero correction of an issued invoice. Best-effort
- * for the reason every such drain is: the booking is committed, and the
- * recovery sweep and the Xero outbox are the authority on completion.
- */
-async function settleGuestAcceptanceRepriceAfterCommit(params: {
-  bookingId: string;
-  actorMemberId: string | null;
-  reprice: Extract<GuestAcceptanceReprice, { repriced: true }>;
-}): Promise<void> {
-  const { bookingId, reprice } = params;
-  if (reprice.bookingModificationId === null) return;
-  await drainSupersededPrimaryIntents({
-    bookingId,
-    supersededPrimaryPaymentIntents: { length: reprice.supersededPrimaryPaymentIntentCount },
-  });
-  try {
-    await queueXeroBookingEditSettlement({
-      bookingId,
-      bookingModificationId: reprice.bookingModificationId,
-      ...(params.actorMemberId ? { createdByMemberId: params.actorMemberId } : {}),
-      hasIssuedXeroInvoice: reprice.hasIssuedXeroInvoice,
-      originalPaymentStatus: reprice.paymentStatus,
-      priceDiffCents: reprice.priceDiffCents,
-      changeFeeCents: 0,
-      datesChanged: false,
-      settlementAmountCents: reprice.xeroRefundAmountCents,
-      settlementMethod: reprice.settlementMethod,
-      refundedThroughStripe: reprice.hasSucceededPayment,
-      // An acceptance never raises a paid or invoiced booking's price (see
-      // `repriceBookingAfterGuestAcceptance`), so there is no Stripe ask to wait on.
-      requiresAdditionalStripePayment: false,
-      additionalPaymentIntentId: null,
-      createPrimaryInvoiceWhenMissing: reprice.zeroDollarAutoPaid && !reprice.hasIssuedXeroInvoice,
-    });
-  } catch (err) {
-    logger.error(
-      { err, bookingId },
-      "Failed to queue the Xero settlement for a guest-acceptance re-price",
-    );
-  }
-}

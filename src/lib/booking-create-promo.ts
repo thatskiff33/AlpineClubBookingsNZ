@@ -277,6 +277,31 @@ export async function resolvePromotionsInTransaction(
   };
 }
 
+/**
+ * The codes a create REQUEST carries, in the booker's order (#3827): the plural
+ * `promoCodes` sorted by each entry's `order` — the list's own order where an
+ * entry gives none, and between equals — or the legacy single code with its
+ * guest choice.
+ */
+export function orderedPromoCodeRequests(body: {
+  promoCodes?: Array<PromoCodeRequest & { order?: number }>;
+  promoCodeStr?: string;
+  promoGuestIndexes?: number[];
+}): PromoCodeRequest[] {
+  if (!body.promoCodes) return promoCodeRequestsOf(body);
+  return body.promoCodes
+    .map((entry, position) => ({ entry, position }))
+    .sort(
+      (a, b) =>
+        (a.entry.order ?? a.position) - (b.entry.order ?? b.position) ||
+        a.position - b.position,
+    )
+    .map(({ entry }) => ({
+      code: entry.code,
+      ...(entry.promoGuestIndexes ? { promoGuestIndexes: entry.promoGuestIndexes } : {}),
+    }));
+}
+
 /** ONE spelling of a typed promo code as it is stored (#3770, `INV-SSOT-001`). */
 export function normalizePromoCodeInput(code: string): string {
   return code.toUpperCase().trim();

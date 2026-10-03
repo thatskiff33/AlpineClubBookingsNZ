@@ -7,6 +7,7 @@
 import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { applyBookingPromotions, repriceBookingPromotions } from "@/lib/booking-promotions";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
+import { requestedPromoCodeListFor } from "@/lib/booking-modify-promo-request";
 import {
   AdminReviewStatus,
   BookingStatus,
@@ -159,7 +160,6 @@ import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-
 import {
   BookingModifyReviewJustificationRequiredError,
   isBookingFullyPaidForGuestNameEdits,
-  requestedPromoCodeListFor,
   resolveStayRangesOrApiError,
   type BatchModifyInput,
   type LoadedBookingForModify,

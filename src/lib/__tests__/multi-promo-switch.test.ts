@@ -25,6 +25,7 @@ vi.mock("@/lib/work-party", async (importOriginal) => ({
 import {
   DUPLICATE_PROMO_CODE_MESSAGE,
   ONE_PROMO_CODE_PER_BOOKING_MESSAGE,
+  orderedPromoCodeRequests,
   resolveEffectivePromoSources,
 } from "../booking-create-promo";
 
@@ -79,5 +80,28 @@ describe("create's promo sources and the multiPromoCodes switch", () => {
       { promoCodeStr: "BOB", allowInternal: false },
       { promoCodeStr: "ANN", allowInternal: false, promoGuestIndexes: [1] },
     ]);
+  });
+});
+
+describe("the create request's code list (D-3813-2)", () => {
+  it("sorts by each entry's order (its list position where none is given), ties by list position", () => {
+    expect(
+      orderedPromoCodeRequests({
+        promoCodes: [
+          { code: "C", order: 2 },
+          { code: "A", order: 0, promoGuestIndexes: [1] },
+          { code: "B" },
+        ],
+      }),
+    // B has no order, so it sorts as its position, 2 — level with C, which
+    // comes first in the list.
+    ).toEqual([{ code: "A", promoGuestIndexes: [1] }, { code: "C" }, { code: "B" }]);
+  });
+
+  it("reads the legacy single code with its guest choice", () => {
+    expect(orderedPromoCodeRequests({ promoCodeStr: "ann", promoGuestIndexes: [0] })).toEqual([
+      { code: "ann", promoGuestIndexes: [0] },
+    ]);
+    expect(orderedPromoCodeRequests({})).toEqual([]);
   });
 });

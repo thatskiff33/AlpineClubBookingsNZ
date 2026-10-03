@@ -42,7 +42,7 @@ import {
 import {
   requestChangesPromoCodes,
   requestedPromoCodeChange,
-} from "@/lib/booking-modify-validation";
+} from "@/lib/booking-modify-promo-request";
 import {
   OtherLodgeRateAmountUnderReviewError,
   requestCarriesOtherLodgeElection,
