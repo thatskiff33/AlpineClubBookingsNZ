@@ -24,6 +24,9 @@
  *  2. `ensureGeneratedCredential(params)`    — the store's create-only generator
  *  3. `deleteIntegrationCredential(params)`  — the store's remover
  *
+ * and the in-transaction forms of 1 and 3 (`…InTransaction(params)`, #3454),
+ * which take the same params object plus the caller's `tx`;
+ *
  * and one way to go round them all:
  *
  *  4. `<client>.integrationCredential.<anything but a read>(…)` — a direct
@@ -100,6 +103,12 @@ export const CREDENTIAL_MUTATORS = [
   "setIntegrationCredential",
   "ensureGeneratedCredential",
   "deleteIntegrationCredential",
+  // The same two writes on a transaction the caller owns (#3454), for a
+  // credential change that must commit with something else. They take the same
+  // required actor and expectation, in the same single params object, so a
+  // caller of these is a site exactly like a caller of the two above.
+  "setIntegrationCredentialInTransaction",
+  "deleteIntegrationCredentialInTransaction",
 ] as const;
 
 export type CredentialMutator = (typeof CREDENTIAL_MUTATORS)[number];
@@ -114,10 +123,29 @@ export type CredentialMutator = (typeof CREDENTIAL_MUTATORS)[number];
 const MUTATORS_REQUIRING_EXPECTATION: ReadonlySet<string> = new Set([
   "setIntegrationCredential",
   "deleteIntegrationCredential",
+  "setIntegrationCredentialInTransaction",
+  "deleteIntegrationCredentialInTransaction",
 ]);
 
 /** The Prisma delegate a bypass reaches. */
 const CREDENTIAL_DELEGATE = "integrationCredential";
+
+/**
+ * THE XERO TOKEN MIRROR (#3454). Since #3454 the Xero OAuth tokens live in the
+ * credential store, but the `XeroToken` row is still written beside them for the
+ * blue-green window — and when its ciphertext no longer matches the store copy's
+ * fingerprint, the token store READS IT as the newer copy. So a write to that
+ * row from anywhere else would plant a live refresh token with no actor and no
+ * audit row, and the next refresh would copy it into the store under the
+ * refresh job's name. The token store is therefore the ONLY module that may
+ * write the delegate; every write it makes is inventoried, so the contract test
+ * can pin each one as reviewed (the connect, the refresh save, the lease claim
+ * and release, the delete), and a write anywhere else is a bypass.
+ */
+export const TOKEN_MIRROR_DELEGATE = "xeroToken";
+
+/** The one module allowed to write `XeroToken`. */
+export const TOKEN_MIRROR_BOUNDARY_MODULES = ["src/lib/xero-token-store.ts"] as const;
 
 /**
  * The delegate's READ surface — and everything else on it counts as a mutation.
@@ -218,8 +246,13 @@ export type CredentialActorCensus = {
   actorForwarded: CredentialWriteSite[];
   /** Sites that must declare an expectation and pass none. MUST be empty. */
   expectationless: CredentialWriteSite[];
-  /** Direct Prisma/raw writes to the table outside the boundary modules. */
+  /**
+   * Direct Prisma/raw writes to the credential table outside its boundary
+   * modules, and to the `XeroToken` mirror outside the token store (#3454).
+   */
   bypasses: CredentialBypassSite[];
+  /** The token store's own writes to the `XeroToken` mirror. Pinned, each reviewed. */
+  tokenMirrorWrites: CredentialBypassSite[];
   /** Files walked, so a scan that resolved nothing cannot read as clean. */
   filesScanned: number;
 };
@@ -287,16 +320,19 @@ function resolveParams(argument: ts.Expression | undefined): ResolvedObject | nu
   return resolveObjectLiteral(inner);
 }
 
-/** Is this expression the `integrationCredential` Prisma delegate? */
-function isCredentialDelegate(expression: ts.Expression): boolean {
+/** Is this expression the named Prisma delegate (`integrationCredential` unless said)? */
+function isCredentialDelegate(
+  expression: ts.Expression,
+  delegate: string = CREDENTIAL_DELEGATE,
+): boolean {
   const inner = unwrap(expression);
   if (ts.isPropertyAccessExpression(inner)) {
-    return inner.name.text === CREDENTIAL_DELEGATE;
+    return inner.name.text === delegate;
   }
   if (ts.isElementAccessExpression(inner)) {
-    return literalText(inner.argumentExpression) === CREDENTIAL_DELEGATE;
+    return literalText(inner.argumentExpression) === delegate;
   }
-  return ts.isIdentifier(inner) && inner.text === CREDENTIAL_DELEGATE;
+  return ts.isIdentifier(inner) && inner.text === delegate;
 }
 
 /**
@@ -337,7 +373,10 @@ function followCopies<T>(
  * invisible. They are followed explicitly now, because "caught by accident" is
  * what stops being true the moment somebody renames a variable.
  */
-function collectDelegateAliases(ast: ts.SourceFile): Set<string> {
+function collectDelegateAliases(
+  ast: ts.SourceFile,
+  delegate: string = CREDENTIAL_DELEGATE,
+): Set<string> {
   const aliases = new Map<string, true>();
   const copies: { from: string; to: string }[] = [];
 
@@ -345,7 +384,7 @@ function collectDelegateAliases(ast: ts.SourceFile): Set<string> {
     if (!ts.isVariableDeclaration(node) || !node.initializer) return;
 
     if (ts.isIdentifier(node.name)) {
-      if (isCredentialDelegate(node.initializer)) {
+      if (isCredentialDelegate(node.initializer, delegate)) {
         aliases.set(node.name.text, true);
         return;
       }
@@ -364,7 +403,7 @@ function collectDelegateAliases(ast: ts.SourceFile): Set<string> {
           : ts.isIdentifier(element.name)
             ? element.name.text
             : null;
-        if (source !== CREDENTIAL_DELEGATE) continue;
+        if (source !== delegate) continue;
         if (ts.isIdentifier(element.name)) aliases.set(element.name.text, true);
       }
     }
@@ -431,6 +470,28 @@ export function classifyCredentialSql(text: string): string | null {
   return null;
 }
 
+/** `INSERT`/`UPDATE`/`DELETE` against the `XeroToken` mirror (#3454), in one SQL string. */
+export function classifyTokenMirrorSql(text: string): string | null {
+  const flat = text.replace(/\s+/g, " ");
+  // The table name is followed by a non-identifier character, so a table that
+  // merely starts with "XeroToken" is not this one.
+  const table = /"?(?:public"?\.)?"?XeroToken"?(?![A-Za-z0-9_])/.source;
+  const statements: Array<[string, string]> = [
+    ["xero-token.insert", String.raw`\bINSERT\s+INTO\s+`],
+    ["xero-token.update", String.raw`\bUPDATE\s+`],
+    ["xero-token.delete", String.raw`\bDELETE\s+FROM\s+`],
+  ];
+  for (const [kind, verb] of statements) {
+    if (new RegExp(verb + table, "i").test(flat)) return kind;
+  }
+  return null;
+}
+
+/** Either table's DML, so every SQL door checks both. */
+function classifyGuardedSql(text: string): string | null {
+  return classifyCredentialSql(text) ?? classifyTokenMirrorSql(text);
+}
+
 /** Every argument of a `$executeRawUnsafe(...)`-style call, as one string. */
 function rawSqlText(call: ts.CallExpression): string {
   return call.arguments.map((argument) => argument.getText()).join(" ");
@@ -439,10 +500,16 @@ function rawSqlText(call: ts.CallExpression): string {
 function scanFile(file: string, repoRoot: string): {
   sites: CredentialWriteSite[];
   bypasses: CredentialBypassSite[];
+  tokenMirrorWrites: CredentialBypassSite[];
 } {
   const relativePath = toPosix(relative(repoRoot, file));
   const ast = parseSourceFile(file);
   const aliases = collectDelegateAliases(ast);
+  const mirrorAliases = collectDelegateAliases(ast, TOKEN_MIRROR_DELEGATE);
+  const tokenMirrorWrites: CredentialBypassSite[] = [];
+  const isMirrorBoundary = (TOKEN_MIRROR_BOUNDARY_MODULES as readonly string[]).includes(
+    relativePath,
+  );
   const mutatorAliases = collectMutatorAliases(ast);
   const sites: CredentialWriteSite[] = [];
   const bypasses: CredentialBypassSite[] = [];
@@ -520,13 +587,26 @@ function scanFile(file: string, repoRoot: string): {
           statement: `${CREDENTIAL_DELEGATE}.${method}`,
         });
       }
+      const receiverIsMirror =
+        isCredentialDelegate(receiver, TOKEN_MIRROR_DELEGATE) ||
+        (ts.isIdentifier(unwrap(receiver)) &&
+          mirrorAliases.has((unwrap(receiver) as ts.Identifier).text));
+      if (method !== null && isMutatingDelegateMethod(method) && receiverIsMirror) {
+        (isMirrorBoundary ? tokenMirrorWrites : bypasses).push({
+          file: relativePath,
+          id: nextId(symbol),
+          symbol,
+          line,
+          statement: `${TOKEN_MIRROR_DELEGATE}.${method}`,
+        });
+      }
     }
 
     // --- raw SQL from TypeScript -------------------------------------------
     if (
       ts.isPropertyAccessExpression(callee) &&
       RAW_SQL_METHODS.has(callee.name.text) &&
-      classifyCredentialSql(rawSqlText(node)) !== null
+      classifyGuardedSql(rawSqlText(node)) !== null
     ) {
       bypasses.push({
         file: relativePath,
@@ -545,7 +625,7 @@ function scanFile(file: string, repoRoot: string): {
     const tag = unwrap(node.tag);
     if (!ts.isPropertyAccessExpression(tag)) return;
     if (!RAW_SQL_METHODS.has(tag.name.text)) return;
-    if (classifyCredentialSql(node.template.getText()) === null) return;
+    if (classifyGuardedSql(node.template.getText()) === null) return;
     const symbol = symbolChain(node);
     bypasses.push({
       file: relativePath,
@@ -556,7 +636,7 @@ function scanFile(file: string, repoRoot: string): {
     });
   });
 
-  return { sites, bypasses };
+  return { sites, bypasses, tokenMirrorWrites };
 }
 
 function listSqlFiles(dir: string, out: string[]): string[] {
@@ -576,6 +656,7 @@ export function scanCredentialActorCensus(
 ): CredentialActorCensus {
   const sites: CredentialWriteSite[] = [];
   const bypasses: CredentialBypassSite[] = [];
+  const tokenMirrorWrites: CredentialBypassSite[] = [];
   let filesScanned = 0;
 
   for (const root of SCAN_ROOTS) {
@@ -591,6 +672,7 @@ export function scanCredentialActorCensus(
       const result = scanFile(file, repoRoot);
       sites.push(...result.sites);
       bypasses.push(...result.bypasses);
+      tokenMirrorWrites.push(...result.tokenMirrorWrites);
     }
   }
 
@@ -605,7 +687,7 @@ export function scanCredentialActorCensus(
   for (const file of sqlFiles) {
     filesScanned += 1;
     const text = readFileSync(file, "utf8");
-    const kind = classifyCredentialSql(text);
+    const kind = classifyGuardedSql(text);
     if (kind === null) continue;
     const relativePath = toPosix(relative(repoRoot, file));
     bypasses.push({
@@ -621,6 +703,7 @@ export function scanCredentialActorCensus(
     a.id.localeCompare(b.id);
   sites.sort(byId);
   bypasses.sort(byId);
+  tokenMirrorWrites.sort(byId);
 
   return {
     sites,
@@ -628,6 +711,7 @@ export function scanCredentialActorCensus(
     actorForwarded: sites.filter((site) => site.actor.kind === "forwarded"),
     expectationless: sites.filter((site) => site.expectation.kind === "absent"),
     bypasses,
+    tokenMirrorWrites,
     filesScanned,
   };
 }

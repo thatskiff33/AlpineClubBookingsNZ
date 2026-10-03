@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { getAuditRequestContext } from "@/lib/audit";
 import {
   enrollTwoFactor,
   recordTwoFactorFailure,
@@ -74,6 +75,9 @@ export async function POST(request: NextRequest) {
   const recoveryCodes = await enrollTwoFactor({
     memberId: guard.member.id,
     method: "EMAIL",
+    // The member is enrolling their own second factor (#3454).
+    actor: { kind: "member", memberId: guard.member.id },
+    request: getAuditRequestContext(request),
   });
   await markTwoFactorSessionVerified();
 

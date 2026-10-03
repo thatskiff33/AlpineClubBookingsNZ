@@ -166,6 +166,12 @@ import "./booking-ledger-projection-census.realdb.test";
 // unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3640-`
 // fixtures.
 import "./card-refund-mirror-races.realdb.test";
+// #3793 reuses it to prove a paid cancel tiers its refund off the refunded
+// total read under the Payment row lock: the REAL cancelBooking queues behind a
+// webhook holding that row, which then records a dashboard refund, and only the
+// still-refundable share is tiered. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-3793-` fixtures.
+import "./paid-cancel-refunded-total-race.realdb.test";
 // #2941 reuses it to prove the application client's dietary/allergy omission
 // against PostgreSQL itself: absent from a plain read, a nested relation, an
 // interactive-transaction read and create/update results, present only through
@@ -186,6 +192,13 @@ import "./group-settlement-invoice-binding-races.realdb.test";
 // at the provider and on the row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-3402-` fixtures.
 import "./edit-financial-review-charge-raise-claim.realdb.test";
+// #3454 reuses it to prove the Xero token store's two fences against real row
+// locks: simultaneous refresh-lease claims (this code against itself, and
+// against an older colour's own claim statement) let exactly one through, and a
+// refresh whose credential-store compare-and-set loses rolls the `XeroToken`
+// mirror back with it. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it clears
+// the singleton `XeroToken` table and its own `xero-oauth` row.
+import "./xero-token-credential-store.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

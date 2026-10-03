@@ -251,12 +251,17 @@ describe("booking profile gate route integration", () => {
   });
 
   it("create route validates linked member profiles before draft and waitlist paths", () => {
+    // #3770: the route gates through the family-first module, which runs the
+    // profile gate on the family and then on the outsiders.
     const source = readRepoFile("src/app/api/bookings/route.ts");
-    const gateIndex = source.indexOf("await assertLinkedBookingMembersCanBeBooked");
-
-    expect(gateIndex).toBeGreaterThan(-1);
-    expect(gateIndex).toBeLessThan(source.indexOf("if (draft) {"));
-    expect(gateIndex).toBeLessThan(source.indexOf("createWaitlistedBooking({"));
+    const helper = readRepoFile("src/lib/member-guest-family-first.ts");
+    expect(helper.match(/await assertLinkedBookingMembersCanBeBooked\(/g)).toHaveLength(2);
+    for (const call of ["await resolveFamilyPhase(", "await resolveBeyondFamilyPhase("]) {
+      const gateIndex = source.indexOf(call);
+      expect(gateIndex, call).toBeGreaterThan(-1);
+      expect(gateIndex, call).toBeLessThan(source.indexOf("if (draft) {"));
+      expect(gateIndex, call).toBeLessThan(source.indexOf("createWaitlistedBooking({"));
+    }
     expect(source).toContain("getBookingGuestValidationErrorResponse(error)");
   });
 

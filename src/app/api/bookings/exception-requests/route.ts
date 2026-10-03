@@ -4,7 +4,12 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
-import { getDefaultLodgeId } from "@/lib/lodges";
+import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
+import {
+  handleMemberGuestAddRefusal,
+  startMemberGuestRefusalClock,
+} from "@/lib/member-guest-probe-guard";
+import { BookingGuestValidationError } from "@/lib/booking-guests";
 import { parseDateOnly, formatDateOnly } from "@/lib/date-only";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
@@ -70,6 +75,9 @@ const createSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  // #3770: taken at the top, as on the booking add paths (#2388), so the
+  // collapsed-refusal timing floor covers the whole request.
+  const startedAt = startMemberGuestRefusalClock();
   const session = await auth();
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
@@ -129,7 +137,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const effectiveLodgeId = lodgeId ?? (await getDefaultLodgeId(prisma));
+  // #3770: refused here in the create route's words, not as a foreign-key 500
+  // that only a party whose members all resolved could reach.
+  const effectiveLodgeId = await resolveOptionalActiveLodgeId(prisma, lodgeId);
+  if (!effectiveLodgeId) {
+    return NextResponse.json(
+      { error: "Unknown or inactive lodgeId" },
+      { status: 400 },
+    );
+  }
 
   try {
     const created = await createNewBookingExceptionRequest({
@@ -187,6 +203,18 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
+    // #3770: a collapsed member-guest refusal owes the add paths' throttle unit,
+    // audit row and timing floor; no boundary hook here, so it charges on exit.
+    if (error instanceof BookingGuestValidationError) {
+      await handleMemberGuestAddRefusal({
+        request: req,
+        actorMemberId: session.user.id,
+        error,
+        route: "bookings/exception-requests",
+        startedAt,
+        throttle: "CHARGE_NOW",
+      });
+    }
     return mapExceptionRequestError(error);
   }
 }

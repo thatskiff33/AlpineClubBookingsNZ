@@ -181,6 +181,7 @@ import {
 } from "@/lib/__tests__/support/hosting-participant-fence-double";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { lockedPaymentReReadDouble } from "./support/locked-payment-reread-double";
 
 const POLICY: CancellationRule[] = [
   {
@@ -307,6 +308,8 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
             },
             payment: {
               update: mocks.paymentUpdate,
+              // #3793: the re-read under the Payment row lock.
+              findUnique: lockedPaymentReReadDouble(mocks.bookingFindUnique),
             },
             // #1547: the never-captured claim reads capture evidence and any
             // Xero-linked applied credit under the lock.
