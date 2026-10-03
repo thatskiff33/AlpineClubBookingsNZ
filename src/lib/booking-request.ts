@@ -2385,6 +2385,33 @@ export async function approveBookingRequest(input: {
           };
         }
 
+        // Re-check per-night capacity for the NEW guest list before the swap,
+        // excluding the held booking's own guests (#3817 review), mirroring
+        // the school path's F6 re-check (#1352). The hold reserved its spaces
+        // for the guests it was written with; since "one person is one space"
+        // (`INV-DATE-030`), a guest row's `memberId` decides whether a ticked
+        // custodian's own space is waived, so a quote re-save that moves a
+        // guest's link off the custodian makes the custodian count again. On a
+        // full night that is one person more than the lodge holds. Runs under
+        // the global and per-lodge locks taken above; the sentinel aborts the
+        // transaction, so the APPROVED claim rolls back and the officer sees
+        // the same capacityExceeded outcome as the fresh-create branch below.
+        const heldCapacity = await checkCapacityForGuestRanges(
+          requestLodgeId,
+          request.checkIn,
+          request.checkOut,
+          guests.map((_guest, index) => ({
+            stayStart: request.checkIn, stayEnd: request.checkOut,
+            memberId: linkedMembers.get(index) ?? null,
+          })),
+          held.id,
+          tx
+        );
+        if (!heldCapacity.available) {
+          capacityFullNights = getCapacityFullNights(heldCapacity.nightDetails);
+          throw new Error("CAPACITY_EXCEEDED_SENTINEL");
+        }
+
         // Preserve the held booking's beds across the guest swap (issue #1254):
         // update guest rows in place rather than deleteMany+recreate. The date
         // range is unchanged (fixed at request submission), so existing bed
