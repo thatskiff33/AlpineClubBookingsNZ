@@ -80,8 +80,8 @@ function renderReview(
       handleJoinWaitlist={vi.fn()}
       joiningWaitlist={false}
       perGuestDatesEnabled={false}
-      appliedPromo={null}
-      setAppliedPromo={vi.fn()}
+      appliedPromos={[]}
+      setAppliedPromos={vi.fn()}
       availableCreditCents={0}
       appliedCreditCents={0}
       remainingToPay={priceQuote.totalPriceCents}
@@ -121,8 +121,6 @@ function renderReview(
       setWorkPartyClearedNotice={vi.fn()}
       availablePromoCodes={[]}
       promoCodesEnabled={false}
-      prefillPromoCode={undefined}
-      setPrefillPromoCode={vi.fn()}
       cancelIfGuestsBumped={false}
       setCancelIfGuestsBumped={vi.fn()}
       setStep={vi.fn()}
@@ -425,7 +423,7 @@ describe("ReviewStep split provisional copy (#1942)", () => {
     // more than the whole total. The rephrased copy anchors on non-member
     // rates instead of "the total above", staying self-consistent.
     renderReview([memberGuest, nonMemberGuest], splitHold, {
-      appliedPromo: {
+      appliedPromos: [{
         code: "SAVE",
         description: null,
         type: "PERCENT",
@@ -433,7 +431,7 @@ describe("ReviewStep split provisional copy (#1942)", () => {
         promoAdjustmentCents: -14000,
         totalPriceCents: 20000,
         finalPriceCents: 6000,
-      },
+      }],
       remainingToPay: 6000,
     });
 
@@ -657,7 +655,7 @@ describe("ReviewStep — the exception-request card (#2562 review)", () => {
   it("shows the undiscounted quote and names the promo as not included", () => {
     renderReview([memberGuest], undefined, {
       exceptionOffer: offer,
-      appliedPromo: {
+      appliedPromos: [{
         code: "WINTER20",
         description: "20% off",
         type: "PERCENT",
@@ -665,7 +663,7 @@ describe("ReviewStep — the exception-request card (#2562 review)", () => {
         promoAdjustmentCents: -6000,
         totalPriceCents: 8000,
         finalPriceCents: 2000,
-      },
+      }],
     });
 
     const card = screen.getByTestId("request-officer-approval");
@@ -686,7 +684,7 @@ describe("ReviewStep — the exception-request card (#2562 review)", () => {
       exceptionOffer: offer,
       attendingWorkParty: true,
       selectedWorkPartyEventId: "event-1",
-      appliedPromo: {
+      appliedPromos: [{
         // A work-party discount never sends its internal code to the client.
         code: null,
         description: "Working bee",
@@ -695,7 +693,7 @@ describe("ReviewStep — the exception-request card (#2562 review)", () => {
         promoAdjustmentCents: -8000,
         totalPriceCents: 8000,
         finalPriceCents: 0,
-      },
+      }],
     });
 
     const card = screen.getByTestId("request-officer-approval");

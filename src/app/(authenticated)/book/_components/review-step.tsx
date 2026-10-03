@@ -34,7 +34,8 @@ import {
   formatClubWeekdayDate,
   requireCalendarDate,
 } from "@/lib/club-time";
-import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
+import { type PromoResult } from "@/components/promo-code-input";
+import { BookingPromoCodes } from "@/components/booking-promo-codes";
 import { TimePicker } from "@/components/time-picker";
 import {
   RequestOfficerApprovalCard,
@@ -70,8 +71,8 @@ export function ReviewStep({
   reviewGuestPayload,
   bookingDateStrings,
   perGuestDatesEnabled,
-  appliedPromo,
-  setAppliedPromo,
+  appliedPromos,
+  setAppliedPromos,
   availableCreditCents,
   appliedCreditCents,
   remainingToPay,
@@ -111,8 +112,6 @@ export function ReviewStep({
   setWorkPartyClearedNotice,
   availablePromoCodes,
   promoCodesEnabled,
-  prefillPromoCode,
-  setPrefillPromoCode,
   cancelIfGuestsBumped,
   setCancelIfGuestsBumped,
   setStep,
@@ -142,8 +141,8 @@ export function ReviewStep({
   reviewGuestPayload: GuestData[];
   bookingDateStrings: { checkIn: string; checkOut: string } | null;
   perGuestDatesEnabled: boolean;
-  appliedPromo: PromoResult | null;
-  setAppliedPromo: Dispatch<SetStateAction<PromoResult | null>>;
+  appliedPromos: PromoResult[];
+  setAppliedPromos: Dispatch<SetStateAction<PromoResult[]>>;
   availableCreditCents: number;
   appliedCreditCents: number;
   remainingToPay: number;
@@ -183,8 +182,6 @@ export function ReviewStep({
   setWorkPartyClearedNotice: (value: string | null) => void;
   availablePromoCodes: AvailablePromoCode[];
   promoCodesEnabled: boolean;
-  prefillPromoCode: string | undefined;
-  setPrefillPromoCode: (value: string | undefined) => void;
   cancelIfGuestsBumped: boolean;
   setCancelIfGuestsBumped: (value: boolean) => void;
   setStep: (step: "dates" | "guests" | "review" | "pay") => void;
@@ -317,14 +314,15 @@ export function ReviewStep({
    * whole screen was submitted.
    */
   const exceptionExtras: NewBookingExceptionExtras = {
-    promoCode: appliedPromo?.code ?? null,
+    promoCode:
+      appliedPromos.flatMap((promo) => (promo.code ? [promo.code] : [])).join(", ") || null,
     workPartyEventId:
       attendingWorkParty && selectedWorkPartyEventId
         ? selectedWorkPartyEventId
         : null,
     // A work-party discount arrives as an applied promo with no member-visible
     // code, so the code check alone would miss the free night entirely.
-    workPartyDiscountApplied: Boolean(appliedPromo?.workPartyEvent),
+    workPartyDiscountApplied: appliedPromos.some((promo) => promo.workPartyEvent),
     appliedCreditCents,
     requestedRoomId: requestedRoomId || null,
     expectedArrivalTime: expectedArrivalTime || null,
@@ -505,20 +503,25 @@ export function ReviewStep({
             </Alert>
           ) : null}
 
-          {appliedPromo && appliedPromo.promoAdjustmentCents !== 0 ? (
+          {appliedPromos.some((promo) => promo.promoAdjustmentCents !== 0) ? (
             <>
               <div className="border-t pt-4 flex justify-between text-sm">
                 <span>Subtotal</span>
                 <span>{formatCents(priceQuote.totalPriceCents, format)}</span>
               </div>
-              <div className={`flex justify-between gap-3 text-sm ${appliedPromo.promoAdjustmentCents > 0 ? "text-warning" : "text-success"}`}>
-                <span>
-                  {appliedPromo.workPartyEvent
-                    ? `Working bee discount (${appliedPromo.workPartyEvent.name})`
-                    : `Promo adjustment (${appliedPromo.code})`}
-                </span>
-                <span>{formatSignedCents(appliedPromo.promoAdjustmentCents, format)}</span>
-              </div>
+              {/* #3492: one row per code, in the booker's order. */}
+              {appliedPromos
+                .filter((promo) => promo.promoAdjustmentCents !== 0)
+                .map((promo) => (
+                  <div key={promo.code ?? promo.workPartyEvent?.id} className={`flex justify-between gap-3 text-sm ${promo.promoAdjustmentCents > 0 ? "text-warning" : "text-success"}`}>
+                    <span>
+                      {promo.workPartyEvent
+                        ? `Working bee discount (${promo.workPartyEvent.name})`
+                        : `Promo adjustment (${promo.code})`}
+                    </span>
+                    <span>{formatSignedCents(promo.promoAdjustmentCents, format)}</span>
+                  </div>
+                ))}
               {appliedCreditCents > 0 && (
                 <div className="flex justify-between gap-3 text-sm text-success">
                   <span>Account credit</span>
@@ -767,8 +770,8 @@ export function ReviewStep({
                     setWorkPartyClearedNotice(null);
                     if (!checked) {
                       setSelectedWorkPartyEventId(null);
-                      setAppliedPromo((current) =>
-                        current?.workPartyEvent ? null : current
+                      setAppliedPromos((current) =>
+                        current.some((promo) => promo.workPartyEvent) ? [] : current
                       );
                     } else {
                       // "Exactly one event to attend" said as a first with
@@ -782,11 +785,11 @@ export function ReviewStep({
                     }
                   }}
                   className="rounded border-input"
-                  disabled={Boolean(appliedPromo && !appliedPromo.workPartyEvent)}
+                  disabled={appliedPromos.some((promo) => !promo.workPartyEvent)}
                 />
                 I am attending a working bee
               </label>
-              {appliedPromo && !appliedPromo.workPartyEvent && (
+              {appliedPromos.some((promo) => !promo.workPartyEvent) && (
                 <p className="text-sm text-muted-foreground">
                   Remove your promo code to select a working bee event — a
                   booking can only use one discount.
@@ -842,39 +845,15 @@ export function ReviewStep({
               cleared.
             </div>
           )}
-          {availablePromoCodes.length > 0 && !appliedPromo && !attendingWorkParty && (
-            <div className="app-callout-brand p-4">
-              <p className="mb-2 text-sm font-medium text-foreground">
-                You have promo codes available:
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {availablePromoCodes.map((pc) => (
-                  <button
-                    key={pc.code}
-                    type="button"
-                    onClick={() => setPrefillPromoCode(pc.code)}
-                    className="app-chip-brand font-mono"
-                  >
-                    {pc.code}
-                    {pc.description && (
-                      <span className="font-sans font-normal text-brand-charcoal">
-                        — {pc.description}
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
           {promoCodesEnabled && (
-            <PromoCodeInput
+            <BookingPromoCodes
               checkIn={checkIn!}
               checkOut={checkOut!}
               guests={reviewGuestPayload}
-              onPromoApplied={setAppliedPromo}
-              appliedPromo={appliedPromo}
+              applied={appliedPromos.filter((promo) => !promo.workPartyEvent)}
+              onChange={setAppliedPromos}
               lodgeId={lodgeId}
-              prefillCode={prefillPromoCode}
+              ownCodes={availablePromoCodes}
               disabled={attendingWorkParty}
               disabledReason="A promo code cannot be combined with a working bee discount. Untick 'I am attending a working bee' to enter a code instead."
             />
