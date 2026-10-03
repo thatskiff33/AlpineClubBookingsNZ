@@ -21,6 +21,11 @@ export interface PromoResult {
   // Set when this discount came from a selected work party event rather
   // than a manually entered promo code.
   workPartyEvent?: { id: string; name: string; discountPercent: number } | null;
+  // #3492: on a booking carrying several codes, the guests the BOOKER chose for
+  // a booker-picks-guests code (resent when the list is re-priced), and the
+  // guest a guest-code chip named ("applies to Sam only").
+  promoGuestIndexes?: number[];
+  appliesTo?: string;
 }
 
 interface PromoCodeInputProps {
