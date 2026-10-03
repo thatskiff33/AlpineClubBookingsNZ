@@ -35,7 +35,12 @@ import {
 import { EXCLUDED_LEDGER_REFUND_STATUSES, isRecordedRefundStatus } from "@/lib/payment-transaction-status";
 import { lockPaymentForRefundedTotal, recordStripeRefundLedgerEntry } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
-import { listRefundsForPaymentIntent, processRefund, retrieveRefund } from "@/lib/stripe";
+import {
+  listRefundsForPaymentIntent,
+  processRefund,
+  retrieveRefund,
+  STRIPE_IDEMPOTENCY_KEY_LIFETIME_MS,
+} from "@/lib/stripe";
 import { formatCents } from "@/lib/utils";
 import { getNextRefundedPaymentStatus } from "@/lib/xero-inbound/amounts";
 import {
@@ -62,6 +67,19 @@ async function findProviderRefundForKey(
         refund.metadata?.organiserChildRefundKey === key && isRecordedRefundStatus(refund.status ?? "unknown"),
     ) ?? null
   );
+}
+
+/** Past Stripe's key lifetime, with room for clock skew between Stripe and here. */
+const KEY_EXPIRY_MARGIN_MS = 60 * 60 * 1000;
+
+/**
+ * When a reopened child refund debt may next be tried (F2): once the refund's
+ * idempotency key has left Stripe's replay window, never sooner, and never in
+ * the past.
+ */
+export function reopenedRetryAt(refund: Pick<Stripe.Refund, "created">, now: Date): Date {
+  const keyExpiresAt = refund.created * 1000 + STRIPE_IDEMPOTENCY_KEY_LIFETIME_MS + KEY_EXPIRY_MARGIN_MS;
+  return new Date(Math.max(now.getTime(), keyExpiresAt));
 }
 
 /** The settlement status the counted refunds on its combined intent imply. */
@@ -322,14 +340,23 @@ export async function reconcilePendingOrganiserChildRefunds(
       if (key && isOrganiserChildRefundKey(key)) {
         // Reopened as a fresh retry: owed again, and counted against the
         // combined capture again (`committedCents`), until it is made.
+        //
+        // Not before Stripe has forgotten the key (fix round 2, F2). The retry
+        // sends the SAME key, and inside its lifetime Stripe answers with the
+        // original, now-failed refund: every attempt in that window would
+        // fail and spend the retry budget, so the debt would exhaust and alert
+        // before a refund could ever be made. So the retry waits out the
+        // window, counted from the refund's creation (the key's first use) plus
+        // a margin, and starts with its whole budget: attempts 0, as a debt
+        // that has never been tried.
         await tx.paymentRecoveryOperation.updateMany({
           where: { idempotencyKey: key, status: PaymentRecoveryOperationStatus.SUCCEEDED },
           data: {
             // PENDING, not FAILED: owed and claimable again, not a terminal
             // failure (`INV-PAY-056` keeps that one route).
             status: PaymentRecoveryOperationStatus.PENDING,
-            attempts: 1,
-            nextRetryAt: new Date(),
+            attempts: 0,
+            nextRetryAt: reopenedRetryAt(refund, new Date()),
             succeededAt: null,
             lastError: `Stripe reported refund ${refund.id} as ${refund.status} after it was recorded`,
           },

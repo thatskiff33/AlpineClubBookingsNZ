@@ -249,6 +249,13 @@ export async function listRefundsForCharge(chargeId: string): Promise<Stripe.Ref
 }
 
 /**
+ * How long Stripe keeps an idempotency key: a request repeated inside it is
+ * answered with the ORIGINAL response, whatever has happened since; after it the
+ * same key is a brand-new request. The window counts from the key's first use.
+ */
+export const STRIPE_IDEMPOTENCY_KEY_LIFETIME_MS = 24 * 60 * 60 * 1000;
+
+/**
  * #3653: every refund on one PaymentIntent - the provider evidence an organiser
  * child's refund replay reads before it asks Stripe again, because Stripe keeps
  * an idempotency key for only 24 hours.
