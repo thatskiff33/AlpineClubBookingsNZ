@@ -866,7 +866,7 @@ describe("finance dashboard page model", () => {
     expect(
       model.cards.find((entry) => entry.title === "Net Collected")
         ?.footnote,
-    ).toBe("Cash is local payment-derived and separate from Xero revenue.");
+    ).toBe("Worked out from this app's own payment, account credit and refund records, not from Xero revenue.");
   });
 
   it("warns and exports primary reconciliation reason counts for pricing sensitivity", async () => {

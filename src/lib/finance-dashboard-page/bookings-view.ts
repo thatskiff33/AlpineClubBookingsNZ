@@ -44,6 +44,10 @@ function formatShortDate(dateOnly: string, format: ClubDateFormat) {
   return formatClubDayMonth(requireCalendarDate(dateOnly), format);
 }
 
+/** The Net Collected card's footnote: where the figure comes from. */
+const NET_COLLECTED_SOURCE_NOTE =
+  "Worked out from this app's own payment, account credit and refund records, not from Xero revenue.";
+
 export async function buildBookingsDashboard(
   selection: FinanceDashboardSelection,
   lodgeId: string | null,
@@ -155,10 +159,12 @@ export async function buildBookingsDashboard(
       // Payments and Reports do.
       description:
         "Captured payments less refunds and credits for bookings in the range, including any collected price increase. Cancelled bookings count only what was kept of what was paid; deleted bookings are left out.",
+      // #3372 (3 Oct 2026): kept account credit and hand-backs owed come from
+      // this app's credit and refund-task rows too, so not "payment-derived".
       footnote:
         ledgerGapBookings > 0
-          ? `May understate by ${formatCents(metrics.paymentSummary.additionalLedgerGapCents, format)} - see the warning above. Cash is local payment-derived and separate from Xero revenue.`
-          : "Cash is local payment-derived and separate from Xero revenue.",
+          ? `May understate by ${formatCents(metrics.paymentSummary.additionalLedgerGapCents, format)} - see the warning above. ${NET_COLLECTED_SOURCE_NOTE}`
+          : NET_COLLECTED_SOURCE_NOTE,
     },
     {
       title: "Forward demand",
