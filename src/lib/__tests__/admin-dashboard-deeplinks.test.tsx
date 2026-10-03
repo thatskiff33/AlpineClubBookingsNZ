@@ -34,9 +34,8 @@ vi.mock("@/lib/auth", () => ({
 // production about when a lodge name is shown (#2917).
 vi.mock("@/lib/hut-leader-coverage", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/hut-leader-coverage")),
-  getUnassignedHutLeaderDates: vi.fn(),
-  // #3818: "Handovers this week" reads the same cover; faked like its sibling.
-  getHutLeaderHandovers: vi.fn(),
+  // #3818: the amber card and "Handovers this week" come from one read.
+  getHutLeaderDashboardCoverage: vi.fn(),
 }));
 
 import AdminDashboardPage from "@/app/(admin)/admin/dashboard/page";
@@ -50,8 +49,7 @@ import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-on
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import {
-  getHutLeaderHandovers,
-  getUnassignedHutLeaderDates,
+  getHutLeaderDashboardCoverage,
 } from "@/lib/hut-leader-coverage";
 import { prisma } from "@/lib/prisma";
 
@@ -109,8 +107,10 @@ function mockDashboardCounts({
   vi.mocked(prisma.bookingChangeRequest.count).mockResolvedValue(
     pendingBookingChangeRequests,
   );
-  vi.mocked(getUnassignedHutLeaderDates).mockResolvedValue([]);
-  vi.mocked(getHutLeaderHandovers).mockResolvedValue([]);
+  vi.mocked(getHutLeaderDashboardCoverage).mockResolvedValue({
+    unassignedDates: [],
+    handovers: [],
+  });
   // Single-lodge club: this suite asserts hrefs, not lodge copy (#2917).
   vi.mocked(prisma.lodge.count).mockResolvedValue(1);
 }
@@ -431,10 +431,9 @@ describe("admin dashboard deep links", () => {
       dropped. A default that silently works is exactly the kind of omission no
       other assertion on this page can see (CT-4, #2870).
     */
-    expect(vi.mocked(getUnassignedHutLeaderDates)).toHaveBeenCalledWith({
-      scope: { kind: "all" },
-      today: clubToday,
-    });
+    expect(vi.mocked(getHutLeaderDashboardCoverage)).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: { kind: "all" }, today: clubToday }),
+    );
 
     /*
       THE MONTH BOUNDS ARE NOT THE ENVIRONMENT'S EITHER — the same negative the

@@ -144,8 +144,28 @@ describe("loadHutLeaderNightCover", () => {
         // A cancelled, bumped or pending stay is never loaded, so never covers.
         status: { in: ["PAID", "COMPLETED"] },
         deletedAt: null,
+        // Any stay overlapping the window: in by `to`, out after `from`.
+        checkIn: { lte: d("2026-08-31") },
+        checkOut: { gt: d("2026-08-01") },
       },
       OR: [{ consentStatus: null }, { consentStatus: "CONFIRMED" }],
+    });
+  });
+
+  it("selects scalar columns only by default, and names only when asked", async () => {
+    const db = buildDb([], []);
+    const input = { scope: { kind: "all" } as const, from: d("2026-08-01"), to: d("2026-08-31") };
+
+    await loadHutLeaderNightCover(db, input);
+    const [[lean]] = db.hutLeaderAssignment.findMany.mock.calls as [[{ select: Record<string, unknown> }]];
+    expect(lean.select).not.toHaveProperty("member");
+    expect(lean.select).not.toHaveProperty("lodge");
+
+    await loadHutLeaderNightCover(db, { ...input, withNames: true });
+    const named = db.hutLeaderAssignment.findMany.mock.calls[1]?.[0] as { select: Record<string, unknown> };
+    expect(named.select).toMatchObject({
+      member: { select: { firstName: true, lastName: true } },
+      lodge: { select: { name: true, active: true } },
     });
   });
 
@@ -208,6 +228,34 @@ describe("handovers and covered-night listings", () => {
         date: "2026-08-06",
         lodgeId: "lodge-a",
         lodgeName: "Alpine Lodge",
+        from: [{ memberId: "ann", name: "Ann Smith" }],
+        to: [{ memberId: "ben", name: "Ben Jones" }],
+      }),
+    ]);
+  });
+});
+
+describe("handovers across a one-night overlap", () => {
+  // Ann's nights are 3–5 Aug, Ben's 5–8 Aug: both are on duty on night 5 (the
+  // one-day overlap the overlap guard allows).
+  const cover = buildHutLeaderNightCover(
+    [
+      shift({ id: "ann", memberId: "ann", startDate: d("2026-08-03"), endDate: d("2026-08-05") }),
+      shift({
+        id: "ben",
+        memberId: "ben",
+        member: { firstName: "Ben", lastName: "Jones" },
+        startDate: d("2026-08-05"),
+        endDate: d("2026-08-08"),
+      }),
+    ],
+    [stay("ann", "2026-08-03", "2026-08-06"), stay("ben", "2026-08-05", "2026-08-09")],
+  );
+
+  it("is ONE handover, on the day Ann finishes, with Ann on one side only", () => {
+    expect(listHutLeaderHandovers(cover, { from: d("2026-08-03"), to: d("2026-08-09") })).toEqual([
+      expect.objectContaining({
+        date: "2026-08-06",
         from: [{ memberId: "ann", name: "Ann Smith" }],
         to: [{ memberId: "ben", name: "Ben Jones" }],
       }),

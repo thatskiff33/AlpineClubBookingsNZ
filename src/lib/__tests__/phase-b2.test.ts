@@ -587,8 +587,54 @@ describe("#25: Auto-Assign Hut Leaders", () => {
     const { autoAssignHutLeaders } = await import("@/lib/cron-hut-leader-auto-assign");
     await autoAssignHutLeaders();
 
-    // One already-covered probe per night: today plus the two-day lookahead.
-    expect(mockPrisma.hutLeaderAssignment.findMany).toHaveBeenCalledTimes(3);
+    // The cheap already-covered probe reads the lodge's whole window ONCE
+    // (#3818 review), today through today + the two-day lookahead.
+    expect(mockPrisma.hutLeaderAssignment.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.hutLeaderAssignment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          startDate: { lte: new Date("2026-04-10T00:00:00.000Z") },
+          endDate: { gte: new Date("2026-04-08T00:00:00.000Z") },
+        }),
+      }),
+    );
+  });
+
+  describe("in a container running TZ=Pacific/Auckland (#3818)", () => {
+    // Production sets TZ=Pacific/Auckland (Dockerfile, docker-compose). date-fns
+    // `eachDayOfInterval` returns LOCAL midnights there, i.e. 11:00/12:00Z of the
+    // PREVIOUS day, so the job used to run one night early. CI runs in UTC, where
+    // that bug is invisible, so this pins the process zone for one case.
+    const originalTz = process.env.TZ;
+    afterEach(() => {
+      if (originalTz === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTz;
+    });
+
+    it("walks the stored lodge nights today .. today + lookahead, not the night before", async () => {
+      process.env.TZ = "Pacific/Auckland";
+      // Premise: the process zone really moved, or this case proves nothing.
+      expect(new Date("2026-04-08T00:00:00.000Z").getTimezoneOffset()).not.toBe(0);
+      mockPrisma.lodgeSettings.findUnique.mockResolvedValue({
+        capacity: null,
+        hutLeaderLookaheadDays: 2,
+      });
+      mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
+      mockPrisma.booking.findMany.mockResolvedValue([]);
+
+      const { autoAssignHutLeaders } = await import("@/lib/cron-hut-leader-auto-assign");
+      await autoAssignHutLeaders();
+
+      // One sole-adult read per uncovered night, each on a UTC-midnight day.
+      const nights = mockPrisma.booking.findMany.mock.calls.map((call: unknown[]) =>
+        (call[0] as { where: { checkIn: { lte: Date } } }).where.checkIn.lte.toISOString(),
+      );
+      expect(nights).toEqual([
+        "2026-04-08T00:00:00.000Z",
+        "2026-04-09T00:00:00.000Z",
+        "2026-04-10T00:00:00.000Z",
+      ]);
+    });
   });
 });
 
@@ -657,6 +703,9 @@ describe("#25: Unassigned Dates API", () => {
       {
         id: "a1",
         memberId: "leader",
+        // Real lodge ids on all three rows, so the lodge match is exercised
+        // rather than passing as undefined === undefined.
+        lodgeId: "lodge-1",
         source: "MANUAL",
         bedId: null,
         startDate: localMidnight("2026-04-01"),
@@ -670,14 +719,19 @@ describe("#25: Unassigned Dates API", () => {
         stayEnd: new Date("2026-05-01T00:00:00.000Z"),
         nights: [],
         booking: {
-          lodgeId: undefined,
+          lodgeId: "lodge-1",
           checkIn: new Date("2026-04-01T00:00:00.000Z"),
           checkOut: new Date("2026-05-01T00:00:00.000Z"),
         },
       },
     ]);
     mockPrisma.booking.findMany.mockResolvedValue([
-      { checkIn: localMidnight("2026-04-10"), checkOut: localMidnight("2026-04-12"), _count: { guests: 2 } },
+      {
+        lodgeId: "lodge-1",
+        checkIn: localMidnight("2026-04-10"),
+        checkOut: localMidnight("2026-04-12"),
+        _count: { guests: 2 },
+      },
     ]);
 
     const { GET } = await import("@/app/api/admin/hut-leaders/unassigned-dates/route");

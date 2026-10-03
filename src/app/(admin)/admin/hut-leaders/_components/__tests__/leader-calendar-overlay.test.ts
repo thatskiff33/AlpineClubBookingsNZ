@@ -8,7 +8,9 @@ import {
 /**
  * The changeover labels (#3818): a day shows "AM · <night D − 1> until midday"
  * and "PM · <night D> from midday" only when the two nights have different
- * leaders, and a night with guests and no valid shift shows "No leader tonight".
+ * leaders, and a night with guests and no valid shift shows "No <label>
+ * tonight" in the club's own word for the role. A phone-width cell drops each
+ * line's suffix (" until midday"), so the name is in `text`, never the suffix.
  */
 
 function d(value: string) {
@@ -18,9 +20,13 @@ function d(value: string) {
 const ann = { memberId: "ann", name: "Ann Smith" };
 const ben = { memberId: "ben", name: "Ben Jones" };
 
+const am = (names: string) => ({ text: `AM · ${names}`, suffix: " until midday" });
+const pm = (names: string) => ({ text: `PM · ${names}`, suffix: " from midday" });
+
 function overlayFor(
   covered: Array<{ date: string; leaders: Array<{ memberId: string; name: string }> }>,
   redDates: string[],
+  hutLeaderLabel = "Hut Leader",
 ) {
   return buildLeaderCalendarOverlay({
     monthStart: d("2026-08-01"),
@@ -28,6 +34,7 @@ function overlayFor(
     coveredNights: coveredNightsByDate(covered),
     redDates,
     guestNights: new Set(["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06"]),
+    hutLeaderLabel,
   });
 }
 
@@ -47,12 +54,12 @@ describe("buildLeaderCalendarOverlay — Wednesday leave / Thursday arrive", () 
     expect(overlay["2026-08-04"]).toEqual({ tone: "violet", label: "Smith", emphasis: "fill" });
     expect(overlay["2026-08-05"]).toEqual({
       tone: "red",
-      label: "AM · Smith until midday, No leader tonight",
-      lines: ["AM · Smith until midday", "No leader tonight"],
+      label: "AM · Smith until midday, No hut leader tonight",
+      lines: [am("Smith"), "No hut leader tonight"],
     });
     expect(overlay["2026-08-06"]).toMatchObject({
       tone: "violet",
-      lines: ["PM · Jones from midday"],
+      lines: [pm("Jones")],
     });
   });
 
@@ -73,13 +80,13 @@ describe("buildLeaderCalendarOverlay — Wednesday leave / Thursday arrive", () 
     expect(overlay["2026-08-06"]).toEqual({
       tone: "violet",
       label: "AM · Smith until midday, PM · Jones from midday",
-      lines: ["AM · Smith until midday", "PM · Jones from midday"],
+      lines: [am("Smith"), pm("Jones")],
       emphasis: "fill",
     });
     // Same leader both nights: no split.
     expect(overlay["2026-08-07"]).toEqual({ tone: "violet", label: "Jones", emphasis: "ring" });
     // Ben's checkout morning: he is on duty until midday.
-    expect(overlay["2026-08-08"]).toMatchObject({ lines: ["AM · Jones until midday"] });
+    expect(overlay["2026-08-08"]).toMatchObject({ lines: [am("Jones")] });
   });
 
   it("reads the night before the month for the 1st's morning", () => {
@@ -91,8 +98,41 @@ describe("buildLeaderCalendarOverlay — Wednesday leave / Thursday arrive", () 
       [],
     );
     expect(overlay["2026-08-01"]).toMatchObject({
-      lines: ["AM · Smith until midday", "PM · Jones from midday"],
+      lines: [am("Smith"), pm("Jones")],
     });
     expect(overlay["2026-07-31"]).toBeUndefined();
+  });
+});
+
+describe("buildLeaderCalendarOverlay — wording", () => {
+  it("names the role in the club's own word on a night with nobody", () => {
+    const overlay = overlayFor([], ["2026-08-05"], "Duty Manager");
+    expect(overlay["2026-08-05"]).toEqual({
+      tone: "red",
+      label: "No duty manager tonight",
+      lines: ["No duty manager tonight"],
+    });
+  });
+
+  it("a one-night overlap never reads as the staying leader departing", () => {
+    // Ann's nights are 3–5 Aug, Ben's 5–8 Aug: both on duty on night 5.
+    const overlay = overlayFor(
+      [
+        { date: "2026-08-04", leaders: [ann] },
+        { date: "2026-08-05", leaders: [ann, ben] },
+        { date: "2026-08-06", leaders: [ben] },
+      ],
+      [],
+    );
+    // Day 5: Ann stays on, Ben joins from midday.
+    expect(overlay["2026-08-05"]).toMatchObject({
+      label: "Smith, PM · Jones from midday",
+      lines: ["Smith", pm("Jones")],
+    });
+    // Day 6: Ann finishes at midday, Ben stays on.
+    expect(overlay["2026-08-06"]).toMatchObject({
+      label: "Jones, AM · Smith until midday",
+      lines: ["Jones", am("Smith")],
+    });
   });
 });

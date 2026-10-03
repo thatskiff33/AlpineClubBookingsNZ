@@ -5,6 +5,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 import {
   coverageLodgeLabel,
   coverageNeedsLodgeContext,
+  getHutLeaderDashboardCoverage,
   getUnassignedHutLeaderDates,
 } from "@/lib/hut-leader-coverage";
 
@@ -612,9 +613,8 @@ describe("getUnassignedHutLeaderDates — a leader must be staying (#3818)", () 
       to: dateOnly("2026-08-06"),
     });
 
+    // Healed by the reader alone: this PR ships no migration or backfill.
     expect(result.map((row) => row.date)).toEqual(["2026-08-05", "2026-08-06"]);
-    // Read-only: the row is healed by the reader, nothing is written.
-    expect(db.hutLeaderAssignment).not.toHaveProperty("update");
   });
 
   it("a leader whose stay is not loaded (cancelled, bumped or archived) covers nothing", async () => {
@@ -632,5 +632,71 @@ describe("getUnassignedHutLeaderDates — a leader must be staying (#3818)", () 
     });
 
     expect(result.map((row) => row.date)).toEqual(["2026-08-03"]);
+  });
+});
+
+describe("getHutLeaderDashboardCoverage (#3818)", () => {
+  // Today 1 Aug, a three-night lookahead (1..4 Aug), the week 1..7 Aug.
+  const today = dateOnly("2026-08-01");
+  const week = { from: today, to: dateOnly("2026-08-07") };
+
+  it("reads ONE cover reaching from the night before the week to whichever window ends later, with names", async () => {
+    const db = buildDb({
+      hutLeaderLookaheadDays: 3,
+      bookings: [
+        { checkIn: dateOnly("2026-08-02"), checkOut: dateOnly("2026-08-03"), guests: [{}] },
+      ],
+      assignments: [
+        { memberId: "ann", startDate: dateOnly("2026-07-31"), endDate: dateOnly("2026-08-02") },
+        { memberId: "ben", startDate: dateOnly("2026-08-03"), endDate: dateOnly("2026-08-06") },
+      ],
+    });
+
+    const result = await getHutLeaderDashboardCoverage({
+      db,
+      scope: { kind: "all" },
+      today,
+      handovers: week,
+    });
+
+    expect(db.hutLeaderAssignment.findMany).toHaveBeenCalledTimes(1);
+    expect(db.hutLeaderAssignment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { startDate: { lte: week.to }, endDate: { gte: dateOnly("2026-07-31") } },
+        select: expect.objectContaining({ member: expect.anything() }),
+      }),
+    );
+    // The uncovered nights still answer over the lookahead window alone.
+    expect(db.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          checkIn: { lte: dateOnly("2026-08-04") },
+          checkOut: { gt: today },
+        }),
+      }),
+    );
+    expect(result.unassignedDates).toEqual([]);
+    expect(result.handovers.map((handover) => handover.date)).toEqual(["2026-08-03"]);
+  });
+
+  it("reads neither names nor handovers when the viewer cannot see the card", async () => {
+    const db = buildDb({ hutLeaderLookaheadDays: 3 });
+
+    const result = await getHutLeaderDashboardCoverage({
+      db,
+      scope: { kind: "all" },
+      today,
+      handovers: null,
+    });
+
+    const [[args]] = db.hutLeaderAssignment.findMany.mock.calls as [
+      [{ where: unknown; select: Record<string, unknown> }],
+    ];
+    expect(args.where).toEqual({
+      startDate: { lte: dateOnly("2026-08-04") },
+      endDate: { gte: today },
+    });
+    expect(args.select).not.toHaveProperty("member");
+    expect(result.handovers).toEqual([]);
   });
 });
