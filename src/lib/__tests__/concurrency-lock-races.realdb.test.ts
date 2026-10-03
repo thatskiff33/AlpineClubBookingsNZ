@@ -186,6 +186,12 @@ import "./group-settlement-invoice-binding-races.realdb.test";
 // at the provider and on the row. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-3402-` fixtures.
 import "./edit-financial-review-charge-raise-claim.realdb.test";
+// #3792 reuses it to prove the late internet-banking capacity cancel gives back
+// the booking's applied account credit through the REAL inbound reconcile: the
+// worked example ends with $200 of credit and owed(b) zero, a replay and the
+// orphan heal add nothing, and a cash-only booking is unchanged. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3792-` fixtures.
+import "./ib-capacity-cancel-credit-restore.realdb.test";
 // #3835 reuses it to prove a review completed after the REAL cancel of a
 // captured payment gives back only what the cancellation's refund left owed,
 // by card and by credit plus card at three tiers, on both captured routes and

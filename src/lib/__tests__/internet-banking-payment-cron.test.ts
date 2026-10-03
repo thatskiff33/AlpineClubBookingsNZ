@@ -553,6 +553,8 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     );
     const emailCall = mocks.sendBookingCancelledEmail.mock.calls[0];
     expect(emailCall[8]).toBe(2000);
+    // #3792: an expired hold is not the member's cancel, so no policy wording.
+    expect(emailCall[10]).toBe("in-full");
   });
 
   it("#3611: posts the released booking's reversals, nothing kept, on the release transaction", async () => {

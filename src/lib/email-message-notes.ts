@@ -629,3 +629,18 @@ export function bookingBumpedRebookAction(
     ? { label: "Book Again", path: "/book" }
     : { label: "Contact the Club", path: "/contact" };
 }
+
+/**
+ * #3792 — why a cancelled booking's applied account credit came back: tiered by
+ * the cancellation policy (the member's own cancel), or in full (a cancel the
+ * member did not choose: capacity, an expired internet banking hold). The
+ * sentence after the amount, shared by the HTML template and the
+ * `{{creditRestoredMessage}}` token so the two cannot drift.
+ */
+export type CreditRestoredBasis = "cancellation-policy" | "in-full";
+
+export function creditRestoredSentenceTail(basis: CreditRestoredBasis): string {
+  return basis === "in-full"
+    ? " of previously applied account credit has been restored to your account in full."
+    : " of previously applied account credit has been restored to your account (per the cancellation policy).";
+}

@@ -586,6 +586,22 @@ describe("email-templates", () => {
       expect(html).toContain("$15.00");
       expect(html).toContain("previously applied account credit");
       expect(html).toContain("per the cancellation policy");
+      expect(html).not.toContain("restored to your account in full");
+    });
+
+    it("says applied credit came back in full, not by policy, for a cancel the member did not choose (#3792)", () => {
+      const html = bookingCancelledTemplate(
+        "Alice",
+        checkIn,
+        checkOut,
+        12000,
+        CLUB_FORMAT_TEST,
+        "credit",
+        8000,
+        "in-full",
+      );
+      expect(html).toContain("$80.00 of previously applied account credit has been restored to your account in full.");
+      expect(html).not.toContain("per the cancellation policy");
     });
 
     it("omits the restored-credit line when nothing was restored", () => {
