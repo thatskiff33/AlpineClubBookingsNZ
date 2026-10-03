@@ -111,7 +111,13 @@ vi.mock("@/lib/module-settings", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    member: { findUnique: h.memberFindUnique },
+    // #3770 R2: the create route reads the booker's lodge restrictions before
+    // its member lookup; nobody here has one.
+    memberLodgeAccess: { findMany: vi.fn().mockResolvedValue([]) },
+    // #3451: the own-dependant guard's parent-link read. This suite's party
+    // carries member ids its mocked resolution does not return, so the shared
+    // entry point reads them as free text and asks; nobody here has a dependant.
+    member: { findUnique: h.memberFindUnique, findMany: vi.fn().mockResolvedValue([]) },
     groupDiscountSetting: { findUnique: h.groupDiscountFindUnique },
     // Member self-books (no admin bypass) run the minimum-stay policy check.
     minimumStayPolicy: { findMany: vi.fn().mockResolvedValue([]) },

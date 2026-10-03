@@ -19,6 +19,7 @@ import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { recordWithheldBookingEmail } from "@/lib/booking-email-suppression";
 import logger from "@/lib/logger";
 import { revokePaymentLinkById, revokePaymentLinksForBooking } from "@/lib/payment-link";
+import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import {
   SPLIT_GUEST_PAYMENT_LINK_TEMPLATE,
   mintSplitGuestPaymentLinkIfAbsent,
@@ -585,6 +586,9 @@ async function resolveHoldWindowUnderLock(
       }
 
       await revokePaymentLinksForBooking(booking.id, tx);
+      // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
+      // reversed if a reversed mark-paid left it confirmed there (lock(1) above).
+      await postCancellationLedgerLines({ store: tx, bookingId: booking.id, lodgeId: booking.lodgeId, keptCents: 0, site: "confirm-pending:capacity-bump" });
 
       return {
         type: "bumped",
@@ -705,6 +709,9 @@ async function resolveHoldWindowUnderLock(
           }
 
           await revokePaymentLinksForBooking(booking.id, tx);
+          // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
+          // reversed if a reversed mark-paid left it confirmed there (lock(1) above).
+          await postCancellationLedgerLines({ store: tx, bookingId: booking.id, lodgeId: booking.lodgeId, keptCents: 0, site: "confirm-pending:request-hold-ended" });
 
           return { type: "request_hold_terminal_cancelled", booking };
         }
@@ -807,6 +814,9 @@ async function resolveHoldWindowUnderLock(
           });
 
           await revokePaymentLinksForBooking(booking.id, tx);
+          // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
+          // reversed if a reversed mark-paid left it confirmed there (lock(1) above).
+          await postCancellationLedgerLines({ store: tx, bookingId: booking.id, lodgeId: booking.lodgeId, keptCents: 0, site: "confirm-pending:child-hold-ended" });
 
           // The CANCELLED narrative event is recorded POST-COMMIT (below), not
           // here: booking-events.ts documents recordBookingEvent as a

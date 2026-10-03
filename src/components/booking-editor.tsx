@@ -99,6 +99,8 @@ export interface BookingEditorData {
   status: string;
   guests: Guest[];
   viewerRole: string;
+  /** #3451: see `BookingData.viewerIsBookingOwner`. */
+  viewerIsBookingOwner?: boolean;
   totalPriceCents: number;
   discountCents: number;
   promoAdjustmentCents: number;
@@ -216,6 +218,7 @@ export function BookingEditor({
           checkOut: booking.checkOut,
           guests: booking.guests,
           viewerRole: booking.viewerRole,
+          viewerIsBookingOwner: booking.viewerIsBookingOwner,
           finalPriceCents: booking.finalPriceCents,
           totalPriceCents: booking.totalPriceCents,
           discountCents: booking.discountCents,

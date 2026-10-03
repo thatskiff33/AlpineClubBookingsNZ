@@ -13,6 +13,12 @@ import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
+import {
+  dependantIdentityDeclarationSchema,
+} from "@/lib/booking-dependant-identity";
+import {
+  dependantIdentitySpeaksOnBehalf,
+} from "@/lib/booking-dependant-identity-doors";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
@@ -24,6 +30,11 @@ import {
   type LiveBookingGuestInput,
 } from "@/lib/booking-exception-request-service";
 import { mapExceptionRequestError } from "@/lib/booking-exception-request-http";
+import {
+  handleMemberGuestAddRefusal,
+  startMemberGuestRefusalClock,
+} from "@/lib/member-guest-probe-guard";
+import { BookingGuestValidationError } from "@/lib/booking-guests";
 
 /**
  * A guest's explicit night set (#713), mirroring `/modify`'s own field.
@@ -70,6 +81,12 @@ const createSchema = z.object({
     )
     .max(200)
     .optional(),
+  // #3451 (`INV-GUEST-019`): the edit panel's answers about an added guest who
+  // shares a name with one of the owner's dependants, re-verified by the service.
+  dependantIdentityDeclarations: z
+    .array(dependantIdentityDeclarationSchema)
+    .max(50)
+    .optional(),
   memberMessage: z.string().max(5000),
   supersedeRequestId: z.string().trim().min(1).optional(),
 });
@@ -78,6 +95,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // #3770: taken at the top, as on the booking add paths (#2388), so the
+  // collapsed-refusal timing floor covers the whole request.
+  const startedAt = startMemberGuestRefusalClock();
   const session = await auth();
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
@@ -162,6 +182,7 @@ export async function POST(
     guestStayRanges,
     memberMessage,
     supersedeRequestId,
+    dependantIdentityDeclarations,
   } = parsed.data;
 
   const removeSet = new Set(removeGuestIds ?? []);
@@ -237,6 +258,8 @@ export async function POST(
         guestStayRanges,
       },
       supersedeRequestId: supersedeRequestId ?? null,
+      bookingOwnerMemberId: bookingOwner(booking).memberId,
+      dependantIdentityDeclarations,
       // Drives the provisional reservation footprint (#2525 FIX 7): a non-holding
       // base (DRAFT / generic PENDING / un-held PAYMENT_PENDING / WAITLISTED /
       // BUMPED) reserves the FULL proposed footprint, a holding base only the delta.
@@ -288,6 +311,25 @@ export async function POST(
 
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
-    return mapExceptionRequestError(error);
+    // #3770: a collapsed member-guest refusal owes the add paths' throttle unit,
+    // audit row and timing floor; no boundary hook here, so it charges on exit.
+    if (error instanceof BookingGuestValidationError) {
+      await handleMemberGuestAddRefusal({
+        request: req,
+        actorMemberId: session.user.id,
+        error,
+        route: "bookings/[id]/exception-requests",
+        startedAt,
+        throttle: "CHARGE_NOW",
+      });
+    }
+    return mapExceptionRequestError(error, {
+      onBehalf: dependantIdentitySpeaksOnBehalf({
+        actorIsAdmin: isAdmin,
+        actorId: session.user.id,
+        ownerMemberId: bookingOwner(booking).memberId,
+      }),
+      surface: "edit",
+    });
   }
 }

@@ -11,6 +11,11 @@ import {
 import type Stripe from "stripe";
 import { bookingOwner } from "@/lib/booking-owner";
 import type { ClubFormat } from "@/lib/club-format";
+import {
+  EDIT_REVIEW_CHARGE_OUTCOME_CLOSES_REPLAY,
+  completeEditFinancialReviewChargeRecovery,
+  rearmEditFinancialReviewChargeRecovery,
+} from "@/lib/edit-financial-review-charge-recovery";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { loadPersistedClubFormatSettings } from "@/lib/club-format-settings";
 import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
@@ -424,6 +429,65 @@ export async function enqueueAdditionalPaymentIntentRecovery({
 }
 
 /**
+ * #3402 (`INV-PAY-112`): make ONE booking edit's review-charge debt durable on
+ * its one recovery row, and make sure that row will run again
+ * (`rearmEditFinancialReviewChargeRecovery` says why and how). The single home
+ * for the row's two keys and its frozen `hadIssuedXeroInvoice`: the sync's
+ * deferral and unminted arm, and `executeEditReviewCharge`'s refusal catch.
+ */
+export async function enqueueEditFinancialReviewChargeRecovery({
+  bookingId,
+  paymentId,
+  bookingModificationId,
+  advisoryAmountCents,
+  hadIssuedXeroInvoice,
+}: {
+  bookingId: string;
+  paymentId: string;
+  bookingModificationId: string;
+  /** Diagnostic only: the replay re-derives the total from the settled shares. */
+  advisoryAmountCents: number;
+  /** #3181: NOT advisory - the replay's answer to "was there an invoice to supplement". */
+  hadIssuedXeroInvoice: boolean | null;
+}) {
+  const idempotencyKey =
+    buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(bookingModificationId);
+  await enqueueAdditionalPaymentIntentRecovery({
+    bookingId,
+    paymentId,
+    idempotencyKey,
+    amountCents: advisoryAmountCents,
+    stripeIdempotencyKey: buildEditFinancialReviewAdditionalIntentStripeKey(bookingModificationId),
+    hadIssuedXeroInvoice,
+  });
+  await rearmEditFinancialReviewChargeRecovery(idempotencyKey);
+}
+
+/**
+ * #3402: is the edit's ONE recovery row DEAD - in a claimable status that no
+ * claim will ever take again (no retry time, or its attempts spent)? The re-arm
+ * deliberately leaves such a row so (`INV-PAY-057`); every other row runs again
+ * or is reopened by the deferral that needs it. The sync asks this before it
+ * re-checks an `already-paid` answer, so a deferred share's `ask-closed` audit is
+ * written once - by the replay, or by the holder when no replay will come.
+ */
+export async function isEditFinancialReviewChargeRecoveryDead(
+  bookingModificationId: string,
+): Promise<boolean> {
+  const row = await prisma.paymentRecoveryOperation.findUnique({
+    where: {
+      idempotencyKey:
+        buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(bookingModificationId),
+    },
+    select: { status: true, attempts: true, nextRetryAt: true },
+  });
+  if (!row) return false;
+  const claimable = (CLAIMABLE_PAYMENT_RECOVERY_STATUSES as readonly PaymentRecoveryOperationStatus[])
+    .includes(row.status);
+  return claimable && (row.nextRetryAt === null || row.attempts >= MAX_PAYMENT_RECOVERY_ATTEMPTS);
+}
+
+/**
  * Durable recovery for an approved refund appeal whose Stripe refund failed
  * (#1039 item 1, PR #846 residual). The approval claim stands and the refund
  * completes through the recovery cron. When the approve route passes the
@@ -472,6 +536,8 @@ import {
   buildDuplicateCaptureRefundRecoveryIdempotencyKey,
   buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking,
   buildDuplicateCaptureRefundStripeKeyPrefix,
+  buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
+  buildEditFinancialReviewAdditionalIntentStripeKey,
   buildEditFinancialReviewRefundRecoveryIdempotencyKey,
   buildEditFinancialReviewRefundStripeKeyPrefix,
   buildLateCaptureApprovalRefundRecoveryIdempotencyKey,
@@ -496,10 +562,10 @@ export {
  * booking-cancel's #1349 pattern, on the same infrastructure, for the same
  * reason.
  *
- * The completion holds no advisory lock (deliberately: the locking guide's
- * bounded-exception rule forbids holding `lock(1)` across a provider round trip),
- * so its only single-flight guarantee is the status-guarded claim, which has
- * already committed by the time the refund is sent. Without this row a crash
+ * The completion holds no advisory lock across the refund (the locking guide
+ * forbids `lock(1)` across a provider round trip; since #3582 it is released at
+ * commit), so its only single-flight guarantee then is the status-guarded
+ * claim, committed by the time the refund is sent. Without this row a crash
  * between the commit and the Stripe call would leave a COMPLETED task, an
  * untouched `refundedAmountCents` and no trace at all that money was owed - a
  * worse state than the booking-edit path's, because the Stripe route writes
@@ -2642,12 +2708,12 @@ async function processCreateAdditionalPaymentIntentOperation(
      * being processed is already this debt's durable retry, and a second row for
      * one debt is a second debt.
      */
-    if (synced.outcome === "not-raised") {
+    if (!EDIT_REVIEW_CHARGE_OUTCOME_CLOSES_REPLAY[synced.outcome]) {
       throw new Error(
         `Edit financial review charge request for booking modification ${bookingModificationId} was not raised (${formatCents(synced.totalCents, format)} still owed); leaving the recovery operation open to retry`,
       );
     }
-    await completePaymentRecoveryOperation(operation.id);
+    await completeEditFinancialReviewChargeRecovery(operation);
     return;
   }
 

@@ -694,8 +694,8 @@ describe("AID-6C finance pack: the grant allowlist matches the SQL (#2377)", () 
   });
 
   it("never names a credential-bearing relation anywhere in the pack", () => {
-    // ADR-007 §1. `XeroToken` stores PLAINTEXT OAuth access and refresh tokens and
-    // `IntegrationCredential` stores encrypted provider secrets; neither is granted,
+    // ADR-007 §1. `XeroToken` and `IntegrationCredential` both hold encrypted OAuth
+    // tokens or provider secrets (#3454); neither is granted,
     // and neither is named in any pack module — including the server-owned source,
     // which runs on the application's own full-privilege connection where a grant
     // would not stop it.

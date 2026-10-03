@@ -5,9 +5,13 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  agreedAdjustmentKey,
   captureKey,
   confirmationNightKey,
   confirmationPromotionKey,
+  modificationChangeFeeKey,
+  modificationNightKey,
+  modificationPromotionKey,
   refundKey,
   reversalKey,
 } from "@/lib/booking-ledger-posting-keys";
@@ -21,6 +25,11 @@ describe("booking-ledger posting keys", () => {
     expect(reversalKey("line-9")).toBe("reversal:line-9");
     expect(captureKey("txn-1")).toBe("capture:txn-1");
     expect(refundKey("ref-1")).toBe("refund:ref-1");
+    // #3582: an edit's own lines, keyed on its BookingModification row.
+    expect(modificationNightKey("m1", "g1", NIGHT)).toBe("modification:m1:night:g1:2026-08-01");
+    expect(modificationPromotionKey("m1")).toBe("modification:m1:promotion");
+    expect(modificationChangeFeeKey("m1")).toBe("modification:m1:change-fee");
+    expect(agreedAdjustmentKey("t1")).toBe("agreed-adjustment:t1");
   });
 
   it("reads a stored night as the calendar day it encodes, whatever the host zone", () => {

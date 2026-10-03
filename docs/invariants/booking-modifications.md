@@ -1769,9 +1769,10 @@ Five things about that re-price are load-bearing:
   to `critical`. A closure that issues one names the settled share, never the
   re-priced strands (`INV-MOD-058`);
 - **in the same transaction as the strand write**, under the claim that write
-  already holds, fenced on all four columns. This path takes no advisory lock, so
-  a concurrent edit that moved any of them is a 409 that rolls the whole
-  completion back rather than a lost update, and the repaired strand must be one
+  already holds, fenced on all four columns. Under the completion's `lock(1)`
+  (#3582) edits queue; a lock-free writer that moved any of them is a 409 that
+  rolls the completion back rather than a lost update, and the repaired
+  strand must be one
   of the booking's own at the value just written to it — nothing else
   cross-checks a review context's strand id against its task's booking.
 

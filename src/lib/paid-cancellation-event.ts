@@ -55,6 +55,18 @@ export function paidCancellationBranch(params: {
  * CREDITED event (written on the base client) rather than following it. The
  * narrative finds each by type, never by order.
  */
+/** #3611: what the ledger was told the club keeps, frozen with the decision. */
+export type CancellationLedgerSnapshot = {
+  /** The ledger's kept figure (design §5.1). */
+  keptCents: number;
+  /** What the policy alone keeps (review D1). */
+  policyKeptCents: number;
+  /** `keptCents - policyKeptCents`: money kept that no policy tier decided. */
+  keptBeyondPolicyCents: number;
+  appliedCreditCents: number;
+  creditRestoredCents: number;
+};
+
 export async function writePaidCancellationEvent(
   tx: Prisma.TransactionClient,
   params: {
@@ -66,6 +78,14 @@ export async function writePaidCancellationEvent(
     refundAmountCents: number;
     paidAmountCents: number;
     changeFeeCents: number;
+    /** From `paidCancellationMoney`, the one home of both kept figures (#3611). */
+    retainedAmountCents: number;
+    /**
+     * What the booking ledger was told the club keeps, and the credit figures
+     * it rests on, frozen with the decision so #3583's back-post replays them
+     * rather than re-deriving them from a mirror that keeps moving (#3611).
+     */
+    ledger: CancellationLedgerSnapshot;
   }
 ): Promise<void> {
   const { days, refundPercentage } = params;
@@ -102,11 +122,9 @@ export async function writePaidCancellationEvent(
         refundPercentage,
         paidAmountCents: params.paidAmountCents,
         settledAmountCents,
-        retainedAmountCents: Math.max(
-          params.paidAmountCents - settledAmountCents,
-          0
-        ),
+        retainedAmountCents: params.retainedAmountCents,
         changeFeeCents: params.changeFeeCents,
+        ledger: params.ledger,
       },
     },
   });

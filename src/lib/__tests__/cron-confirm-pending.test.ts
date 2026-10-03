@@ -31,6 +31,12 @@ const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(
 // capture can be recognised.
 const mockGetPaymentIntent = vi.fn();
 const mockCancelPaymentIntentIfCancellableWithResult = vi.fn();
+// #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
+const cancellationLedger = vi.hoisted(() => ({
+  postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}),
+}));
+vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
+
 vi.mock("../stripe", () => ({
   chargePaymentMethod: (...args: unknown[]) => mockChargePaymentMethod(...args),
   getPaymentIntent: (...args: unknown[]) => mockGetPaymentIntent(...args),
@@ -1216,6 +1222,10 @@ describe("Cron: Confirm Pending Bookings", () => {
     // #2430: a club member's own bumped booking keeps the members-only
     // booking flow (the last argument is the owner's canLogin).
     expect(mockSendBumpedEmail.mock.calls[0].at(-1)).toBe(true);
+    // #3611: the cancel posts its ledger reversals in its own claim, keeping nothing.
+    expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "b1", keptCents: 0, site: "confirm-pending:capacity-bump" }),
+    );
   });
 
   // #2430: the same bump, but the booking came from a public booking request,
@@ -1793,6 +1803,10 @@ describe("Cron: Confirm Pending Bookings", () => {
           checkOut: booking.checkOut,
         }),
         CLUB_FORMAT_TEST,
+      );
+      // #3611: the cancel posts its ledger reversals in its own claim, keeping nothing.
+      expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: "b1", keptCents: 0, site: "confirm-pending:request-hold-ended" }),
       );
     });
 
@@ -2502,6 +2516,10 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(
         mockSendAdminSplitSettlementCancelledAlert.mock.calls[0][0]
       ).not.toHaveProperty("finalNotice");
+      // #3611: the cancel posts its ledger reversals in its own claim, keeping nothing.
+      expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: "child_1", keptCents: 0, site: "confirm-pending:child-hold-ended" }),
+      );
     });
 
     it("records the CANCELLED event post-commit so a bookingEvent write failure never blocks the cancel (L1)", async () => {

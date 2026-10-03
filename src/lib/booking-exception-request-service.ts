@@ -30,13 +30,15 @@ import {
 } from "@/lib/booking-exception-reservations";
 import type { GuestStayRange } from "@/lib/booking-guest-stay-ranges";
 import { resolveModificationStayRanges } from "@/lib/booking-modification-stay-ranges";
+import { memberGuestCrossFamilyRefusal } from "@/lib/booking-guests";
 import {
-  assertLinkedBookingMembersCanBeBooked,
-  resolveLinkedBookingMembersWithBoundary,
-} from "@/lib/booking-guests";
+  resolveBeyondFamilyPhase,
+  resolveFamilyPhase,
+  type FamilyFirstOptions,
+} from "@/lib/member-guest-family-first";
 import {
-  checkOwnDependantIdentity,
-  loadBookerDependants,
+  checkOwnDependantIdentityForParty,
+  claimedMemberPathIds,
   type DependantIdentityDeclaration,
   type DependantIdentityRefusal,
 } from "@/lib/booking-dependant-identity";
@@ -266,6 +268,18 @@ export interface CreateModificationExceptionRequestInput {
    * with proposal drift instead of executing something nobody reviewed.
    */
   delta: ModificationDeltaInput;
+  /**
+   * The member the booking is FOR (`bookingOwner(booking).memberId`), whose
+   * recorded dependants the own-dependant question is about (#3451) — never the
+   * requester, who may be an officer. `null` for a booking with no member owner.
+   */
+  bookingOwnerMemberId: string | null;
+  /**
+   * "Different person with the same name" answers about the guests this edit
+   * adds (#3451, `INV-GUEST-019`). Verified here and frozen beside the delta, so
+   * the approval's replay re-checks them against the records as they stand THEN.
+   */
+  dependantIdentityDeclarations?: DependantIdentityDeclaration[];
   supersedeRequestId?: string | null;
   /**
    * Whether the LIVE booking being modified currently holds lodge capacity
@@ -1143,12 +1157,28 @@ interface FrozenProposal {
  * review), otherwise build the canonical snapshot + hash and the #2363 evidence
  * aggregate. `aggregateCapacityMode` is guaranteed non-null because a non-empty
  * violation set always resolves HOLD-if-any-HOLD.
+ *
+ * "NOTHING TO REVIEW" IS COLLAPSED FOR A BEYOND-FAMILY MEMBER GUEST (#3770,
+ * `INV-EXCEPT-011`). It cannot be moved above the member lookup the way the
+ * input-only refusals were, because whether anything trips reads the named
+ * members themselves: their subscription for the paid-up-adult rule, their age
+ * and membership for hosting. And it is reachable only once every claimed id
+ * resolved, so "nothing to review" against the lookup's collapsed refusal
+ * told a caller that a beyond-family id they named is a real member. With one
+ * in the party it is therefore answered with that same collapsed refusal (D-8,
+ * #2388), byte for byte. `beyondFamilyMemberIds` is the RESOLVED beyond-family
+ * set from `assertRequestedPartyMemberGuestsAllowed`, and it is required so a
+ * new caller has to answer the question.
  */
 function freezeProposal(
   snapshotInput: NewBookingProposalSnapshot | ModificationProposalSnapshot,
   violations: PolicyExceptionViolation[],
+  beyondFamilyMemberIds: readonly string[],
 ): FrozenProposal {
   if (violations.length === 0) {
+    if (beyondFamilyMemberIds.length > 0) {
+      throw memberGuestCrossFamilyRefusal(beyondFamilyMemberIds);
+    }
     throw new NoEligiblePolicyExceptionError();
   }
   const frozenEvidence = freezePolicyExceptionEvidence(violations);
@@ -1241,33 +1271,27 @@ export interface CreatedExceptionRequest {
 async function assertRequestedPartyMemberGuestsAllowed(args: {
   requestedByMemberId: string;
   memberIds: Array<string | null | undefined>;
-}): Promise<ReadonlySet<string>> {
+}): Promise<{ beyondFamilyMemberIds: readonly string[] }> {
   if (!args.memberIds.some((memberId) => Boolean(memberId)))
-    return new Set<string>();
+    return { beyondFamilyMemberIds: [] };
   const policy = await loadMemberGuestAddPolicy();
-  const { members, boundary } = await resolveLinkedBookingMembersWithBoundary(
-    prisma,
-    args.requestedByMemberId,
-    args.memberIds,
-    {
-      skipAuthorization: false,
-      memberGuestWideningEnabled: policy.wideningEnabled,
-    },
-  );
-  await assertLinkedBookingMembersCanBeBooked(
-    prisma,
-    members,
-    args.requestedByMemberId,
-    {
-      actorRole: "MEMBER",
-      onBehalfOfMemberId: null,
-      crossFamilyMemberIds: boundary.beyondFamilyMemberIds,
-    },
-  );
-  // The ids that really resolved, for the own-dependant guard (#2721). It must
-  // not take a row's word for being on the member path, and this call has
-  // already done the work of finding out.
-  return new Set(members.keys());
+  // FAMILY FIRST (#3770, `INV-GUEST-020`; the owner's create-door decision,
+  // extended to both exception doors): the requester's family is resolved and
+  // gated before any member from beyond it, so a family refusal reads the same
+  // whether a named outsider is real or nobody.
+  const options: FamilyFirstOptions = {
+    bookerMemberId: args.requestedByMemberId,
+    actorMemberId: args.requestedByMemberId,
+    skipAuthorization: false,
+    memberGuestWideningEnabled: policy.wideningEnabled,
+    profileGate: { actorRole: "MEMBER", onBehalfOfMemberId: null },
+  };
+  const family = await resolveFamilyPhase(prisma, args.memberIds, options);
+  await resolveBeyondFamilyPhase(prisma, family, options);
+  // Every id resolved (an unresolved one threw above), so these beyond-family
+  // ids are real members: `freezeProposal` collapses "nothing to review" for
+  // them (#3770).
+  return { beyondFamilyMemberIds: family.beyondFamilyMemberIds };
 }
 
 /**
@@ -1282,8 +1306,8 @@ async function assertRequestedPartyMemberGuestsAllowed(args: {
  * parent is not at the screen. Approval re-runs the guard against the records as
  * they stand then, which is the stale window this cannot cover on its own.
  *
- * The dependant read is skipped for a party that is all member-linked and
- * carries no declaration, exactly as on the create route.
+ * The read and its skip rule are `checkOwnDependantIdentityForParty`'s, the one
+ * entry point every door shares.
  */
 async function resolveRequestedPartyDependantIdentity(args: {
   requestedByMemberId: string;
@@ -1291,22 +1315,14 @@ async function resolveRequestedPartyDependantIdentity(args: {
   memberPathMemberIds: ReadonlySet<string>;
   declarations: DependantIdentityDeclaration[] | undefined;
 }): Promise<DependantIdentityDeclaration[]> {
-  const declarations = args.declarations ?? [];
-  const anyFreeText = args.guests.some(
-    (guest) =>
-      !guest.memberId?.trim() ||
-      !args.memberPathMemberIds.has(guest.memberId.trim()),
-  );
-  if (!anyFreeText && declarations.length === 0) return [];
-
-  const refusal = checkOwnDependantIdentity({
+  const refusal = await checkOwnDependantIdentityForParty(prisma, {
+    bookerMemberId: args.requestedByMemberId,
     party: args.guests,
     memberPathMemberIds: args.memberPathMemberIds,
-    dependants: await loadBookerDependants(prisma, args.requestedByMemberId),
-    declarations,
+    declarations: args.declarations,
   });
   if (refusal) throw new PolicyExceptionDependantIdentityError(refusal);
-  return declarations;
+  return args.declarations ?? [];
 }
 
 /**
@@ -1322,26 +1338,47 @@ export async function createNewBookingExceptionRequest(
 ): Promise<CreatedExceptionRequest> {
   const memberMessage = normalizeMemberMessage(input.memberMessage);
 
-  const memberPathMemberIds = await assertRequestedPartyMemberGuestsAllowed({
-    requestedByMemberId: input.requestedByMemberId,
-    memberIds: input.guests.map((guest) => guest.memberId),
-  });
-
   // #2721: a policy-exception request is a create door, so it asks the
-  // own-dependant question before anything is frozen.
+  // own-dependant question before anything is frozen. #3770: BEFORE the member
+  // lookup, against the CLAIMED ids, as the create route and the edit doors ask
+  // it; after the lookup, this refusal versus the lookup's collapsed one told a
+  // caller whether another claimed id was a real member. The lookup below still
+  // refuses any claimed id that does not resolve.
   const dependantIdentityDeclarations =
     await resolveRequestedPartyDependantIdentity({
       requestedByMemberId: input.requestedByMemberId,
       guests: input.guests,
-      memberPathMemberIds,
+      memberPathMemberIds: claimedMemberPathIds(input.guests),
       declarations: input.dependantIdentityDeclarations,
     });
 
+  // #3770: input-only, so above the lookup for the same reason — a stay-range
+  // refusal reads nothing about the party's members.
   const proposedParty = buildProposalPartyFromGuests(
     input.checkIn,
     input.checkOut,
     input.guests,
   );
+
+  // #3770: a supersede target that is not this member's open request is refused
+  // here, before the lookup, so LOST_SUPERSEDE_CLAIM never says whether a named
+  // member resolved. The guarded claim in the transaction stays the arbiter.
+  if (input.supersedeRequestId) {
+    const target = await prisma.newBookingPolicyExceptionRequest.findFirst({
+      where: {
+        id: input.supersedeRequestId,
+        requestedByMemberId: input.requestedByMemberId,
+        status: "REQUESTED",
+      },
+      select: { id: true },
+    });
+    if (!target) throw new LostSupersedeClaimError();
+  }
+
+  const { beyondFamilyMemberIds } = await assertRequestedPartyMemberGuestsAllowed({
+    requestedByMemberId: input.requestedByMemberId,
+    memberIds: input.guests.map((guest) => guest.memberId),
+  });
 
   const violations = await evaluateProposalPartyViolations(
     prisma,
@@ -1355,6 +1392,7 @@ export async function createNewBookingExceptionRequest(
   const frozen = freezeProposal(
     { kind: "NEW_BOOKING", lodgeId: input.lodgeId, proposed: proposedParty },
     violations,
+    beyondFamilyMemberIds,
   );
 
   const openStateKey = newBookingExceptionOpenStateKey(
@@ -1511,7 +1549,57 @@ export async function createModificationExceptionRequest(
 ): Promise<CreatedExceptionRequest> {
   const memberMessage = normalizeMemberMessage(input.memberMessage);
 
-  await assertRequestedPartyMemberGuestsAllowed({
+  // #3451: an edit's exception request is an add-guest door too, so it asks the
+  // own-dependant question about the guests it adds before anything is frozen —
+  // otherwise it would be the way round the edit panel's question. Against the
+  // booking OWNER's dependants, exactly as `modify-quote` and the save ask it,
+  // and BEFORE the member lookup, against the CLAIMED ids
+  // (`claimedMemberPathIds`), so its answer never depends on whether another
+  // claimed id is a real member. The lookup still refuses an unresolved id.
+  const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(
+    prisma,
+    {
+      bookerMemberId: input.bookingOwnerMemberId,
+      party: input.delta.addGuests ?? [],
+      memberPathMemberIds: claimedMemberPathIds(input.delta.addGuests ?? []),
+      declarations: input.dependantIdentityDeclarations,
+    },
+  );
+  if (dependantIdentityRefusal) {
+    throw new PolicyExceptionDependantIdentityError(dependantIdentityRefusal);
+  }
+  const dependantIdentityDeclarations = input.dependantIdentityDeclarations ?? [];
+
+  // #3770: the two refusals that read only this member's own requests, before
+  // the lookup, so neither says whether an added member resolved. The guarded
+  // claim and the unique slot in the transaction stay the arbiters of a race.
+  // (A HOLD's capacity refusal cannot move: whether it holds reads the members.)
+  if (input.supersedeRequestId) {
+    const target = await prisma.bookingChangeRequest.findFirst({
+      where: {
+        id: input.supersedeRequestId,
+        bookingId: input.bookingId,
+        requestedByMemberId: input.requestedByMemberId,
+        kind: "POLICY_EXCEPTION",
+        status: "REQUESTED",
+      },
+      select: { id: true },
+    });
+    if (!target) throw new LostSupersedeClaimError();
+  } else {
+    const occupied = await prisma.bookingChangeRequest.findFirst({
+      where: {
+        openStateKey: modificationExceptionOpenStateKey(
+          input.bookingId,
+          input.requestedByMemberId,
+        ),
+      },
+      select: { id: true },
+    });
+    if (occupied) throw new OpenExceptionRequestConflictError();
+  }
+
+  const { beyondFamilyMemberIds } = await assertRequestedPartyMemberGuestsAllowed({
     requestedByMemberId: input.requestedByMemberId,
     memberIds: (input.delta.addGuests ?? []).map((guest) => guest.memberId),
   });
@@ -1538,6 +1626,7 @@ export async function createModificationExceptionRequest(
       proposed: input.proposed,
     },
     violations,
+    beyondFamilyMemberIds,
   );
 
   const openStateKey = modificationExceptionOpenStateKey(
@@ -1684,6 +1773,12 @@ export async function createModificationExceptionRequest(
             // #2526: the replayable member delta. See `delta` on the input type
             // — untrusted, and re-verified against the frozen hash at approval.
             delta: normalizeStoredExceptionDelta(input.delta),
+            // #3451: the own-dependant answers, beside the delta and outside the
+            // proposal hash; the approval replays them with it and the planner
+            // re-verifies each against the owner's records then.
+            ...(dependantIdentityDeclarations.length > 0
+              ? { dependantIdentityDeclarations }
+              : {}),
           } as unknown as Prisma.InputJsonValue,
           proposalSnapshot: frozen.snapshot as unknown as Prisma.InputJsonValue,
           proposalHash: frozen.proposalHash,

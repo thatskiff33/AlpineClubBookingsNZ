@@ -15,6 +15,14 @@ import {
 } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
+import {
+  checkOwnDependantIdentityForParty,
+  claimedMemberPathIds,
+  OwnDependantIdentityRefusedError,
+} from "@/lib/booking-dependant-identity";
+import {
+  renamedGuestsForDependantCheck,
+} from "@/lib/booking-dependant-identity-doors";
 import { ApiError } from "@/lib/api-error";
 import type {
   CalendarDate,
@@ -849,6 +857,41 @@ export async function prepareGuestPlan(
   if (otherLodgeElection.requested) {
     await assertOtherLodgeExists(tx, otherLodgeElection.otherLodgeId);
   }
+  /**
+   * OWN-DEPENDANT IDENTITY (#3451, `INV-GUEST-019`) — the save half of what
+   * `modify-quote` asked. A free-text row this edit ADDS, or an existing one it
+   * RENAMES onto a new name, named as one of the booking OWNER's recorded
+   * dependants needs a live declaration; untouched rows are not re-asked.
+   *
+   * BEFORE the member resolution below, against the ids the party CLAIMS
+   * (`claimedMemberPathIds`, #3451 review): after it, this 409 versus the
+   * resolution's collapsed refusal answered "is that other id a real member?" for
+   * free. The resolution still refuses any claimed id that does not resolve. The
+   * read runs on `tx` (`INV-LOCK-004`) and takes no lock. An approved policy
+   * exception's replay is checked too, against the answers frozen on the request.
+   */
+  {
+    const ownerMemberId = bookingOwner(booking).memberId;
+    const dependantIdentityRefusal = await checkOwnDependantIdentityForParty(tx, {
+      bookerMemberId: ownerMemberId,
+      party: [
+        ...(input.addGuests ?? []),
+        ...renamedGuestsForDependantCheck(
+          booking.guests,
+          input.guestUpdates,
+          input.removeGuestIds,
+        ),
+      ],
+      memberPathMemberIds: claimedMemberPathIds(input.addGuests ?? []),
+      declarations: input.dependantIdentityDeclarations,
+    });
+    if (dependantIdentityRefusal) {
+      throw new OwnDependantIdentityRefusedError(
+        dependantIdentityRefusal,
+        ownerMemberId,
+      );
+    }
+  }
   const { members: linkedMembers, boundary } =
     await resolveLinkedBookingMembersWithBoundary(
       tx,
@@ -1108,23 +1151,6 @@ export async function prepareGuestPlan(
     today,
   }, format);
 
-  const requiresAdminReview = requiresAdultSupervisionReview(guestsForPricing);
-  const adminReviewReason = requiresAdminReview
-    ? ADULT_SUPERVISION_REVIEW_REASON
-    : null;
-
-  const reviewUpdate = resolveModifyReviewUpdate({
-    booking,
-    // #2526: an ADMIN executing a member's reviewed proposal must not
-    // auto-approve the adult-supervision review — that rule was never on the
-    // officer's card. Member semantics open it PENDING, which keeps the #1422
-    // check-in block armed until a human actually looks.
-    role: guestAuthorizationRole,
-    actorId,
-    nowFlagged: requiresAdminReview,
-    memberReviewJustification: input.memberReviewJustification,
-  });
-
   // D-12 facts for the two kinds of row in the proposed party (#2543): the stored
   // status for a row already on the booking, and the status
   // `planMemberGuestConsentWrites` has just decided for a row being added. Built
@@ -1140,6 +1166,38 @@ export async function prepareGuestPlan(
         guest.memberGuestConsent?.consentStatus ?? null,
       ]),
   );
+  /** The proposed row's consent: stored for a kept row, planned for an added one. */
+  const proposedConsentStatus = (guest: {
+    bookingGuestId: string | null;
+    memberId?: string | null;
+  }) =>
+    guest.bookingGuestId
+      ? consentStatusByGuestId.get(guest.bookingGuestId) ?? null
+      : addedConsentByMemberId.get(guest.memberId ?? "") ?? null;
+
+  // Only an agreed adult counts (#3770, owner decision), read through the same
+  // D-12 facts the paid-up-adult requirement below uses.
+  const requiresAdminReview = requiresAdultSupervisionReview(
+    guestsForPricing.map((guest) => ({
+      ageTier: guest.ageTier,
+      consentStatus: proposedConsentStatus(guest),
+    })),
+  );
+  const adminReviewReason = requiresAdminReview
+    ? ADULT_SUPERVISION_REVIEW_REASON
+    : null;
+
+  const reviewUpdate = resolveModifyReviewUpdate({
+    booking,
+    // #2526: an ADMIN executing a member's reviewed proposal must not
+    // auto-approve the adult-supervision review — that rule was never on the
+    // officer's card. Member semantics open it PENDING, which keeps the #1422
+    // check-in block armed until a human actually looks.
+    role: guestAuthorizationRole,
+    actorId,
+    nowFlagged: requiresAdminReview,
+    memberReviewJustification: input.memberReviewJustification,
+  });
 
   if (!guestAuthorizationIsAdmin) {
     const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
@@ -1195,13 +1253,9 @@ export async function prepareGuestPlan(
         // D-12: a row already on the booking is judged by its stored
         // consentStatus; a row this modification ADDS is judged by the consent
         // columns `planMemberGuestConsentWrites` has just decided for it.
-        operationallyPresent: guest.bookingGuestId
-          ? isOperationallyPresentConsent(
-              consentStatusByGuestId.get(guest.bookingGuestId) ?? null,
-            )
-          : isOperationallyPresentConsent(
-              addedConsentByMemberId.get(guest.memberId ?? "") ?? null,
-            ),
+        operationallyPresent: isOperationallyPresentConsent(
+          proposedConsentStatus(guest),
+        ),
       })),
     });
     if (nonMemberPricing?.violation) {

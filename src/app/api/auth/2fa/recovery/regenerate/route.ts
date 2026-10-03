@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { getAuditRequestContext } from "@/lib/audit";
 import { replaceRecoveryCodes } from "@/lib/two-factor";
 import {
   passwordChangeRequiredResponse,
@@ -34,6 +35,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const recoveryCodes = await replaceRecoveryCodes(guard.member.id);
+  const recoveryCodes = await replaceRecoveryCodes({
+    memberId: guard.member.id,
+    // The member is replacing their own codes (#3454).
+    actor: { kind: "member", memberId: guard.member.id },
+    request: getAuditRequestContext(request),
+  });
   return NextResponse.json({ ok: true, recoveryCodes });
 }

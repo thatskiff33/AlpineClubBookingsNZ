@@ -124,6 +124,37 @@ transaction participant; provider delivery remains outside a database
 transaction. New booking rows keep `htmlBody` null and retain retry HTML only in
 `bookingRetryHtmlBody`, which the old worker cannot select after rollback.
 
+### The Xero token refresh uses a row lease, shared across colours (#3454)
+
+`xero-token-store.ts` composes no booking, capacity, membership or money
+mutation and takes **no advisory lock**. One rotating refresh token may be
+spent only once, so a refresh first claims `XeroToken.refreshInProgressUntil`
+with a status-guarded `updateMany` (`NULL` or expired → this lease). PostgreSQL
+re-evaluates that predicate after the row lock, so of two simultaneous claimants
+exactly one wins. The losers wait out the lease and re-read. The Xero call runs
+outside any transaction (`INV-INT-003`).
+
+**The claim takes the lease first and reads the tokens second, in the same
+transaction.** The winning `updateMany` holds the `XeroToken` row lock until the
+claim commits, and every writer of either copy (a connect, a refresh save, a
+disconnect, a verify-reset, of either colour) takes that row first. So the two
+copies the claim then reads are a consistent pair. Reading first and claiming
+second let a reconnect commit between the reads, and the refresh then overwrote
+it (#3454 review).
+
+**Before the Xero call, the refresh proves its save can succeed**
+(`assertXeroTokensCanBeStored`: the auth-secret capture gate and the wrapped
+token key). Otherwise it refuses without spending the refresh token.
+
+Since #3454 the save is one short transaction with two fences. The first is the
+lease-guarded `XeroToken` update, so a reconnect or an expired lease matches
+nothing. The second is a compare-and-set on the credential-store copy, against
+the version the claim read under its lock. Losing either rolls back both copies. The lease
+stays on `XeroToken` because a deployed older colour claims exactly that column.
+Moving it would let one old and one new process spend the same token.
+`xero-token-credential-store.realdb.test.ts` proves both fences against real row
+locks, including against the old colour's own claim statement.
+
 ## The lock families
 
 All keys below are the argument(s) to `pg_advisory_xact_lock`. Two-argument keys
@@ -2915,7 +2946,8 @@ re-read `Booking.deletedAt` outside it.
 `COMPLETED` `ManualRefundTask` on this capture, which means an operator has already
 paid the member back by hand and refunding again would pay them twice. It takes no
 lock, and it CANNOT be made to close its own window: `resolveManualRefundTask` (the
-hand-completion) holds no advisory key either, so serialising them would require the
+hand-completion) holds no advisory key either (since #3582 only an
+`EDIT_FINANCIAL_REVIEW` completion takes one, below), so serialising them would require the
 webhook to hold `lock(1)` across the Stripe refund round trip — the bounded-exception
 rule in this document forbids exactly that. So the fence is documented as a
 **window-narrowing** guard rather than a mutual exclusion: it shrinks the exposure
@@ -3107,6 +3139,40 @@ against the booking, takes no lock, and is only reached after the fenced
 not commit. Since #3257 it is also skipped where the recomputed figures matched
 the stored ones, which removes a write rather than adding one.
 
+**#3582 ADDS `lock(1)` TO AN EDIT REVIEW'S COMPLETION — INSIDE THE TRANSACTION,
+AS ITS FIRST LOCK, AND NEVER ACROSS THE PROVIDER CALL.** The closure now posts
+booking-ledger lines (the re-price's reversal and re-post, anchored on the
+`PRICE_REBASE` row, and a share only where the ledger design's §5.3 says it
+stands in), and a poster may post only for a booking already confirmed on the ledger
+(`bookingHasConfirmationLines`). The settle asks that question under `lock(1)`;
+a closure asking it without the key could see "not yet" while a first settle
+does too, and both would post. So `resolveManualRefundTask` takes
+`pg_advisory_xact_lock(1)` for an `EDIT_FINANCIAL_REVIEW` task only, and:
+
+- **first, and before the task is read**: only the task's `kind` is read
+  unlocked (it is immutable for this kind; the one `kind` write,
+  `late-capture-refund-hold.ts`, sets NULL to a late-capture kind). The task,
+  booking and payment read that chooses the settlement route comes after the
+  key (#3740), so the route is never picked from a snapshot a settle has since
+  moved. Then the route choice, the claim, the payment-row allocation, the repair's guest and night row locks and
+  the re-price's promo-row lock. That is the order every edit door takes the same
+  resources in (global, then anything narrower — `INV-LOCK-002`), so it closes no
+  cycle against them; the old guest/night-row-versus-promo-row shape against a
+  waitlist confirm that holds `lock(1)` is now serialised by the key instead;
+- **inside the transaction only**: the Stripe refund and the Xero leg run after
+  the commit (`executeEditReviewSettlement`), so the bounded-exception rule about
+  provider round trips is not engaged; the key is released at commit;
+- **not a replacement for the claim**: two completions of one task queue on the
+  key, and the second reads the task closed and is refused (409) before its
+  claim (`edit-financial-review-races.realdb.test.ts`). The status-guarded
+  `updateMany` still fences on `OPEN` for every kind, pinned with the lock
+  mocked in `manual-refund-task.test.ts`. Legacy hand-back kinds take no key,
+  exactly as before.
+
+Registered in `advisory-lock-guard.test.ts` as `resolveManualRefundTask#1`
+(`INV-LOCK-002`). The four edit doors and the batch path post their own lines
+under the `lock(1)` they already take first; no other writer changes.
+
 **#3257 WIDENS WHEN THAT PROMO ROW LOCK IS TAKEN, AND CHANGES NOTHING ELSE ABOUT
 IT.** The re-price used to be invoked only from the night-price repair, so only a
 closure that repaired a strand reached `recalculateBookingPromo`. The trigger is
@@ -3191,15 +3257,16 @@ a sum. So a later share RAISES the existing intent's amount instead of minting,
 and both the Stripe key and the recovery key name the edit.
 
 **Two officers settling two shares at once is made safe by DERIVATION plus a
-refusal to lower, not by a lock** — which matters here because this path still has
-none, for the reason above. The combined total is summed from the settled task
-rows (`sumEditReviewChargeSharesCents`) at execution time, after the caller's
-transaction has committed, so:
+single-flight CLAIM on the raise, not by a lock** — which matters here because this
+path still holds none, for the reason above. The combined total is summed from the
+settled task rows (`sumEditReviewChargeSharesCents`) at execution time, after the
+caller's transaction has committed, so:
 
 - **no double count** — each task contributes exactly once, from the row its own
   status-fenced claim wrote, and never as an increment of a running figure;
 - **no lost share** — whichever completion commits LAST necessarily reads after
-  both commits, so at least one run always derives the true total;
+  both commits, so at least one run always derives the true total, and the raise
+  claim below is what makes that total the one ASKED FOR;
 - **a stale replay cannot lower a live ask** — a settled share is terminal, so the
   derived total only ever grows and a smaller figure is always the older answer,
   and the write REFUSES TO LOWER the recorded request. Since #3371 a balance
@@ -3208,33 +3275,119 @@ transaction has committed, so:
   stays monotone; folding it in would make the figure fall when the member paid,
   and repairing that would need the lock this path may not hold.
 
-**THAT REFUSAL IS NOT AN ATOMIC CLAIM, and this section used to say it was**
-(corrected in the #3371 review round). `syncEditFinancialReviewChargeRequest`
-reads the existing `ADDITIONAL` row, compares in application code, calls Stripe,
-and then upserts on the intent id with **no amount predicate**. Two runs that
-each derive a figure ABOVE the stored one therefore both proceed, and both the
-provider amount and the stored row settle on whichever landed last rather than on
-the larger: shares of $60 and $100 against a stored $50 can end at $60, and the
-second officer's $40 is never asked for. What monotonicity buys is that neither
-run derives a figure that is wrong for the shares IT saw, and that a REPLAY —
-which reads after the newer write, and is the recovery cron's whole shape —
-leaves a larger recorded ask alone. It does not order two concurrent runs.
+**The refusal to lower orders nothing between two CONCURRENT runs, so since #3402
+the raise is single-flight per edit**
+([`INV-PAY-112`](invariants/payment-and-settlement.md)). Before it,
+`syncEditFinancialReviewChargeRequest` read the `ADDITIONAL` row, compared in
+application code, called Stripe and upserted: two runs each deriving a figure ABOVE
+the stored one both proceeded, and the provider amount and the row settled on
+whichever LANDED last — shares of $60 and $100 against a stored $50 could end at
+$60, the second officer's $40 never asked for and nothing recording it. A
+`where amountCents < raised` predicate is no repair: both runs pass it, and the
+money has moved at Stripe before the row is written, so the row and the intent
+would disagree instead.
 
-This is `main`'s own shape and #3371 neither introduced nor repaired it; #3371
-changed what the figure is made of, not how it is written. **The repair is not a
-predicate on that upsert.** A `where amountCents < raised` claim would stop the
-STORED row being lowered, but the money moves at Stripe, and the Stripe call
-already happened by then — so the row and the intent would disagree instead, on a
-path whose whole point is that the row is what the member's pay page shows. Doing
-it properly means claiming BEFORE the provider call and reconciling the provider
-afterwards, which buys a new failure mode (a claim recorded against an intent the
-provider then refused to raise) and is a design change to a gated money path.
-It is carried forward as #3402 rather than widened into #3371.
+So the claim is taken BEFORE the provider call, on `EditReviewChargeRaiseClaim`
+(one row per `BookingModification`, `edit-financial-review-charge-raise-claim.ts`):
+
+1. **claim** — a guarded `updateMany` writes a fresh opaque token only where no
+   live token is held. Under READ COMMITTED a concurrent second claim re-checks
+   that predicate against the winner's committed row and matches nothing, so
+   exactly one run proceeds;
+2. **record the intent** — the amount about to be asked for is written under the
+   EXACT token, renewing the lease; no row means the lease was taken over, and the
+   run makes no provider call;
+3. **call Stripe** — update, currency re-issue, or the first mint (which is under
+   the claim too: two first shares would otherwise mint two intents under two
+   amount keys, each superseding the other);
+4. **write the row** — on the raise (`paymentIntents.update`) from Stripe's
+   answer (`amount` on the returned intent), not from the figure asked for; a
+   currency re-issue and a first mint write the amount they REQUESTED, which their
+   amount-carrying keys make the amount a replayed key returns. The raise writes
+   AMOUNTS ONLY, through `writeRaisedAdditionalRequestAmount`, and only onto a
+   live (not withdrawn) ADDITIONAL row that is not captured: a
+   `payment_intent.succeeded` webhook landing between Stripe accepting the new
+   amount and this write is not reverted to PENDING, and the run reports
+   `already-paid` (the member paid the new amount). A declined card's FAILED row
+   KEEPS FAILED when raised (the old upsert reset it to PENDING): FAILED is the
+   ledger's still-owed shape, which chasing and the outstanding-ask readers treat
+   like PENDING, and the intent behind it stays payable. A row an officer
+   withdrew in that window (#3528) is not written and the run defers;
+5. **release** by exact token, then **re-derive**: a run that lost the claim
+   committed its share before trying to claim, which was before this release, so
+   this read sees it and the holder raises again (up to three passes). After
+   `already-paid` it looks again ONLY when the edit's recovery row is dead
+   (terminal FAILED): otherwise the deferring share armed that row, and its
+   replay writes the share's `ask-closed` audit — looking here too wrote it
+   twice. A paid request that already covers every settled share is reported
+   `already-paid` with no audit at all, since nothing is uncollected. A
+   release that finds the lease already taken over AFTER a provider call is logged
+   at error level and reported `deferred`, never `raised`: this run's absolute
+   amount may have landed after its successor's.
+
+A run that loses the claim calls no provider, arms the edit's ONE recovery row
+(the backstop if the holder dies) and returns `deferred`, which the recovery replay
+cannot close (`EDIT_REVIEW_CHARGE_OUTCOME_CLOSES_REPLAY` in
+`edit-financial-review-charge-recovery.ts`, one entry per outcome, so
+a new outcome is a type error). A raise Stripe REFUSES throws with nothing
+written, so the row still equals the unchanged intent; the claim is released and
+`executeEditReviewCharge` or the replay makes the debt durable.
+
+**Arming the recovery row is one helper, and it re-arms.** The deferral, the
+unminted arm and `executeEditReviewCharge`'s refusal catch all call
+`enqueueEditFinancialReviewChargeRecovery`. The shared enqueue's update branch
+leaves `status` alone, so before this an edit whose one row an earlier replay had
+closed SUCCEEDED - routine once the claim exists, because every resolved race
+creates the row and its replay finds the holder already raised - wrote nothing
+that would ever run, and a later deferred or refused share was lost. The helper
+reopens a SUCCEEDED row (PENDING, due now, attempts reset) and never a PROCESSING
+one, which a second worker could then claim; on a PROCESSING row it moves only
+`nextRetryAt` — BEFORE reopening, an order under which no interleaving with a
+replay's close leaves the row unarmed — and the replay's close is fenced on the
+`nextRetryAt` it claimed with, so a share deferred onto a running replay - after
+its last re-derivation - hands the row back to PENDING instead of being closed
+with it. The close and the hand-back are also fenced on the attempt's
+`processingStartedAt` (the stale-worker reaper's own fence), so a worker reaped
+and re-claimed while stalled can neither close nor reset its successor's live
+claim. A terminal FAILED
+row is not reopened: its death handed the edit to the booking-vs-Xero repair pass
+and withdrew the live ask (`INV-PAY-057`), and a fresh card request on top would be
+the two-instrument state that rule removes. A share that arrives after that is the
+repair pass's to find, as before #3402.
+
+**It is a lease, not a lock.** Every claim statement autocommits; no advisory key
+is taken and nothing is held across the provider call, so it cannot join a
+wait-for cycle and `INV-LOCK-001`/`002`/`003` are untouched. A dead holder's token
+ages out after `EDIT_REVIEW_CHARGE_RAISE_LEASE_MS` and the next run takes it over —
+safe because the derived total only grows and a raise is an absolute amount.
+**Stated limits:**
+
+- a holder still ALIVE past the lease could land an older, smaller amount after
+  its successor. The Stripe client's defaults bound a live holder at a few minutes
+  per call, but its timeout is a socket-inactivity timeout and a paused process is
+  bounded by nothing. The holder now NOTICES (its release fails, and it defers to
+  the recovery row instead of reporting `raised`), but nothing prevents the late
+  write itself;
+- a crash after Stripe accepted but before the row was written leaves the row
+  behind the intent until the next run for that edit, as before #3402;
+- the lease is measured on each instance's own clock: `claimedAt` is written by
+  the holder's `new Date()` and judged by the claimant's, so clock skew between
+  instances lengthens or shortens it. The lease dwarfs ordinary NTP skew; a much
+  shorter lease would want the database's `now()` instead;
+- the replay's close fence compares a millisecond timestamp, so a share armed in
+  the same millisecond as the claimed row's retry time would not be noticed —
+  unreachable in practice, since a claim and a Stripe round trip sit between them;
+- while the previous colour drains after deploy, its syncs take no claim and arm
+  the recovery row the old way, so the pre-existing race persists for the drain
+  only, never wider. Proven against
+real PostgreSQL by `edit-financial-review-charge-raise-claim.realdb.test.ts`, which forces
+the $60/$100 interleaving through the real sync.
 
 The contrast is instructive and it is one paragraph down: the refund leg's
 `applyLocalRefundAllocation` on this same lockless path IS a real compare-and-set,
 because there the write is the whole movement and no provider round trip sits in
-front of it.
+front of it. The charge leg cannot be one, because Stripe moves first — which is
+why its claim is taken before the call rather than on the write.
 
 The recovery replay is the same function, so a crash between the commit and the
 Stripe call costs a delay rather than a share: the row's stored `amountCents` is
@@ -3277,9 +3430,15 @@ booking-ledger lines. No provider call runs inside it.
 transaction rows.** Every writer that holds more than one of them takes the
 `Payment` row first through `lockPaymentForRefundedTotal`: the card-refund
 writer, `applyLocalRefundAllocation` (joining the caller's transaction), and the
-paid-path cancel claim, right after its post-lock re-read and before the #1491
-fold (earlier still when #3643's part-payment recognition writes the receipt:
-`recordPartPaymentInClaim` takes it before that transaction-row write). The first version of this writer took the transaction row and then the
+paid-path cancel claim, right after its lodge capacity lock and before #3643's
+part-payment recognition, its eligibility re-check and the #1491 fold. The claim
+then re-reads the `Payment` row under that lock (#3793): the card-refund writers
+take no advisory lock, so the payment read with the booking under `lock(1)` can
+already miss a dashboard refund, so that read takes only the payment's id;
+every figure the refund is tiered off, and the refund method an internet
+banking payment forces, comes from the re-read. Proved by
+`paid-cancel-refunded-total-race.realdb.test.ts`. The first version of this
+writer took the transaction row and then the
 `Payment` row (its aggregate), while a cancel with an unpaid top-up takes the
 `Payment` row (failing the top-up) and then the transaction row (its credit
 allocation): a deadlock, proved and closed by

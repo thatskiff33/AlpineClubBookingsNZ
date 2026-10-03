@@ -79,6 +79,12 @@ idempotent — retrying the same work never double-charges.
    cron, and only linked members are refreshed.
 3. **Xero Operations** lists outbound sync attempts; retry active failures, reset
    stale running jobs, or mark an individual operation non-replayable / resolved.
+   An operation still **Running** after 15 minutes is stuck: nothing will finish
+   it. Its row shows **Mark failed**. Give a reason, and it moves to **Failed**
+   with an audit entry, keeping any earlier error so you can see what to fix.
+   Fix the cause, then **Retry in background**. Check Xero first if the stuck
+   run may already have created a document. **Reset stale running** does the
+   same for every stuck operation at once.
    Mark one **resolved** only after you have fixed it in Xero yourself: it is
    then treated as done and is never retried or recreated automatically,
    though the repair tool still lists it for information. You cannot resolve
@@ -288,6 +294,8 @@ one button that reaches Xero at all only asks it a question.
 | The Connect step shows the organisation as **"the last organisation we saw"** rather than a green tick | The name came from cache because the live re-check failed — most often because the club revoked this app inside Xero's own **Connected apps** screen, which leaves the stored connection looking healthy | Treat the name as unconfirmed. Follow the warning above it: usually disconnect and connect again, re-authorising the app in Xero |
 | Operations/events are read-only ("… can view Xero operations but cannot retry…") | Your finance role is view-only | Ask a finance-edit admin |
 | An outbound operation is stuck **Failed** | A push failed and needs a replay (or was fixed directly in Xero) | **Retry in background**, or **Resolve (fixed in Xero)** with a reason |
+| An operation is stuck **Running** with no Retry button | Its run stopped without finishing it — a worker was interrupted, or (before this release) a requeue failed early | After 15 minutes the row shows **Mark failed**. Use it, fix the cause named in the error, then **Retry in background** |
+| A **REQUEUE** row says "not marked replayable" | A requeue is never replayed itself. Its error names the original operation and says where that operation now stands | Find the original operation it names. If it is back to **Failed**, fix the cause and requeue it again |
 | A booking is under **Failed** operations but not under **Missing invoices** | Its invoice reached Xero before a later step of the same operation failed; the list reads the club's invoice records, not the operation's status | Nothing to raise — do not **Trigger All Missing** for it. Open the booking to see which step is outstanding, then **Retry in background** or **Resolve (fixed in Xero)** on the operation |
 | A booking-invoice operation here is **Failed**, part-finished, or stuck **Running**, and you want to know which booking it belongs to | These rows are stored against the payment, not the booking, so the booking is not obvious from this screen | The booking says it itself: a full admin opening that booking sees a warning naming what Xero does and does not have, with a link back to this screen. **Retry in background** or **Resolve (fixed in Xero)** on the operation clears the warning, without touching the booking, the payment or the invoice |
 | A member's grouping looks wrong | The mode/rules changed but existing members were not re-grouped automatically | Run the **dry-run diff**, then **bulk re-sync** per the [runbook](../XERO_MEMBER_GROUPING_RUNBOOK.md) |

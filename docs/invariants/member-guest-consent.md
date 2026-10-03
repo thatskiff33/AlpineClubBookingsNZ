@@ -288,28 +288,57 @@ leave a stale row here.
 
 - **The booking member's own recorded dependant belongs on the member path, and
   the app never guesses which person a typed name is** (#2721). A row with no
-  `memberId` is a non-member guest: provisional under the hold policy, bumpable
-  when the lodge fills, invoiced as the deferred guest portion. A dependant put
-  there stands behind their own club's members.
+  `memberId` is a non-member guest: provisional under the hold policy, bumpable,
+  invoiced as the deferred guest portion.
 - **The candidate set is the booking member's own parent links, nothing wider** —
   the privacy half of the rule: free-text guest entry must never become a way to
-  ask the club whether a name is a member. Not the family group, lodge or
-  membership database. Matching is **exact on the normalised name** (`person-name-normalization.ts`:
+  ask whether a name is a member. Not the family group, lodge or membership
+  database. Matching is **exact on the normalised name** (`person-name-normalization.ts`:
   trim, lowercase, collapse whitespace, NFC), nothing fuzzy, phonetic or partial.
 - **A collision is resolved explicitly, per dependant.** Either the row moves to
   the member path, or the guest path continues behind a declaration naming the
   exact dependant it is not; a generic override is not a shape the field can
   hold. Two dependants whose names normalise alike need two answers; one answer
-  covers **every row carrying that name**: the question is about the name, not
-  the row.
-- **Which doors this holds on.** The create route, **on-behalf creates
-  included** (owner decision 15 Sep 2026: it protects a third party's bed, not
-  the officer's authority, so `/admin/book` asks the officer about the booking
-  member's dependants); and the policy-exception request, at submit and again at
-  approval, where that door creates the booking. **Not** the edit doors (add-guest,
-  modify-quote): #3451.
-- **The server re-resolves both from authenticated data**, taking the member ids
-  that really resolved rather than trusting a row, so a forged member link, a
+  covers **every row carrying that name**.
+- **Which doors.** Create, **on-behalf included** (owner decision 15 Sep 2026: it
+  protects a third party's bed, not the officer's authority); both
+  policy-exception requests, at submit and again at approval against the frozen
+  answers; and on an existing booking (owner decision 1 Oct 2026, #3451)
+  `modify-quote` and `modify`, asking about guests an edit **adds** or
+  **renames** onto a new name, while `POST /api/bookings/[id]/guests` refuses
+  with a pointer to Edit Booking. Untouched guests are not re-asked.
+- **The server re-resolves both from authenticated data**, asking before the
+  member lookup (after it at approval), which refuses any claimed id that does
+  not resolve, so a forged member link, a
   fabricated or unrelated dependant id and a stale declaration are refused.
   **Identity is keyed by the normalised name, never a party position.** Home:
   `src/lib/booking-dependant-identity.ts`.
+
+## INV-GUEST-020
+
+- **The booker's family is judged before any member from beyond it is
+  resolved** (owner decision 2 Oct 2026, #3770), on `POST /api/bookings` and both
+  policy-exception doors. A refusal reachable only once a named member resolved
+  says that member is real, so the boundary is computed from the booker's family
+  groups, and on a member's own request a beyond-family id is refused outright
+  where member guests are off; then the family is resolved and gated before any
+  outsider is looked up. One home: `src/lib/member-guest-family-first.ts`. The
+  #2388 throttle is spent on the boundary on create, and on a collapsed refusal
+  on the exception doors.
+- **On create, every per-member refusal about the family** (night clash,
+  membership type, unpaid subscription) **runs before the outsider lookup too,
+  and so does a full lodge** (owner decision on R4), counting the rows the
+  service will count (`decideBookingSplit`: the whole party unless it splits,
+  and the whole party when a justification is supplied and no adult other
+  than the outsider is known); the services still decide. The guards then run again over the whole
+  party, where only the outsider can refuse, with D-8's neutral sentence.
+- **This reverses, on these doors, the "cross-family refusal wins" order** the
+  profile gate, the person-night guard and the membership-type message keep
+  elsewhere.
+- **A rule a beyond-family adult can satisfy waits for that member.** With one
+  named on a member's own booking, paid-up adult, hosting and adult supervision
+  are judged on the whole party; a failure, or the create service's own hosting
+  or supervision refusal, is the lookup's collapsed refusal. An officer acting on
+  a member's behalf keeps the detailed answers.
+- **Not yet before the lookup on create:** promo usage caps and guest
+  eligibility, and race-only refusals.

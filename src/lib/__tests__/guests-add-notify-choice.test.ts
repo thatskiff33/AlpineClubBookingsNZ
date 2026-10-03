@@ -716,6 +716,205 @@ describe("POST /api/bookings/[id]/guests clears a flagged review in place (#3500
   });
 });
 
+// #3770, owner decision "only agreed adults count": adding children to a booking
+// whose only adult is a member guest from beyond the family who has NOT agreed
+// yet raises the adult-supervision review, exactly as children alone would.
+describe("POST /api/bookings/[id]/guests: a pending outsider adult is not the responsible adult (#3770)", () => {
+  const CHILD_GUEST = { firstName: "Kid", lastName: "Jones", ageTier: "CHILD", isMember: false };
+  function bookingWithOutsiderAdult(consentStatus: "PENDING" | "CONFIRMED") {
+    const booking = makeBooking();
+    booking.guests[0].ageTier = "YOUTH";
+    booking.guests.push({
+      ...booking.guests[0],
+      id: "g2",
+      firstName: "Grace",
+      lastName: "Hopper",
+      ageTier: "ADULT",
+      memberId: "member-x",
+      consentStatus,
+      member: hostingMemberRow("member-x"),
+    } as unknown as (typeof booking.guests)[number]);
+    return booking;
+  }
+  async function reviewFlagAfterAddingAChild(consentStatus: "PENDING" | "CONFIRMED") {
+    const tx = makeTx(bookingWithOutsiderAdult(consentStatus));
+    // A non-member child rate, so the added child prices.
+    tx.season.findMany.mockResolvedValue([
+      {
+        ...CURRENT_SEASON[0],
+        membershipTypeRates: [
+          ...CURRENT_SEASON[0].membershipTypeRates,
+          { membershipTypeId: "type-nonmember", ageTier: "CHILD", pricePerNightCents: 4000 },
+        ],
+      },
+    ]);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+    const res = await POST(guestsRequest({ guests: [CHILD_GUEST] }), params);
+    expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
+    const data = tx.booking.update.mock.calls.at(-1)?.[0]?.data as Record<string, unknown>;
+    return data.requiresAdminReview;
+  }
+
+  it("flags the booking for review when the only adult has not agreed yet", async () => {
+    expect(await reviewFlagAfterAddingAChild("PENDING")).toBe(true);
+  });
+
+  it("CONTROL: an outsider adult who has agreed still counts", async () => {
+    expect(await reviewFlagAfterAddingAChild("CONFIRMED")).toBeFalsy();
+  });
+});
+
+describe("POST /api/bookings/[id]/guests refuses the owner's dependant as a typed guest (#3451)", () => {
+  /**
+   * `INV-GUEST-019` on the standalone add door. The owner's decision (1 Oct 2026,
+   * option C) is "refuse with a pointer" here: this route has no screen and no
+   * field for an answer, so a typed guest whose name is one of the booking
+   * OWNER's recorded dependants is refused — naming the dependant and pointing at
+   * Edit Booking — and nothing is written.
+   *
+   * Driven through the REAL route and the REAL guard; the only thing arranged is
+   * the parent-link read the guard makes on the transaction client.
+   */
+  const DEPENDANT = { id: "dep-sam", firstName: "Sam", lastName: "Smith" };
+
+  function withDependants(
+    tx: ReturnType<typeof makeTx>,
+    dependants: Array<typeof DEPENDANT>,
+  ) {
+    const original = tx.member.findMany;
+    const findMany = vi.fn(async (args: unknown) => {
+      const where = (args as { where?: { OR?: unknown } })?.where;
+      // The guard's read, and only that one, is the parent-link query.
+      if (where && "OR" in where) return dependants;
+      return (original as (a: unknown) => Promise<unknown>)(args);
+    });
+    tx.member.findMany = findMany as unknown as typeof tx.member.findMany;
+    return findMany;
+  }
+
+  it("refuses a member's own dependant with a pointer, and writes nothing", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    const findMany = withDependants(tx, [DEPENDANT]);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+    const res = await POST(
+      guestsRequest({
+        guests: [{ firstName: "sam", lastName: " Smith ", ageTier: "CHILD", isMember: false }],
+      }),
+      params,
+    );
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("DEPENDANT_IDENTITY_UNRESOLVED");
+    expect(body.error).toContain("Sam Smith is already known to the club as your dependant");
+    expect(body.error).toContain("Edit Booking");
+    // The OWNER's parent links, read on the transaction client.
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [{ parentMemberId: "m1" }, { secondaryParentId: "m1" }],
+        }),
+      }),
+    );
+    expect(tx.bookingGuest.create).not.toHaveBeenCalled();
+    expect(tx.booking.update).not.toHaveBeenCalled();
+    expect(mockedSendModifiedEmail).not.toHaveBeenCalled();
+  });
+
+  it("says whose dependant it is to an officer adding for the member", async () => {
+    mockedAuth.mockResolvedValue(makeAdminSession() as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    withDependants(tx, [DEPENDANT]);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+    const res = await POST(
+      guestsRequest({
+        guests: [{ firstName: "Sam", lastName: "Smith", ageTier: "CHILD", isMember: false }],
+      }),
+      params,
+    );
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toContain("this member's dependant");
+    expect(tx.bookingGuest.create).not.toHaveBeenCalled();
+  });
+
+  it("ignores a declaration the body tries to carry — this door takes no answer", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    withDependants(tx, [DEPENDANT]);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+    const res = await POST(
+      guestsRequest({
+        guests: [{ firstName: "Sam", lastName: "Smith", ageTier: "CHILD", isMember: false }],
+        dependantIdentityDeclarations: [
+          {
+            kind: "different_person_same_name",
+            dependantMemberId: DEPENDANT.id,
+            normalizedName: "sam smith",
+          },
+        ],
+      }),
+      params,
+    );
+
+    expect(res.status).toBe(409);
+    expect(tx.bookingGuest.create).not.toHaveBeenCalled();
+  });
+
+  // #3451 review, B1: the answer must not depend on whether ANOTHER claimed
+  // member id is real — the guard runs before the member lookup reads it.
+  it.each([["X is a real member", true], ["X is nobody", false]])(
+    "answers identically whether another claimed id resolves (%s)",
+    async (_label, xExists) => {
+      const booking = makeBooking();
+      const tx = makeTx(booking);
+      const findMany = withDependants(tx, [DEPENDANT]);
+      mockTransaction.mockImplementation((fn: any) => fn(tx));
+      const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+      const res = await POST(
+        guestsRequest({
+          guests: [
+            { firstName: "Grace", lastName: "Hopper", ageTier: "ADULT", isMember: true, memberId: xExists ? "member-x" : "nobody" },
+            { firstName: "Sam", lastName: "Smith", ageTier: "CHILD", isMember: false },
+          ],
+        }),
+        params,
+      );
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("DEPENDANT_IDENTITY_UNRESOLVED");
+      // Only the parent-link read happened: no member row was looked up by id.
+      const idLookups = findMany.mock.calls.filter(
+        ([args]) => (args as { where?: { id?: unknown } })?.where?.id !== undefined,
+      );
+      expect(idLookups).toHaveLength(0);
+    },
+  );
+
+  it("adds a guest who is nobody's dependant exactly as before", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    withDependants(tx, [DEPENDANT]);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+    const res = await POST(guestsRequest({ guests: [NON_MEMBER_GUEST] }), params);
+
+    expect(res.status).toBe(200);
+  });
+});
+
 describe("POST /api/bookings/[id]/guests measures the booking's own lodge only (#3407 review)", () => {
   /*
     The route used to check the payload against the DEFAULT lodge's capacity

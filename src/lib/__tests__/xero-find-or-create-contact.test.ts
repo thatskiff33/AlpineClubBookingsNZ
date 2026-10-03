@@ -36,6 +36,11 @@ const mocks = vi.hoisted(() => {
     xeroToken: {
       findFirst: vi.fn(),
     },
+    // #3454: the token store reads its credential-store copy too; none here,
+    // so these suites keep exercising the pre-upgrade XeroToken row.
+    integrationCredential: {
+      findUnique: vi.fn(async () => null),
+    },
     /*
       #3034/#3036: `findOrCreateXeroContact` now asks which installation this is
       before it does anything. A MISSING delegate here is an UNREADABLE override,
