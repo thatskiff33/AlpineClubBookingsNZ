@@ -22,8 +22,7 @@ import {
   writeEditReviewAccountCredit,
   type EditReviewAccountCreditOutcome,
 } from "@/lib/edit-financial-review-account-credit";
-import { refundMethodForEditReviewRoute, refundRequestCreditNoteAsk } from "@/lib/edit-financial-review-xero-leg";
-import { enqueueXeroRefundRequestCreditNoteOperation } from "@/lib/xero-refund-request-credit-note-outbox";
+import { cancellationHandBackInvoiceIdOf, queueRefundRequestCreditNoteInTransaction, refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero-leg";
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { requireMemberCreditRecipient } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -84,16 +83,6 @@ import {
   planKeptLateCaptureXeroRecord,
   type KeptLateCaptureXeroPlan,
 } from "@/lib/late-capture-kept-xero";
-
-/** `INV-PAY-101` (#3529): the invoice a cancellation hand-back refunds against. */
-function cancellationHandBackInvoiceIdOf(task: {
-  kind: ManualRefundTaskKind | null;
-  booking: { payment?: { xeroInvoiceId?: string | null } | null };
-}): string | null {
-  return task.kind === ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK
-    ? (task.booking.payment?.xeroInvoiceId ?? null)
-    : null;
-}
 
 /**
  * B5 (#2262): close a hand-back task raised when a cash-settled booking was
@@ -474,17 +463,10 @@ export async function resolveManualRefundTask(
           officerMemberId: actingMemberId,
           store: tx,
         });
-        // #3827 (D-3813-8, review F4): a refund request's own Xero note, queued
-        // in this transaction so a paid-back request never commits without it.
-        const requestNote = refundRequestCreditNoteAsk({
-          route: settlementRoute,
-          cancellationHandBackInvoiceId: cancellationHandBackInvoiceIdOf(task),
-          amountCents: settlement.amountCents,
-          refundRequestId: refundRequestIdOfHandBack(task),
+        // #3827 (D-3813-8, review F4): a refund request's own note, in this transaction.
+        await queueRefundRequestCreditNoteInTransaction({
+          task, route: settlementRoute, amountCents: settlement.amountCents, createdByMemberId: actingMemberId, store: tx,
         });
-        if (requestNote) {
-          await enqueueXeroRefundRequestCreditNoteOperation({ ...requestNote, createdByMemberId: actingMemberId, store: tx });
-        }
       }
     }
 

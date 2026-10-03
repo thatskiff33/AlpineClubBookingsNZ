@@ -15,7 +15,9 @@ import {
   OPEN_NON_CANCELLATION_HAND_BACKS_SELECT,
   refundRequestHandBackOccurrenceKey,
 } from "@/lib/manual-refund-task-settlement-rules";
+import { REVIEW_REFUND_EXCEEDS_UNPROMISED_CASH_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
 import { sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
+import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 
 /**
@@ -199,6 +201,27 @@ export async function refundableCashNetOfOpenHandBacks(
     payment,
     await openNonCancellationHandBackCents(db, payment.id),
   );
+}
+
+/**
+ * #3827 (`INV-PAY-115`): an edit review refunded BY HAND is refused past the
+ * payment's cash net of open hand-backs - before its claim, under the
+ * caller's lock(1), so the task stays OPEN. The ledger cap inside
+ * `applyLocalRefundAllocation` counts only what was already refunded, so on
+ * its own it would let the review promise an open hand-back's cash again.
+ */
+export async function assertByHandReviewRefundWithinUnpromisedCash(
+  db: OpenNonCancellationHandBackDb & Pick<PrismaClient, "payment">,
+  paymentId: string,
+  amountCents: number,
+): Promise<void> {
+  const payment = await db.payment.findUnique({
+    where: { id: paymentId },
+    select: { id: true, status: true, amountCents: true, refundedAmountCents: true },
+  });
+  if (amountCents > (await refundableCashNetOfOpenHandBacks(db, payment))) {
+    throw new ManualBookingPaymentError(REVIEW_REFUND_EXCEEDS_UNPROMISED_CASH_MESSAGE, 400);
+  }
 }
 
 /** What a refund appeal's cap reads: hand-back tasks and member credit. */

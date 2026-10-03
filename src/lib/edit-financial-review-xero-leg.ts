@@ -1,5 +1,7 @@
 import "server-only";
 
+import { ManualRefundTaskKind, type Prisma } from "@prisma/client";
+
 import {
   recordShortEditReviewChargeInvoice,
   restateEditReviewChargeSupplementaryInvoice,
@@ -11,6 +13,8 @@ import {
   enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
+import { enqueueXeroRefundRequestCreditNoteOperation } from "@/lib/xero-refund-request-credit-note-outbox";
+import { refundRequestIdOfHandBack } from "@/lib/manual-refund-task-settlement-rules";
 import type { RefundMethod } from "@/lib/xero-refund-method";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -139,6 +143,42 @@ export function refundRequestCreditNoteAsk({
     return null;
   }
   return { paymentId: route.paymentId, refundRequestId, amountCents };
+}
+
+/** `INV-PAY-101` (#3529): the paid invoice a cancellation hand-back (an appeal's too) refunds against. */
+export function cancellationHandBackInvoiceIdOf(task: {
+  kind: ManualRefundTaskKind | null;
+  booking: { payment?: { xeroInvoiceId?: string | null } | null };
+}): string | null {
+  return task.kind === ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK
+    ? (task.booking.payment?.xeroInvoiceId ?? null)
+    : null;
+}
+
+/**
+ * Review F4: the completion queues the request's note through the outbox on
+ * its OWN transaction, so a paid-back request never commits without it; the
+ * Xero call runs from the outbox after the commit.
+ */
+export async function queueRefundRequestCreditNoteInTransaction(params: {
+  task: Parameters<typeof cancellationHandBackInvoiceIdOf>[0] & { occurrenceKey: string | null };
+  route: EditReviewSettlementRoute | null;
+  amountCents: number | null;
+  createdByMemberId: string;
+  store: Prisma.TransactionClient;
+}): Promise<void> {
+  const ask = refundRequestCreditNoteAsk({
+    route: params.route,
+    cancellationHandBackInvoiceId: cancellationHandBackInvoiceIdOf(params.task),
+    amountCents: params.amountCents,
+    refundRequestId: refundRequestIdOfHandBack(params.task),
+  });
+  if (!ask) return;
+  await enqueueXeroRefundRequestCreditNoteOperation({
+    ...ask,
+    createdByMemberId: params.createdByMemberId,
+    store: params.store,
+  });
 }
 
 export async function dispatchEditReviewXeroSettlement({
