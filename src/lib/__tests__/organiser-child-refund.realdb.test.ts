@@ -57,6 +57,12 @@ const COMBINED_CENTS = 9_000; // children 1 and 2; child 3 is the legacy fixture
 // Fix round: two more groups of one child each, so their arithmetic is their own.
 const B = { organiser: `${P}-b-organiser`, group: `${P}-b-group`, settlement: `${P}-b-settlement`, child: `${P}-b-child`, payment: `${P}-b-pay`, pi: "pi_race_3653_b" };
 const C = { organiser: `${P}-c-organiser`, group: `${P}-c-group`, settlement: `${P}-c-settlement`, child: `${P}-c-child`, payment: `${P}-c-pay`, pi: "pi_race_3653_c" };
+// Fix round 2: a joiner's own cancel after a reduction (D), behind the group's
+// cancel (E), and against a combined payment that holds less than it owes (F).
+const D = { organiser: `${P}-d-organiser`, group: `${P}-d-group`, settlement: `${P}-d-settlement`, child: `${P}-d-child`, payment: `${P}-d-pay`, pi: "pi_race_3653_d" };
+const E = { organiser: `${P}-e-organiser`, group: `${P}-e-group`, settlement: `${P}-e-settlement`, child: `${P}-e-child`, payment: `${P}-e-pay`, pi: "pi_race_3653_e" };
+const F = { organiser: `${P}-f-organiser`, group: `${P}-f-group`, settlement: `${P}-f-settlement`, child: `${P}-f-child`, payment: `${P}-f-pay`, pi: "pi_race_3653_f" };
+const EXTRA = [D, E, F];
 
 /** Standalone fail-closed copy: importing this file must not register another suite. */
 export function assertSafeOrganiserChildRefundDbUrl(url: string): void {
@@ -170,19 +176,27 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
     const stripe = fakeStripe();
 
     async function deleteFixtures() {
-      const bookingIds = [ORGANISER_BOOKING, ...CHILDREN, B.organiser, B.child, C.organiser, C.child];
-      const paymentIds = [...PAYMENTS, B.payment, C.payment];
+      const bookingIds = [
+        ORGANISER_BOOKING, ...CHILDREN, B.organiser, B.child, C.organiser, C.child,
+        ...EXTRA.flatMap((group) => [group.organiser, group.child]),
+      ];
+      const paymentIds = [...PAYMENTS, B.payment, C.payment, ...EXTRA.map((group) => group.payment)];
       await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "Payment", localId: { in: paymentIds } } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "BookingModification", localId: { startsWith: P } } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: { in: bookingIds } } });
+      await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: { in: bookingIds } } });
       await prisma.auditLog.deleteMany({ where: { targetId: { in: bookingIds } } });
       await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: { in: bookingIds } } });
       await prisma.paymentRefund.deleteMany({ where: { paymentId: { in: paymentIds } } });
       await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
-      await prisma.groupBookingSettlement.deleteMany({ where: { id: { in: [SETTLEMENT_ID, B.settlement, C.settlement] } } });
-      await prisma.groupBooking.deleteMany({ where: { id: { in: [GROUP_ID, B.group, C.group] } } });
-      await prisma.booking.deleteMany({ where: { id: { in: [...CHILDREN, B.child, C.child] } } });
-      await prisma.booking.deleteMany({ where: { id: { in: [ORGANISER_BOOKING, B.organiser, C.organiser] } } });
+      await prisma.groupBookingSettlement.deleteMany({
+        where: { id: { in: [SETTLEMENT_ID, B.settlement, C.settlement, ...EXTRA.map((group) => group.settlement)] } },
+      });
+      await prisma.groupBooking.deleteMany({ where: { id: { in: [GROUP_ID, B.group, C.group, ...EXTRA.map((group) => group.group)] } } });
+      await prisma.booking.deleteMany({ where: { id: { in: [...CHILDREN, B.child, C.child, ...EXTRA.map((group) => group.child)] } } });
+      await prisma.booking.deleteMany({
+        where: { id: { in: [ORGANISER_BOOKING, B.organiser, C.organiser, ...EXTRA.map((group) => group.organiser)] } },
+      });
       await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE_ID } });
       await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
       await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
@@ -260,6 +274,17 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
       }
     }
 
+    /** The joiner cancels their own booking, as the member cancel route does. */
+    async function joinerCancels(bookingId: string) {
+      const { cancelBooking } = await import("@/lib/booking-cancel");
+      return cancelBooking(bookingId, MEMBER_ID, "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+    }
+
+    async function cancelledSnapshot(bookingId: string) {
+      const event = await prisma.bookingEvent.findFirstOrThrow({ where: { bookingId, type: "CANCELLED" } });
+      return event.snapshot as Record<string, unknown> & { ledger: Record<string, number> };
+    }
+
     /** Claim the row as the recovery runner does, then run it. */
     async function run(operationId: string) {
       const claimed = await prisma.paymentRecoveryOperation.update({
@@ -303,6 +328,10 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
       // Group B: 20000 captured, one 10000 child. Group C: 5000 and 5000.
       await createOneChildGroup(B, 20_000, 10_000, booking);
       await createOneChildGroup(C, 5_000, 5_000, booking);
+      await createOneChildGroup(D, 10_000, 10_000, booking);
+      await createOneChildGroup(E, 5_000, 5_000, booking);
+      // F's combined payment holds less than its child's tier would return.
+      await createOneChildGroup(F, 3_000, 5_000, booking);
       // Child 3: a pre-#3653 phantom - a mirror nothing backs.
       await prisma.payment.update({ where: { id: PAYMENTS[2] }, data: { refundedAmountCents: 1_000, status: "PARTIALLY_REFUNDED" } });
     });
@@ -533,11 +562,12 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
         status: "SUCCEEDED",
       });
       expect((await prisma.groupBookingSettlement.findUniqueOrThrow({ where: { id: C.settlement } })).status).toBe("SUCCEEDED");
-      expect(await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: debt!.id } })).toMatchObject({
-        status: "PENDING",
-        attempts: 1,
-        succeededAt: null,
-      });
+      const reopened = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: debt!.id } });
+      expect(reopened).toMatchObject({ status: "PENDING", attempts: 0, succeededAt: null });
+      // Fix round 2 (F2): not due again until Stripe has forgotten the key, so
+      // no retry is spent on the original response inside its window.
+      const refundCreatedMs = (await stripe.retrieveRefund(refundId)).created * 1000;
+      expect(reopened.nextRetryAt!.getTime()).toBeGreaterThan(refundCreatedMs + 24 * 60 * 60 * 1000);
 
       // Still spoken for: 5000 captured, 2000 owed again, so 4000 cannot fit.
       await expect(reserveFor(target, `${P}-c-mod-2`, 4_000)).rejects.toBeInstanceOf(core.OrganiserChildRefundRefusedError);
@@ -549,6 +579,73 @@ let xeroEdit: typeof import("@/lib/xero-booking-edit-settlement");
       await expect(run(debt!.id)).rejects.toThrow("is recorded as failed");
       expect(await prisma.paymentRefund.count({ where: { paymentId: C.payment } })).toBe(1);
       expect((await executor.reconcilePendingOrganiserChildRefunds(stripe)).reversed).toBe(0);
+    });
+
+    it("refunds a joiner's own cancel after a reduction: the tiered remainder, to the organiser's card (fix round 2, F1)", async () => {
+      const target = { settlementId: D.settlement, pi: D.pi, childId: D.child, paymentId: D.payment };
+      const reduction = await reserveFor(target, `${P}-d-mod-1`, 4_000);
+      await run(reduction!.id);
+      await prisma.booking.update({ where: { id: D.child }, data: { totalPriceCents: 6_000, finalPriceCents: 6_000 } });
+      // The shape that used to refund nothing: PARTIALLY_REFUNDED with no
+      // transaction row, because the organiser's payment holds the money.
+      expect(await prisma.payment.findUniqueOrThrow({ where: { id: D.payment } })).toMatchObject({
+        status: "PARTIALLY_REFUNDED",
+        refundedAmountCents: 4_000,
+      });
+      expect(await prisma.paymentTransaction.count({ where: { paymentId: D.payment } })).toBe(0);
+
+      const result = await joinerCancels(D.child);
+      expect(result.status).toBe(200);
+      expect(result.data).toMatchObject({ refundAmountCents: 6_000, refundPercentage: 100, refundMethod: "card" });
+      expect((await prisma.booking.findUniqueOrThrow({ where: { id: D.child } })).status).toBe("CANCELLED");
+
+      // Owed under the cancellation key; the inline attempt had no Stripe here,
+      // so the runner makes it.
+      const debt = await prisma.paymentRecoveryOperation.findFirstOrThrow({
+        where: { bookingId: D.child, idempotencyKey: { not: { endsWith: `${P}-d-mod-1` } } },
+      });
+      expect(debt.amountCents).toBe(6_000);
+      if (debt.status !== "SUCCEEDED") await run(debt.id);
+      const total = await prisma.paymentRefund.aggregate({ where: { stripePaymentIntentId: D.pi }, _sum: { amountCents: true } });
+      expect(total._sum.amountCents).toBe(10_000);
+      expect(await prisma.payment.findUniqueOrThrow({ where: { id: D.payment } })).toMatchObject({
+        status: "REFUNDED",
+        refundedAmountCents: 10_000,
+      });
+    });
+
+    it("reports a joiner's cancel behind the group's cancel as the group's refund, with no refund of its own (fix round 2, F4)", async () => {
+      const plan = await core.planOrganiserCancelChildRefunds({
+        settlementId: E.settlement,
+        organiserBookingId: E.organiser,
+        activeChildStatuses: ["PAYMENT_PENDING", "CONFIRMED", "PAID"],
+        daysUntilCheckIn: 300,
+        policy: [{ daysBeforeStay: 0, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0, creditFixedFeeCents: 0 }],
+      });
+      expect(Object.fromEntries(plan)).toEqual({ [E.child]: 2_500 });
+
+      // The joiner cancels before the group's cancel reaches this child.
+      const result = await joinerCancels(E.child);
+      expect(result.status).toBe(200);
+      expect(result.data).toMatchObject({ refundAmountCents: 0, refundPercentage: 0 });
+      expect(String((result.data as { message: string }).message)).toContain("group organiser's cancellation is already refunding");
+      expect(await prisma.paymentRecoveryOperation.count({ where: { bookingId: E.child } })).toBe(1);
+
+      const snapshot = await cancelledSnapshot(E.child);
+      // 5000 paid, the group's 2500 owed: the joiner's cancel returns none of
+      // the 2500 left, and records it as kept rather than as refunded.
+      expect(snapshot).toMatchObject({ paidAmountCents: 2_500, settledAmountCents: 0, retainedAmountCents: 2_500, refundPercentage: 0 });
+      expect(snapshot.ledger.keptCents).toBe(2_500);
+    });
+
+    it("records a clamped cancel refund from the final amount, not the policy's first answer (fix round 2, F4)", async () => {
+      const result = await joinerCancels(F.child);
+      expect(result.status).toBe(200);
+      // 100% of 5000 asked; the combined payment holds 3000.
+      expect(result.data).toMatchObject({ refundAmountCents: 3_000, refundPercentage: 60 });
+      const snapshot = await cancelledSnapshot(F.child);
+      expect(snapshot).toMatchObject({ paidAmountCents: 5_000, settledAmountCents: 3_000, retainedAmountCents: 2_000, refundPercentage: 60 });
+      expect(snapshot.ledger.keptCents).toBe(2_000);
     });
   },
 );

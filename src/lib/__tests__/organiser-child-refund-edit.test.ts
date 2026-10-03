@@ -8,10 +8,14 @@ import { requireCalendarDate } from "@/lib/club-time";
 import {
   applyPaymentAdjustments,
   calculateModificationSettlementOptions,
+  organiserChildChargeRefusal,
 } from "@/lib/booking-modify-settlement";
+import { paymentEligibleForPaidCancelPath } from "@/lib/booking-cancel";
+import { ORGANISER_CHILD_CHARGE_REFUSAL } from "@/lib/group-organiser-paid";
 import type { BookingModificationSettlementOptions } from "@/lib/booking-modify-settlement";
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { OrganiserChildRefundRefusedError } from "@/lib/organiser-child-refund";
+import { reopenedRetryAt } from "@/lib/organiser-child-refund-executor";
 
 // `booking-modify-settlement` reaches `@/lib/cancellation`, which constructs the
 // Prisma adapter at import time; nothing here touches the module client.
@@ -216,6 +220,67 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     expect(ib.additionalAsk.amountCents).toBe(0);
   });
 
+  it("the quote shows the refusal the save would meet for an increase, and only for an organiser card child (fix round 2, F3)", () => {
+    expect(organiserChildChargeRefusal({ booking: child(), netChargeCents: 1000 })).toBe(ORGANISER_CHILD_CHARGE_REFUSAL);
+    expect(organiserChildChargeRefusal({ booking: child(), netChargeCents: -1000 })).toBeNull();
+    expect(organiserChildChargeRefusal({ booking: child(), netChargeCents: 0 })).toBeNull();
+    expect(organiserChildChargeRefusal({ booking: ibChild(), netChargeCents: 1000 })).toBeNull();
+    expect(
+      organiserChildChargeRefusal({
+        booking: child({ organiserSettled: false, parentBookingId: null }),
+        netChargeCents: 1000,
+      }),
+    ).toBeNull();
+    // The quote route answers with the SAME predicate the save refuses on.
+    const quote = readFileSync(resolve(REPO_ROOT, "src/app/api/bookings/[id]/modify-quote/route.ts"), "utf8");
+    expect(quote).toContain("chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }),");
+  });
+
+  it("a joiner's organiser-card booking a reduction partly refunded still takes the paid cancel path (fix round 2, F1)", async () => {
+    // The executor writes an organiser child's refunds onto its mirror; the
+    // child has NO transaction row. Without the organiser rule the gate asks the
+    // ledger, finds nothing and sends the cancel down the no-refund branch.
+    const noLedger = {
+      paymentTransaction: { findFirst: vi.fn().mockResolvedValue(null) },
+    } as unknown as Parameters<typeof paymentEligibleForPaidCancelPath>[1];
+    const partlyRefunded = {
+      id: "payment_1",
+      status: PaymentStatus.PARTIALLY_REFUNDED,
+      source: PaymentSource.STRIPE,
+    };
+    await expect(
+      paymentEligibleForPaidCancelPath(
+        { organiserSettled: true, parentBookingId: "organiser_booking", payment: partlyRefunded },
+        noLedger,
+      ),
+    ).resolves.toBe(true);
+    // An ordinary booking in that shape is the mirror-only legacy row (#1491).
+    await expect(
+      paymentEligibleForPaidCancelPath(
+        { organiserSettled: false, parentBookingId: null, payment: partlyRefunded },
+        noLedger,
+      ),
+    ).resolves.toBe(false);
+    // An Internet Banking organiser child is not paid by card: ledger rules.
+    await expect(
+      paymentEligibleForPaidCancelPath(
+        {
+          organiserSettled: true,
+          parentBookingId: "organiser_booking",
+          payment: { ...partlyRefunded, source: PaymentSource.INTERNET_BANKING },
+        },
+        noLedger,
+      ),
+    ).resolves.toBe(false);
+    // Fully refunded is never eligible, organiser child or not.
+    await expect(
+      paymentEligibleForPaidCancelPath(
+        { organiserSettled: true, parentBookingId: "organiser_booking", payment: { ...partlyRefunded, status: PaymentStatus.REFUNDED } },
+        noLedger,
+      ),
+    ).resolves.toBe(false);
+  });
+
   it("every door that settles an edit through applyPaymentAdjustments writes the child's refund debt before it commits", () => {
     for (const door of [
       "src/lib/booking-batch-modification-service.ts",
@@ -227,5 +292,24 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
       expect(source, door).toMatch(/await reserveOrganiserChildModificationRefund\(tx, \{\s+plan: \w+\.organiserChildRefund,/);
       expect(source, door).toMatch(/organiserChildRefund: \w+\.organiserChildRefund,/);
     }
+  });
+});
+
+describe("a reopened organiser child refund waits out Stripe's key window (fix round 2, F2)", () => {
+  // The retry re-sends the SAME idempotency key, and inside its 24 hours Stripe
+  // answers with the original, now-failed refund: a retry there can only fail
+  // and spend the budget. So the reopened debt is next due after the window.
+  const created = Date.parse("2026-07-01T00:00:00.000Z") / 1000;
+
+  it("is not due until the key has left the 24-hour window, with a margin", () => {
+    const now = new Date("2026-07-01T00:05:00.000Z");
+    const due = reopenedRetryAt({ created }, now);
+    expect(due.getTime()).toBeGreaterThan(created * 1000 + 24 * 60 * 60 * 1000);
+    expect(due.toISOString()).toBe("2026-07-02T01:00:00.000Z");
+  });
+
+  it("is due now once the window has already passed", () => {
+    const now = new Date("2026-07-05T00:00:00.000Z");
+    expect(reopenedRetryAt({ created }, now)).toEqual(now);
   });
 });
