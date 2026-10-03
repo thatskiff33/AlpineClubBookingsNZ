@@ -539,7 +539,16 @@ describe("deriveIbAppliedCreditStrandFinding (#1620 enumeration)", () => {
     expect(finding?.settlementEvidence).toBe("unverified");
   });
 
-  it("keeps an IB row pending when a credit-note repair changed only its mirror", () => {
+  it("does not treat a captured receipt for a superseded invoice as the current one", () => {
+    const finding = deriveIbAppliedCreditStrandFinding(makeStrandRow({
+      paymentStatus: "SUCCEEDED",
+      transactions: [{ status: "SUCCEEDED", source: "INTERNET_BANKING", kind: "PRIMARY", xeroInvoiceId: "inv_old" }],
+    }));
+    expect(finding?.realized).toBe(false);
+    expect(finding?.settlementEvidence).toBe("unverified");
+  });
+
+  it("keeps an IB row unverified when a credit-note repair changed only its mirror", () => {
     const finding = deriveIbAppliedCreditStrandFinding(
       makeStrandRow({ paymentStatus: "REFUNDED", bookingStatus: "PAID" }),
     );

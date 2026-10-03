@@ -1865,7 +1865,11 @@ whose booking still carries UN-allocated applied credit (a `BOOKING_APPLIED`
 ledger row not yet stamped with an allocated Xero note), split into REALIZED
 (a current IB receipt or manual settlement proves the member already double-paid)
 and UNVERIFIED (local history cannot prove whether the current invoice was paid).
-CANCELLED bookings are excluded (the #1547 restore domain).
+CANCELLED bookings are excluded (the #1547 restore domain). Each row prints its
+`settlement evidence` (`xero-primary-receipt`, `manual-settlement` or
+`unverified`). Since #3632 the `--json` output names the second list `unverified`
+and its total `unverifiedExposureCents`; they were `pending` and
+`pendingExposureCents`, so update anything that parses the old keys.
 Repair guidance under the #1620 allocate-existing mechanism:
 
 - **UNVERIFIED** rows need an operator to check the current Xero invoice or the

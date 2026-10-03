@@ -10,13 +10,17 @@ import {
   CreditType,
   PaymentSource,
   PaymentStatus,
-  PaymentTransactionKind,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import { isAdditionalAmountUncollected } from "@/lib/unpaid-finished-stays";
 import type { ClubFormat } from "@/lib/club-format";
-import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
+import {
+  INTERNET_BANKING_SETTLEMENT_EVIDENCE_SELECT,
+  internetBankingSettlementEvidence,
+  type InternetBankingSettlementEvidence,
+  type InternetBankingSettlementEvidenceInput,
+} from "@/lib/internet-banking-settlement-evidence";
 
 // ---------------------------------------------------------------------------
 // #1620 — Internet-Banking + applied-credit strand enumeration (read-only)
@@ -28,13 +32,16 @@ import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 // never reduced the invoice"). So every Internet-Banking payment carrying
 // applied credit is exposed: a member who pays that full invoice loses the
 // applied-credit slice (realized double-pay); one who has not yet paid is still
-// exposed (recoverable). This enumeration sizes that population.
+// exposed (recoverable). This enumeration sizes that population. Whether a row
+// is realized is read from settlement evidence, not the payment mirror (#3632,
+// `internet-banking-settlement-evidence.ts`); a row without that evidence is
+// UNVERIFIED, never asserted unpaid.
 //
 // CANCELLED bookings are intentionally EXCLUDED — their applied credit is the
 // #1547 domain (restored on cancel; orphans surfaced by
 // cron-credit-reconciliation + backfill-orphaned-applied-credits). This targets
-// the never-cancelled PAID (realized) and PAYMENT_PENDING (not-yet-realized)
-// shapes. Read-only: local SELECTs only, no Xero calls.
+// the never-cancelled PAID and PAYMENT_PENDING shapes. Read-only: local SELECTs
+// only, no Xero calls.
 //
 // Load-bearing invariant that lets the scan use Σ BOOKING_APPLIED directly (no
 // restore subtraction): EVERY path that writes a CANCELLATION_REFUND restore row
@@ -46,23 +53,12 @@ import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 // modifications mint BOOKING_MODIFICATION_REFUND rows; they never reverse a
 // BOOKING_APPLIED row, so they do not perturb this sum.)
 
-export interface IbAppliedCreditStrandRow {
+export interface IbAppliedCreditStrandRow
+  extends InternetBankingSettlementEvidenceInput {
   paymentId: string;
   bookingId: string;
   bookingStatus: string;
   paymentStatus: string;
-  /** The invoice the current Internet-Banking PRIMARY receipt must name. */
-  xeroInvoiceId: string | null;
-  /** Durable manual-settlement provenance (INV-PAY-001). */
-  manuallyMarkedPaidAt: Date | null;
-  /** A historical Stripe PRIMARY or ADDITIONAL capture does not prove this
-   * Internet-Banking payment's current primary invoice was paid. */
-  transactions: Array<{
-    status: PaymentStatus;
-    source: PaymentSource;
-    kind: PaymentTransactionKind;
-    xeroInvoiceId: string | null;
-  }>;
   /** payment.amountCents mirror. */
   amountCents: number;
   /** payment.creditAppliedCents mirror (0 on a card-origin switched payment,
@@ -90,7 +86,7 @@ export interface IbAppliedCreditStrandFinding {
    * Repair is a LOCAL credit restore (a Xero credit note does not refund cash a
    * member already sent). */
   realized: boolean;
-  settlementEvidence: "xero-primary-receipt" | "manual-settlement" | "unverified";
+  settlementEvidence: InternetBankingSettlementEvidence;
   amountCents: number;
   creditAppliedCents: number;
   finalPriceCents: number;
@@ -127,7 +123,7 @@ export interface IbAppliedCreditStrandFinding {
    * the addition was collected.
    */
   uncollectedAdditionalCents: number;
-  /** Credit the member stands to lose (pending) or has lost (realized). */
+  /** Credit the member stands to lose (unverified) or has lost (realized). */
   strandExposureCents: number;
 }
 
@@ -141,22 +137,6 @@ export interface IbAppliedCreditStrandAuditResult {
   unverifiedExposureCents: number;
 }
 
-function ibSettlementEvidence(
-  row: IbAppliedCreditStrandRow,
-): IbAppliedCreditStrandFinding["settlementEvidence"] {
-  if (row.manuallyMarkedPaidAt) return "manual-settlement";
-  return row.transactions.some(
-    (transaction) =>
-      transaction.source === PaymentSource.INTERNET_BANKING &&
-      transaction.kind === PaymentTransactionKind.PRIMARY &&
-      transaction.xeroInvoiceId === row.xeroInvoiceId &&
-      row.xeroInvoiceId !== null &&
-      isCapturedTransactionStatus(transaction.status),
-  )
-    ? "xero-primary-receipt"
-    : "unverified";
-}
-
 /**
  * Pure per-row classification. Returns a finding only when the ledger shows
  * applied credit still consumed against this booking; otherwise null.
@@ -168,7 +148,7 @@ export function deriveIbAppliedCreditStrandFinding(
     return null;
   }
 
-  const settlementEvidence = ibSettlementEvidence(row);
+  const settlementEvidence = internetBankingSettlementEvidence(row);
   return {
     bookingId: row.bookingId,
     paymentId: row.paymentId,
@@ -213,13 +193,11 @@ export async function auditIbAppliedCreditStrands(options?: {
       bookingId: true,
       amountCents: true,
       creditAppliedCents: true,
-      xeroInvoiceId: true,
       status: true,
-      manuallyMarkedPaidAt: true,
+      ...INTERNET_BANKING_SETTLEMENT_EVIDENCE_SELECT,
       // #2397: the generalised mirror's third term.
       additionalAmountCents: true,
       additionalPaymentStatus: true,
-      transactions: { select: { status: true, source: true, kind: true, xeroInvoiceId: true } },
       booking: { select: { finalPriceCents: true, status: true } },
     },
     orderBy: { createdAt: "asc" },

@@ -52,9 +52,10 @@ function handwrittenCapturedTransactionStatusLists(files: readonly SourceFile[])
             ? match.slice(2).join(" ")
             : match[1] ?? match[0];
         if (receiver === namedArray) {
-          // Full status vocabularies contain other members. This exact legacy
-          // Xero eligibility list asks a different question and is not a
-          // captured-payment list.
+          // Full status vocabularies contain other members. One distinct
+          // operational list is exempt by exact name: Admin > Payments' "is a
+          // Xero invoice expected for this payment?" (#2377). It is an invoice
+          // question that may diverge from capture, so it keeps its own home.
           const statusNames = values.match(/\b(?:PaymentStatus\.)?(?:PENDING|PROCESSING|SUCCEEDED|FAILED|REFUNDED|PARTIALLY_REFUNDED)\b/g) ?? [];
           if (statusNames.length !== CAPTURED_STATUS_NAMES.length) continue;
           const knownXeroEligibility =
@@ -71,14 +72,21 @@ function handwrittenCapturedTransactionStatusLists(files: readonly SourceFile[])
   });
 }
 
-const AGGREGATE_CAPTURED_STATUS_AUTHORITY_READERS = new Set([
-  "src/app/api/bookings/[id]/guests/route.ts",
-  "src/lib/additional-payment-ask.ts",
-  "src/lib/admin-reports.ts",
-  "src/lib/booking-delete.ts",
-  "src/lib/finance-booking-metrics.ts",
-  "src/lib/xero-booking-edit-conditions.ts",
-  "src/lib/xero-booking-invoices.ts",
+/**
+ * Every production importer of the AGGREGATE authority, with the `Payment`
+ * receiver it reads. A module reading `PaymentTransaction.status` asks
+ * `payment-transaction-status.ts` instead; registering a module here is the
+ * claim that its reader is an aggregate `Payment` row (#3503, #3632).
+ */
+const AGGREGATE_CAPTURED_STATUS_AUTHORITY_READERS = new Map([
+  ["src/app/api/bookings/[id]/guests/route.ts", "booking.payment.status (guest-add collection)"],
+  ["src/lib/additional-payment-ask.ts", "census SQL over payment.status"],
+  ["src/lib/admin-reports.ts", "payment.status in summarizeNetCollectedCash"],
+  ["src/lib/booking-delete.ts", "payment.status in hasCapturedOrCreditedPayment"],
+  ["src/lib/finance-booking-metrics.ts", "payment.status for capturedGrossCents"],
+  ["src/lib/refunded-total-shortfall-audit.ts", "Prisma payment.findMany status filter"],
+  ["src/lib/xero-booking-edit-conditions.ts", "primary-invoice payment.status"],
+  ["src/lib/xero-booking-invoices.ts", "booking.payment.status for allocation and invoice payment"],
 ]);
 
 function unregisteredAggregateCapturedStatusReaders(files: readonly SourceFile[]): string[] {
@@ -105,14 +113,44 @@ function aggregateCapturedStatusAuthorityReaders(files: readonly SourceFile[]): 
     .sort();
 }
 
+/**
+ * Receiver check at the call site: the transaction predicate handed an
+ * aggregate `payment.status`, or the aggregate predicate handed a
+ * transaction's status. Both spell the same values today, so only the receiver
+ * shows the wrong question being asked (#3632).
+ */
+function crossedStatusAuthorityCalls(files: readonly SourceFile[]): string[] {
+  const transactionLeafOnPayment =
+    /\bisCapturedTransactionStatus\(\s*(?:[\w?.]+\.)?payment\??\.status\b/;
+  const aggregateLeafOnTransaction =
+    /\bisCapturedPaymentStatus\(\s*[\w?.]*(?:transaction|Transaction)[\w?.]*\.status\b/;
+  return files
+    .filter(({ source }) => {
+      const code = stripComments(source);
+      return transactionLeafOnPayment.test(code) || aggregateLeafOnTransaction.test(code);
+    })
+    .map(({ file }) => file);
+}
+
 describe("INV-SSOT: captured Payment and PaymentTransaction status guard (#3606, #3632)", () => {
   it("rejects handwritten captured triples and unregistered aggregate authority readers", () => {
     expect(handwrittenCapturedTransactionStatusLists(productionSourceFiles())).toEqual([]);
     expect(aggregateCapturedStatusAuthorityReaders(productionSourceFiles())).toEqual(
-      [...AGGREGATE_CAPTURED_STATUS_AUTHORITY_READERS].sort(),
+      [...AGGREGATE_CAPTURED_STATUS_AUTHORITY_READERS.keys()].sort(),
     );
     expect(unregisteredAggregateCapturedStatusReaders(productionSourceFiles())).toEqual([]);
+    expect(crossedStatusAuthorityCalls(productionSourceFiles())).toEqual([]);
   }, 15000);
+
+  it("rejects either predicate handed the other receiver", () => {
+    expect(crossedStatusAuthorityCalls([
+      { file: "src/lib/a.ts", source: "isCapturedTransactionStatus(booking.payment.status)" },
+      { file: "src/lib/b.ts", source: "isCapturedTransactionStatus(booking.payment?.status ?? '')" },
+      { file: "src/lib/c.ts", source: "isCapturedPaymentStatus(paymentTransaction.status)" },
+      { file: "src/lib/d.ts", source: "isCapturedPaymentStatus(transaction.status)" },
+      { file: "src/lib/ok.ts", source: "isCapturedTransactionStatus(paymentTransaction.status); isCapturedPaymentStatus(payment.status)" },
+    ])).toEqual(["src/lib/a.ts", "src/lib/b.ts", "src/lib/c.ts", "src/lib/d.ts"]);
+  });
 
   it("fails new hand-written captured transaction readers", () => {
     const mutation = [

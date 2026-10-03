@@ -1,17 +1,20 @@
 - **Payment readers now share their captured-status definitions (#3632).** Xero
-  invoice handling, finance figures, admin reports, modification-payment replay
-  handling and webhook replay handling now use the aggregate `Payment` or
-  individual `PaymentTransaction` definition that matches the row being read.
-  This preserves the current cash, invoice and replay results while keeping the
-  two meanings independent for a future status change.
+  invoice handling, finance figures, admin reports, the modification-payment
+  confirmation and the Stripe webhook's replay handling now use the aggregate
+  `Payment` or the individual `PaymentTransaction` definition that matches the
+  row being read. Current cash, invoice and replay results are unchanged; the
+  two meanings can now move independently.
 
-- **The Internet Banking applied-credit audit now identifies cash loss from
-  transaction evidence.** A repaired aggregate payment mirror alone no longer
-  makes an unpaid bank-transfer row look realized; the read-only audit requires
-  a captured payment transaction before it reports an already-realized strand.
+- **The Internet Banking applied-credit audit reads settlement evidence, not the
+  payment mirror (#3632).** A row is reported as an already-realized double-pay
+  only when a captured bank-transfer receipt names the payment's current Xero
+  invoice, or the payment carries the manual-settlement stamp. Every other row
+  is reported as UNVERIFIED for an officer to check, rather than as "pending":
+  an inbound credit-note repair can make an unpaid bank-transfer payment's
+  mirror read refunded. The `--json` keys `pending` / `pendingExposureCents`
+  are now `unverified` / `unverifiedExposureCents`.
 
-- **The group-cancellation `SUCCEEDED`-only refund condition remains frozen for
-  #3653.** Its refund plan is produced from the group settlement and recovered
-  from the stored plan, so widening that condition here could claim a refund for
-  organiser-settled children with no child payment mirror. #3653 owns the
-  producer and recovery correction before the #3503 wave is merged.
+- **Group cancellation's `SUCCEEDED`-only child test is kept and now says why.**
+  Its refund plan sizes each child at the full price and is replayed verbatim
+  on recovery, so admitting a part-refunded child would refund it twice. #3653
+  owns the organiser-settled child correction before the #3503 wave merges.
