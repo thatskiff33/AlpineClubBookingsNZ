@@ -4,8 +4,6 @@
  * booking ledger (`postModificationLedgerLines`). Its own module only because
  * `booking-modification-lines.ts` is at its size budget.
  */
-import type { Prisma } from "@prisma/client";
-
 import {
   bookingPromoRedemptions,
   type PromoRedemptionCarrier,
@@ -60,7 +58,20 @@ export async function computeModificationPricing(
   return { priceLines, sides };
 }
 
-type PromoRedemptionStore = Pick<Prisma.TransactionClient, "promoRedemption">;
+/** The one read this needs: the booking's redemptions, inside the edit's transaction. */
+type PromoRedemptionStore = {
+  promoRedemption: {
+    findMany(args: {
+      where: { bookingId: string };
+      select: {
+        id: true;
+        applicationOrder: true;
+        priceAdjustmentCents: true;
+        promoCode: { select: { code: true } };
+      };
+    }): Promise<ReadonlyArray<PromoSideRedemption>>;
+  };
+};
 
 /** A redemption as an edit's snapshot carries it. */
 type PromoSideRedemption = {

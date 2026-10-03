@@ -233,6 +233,9 @@ const MODULE_IMPORTERS = new Set([
   "src/lib/booking-money-reconciliation.ts",
   // The guarded demo-only PAID FREE_NIGHTS fixture calls the canonical writer.
   "prisma/demo-seed.ts",
+  // #3828: the invoice's per-code promotion lines take a code's figure only
+  // when the same derived state says its rows reconcile to that redemption.
+  "src/lib/xero-promo-adjustment-lines.ts",
 ]);
 
 const SOURCE = sourceFiles();
