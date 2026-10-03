@@ -223,14 +223,21 @@ export interface CollectedCashSummary {
   /** `Payment.amountCents` summed over captured payments only — before refunds. */
   capturedGrossCents: number;
   /**
-   * `Payment.refundedAmountCents` summed — card refunds and cancellation credit
-   * to the member's account alike (`INV-PAY-050`).
+   * How much of `capturedGrossCents` has gone back out: each captured
+   * payment's `refundedAmountCents` — card refunds and cancellation credit to
+   * the member's account alike (`INV-PAY-050`) — capped at what that payment
+   * took. Exactly `capturedGrossCents - netCollectedCents`, so a "paid,
+   * refunded" line beneath the headline always adds up. A refund recorded on a
+   * payment that never took money is not here: nothing came in for it to
+   * reverse.
    */
   refundedCents: number;
   /**
-   * `capturedGrossCents - refundedCents`, floored at zero: collected money net
-   * of refunds AND credits. Not "cash the club holds" — a credit is still owed
-   * to the member as a future booking, and it is subtracted here all the same.
+   * Money each payment received and has not refunded or credited back,
+   * summed: `getRemainingRefundableCents` per payment, so no payment adds less
+   * than nothing and one that never took money adds nothing. Not "cash the club
+   * holds" — a credit is still owed to the member as a future booking, and it is
+   * subtracted here all the same.
    */
   netCollectedCents: number;
 }
@@ -247,8 +254,14 @@ export interface NetCollectedBookingScopeFields {
  * Collected" figure - the dashboard card, the payments board tile, Reports'
  * Net Collected Cash and the finance dashboard's Net Collected Cash (#3637). A
  * payment counts when its booking has not been
- * soft-deleted, whatever the booking's status: a cancelled booking nets to the
- * cancellation fee the club kept, and that fee is money collected.
+ * soft-deleted, whatever the booking's status.
+ *
+ * What a CANCELLED booking adds (owner review on PR #3811, 2 Oct 2026) is only
+ * money actually received on it and not refunded or credited back - what a
+ * cancellation policy kept out of money that was paid. A booking cancelled
+ * before anything was paid adds nil, whatever fee its policy would have
+ * charged: the figure is never built from a price or a policy, only from what
+ * each payment took (`summarizeCollectedCash`).
  *
  * Before the decision each screen chose its own set: Reports a fixed status
  * list, the payments tile everything but cancelled (#773, which kept a refunded
@@ -318,9 +331,11 @@ export function cancelRefundableBaseCents(input: {
 
 /**
  * `Payment.refundedAmountCents` summed over the rows handed in, captured or not:
- * card refunds and account credits alike (`INV-PAY-050`). The one refund fold -
- * `summarizeCollectedCash` uses it for the net, and the payments board's
- * "Refunded / Credited" tile uses it over every payment its filters match.
+ * card refunds and account credits alike (`INV-PAY-050`). The payments board's
+ * "Refunded / Credited" tile uses it over every payment its filters match. NOT
+ * the net's refund: `summarizeCollectedCash` nets each payment on its own
+ * (`getRemainingRefundableCents`), so a refund can never reach past the
+ * payment it was made on.
  */
 export function sumRefundedAndCreditedCents(
   payments: ReadonlyArray<{ refundedAmountCents: number }>,
@@ -344,8 +359,23 @@ export function sumRefundedAndCreditedCents(
  * The finance dashboard's "Net Collected Cash" (`finance-booking-metrics.ts`)
  * reads it too, over the bookings staying in its window (#3637).
  *
- * Captured is `isCapturedPaymentStatus` above. `refundedCents` is summed over
- * EVERY in-scope row, captured or not, and the net is floored at zero.
+ * PER PAYMENT, never pooled (owner review on PR #3811): each in-scope payment
+ * adds what it received and has not refunded or credited back -
+ * `getRemainingRefundableCents`, the one "money taken and still held" reading,
+ * which is 0 for a payment that never took money (`hasCapturedPayment`) and
+ * never below 0. So a cancelled booking that was never paid adds nil. The old
+ * pooled sum (all captured gross less ALL refunds) let a refund recorded on a
+ * never-captured payment - the inbound reconcile folds a modification credit
+ * note into an unpaid Internet Banking payment's mirror, and the unpaid cancel
+ * then marks it FAILED (`booking-cancel.ts`) - or a refund above its own
+ * capture, subtract from OTHER bookings' money.
+ *
+ * Two consequences of reading only what each payment took, stated so nobody
+ * reads them as accidents. Applied account credit is not in `amountCents`
+ * (`INV-PAY-047`), so a booking paid with credit adds nothing here, live or
+ * cancelled, whether the cancellation restored the credit or kept it. And a
+ * cash hand-back the club still owes adds the money until it is paid: only
+ * completing the refund task writes `refundedAmountCents`.
  *
  * Cash is payment-derived and deliberately NOT allocated over stay nights.
  * `Payment.amountCents` already contains captured additions (#2408); rebuilding
@@ -358,18 +388,18 @@ export function sumRefundedAndCreditedCents(
 export function summarizeCollectedCash(
   payments: ReadonlyArray<NetCollectedPaymentRow>,
 ): CollectedCashSummary {
-  const inScope = netCollectedScopedPayments(payments);
   let capturedGrossCents = 0;
-  for (const payment of inScope) {
-    if (payment.status !== null && isCapturedPaymentStatus(payment.status)) {
-      capturedGrossCents += payment.amountCents;
-    }
+  let netCollectedCents = 0;
+  for (const payment of netCollectedScopedPayments(payments)) {
+    const { status } = payment;
+    if (status === null || !isCapturedPaymentStatus(status)) continue;
+    capturedGrossCents += payment.amountCents;
+    netCollectedCents += getRemainingRefundableCents({ ...payment, status });
   }
-  const refundedCents = sumRefundedAndCreditedCents(inScope);
   return {
     capturedGrossCents,
-    refundedCents,
-    netCollectedCents: Math.max(capturedGrossCents - refundedCents, 0),
+    refundedCents: capturedGrossCents - netCollectedCents,
+    netCollectedCents,
   };
 }
 

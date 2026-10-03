@@ -498,9 +498,11 @@ describe("Admin Payments API", () => {
     expect(body.summary.netCollectedCents).toBe(
       NET_COLLECTED_SCOPE_FIXTURE.expectedNetCollectedCents
     );
-    // The refund tile is every matched row, as its hint says.
-    expect(body.summary.refundedCents).toBe(15_000);
-    expect(body.summary.count).toBe(2);
+    // The refund tile is every matched row, as its hint says - the never-paid
+    // cancelled booking's $30.00 mirror refund included, though the Net
+    // Collected tile (owner review on #3811) gives that booking nil.
+    expect(body.summary.refundedCents).toBe(18_000);
+    expect(body.summary.count).toBe(3);
   });
 
   /*

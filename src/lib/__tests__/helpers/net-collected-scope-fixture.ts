@@ -5,10 +5,16 @@
  * Finance dashboard's "Net Collected Cash" (#3637) - so each surface's test
  * asserts the SAME expected amount from the SAME payments.
  *
- * Two payments:
+ * Three payments:
  *  - a CANCELLED booking that paid $200.00 and was refunded $150.00, so the
- *    club kept a $50.00 cancellation fee. It counts: $50.00 is money collected.
+ *    club kept $50.00 of money it received. It counts: $50.00 is money collected.
  *  - a SOFT-DELETED booking's captured $70.00. It does not count.
+ *  - a CANCELLED booking that was NEVER PAID (owner review on PR #3811): its
+ *    payment never took money, so it adds nil, whatever its price or its
+ *    policy's fee. It carries a $30.00 refund on its mirror - the shape the
+ *    inbound reconcile leaves when it folds a modification credit note into an
+ *    unpaid Internet Banking payment that the unpaid cancel then marks FAILED -
+ *    so a derivation that pools refunds across payments reads $20.00 instead.
  *
  * Each surface used to answer differently: the payments tile, Reports and
  * Finance left the cancelled booking out ($0.00), the dashboard counted the
@@ -31,12 +37,21 @@ export const NET_COLLECTED_SCOPE_FIXTURE = {
     refundedAmountCents: 0,
     deletedAt: new Date("2026-04-02T00:00:00.000Z"),
   },
-  /** What every Net Collected figure must read over the two payments above. */
+  unpaidCancelled: {
+    bookingId: "b-cancelled-never-paid",
+    bookingStatus: "CANCELLED",
+    status: "FAILED",
+    amountCents: 20_000,
+    refundedAmountCents: 3_000,
+    deletedAt: null,
+  },
+  /** What every Net Collected figure must read over the three payments above. */
   expectedNetCollectedCents: 5_000,
 } as const;
 
-/** The fixture's two payments as a list. */
+/** The fixture's three payments as a list. */
 export const NET_COLLECTED_SCOPE_PAYMENTS = [
   NET_COLLECTED_SCOPE_FIXTURE.keptFee,
   NET_COLLECTED_SCOPE_FIXTURE.deleted,
+  NET_COLLECTED_SCOPE_FIXTURE.unpaidCancelled,
 ] as const;

@@ -5,6 +5,7 @@ import {
   getPaymentNetOfRefundsCents,
   getRemainingRefundableCents,
   hasCapturedPayment,
+  summarizeCollectedCash,
 } from "@/lib/booking-payment-state";
 
 describe("booking payment state helpers", () => {
@@ -109,5 +110,94 @@ describe("the Net Collected ledger-gap warning", () => {
         grouped,
       ),
     ).toBeNull();
+  });
+});
+
+/*
+  Owner review on PR #3811 (2 Oct 2026): "a cancelled booking should only count
+  if there were payments on the booking and they were not refunded when the
+  booking was cancelled, but if there were no payments on the booking and it's
+  cancelled, then the money received is nil". Each case below is ONE cancelled
+  booking's payment in the shape its cancel path leaves it, beside a live
+  booking's untouched $100.00, so a case that leaks into another booking's
+  money shows up as a total other than $100.00 plus that booking's own share.
+*/
+describe("what a cancelled booking adds to Net Collected (owner review on #3811)", () => {
+  const LIVE = { deletedAt: null };
+  const otherBooking = {
+    status: "SUCCEEDED",
+    amountCents: 10_000,
+    refundedAmountCents: 0,
+    booking: LIVE,
+  };
+  const netWith = (
+    cancelled: { status: string | null; amountCents: number; refundedAmountCents: number },
+  ) =>
+    summarizeCollectedCash([otherBooking, { ...cancelled, booking: LIVE }]);
+
+  it("adds nil for a booking cancelled before anything was paid", () => {
+    // The unpaid cancel marks a never-captured payment FAILED; a booking
+    // cancelled while still PENDING keeps its PENDING row. Its price, and any
+    // fee its policy would charge, is never read.
+    expect(netWith({ status: "FAILED", amountCents: 45_000, refundedAmountCents: 0 }).netCollectedCents).toBe(10_000);
+    expect(netWith({ status: "PENDING", amountCents: 45_000, refundedAmountCents: 0 }).netCollectedCents).toBe(10_000);
+  });
+
+  it("adds nil, never less, when a never-paid booking's payment carries a refund on its mirror", () => {
+    // The inbound reconcile folds a modification credit note into a
+    // never-captured Internet Banking payment; the unpaid cancel then marks it
+    // FAILED with the fold still on it. Pooled, that $30.00 came off the OTHER
+    // booking's money.
+    const summary = netWith({ status: "FAILED", amountCents: 20_000, refundedAmountCents: 3_000 });
+    expect(summary).toEqual({
+      capturedGrossCents: 10_000,
+      refundedCents: 0,
+      netCollectedCents: 10_000,
+    });
+  });
+
+  it("adds nil for a booking paid and then refunded in full", () => {
+    expect(netWith({ status: "REFUNDED", amountCents: 20_000, refundedAmountCents: 20_000 }).netCollectedCents).toBe(10_000);
+  });
+
+  it("adds the part a cancellation policy kept out of money that was paid", () => {
+    // Paid $200.00 by card; a 75% tier refunded $150.00, and the club kept $50.00.
+    expect(netWith({ status: "PARTIALLY_REFUNDED", amountCents: 20_000, refundedAmountCents: 15_000 })).toEqual({
+      capturedGrossCents: 30_000,
+      refundedCents: 15_000,
+      netCollectedCents: 15_000,
+    });
+  });
+
+  it("never lets a refund above its own payment reach another booking", () => {
+    // A refund recorded beyond what the payment took (legacy mirror drift):
+    // that booking adds nil, and the breakdown still adds up.
+    expect(netWith({ status: "REFUNDED", amountCents: 20_000, refundedAmountCents: 26_000 })).toEqual({
+      capturedGrossCents: 30_000,
+      refundedCents: 20_000,
+      netCollectedCents: 10_000,
+    });
+  });
+
+  it("adds nil for a booking paid wholly with account credit, whether the cancel restored the credit or kept it", () => {
+    // Applied credit is not in `amountCents` (INV-PAY-047): the payment took
+    // no money, so this cash figure has nothing to add either way.
+    expect(netWith({ status: "SUCCEEDED", amountCents: 0, refundedAmountCents: 0 }).netCollectedCents).toBe(10_000);
+  });
+
+  it("adds an Internet Banking payment's kept share once its cancellation refund is held as credit", () => {
+    // A reconciled Internet Banking payment cancels on the credit path: the
+    // refunded share becomes account credit and is on `refundedAmountCents`
+    // at once (`applyLocalRefundAllocation`), so only the kept share counts.
+    expect(netWith({ status: "PARTIALLY_REFUNDED", amountCents: 20_000, refundedAmountCents: 10_000 }).netCollectedCents).toBe(20_000);
+  });
+
+  it("counts a marked-paid booking's money until its hand-back task is completed, then only what was kept", () => {
+    // A payment an officer marked paid cancels on the manual path: the refund
+    // is a hand-back task, and only COMPLETING it writes `refundedAmountCents`
+    // (`manual-refund-task-resolution.ts`). Until then the club still holds
+    // the money; once paid back, only the kept share remains.
+    expect(netWith({ status: "SUCCEEDED", amountCents: 20_000, refundedAmountCents: 0 }).netCollectedCents).toBe(30_000);
+    expect(netWith({ status: "PARTIALLY_REFUNDED", amountCents: 20_000, refundedAmountCents: 10_000 }).netCollectedCents).toBe(20_000);
   });
 });

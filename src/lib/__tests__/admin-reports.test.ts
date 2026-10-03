@@ -332,18 +332,21 @@ describe("admin reports helpers", () => {
     expect(isInNetCollectedBookingScope(deleted)).toBe(false);
   });
 
-  it("floors net collected cash at zero but reports the refund in full", () => {
+  it("floors each payment at zero and counts its refund only up to what it took", () => {
     // A refund larger than the capture cannot happen through the refund
-    // writers, but a floor is what the old function promised and Reports
-    // still reads through the wrapper.
+    // writers. Owner review on #3811: each payment adds what it received and
+    // has not refunded, so the excess $5.00 neither goes below zero nor comes
+    // off another payment, and the breakdown's refund is what came back out of
+    // money that came in - gross less net, so the card's line adds up.
     expect(
       summarizeCollectedCash([
         { status: PaymentStatus.REFUNDED, amountCents: 1_000, refundedAmountCents: 1_500, booking: LIVE },
+        { status: PaymentStatus.SUCCEEDED, amountCents: 4_000, refundedAmountCents: 0, booking: LIVE },
       ]),
     ).toEqual({
-      capturedGrossCents: 1_000,
-      refundedCents: 1_500,
-      netCollectedCents: 0,
+      capturedGrossCents: 5_000,
+      refundedCents: 1_000,
+      netCollectedCents: 4_000,
     });
   });
 });
