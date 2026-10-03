@@ -105,7 +105,9 @@ export async function raiseEditRefundHandBackIfOwed(
  * second appeal could be approved against the same cash. Now that remainder
  * raises ONE officer task in the money-to-settle queue, inside the approval's
  * own transaction under `lock(1)`, and is netted from refundable cash until the
- * treasurer marks it paid back (which records the refund on the payment).
+ * treasurer marks it paid back (which records the refund on the payment and,
+ * D-3813-8, queues this request's own Xero refund credit note for the amount
+ * paid back - `enqueueXeroRefundRequestCreditNoteOperation`).
  *
  * IDEMPOTENT PER REFUND REQUEST, as the edit's is per modification: the
  * occurrence key is unique and the insert is `ON CONFLICT DO NOTHING`. The

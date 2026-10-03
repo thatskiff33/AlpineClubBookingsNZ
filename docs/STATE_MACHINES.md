@@ -1918,7 +1918,8 @@ reopened past that. See
 Approving a refund request raises the task OPEN for the part of the approved
 amount no card refund carries, inside the approval's transaction under
 `lock(1)`, keyed one per `RefundRequest`, and nets it as above. Its completion
-queues no Xero document either (the approval queued the credit note), and its
+queues that request's own Xero refund credit note for the amount paid back
+(owner decision D-3813-8; the approval queues none for this part), and its
 `REFUNDED` event is marked the same way. It may be DISMISSED with a note even
 though the booking is cancelled, because the cancel came first and never
 counted it. See

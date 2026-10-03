@@ -46,7 +46,10 @@
   approved against the same money. Now the approval raises one task in
   **Money to settle** for the amount no card refund can carry, the member's
   email says the club **will** refund them by bank transfer, and marking the
-  task paid back records the refund. Until then the amount counts as already
+  task paid back records the refund and queues that appeal's own Xero refund
+  credit note for the amount paid back (owner decision D-3813-8): each appeal
+  gets its own note, and approval no longer queues one for the bank-transfer
+  part. Until then the amount counts as already
   promised, so a further appeal can be approved only for what is left. An
   appeal also cannot ask for, or be approved for, money already returned
   another way: an open refund task on the booking's payment of any kind, or

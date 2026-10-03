@@ -146,9 +146,14 @@ completed. Void the second one by hand.
 **The same applies to an approved refund appeal's task (D-3813-7).** Approving
 an appeal on a booking paid by internet banking now raises a task whose reason
 reads "Refund appeal approved on booking …; not paid by card, so the club
-refunds this by bank transfer". The approval already queued the appeal's Xero
-refund credit note, so treat these tasks exactly like the edit tasks above, and
-on the previous colour a second note would sit beside the appeal's own.
+refunds this by bank transfer". The new version queues that appeal's own Xero
+refund credit note when the task is marked paid back (D-3813-8), and none at
+approval. Marked paid back on the previous colour, the note is raised as the
+payment's one cancellation refund note instead: the right amount, but a later
+cancellation refund on the same payment would then be taken as already noted.
+So treat these tasks exactly like the edit tasks above, and mark them paid
+back after cutover. If one was marked paid back during the window, check in
+Xero that each paid-back appeal has one refund credit note for its amount.
 
 ### Re-save a customised "refund appeal approved" email (#3827)
 

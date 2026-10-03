@@ -1772,8 +1772,12 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     and `NOT_NON_CANCELLATION_HAND_BACK_WHERE` cover both. Completion records
     the refund on the payment, the bank-refund ledger line and a `REFUNDED`
     event marked `refund_request_hand_back_completed`, outside the narrative's
-    settlement; it queues NO Xero document, because the approval queued the
-    refund credit note for the whole approved amount.
+    settlement.
+  - **Its Xero note is queued on payout, one per request** (D-3813-8): the
+    approval notes only the card part; completion queues the request's own
+    note for the amount paid back
+    (`enqueueXeroRefundRequestCreditNoteOperation`), keyed by the request and
+    linked as `REFUND_REQUEST_CREDIT_NOTE`, outside `INV-ADDPAY-020`'s one note.
   - **An appeal's ceiling nets everything already handed back**
     (`refundableCashForRefundAppeal`; screens `refundAppealCeiling`): every
     OPEN hand-back on the payment, any kind, and the member credit minted

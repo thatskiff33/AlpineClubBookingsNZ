@@ -69,8 +69,10 @@ change and not yet sent ([Payments](payments.md)).
    **refund task** in the queue on **Admin → Finance → Payments**, and the
    member's email says the club **will** refund them by bank transfer. Send the
    money, then mark the task paid back there; that is when the payment records
-   the refund. The Xero credit note for the whole approved amount is queued at
-   approval, so marking the task paid back sends nothing further to Xero. Until
+   the refund, and when the app queues this appeal's own Xero refund credit
+   note for exactly the amount paid back. Approving queues no note for that
+   part (a card refund's note is still queued at approval). Each appeal gets
+   its own note, so a second appeal on the same booking gets one too. Until
    the task is done its amount counts as already promised, so a second appeal
    on the same booking can only be approved for what is left. See
    [Payments](payments.md#pay-back-a-refund-for-a-cash-booking).

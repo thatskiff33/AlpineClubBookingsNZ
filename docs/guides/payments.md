@@ -217,9 +217,10 @@ treasurer rather than dismissing it.
 appeal on a booking paid by internet banking raises one of these tasks for the
 approved amount (on a booking paid partly by card, for the part the card
 refund cannot carry), and the member's email says the club **will** refund
-them by bank transfer. Pay it and mark it paid back exactly as above; the Xero
-credit note was queued when the appeal was approved, so nothing further goes
-to Xero. While it is open its amount counts as already promised, so a second
+them by bank transfer. Pay it and mark it paid back exactly as above. Marking
+it paid back queues that appeal's own Xero refund credit note for the amount
+you paid back; each appeal gets its own note, beside the payment's one refund
+note for its cancellation. While it is open its amount counts as already promised, so a second
 appeal can only be approved for what is left. An appeal's limit also leaves
 out every other task still open on the payment, a cancellation's own
 included, and any account credit already given for a bank transfer that
