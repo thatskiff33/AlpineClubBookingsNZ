@@ -479,6 +479,10 @@ describe("what completing or dismissing means, per kind (#3033)", () => {
     // Offered with nothing chosen: the app never answers for the officer.
     expect(screen.getByLabelText("In cash")).not.toBeChecked();
     expect(screen.getByLabelText("By bank transfer")).not.toBeChecked();
+    // The help sentence is the group's accessible description, not loose text.
+    expect(
+      screen.getByRole("group", { name: "How did the club pay the member back?" }),
+    ).toHaveAccessibleDescription(/only changes the wording on the Xero credit note/);
     fireEvent.click(screen.getByLabelText("In cash"));
     fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "73.00" } });
     fireEvent.change(screen.getByLabelText(/^Note/), {

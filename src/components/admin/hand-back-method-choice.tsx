@@ -1,5 +1,7 @@
 "use client";
 
+import { useId } from "react";
+
 /**
  * #3536 (`INV-PAY-113`, owner decision 3 Oct 2026): HOW A HAND-SETTLED REFUND
  * WENT BACK, in the officer's own words.
@@ -24,12 +26,13 @@ export function HandBackMethodChoice({
   handedBackInCash: boolean | null;
   onChange: (inCash: boolean) => void;
 }) {
+  const helpId = useId();
   return (
-    <fieldset className="space-y-2">
+    <fieldset className="space-y-2" aria-describedby={helpId}>
       <legend className="text-sm font-medium">
         How did the club pay the member back?
       </legend>
-      <p className="text-xs text-muted-foreground">
+      <p id={helpId} className="text-xs text-muted-foreground">
         This only changes the wording on the Xero credit note. If you leave it
         blank, the note says it was refunded by bank transfer.
       </p>
