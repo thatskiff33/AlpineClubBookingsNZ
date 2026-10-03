@@ -37,6 +37,10 @@ import {
 } from "@/lib/payment-transactions";
 import { dispatchEditReviewXeroSettlement } from "@/lib/edit-financial-review-xero-leg";
 import {
+  finishEditReviewAccountCredit,
+  type EditReviewAccountCreditOutcome,
+} from "@/lib/edit-financial-review-account-credit";
+import {
   assertLateCaptureHandBackStillOwed,
   executeLateCaptureApprovalRefund,
   planLateCaptureApprovalRefund,
@@ -194,6 +198,11 @@ export type EditReviewSettlementRoute =
        * the booking that has LEFT it - cancelled, most obviously - whose cents
        * are just as capable of being refunded twice. Matching the route gate
        * would drop the allocation on the one shape that still needs it.
+       *
+       * NULL also decides HOW the share is credited (#3791): with no captured
+       * payment, what the member paid is their applied account credit, so
+       * `writeEditReviewAccountCredit` gives that back rather than minting new
+       * credit beside it.
        */
       allocateAgainstPaymentId: string | null;
     }
@@ -513,8 +522,10 @@ export async function executeEditReviewSettlement({
   actingMemberId,
   route,
   amountCents,
+  accountCredit,
   hasIssuedXeroInvoice,
   bookingPaymentStatus,
+  bookingXeroInvoiceId = null,
   cancellationHandBackInvoiceId,
   format,
 }: {
@@ -523,6 +534,10 @@ export async function executeEditReviewSettlement({
   actingMemberId: string;
   route: EditReviewSettlementRoute | null;
   amountCents: number | null;
+  /** #3791: what the account-credit route gave back and minted, else null. */
+  accountCredit: EditReviewAccountCreditOutcome | null;
+  /** #3791: the booking's primary invoice, which a cancelled booking still has. */
+  bookingXeroInvoiceId?: string | null;
   hasIssuedXeroInvoice: boolean;
   bookingPaymentStatus: string | null;
   /** `INV-PAY-101` (#3529): see `dispatchEditReviewXeroSettlement`. */
@@ -639,17 +654,20 @@ export async function executeEditReviewSettlement({
     chargeTotalCents = charged.totalCents;
   }
 
-  if (route?.kind === "account-credit") {
-    // `INV-PAY-051` asks for the booking event to be written where the money
-    // moves, and this is that place: the credit row is committed, so the claim
-    // the member reads is one the ledger can be pointed at.
-    await recordBookingEvent({
+  // #3791: an account-credit share's event and Xero leg - given back, minted,
+  // or on a cancelled booking - are its own, after the commit as everything here.
+  if (route?.kind === "account-credit" && accountCredit) {
+    await finishEditReviewAccountCredit({
       bookingId,
-      type: BookingEventType.CREDITED,
-      actorMemberId: actingMemberId,
-      amountCents: amountCents ?? 0,
-      reason: "edit_financial_review_credited",
+      taskId,
+      actingMemberId,
+      bookingModificationId: route.bookingModificationId,
+      outcome: accountCredit,
+      hasIssuedXeroInvoice,
+      bookingXeroInvoiceId,
+      bookingPaymentStatus,
     });
+    return { stripeRefundId, additionalPaymentIntentId };
   }
 
   /**
