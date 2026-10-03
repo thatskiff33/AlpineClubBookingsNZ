@@ -184,6 +184,8 @@ export type EditReviewSettlementRoute =
        * behind them and no invoice line to correct.
        */
       bookingModificationId: string | null;
+      /** What is handed back: the share, or on a cancelled booking what is still owed (#3835). */
+      refundCents: number;
     }
   | {
       kind: "account-credit";
@@ -302,6 +304,7 @@ export async function chooseEditReviewSettlementRoute({
           kind: "local-allocation",
           paymentId: task.paymentId,
           bookingModificationId: null,
+          refundCents: amountCents,
         }
       : null;
   }
@@ -378,6 +381,16 @@ export async function chooseEditReviewSettlementRoute({
       ? (task.payment?.source ?? null)
       : (backfilledPayment?.source ?? null);
 
+  // #3835: on a cancelled booking a captured payment's share - by card or by
+  // hand - is netted against what the cancellation returned (owner decision 2
+  // on #3791), and only that is planned, capped and handed back.
+  const owedCents = () =>
+    task.booking.status === BookingStatus.CANCELLED
+      ? capturedShareOwedAfterCancellationCents({
+          bookingId: task.bookingId, taskId: task.id, booking: task.booking, shareCents: amountCents, clubZone, store,
+        })
+      : Promise.resolve(amountCents);
+
   if (
     settlementPaymentId !== null &&
     settlementPaymentSource === PaymentSource.STRIPE
@@ -388,13 +401,7 @@ export async function chooseEditReviewSettlementRoute({
         409,
       );
     }
-    // #3835: a cancelled booking's share is netted against the cancellation's
-    // refund (owner decision 2 on #3791), and only that is planned and capped.
-    const refundCents = task.booking.status === BookingStatus.CANCELLED
-      ? await capturedShareOwedAfterCancellationCents({
-          bookingId: task.bookingId, taskId: task.id, booking: task.booking, shareCents: amountCents, clubZone, store,
-        })
-      : amountCents;
+    const refundCents = await owedCents();
     // Freeze the allocation and cap the amount in ONE read, on the caller's
     // transaction and before its claim. Once the cap has passed the planned total
     // cannot be short of it: the planner allocates newest-first across exactly
@@ -430,6 +437,7 @@ export async function chooseEditReviewSettlementRoute({
       kind: "local-allocation",
       paymentId: settlementPaymentId,
       bookingModificationId,
+      refundCents: await owedCents(),
     };
   }
 

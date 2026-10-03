@@ -29,7 +29,9 @@
 
 import type { ManualRefundTaskKind } from "@prisma/client";
 
+import type { ClubFormat } from "@/lib/club-format";
 import { manualRefundTaskKindAllowsSettlement } from "@/lib/manual-refund-task-settlement-rules";
+import { formatCents } from "@/lib/utils";
 
 /**
  * A completion at zero stays refused, and the refusal names the way out.
@@ -142,7 +144,9 @@ export function completionMessage(result: {
   additionalPaymentIntentId: string | null;
   /** #3791: what the account-credit route gave back and minted, where it ran. */
   accountCredit?: { givenBackCents: number; mintedCents: number } | null;
-}) {
+  /** #3835: the share the officer typed, beside what a cancelled booking still owed. */
+  amountCents?: number | null;
+}, format: ClubFormat) {
   const amended = result.amountAmended ? " at the confirmed amount" : "";
   switch (completionSettlementShape(result.settlementRoute)) {
     case "card-refund":
@@ -167,8 +171,16 @@ export function completionMessage(result: {
       return result.additionalPaymentIntentId
         ? `The member has been asked to pay this${amended}. It is on the booking as an additional payment and they will be reminded until it is paid.`
         : "The request for payment could not be raised just now. It has been recorded and will be retried automatically — check this booking's payment history before asking the member another way.";
-    case "hand-back":
+    case "hand-back": {
+      // #3835: a share netted against a cancellation is handed back at what is
+      // still owed, and the officer moving the money must be told that figure.
+      const refundCents = result.settlementRoute?.refundCents;
+      if (refundCents === 0) return NOTHING_FURTHER_RETURNED;
+      if (refundCents !== undefined && result.amountCents != null && refundCents < result.amountCents) {
+        return `Only ${formatCents(refundCents, format)} of the ${formatCents(result.amountCents, format)} share was still owed: the booking's cancellation had already returned the rest. ${formatCents(refundCents, format)} is recorded as paid back by hand - hand back that amount, not the full share.`;
+      }
       return `Refund recorded as paid back by hand${amended}.`;
+    }
   }
 }
 

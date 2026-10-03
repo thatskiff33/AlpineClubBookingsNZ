@@ -306,8 +306,8 @@ export async function resolveManualRefundTask(
           store: tx,
         })
       : null;
-    // #3835: what actually goes back - on the card route, netted against a cancellation.
-    const settledCents = settlementRoute?.kind === "stripe-refund" ? settlementRoute.refundCents : (settlement?.amountCents ?? null);
+    // #3835: what actually goes back - by card or by hand, netted against a cancellation.
+    const settledCents = settlementRoute && "refundCents" in settlementRoute ? settlementRoute.refundCents : (settlement?.amountCents ?? null);
 
     // #3191/#3219 D2: the night prices, checked BEFORE the claim so a refusal
     // leaves the task OPEN - one plan per repairable strand since #3498.
@@ -371,10 +371,10 @@ export async function resolveManualRefundTask(
       // before the club handed anything back, which is the whole reason the task
       // exists.
       try {
-        if (settlementRoute.kind === "local-allocation") {
+        if (settlementRoute.kind === "local-allocation" && settlementRoute.refundCents > 0) {
           await applyLocalRefundAllocation({
             paymentId: settlementRoute.paymentId,
-            amountCents: settlement.amountCents,
+            amountCents: settlementRoute.refundCents,
             store: tx,
           });
         }
@@ -423,12 +423,12 @@ export async function resolveManualRefundTask(
         throw settlementWriteRefusal(error);
       }
       // #3599: the money the club handed back by hand, on the booking ledger.
-      if (settlementRoute.kind === "local-allocation") {
+      if (settlementRoute.kind === "local-allocation" && settlementRoute.refundCents > 0) {
         await postHandBackLedgerLine({
           bookingId: task.bookingId,
           lodgeId: task.booking.lodgeId,
           manualRefundTaskId: task.id,
-          amountCents: settlement.amountCents,
+          amountCents: settlementRoute.refundCents,
           refundMethod: refundMethodForEditReviewRoute(settlementRoute),
           paymentSource: task.payment?.source ?? null,
           officerMemberId: actingMemberId,
@@ -566,8 +566,8 @@ export async function resolveManualRefundTask(
        * rather than `REFUNDED` - the member got credit, not their money back.
        */
       recordedRefund:
-        settlement && settlementRoute?.kind === "local-allocation"
-          ? { amountCents: settlement.amountCents }
+        settlement && settlementRoute?.kind === "local-allocation" && settlementRoute.refundCents > 0
+          ? { amountCents: settlementRoute.refundCents }
           : null,
       /**
        * #3032: the two routes whose money moves OUTSIDE this transaction, carried

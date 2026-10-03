@@ -88,8 +88,9 @@ function frozenCents(record: Record<string, unknown> | null, key: string): numbe
 
 /**
  * #3835: owner decision 2 on a CAPTURED payment's share - the Stripe refund
- * route and the account-credit route that mints against the payment. The
- * cancellation refunded by tier on the full price; the share is netted against
+ * route, the hand-back route (internet banking, whose cancellation returned
+ * account credit) and the account-credit route that mints against the
+ * payment. The cancellation refunded by tier on the full price; the share is netted against
  * that refund and the credit it restored, cumulatively across sibling reviews,
  * by `shareOwedAfterCancellationCents`. Never more than the share typed.
  *
@@ -166,9 +167,10 @@ export async function capturedShareOwedAfterCancellationCents({
 /**
  * The other reviews of this booking settled to the member since the
  * cancellation: the shares they were typed at, and what they actually
- * returned - a card refund's frozen debt (its recovery operation) or the
- * credit minted against the payment. Edits are refused on a cancelled booking,
- * so a modification credit on it since then is a review's.
+ * returned - a card refund's frozen debt (its recovery operation), a hand-back's
+ * `BANK_REFUND` line, or the credit minted against the payment. Edits are
+ * refused on a cancelled booking, so a modification credit on it since then is
+ * a review's.
  */
 async function settledSinceCancellation({
   bookingId,
@@ -197,12 +199,16 @@ async function settledSinceCancellation({
     where: { idempotencyKey: { in: siblings.map((task) => buildEditFinancialReviewRefundRecoveryIdempotencyKey(task.id)) } },
     _sum: { amountCents: true },
   });
+  const handedBack = await store.bookingLedgerLine.aggregate({
+    where: { bookingId, kind: "BANK_REFUND", anchorKind: "REVIEW_TASK", anchorId: { in: siblings.map((task) => task.id) }, reversesLineId: null },
+    _sum: { unitCents: true },
+  });
   const minted = await store.memberCredit.aggregate({
     where: { sourceBookingId: bookingId, type: CreditType.BOOKING_MODIFICATION_REFUND, createdAt: { gte: since } },
     _sum: { amountCents: true },
   });
   return {
     sharesCents: siblings.reduce((sum, task) => sum + (task.amountCents ?? 0), 0),
-    returnedCents: (refunded._sum.amountCents ?? 0) + (minted._sum.amountCents ?? 0),
+    returnedCents: (refunded._sum.amountCents ?? 0) + (handedBack._sum.unitCents ?? 0) + (minted._sum.amountCents ?? 0),
   };
 }
