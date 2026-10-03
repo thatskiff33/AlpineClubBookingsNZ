@@ -346,13 +346,15 @@ describe("INV-SSOT: captured Payment and PaymentTransaction status guard (#3606,
   });
 
   it("does not read a different question as a copy", () => {
+    // The mapping cases carry an `||` on purpose: without one the connector
+    // check alone would pass them, and the condition cut would go untested.
     const negatives: Record<string, string> = {
       "full-vocabulary": "const ALL = ['PENDING', 'PROCESSING', 'SUCCEEDED', 'FAILED', 'REFUNDED', 'PARTIALLY_REFUNDED'] as const;",
       "superset": "const where = { status: { in: [PaymentStatus.PROCESSING, PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.REFUNDED] } };",
       "two-statuses": "const refunded = status === PaymentStatus.REFUNDED || status === PaymentStatus.PARTIALLY_REFUNDED;",
       "different-receivers": "const x = next === PaymentStatus.SUCCEEDED || payment.status === PaymentStatus.REFUNDED || payment.status === PaymentStatus.PARTIALLY_REFUNDED;",
-      "ternary-mapping": "const label = status === PaymentStatus.SUCCEEDED ? 'a' : status === PaymentStatus.REFUNDED ? 'b' : status === PaymentStatus.PARTIALLY_REFUNDED ? 'c' : 'd';",
-      "if-else-ladder": "if (status === PaymentStatus.SUCCEEDED) { a(); } else if (status === PaymentStatus.REFUNDED) { b(); } else if (status === PaymentStatus.PARTIALLY_REFUNDED) { c(); }",
+      "ternary-mapping": "const label = status === PaymentStatus.SUCCEEDED || legacy ? 'a' : status === PaymentStatus.REFUNDED ? 'b' : status === PaymentStatus.PARTIALLY_REFUNDED ? 'c' : 'd';",
+      "if-else-ladder": "if (status === PaymentStatus.SUCCEEDED || legacy) { a(); } else if (status === PaymentStatus.REFUNDED) { b(); } else if (status === PaymentStatus.PARTIALLY_REFUNDED) { c(); }",
       "mixed-families": "const x = status === PaymentStatus.SUCCEEDED || status !== PaymentStatus.REFUNDED || status === PaymentStatus.PARTIALLY_REFUNDED;",
       "switch-separate-bodies": "switch (status) {\n  case PaymentStatus.SUCCEEDED:\n    return 'a';\n  case PaymentStatus.PARTIALLY_REFUNDED:\n    return 'b';\n  case PaymentStatus.REFUNDED:\n    return 'c';\n}",
       "label-map": "const LABELS = { SUCCEEDED: 'Succeeded', PARTIALLY_REFUNDED: 'Part refunded', REFUNDED: 'Refunded' };",
