@@ -126,9 +126,8 @@ import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
-import { SCHOOL_CHILD_NAME_PREFIX } from "@/lib/placeholder-guest-names";
 import {
-  SCHOOL_CHILD_TIERS,
+  generateSchoolGuests,
   sameSchoolGuestList,
   unchangedSchoolGuestPrefixLength,
 } from "@/lib/school-booking-constants";
@@ -236,36 +235,10 @@ function cleanNullableString(value?: string | null) {
   return cleanString(value) || null;
 }
 
-/**
- * Build the bulk guest list: teachers as named ADULT guests, then children
- * numbered "School Child 1..N" across the requested age tiers.
- */
-export function generateSchoolGuests(input: {
-  teachers: Array<{ firstName: string; lastName: string }>;
-  childCounts: SchoolChildCounts;
-}): BookingRequestGuest[] {
-  const teacherGuests: BookingRequestGuest[] = input.teachers.map((teacher) => ({
-    firstName: teacher.firstName,
-    lastName: teacher.lastName,
-    ageTier: AgeTier.ADULT,
-  }));
-
-  const childGuests: BookingRequestGuest[] = [];
-  let childNumber = 0;
-  for (const tier of SCHOOL_CHILD_TIERS) {
-    const count = input.childCounts[tier] ?? 0;
-    for (let i = 0; i < count; i += 1) {
-      childNumber += 1;
-      childGuests.push({
-        firstName: SCHOOL_CHILD_NAME_PREFIX,
-        lastName: String(childNumber),
-        ageTier: tier,
-      });
-    }
-  }
-
-  return [...teacherGuests, ...childGuests];
-}
+// The composition rule is shared with the admin queue panel, so it lives in
+// the client-safe constants module (#3486). Re-exported to keep this module's
+// import surface for the route and the corrections service.
+export { generateSchoolGuests };
 
 function parseSchoolTeachers(raw: unknown): StoredTeacher[] {
   const parsed = storedSchoolTeacherListSchema.safeParse(raw);
