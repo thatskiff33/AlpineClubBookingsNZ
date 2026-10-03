@@ -18,3 +18,8 @@
   club's own calendar, where before, in a container running New Zealand time, it
   started from yesterday. See the
   [Hut Leaders guide](../docs/guides/hut-leaders.md#what-counts-as-a-covered-night).
+- **Custodians now appear on the lodge lobby screen and the member "Who's at
+  the lodge" list whenever they are ticked as living on site, with or without a
+  bed.** Before, only a custodian holding a bed was shown. A custodian who
+  holds a bed and is ticked is shown once, and a custodian who is a minor is
+  never named.

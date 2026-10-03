@@ -134,6 +134,9 @@ the lodge without ever making a booking.
    the assignment covers, with no booking, and takes **one space** off the
    lodge's capacity on each of those nights — members see one fewer space on the
    calendar. The tick is there whether or not your club uses bed allocation.
+   A ticked custodian, with or without a bed, is named on the lodge lobby screen
+   and on members' **Who's at the lodge** list, once each; a custodian who is a minor
+   is never named.
 3. If your club uses bed allocation, you can also **hold a bed** for them (below)
    so the allocation board shows which bed is theirs. A custodian with a bed
    still takes only one space.
