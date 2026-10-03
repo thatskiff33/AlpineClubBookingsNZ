@@ -225,7 +225,8 @@ export function AssignmentForm({
               />
             </div>
             <div>
-              <Label htmlFor="endDate">End Date</Label>
+              {/* #3817: an assignment's end is the last NIGHT covered, never the leave day. */}
+              <Label htmlFor="endDate">Last night</Label>
               <Input
                 id="endDate"
                 type="date"
@@ -382,8 +383,9 @@ export function AssignmentForm({
           )}
         </div>
 
-        {/* Optional custodian bed hold (#2286) — only meaningful once both the
-            nights and the person are settled, so it sits between steps 2 and 3. */}
+        {/* The custodian tick (#3817) and the optional custodian bed hold
+            (#2286) — only meaningful once both the nights and the person are
+            settled, so they sit between steps 2 and 3. */}
         {datesSelected && target ? (
           <div className="border-t border-border pt-4">
             <div className="flex items-start gap-2">
@@ -392,11 +394,12 @@ export function AssignmentForm({
                 checked={isCustodian}
                 disabled={!canEdit || creating}
                 onCheckedChange={onCustodianChange}
+                aria-describedby="hut-leader-is-custodian-hint"
                 className="mt-0.5"
               />
               <div>
                 <Label htmlFor="hut-leader-is-custodian">Custodian (lives on site)</Label>
-                <p className="text-xs text-muted-foreground">
+                <p id="hut-leader-is-custodian-hint" className="text-xs text-muted-foreground">
                   Counts as staying every night covered, with no booking needed.
                   Otherwise the {label} must be staying every night they cover.
                 </p>

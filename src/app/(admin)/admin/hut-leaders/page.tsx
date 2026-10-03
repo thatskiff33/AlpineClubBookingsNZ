@@ -20,6 +20,7 @@ import {
   CalendarDays,
   KeyRound,
   Undo2,
+  Home,
 } from "lucide-react";
 import { useClubTime } from "@/components/club-time-provider";
 import { calendarMonthOf } from "@/lib/club-time";
@@ -379,6 +380,7 @@ export default function HutLeadersPage() {
     setGuestNightsByMonth({});
     setSelection({ startDate: "", endDate: "" });
     setTarget(null);
+    setIsCustodian(false);
     setSelectedBedId(null);
     setOverCapacity(null);
     setError(null);
@@ -435,6 +437,7 @@ export default function HutLeadersPage() {
     if (!lodgeScopeReady) return;
     setSelection(next);
     setTarget(null);
+    setIsCustodian(false); // the tick belongs to one member's pick (#3817)
   }
 
   // Step 2a — a suggestion adopts the member's conflict-free suggested range.
@@ -448,6 +451,7 @@ export default function HutLeadersPage() {
       memberId: member.id,
       memberName: `${member.firstName} ${member.lastName}`,
     });
+    setIsCustodian(false);
     setError(null);
   }
 
@@ -466,6 +470,7 @@ export default function HutLeadersPage() {
       memberId: member.id,
       memberName: `${member.firstName} ${member.lastName}`,
     });
+    setIsCustodian(false);
     setError(null);
   }
 
@@ -558,7 +563,10 @@ export default function HutLeadersPage() {
       // parsed must not turn a successful assignment into an error.
       const created = await res.json().catch(() => null);
       if (activeLodgeIdRef.current !== requestedLodgeId) return;
-      setMinorCustodianNote(created?.minorCustodianWarning ?? null);
+      // #3817: the booked-as-a-guest-too note shares the advisory slot.
+      const notes = [created?.minorCustodianWarning, created?.custodianBookedWarning]
+        .filter((note): note is string => typeof note === "string" && note.length > 0);
+      setMinorCustodianNote(notes.length > 0 ? notes.join(" ") : null);
       setSelection({ startDate: "", endDate: "" });
       setTarget(null);
       setSelectedBedId(null);
@@ -583,9 +591,12 @@ export default function HutLeadersPage() {
    * assignment, which also destroyed the coverage record and the kiosk PIN — and
    * a hold on a cron-created assignment had no admin control at all.
    */
-  async function handleSetBed(
+  async function handleSaveRow(
     assignment: HutLeaderAssignment,
-    bedId: string | null,
+    // #3817: a row edit is the bed (three-state, as above) OR the custodian
+    // tick, so an officer can mark an existing row Custodian before releasing
+    // its bed. Either goes through the same over-capacity and hold questions.
+    patch: { bedId: string | null } | { isCustodian: boolean },
     confirmOverCapacity = false,
     amendOverlappingHolds = false,
   ) {
@@ -601,7 +612,7 @@ export default function HutLeadersPage() {
         // "leave the bed alone" to the route, which is the one thing a release
         // must not do.
         body: JSON.stringify({
-          bedId,
+          ...patch,
           ...(confirmOverCapacity ? { confirmOverCapacity: true } : {}),
           // #2698: sent only after an explicit acceptance; absent is decline.
           ...(amendOverlappingHolds ? { amendOverlappingHolds: true } : {}),
@@ -623,9 +634,9 @@ export default function HutLeadersPage() {
               ? data.nonHoldingBookings
               : [],
             confirm: () =>
-              void handleSetBed(
+              void handleSaveRow(
                 assignment,
-                bedId,
+                patch,
                 true,
                 amendOverlappingHolds,
               ),
@@ -641,9 +652,9 @@ export default function HutLeadersPage() {
             nights: data.nights ?? [],
             amendments: Array.isArray(data.amendments) ? data.amendments : [],
             accept: () =>
-              void handleSetBed(
+              void handleSaveRow(
                 assignment,
-                bedId,
+                patch,
                 confirmOverCapacity,
                 true,
               ),
@@ -651,7 +662,7 @@ export default function HutLeadersPage() {
           return;
         }
         setError({
-          message: data?.error || "Failed to update the bed",
+          message: data?.error || "Failed to update the assignment",
           memberId: null,
         });
         return;
@@ -746,6 +757,7 @@ export default function HutLeadersPage() {
     if (!lodgeScopeReady) return;
     setSelection({ startDate: date, endDate: date });
     setTarget(null);
+    setIsCustodian(false);
   }
 
   // ---- Calendar overlay (three layers: red needs-leader, violet covered) ----
@@ -965,7 +977,7 @@ export default function HutLeadersPage() {
         target={target}
         onSelectEligible={handleSelectEligible}
         onSelectAnyMember={handleSelectAnyMember}
-        onClearTarget={() => setTarget(null)}
+        onClearTarget={() => { setTarget(null); setIsCustodian(false); }}
         summary={summary}
         creating={creating}
         error={error}
@@ -1222,7 +1234,7 @@ export default function HutLeadersPage() {
               <TableHead>Member</TableHead>
               {showLodgeColumn && <TableHead>Lodge</TableHead>}
               <TableHead>Start</TableHead>
-              <TableHead>End</TableHead>
+              <TableHead>Last night</TableHead>
               {/* #2286: which bed (if any) this assignment holds. */}
               <TableHead>Bed held</TableHead>
               <TableHead>Status</TableHead>
@@ -1275,7 +1287,7 @@ export default function HutLeadersPage() {
                           endDate={a.endDate}
                           assignmentId={a.id}
                           value={a.bedId}
-                          onChange={(bedId) => void handleSetBed(a, bedId)}
+                          onChange={(bedId) => void handleSaveRow(a, { bedId })}
                           canEdit={canEdit && savingBedForId !== a.id}
                         />
                         <Button
@@ -1317,7 +1329,7 @@ export default function HutLeadersPage() {
                           describeReason={false}
                           variant="ghost"
                           size="sm"
-                          onClick={() => void handleSetBed(a, null)}
+                          onClick={() => void handleSaveRow(a, { bedId: null })}
                           disabled={savingBedForId === a.id}
                           className="text-muted-foreground hover:bg-muted hover:text-foreground"
                           title="Release the bed (keep the assignment)"
@@ -1345,6 +1357,26 @@ export default function HutLeadersPage() {
                           {a.bedId ? "Change bed" : "Hold a bed"}
                         </span>
                       </ViewOnlyActionButton> : null}
+                      {/*
+                        #3817: convert an existing row to or from Custodian
+                        (lives on site). Unticking a row that has no bed and no
+                        stay is refused by the server, like Release bed.
+                      */}
+                      <ViewOnlyActionButton
+                        canEdit={canEdit}
+                        describeReason={false}
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void handleSaveRow(a, { isCustodian: !a.isCustodian })}
+                        disabled={savingBedForId === a.id}
+                        aria-pressed={Boolean(a.isCustodian)}
+                        className="text-muted-foreground hover:bg-muted hover:text-foreground"
+                        title={a.isCustodian ? "Custodian (lives on site): untick" : "Mark as custodian (lives on site)"}
+                      >
+                        <Home className="h-4 w-4" />
+                        {/* One label; aria-pressed carries the state. */}
+                        <span className="sr-only">Custodian (lives on site)</span>
+                      </ViewOnlyActionButton>
                       <ViewOnlyActionButton
                         canEdit={canEdit}
                         describeReason={false}

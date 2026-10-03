@@ -111,7 +111,7 @@ describe("hut-leader stay refusal offers the last night stayed (#3817)", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Start Date")).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText("Start Date"), { target: { value: "2099-07-10" } });
-    fireEvent.change(screen.getByLabelText("End Date"), { target: { value: "2099-07-13" } });
+    fireEvent.change(screen.getByLabelText("Last night"), { target: { value: "2099-07-13" } });
 
     // The suggestions load after the dates settle; a cold transform of the
     // page can take seconds on a loaded runner, so give that fetch its time.
@@ -127,7 +127,7 @@ describe("hut-leader stay refusal offers the last night stayed (#3817)", () => {
       fireEvent.click(change);
     });
 
-    expect(screen.getByLabelText("End Date")).toHaveValue("2099-07-12");
+    expect(screen.getByLabelText("Last night")).toHaveValue("2099-07-12");
     expect(screen.getByLabelText("Start Date")).toHaveValue("2099-07-10");
     // The member is still the chosen one, and the refusal has cleared.
     expect(screen.getByRole("button", { name: /^Selected$/ })).toBeInTheDocument();
@@ -180,7 +180,7 @@ describe("hut-leader stay refusal offers the last night stayed (#3817)", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Start Date")).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText("Start Date"), { target: { value: "2099-07-10" } });
-    fireEvent.change(screen.getByLabelText("End Date"), { target: { value: "2099-07-12" } });
+    fireEvent.change(screen.getByLabelText("Last night"), { target: { value: "2099-07-12" } });
     await screen.findByText("Cat Custodian", {}, { timeout: 10000 });
     fireEvent.click(await screen.findByRole("button", { name: /^Select$/ }));
 
@@ -192,5 +192,117 @@ describe("hut-leader stay refusal offers the last night stayed (#3817)", () => {
 
     await waitFor(() => expect(posts).toHaveLength(1));
     expect(posts[0]).toMatchObject({ memberId: "m1", isCustodian: true });
+  });
+
+  it("drops the custodian tick when the member or the nights change (#3817 review)", async () => {
+    const posts: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/admin/lodges")) {
+        return Response.json({ lodges: [{ id: "lodge-1", name: "Lodge One", active: true }] });
+      }
+      if (url.includes("/api/admin/hut-leaders/eligible-members")) {
+        return Response.json({
+          members: [
+            {
+              id: "m1", firstName: "Cat", lastName: "Custodian", email: "cat@example.org",
+              hutLeaderEligible: true, hutLeaderEligibleAt: null,
+              bookingCheckIn: "2099-07-10", bookingCheckOut: "2099-07-13",
+              suggestedStartDate: "2099-07-10", suggestedEndDate: "2099-07-12",
+              uncoveredNightCount: 3, fullyCovered: false,
+            },
+          ],
+        });
+      }
+      if (url.includes("/api/admin/hut-leaders/unassigned-dates")) {
+        return Response.json({ unassignedDates: [] });
+      }
+      if (url.includes("/api/admin/hut-leaders") && init?.method === "POST") {
+        posts.push(JSON.parse(String(init.body)));
+        return Response.json({ id: "new-1", emailSent: true }, { status: 201 });
+      }
+      if (url.includes("/api/admin/hut-leaders")) {
+        return Response.json({ assignments: [], bedAllocationEnabled: false });
+      }
+      if (url.includes("/api/admin/occupancy")) {
+        return Response.json({ month: "2099-07", nights: [], bookings: [] });
+      }
+      return Response.json({});
+    }));
+
+    render(
+      <ClubIdentityProvider value={clubIdentity}>
+        <HutLeadersPage />
+      </ClubIdentityProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Start Date")).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("Start Date"), { target: { value: "2099-07-10" } });
+    fireEvent.change(screen.getByLabelText("Last night"), { target: { value: "2099-07-12" } });
+    await screen.findByText("Cat Custodian", {}, { timeout: 10000 });
+    fireEvent.click(await screen.findByRole("button", { name: /^Select$/ }));
+    fireEvent.click(await screen.findByLabelText("Custodian (lives on site)"));
+
+    // Re-pick the nights (which clears the member), then choose again.
+    fireEvent.change(screen.getByLabelText("Last night"), { target: { value: "2099-07-11" } });
+    fireEvent.click(await screen.findByRole("button", { name: /^Select$/ }));
+    expect(await screen.findByLabelText("Custodian (lives on site)")).not.toBeChecked();
+    fireEvent.click(await screen.findByRole("button", { name: /Confirm assignment/ }));
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).not.toHaveProperty("isCustodian");
+  });
+
+  it("marks an EXISTING row Custodian through the row toggle (#3817)", async () => {
+    const puts: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/admin/lodges")) {
+        return Response.json({ lodges: [{ id: "lodge-1", name: "Lodge One", active: true }] });
+      }
+      if (url.includes("/api/admin/hut-leaders/unassigned-dates")) {
+        return Response.json({ unassignedDates: [] });
+      }
+      if (url.includes("/api/admin/hut-leaders/row-1") && init?.method === "PUT") {
+        puts.push(JSON.parse(String(init.body)));
+        return Response.json({ success: true });
+      }
+      if (url.includes("/api/admin/hut-leaders")) {
+        return Response.json({
+          assignments: [
+            {
+              id: "row-1", memberId: "m1", memberName: "Cat Custodian",
+              memberEmail: "cat@example.org", startDate: "2099-07-01",
+              endDate: "2099-09-30", createdAt: "2099-06-01T00:00:00.000Z",
+              lodgeId: "lodge-1", lodgeName: "Lodge One", bedId: "bed-1",
+              bedName: "A1", bedRoomName: "Kea", isCustodian: false,
+            },
+          ],
+          bedAllocationEnabled: false,
+        });
+      }
+      if (url.includes("/api/admin/occupancy")) {
+        return Response.json({ month: "2099-07", nights: [], bookings: [] });
+      }
+      return Response.json({});
+    }));
+
+    render(
+      <ClubIdentityProvider value={clubIdentity}>
+        <HutLeadersPage />
+      </ClubIdentityProvider>,
+    );
+
+    const toggle = await screen.findByRole(
+      "button",
+      { name: "Custodian (lives on site)" },
+      { timeout: 10000 },
+    );
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await act(async () => {
+      fireEvent.click(toggle);
+    });
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0]).toEqual({ isCustodian: true });
   });
 });
