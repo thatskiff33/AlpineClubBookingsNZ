@@ -57,6 +57,9 @@ const JAVASCRIPT_VITEST_TESTS = [
   // same reason every other entry here does. It arrived on `main`, whose copy of
   // this contract has no such list, so nothing there asked for the entry.
   "scripts/ci/audit-dependencies.test.mjs",
+  // #3843: the audit's MITIGATED verdict lives in its own `.mjs` module beside
+  // the wrapper, and its suite is JavaScript for the same reason.
+  "scripts/ci/dependency-mitigation.test.mjs",
   "scripts/ci/check-doc-index-integrity.test.mjs",
   "scripts/ci/check-pr-body.test.mjs",
   "scripts/ci/check-pr-changelog-fragment.test.mjs",
