@@ -23,7 +23,7 @@ reason: the same debt write and carried decision as the batch edit, at the
   guest removal's own transaction, plus the result field the route reads.
 
 file: src/lib/payment-recovery.ts
-lines: 3320
+lines: 3328
 reason: the recovery dispatcher must route an organiser child's refund before it
   reads the child's transactions, which is a branch in the dispatcher itself;
   and the payments run re-reads pending child refunds after its queue, in the

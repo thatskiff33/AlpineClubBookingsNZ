@@ -175,9 +175,12 @@ vi.mock("@/lib/group-cancel", () => ({
 }));
 
 const mockProcessOrganiserChildRefundOperation = vi.fn();
+const mockReconcilePendingOrganiserChildRefunds = vi.fn().mockResolvedValue({ checked: 0, reversed: 0 });
 vi.mock("@/lib/organiser-child-refund-executor", () => ({
   processOrganiserChildRefundOperation: (...args: unknown[]) =>
     mockProcessOrganiserChildRefundOperation(...args),
+  reconcilePendingOrganiserChildRefunds: (...args: unknown[]) =>
+    mockReconcilePendingOrganiserChildRefunds(...args),
 }));
 
 /**
@@ -488,6 +491,19 @@ describe("payment recovery worker", () => {
         },
       ],
     });
+  });
+
+  it("#3653: re-reads pending organiser child refunds on the cron's run only, never on an inline drain", async () => {
+    mockReconcilePendingOrganiserChildRefunds.mockClear();
+    await processPaymentRecoveryOperations({ limit: 1 });
+    expect(mockReconcilePendingOrganiserChildRefunds).not.toHaveBeenCalled();
+
+    // A failure there never fails the run that already processed the queue.
+    mockReconcilePendingOrganiserChildRefunds.mockRejectedValueOnce(new Error("Stripe is unavailable"));
+    await expect(
+      processPaymentRecoveryOperations({ limit: 1, reconcilePendingChildRefunds: true }),
+    ).resolves.toMatchObject({ found: expect.any(Number) });
+    expect(mockReconcilePendingOrganiserChildRefunds).toHaveBeenCalledOnce();
   });
 
   it("cancels a cancellable superseded PaymentIntent and marks the transaction failed", async () => {
