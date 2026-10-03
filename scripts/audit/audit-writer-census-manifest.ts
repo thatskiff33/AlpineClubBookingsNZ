@@ -591,7 +591,14 @@ export const AUDIT_CENSUS_TOTALS = {
   // enrolment and the erasure's clear, categorised `security` at the site. The
   // Xero token writes add no site: they go through the credential store's
   // existing `recordCredentialMutation`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 495,
+  // 495 -> 496 (#3792): `xero.allocation.restored-booking-change-refused`, the
+  // durable record of a Xero allocation change the inbound credit-note sync
+  // refused to post to a cancelled booking whose applied credit was already
+  // restored. One awaited `createAuditLog` in
+  // `src/lib/xero-inbound/credit-note-repairs.ts`, categorised `xero` at the
+  // site, with `entityType`/`entityId` for the booking and no subject member.
+  // RE-MEASURED with `pnpm run audit:census`, not incremented.
+  writeSites: 496,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -766,7 +773,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // each await their record inside the state change's transaction.
     // 137 -> 138 (#3454): the two-factor enrolment / erasure-clear record,
     // awaited on the transaction that changes the second factor.
-    createAuditLog: { total: 138, uncategorised: 0 },
+    // 138 -> 139 (#3792): the refused restored-booking allocation change record.
+    createAuditLog: { total: 139, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1176,7 +1184,11 @@ export const AUDIT_CENSUS_TOTALS = {
     //
     // 37 -> 38 (#3462): `xero.operation.marked_failed`, beside the other
     // operation-panel writers. Nobody's readership changes.
-    xero: 38,
+    //
+    // 38 -> 39 (#3792): `xero.allocation.restored-booking-change-refused`,
+    // beside the inbound reconcile's other `xero` rows. Nobody's readership
+    // changes.
+    xero: 39,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership

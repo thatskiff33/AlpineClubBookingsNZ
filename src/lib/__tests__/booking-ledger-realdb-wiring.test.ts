@@ -134,6 +134,23 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
     }
   });
 
+  it("carries #3792's late capacity-cancel credit-restore proof into the same harness", () => {
+    const harness = source(
+      resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
+    );
+    expect(harness).toContain('import "./ib-capacity-cancel-credit-restore.realdb.test";');
+    const suite = source(
+      resolve(REPO_ROOT, "src/lib/__tests__/ib-capacity-cancel-credit-restore.realdb.test.ts"),
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    for (const caseName of [
+      "THE WORKED EXAMPLE: $80 applied plus a late $120 transfer leaves the member $200 of credit, owed(b) zero, and a replay changes nothing",
+      "A CASH-ONLY booking is unchanged: the $120 comes back as credit and no restore row is written",
+    ]) {
+      expect(suite).toContain(caseName);
+    }
+  });
+
   it("still gates on the harness's variable and carries its three proofs", () => {
     const suite = source(
       resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-posting-key.realdb.test.ts"),
