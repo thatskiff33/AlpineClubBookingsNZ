@@ -1031,6 +1031,18 @@ describe("package manager contract (#3673)", () => {
     // `COPY patches` would fail on a missing source. The tracked placeholder
     // keeps the directory, and the image build, whole with no patch in it.
     expect(readdirSync(path.join(process.cwd(), "patches"))).toContain(".gitkeep");
+    // pnpm checks patch DATES before every `pnpm run`, so the builder must take
+    // patches/ from the deps layer (older than its install), AFTER `COPY . .`,
+    // or a cached deps layer fails the build with "Patches were modified".
+    const builder = dockerfile.slice(
+      dockerfile.indexOf("FROM base AS builder"),
+      dockerfile.indexOf("FROM node:24.17-alpine AS runner"),
+    );
+    expect(builder).toMatch(/^COPY --from=deps \/app\/patches \.\/patches\/$/m);
+    expect(builder.indexOf("COPY . .")).toBeLessThan(builder.indexOf("COPY --from=deps /app/patches"));
+    const firstPnpm = builder.search(/^RUN pnpm\b/m);
+    expect(firstPnpm).toBeGreaterThan(-1);
+    expect(builder.indexOf("COPY --from=deps /app/patches")).toBeLessThan(firstPnpm);
     expect(dockerfile).not.toMatch(/\bnpm ci\b|package-lock\.json/);
     // npm is used once, to install pnpm, and then removed in the SAME layer, so
     // the builder and migrate images carry pnpm and no npm/npx.
