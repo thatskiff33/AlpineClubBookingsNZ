@@ -2409,16 +2409,24 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       );
       // D-3813-8: after the money moved, the request's own note for exactly
       // the amount paid back - never the cancellation's one-per-payment note.
+      // Review F4: queued on the completion's OWN transaction (the outbox
+      // pattern), before its commit; only the outbox kick follows it.
       expect(mocks.enqueueXeroRefundRequestCreditNoteOperation).toHaveBeenCalledTimes(1);
       expect(mocks.enqueueXeroRefundRequestCreditNoteOperation).toHaveBeenCalledWith({
         paymentId: "payment-1",
         refundRequestId: "req-1",
         amountCents: 10000,
         createdByMemberId: "admin-1",
+        store: tx,
       });
       expect(mocks.applyLocalRefundAllocation.mock.invocationCallOrder[0]).toBeLessThan(
         mocks.enqueueXeroRefundRequestCreditNoteOperation.mock.invocationCallOrder[0]!,
       );
+      // The REFUNDED event is written after the commit, so the note came first.
+      expect(mocks.enqueueXeroRefundRequestCreditNoteOperation.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.recordBookingEvent.mock.invocationCallOrder[0]!,
+      );
+      expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
       expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
       expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
       expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
@@ -2428,6 +2436,27 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
         mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!,
       );
+    });
+
+    it("does not commit a paid-back request whose note could not be queued: the completion fails whole (review F4)", async () => {
+      appealTask();
+      mocks.enqueueXeroRefundRequestCreditNoteOperation.mockRejectedValueOnce(new Error("outbox write failed"));
+
+      await expect(
+        resolveManualRefundTask({
+          taskId: "task-7",
+          resolution: "completed",
+          note: null,
+          actingMemberId: "admin-1",
+          confirmedAmountCents: null,
+          direction: "REFUND_TO_MEMBER",
+          recordedNightPrices: null,
+        }, CLUB_FORMAT_TEST),
+      ).rejects.toThrow("outbox write failed");
+      // Thrown inside the transaction callback, so the claim and the
+      // allocation roll back with it; nothing post-commit ran.
+      expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+      expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).not.toHaveBeenCalled();
     });
 
     it("queues no note when the payment has no Xero invoice to answer (a permanently failing row otherwise)", async () => {

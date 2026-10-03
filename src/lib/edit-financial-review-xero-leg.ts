@@ -11,7 +11,6 @@ import {
   enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
-import { enqueueXeroRefundRequestCreditNoteOperation } from "@/lib/xero-refund-request-credit-note-outbox";
 import type { RefundMethod } from "@/lib/xero-refund-method";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -110,6 +109,38 @@ export function editReviewSettlementIssuesXeroDocument(
   return editReviewXeroDocumentAsk(input) !== null;
 }
 
+/**
+ * #3827 (D-3813-8, `INV-PAY-116`): DOES THIS COMPLETION OWE A REFUND REQUEST
+ * ITS OWN XERO NOTE, and for what? A request's hand-back settled by hand, for
+ * a positive amount, on a payment whose paid invoice the note answers (a note
+ * against no invoice is a permanently failing outbox row). The one gate: the
+ * completion queues the note from it INSIDE its transaction (the outbox
+ * pattern, so a paid-back request never commits without its note), and the
+ * post-commit leg kicks the outbox from it.
+ */
+export function refundRequestCreditNoteAsk({
+  route,
+  cancellationHandBackInvoiceId,
+  amountCents,
+  refundRequestId,
+}: {
+  route: EditReviewSettlementRoute | null;
+  cancellationHandBackInvoiceId: string | null;
+  amountCents: number | null;
+  refundRequestId: string | null | undefined;
+}): { paymentId: string; refundRequestId: string; amountCents: number } | null {
+  if (
+    !refundRequestId ||
+    route?.kind !== "local-allocation" ||
+    cancellationHandBackInvoiceId === null ||
+    amountCents === null ||
+    amountCents <= 0
+  ) {
+    return null;
+  }
+  return { paymentId: route.paymentId, refundRequestId, amountCents };
+}
+
 export async function dispatchEditReviewXeroSettlement({
   bookingId,
   taskId,
@@ -187,33 +218,16 @@ export async function dispatchEditReviewXeroSettlement({
    * must not undo a completion whose money has already moved.
    */
   if (refundRequestId) {
-    // D-3813-8: the request's own note, keyed by the request, so a second
-    // request on the same payment gets its own. Gated on the paid invoice the
-    // note answers, exactly as the cancellation hand-back's note below is: a
-    // note against no invoice is a permanently failing outbox row.
-    if (
-      route?.kind === "local-allocation" &&
-      cancellationHandBackInvoiceId !== null &&
-      amountCents !== null &&
-      amountCents > 0
-    ) {
-      await enqueueXeroRefundRequestCreditNoteOperation({
-        paymentId: route.paymentId,
-        refundRequestId,
-        amountCents,
-        createdByMemberId: actingMemberId,
-      })
-        .then(async (queued) => {
-          if (queued.queueOperationId) {
-            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-          }
-        })
-        .catch((err) =>
-          logger.error(
-            { err, bookingId, taskId, refundRequestId },
-            "Failed to queue the Xero refund credit note for a completed refund-request hand-back",
-          ),
-        );
+    // D-3813-8: the request's own note was queued inside the completion's
+    // transaction (`refundRequestCreditNoteAsk`, review F4); only the kick of
+    // the outbox is left, best-effort, after the commit.
+    if (refundRequestCreditNoteAsk({ route, cancellationHandBackInvoiceId, amountCents, refundRequestId })) {
+      await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((err) =>
+        logger.error(
+          { err, bookingId, taskId, refundRequestId },
+          "Failed to start the Xero outbox for a completed refund-request hand-back's credit note",
+        ),
+      );
     }
     return;
   }

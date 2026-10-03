@@ -1842,9 +1842,10 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     settlement.
   - **Its Xero note is queued on payout, one per request** (D-3813-8): the
     approval notes only the card part; completion queues the request's own
-    note for the amount paid back
+    note for the amount paid back in its own transaction, Xero after commit
     (`enqueueXeroRefundRequestCreditNoteOperation`), keyed by the request and
     linked as `REFUND_REQUEST_CREDIT_NOTE`, outside `INV-ADDPAY-020`'s one note.
+    The repair tool and failures panel never read it as the payment's note.
   - **An appeal's ceiling nets everything already handed back**
     (`refundableCashForRefundAppeal`; screens `refundAppealCeiling`): every
     OPEN hand-back on the payment, any kind, and the member credit minted
