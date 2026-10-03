@@ -22,7 +22,7 @@ import {
   type LedgerTableStatistics,
 } from "@/lib/booking-ledger-projection-census-report";
 import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-classes";
-import { BOOKING_ISSUED_CREDIT_TYPES } from "@/lib/member-credit-booking-rows";
+import { bookingIdOfCreditRow, bookingsCreditRowsWhere } from "@/lib/member-credit-booking-rows";
 import { decodeRawRows } from "@/lib/raw-sql-rows";
 
 const ASC = { id: "asc" } as const;
@@ -228,19 +228,10 @@ export async function evaluateBookingLedgerPages(
     });
     if (page.length === 0) break;
     const ids = page.map((booking) => booking.id);
-    const credits = await tx.memberCredit.findMany({
-      where: {
-        OR: [
-          { type: "BOOKING_APPLIED", appliedToBookingId: { in: ids } },
-          { type: { in: [...BOOKING_ISSUED_CREDIT_TYPES] }, sourceBookingId: { in: ids } },
-        ],
-      },
-      orderBy: ASC,
-      select: CREDIT_SELECT,
-    });
+    const credits = await tx.memberCredit.findMany({ where: bookingsCreditRowsWhere(ids), orderBy: ASC, select: CREDIT_SELECT });
     const creditsByBooking = new Map<string, BookingLedgerCensusRow["credits"][number][]>();
     for (const credit of credits) {
-      const bookingId = credit.type === "BOOKING_APPLIED" ? credit.appliedToBookingId : credit.sourceBookingId;
+      const bookingId = bookingIdOfCreditRow(credit);
       if (bookingId) creditsByBooking.set(bookingId, [...(creditsByBooking.get(bookingId) ?? []), credit]);
     }
     for (const booking of page) evaluations.push(evaluate(toCensusRow(booking, creditsByBooking.get(booking.id) ?? [])));
