@@ -34,8 +34,8 @@ export type RevenueGranularity = "daily" | "weekly" | "monthly";
  *
  * Net Collected Cash is NOT read over this population (#3372, owner decision
  * A): it is money the club has, so it uses the one Net Collected booking scope
- * beside `summarizeCollectedCash`, in which a cancelled booking counts at the
- * fee the club kept.
+ * beside `summarizeCollectedCash`, in which a cancelled booking counts only
+ * money paid on it and not refunded or credited back.
  */
 export const REPORT_BOOKING_STATUSES = [
   BookingStatus.PENDING,

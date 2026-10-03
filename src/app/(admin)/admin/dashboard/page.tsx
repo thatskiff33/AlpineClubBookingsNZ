@@ -145,8 +145,8 @@ async function getStats() {
     // net-collected-cash derivation (`summarizeCollectedCash`) decides which
     // statuses count as captured AND which bookings count (the one Net
     // Collected booking scope, owner decision A: every booking not
-    // soft-deleted, so a kept cancellation fee counts). The booking's
-    // `deletedAt` is loaded because the derivation's row type requires it.
+    // soft-deleted; a cancelled booking adds only money paid and not refunded,
+    // nil if never paid). `deletedAt` is loaded: the row type requires it.
     // This used to sum `SUCCEEDED` alone: a partly-refunded payment left the
     // figure entirely, and nothing subtracted a refund on the ones that stayed.
     //

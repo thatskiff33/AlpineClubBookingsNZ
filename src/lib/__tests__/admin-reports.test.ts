@@ -306,7 +306,7 @@ describe("admin reports helpers", () => {
     #3372, owner decision A: the one Net Collected booking scope lives in the
     derivation, so no surface can choose its own. A soft-deleted booking's
     payment contributes to neither the gross nor the refund; the booking's
-    status is not read at all, so a cancelled booking counts at the fee kept.
+    status is not read at all, so a cancelled booking counts the money it kept out of what was paid.
   */
   it("applies the one Net Collected booking scope: a deleted booking's payment counts for nothing", () => {
     const deleted = { deletedAt: new Date("2026-04-02T00:00:00.000Z") };

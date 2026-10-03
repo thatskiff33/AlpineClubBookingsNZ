@@ -396,11 +396,11 @@ describe("Admin Payments API", () => {
     row the filter matched: a refund never subtracted, and under the default
     "all" status filter a PENDING or FAILED payment's amount counted as revenue.
     The tile is now net over CAPTURED payments through `summarizeCollectedCash`,
-    and - owner decision A - a cancelled booking counts at the fee the club
-    kept (#773's exclusion is retired for this figure). This fixture is built so
+    and - owner decision A - a cancelled booking counts what it paid less what was
+    refunded (#773's exclusion is retired for this figure). This fixture is built so
     each exclusion moves the number.
   */
-  it("sums Net Collected Cash over captured payments only, net of refunds, cancelled bookings at the fee kept", async () => {
+  it("sums Net Collected Cash over captured payments only, net of refunds, cancelled bookings at what they paid and kept", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
 
     const cancelledBooking = {

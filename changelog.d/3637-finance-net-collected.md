@@ -5,7 +5,8 @@
   deleted. It now counts every booking staying in the selected range, whatever
   its status, and leaves deleted bookings out: the rule the admin dashboard,
   the Payments page and Reports already use (#3372). So the figure **goes up**
-  by any cancellation fee the club kept on a cancelled booking. (It would also
+  by any money the club kept out of what was paid on a cancelled booking; a
+  booking cancelled before anything was paid adds nothing. (It would also
   drop a deleted booking's payment, but the admin delete only acts on bookings
   already cancelled, which this figure never counted before, so in practice
   that changes nothing.) The figure is worked out by the

@@ -55,8 +55,9 @@ The booking metrics response includes:
   (#3637, epic #3372 owner decision A). They, and the two ledger-gap fields
   that warn about them, count a different set of bookings from every other
   field here: every booking whose stay falls in a requested window, **whatever
-  its status**. So a cancelled booking counts at the cancellation fee the club
-  kept. Every other field, `capturedAdditionalCents` included, counts the
+  its status**. So a cancelled booking counts the money paid on it that was not
+  refunded or credited back, and one cancelled before anything was paid counts
+  nothing (owner review on PR #3811). Every other field, `capturedAdditionalCents` included, counts the
   contributing bookings above, which use the status lists
 - no field counts a soft-deleted booking (#3745): the booking read and the Net
   Collected scope both leave it out, the same as Reports' default view
@@ -97,9 +98,15 @@ The booking metrics response includes:
   use (`formatNetCollectedLedgerGapWarning`); reconcile those payments' ledgers before trusting the
   collected total. An UNCOLLECTED increase is not this shape — it is absent from
   the captured total by design and reported by `outstandingAdditionalCents`
-- `refundedCents`: `Payment.refundedAmountCents` summed over every payment in
-  that scope, captured or not — card refunds and account credits alike
-- `netCollectedCents`: `capturedGrossCents - refundedCents`, floored at zero.
+- `refundedCents`: how much of `capturedGrossCents` went back out — each
+  captured payment's `refundedAmountCents` (card refunds and account credits
+  alike), capped at what that payment took. A refund on a payment that never
+  took money is not counted
+- `netCollectedCents`: each payment in that scope adds what it received and has
+  not refunded or credited back (`getRemainingRefundableCents`): never below
+  zero, and nothing for a payment that took no money, so a booking cancelled
+  before it was paid adds nothing (owner review on PR #3811). It equals
+  `capturedGrossCents - refundedCents` exactly.
   **Never** the sum of `capturedGrossCents` and `capturedAdditionalCents` — that
   was the #2408 double count, which reported a $121 booking with a collected $21
   increase as $142 collected

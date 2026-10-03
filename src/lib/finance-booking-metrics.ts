@@ -281,8 +281,8 @@ interface FinanceBookingMetricsPaymentSummary {
   additionalLedgerGapBookings: number;
   refundedCents: number;
   /**
-   * `capturedGrossCents - refundedCents`, floored at zero: collected money net
-   * of refunds and credits, from `summarizeCollectedCash`. Never sums the gross
+   * Each payment's money received and not refunded or credited back, summed
+   * (`summarizeCollectedCash`); equal to `capturedGrossCents - refundedCents`. Never sums the gross
    * and additional columns — see `capturedGrossCents` (#2408).
    */
   netCollectedCents: number;
