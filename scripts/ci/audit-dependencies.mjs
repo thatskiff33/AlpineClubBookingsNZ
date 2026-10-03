@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
+import { applyMitigation, formatMitigatedReport } from "./dependency-mitigation.mjs";
+
 /**
  * Runs this repository's dependency audit and says **which of three things
  * happened** (#3254): the audit ran and found nothing, the audit ran and found a
@@ -16,18 +18,12 @@ import { pathToFileURL } from "node:url";
  * check name, same colour, same position in the list. Telling them apart meant
  * opening the job log and finding a `npm warn audit …` line in it.
  *
- * That happened three times across two pull requests inside about an hour on
- * 4 September 2026 (#3246, #3247): a network timeout on
- * `…/-/npm/v1/security/advisories/bulk`, a 503 on the same endpoint, and — after
- * an explicit re-run — the same 503 reaching `npm error audit endpoint returned
- * an error`. All three passed unchanged later. None had a vulnerability. A
- * fully-green pull request was held for hours.
+ * That happened three times inside about an hour on 4 September 2026 (#3246,
+ * #3247): a timeout and two 503s on `…/-/npm/v1/security/advisories/bulk`. None
+ * had a vulnerability; a fully-green pull request was held for hours.
  *
- * The cost that matters is not the re-runs. A required security gate that
- * sometimes goes red for reasons that do not matter teaches its readers that red
- * sometimes means nothing, and that is how a genuine advisory eventually gets
- * clicked past. During that outage the check was re-run three times without the
- * log being read, which is the behaviour this script exists to stop.
+ * The real cost: a gate red for reasons that do not matter teaches readers that
+ * red sometimes means nothing (it was re-run three times, the log unread).
  *
  * ## The recorded decision (owner, 5 September 2026, issue #3254)
  *
@@ -57,15 +53,12 @@ import { pathToFileURL } from "node:url";
  * One flag is new, `--config.fetch-retries=0`, and it is load-bearing. pnpm
  * retries a failed request to the advisory endpoint on its own (twice by
  * default, waiting 10 seconds and then a minute), which would duplicate the
- * retry policy below and spend the per-attempt budget on every 503. Measured on
- * pnpm 11.27.1 against an endpoint answering 503: with its own retries pnpm
- * waited 10 seconds and then a minute before giving up; without them it gave up
- * in about two seconds. This script owns the retry policy, so pnpm makes exactly
- * one request per attempt.
+ * retry policy below and spend the per-attempt budget on every 503 (measured on
+ * pnpm 11.27.1: without them it gave up in about two seconds). This script owns
+ * the retry policy, so pnpm makes exactly one request per attempt.
  *
- * The half of the value that is not the retry is the **wording**: every outcome
- * below prints a verdict line that names the case in capitals, so nobody has to
- * infer "the registry was down" from a warning buried in the log.
+ * The other half of the value is the **wording**: every outcome prints a verdict
+ * line naming the case in capitals.
  *
  * ## How a verdict is reached, and why it fails closed
  *
@@ -75,8 +68,9 @@ import { pathToFileURL } from "node:url";
  * a pnpm error object, a report with no `metadata.vulnerabilities`, a counts
  * object missing a severity or carrying a non-numeric one — is inconclusive, and
  * inconclusive is never success. That is structural rather than a rule to
- * remember: there is exactly one branch that can exit 0, and it needs the
- * complete counts in its hand.
+ * remember: exactly one classification branch is CLEAN, and it needs the
+ * complete counts in its hand. The only other exit 0, MITIGATED, can only be
+ * reached FROM a vulnerable verdict, never from an unreadable one.
  *
  * The counts are **validated, never coerced**. `Number(counts.high ?? 0)` would
  * turn a missing key into `0` and a renamed or nested one into `NaN`, and
@@ -97,8 +91,10 @@ import { pathToFileURL } from "node:url";
  * the list and from pnpm's exit code but is still counted in
  * `metadata.vulnerabilities` (measured on pnpm 11.27.1). So that setting does
  * not clear this gate — it fails closed, as `VULNERABILITY FOUND` with the
- * ignored advisory counted but not listed. The recorded way to accept a
- * finding is still an override with its reasoning in docs/MAINTENANCE.md.
+ * ignored advisory counted but not listed. A finding is accepted only by an
+ * override (docs/MAINTENANCE.md) or, for one reviewed unfixed advisory, by an
+ * expiring owner-approved record that makes the verdict MITIGATED — never CLEAN
+ * — under the conditions in `dependency-mitigation.mjs` (#3843).
  *
  * `inconclusive` is deliberately **not** retried: a usage error, a missing
  * lockfile, an endpoint that refuses the request (a 4xx other than 429) or a
@@ -112,7 +108,8 @@ import { pathToFileURL } from "node:url";
  * ## What it deliberately does not do
  *
  * It carries no way to skip, no `continue-on-error`, and no environment switch
- * that softens the verdict. It also must never be given a job-level `if:` or
+ * that softens the verdict (a mitigation record is a reviewed, committed file
+ * bound to exact digests and an expiry). It must never be given a job-level `if:` or
  * `needs:` in the workflow: GitHub counts a *skipped* required check as
  * satisfying branch protection, so a condition at job level would make this gate
  * vacuously green. Conditions go on steps. See `AGENTS.md` → "Completion and
@@ -508,7 +505,7 @@ export function classifyAuditRun({ exitCode, stdout = "", stderr = "", timedOut 
 
   if (failing > 0) {
     const advisories = failingAdvisories(parsed.advisories);
-    return { outcome: "vulnerable", severityCounts, advisories, exitCode };
+    return { outcome: "vulnerable", severityCounts, advisories, exitCode, report: parsed, stdout };
   }
 
   // The counts say clean. pnpm was asked with `--audit-level=high`, so it exits
@@ -683,6 +680,14 @@ export function formatReport(result) {
             `${advisory.range ? ` ${advisory.range}` : ""}` +
             `${advisory.fixAvailable ? " — a fix is available" : " — no fix published yet"}`,
         ),
+        ...(result.mitigationRefused ?? []).map((why) => `  Mitigation record NOT applied: ${why}`),
+        ...(result.mitigationRefused?.length
+          ? [
+              "",
+              "  A mitigation record exists but no longer applies. Extend it (a new reviewed",
+              "  change with the owner's approval) or retire it: dependency-mitigations.d/README.md.",
+            ]
+          : []),
         "",
         "  Upgrade the dependency, or record a deliberate override with its reasoning",
         "  in docs/MAINTENANCE.md. Do not re-run this check hoping it goes green.",
@@ -737,8 +742,8 @@ function writeStepSummary(lines) {
   }
 }
 
-export async function main({ run, sleep } = {}) {
-  const result = await auditWithRetries({
+export async function main({ run, sleep, now = new Date(), root = process.cwd() } = {}) {
+  const audited = await auditWithRetries({
     ...(run ? { run } : {}),
     ...(sleep ? { sleep } : {}),
     onAttempt: ({ attempt, maxAttempts, outcome, reason }) => {
@@ -751,9 +756,13 @@ export async function main({ run, sleep } = {}) {
     },
   });
 
-  const { exitCode, lines } = formatReport(result);
+  const result = applyMitigation(audited, { now, root });
+  const format = result.outcome === "mitigated" ? formatMitigatedReport : formatReport;
+  const { exitCode, lines, annotations = [] } = format(result);
   const write = exitCode === 0 ? console.log : console.error;
   for (const line of lines) write(line);
+  // Workflow commands are read from stdout; they are not part of the summary.
+  for (const annotation of annotations) console.log(annotation);
   writeStepSummary(lines);
   process.exitCode = exitCode;
 }
