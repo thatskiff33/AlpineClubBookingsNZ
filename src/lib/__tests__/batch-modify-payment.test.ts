@@ -228,6 +228,8 @@ vi.mock("@/lib/promo", () => ({
   ),
   deletePromoRedemptionAndAdjustCount: vi.fn(),
   releaseBookingPromoRedemptions: vi.fn().mockResolvedValue(0),
+  // #3827: an edit stores the booker's order for the codes it keeps.
+  writePromoApplicationOrder: vi.fn(),
   releasePromoRedemptions: vi.fn().mockResolvedValue(undefined),
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
