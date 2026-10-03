@@ -24,6 +24,7 @@ import {
 import { bookingPromoEmailOptions } from "../booking-promo-email-options";
 import { redeemPromoCode, releaseBookingPromoRedemptions } from "../promo";
 import { SECOND_PROMO_CODE_REFUSED_MESSAGE } from "../promo-redemption-slot";
+import { deleteDraftBookingDependents } from "../draft-booking-cleanup";
 import {
   combinedPromoRedemptionEvidence,
   deriveNightAdjustmentState,
@@ -229,6 +230,43 @@ describe("releasing a booking that carries two codes (#3826)", () => {
     expect(counters).toEqual({ "code-a": 4, "code-z": 5 });
     // One global order, so two releases of overlapping codes cannot deadlock.
     expect(counterOrder).toEqual(["code-a", "code-z"]);
+  });
+});
+
+describe("releasing several drafts at once (#3826)", () => {
+  it("takes every draft's code rows in ONE promo-code-id order, not draft by draft", async () => {
+    const counterOrder: string[] = [];
+    const tx = {
+      promoRedemption: { delete: vi.fn(async () => ({})) },
+      promoRedemptionAllocation: { count: vi.fn(async () => 1) },
+      promoCode: {
+        update: vi.fn(async ({ where }: { where: { id: string } }) => {
+          counterOrder.push(where.id);
+          return {};
+        }),
+      },
+      bookingChangeRequest: { deleteMany: vi.fn(async () => ({ count: 0 })) },
+      bookingModification: { deleteMany: vi.fn(async () => ({ count: 0 })) },
+      bookingEvent: { deleteMany: vi.fn(async () => ({ count: 0 })) },
+    };
+
+    const summary = await deleteDraftBookingDependents(tx as unknown as RedeemTx, [
+      // Draft 1 holds code B and C; draft 2 holds code A. Per-draft passes
+      // would take B, C, then A — out of the order a modify holding A then B
+      // takes them, which is a deadlock the expiry cron could walk into.
+      {
+        id: "draft-1",
+        promoRedemptions: [
+          { id: "r-c", promoCodeId: "code-c" },
+          { id: "r-b", promoCodeId: "code-b" },
+        ],
+      },
+      { id: "draft-2", promoRedemptions: [{ id: "r-a", promoCodeId: "code-a" }] },
+    ]);
+
+    expect(counterOrder).toEqual(["code-a", "code-b", "code-c"]);
+    expect(summary.promoRedemptions).toBe(3);
+    expect(summary.bookingIds).toEqual(["draft-1", "draft-2"]);
   });
 });
 
