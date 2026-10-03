@@ -31,4 +31,20 @@ describe("the card-refund writer's race proof stays wired into CI (#3640)", () =
     expect(suite).toContain("a cancel failing an unpaid top-up, racing a card refund's webhook, does not deadlock");
     expect(suite).toContain("nor when the claim's #1491 fold took the transaction row before the top-up write");
   });
+
+  // #3793: the paid cancel's read-under-lock proof rides the same harness.
+  it("wires the paid cancel's refunded-total race proof the same way (#3793)", () => {
+    const harness = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
+      "utf8",
+    );
+    expect(harness).toContain('import "./paid-cancel-refunded-total-race.realdb.test";');
+    const suite = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/paid-cancel-refunded-total-race.realdb.test.ts"),
+      "utf8",
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    expect(suite).toContain("is not refunded again at the tier");
+    expect(suite).toContain("lockPaymentForRefundedTotal(tx, PAYMENT_ID)");
+  });
 });

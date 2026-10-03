@@ -124,6 +124,37 @@ transaction participant; provider delivery remains outside a database
 transaction. New booking rows keep `htmlBody` null and retain retry HTML only in
 `bookingRetryHtmlBody`, which the old worker cannot select after rollback.
 
+### The Xero token refresh uses a row lease, shared across colours (#3454)
+
+`xero-token-store.ts` composes no booking, capacity, membership or money
+mutation and takes **no advisory lock**. One rotating refresh token may be
+spent only once, so a refresh first claims `XeroToken.refreshInProgressUntil`
+with a status-guarded `updateMany` (`NULL` or expired → this lease). PostgreSQL
+re-evaluates that predicate after the row lock, so of two simultaneous claimants
+exactly one wins. The losers wait out the lease and re-read. The Xero call runs
+outside any transaction (`INV-INT-003`).
+
+**The claim takes the lease first and reads the tokens second, in the same
+transaction.** The winning `updateMany` holds the `XeroToken` row lock until the
+claim commits, and every writer of either copy (a connect, a refresh save, a
+disconnect, a verify-reset, of either colour) takes that row first. So the two
+copies the claim then reads are a consistent pair. Reading first and claiming
+second let a reconnect commit between the reads, and the refresh then overwrote
+it (#3454 review).
+
+**Before the Xero call, the refresh proves its save can succeed**
+(`assertXeroTokensCanBeStored`: the auth-secret capture gate and the wrapped
+token key). Otherwise it refuses without spending the refresh token.
+
+Since #3454 the save is one short transaction with two fences. The first is the
+lease-guarded `XeroToken` update, so a reconnect or an expired lease matches
+nothing. The second is a compare-and-set on the credential-store copy, against
+the version the claim read under its lock. Losing either rolls back both copies. The lease
+stays on `XeroToken` because a deployed older colour claims exactly that column.
+Moving it would let one old and one new process spend the same token.
+`xero-token-credential-store.realdb.test.ts` proves both fences against real row
+locks, including against the old colour's own claim statement.
+
 ## The lock families
 
 All keys below are the argument(s) to `pg_advisory_xact_lock`. Two-argument keys
@@ -3417,9 +3448,15 @@ booking-ledger lines. No provider call runs inside it.
 transaction rows.** Every writer that holds more than one of them takes the
 `Payment` row first through `lockPaymentForRefundedTotal`: the card-refund
 writer, `applyLocalRefundAllocation` (joining the caller's transaction), and the
-paid-path cancel claim, right after its post-lock re-read and before the #1491
-fold (earlier still when #3643's part-payment recognition writes the receipt:
-`recordPartPaymentInClaim` takes it before that transaction-row write). The first version of this writer took the transaction row and then the
+paid-path cancel claim, right after its lodge capacity lock and before #3643's
+part-payment recognition, its eligibility re-check and the #1491 fold. The claim
+then re-reads the `Payment` row under that lock (#3793): the card-refund writers
+take no advisory lock, so the payment read with the booking under `lock(1)` can
+already miss a dashboard refund, so that read takes only the payment's id;
+every figure the refund is tiered off, and the refund method an internet
+banking payment forces, comes from the re-read. Proved by
+`paid-cancel-refunded-total-race.realdb.test.ts`. The first version of this
+writer took the transaction row and then the
 `Payment` row (its aggregate), while a cancel with an unpaid top-up takes the
 `Payment` row (failing the top-up) and then the transaction row (its credit
 allocation): a deadlock, proved and closed by

@@ -67,6 +67,33 @@ describe("deployment image contracts", () => {
     expect(compose).toContain("target: builder");
   });
 
+  it("hands NODE_BUILD_OPTIONS to every image build in Compose, not only the app's (#3824)", () => {
+    const lines = directivesOnly(readRepoFile("docker-compose.yml")).split("\n");
+    // Every `build:` block, by indentation: the key line plus every deeper line.
+    // A census rather than a named pair, so a third builder-stage service cannot
+    // quietly miss the setting the way `migrate` did. The short form
+    // (`build: .`) is matched too: it yields an empty block and fails, because it
+    // cannot carry build args at all.
+    const buildBlocks: string[] = [];
+    lines.forEach((line, index) => {
+      const opener = /^(\s*)build:(\s|$)/.exec(line);
+      if (!opener) return;
+      const indent = opener[1].length;
+      const body: string[] = [];
+      for (const next of lines.slice(index + 1)) {
+        if (next.trim() !== "" && next.search(/\S/) <= indent) break;
+        body.push(next);
+      }
+      buildBlocks.push(body.join("\n"));
+    });
+
+    // The x-app-service anchor and the migrate service, at least.
+    expect(buildBlocks.length).toBeGreaterThanOrEqual(2);
+    for (const block of buildBlocks) {
+      expect(block).toContain("NODE_OPTIONS: ${NODE_BUILD_OPTIONS:-}");
+    }
+  });
+
   it("publishes app and migration images to GHCR after CI passes", () => {
     const workflow = readRepoFile(".github/workflows/ci.yml");
 

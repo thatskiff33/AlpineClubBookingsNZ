@@ -181,9 +181,12 @@ function moduleClient(memberGuests: boolean) {
  */
 const CALL_SITES = [
   {
-    name: "api/bookings/route.ts",
-    file: "src/app/api/bookings/route.ts",
-    /** `skipAuthorization: isAuthorizedOnBehalf` — admin/officer on-behalf. */
+    // #3770: the create route and both exception doors resolve their party
+    // family-first through this one module; their own modes are read back by
+    // "declares each family-first caller's real authorization modes" below.
+    name: "member-guest-family-first.ts (create route + both exception doors)",
+    file: "src/lib/member-guest-family-first.ts",
+    /** `skipAuthorization: options.skipAuthorization` — the caller's answer. */
     skipAuthorizationModes: [false, true],
   },
   {
@@ -233,6 +236,19 @@ const CALL_SITES = [
      */
     skipAuthorizationModes: [false],
   },
+] as const;
+
+/**
+ * The callers of the family-first module (#3770), each with the modes it can
+ * pass through `FamilyFirstOptions.skipAuthorization`.
+ */
+const FAMILY_FIRST_CALL_SITES = [
+  {
+    name: "api/bookings/route.ts",
+    file: "src/app/api/bookings/route.ts",
+    /** `skipAuthorization: isAuthorizedOnBehalf` — admin/officer on-behalf. */
+    skipAuthorizationModes: [false, true],
+  },
   {
     name: "booking-exception-request-service.ts (request creation)",
     file: "src/lib/booking-exception-request-service.ts",
@@ -245,10 +261,10 @@ const CALL_SITES = [
   },
 ] as const;
 
-/** How many of the nine can reach the `skipAuthorization` branch. */
+/** How many of the eight can reach the `skipAuthorization` branch. */
 const CALL_SITES_THAT_CAN_SKIP = 6;
 
-/** The nine files that call the helper. */
+/** The eight files that call the helper. */
 const CALL_SITE_FILES = CALL_SITES.map((site) => site.file);
 
 /**
@@ -567,7 +583,7 @@ describe("call-site survey", () => {
     ].sort();
   }
 
-  it("still has exactly nine call-site files, six of which can skip authorization", () => {
+  it("still has exactly eight call-site files, six of which can skip authorization", () => {
     // SET EQUALITY, not "each declared file still contains the call". The weaker
     // form only proves the known files have not stopped calling it: a planted
     // EXTRA caller passes it untouched, and an extra caller is a consent decision
@@ -611,6 +627,44 @@ describe("call-site survey", () => {
       } else {
         // No option at all: authorization is always enforced.
         expect([...site.skipAuthorizationModes], site.name).toEqual([false]);
+      }
+    }
+  });
+
+  it("has exactly the declared family-first callers (#3770)", () => {
+    // SET EQUALITY again: the module is declared as able to skip, so a new door
+    // calling it with `skipAuthorization: true` would be a consent decision nobody
+    // made, invisible to every check above. The module defines both phases.
+    const familyFirstCallers = [
+      ...new Set(
+        ["resolveFamilyPhase", "resolveBeyondFamilyPhase"].flatMap((helper) =>
+          callersOf(helper).filter(
+            (file) => file !== "src/lib/member-guest-family-first.ts",
+          ),
+        ),
+      ),
+    ].sort();
+    expect(familyFirstCallers).toEqual(
+      FAMILY_FIRST_CALL_SITES.map((site) => site.file).sort(),
+    );
+  });
+
+  it("declares each family-first caller's real authorization modes", () => {
+    for (const site of FAMILY_FIRST_CALL_SITES) {
+      const source = readRepoFile(site.file);
+      const at = source.indexOf("FamilyFirstOptions = {");
+      expect(at, `${site.file}: no FamilyFirstOptions literal`).toBeGreaterThan(-1);
+      expect(source, `${site.file}: resolves through the family-first module`).toContain(
+        "resolveFamilyPhase(",
+      );
+      const options = source.slice(at, source.indexOf("};", at));
+      expect(options, site.name).toContain("memberGuestWideningEnabled");
+      if (/skipAuthorization:\s*false\b/.test(options)) {
+        expect([...site.skipAuthorizationModes], site.name).toEqual([false]);
+      } else if (/skipAuthorization:\s*true\b/.test(options)) {
+        expect([...site.skipAuthorizationModes], site.name).toEqual([true]);
+      } else {
+        expect([...site.skipAuthorizationModes].sort(), site.name).toEqual([false, true]);
       }
     }
   });
@@ -906,6 +960,13 @@ describe("consent columns have exactly one writer", () => {
     // writes no consent column.
     "src/lib/subscription-lockout-enforcement.ts":
       "the shared participant mapper reads consent presence so a pending invite cannot stand in as the paid-up adult member",
+    // #3770, "only agreed adults count": READERS that state each planned row's
+    // consent (`consentStatus: guestConsentStatus(guest)`) for the
+    // adult-supervision rule. They compose no consent shape and write nothing.
+    "src/app/api/bookings/route.ts":
+      "the create route states each planned row's consent for the adult-supervision pre-flight",
+    "src/lib/booking-create-guests.ts":
+      "the create services' review gate states each planned row's consent for the adult-supervision rule",
     // The edit PREVIEW. A READER: it maps the rows already on the booking to
     // their stored `consentStatus` so the preview refuses exactly what the save
     // refuses. It persists nothing at all — it is a quote.
