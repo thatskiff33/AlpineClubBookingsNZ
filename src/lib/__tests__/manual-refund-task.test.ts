@@ -214,6 +214,8 @@ vi.mock("@/lib/member-credit", () => {
     createBookingModificationCredit: (...a: unknown[]) =>
       mocks.createBookingModificationCredit(...a),
     giveBackAppliedCredit: (...a: unknown[]) => mocks.giveBackAppliedCredit(...a),
+    // #3835: the applied rows a cancelled booking's netting reads - none here.
+    deriveBookingAppliedCreditCents: async () => mocks.appliedCredit.cents,
     SchoolHasNoCreditAccountError,
     requireMemberCreditRecipient: (memberId: string | null) => {
       if (!memberId) throw new SchoolHasNoCreditAccountError();
@@ -4025,6 +4027,55 @@ describe("#3835 - a review completed after a card-paid booking was cancelled", (
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
     expect(completionMessage(result, CLUB_FORMAT_TEST)).toMatch(/^Nothing further was credited or refunded/);
+  });
+
+  /** $50 card + $150 applied credit, cancelled at 50% (no fee): $25 card refund promised, $75 restored. */
+  const cardPlusCreditCancellation = () => {
+    mocks.appliedCredit.cents = 15_000;
+    vi.mocked(loadCancellationPolicy).mockResolvedValue([{ daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 0 }]);
+    const frozen = frozenCardCancellation({ settledAmountCents: 2_500, paidAmountCents: 5_000, appliedCreditCents: 15_000, creditRestoredCents: 7_500 });
+    mocks.bookingEventFindFirst.mockResolvedValue(frozen);
+  };
+  const completeAt = (confirmedAmountCents: number) =>
+    resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the booking's own payment history.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+
+  it("MUTATION: review F1 - a $100 share on $50 card + $150 credit sends $25 to the card and gives $25 of credit back, never $50 to the card", async () => {
+    cancelledCardTask();
+    cardPlusCreditCancellation();
+
+    const result = await completeAt(10_000);
+
+    expect(mocks.planStripeRefundAllocation).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 2_500 }));
+    expect(mocks.enqueueEditFinancialReviewRefundRecovery).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 2_500 }));
+    expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 2_500 }));
+    expect(mocks.giveBackAppliedCredit).toHaveBeenCalledWith(expect.objectContaining({ bookingId: "booking-1", sourceBookingId: "booking-1" }), tx);
+    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "CREDITED", amountCents: 2_500 }));
+    expect(vi.mocked(postReviewClosureLedgerLines)).toHaveBeenCalledWith(
+      expect.objectContaining({ settlement: { direction: "REFUND_TO_MEMBER", amountCents: 5_000 } }),
+    );
+    expect(completionMessage(result, CLUB_FORMAT_TEST)).toBe("Refund sent back to the card. $25.00 was given back as account credit.");
+  });
+
+  it("MUTATION: review F1 - the card cap counts the card refunds already promised and not yet made", async () => {
+    cancelledCardTask();
+    mocks.bookingEventFindFirst.mockResolvedValue(frozenCardCancellation({ settledAmountCents: 0 }));
+    // $200 captured and none of it refunded yet - but $180 is promised to Stripe.
+    mocks.planStripeRefundAllocation.mockResolvedValue({ slices: [], plannedAmountCents: 5_000, totalRefundableCents: 20_000 });
+    mocks.paymentRecoveryOperationAggregate.mockResolvedValue({ _sum: { amountCents: 18_000 } });
+
+    await expect(complete()).rejects.toMatchObject({ status: 400 });
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.paymentRecoveryOperationAggregate).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ paymentId: "payment-1", status: { not: "SUCCEEDED" } }),
+    }));
   });
 
   it("MUTATION: refuses with the task OPEN where the cancellation's refund cannot be reproduced", async () => {

@@ -274,6 +274,8 @@ const tx = {
   paymentTransaction: {
     findFirst: (...a: unknown[]) => mocks.paymentTransactionFindFirst(...a),
   },
+  // #3835: the card refunds already promised out of the payment - none here.
+  paymentRecoveryOperation: { aggregate: async () => ({ _sum: { amountCents: null } }) },
   xeroObjectLink: {
     findFirst: (...a: unknown[]) => mocks.xeroObjectLinkFindFirst(...a),
   },

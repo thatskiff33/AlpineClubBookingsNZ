@@ -13,13 +13,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * policy READ and the rows are stubbed.
  */
 
-const h = vi.hoisted(() => ({ loadCancellationPolicy: vi.fn() }));
+const h = vi.hoisted(() => ({ loadCancellationPolicy: vi.fn(), appliedNowCents: null as number | null }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/cancellation", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/cancellation")),
   loadCancellationPolicy: (...a: unknown[]) => h.loadCancellationPolicy(...a),
 }));
+// What the booking's applied rows hold now; the frozen figure unless a case moves it.
+vi.mock("@/lib/member-credit", () => ({ deriveBookingAppliedCreditCents: async () => h.appliedNowCents ?? 0 }));
 vi.mock("@/lib/payment-reconciliation", () => ({
   ManualBookingPaymentError: class ManualBookingPaymentError extends Error {
     constructor(message: string, readonly status = 400) {
@@ -30,7 +32,7 @@ vi.mock("@/lib/payment-reconciliation", () => ({
 
 import { requireClubTimeZone } from "@/lib/club-time";
 import {
-  capturedShareOwedAfterCancellationCents,
+  capturedShareOwedAfterCancellation,
   shareOwedAfterCancellationCents,
 } from "@/lib/edit-financial-review-cancel-netting";
 import { REVIEW_CANCELLATION_REFUND_UNREPRODUCIBLE_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
@@ -74,7 +76,7 @@ const cancelMoney = (cardCents: number, appliedCents: number, priceCents: number
 
 const rows = {
   cancelled: null as unknown,
-  siblings: [] as Array<{ id: string; amountCents: number }>,
+  siblings: [] as Array<{ id: string; amountCents: number; reviewContext?: unknown }>,
   refundedBySiblingsCents: 0,
   mintedBySiblingsCents: 0,
   handedBackBySiblingsCents: 0,
@@ -88,24 +90,29 @@ const store = {
 };
 
 /** The CANCELLED event `writePaidCancellationEvent` writes for that cancellation. */
-function cancelledAt(cardCents: number, appliedCents: number, rule: Rule, method: Method = "card") {
-  const money = cancelMoney(cardCents, appliedCents, 20_000, rule, method);
+function cancelledAt(cardCents: number, appliedCents: number, rule: Rule, method: Method = "card", priceCents = 20_000) {
+  const money = cancelMoney(cardCents, appliedCents, priceCents, rule, method);
+  h.appliedNowCents = appliedCents;
   rows.cancelled = {
     occurredAt: CANCELLED_AT,
     snapshot: {
-      refundMethod: method,
+      refundMethod: money.refundAmountCents > 0 ? method : "card",
       paidAmountCents: money.paidAmountCents,
       settledAmountCents: money.refundAmountCents,
       changeFeeCents: 0,
       ledger: { appliedCreditCents: appliedCents, creditRestoredCents: money.creditRestoredCents },
+      // #3835: what the tier ran on, and the reviews settled before it.
+      tierRefundMethod: method,
+      refundableBaseCents: money.refundableBaseCents,
+      completedReviewTaskIds: [],
     },
   };
   h.loadCancellationPolicy.mockResolvedValue([rule]);
   return money.refundAmountCents + money.creditRestoredCents;
 }
 
-const owed = (shareCents = 5_000, taskId = "task-2") =>
-  capturedShareOwedAfterCancellationCents({
+const split = (shareCents = 5_000, taskId = "task-2") =>
+  capturedShareOwedAfterCancellation({
     bookingId: "booking-1",
     taskId,
     booking: { checkIn: CHECK_IN, lodgeId: "lodge-1" },
@@ -113,9 +120,16 @@ const owed = (shareCents = 5_000, taskId = "task-2") =>
     clubZone: requireClubTimeZone("Pacific/Auckland"),
     store: store as never,
   });
+/** The whole still owed, both parts. */
+const owed = async (shareCents = 5_000, taskId = "task-2") => {
+  const { captureCents, creditCents } = await split(shareCents, taskId);
+  return captureCents + creditCents;
+};
+const snapshotOf = () => (rows.cancelled as { snapshot: Record<string, unknown> }).snapshot;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.appliedNowCents = null;
   Object.assign(rows, { cancelled: null, siblings: [], refundedBySiblingsCents: 0, mintedBySiblingsCents: 0, handedBackBySiblingsCents: 0 });
 });
 
@@ -124,9 +138,12 @@ describe("the worked example: $200 paid, a $50 share, the booking cancelled firs
     it.each(TIERS)(`MUTATION: ${payment.paid}, at $tier: $owedCents cents still owed, $totalBackCents in all - what the review first then the cancel returns`, async ({ rule, owedCents, totalBackCents }) => {
       const returnedCents = cancelledAt(payment.cardCents, payment.appliedCents, rule, payment.method);
 
-      const stillOwedCents = await owed();
+      const { captureCents, creditCents } = await split();
+      const stillOwedCents = captureCents + creditCents;
 
       expect(stillOwedCents).toBe(owedCents);
+      // The share came off the capture first, so all of it goes back that way.
+      expect({ captureCents, creditCents }).toEqual({ captureCents: owedCents, creditCents: 0 });
       expect(returnedCents + stillOwedCents).toBe(totalBackCents);
       // Review first: the share refunded off the card, then the $150 booking
       // cancelled - the same total either way.
@@ -181,7 +198,14 @@ describe("sibling reviews of one cancelled booking", () => {
 
   it("MUTATION: a sibling's minted credit counts as returned, as its card refund does", async () => {
     cancelledAt(10_000, 10_000, TIERS[1]!.rule);
-    rows.siblings = [{ id: "task-1", amountCents: 2_000 }];
+    rows.siblings = [{ id: "task-1", amountCents: 2_000, reviewContext: {
+      version: 1,
+      occurrence: {
+        bookingId: "booking-1", bookingGuestId: "guest-1", cause: "NO_STORED_NIGHT_PRICES",
+        surrenderedNightDates: ["2026-08-01"], addedNightDates: [], storedEvidence: { guestTotalCents: null, nightPrices: [] },
+      },
+      guestMemberId: "member-1", bookingCheckIn: "2026-08-01", bookingCheckOut: "2026-08-03", bookingModificationId: "mod-1",
+    } }];
     rows.mintedBySiblingsCents = 1_000;
 
     expect(await owed(2_000)).toBe(1_000);
@@ -253,5 +277,78 @@ describe("the one formula, shared with the credit-only route (#3791)", () => {
       sharesCents: 5_000, cardBaseCents: 20_000, appliedCents: 0,
       returnedByCancellationCents: 20_000, returnedSinceCents: 1_000, returnOf: (base) => base,
     })).toBe(0);
+  });
+});
+
+describe("#3835 review: it goes back the way it came in", () => {
+  it("MUTATION: $150 credit + $50 card, a $100 share after a cancel at 50% (no fee): $25 to the card, $25 as credit - never $50 at a $50 capture with $25 already promised", async () => {
+    const rule = { daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 0 };
+    const returnedCents = cancelledAt(5_000, 15_000, rule);
+    expect(returnedCents).toBe(10_000); // $25 card refund + $75 credit restored
+
+    expect(await split(10_000)).toEqual({ captureCents: 2_500, creditCents: 2_500 });
+    // And the review-first total: $100 back, then 50% of the $100 left.
+    expect(returnedCents + 5_000).toBe(15_000);
+  });
+
+  it("MUTATION: credit an earlier review gave back since the cancel counts on the credit side", async () => {
+    const rule = { daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 0 };
+    cancelledAt(5_000, 15_000, rule);
+    rows.siblings = [{ id: "task-1", amountCents: 10_000 }];
+    rows.refundedBySiblingsCents = 2_500;
+    h.appliedNowCents = 12_500; // the first review gave $25 of applied credit back
+
+    // $100 + $100 more: what's left tiers to nothing more on the card; $50 of credit.
+    expect(await split(10_000)).toEqual({ captureCents: 0, creditCents: 5_000 });
+  });
+});
+
+describe("#3835 review: the cancellation's own frozen figures", () => {
+  it("MUTATION: re-tiers by the refund method the tier actually ran on, not the branch's word for it (F2)", async () => {
+    // A manually settled payment tiered on the CREDIT tier: 60%, $20 fee - $100 back.
+    cancelledAt(20_000, 0, { daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 2_000, creditRefundPercentage: 60 }, "credit");
+    snapshotOf().refundMethod = "manual";
+
+    expect(await owed()).toBe(2_000);
+  });
+
+  it("MUTATION: reads the frozen refundable base, which the price capped below what was paid (F3)", async () => {
+    // $250 paid against a $200 price: the tier ran on $200, so $80 came back at 50% less $20.
+    cancelledAt(25_000, 0, TIERS[1]!.rule, "card", 20_000);
+    expect(snapshotOf().refundableBaseCents).toBe(20_000);
+
+    expect(await owed()).toBe(2_500);
+  });
+
+  it("an event older than #3835 falls back to paid less change fee and the branch's method", async () => {
+    cancelledAt(20_000, 0, TIERS[1]!.rule);
+    delete snapshotOf().tierRefundMethod;
+    delete snapshotOf().refundableBaseCents;
+
+    expect(await owed()).toBe(2_500);
+  });
+
+  it("MUTATION: reads #3809's appliedCreditBaseCents where the event has it: $200 credit applied, $150 tiered", async () => {
+    // $50 card + $200 credit on a $200 price, of which $150 was tiered.
+    const rule = { daysBeforeStay: 0, refundPercentage: 100, fixedFeeCents: 0 };
+    cancelledAt(5_000, 15_000, rule);
+    snapshotOf().appliedCreditBaseCents = 15_000;
+    (snapshotOf().ledger as Record<string, number>).appliedCreditCents = 20_000;
+
+    // The re-tier reproduces the $150 restore from the $150 base; nothing is owed at 100%.
+    expect(await owed()).toBe(0);
+  });
+
+  it("MUTATION: counts siblings settled AFTER the cancel by the ids it froze, not by the clock", async () => {
+    cancelledAt(20_000, 0, TIERS[1]!.rule);
+    snapshotOf().completedReviewTaskIds = ["task-before"];
+    await owed(5_000, "task-2");
+
+    expect(store.manualRefundTask.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.not.objectContaining({ completedAt: expect.anything() }),
+    }));
+    expect(store.manualRefundTask.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: { notIn: ["task-2", "task-before"] } }),
+    }));
   });
 });

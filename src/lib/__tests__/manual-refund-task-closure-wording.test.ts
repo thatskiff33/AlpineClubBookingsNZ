@@ -244,13 +244,23 @@ describe("#3213 fix round: the durable summary names the money's direction", () 
 });
 
 describe("#3835: the settle dialog's still-owed sentence", () => {
-  const say = (stillOwedCents: number, route: "card" | "hand-back" | "account-credit") =>
-    stillOwedNoticeText({ shareCents: 5_000, stillOwedCents, route }, CLUB_FORMAT_TEST);
+  const say = (stillOwedCents: number, route: "card" | "hand-back" | "account-credit", creditCents = 0, shareCents = 5_000) =>
+    stillOwedNoticeText(
+      { shareCents, stillOwedCents, captureCents: route === "account-credit" ? 0 : stillOwedCents - creditCents, creditCents: route === "account-credit" ? stillOwedCents : creditCents, route },
+      CLUB_FORMAT_TEST,
+    );
 
   it("MUTATION: names the netted figure and what happens to it, route by route", () => {
     expect(say(2_500, "hand-back")).toBe("Only $25.00 of the $50.00 share is still owed after the booking's cancellation - hand back $25.00, not the full share.");
     expect(say(2_500, "card")).toBe("Only $25.00 of the $50.00 share is still owed after the booking's cancellation - $25.00 will be refunded to the card.");
     expect(say(2_500, "account-credit")).toBe("Only $25.00 of the $50.00 share is still owed after the booking's cancellation - $25.00 will be credited.");
+  });
+
+  it("MUTATION: review F1 - says the split when part goes back as credit, even when the whole share is owed", () => {
+    expect(say(5_000, "card", 2_500, 10_000)).toBe("Only $50.00 of the $100.00 share is still owed after the booking's cancellation - $25.00 to the card and $25.00 as account credit.");
+    expect(say(5_000, "hand-back", 2_500, 10_000)).toBe("Only $50.00 of the $100.00 share is still owed after the booking's cancellation - hand back $25.00, not the full share, and $25.00 goes back as account credit.");
+    expect(say(2_500, "hand-back", 2_500, 10_000)).toBe("Only $25.00 of the $100.00 share is still owed after the booking's cancellation - hand nothing back: $25.00 goes back as account credit.");
+    expect(say(5_000, "card", 2_500)).toBe("The $50.00 share goes back in two parts - $25.00 to the card and $25.00 as account credit.");
   });
 
   it("MUTATION: at nothing owed, says so - and on a hand-back, not to hand anything back", () => {

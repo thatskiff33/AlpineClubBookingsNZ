@@ -24,7 +24,7 @@ const get = (query: string) => GET(new NextRequest(`http://localhost/api/admin/p
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireAdmin.mockResolvedValue({ ok: true, session: { user: { id: "admin-1" } } });
-  mocks.previewEditReviewStillOwed.mockResolvedValue({ shareCents: 5_000, stillOwedCents: 2_500, route: "hand-back" });
+  mocks.previewEditReviewStillOwed.mockResolvedValue({ shareCents: 5_000, stillOwedCents: 2_500, captureCents: 2_500, creditCents: 0, route: "hand-back" });
 });
 
 describe("GET still-owed (#3835)", () => {
@@ -32,7 +32,7 @@ describe("GET still-owed (#3835)", () => {
     const response = await get("?shareCents=5000");
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ preview: { shareCents: 5_000, stillOwedCents: 2_500, route: "hand-back" } });
+    expect(await response.json()).toEqual({ preview: { shareCents: 5_000, stillOwedCents: 2_500, captureCents: 2_500, creditCents: 0, route: "hand-back" } });
     expect(mocks.previewEditReviewStillOwed).toHaveBeenCalledWith({ taskId: "task-1", shareCents: 5_000, clubZone: "Pacific/Auckland" });
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "finance", level: "view" } });
   });

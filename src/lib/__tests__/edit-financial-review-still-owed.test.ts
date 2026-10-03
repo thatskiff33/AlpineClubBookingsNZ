@@ -25,7 +25,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/edit-financial-review-settlement", () => ({ chooseEditReviewSettlementRoute: h.choose }));
-vi.mock("@/lib/edit-financial-review-cancel-netting", () => ({ capturedShareOwedAfterCancellationCents: h.owed }));
+vi.mock("@/lib/edit-financial-review-cancel-netting", () => ({ capturedShareOwedAfterCancellation: h.owed }));
 vi.mock("@/lib/payment-reconciliation", () => ({
   ManualBookingPaymentError: class ManualBookingPaymentError extends Error {},
 }));
@@ -48,21 +48,21 @@ beforeEach(() => {
 
 describe("previewEditReviewStillOwed (#3835)", () => {
   it.each([
-    ["card", { kind: "stripe-refund", refundCents: 2_500 }],
-    ["hand-back", { kind: "local-allocation", refundCents: 2_500 }],
-  ])("MUTATION: the %s figure is the route's own netted refund, and nothing commits", async (route, chosen) => {
+    ["card", { kind: "stripe-refund", refundCents: 2_500, creditBackCents: 1_000 }],
+    ["hand-back", { kind: "local-allocation", refundCents: 2_500, creditBackCents: 1_000 }],
+  ])("MUTATION: the %s figure is the route's own netted refund and credit part, and nothing commits", async (route, chosen) => {
     h.choose.mockResolvedValue(chosen);
 
-    expect(await preview()).toEqual({ shareCents: 5_000, stillOwedCents: 2_500, route });
+    expect(await preview()).toEqual({ shareCents: 5_000, stillOwedCents: 3_500, captureCents: 2_500, creditCents: 1_000, route });
     expect(h.choose).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 5_000, direction: "REFUND_TO_MEMBER" }));
     expect(h.committed).toBe(false);
   });
 
   it("MUTATION: credit minted against the payment is netted by the writer's own function", async () => {
     h.choose.mockResolvedValue({ kind: "account-credit", allocateAgainstPaymentId: "payment-1" });
-    h.owed.mockResolvedValue(2_500);
+    h.owed.mockResolvedValue({ captureCents: 1_500, creditCents: 1_000 });
 
-    expect(await preview()).toEqual({ shareCents: 5_000, stillOwedCents: 2_500, route: "account-credit" });
+    expect(await preview()).toEqual({ shareCents: 5_000, stillOwedCents: 2_500, captureCents: 0, creditCents: 2_500, route: "account-credit" });
     expect(h.owed).toHaveBeenCalledWith(expect.objectContaining({ bookingId: "booking-1", taskId: "task-1", shareCents: 5_000 }));
   });
 

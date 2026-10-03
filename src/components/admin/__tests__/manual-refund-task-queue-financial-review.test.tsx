@@ -450,7 +450,7 @@ describe("what completing or dismissing means, per kind (#3033)", () => {
       status: 200,
       json: async () =>
         url.includes("/still-owed?")
-          ? { preview: { shareCents: Number(new URL(url, "http://x").searchParams.get("shareCents")), stillOwedCents: 2500, route: "hand-back" } }
+          ? { preview: { shareCents: Number(new URL(url, "http://x").searchParams.get("shareCents")), stillOwedCents: 2500, captureCents: 2500, creditCents: 0, route: "hand-back" } }
           : { tasks: [priced] },
     })) as never);
 

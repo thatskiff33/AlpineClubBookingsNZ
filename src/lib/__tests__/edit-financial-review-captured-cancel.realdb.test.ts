@@ -96,6 +96,9 @@ let raiseEditFinancialReviewTask: (typeof import("@/lib/edit-financial-review"))
 let resolveManualRefundTask: (typeof import("@/lib/manual-refund-task-resolution"))["resolveManualRefundTask"];
 let credit: typeof import("@/lib/member-credit");
 let previewEditReviewStillOwed: (typeof import("@/lib/edit-financial-review-still-owed"))["previewEditReviewStillOwed"];
+let payments: typeof import("@/lib/payment-transactions");
+/** When the refund ledger began, so a recorded refund is dated after it. */
+let ledgerStartSeconds = 0;
 
 /**
  * What the settle dialog shows before completing, through the dialog's own
@@ -235,6 +238,13 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       ({ resolveManualRefundTask } = await import("@/lib/manual-refund-task-resolution"));
       credit = await import("@/lib/member-credit");
       ({ previewEditReviewStillOwed } = await import("@/lib/edit-financial-review-still-owed"));
+      payments = await import("@/lib/payment-transactions");
+      const startRows = await prisma.$queryRaw<Array<{ finished_at: Date }>>`
+        SELECT "finished_at" FROM "_prisma_migrations"
+        WHERE "migration_name" = '20260509090000_enrich_payment_refund_ledger' AND "finished_at" IS NOT NULL
+        LIMIT 1
+      `;
+      ledgerStartSeconds = Math.floor((startRows[0]?.finished_at ?? new Date(0)).getTime() / 1000);
 
       await deleteFixtures();
       await prisma.member.create({
@@ -269,7 +279,7 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
         await cancelAt(rule);
         const backAfterCancelCents = await totalBackCents();
         const shown = await dialogSays(raised.taskId);
-        expect(shown).toEqual({ shareCents: 5_000, stillOwedCents: owedCents, route: "card" });
+        expect(shown).toEqual({ shareCents: 5_000, stillOwedCents: owedCents, captureCents: owedCents, creditCents: 0, route: "card" });
 
         const result = await completeShare(raised.taskId);
 
@@ -303,7 +313,7 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
         expect(await cardDebts()).toEqual([]);
         // The settle dialog says what to hand back BEFORE the officer transfers it.
         const shown = await dialogSays(raised.taskId);
-        expect(shown).toEqual({ shareCents: 5_000, stillOwedCents: owedCents, route: "hand-back" });
+        expect(shown).toEqual({ shareCents: 5_000, stillOwedCents: owedCents, captureCents: owedCents, creditCents: 0, route: "hand-back" });
 
         const result = await completeShare(raised.taskId);
         expect(result.settlementAmountCents).toBe(owedCents);
@@ -340,7 +350,7 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       const raised = await raise("2026-08-01", null);
       await cancelAt(TIERS[1]!.rule);
       const backAfterCancelCents = await totalBackCents();
-      expect(await dialogSays(raised.taskId)).toEqual({ shareCents: 5_000, stillOwedCents: 2_500, route: "account-credit" });
+      expect(await dialogSays(raised.taskId)).toEqual({ shareCents: 5_000, stillOwedCents: 2_500, captureCents: 0, creditCents: 2_500, route: "account-credit" });
 
       await completeShare(raised.taskId);
 
@@ -348,6 +358,80 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       expect(minted.map((row) => row.amountCents)).toEqual([2_500]);
       expect((await totalBackCents()) - backAfterCancelCents).toBe(2_500);
       expect(await totalBackCents()).toBe(10_500);
+    });
+
+    /**
+     * Stripe answers every refund frozen so far, as the inline call or the
+     * recovery replay would: recorded through the real writer, debt closed.
+     */
+    async function stripeRefundsWhatIsOwed() {
+      const debts = await prisma.paymentRecoveryOperation.findMany({ where: { bookingId: BOOKING_ID, status: { not: "SUCCEEDED" } } });
+      for (const [index, debt] of debts.entries()) {
+        await payments.recordStripeRefundsAgainstTransaction({
+          paymentId: PAYMENT_ID,
+          paymentTransactionId: TRANSACTION_ID,
+          refunds: [{
+            id: `re_race_3835_${debt.id}`, amount: debt.amountCents, currency: "nzd", status: "succeeded",
+            reason: "requested_by_customer", created: ledgerStartSeconds + 60 + index, charge: "ch_race_3835", payment_intent: INTENT_ID,
+          } as never],
+          fallbackPaymentIntentId: INTENT_ID,
+        });
+        await prisma.paymentRecoveryOperation.update({ where: { id: debt.id }, data: { status: "SUCCEEDED" } });
+      }
+    }
+    const capture = async () =>
+      (await prisma.paymentTransaction.findUniqueOrThrow({ where: { id: TRANSACTION_ID }, select: { amountCents: true } })).amountCents;
+
+    it("review F1: $150 credit + $50 card, cancelled at 50% (no fee), a $100 share: $25 to the card and $25 given back as credit - the card never promised more than it took", async () => {
+      await paid({ paid: "credit plus card", cardCents: 5_000, appliedCents: 15_000, source: "STRIPE" });
+      const raised = await raise("2026-08-01");
+      await cancelAt({ refundPercentage: 50, fixedFeeCents: 0 });
+      expect((await cardDebts()).map((debt) => debt.amountCents)).toEqual([2_500]);
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(7_500);
+
+      expect(await dialogSays(raised.taskId, 10_000)).toEqual({ shareCents: 10_000, stillOwedCents: 5_000, captureCents: 2_500, creditCents: 2_500, route: "card" });
+      const result = await completeShare(raised.taskId, 10_000);
+      expect(result.settlementAmountCents).toBe(5_000);
+
+      const cardPromised = (await cardDebts()).reduce((sum, debt) => sum + debt.amountCents, 0);
+      expect(cardPromised).toBe(5_000);
+      expect(cardPromised).toBeLessThanOrEqual(await capture());
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(10_000);
+      expect(await totalBackCents()).toBe(15_000);
+      // Stripe can honour every promise: nothing is refused at the provider.
+      await stripeRefundsWhatIsOwed();
+      const refunded = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { refundedAmountCents: true } });
+      expect(refunded.refundedAmountCents).toBe(5_000);
+    });
+
+    it("a $50 share settled BEFORE the cancel, then the cancel at 50% less $20, then another $50 share: $130 in all", async () => {
+      await paid(PAYMENTS[0]!);
+      const before = await raise("2026-08-01");
+      const after = await raise("2026-08-02");
+      await completeShare(before.taskId);
+      await stripeRefundsWhatIsOwed();
+      await cancelAt(TIERS[1]!.rule);
+      // The cancel tiered the $150 left: $75 less $20.
+      expect((await cardDebts()).map((debt) => debt.amountCents)).toEqual([5_000, 5_500]);
+
+      expect(await dialogSays(after.taskId)).toMatchObject({ stillOwedCents: 2_500, captureCents: 2_500 });
+      await completeShare(after.taskId);
+
+      expect(await totalBackCents()).toBe(13_000);
+    });
+
+    it("a $150 share then a $40 share after the REAL card cancel at 50% less $20 net cumulatively: $75 then $35, $190 in all", async () => {
+      await paid(PAYMENTS[0]!);
+      const first = await raise("2026-08-01");
+      const second = await raise("2026-08-02");
+      await cancelAt(TIERS[1]!.rule);
+
+      await completeShare(first.taskId, 15_000);
+      expect(await totalBackCents()).toBe(15_500);
+      await completeShare(second.taskId, 4_000);
+
+      expect(await totalBackCents()).toBe(19_000);
+      expect((await cardDebts()).reduce((sum, debt) => sum + debt.amountCents, 0)).toBeLessThanOrEqual(await capture());
     });
 
     it("two $20 reviews after the REAL card cancel at 50% less $20 net cumulatively: $10 each, $100 in all", async () => {

@@ -23,6 +23,8 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/member-credit", () => ({
   createBookingModificationCredit: (...a: unknown[]) => h.createBookingModificationCredit(...a),
   giveBackAppliedCredit: (...a: unknown[]) => h.giveBackAppliedCredit(...a),
+  // #3835: the applied rows the captured netting reads.
+  deriveBookingAppliedCreditCents: async () => h.applied.cents,
 }));
 vi.mock("@/lib/cancellation", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/cancellation")),
@@ -40,6 +42,7 @@ import { calculateAppliedCreditRestore } from "@/lib/cancellation";
 import { requireClubTimeZone } from "@/lib/club-time";
 import {
   creditSliceOfReviewShare,
+  giveBackCancelledShareCredit,
   reviewInvoiceReductionCents,
   reviewShareGiveBackDescription,
   writeEditReviewAccountCredit,
@@ -208,6 +211,29 @@ describe("owner decision 2: the booking was cancelled before the review complete
     expect((await write()).givenBackCents).toBe(2_500);
   });
 
+  it("MUTATION: #3809 - re-tiers the applied credit the cancel TIERED: $200 applied, $150 base, $150 restored at 100% owes nothing", async () => {
+    bookingIs("CANCELLED");
+    h.loadCancellationPolicy.mockResolvedValue([TIERS[0]!.rule]);
+    restored(15_000);
+    store.bookingEvent.findFirst.mockResolvedValueOnce({
+      snapshot: { appliedCreditBaseCents: 15_000, ledger: { appliedCreditCents: 20_000 } },
+    } as never);
+
+    expect((await write()).givenBackCents).toBe(0);
+  });
+
+  it("MUTATION: #3809 - and at 50% the share nets against the $75 restored from the $150 base", async () => {
+    bookingIs("CANCELLED");
+    h.loadCancellationPolicy.mockResolvedValue([{ daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 0 }]);
+    restored(7_500);
+    store.bookingEvent.findFirst.mockResolvedValueOnce({
+      snapshot: { appliedCreditBaseCents: 15_000, ledger: { appliedCreditCents: 20_000 } },
+    } as never);
+
+    // $50 + 50% of the $100 left - $75 restored.
+    expect((await write()).givenBackCents).toBe(2_500);
+  });
+
   it("MUTATION: refuses, with nothing written, when no frozen figure can be derived", async () => {
     bookingIs("CANCELLED");
     restored(8_000);
@@ -313,6 +339,35 @@ describe("what of the share is applied credit coming back", () => {
 
     expect(await write(5_000, null, "payment-9")).toEqual({ givenBackCents: 0, mintedCents: 2_500, cancelled: false, invoiceReductionCents: null, agreedGiveBackCents: null });
     expect(h.createBookingModificationCredit).toHaveBeenCalledWith("member-1", 2_500, "booking-1", "mod-1", undefined, store, "payment-9");
+  });
+
+  it("MUTATION: #3835 - the applied-credit part of what is still owed is given back, never minted against the capture", async () => {
+    // $50 card + $150 credit, cancelled at 50% (no fee): $25 refunded, $75 restored; a $100 share.
+    bookingIs("CANCELLED");
+    h.applied.cents = 15_000;
+    h.applied.mirrorCents = 15_000;
+    h.loadCancellationPolicy.mockResolvedValue([{ daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 0 }]);
+    store.bookingEvent.findFirst.mockResolvedValueOnce({
+      occurredAt: RESTORED_AT,
+      snapshot: {
+        refundMethod: "card", paidAmountCents: 5_000, settledAmountCents: 2_500, changeFeeCents: 0,
+        ledger: { appliedCreditCents: 15_000, creditRestoredCents: 7_500 },
+        tierRefundMethod: "card", refundableBaseCents: 5_000, completedReviewTaskIds: [],
+      },
+    } as never);
+
+    expect(await write(10_000, null, "payment-9")).toEqual({ givenBackCents: 2_500, mintedCents: 2_500, cancelled: false, invoiceReductionCents: null, agreedGiveBackCents: null });
+    expect(h.createBookingModificationCredit).toHaveBeenCalledWith("member-1", 2_500, "booking-1", "mod-1", undefined, store, "payment-9");
+    expect(h.giveBackAppliedCredit).toHaveBeenCalledWith(expect.objectContaining({ bookingId: "booking-1", sourceBookingId: "booking-1" }), store);
+  });
+
+  it("MUTATION: #3835 - a credit part the applied rows cannot cover is refused, task OPEN, rather than half given back", async () => {
+    h.applied.cents = 1_000;
+    h.applied.mirrorCents = 1_000;
+
+    await expect(giveBackCancelledShareCredit({ memberId: "member-1", bookingId: "booking-1", cents: 2_500, format: CLUB_FORMAT_TEST, store: store as never }))
+      .rejects.toMatchObject({ status: 409 });
+    expect(store.payment.update).not.toHaveBeenCalled();
   });
 
   it("MUTATION: #3835 - and mints nothing where the cancellation already refunded it all", async () => {
