@@ -31,12 +31,11 @@ import {
   reversalKey,
 } from "@/lib/booking-ledger-posting-keys";
 import { ledgerLineAmountCents, type BookingLedgerPosting } from "@/lib/booking-ledger-write";
+import { diffGuestNights, type ModificationPricingSide } from "@/lib/booking-modification-lines";
 import {
-  diffGuestNights,
   modificationPromoDeltaCents,
   normalisedPromoCents,
-  type ModificationPricingSide,
-} from "@/lib/booking-modification-lines";
+} from "@/lib/booking-modification-promo-delta";
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { editReviewSettlementSign } from "@/lib/edit-financial-review-charge-shape";
 

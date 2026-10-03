@@ -14,9 +14,10 @@ reason: the quote preview reads the booking's one promo redemption through
   #3827 then prices every code the booking carries in the preview through the one orchestrator, reading the edit's code list the way the save reads it.
 
 file: src/app/api/member/data-export/route.ts
-lines: 396
+lines: 417
 reason: a member's export must state a booking's promo discount across every code it
-  carries (#3826); the small summing helper belongs beside the one export shape
+  carries (#3826), and name each code with its own discount (#3828, re-measured
+  in place); the small summing helper belongs beside the one export shape
   it serves, not in a shared module nothing else would call.
 
 file: src/lib/booking-batch-modification-service.ts
@@ -60,6 +61,7 @@ reason: one import of bookingPromoRedemptions for the plural redemption read (#3
   #3827 hands each guest's consent to the promo re-price.
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1563
-reason: the promo line refuses a multi-code booking until epic #3813 C3 gives each
-  code its own line (#3826); one import and a two-line comment at the one site.
+lines: 1562
+reason: the promo line refused a multi-code booking until epic #3813 C3 gave each
+  code its own line (#3826); #3828 re-measured it in place after moving the line
+  into xero-promo-adjustment-lines.ts.

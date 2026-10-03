@@ -26,7 +26,6 @@ import {
   bookingModificationSummaryRows,
   bookingModificationTypeLabel,
   promoAdjustmentSummaryRows,
-  type PromoCodeAdjustment,
   resolvePromoAdjustmentCents,
   resolveUnpaidCreditNetting,
   settledByPaymentCents,
@@ -99,8 +98,7 @@ export async function sendBookingConfirmedEmail(
     discountCents?: number;
     promoAdjustmentCents?: number;
     promoCode?: string;
-    /** #3828: each code's own adjustment, for one row per code. */
-    promoLines?: ReadonlyArray<PromoCodeAdjustment>;
+    promoLines?: ReadonlyArray<{ code: string; amountCents: number }>; // #3828: a row per code
     // Booking's lodge (multi-lodge phase 8): the email carries this lodge's
     // name, travel note, and door code. Omitted/null resolves the club's
     // default lodge — including its real door code, so always thread the

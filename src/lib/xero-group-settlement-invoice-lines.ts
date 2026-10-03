@@ -57,11 +57,12 @@ export interface GroupSettlementInvoiceLines {
   /** What the lines add up to. */
   lineCents: number;
   /**
-   * #3828: how each child carrying several codes was split into promotion
-   * lines (or why it fell back to one aggregate line). Empty when no child
-   * carries more than one code, so a one-code group records nothing new.
+   * #3828: what the CREATE operation records beside the invoice — how each
+   * child carrying several codes was split into promotion lines (or why it fell
+   * back to one aggregate line). `{}` when no child carries more than one code,
+   * so a one-code group's payload is exactly what it always was.
    */
-  promoLines: Array<{ bookingId: string } & PromoAdjustmentLineRecord>;
+  operationRecord: { promoLines?: Array<{ bookingId: string } & PromoAdjustmentLineRecord> };
 }
 
 /** Build the combined invoice's lines from the settlement's committed children. */
@@ -91,7 +92,7 @@ export async function buildGroupSettlementInvoiceLines(
   // Built per child (each child has its own date range and season), then
   // aggregated across the whole group into one invoice.
   const lineItems: LineItem[] = [];
-  const promoLines: GroupSettlementInvoiceLines["promoLines"] = [];
+  const promoLines: Array<{ bookingId: string } & PromoAdjustmentLineRecord> = [];
   for (const child of children) {
     const checkIn = new Date(child.checkIn);
     const checkOut = new Date(child.checkOut);
@@ -148,7 +149,7 @@ export async function buildGroupSettlementInvoiceLines(
       children.map((child) => ({ finalPriceCents: child.finalPriceCents ?? 0 }))
     ),
     lineCents: invoiceLineItemsTotalCents(lineItems),
-    promoLines,
+    operationRecord: promoLines.length > 0 ? { promoLines } : {},
   };
 }
 

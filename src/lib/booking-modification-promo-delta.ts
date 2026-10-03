@@ -16,8 +16,9 @@
  * writes the single aggregate line it always wrote — which is every one-code
  * booking, byte for byte.
  *
- * Pure; its own module because `booking-modification-lines.ts` is at its size
- * budget.
+ * The home of an edit's promotion figures — the normalised side, the aggregate
+ * change, and the per-code split. Pure; its own module because
+ * `booking-modification-lines.ts` is at its size budget.
  */
 
 /** A side's codes, in application order, each with its own signed adjustment. */
@@ -49,4 +50,45 @@ export function splitPromoDeltaByCode(
     .filter((delta) => delta.amountCents !== 0);
   const sum = deltas.reduce((total, delta) => total + delta.amountCents, 0);
   return sum === aggregateDeltaCents ? deltas : null;
+}
+
+/** A side as the promotion figures read it. */
+type PromoSide = {
+  promoAdjustmentCents: number;
+  promoCode?: string | null;
+  promoByCode?: PromoSideCodes | null;
+};
+
+/**
+ * A side's promotion figure; a non-number (a legacy row read without the column)
+ * counts as zero. Every caller's sum still holds against its real delta.
+ */
+export function normalisedPromoCents(promoAdjustmentCents: number): number {
+  return Number.isFinite(promoAdjustmentCents) ? promoAdjustmentCents : 0;
+}
+
+/** The signed change in the promotion adjustment, each side normalised. */
+export function modificationPromoDeltaCents(
+  before: Pick<PromoSide, "promoAdjustmentCents">,
+  after: Pick<PromoSide, "promoAdjustmentCents">,
+): number {
+  return normalisedPromoCents(after.promoAdjustmentCents) - normalisedPromoCents(before.promoAdjustmentCents);
+}
+
+/**
+ * The promotion deltas an edit stores: one per code that moved where the split
+ * holds, else the one aggregate delta naming the after side's codes (the
+ * before side's when none remain) — or none when nothing moved.
+ */
+export function modificationPromoDeltas(
+  before: PromoSide,
+  after: PromoSide,
+): Array<{ promoCode: string | null; amountCents: number }> {
+  const deltaCents = modificationPromoDeltaCents(before, after);
+  return (
+    splitPromoDeltaByCode(before, after, deltaCents) ??
+    (deltaCents !== 0
+      ? [{ promoCode: after.promoCode ?? before.promoCode ?? null, amountCents: deltaCents }]
+      : [])
+  );
 }

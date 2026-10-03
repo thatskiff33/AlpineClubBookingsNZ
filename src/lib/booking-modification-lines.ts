@@ -6,8 +6,7 @@
  * `{ priceDiffCents, changeFeeCents }` before anything rendered, so a treasurer
  * reading "$80" had to believe it and a member asking why got a number. This
  * module computes, at edit time, the signed lines behind that number - per
- * guest category x rate x unit price x nights, plus one promotion delta (one per
- * code that moved, on a several-code booking, #3828) - and
+ * guest category x rate x unit price x nights, plus one promotion delta - and
  * is the ONE home for their shape, their sum rule, their parser and their
  * sentence (`INV-SSOT`). Three readers share it: the edit's audit row, the
  * booking's own history, and (stage 2b) the Xero supplementary invoice and
@@ -22,7 +21,7 @@
  *  - Night prices are the GROSS rate per night (`BookingGuestNight.priceCents`,
  *    `PriceBreakdown.perNightCents`). The promotion is one signed
  *    `PROMO_DELTA` line equal to the change in `promoAdjustmentCents` (one per
- *    code that moved on a several-code booking, summing to it), because
+ *    code that moved: `booking-modification-promo-delta.ts`), because
  *    `finalPriceCents = totalPriceCents + promoAdjustmentCents`
  *    (`bookingFinalPriceCents`); the group discount is already inside the
  *    night prices and appears in no line.
@@ -58,7 +57,7 @@ import type { AgeTier, BookingGuestNightPriceSource } from "@prisma/client";
 import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
 import { splitNightsIntoPriceRuns } from "@/lib/night-price-runs";
-import { splitPromoDeltaByCode, type PromoSideCodes } from "@/lib/booking-modification-promo-delta";
+import { modificationPromoDeltas, type PromoSideCodes } from "@/lib/booking-modification-promo-delta";
 import { storedNightPriceSourceIsInexact } from "@/lib/stored-sold-price-evidence";
 import {
   describeGuestRateMembershipLabel,
@@ -124,11 +123,7 @@ export interface ModificationPricingSide {
   }>;
   promoAdjustmentCents: number;
   promoCode?: string | null;
-  /**
-   * #3828: each code's own adjustment, in application order — set only where
-   * the booking carries several codes on either side, and then one
-   * `PROMO_DELTA` is stored per code that moved (`splitPromoDeltaByCode`).
-   */
+  /** #3828: each code's own adjustment, where either side carries several codes. */
   promoByCode?: PromoSideCodes | null;
 }
 
@@ -263,22 +258,6 @@ export function diffGuestNights(
 }
 
 /**
- * A side's promotion figure; a non-number (a legacy row read without the column)
- * counts as zero. Every caller's sum still holds against its real delta.
- */
-export function normalisedPromoCents(promoAdjustmentCents: number): number {
-  return Number.isFinite(promoAdjustmentCents) ? promoAdjustmentCents : 0;
-}
-
-/** The signed change in the promotion adjustment, each side normalised. */
-export function modificationPromoDeltaCents(
-  before: Pick<ModificationPricingSide, "promoAdjustmentCents">,
-  after: Pick<ModificationPricingSide, "promoAdjustmentCents">,
-): number {
-  return normalisedPromoCents(after.promoAdjustmentCents) - normalisedPromoCents(before.promoAdjustmentCents);
-}
-
-/**
  * The signed lines from `before` to `after`, or why there are none.
  * `expectedDeltaCents` is the caller's own `priceDiffCents`, the figure it
  * settles on; the lines are stored only when they explain exactly that.
@@ -345,13 +324,7 @@ export function diffBookingPricing(
 
   const lines: ModificationLine[] = [...folded.values()].sort(orderLines);
 
-  const promoDeltaCents = modificationPromoDeltaCents(before, after);
-  const promoDeltas =
-    splitPromoDeltaByCode(before, after, promoDeltaCents) ??
-    (promoDeltaCents !== 0
-      ? [{ promoCode: after.promoCode ?? before.promoCode ?? null, amountCents: promoDeltaCents }]
-      : []);
-  for (const delta of promoDeltas) {
+  for (const delta of modificationPromoDeltas(before, after)) {
     lines.push({
       v: MODIFICATION_LINES_VERSION,
       kind: "PROMO_DELTA",

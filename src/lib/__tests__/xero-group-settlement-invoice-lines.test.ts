@@ -81,7 +81,7 @@ describe("buildGroupSettlementInvoiceLines (#3642)", () => {
       expect.objectContaining({ description: "Promo adjustment - SAVE5", unitAmount: -5 })
     );
     // One code records nothing new on the operation.
-    expect(lines.promoLines).toEqual([]);
+    expect(lines.operationRecord).toEqual({});
   });
 
   it("gives a several-code joiner one coded promotion line per code, totalling the settlement (#3828)", async () => {
@@ -128,7 +128,7 @@ describe("buildGroupSettlementInvoiceLines (#3642)", () => {
       }),
     ]);
     expect(lines.lineCents).toBe(lines.childrenCents);
-    expect(lines.promoLines).toEqual([
+    expect(lines.operationRecord.promoLines).toEqual([
       expect.objectContaining({ bookingId: "two-codes", promoLineSource: "PER_CODE" }),
     ]);
   });
@@ -170,7 +170,7 @@ describe("buildGroupSettlementInvoiceLines (#3642)", () => {
       expect.objectContaining({ description: "Promo adjustment - SAVE5, GUESTFREE", unitAmount: -8 }),
     ]);
     expect(lines.lineCents).toBe(lines.childrenCents);
-    expect(lines.promoLines).toEqual([
+    expect(lines.operationRecord.promoLines).toEqual([
       expect.objectContaining({
         bookingId: "drifted",
         promoLineSource: "AGGREGATE_FALLBACK",
