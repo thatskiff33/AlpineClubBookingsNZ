@@ -17,6 +17,14 @@
 -- CARD_REFUND, BANK_REFUND) under the new anchor, so none of them returns it,
 -- and no unfiltered read of the table exists.
 --
+-- One permanent mis-post is possible during the overlap, accepted rather than
+-- splitting the release: the old colour's organiser cancel on a child the new
+-- colour already settled posts reversals with nothing kept and no refund line,
+-- leaving owed(b) at minus the share; the confirmation fence stops a later
+-- poster correcting it, so C4's census reports it and an officer corrects it.
+-- DEPLOY NOTE: finish the colour switch before processing organiser
+-- cancellations.
+--
 -- Nothing in this migration uses the value, so PostgreSQL's refusal to use a
 -- label in the transaction that added it does not arise. PostgreSQL cannot
 -- drop an enum value; the reverse is to leave it unused.

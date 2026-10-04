@@ -11,3 +11,8 @@
   without showing a group joiner's booking as unpaid. A database change adds
   one value to the ledger's list of anchors; it is safe to run while the
   previous version is still serving.
+
+  **Deploy note:** finish the switch to the new version before processing any
+  group organiser's cancellation. If the previous version cancels a joiner the
+  new version has already settled, that joiner's ledger is left wrong (the
+  census reports it, and an officer corrects it by hand).

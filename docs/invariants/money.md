@@ -489,9 +489,10 @@ records). Three facets, not three statements of one rule (#2707, owner decision
 
 - **A booking's settlement lines converge from its payment rows, at the place
   the mirror is derived from them** (#3581). `syncBookingLedgerSettlements`
-  runs at the end of `reconcilePaymentAggregates` and from the three writers
+  runs at the end of `reconcilePaymentAggregates` and from the five writers
   that set the payment's columns themselves: the manual mark-paid settle, its
-  reversal, and the Xero payment-received receipt. It posts one line
+  reversal, the Xero payment-received receipt, and #3653's organiser-child
+  refund recorder and its pending-refund sweep (#3854). It posts one line
   per captured transaction (`CARD_CAPTURE`, `BANK_RECEIPT`, or `CASH_RECORDED`
   when `manuallyMarkedPaidAt` is set, `INV-PAY-001`) and one per recorded
   refund (`CARD_REFUND`), keyed on the row (`INV-MONEY-033`), and posts
@@ -515,8 +516,7 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   **A group organiser's settlement posts on its children** (#3854). The group
   settle confirms each child on the ledger and posts its share, its own price,
   as `CARD_CAPTURE` or `BANK_RECEIPT` anchored `GROUP_SETTLEMENT`; a frozen
-  cancel plan posts the matching refund there; a #3653 refund row converges
-  here (design §5.2).
+  cancel plan posts the matching refund there (design §5.2).
 
 ## INV-MONEY-035
 
