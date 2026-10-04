@@ -1848,6 +1848,24 @@ internet-banking cash that became credit on an already-cancelled booking. Only
 the first is the #3640 repair question. The arithmetic and its caveats are in
 `src/lib/refunded-total-shortfall-audit.ts`.
 
+### Audit organiser-settled children's refunded mirrors (#3653)
+
+Before #3653 a joiner's reduction of a booking the group organiser paid for could
+hand the joiner account credit, or leave recovery that refunded nothing, and the
+joiner's `Payment` mirror then read as partly refunded with no Stripe refund
+behind it (`INV-PAY-114` stops new cases). A later group cancellation sizes from
+that mirror, so the organiser can be under-refunded.
+`scripts/audit-organiser-child-refunds.ts` lists each organiser-settled child
+whose mirror Stripe does not fully back, classed `legacy-group-cancel` (a
+pre-#3653 one-refund cancellation; legitimate), `joiner-account-credit` (value
+went to the joiner; an officer decides) or `unbacked` (nothing explains it). It
+is READ-ONLY and repairs nothing: a cash mirror moves only on Stripe evidence.
+
+```bash
+DATABASE_URL=<non-prod copy> pnpm run payments:audit-organiser-child-refunds
+DATABASE_URL=<non-prod copy> pnpm run payments:audit-organiser-child-refunds --json
+```
+
 ### Audit IB hold-expiry invoice under-clears (#1597)
 
 `scripts/audit-ib-hold-clearing.ts` is a READ-ONLY audit — it never writes and
@@ -1880,6 +1898,14 @@ under-clear and is listed apart as "paid in cash after release, note retired".
 The late payment retired the pending note and credited the member, so a credit
 note now would credit an invoice the member paid: take no action on those rows
 (a part payment is kept, not released — see below).
+
+Its applied-credit strand section reports an already-realized loss only when the
+current Internet-Banking `PRIMARY` transaction is captured and linked to the
+payment's current Xero invoice, or when the payment has its manual-settlement
+stamp. The aggregate payment status is a mutable mirror and any historical Stripe
+or `ADDITIONAL` capture is not evidence that this IB invoice was paid. Rows without
+that evidence are reported as **UNVERIFIED**, never as definitely unpaid: check the
+current Xero invoice or the manual settlement record before changing credit.
 
 ```bash
 DATABASE_URL=<non-prod copy> pnpm run payments:audit-ib-hold-clearing
@@ -2015,16 +2041,20 @@ the booking-ledger census (#3583; see "Census the booking ledger against its
 money columns" above), where it is an information line under the credit
 identity: every non-cancelled Internet-Banking payment whose booking still
 carries UN-allocated applied credit (a `BOOKING_APPLIED` row not yet stamped
-with an allocated Xero note), split into REALIZED (payment captured — the
-member already double-paid the full invoice) and PENDING (not yet paid); its
-JSON lists each booking. Repair guidance under the #1620 allocate-existing
+with an allocated Xero note), split into REALIZED (a current IB receipt or
+manual settlement proves the member already double-paid the full invoice) and
+UNVERIFIED (local history cannot prove whether the current invoice was paid).
+Since #3632 that split is read from settlement evidence
+(`internet-banking-settlement-evidence.ts`), never from the payment's status
+mirror, and an unverified row is never asserted unpaid; the census's JSON lists
+each booking with its evidence (`xero-primary-receipt`, `manual-settlement` or
+`unverified`) under `realized` and `unverified` (the audit's old `pending`
+keys are gone with it). Repair guidance under the #1620 allocate-existing
 mechanism, for what the census lists:
 
-- **PENDING** rows are fixed forward automatically: the applied-credit allocation
-  op reduces their already-raised invoice to the effective amount. If a legacy
-  PENDING row predates the fix and never got an allocation op, re-running the
-  raise path (or re-enqueuing `enqueueXeroAppliedCreditAllocationOperation`)
-  allocates it.
+- **UNVERIFIED** rows need an operator to check the current Xero invoice or the
+  manual settlement record before choosing a remedy. Do not restore credit or
+  allocate a note solely from the audit row.
 - **REALIZED** rows already paid the full invoice in cash, so allocating a credit
   note now would over-pay the invoice. The repair is a LOCAL credit restore for
   the strand amount (a Xero credit note does not refund cash already sent);
