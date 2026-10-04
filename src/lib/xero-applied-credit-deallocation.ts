@@ -17,6 +17,7 @@ import {
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
 } from "./xero-operation-outbox-payload";
+import { busyWhileCardAllocationUnfinished } from "./xero-card-allocation-busy";
 import {
   assertNoAppliedCreditDeallocationFence,
   XeroAppliedCreditDeallocationEventualConsistencyError,
@@ -734,12 +735,16 @@ export async function deallocateExcessAppliedCreditForBooking(
       excludeOperationId: options.syncOperationId,
       allowUncheckpointedPending: true,
     });
-    await repairLegacyAppliedCreditNoteAllocationsForBooking(
-      bookingId,
-      booking.payment!.xeroInvoiceId!,
-      tx,
-      format,
-    );
+    try {
+      await repairLegacyAppliedCreditNoteAllocationsForBooking(
+        bookingId,
+        booking.payment!.xeroInvoiceId!,
+        tx,
+        format,
+      );
+    } catch (error) {
+      throw await busyWhileCardAllocationUnfinished(error, booking.payment!, tx);
+    }
     const desiredAppliedCents = await deriveBookingAppliedCreditCents(bookingId, tx);
     const rows = await tx.memberCreditNoteAllocation.findMany({
       where: { appliedToBookingId: bookingId },

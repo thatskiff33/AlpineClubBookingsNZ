@@ -43,10 +43,10 @@ type XeroBookingEditFinancialAction =
       /** `INV-PAY-101`: how the reduction went back, as the note will say. */
       refundMethod: RefundMethod;
       /**
-       * #3809: applied credit given back BESIDE a card or bank refund - an
-       * allocated note of its own, worded as account credit, since one note
-       * may name only one method (`INV-PAY-101`). 0 where the note above is
-       * the give-back itself.
+       * #3809: applied credit given back - always an allocated note of its own,
+       * worded as account credit and scoped (`giveBackNoteScope`), beside the
+       * refund's note above or alone where the refund (`refundAmountCents`) is
+       * nothing, since one note may name only one method (`INV-PAY-101`).
        */
       allocatedGiveBackCents: number;
       reason: string;
@@ -203,15 +203,16 @@ export function classifyXeroBookingEditSettlement(
         reason: "Negative booking-edit delta held as account credit needs an unapplied modification credit note.",
       };
     } else {
+      // #3809: the give-back is ALWAYS its own note, under its own scope, even
+      // where it is all that came back - one key identifies it everywhere, so
+      // the repair pass reads it there and can never mint a second.
       financialAction = {
         type: "modification-credit-note",
-        refundAmountCents: refundAmountCents > 0 ? refundAmountCents : giveBackCents,
+        refundAmountCents,
         refundMethod:
-          refundAmountCents <= 0
-            ? "account-credit"
-            : (input.refundMethod ??
-              refundMethodForSettlementMethod(input.settlementMethod, input.refundedThroughStripe)),
-        allocatedGiveBackCents: refundAmountCents > 0 ? giveBackCents : 0,
+          input.refundMethod ??
+          refundMethodForSettlementMethod(input.settlementMethod, input.refundedThroughStripe),
+        allocatedGiveBackCents: giveBackCents,
         reason: "Negative booking-edit delta needs a modification credit note instead of mutating the original invoice.",
       };
     }
@@ -331,19 +332,21 @@ export async function queueXeroBookingEditSettlement(
       await kickQueuedXeroOperation(queued);
     }
   } else if (decision.financialAction.type === "modification-credit-note") {
-    const queued = await enqueueXeroModificationCreditNoteOperation(
-      {
-        bookingId: input.bookingId,
-        refundAmountCents: decision.financialAction.refundAmountCents,
-        bookingModificationId: input.bookingModificationId,
-        refundMethod: decision.financialAction.refundMethod,
-        ...(input.reviewTaskId ? { reviewTaskId: input.reviewTaskId } : {}),
-      },
-      {
-        createdByMemberId: input.createdByMemberId,
-      }
-    );
-    await kickQueuedXeroOperation(queued);
+    if (decision.financialAction.refundAmountCents > 0) {
+      const queued = await enqueueXeroModificationCreditNoteOperation(
+        {
+          bookingId: input.bookingId,
+          refundAmountCents: decision.financialAction.refundAmountCents,
+          bookingModificationId: input.bookingModificationId,
+          refundMethod: decision.financialAction.refundMethod,
+          ...(input.reviewTaskId ? { reviewTaskId: input.reviewTaskId } : {}),
+        },
+        {
+          createdByMemberId: input.createdByMemberId,
+        }
+      );
+      await kickQueuedXeroOperation(queued);
+    }
     await queueGiveBackNote(input, decision.financialAction.allocatedGiveBackCents);
   } else if (decision.financialAction.type === "modification-account-credit-note") {
     const queued = await enqueueXeroModificationAccountCreditNoteOperation(

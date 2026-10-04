@@ -3,9 +3,9 @@ import { asRecord, readString } from "@/lib/xero-json";
 import { isGiveBackNoteScope, queuedReviewTaskId } from "@/lib/xero-review-task-key";
 
 /**
- * #3809 (review M1): the edit's SECOND invoice-allocated note - applied credit
- * given back beside a card or bank refund's note or a credit election's
- * unallocated one - is scoped (`giveBackNoteScope`) on its
+ * #3809: the invoice-allocated note for applied credit given back - alone, or
+ * beside a card or bank refund's note or a credit election's unallocated one -
+ * is always scoped (`giveBackNoteScope`) on its
  * operation's payload and on the links it records. The repair pass reads the
  * edit's own note without it, so the one cannot hide the other, and checks the
  * give-back's separately.
@@ -29,22 +29,19 @@ export function withoutGiveBackNote<L extends { metadata?: unknown }, O extends 
 }
 
 /**
- * Where the edit's history row records applied credit given back beside money
- * captured (so the give-back took a note of its own), whether that note is
- * present: the scoped operations, or nothing where none is due. `null` means
- * there is nothing to check here.
+ * Where the edit's history row records applied credit given back - which
+ * always takes an allocated note of its own, scoped - that note's operations.
+ * `null` means none is due.
  */
 export function scopedGiveBackNote<O extends { entityType: string; operationType: string; requestPayload: unknown }>({
   newData,
   operations,
-  paymentHasCapturedMoney,
 }: {
   newData: unknown;
   operations: O[];
-  paymentHasCapturedMoney: boolean;
 }): { givenBackCents: number; operations: O[] } | null {
   const recorded = recordedCreditGiveBack(newData);
-  if (!paymentHasCapturedMoney || !recorded || recorded.givenBackCents <= 0) return null;
+  if (!recorded || recorded.givenBackCents <= 0) return null;
   return {
     givenBackCents: recorded.givenBackCents,
     operations: operations.filter(

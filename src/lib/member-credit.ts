@@ -504,9 +504,9 @@ export async function giveBackAppliedCredit(
   // it, and releasing credit allocated against it would reopen it with an
   // amount due. The caller returns that money in Xero another way (#3791).
   // #3809: the allocation SLICES decide, not the payment's source - a card
-  // booking's applied credit is allocated against its invoice too (#1641).
+  // booking's are #1641's - and are checked against their provenance first.
   if (booking?.status !== BookingStatus.CANCELLED && payment?.xeroInvoiceId) {
-    if (payment.source === PaymentSource.INTERNET_BANKING) {
+    if (payment.source === PaymentSource.INTERNET_BANKING || (await tx.memberCreditNoteAllocation.count({ where: { appliedToBookingId: bookingId } })) > 0) {
       await repairLegacyAppliedCreditNoteAllocationsForBooking(bookingId, payment.xeroInvoiceId, tx, format);
     }
     const allocated = await tx.memberCreditNoteAllocation.aggregate({

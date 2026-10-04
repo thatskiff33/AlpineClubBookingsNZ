@@ -63,7 +63,7 @@ reason: one line: the guest-add email passes 0 for the credit given back, which
   the sender now requires of every caller.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 2304
+lines: 2299
 reason: the missing-modification-credit-note finding sizes a credit-paid
   booking's lost note from the give-back its edit's history row records, and
   expects none where the tier gave nothing back, and checks a give-back note
@@ -75,3 +75,9 @@ lines: 1019
 reason: the fold of earlier modification notes into a payment's refunded total
   leaves out notes worded as account credit (no cash moved); the reader lives
   in `account-credit-modification-notes.ts`, the filter where the fold is.
+
+file: src/lib/xero-applied-credit-deallocation.ts
+lines: 1026
+reason: the worker's legacy-repair call is wrapped so a card booking's slice
+  whose #1641 allocation is still in its invoice operation waits instead of
+  failing for good; the rule lives in `xero-card-allocation-busy.ts`.

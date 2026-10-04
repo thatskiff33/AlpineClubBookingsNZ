@@ -847,10 +847,10 @@ export function classifyBookingContext(
       // `hasCapturedRepairPayment` (#3639): this split routes card refunds.
       const paymentHasCapturedMoney =
         hasCapturedPayment(payment) || capturedPaymentTransactions.length > 0;
-      // #3809 (review M1): applied credit given back beside captured money has
-      // an allocated note of its own, under its own scope, checked here; the
-      // edit's own note is read below without it, so neither hides the other.
-      const giveBackNote = scopedGiveBackNote({ newData: modification.newData, operations: modificationOperations, paymentHasCapturedMoney });
+      // #3809: applied credit given back always has an allocated note of its
+      // own, under its own scope, checked here; the edit's own note is read
+      // below without it, so neither hides the other or stands in for it.
+      const giveBackNote = scopedGiveBackNote({ newData: modification.newData, operations: modificationOperations });
       if (giveBackNote) {
         const blocking = getBlockingOperation(giveBackNote.operations, "CREDIT_NOTE", "CREATE");
         if (blocking?.kind === "retryable") {
@@ -958,18 +958,15 @@ export function classifyBookingContext(
           ? storedEvidence
           : null;
       // #3809: with nothing captured, a paid booking's reduction settled as
-      // applied credit given back, and its note is that give-back - none at
-      // all where the tier gave nothing back - as the edit's history row
-      // records (`recordedCreditGiveBack`). The whole reduction would credit
-      // the invoice for money the policy kept. This is also what recovers a
-      // note whose post-commit queue failed after its deallocation committed.
-      const recordedGiveBack = paymentHasCapturedMoney ? null : recordedCreditGiveBack(modification.newData);
-      if (!modificationCreditNote && recordedGiveBack && recordedGiveBack.givenBackCents <= 0) {
+      // applied credit given back, as the edit's history row records
+      // (`recordedCreditGiveBack`), and the give-back's note is its own,
+      // scoped, checked above. The edit has no note of its own to repair: the
+      // whole reduction would credit the invoice for money the policy kept.
+      if (!modificationCreditNote && !paymentHasCapturedMoney && recordedCreditGiveBack(modification.newData)) {
         continue;
       }
-      const expectedCreditNoteCents =
-        storedSettlement?.amountCents ?? recordedGiveBack?.givenBackCents ?? refundDueCents;
-      const expectedAmountSource = storedSettlement?.source ?? (recordedGiveBack ? "recorded-give-back" : "net-amount");
+      const expectedCreditNoteCents = storedSettlement?.amountCents ?? refundDueCents;
+      const expectedAmountSource = storedSettlement?.source ?? "net-amount";
 
       if (!modificationCreditNote) {
         const blockingOperation = getBlockingOperation(
@@ -1014,8 +1011,6 @@ export function classifyBookingContext(
                 bookingId: booking.id,
                 bookingModificationId: modification.id,
                 refundAmountCents: expectedCreditNoteCents,
-                // #3809: worded as the account credit it gave back (`INV-PAY-101`).
-                ...(recordedGiveBack ? { refundMethod: "account-credit" } : {}),
               },
             });
             addFinding(findings, {
