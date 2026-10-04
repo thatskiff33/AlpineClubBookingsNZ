@@ -26,6 +26,9 @@ import "server-only";
  *   cancellation `postCancellationLedgerLines`, with the kept figure the CANCELLED
  *                event froze (#3611), or replayed from the frozen retained figure
  *                and the booking's credit rows through `cancellationKeptCents`
+ *   group child  its share, plan refund and organiser-cancel kept figure through
+ *                the live group posters' planners and keys (#3854,
+ *                `booking-ledger-back-post-group.ts`)
  *
  * Every key is built by `booking-ledger-posting-keys.ts`, every row goes through
  * the one write door, and an edit that already has a line anchored on it is
@@ -39,8 +42,8 @@ import "server-only";
  * a named class is not a refusal (the census reports it, and the owner signs it
  * off). A booking that cannot be planned at all — an unpriced night, a price its
  * nights do not reach — is listed the same way. A group-settled child with no
- * money of its own is `GROUP_SETTLEMENT_OFF_LEDGER` and is left alone (owner
- * decision 2; its poster is #3854).
+ * lines that cannot be posted stays `GROUP_SETTLEMENT_OFF_LEDGER` (owner
+ * decision 2A), listed with its reason.
  *
  * CONCURRENCY. Each booking's transaction takes the locks its live posters take,
  * in canonical order (`INV-LOCK-002`, `docs/CONCURRENCY_AND_LOCKING.md`): the
@@ -65,6 +68,7 @@ import { randomUUID } from "node:crypto";
 
 import type { Prisma, PrismaClient } from "@prisma/client";
 
+import { planGroupChildBackPost } from "@/lib/booking-ledger-back-post-group";
 import { postHandBackLedgerLine } from "@/lib/booking-ledger-hand-back";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
@@ -323,6 +327,8 @@ async function planHistoricChargeLines(
   tx: Tx,
   booking: BackPostBooking,
   census: BookingLedgerCensusRow,
+  /** A child a group settlement paid: confirmed as the group settle confirms it, cancelled or not (#3854). */
+  groupPaid: boolean,
 ): Promise<ChargePlan | CannotPost> {
   const cancelled = booking.status === "CANCELLED";
   const postings: ChargePlan["postings"] = [];
@@ -337,7 +343,7 @@ async function planHistoricChargeLines(
   if (confirmedAt === null) {
     // The census's own rule for who must be confirmed: a paid-like booking, or
     // one the paid path cancelled (it froze a snapshot).
-    const mustConfirm = isPaidLikeBookingStatus(booking.status) || (cancelled && census.cancellation !== null);
+    const mustConfirm = isPaidLikeBookingStatus(booking.status) || (cancelled && census.cancellation !== null) || groupPaid;
     if (!mustConfirm) return { postings, steps };
     const plan = planConfirmationChargeLines({
       id: booking.id,
@@ -502,10 +508,19 @@ async function backPostBooking(tx: Tx, bookingId: string): Promise<BookingBackPo
 
   const first = await readBookingLedgerCensusRow(tx, bookingId);
   if (!first) return { bookingId, kind: "NOTHING_TO_POST", classes: [] };
-  if (isGroupSettlementOffLedger(first)) return { bookingId, kind: "LISTED_GROUP_SETTLEMENT_OFF_LEDGER" };
+  // A group child with no lines that cannot be posted stays in its class (#3854).
+  const offLedger = isGroupSettlementOffLedger(first);
+  const refuse = (outcome: CannotPost) =>
+    new BackPostRollback(offLedger ? { ...outcome, kind: "LISTED_GROUP_SETTLEMENT_OFF_LEDGER" } : outcome);
 
   const booking = await tx.booking.findUniqueOrThrow({ where: { id: bookingId }, select: BOOKING_SELECT });
   const steps: string[] = [];
+  const group = await planGroupChildBackPost(tx, {
+    census: first,
+    lodgeId: booking.lodgeId,
+    cancelledWithoutSnapshot: booking.status === "CANCELLED" && (booking.events[0]?.snapshot ?? null) === null,
+  });
+  if (group?.kind === "refuse") throw refuse(cannotPost(bookingId, group.reason, group.detail));
 
   // Settlement and credit lines: the live syncs converge the whole booking.
   if (booking.payment) await syncBookingLedgerSettlements({ paymentId: booking.payment.id, store: tx });
@@ -534,17 +549,17 @@ async function backPostBooking(tx: Tx, bookingId: string): Promise<BookingBackPo
     });
   }
 
-  const charges = await planHistoricChargeLines(tx, booking, first);
-  if ("kind" in charges) throw new BackPostRollback(charges);
-  await writeBookingLedgerRows(tx, buildBookingLedgerRows(charges.postings));
-  steps.push(...charges.steps);
+  const charges = await planHistoricChargeLines(tx, booking, first, group !== null);
+  if ("kind" in charges) throw refuse(charges);
+  await writeBookingLedgerRows(tx, buildBookingLedgerRows([...charges.postings, ...(group?.postings ?? [])]));
+  steps.push(...charges.steps, ...(group?.steps ?? []));
 
   // The cancellation, once the stay it takes back is on the ledger.
   const cancellationPosted = first.lines.some((line) => line.anchorKind === "CANCELLATION" && line.side !== "SETTLEMENT");
   if (booking.status === "CANCELLED" && !cancellationPosted && (await bookingHasConfirmationLines(tx, bookingId))) {
-    const kept = await cancellationKept(tx, booking);
+    const kept = group?.cancellationKeptCents != null ? { keptCents: group.cancellationKeptCents } : await cancellationKept(tx, booking);
     if (kept === null) {
-      throw new BackPostRollback(cannotPost(bookingId, "CENSUS_WOULD_NOT_PASS", "the CANCELLED event's snapshot holds no kept or retained figure"));
+      throw refuse(cannotPost(bookingId, "CENSUS_WOULD_NOT_PASS", "the CANCELLED event's snapshot holds no kept or retained figure"));
     }
     await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: booking.lodgeId, ...kept, site: "booking-ledger-back-post" });
     steps.push(`cancellation (kept ${kept.keptCents})`);
@@ -560,7 +575,7 @@ async function backPostBooking(tx: Tx, bookingId: string): Promise<BookingBackPo
       ...(evaluation.coverage.length > 0 ? [`coverage ${evaluation.coverage.join(", ")}`] : []),
       ...(evaluation.integrity.length > 0 ? ["an integrity finding"] : []),
     ].join(", ");
-    throw new BackPostRollback(cannotPost(bookingId, "CENSUS_WOULD_NOT_PASS", `the census would report ${what}`, evaluation));
+    throw refuse(cannotPost(bookingId, "CENSUS_WOULD_NOT_PASS", `the census would report ${what}`, evaluation));
   }
   const inserted = (await lineIds()).filter((id) => !before.has(id)).sort();
   const classes = namedClasses(evaluation);
