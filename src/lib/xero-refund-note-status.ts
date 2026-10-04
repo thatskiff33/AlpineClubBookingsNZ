@@ -59,11 +59,27 @@ export function isPerDeltaRefundNoteLink(metadata: unknown): boolean {
 }
 
 /**
- * #3880: the create row that raised a per-refund note - `createXeroCreditNote`
- * stamps `perDelta` on its request payload as on the link.
+ * #3880 F1: the evidence for a payment's ONE canonical refund note with every
+ * per-refund note left out - the field (`canonicalRefundNoteFromField`), its
+ * links, and its create rows, which `createXeroCreditNote` stamps `perDelta` as
+ * it stamps the link. The booking-repair pass resolves the field from this, so
+ * a per-refund note is neither offered as the field nor read as a conflict.
  */
-export function isPerDeltaRefundNoteOperation(operation: { requestPayload: unknown }): boolean {
-  return asRecord(operation.requestPayload)?.perDelta === true;
+export function canonicalRefundNoteCandidates<
+  L extends { role: string; xeroObjectId: string; metadata: unknown },
+  O extends { requestPayload: unknown; xeroObjectId: string | null },
+>(fieldNoteId: string | null | undefined, links: L[], operations: O[]) {
+  const perDeltaIds = new Set(
+    links.filter((link) => link.role === "REFUND_CREDIT_NOTE" && isPerDeltaRefundNoteLink(link.metadata)).map((link) => link.xeroObjectId),
+  );
+  return {
+    fieldObjectId: canonicalRefundNoteFromField(fieldNoteId, perDeltaIds),
+    links: links.filter((link) => !perDeltaIds.has(link.xeroObjectId)),
+    operations: operations.filter(
+      (operation) =>
+        asRecord(operation.requestPayload)?.perDelta !== true && !(operation.xeroObjectId && perDeltaIds.has(operation.xeroObjectId)),
+    ),
+  };
 }
 
 /** #3880: the payment's per-refund notes, active or not, read on the caller's client. */

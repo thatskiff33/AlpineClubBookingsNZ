@@ -78,7 +78,7 @@ import {
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
 import { formatDateOnly } from "@/lib/date-only";
-import { canonicalRefundNoteFromField, isPerDeltaRefundNoteLink, isPerDeltaRefundNoteOperation } from "@/lib/xero-refund-note-status";
+import { canonicalRefundNoteCandidates } from "@/lib/xero-refund-note-status";
 import {
   decideLateCapture,
   keptLateCaptureInvoiceAsked,
@@ -1321,22 +1321,10 @@ export function classifyBookingContext(
     }
   }
 
-  // #3880 F1: a per-refund note is never the payment's canonical one, so it is
-  // neither a candidate for the field nor a conflict with it.
-  const perDeltaRefundNoteIds = new Set(
-    paymentLinks
-      .filter((link) => link.role === "REFUND_CREDIT_NOTE" && isPerDeltaRefundNoteLink(link.metadata))
-      .map((link) => link.xeroObjectId)
-  );
   const refundCreditNote = payment
     ? resolveObjectFromCandidates({
-        fieldObjectId: canonicalRefundNoteFromField(payment.xeroRefundCreditNoteId, perDeltaRefundNoteIds),
-        links: paymentLinks.filter((link) => !perDeltaRefundNoteIds.has(link.xeroObjectId)),
-        operations: paymentOperations.filter(
-          (operation) =>
-            !isPerDeltaRefundNoteOperation(operation) &&
-            !(operation.xeroObjectId && perDeltaRefundNoteIds.has(operation.xeroObjectId))
-        ),
+        // #3880 F1: never a per-refund note, as the field or as a conflict with it.
+        ...canonicalRefundNoteCandidates(payment.xeroRefundCreditNoteId, paymentLinks, paymentOperations),
         xeroObjectType: "CREDIT_NOTE",
         role: "REFUND_CREDIT_NOTE",
         entityType: "CREDIT_NOTE",

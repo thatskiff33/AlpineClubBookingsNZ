@@ -20,18 +20,26 @@ guard itself and the link lookup live in their own small modules
 (`xero-refund-note-in-flight.ts`, `xero-refund-note-status.ts`).
 
 file: src/lib/xero-credit-notes.ts
-lines: 1199
+lines: 1212
 reason: the in-flight check must sit between the row's own-note leg and its
   coverage read inside `createXeroCreditNote`, and the per-refund marker on the
-  link and the payment-field skip belong to the record the builder writes.
+  link and the payment-field skip belong to the record the builder writes. The
+  second fix round reads and writes the payment's canonical note through the
+  shared helpers at the builder's two existing reads and one write, and records
+  the delta watermark on the row it already writes.
 
 file: src/lib/xero-sync.ts
-lines: 995
+lines: 1008
 reason: the single-active refund-note rule (`normalizePaymentRefundLinkWithClient`)
   and the canonical lookup are the two readers that must skip a per-refund
-  note; the lookup itself was moved out to `xero-refund-note-status.ts`.
+  note; the lookup itself was moved out to `xero-refund-note-status.ts`. The
+  second fix round routes their three reads of the payment's field through the
+  one helper there (`canonicalRefundNoteFromField`), which is an import list and
+  a call each.
 
 file: src/lib/xero-operation-retry.ts
-lines: 1846
+lines: 1854
 reason: the operator retry passes its REQUEUE row and the row's task into the
-  same builder call; two spread lines and one option.
+  same builder call; two spread lines and one option. The second fix round adds
+  the review task to the delta-mode test and a guard on the repair leg's one
+  write of the payment's canonical note.
