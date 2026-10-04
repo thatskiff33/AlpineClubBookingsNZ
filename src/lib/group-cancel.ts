@@ -82,6 +82,10 @@ import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "./bed-alloc
 import { bookingOwner } from "@/lib/booking-owner";
 import { cancelRefundableBaseCents, hasCapturedPayment } from "@/lib/booking-payment-state";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
+import {
+  groupSettledChildCancellationKeptCents,
+  postGroupSettlementRefundLedgerLine,
+} from "@/lib/booking-ledger-group-settlement-sync";
 import { formatCents } from "@/lib/utils";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
@@ -374,6 +378,13 @@ export async function settleGroupBookingOnOrganiserCancel(
   for (const cents of refundByChildId.values()) {
     totalRefundCents += cents;
   }
+  // #3854: the mirror plan as frozen, kept apart from `refundByChildId`, which a
+  // failed card refund clears below: the cancellation keeps the same figure
+  // whether the refund went through now or is replayed from the plan later.
+  const plannedMirrorRefunds = new Map(refundByChildId);
+  const ledgerSettlement = settlement
+    ? { id: settlement.id, source: settlement.source, stripePaymentIntentId: settlement.stripePaymentIntentId }
+    : null;
 
   // Refund + settlement flip, guarded on SUCCEEDED so it fires exactly once
   // across re-drives: the plan survives this flip, so a re-drive after the flip
@@ -583,6 +594,17 @@ export async function settleGroupBookingOnOrganiserCancel(
             { createdByMemberId: sessionUserId, store: tx }
           );
           queuedOperationId = queued.queueOperationId;
+          // #3854: the refund this plan hands back on the child, beside its
+          // mirror, anchored on the settlement that paid it.
+          if (ledgerSettlement) {
+            await postGroupSettlementRefundLedgerLine({
+              store: tx,
+              settlement: ledgerSettlement,
+              bookingId: child.id,
+              lodgeId: child.lodgeId,
+              refundCents: refundForChild,
+            });
+          }
         }
 
         // #3209 (`INV-HOST-041`). The beds are reconciled above; ADULT SUPERVISION
@@ -598,16 +620,24 @@ export async function settleGroupBookingOnOrganiserCancel(
         // never drags in the organiser or the other joiners.
         await reconcileHostingReviewForSystemCancellation(child.id, tx);
         // #3611: the child's stay is taken back under the lock(1) this
-        // transaction took first, and NOTHING is kept on the child: it holds no
-        // settlement line (the organiser paid, through one group intent), so a
-        // fee here would leave owed(child) at the fee. Where the kept money
-        // belongs is #3583's to decide. Posts only for a child confirmed on the
-        // ledger, which today none is — the group settle marks it PAID itself.
+        // transaction took first. #3854: a settled child holds its share of the
+        // settlement as a settlement line, so the club keeps that share less
+        // every refund made or owed on it - this plan's included - and owed(b)
+        // is zero once they post. Posts only for a child confirmed on the
+        // ledger (the group settle confirms it, since #3854).
         await postCancellationLedgerLines({
           store: tx,
           bookingId: child.id,
           lodgeId: child.lodgeId,
-          keptCents: 0,
+          keptCents: ledgerSettlement
+            ? await groupSettledChildCancellationKeptCents(
+                tx,
+                child,
+                mirrorPlan || !ledgerSettlement.stripePaymentIntentId
+                  ? { kind: "mirror", plannedRefundCents: plannedMirrorRefunds.get(child.id) ?? 0 }
+                  : { kind: "per-child", paymentIntentId: ledgerSettlement.stripePaymentIntentId },
+              )
+            : 0,
           site: "group-cancel:organiser-settled-child",
         });
         return queuedOperationId;
@@ -875,6 +905,15 @@ export async function executeGroupSettlementRefundPlan(
         nextRefunded,
         { store: tx }
       );
+      // #3854: the refund line the inline loop would have posted beside this
+      // mirror, under the same key, so the two can never both post.
+      await postGroupSettlementRefundLedgerLine({
+        store: tx,
+        settlement,
+        bookingId: child.id,
+        lodgeId: child.lodgeId,
+        refundCents: nextRefunded,
+      });
       return { applied: true, queuedOperationId: queued.queueOperationId };
     });
     if (!mirrorResult.applied) continue;
