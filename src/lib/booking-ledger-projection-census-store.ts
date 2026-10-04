@@ -25,6 +25,7 @@ import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-cen
 import { INTERNET_BANKING_SETTLEMENT_EVIDENCE_SELECT } from "@/lib/internet-banking-settlement-evidence";
 import { bookingIdOfCreditRow, bookingsCreditRowsWhere } from "@/lib/member-credit-booking-rows";
 import { decodeRawRows } from "@/lib/raw-sql-rows";
+import { buildGroupSettlementRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
 
 const ASC = { id: "asc" } as const;
 
@@ -83,6 +84,10 @@ const CENSUS_SELECT = {
   paymentRecoveryOperations: {
     orderBy: ASC,
     select: { type: true, status: true, amountCents: true, idempotencyKey: true },
+  },
+  // #3854: a group child's settlement, through its organiser's booking.
+  parentBooking: {
+    select: { groupBookingAsOrganiser: { select: { settlement: { select: { id: true, source: true, status: true, refundPlan: true } } } } },
   },
   events: {
     where: { type: "CANCELLED" },
@@ -164,8 +169,10 @@ const CREDIT_SELECT = {
 export function toCensusRow(
   booking: StoredCensusBooking,
   credits: BookingLedgerCensusRow["credits"],
+  inFlightGroupRefundSettlementIds: ReadonlySet<string> = new Set(),
 ): BookingLedgerCensusRow {
   const { payment } = booking;
+  const settlement = booking.organiserSettled ? (booking.parentBooking?.groupBookingAsOrganiser?.settlement ?? null) : null;
   return {
     booking: {
       id: booking.id,
@@ -203,6 +210,9 @@ export function toCensusRow(
     })),
     recoveryOperations: booking.paymentRecoveryOperations,
     cancellation: cancellationOf(booking),
+    groupSettlement: settlement
+      ? { ...settlement, refundRecoveryInFlight: inFlightGroupRefundSettlementIds.has(settlement.id) }
+      : null,
     lines: booking.ledgerLines,
   };
 }
@@ -232,7 +242,28 @@ async function readLedgerTableStatistics(tx: Prisma.TransactionClient): Promise<
 /** Bookings read per page inside the snapshot: bounds memory on a whole history. */
 export const CENSUS_PAGE_SIZE = 500;
 
-type CensusReadStore = Pick<Prisma.TransactionClient, "booking" | "memberCredit">;
+type CensusReadStore = Pick<Prisma.TransactionClient, "booking" | "memberCredit" | "paymentRecoveryOperation">;
+
+/** #3854: which of a page's group settlements have their one pre-#3653 refund-plan retry still in flight. */
+async function inFlightGroupRefunds(tx: CensusReadStore, page: readonly StoredCensusBooking[]): Promise<Set<string>> {
+  const settlementIds = [
+    ...new Set(page.flatMap((booking) => {
+      const id = booking.parentBooking?.groupBookingAsOrganiser?.settlement?.id;
+      return booking.organiserSettled && id ? [id] : [];
+    })),
+  ];
+  if (settlementIds.length === 0) return new Set();
+  const operations = await tx.paymentRecoveryOperation.findMany({
+    where: {
+      idempotencyKey: { in: settlementIds.map(buildGroupSettlementRefundRecoveryIdempotencyKey) },
+      status: { in: ["PENDING", "PROCESSING"] },
+    },
+    orderBy: ASC,
+    select: { idempotencyKey: true },
+  });
+  const inFlight = new Set(operations.map((operation) => operation.idempotencyKey));
+  return new Set(settlementIds.filter((id) => inFlight.has(buildGroupSettlementRefundRecoveryIdempotencyKey(id))));
+}
 
 /**
  * Every booking's evaluation, read in pages of `pageSize` by id inside the
@@ -264,7 +295,10 @@ export async function evaluateBookingLedgerPages(
       const bookingId = bookingIdOfCreditRow(credit);
       if (bookingId) creditsByBooking.set(bookingId, [...(creditsByBooking.get(bookingId) ?? []), credit]);
     }
-    for (const booking of page) evaluations.push(evaluate(toCensusRow(booking, creditsByBooking.get(booking.id) ?? [])));
+    const groupRefundsInFlight = await inFlightGroupRefunds(tx, page);
+    for (const booking of page) {
+      evaluations.push(evaluate(toCensusRow(booking, creditsByBooking.get(booking.id) ?? [], groupRefundsInFlight)));
+    }
     after = page[page.length - 1]!.id;
     if (page.length < pageSize) break;
   }

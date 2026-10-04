@@ -179,6 +179,7 @@ function row(overrides: Partial<BookingLedgerCensusRow> & { lines: CensusLedgerL
     modifications: [],
     recoveryOperations: [],
     cancellation: null,
+    groupSettlement: null,
     ...overrides,
   };
 }

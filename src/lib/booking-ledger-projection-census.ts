@@ -73,6 +73,11 @@ import {
   type ResidualComponent,
 } from "@/lib/booking-ledger-projection-census-classes";
 import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
+import {
+  GROUP_SETTLEMENT_KEY_EXAMPLES,
+  groupSettlementBankRefundCents,
+  groupSettlementSourceDrift,
+} from "@/lib/booking-ledger-projection-census-group";
 import { reviewAdjustmentEvidence, type ReviewAdjustmentEvidence } from "@/lib/booking-ledger-projection-census-review-adjustments";
 
 /**
@@ -176,6 +181,7 @@ const KEY_NAMESPACE_ANCHORS: ReadonlyMap<string, ReadonlySet<LedgerAnchorKind>> 
     [refundKey("r"), ["PAYMENT_REFUND"]],
     [creditKey("c"), ["MEMBER_CREDIT", "CANCELLATION"]],
     [handBackKey("t"), ["REVIEW_TASK"]],
+    ...GROUP_SETTLEMENT_KEY_EXAMPLES.map((key): [string, LedgerAnchorKind[]] => [key, ["GROUP_SETTLEMENT"]]),
   ];
   const map = new Map<string, Set<LedgerAnchorKind>>();
   for (const [key, anchors] of pairs) {
@@ -291,7 +297,9 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
   // re-based from the strands — never carries (#3791). Cancelled: owed(b) == 0
   // once its refunds have posted (design §6, #3611).
   if (cancelled) {
-    if (!confirmed && row.cancellation !== null) {
+    // A group child the organiser settled before #3854 has no snapshot and
+    // can hold a #3653 refund line alone: coverage for the back-post too.
+    if (!confirmed && (row.cancellation !== null || booking.organiserSettled)) {
       coverage.add("NOT_CONFIRMED_ON_LEDGER");
       identities.push(coverageOnly("PRICE", "NOT_CONFIRMED_ON_LEDGER"));
     } else {
@@ -334,8 +342,10 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
       : notApplicable("CREDIT_APPLIED"),
   );
 
-  // 4. REFUNDED: refundedAmountCents == −Σ CARD_REFUND, its residual classified.
-  const cardRefunded = -sumKinds(lines, ["CARD_REFUND"]);
+  // 4. REFUNDED: refundedAmountCents == −Σ CARD_REFUND, its residual classified
+  // — plus an Internet Banking group plan's BANK_REFUND, which the same
+  // transaction counted in the column (#3854).
+  const cardRefunded = -sumKinds(lines, ["CARD_REFUND"]) + groupSettlementBankRefundCents(lines);
   identities.push(
     applies(cardRefunded)
       ? result("REFUNDED", column("refundedAmountCents"), cardRefunded, refundedComponents(row))
@@ -508,7 +518,9 @@ function sourceDrift(row: BookingLedgerCensusRow, line: CensusLedgerLine, review
       if (row.booking.status !== "CANCELLED") return "a cancellation line on a booking that is not cancelled";
       if (line.kind === "CANCELLATION_FEE") {
         // The fee is the kept figure the CANCELLED event froze, less the
-        // change fees that stayed charged (design §5.1).
+        // change fees that stayed charged (design §5.1). A group child's
+        // organiser cancel freezes none (#3854: its kept figure is its share
+        // less the plan's refunds, re-derivable from the rows), so it is skipped.
         const keptCents = row.cancellation?.keptCents ?? null;
         if (keptCents === null) return null;
         const stayingFees = liveLines(row.lines).filter((candidate) => candidate.kind === "CHANGE_FEE").reduce((sum, fee) => sum + fee.amountCents, 0);
@@ -536,6 +548,8 @@ function sourceDrift(row: BookingLedgerCensusRow, line: CensusLedgerLine, review
       if (!credit) return `no credit row ${line.anchorId} on this booking`;
       return line.amountCents === -credit.amountCents ? null : `credit row holds ${credit.amountCents}, line ${line.amountCents}`;
     }
+    case "GROUP_SETTLEMENT":
+      return groupSettlementSourceDrift(row, line);
     case "REVIEW_TASK": {
       const task = row.tasks.find((candidate) => candidate.id === line.anchorId);
       if (!task) return `no task ${line.anchorId} on this booking`;

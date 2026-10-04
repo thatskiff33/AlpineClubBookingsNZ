@@ -19,6 +19,7 @@
 import type { LedgerLineKind, ManualRefundTaskStatus } from "@prisma/client";
 
 import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
+import { inFlightGroupPlanRefundCents } from "@/lib/booking-ledger-projection-census-group";
 import { captureKey, creditKey, refundKey } from "@/lib/booking-ledger-posting-keys";
 import { settlementChainWalker } from "@/lib/booking-ledger-settlement-posting";
 import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
@@ -563,7 +564,7 @@ export function cancelledOwedComponents(row: BookingLedgerCensusRow): ResidualCo
     [
       { name: "IN_FLIGHT_HAND_BACK", cents: handBacks("OPEN") },
       { name: "D2_DISMISSED_HAND_BACK", cents: handBacks("DISMISSED") },
-      { name: "IN_FLIGHT_REFUND", cents: inFlightRefund },
+      { name: "IN_FLIGHT_REFUND", cents: inFlightRefund + inFlightGroupPlanRefundCents(row) },
       { name: "V5_PLANNED_REFUND_SHORT", cents: v5 },
       { name: "UNPOSTED_CREDIT", cents: unpostedCredits(row).reduce((sum, credit) => sum + credit.amountCents, 0) },
       ...knownDefectHistory(row),
