@@ -31,6 +31,8 @@ export interface EligibleMember {
   suggestedStartDate: string;
   suggestedEndDate: string;
   uncoveredNightCount: number;
+  /** Uncovered school-group nights this lodge does not accept this member for (#3819). */
+  schoolNightsNotAccepted?: number;
   fullyCovered: boolean;
 }
 
@@ -337,9 +339,18 @@ export function AssignmentForm({
                                 (covers {m.uncoveredNightCount} uncovered night
                                 {m.uncoveredNightCount !== 1 ? "s" : ""})
                               </p>
-                              {m.fullyCovered && (
+                              {m.fullyCovered && !m.schoolNightsNotAccepted && (
                                 <p className="mt-1 text-xs text-warning">
                                   These dates already have a {label}.
+                                </p>
+                              )}
+                              {(m.schoolNightsNotAccepted ?? 0) > 0 && (
+                                <p className="mt-1 text-xs text-warning">
+                                  {m.schoolNightsNotAccepted} school-group night
+                                  {m.schoolNightsNotAccepted === 1 ? "" : "s"} here
+                                  need a different kind of {label}: this lodge&apos;s
+                                  &ldquo;Who can be hut leader for school bookings&rdquo;
+                                  does not accept this member for them.
                                 </p>
                               )}
                             </div>

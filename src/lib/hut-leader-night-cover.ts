@@ -154,6 +154,13 @@ export type HutLeaderNightCover = {
   coveringShifts(lodgeId: string | null, night: Date): HutLeaderShift[];
   /** Whether any assignment validly covers `night` at `lodgeId`. */
   isCovered(lodgeId: string | null, night: Date): boolean;
+  /**
+   * On a night a school booking stays at `lodgeId`, that lodge's ticked
+   * school hut-leader kinds; null on any other night (#3819).
+   */
+  schoolNightKinds(lodgeId: string | null, night: Date): SchoolHutLeaderKinds | null;
+  /** Whether a loaded booking is a school group's (#3819). */
+  isSchoolBooking(bookingId: string): boolean;
   /** Every assignment loaded, valid or not, for callers that name lodges. */
   readonly shifts: readonly HutLeaderShift[];
 };
@@ -270,6 +277,12 @@ export function buildHutLeaderNightCover(
     return activeStaysOnNight(shift, night, staysByMember).length > 0;
   };
 
+  const schoolNightKinds = (lodgeId: string | null, night: Date) =>
+    schoolBookingsOnNight(lodgeId, night).length === 0
+      ? null
+      : ((lodgeId !== null ? school.kindsByLodge.get(lodgeId) : undefined) ??
+        DEFAULT_SCHOOL_HUT_LEADER_KINDS);
+
   const coveringShifts = (lodgeId: string | null, night: Date) => {
     const present = shifts.filter(
       (shift) =>
@@ -277,10 +290,8 @@ export function buildHutLeaderNightCover(
         shiftClaimsNight(shift, night) &&
         isPresent(shift, night),
     );
-    if (schoolBookingsOnNight(lodgeId, night).length === 0) return present;
-    const ticked =
-      (lodgeId !== null ? school.kindsByLodge.get(lodgeId) : undefined) ??
-      DEFAULT_SCHOOL_HUT_LEADER_KINDS;
+    const ticked = schoolNightKinds(lodgeId, night);
+    if (!ticked) return present;
     return present.filter((shift) =>
       schoolHutLeaderKindsOfShift(shift, night, staysByMember, schoolBookingIds).some(
         (kind) => ticked[kind],
@@ -292,7 +303,28 @@ export function buildHutLeaderNightCover(
     shifts,
     coveringShifts,
     isCovered: (lodgeId, night) => coveringShifts(lodgeId, night).length > 0,
+    schoolNightKinds,
+    isSchoolBooking: (bookingId) => schoolBookingIds.has(bookingId),
   };
+}
+
+/**
+ * May a member staying on `stayBookingId` lead `night` at `lodgeId`? Always,
+ * except on a school night, where only if the kind they would be — a member
+ * on the school booking, or one staying separately — is ticked at that lodge
+ * (#3819). The nightly auto-assign and the eligible-members suggestions ask
+ * this before offering or writing a member, so neither proposes a leader the
+ * cover would not count.
+ */
+export function memberMayLeadNight(
+  cover: HutLeaderNightCover,
+  input: { lodgeId: string | null; night: Date; stayBookingId: string },
+): boolean {
+  const ticked = cover.schoolNightKinds(input.lodgeId, input.night);
+  if (!ticked) return true;
+  return ticked[
+    cover.isSchoolBooking(input.stayBookingId) ? "memberOnBooking" : "memberStayingSeparately"
+  ];
 }
 
 /** The scalar columns every coverage answer needs. */
@@ -357,10 +389,6 @@ export async function loadHutLeaderNightCover(
         .filter((lodgeId): lodgeId is string => lodgeId !== null),
     ),
   ];
-  const shiftLodgeIds = lodgeIdsOf(shifts);
-  if (shiftLodgeIds.length === 0) {
-    return buildHutLeaderNightCover(shifts, []);
-  }
 
   // A school group is "staying" on the nights its booking HOLDS CAPACITY — the
   // capacity engine's own population (`capacityHoldingBookingFilter`), never a
@@ -370,7 +398,10 @@ export async function loadHutLeaderNightCover(
   const schoolBookings = (await db.booking.findMany({
     where: {
       deletedAt: null,
-      lodgeId: { in: shiftLodgeIds },
+      // Every school booking in scope, not only at lodges with assignments:
+      // the auto-assign and the suggestions ask which kinds a night accepts
+      // before any leader exists there.
+      ...(input.scope.kind === "lodge" ? { lodgeId: input.scope.lodgeId } : {}),
       checkIn: { lte: input.to },
       checkOut: { gt: input.from },
       AND: [capacityHoldingBookingFilter(), SCHOOL_GROUP_BOOKING_WHERE],

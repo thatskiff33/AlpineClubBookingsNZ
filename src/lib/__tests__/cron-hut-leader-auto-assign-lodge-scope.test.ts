@@ -39,11 +39,24 @@ vi.mock("@/lib/module-settings", async (importOriginal) => ({
   loadEffectiveModuleFlags: mockFlags,
 }));
 vi.mock("./module-settings", () => ({ loadEffectiveModuleFlags: mockFlags }));
+// #3819: the cover asks a school lodge's ticked kinds; these are the defaults.
 vi.mock("@/lib/lodge-settings", () => ({
   loadHutLeaderLookaheadDays: mockLookahead,
+  loadSchoolHutLeaderKinds: async () => ({
+    teacherOnBooking: false,
+    custodian: true,
+    memberOnBooking: true,
+    memberStayingSeparately: true,
+  }),
 }));
 vi.mock("./lodge-settings", () => ({
   loadHutLeaderLookaheadDays: mockLookahead,
+  loadSchoolHutLeaderKinds: async () => ({
+    teacherOnBooking: false,
+    custodian: true,
+    memberOnBooking: true,
+    memberStayingSeparately: true,
+  }),
 }));
 vi.mock("@/lib/logger", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },

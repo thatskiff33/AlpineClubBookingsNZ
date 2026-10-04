@@ -546,6 +546,8 @@ describe("hut leader auto-assign (D-12)", () => {
     // Their stay holds the job's window (the frozen today, 1 July, plus a
     // one-day lookahead): since #3817 a guest counts only on a night they hold.
     mockPrisma.booking.findMany.mockImplementation(async (args: never) => {
+      // The coverage cover's school-group read (#3819) finds no school here.
+      if ((args as unknown as { where: { AND?: unknown } }).where.AND) return [];
       const typed = args as unknown as {
         select: { guests: { where?: { OR?: Array<{ consentStatus: string | null }> } } };
       };
@@ -586,7 +588,11 @@ describe("hut leader auto-assign (D-12)", () => {
       expect((call as { data: { memberId: string } }).data.memberId).toBe("m-anna");
     }
 
-    const args = mockPrisma.booking.findMany.mock.calls[0][0] as {
+    // The first candidate search, past the cover's school-group read (#3819).
+    const [[firstSearch]] = mockPrisma.booking.findMany.mock.calls.filter(
+      ([call]: unknown[]) => !(call as { where: { AND?: unknown } }).where.AND,
+    );
+    const args = firstSearch as {
       where: { guests: { some: { OR?: unknown } } };
       select: { guests: { where?: { OR?: unknown } } };
     };

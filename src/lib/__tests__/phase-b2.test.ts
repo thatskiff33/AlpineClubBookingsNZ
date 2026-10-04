@@ -644,7 +644,10 @@ describe("#25: Auto-Assign Hut Leaders", () => {
       await autoAssignHutLeaders();
 
       // One sole-adult read per uncovered night, each on a UTC-midnight day.
-      const nights = mockPrisma.booking.findMany.mock.calls.map((call: unknown[]) =>
+      // The cover's school-group read (#3819, filter under AND) is not one.
+      const nights = mockPrisma.booking.findMany.mock.calls
+        .filter((call: unknown[]) => !(call[0] as { where: { AND?: unknown } }).where.AND)
+        .map((call: unknown[]) =>
         (call[0] as { where: { checkIn: { lte: Date } } }).where.checkIn.lte.toISOString(),
       );
       expect(nights).toEqual([

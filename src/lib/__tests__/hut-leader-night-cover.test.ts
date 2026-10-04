@@ -270,7 +270,7 @@ describe("loadHutLeaderNightCover", () => {
 
     const [[args]] = db.booking.findMany.mock.calls as [[{ where: Record<string, unknown> }]];
     expect(args.where).toEqual({
-      lodgeId: { in: ["lodge-a"] },
+      lodgeId: "lodge-a",
       deletedAt: null,
       checkIn: { lte: d("2026-08-31") },
       checkOut: { gt: d("2026-08-01") },
