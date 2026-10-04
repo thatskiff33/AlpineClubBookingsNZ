@@ -814,13 +814,16 @@ edit's own modification note waits the same way: a paid booking's price
 reduction gives back applied credit through the same deallocation - all of a
 credit-paid booking's tiered reduction, or what a card-and-credit booking's
 card basis could not return - and `queueXeroBookingEditSettlement` takes it as
-`appliedCreditGiveBackCents`: the edit's invoice-allocated note, worded as
-account credit, where nothing else was refunded; otherwise an allocated note of
-its own beside the card or bank refund's note or a credit election's
-unallocated one, since one note names one method (`INV-PAY-101`). That second
-note rides the per-share key slot (`reviewTaskKeyParts`) under the scope
-`applied-credit-give-back`, so the edit's own note neither answers for it nor
-folds an equal amount into its key. So the invoice reopened by the deallocation
+`appliedCreditGiveBackCents`: always an allocated note of its own, worded as
+account credit - alone where nothing else was refunded, or beside the card or
+bank refund's note or a credit election's unallocated one, since one note names
+one method (`INV-PAY-101`). It rides the per-share key slot
+(`reviewTaskKeyParts`) under the scope `applied-credit-give-back` (nested under
+a review task's where there is one), so one key identifies it everywhere: the
+edit's own note never answers for it, and the repair pass reads it only there,
+so it can never mint a second. A card booking's deallocation that meets a slice
+whose #1641 allocation is still in its invoice operation waits rather than
+failing. So the invoice reopened by the deallocation
 is closed again and no unallocated note is raised for it. The note is queued
 after the commit, as every edit's is; if that queue fails, the repair pass
 (`MISSING_MODIFICATION_CREDIT_NOTE`) re-queues it at the give-back the edit's
