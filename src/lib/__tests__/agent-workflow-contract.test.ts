@@ -235,9 +235,10 @@ describe("repository agent workflow contract", () => {
     expect(packageJson).toContain('"agent:context": "tsx scripts/agent-context.ts"');
     expect(gitignore).toMatch(/^\/\.artifacts\/$/m);
     // `.claude/` local state stays ignored; only the shared roles are tracked.
-    expect(gitignore).toMatch(/^\*\/\*\*\/\.claude\/$/m);
-    expect(gitignore).toMatch(/^\.claude\/\*$/m);
-    expect(gitignore).toMatch(/^!\.claude\/agents\/$/m);
+    const gitignoreLines = gitignore.split(/\r?\n/);
+    for (const line of [String.raw`*/**/.claude/`, ".claude/" + "*", "!.claude/agents/"]) {
+      expect(gitignoreLines).toContain(line);
+    }
     expect(contextGenerator).toContain("No artifact was written");
     expect(contextGenerator).toContain('runGit(repoRoot, ["ls-files", "-z"])');
 
