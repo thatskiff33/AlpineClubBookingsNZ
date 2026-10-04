@@ -28,6 +28,9 @@ import { parseDateOnly } from "@/lib/date-only";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
+  // #3864: nothing to give back unless a case says so.
+  giveBackAppliedCredit: vi.fn(async () => ({ appliedCreditCents: 0, givenBackCents: 0, payment: null })),
+  paymentUpdate: vi.fn(),
   executeRaw: vi.fn(),
   bookingFindUnique: vi.fn(),
   bookingFindMany: vi.fn(),
@@ -94,6 +97,8 @@ vi.mock("@/lib/payment-recovery", () => ({
 vi.mock("@/lib/member-credit", () => ({
   restoreCreditFromBooking: (...args: unknown[]) =>
     mocks.restoreCreditFromBooking(...args),
+  // #3864: the settle gives back credit a full-price capture left unspent.
+  giveBackAppliedCredit: (...args: unknown[]) => mocks.giveBackAppliedCredit(...args),
   // #3792: the settle takes the member credit-ledger key after its lodge key.
   lockMemberCreditLedger: vi.fn().mockResolvedValue(undefined),
   deriveBookingAppliedCreditCents: (...args: unknown[]) =>
@@ -182,6 +187,7 @@ const tx = {
   },
   payment: {
     upsert: (...args: unknown[]) => mocks.paymentUpsert(...args),
+    update: (...args: unknown[]) => mocks.paymentUpdate(...args),
   },
   paymentTransaction: {
     findFirst: (...args: unknown[]) => mocks.paymentTransactionFindFirst(...args),

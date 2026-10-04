@@ -436,9 +436,10 @@ export async function clampAppliedCreditToBookingPrice(
 
 /**
  * THE GIVE-BACK OF APPLIED CREDIT, the one mechanism (#1887's clamp; #3791,
- * `INV-SSOT`). The clamp above and a credit-paid booking's review share
- * (`edit-financial-review-account-credit.ts`) are its only callers, and #3809
- * is meant to be the next. Under the member's credit-ledger lock and the
+ * `INV-SSOT`). The clamp above, a credit-paid booking's review share
+ * (`edit-financial-review-account-credit.ts`) and the card settle door's
+ * full-price capture (#3864, `payment-reconciliation.ts`) are its only callers,
+ * and #3809 is meant to be the next. Under the member's credit-ledger lock and the
  * deallocation fence it writes one positive `BOOKING_APPLIED` row for what
  * `giveBackCentsOf` returns, capped at the credit applied, and posts it through
  * the credit sync.

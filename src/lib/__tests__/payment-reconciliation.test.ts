@@ -14,6 +14,9 @@ const CLUB_ZONE = "Pacific/Auckland";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
+  // #3864: nothing to give back unless a case says so.
+  giveBackAppliedCredit: vi.fn(async () => ({ appliedCreditCents: 0, givenBackCents: 0, payment: null })),
+  paymentUpdate: vi.fn(),
   // #3792: the settle's member credit-ledger key.
   lockMemberCreditLedger: vi.fn(),
   // #3580: the ledger's one write delegate, so a settle's charge lines are
@@ -105,6 +108,8 @@ vi.mock("@/lib/payment-recovery", () => ({
 vi.mock("@/lib/member-credit", () => ({
   restoreCreditFromBooking: (...args: unknown[]) =>
     mocks.restoreCreditFromBooking(...args),
+  // #3864: the settle gives back credit a full-price capture left unspent.
+  giveBackAppliedCredit: (...args: unknown[]) => mocks.giveBackAppliedCredit(...args),
   // #3792: the settle takes the member credit-ledger key after its lodge key.
   lockMemberCreditLedger: (...args: unknown[]) => mocks.lockMemberCreditLedger(...args),
   deriveBookingAppliedCreditCents: (...args: unknown[]) =>
@@ -198,6 +203,7 @@ const tx = {
   },
   payment: {
     upsert: (...args: unknown[]) => mocks.paymentUpsert(...args),
+    update: (...args: unknown[]) => mocks.paymentUpdate(...args),
   },
 };
 
@@ -733,6 +739,11 @@ describe("markBookingPaymentSucceeded", () => {
         amountCents: EFFECTIVE,
         creditAppliedCents: APPLIED,
       });
+      // #3864: the credit covered exactly what the card did not, so none goes back.
+      const [giveBack] = mocks.giveBackAppliedCredit.mock.calls[0] as unknown as [
+        { giveBackCentsOf: (applied: number) => number },
+      ];
+      expect(giveBack.giveBackCentsOf(APPLIED)).toBe(0);
     });
 
     it("still accepts a legacy full-price capture (mirror credit = 0)", async () => {
@@ -748,6 +759,15 @@ describe("markBookingPaymentSucceeded", () => {
         amountCents: FINAL,
         creditAppliedCents: 0,
       });
+      // #3864: the card paid it all, so every cent of applied credit goes back
+      // and the existing Payment row's mirror is written to match.
+      const [giveBack] = mocks.giveBackAppliedCredit.mock.calls[0] as unknown as [
+        { giveBackCentsOf: (applied: number) => number },
+      ];
+      expect(giveBack.giveBackCentsOf(3000)).toBe(3000);
+      expect(mocks.paymentUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { creditAppliedCents: 0 } }),
+      );
     });
 
     it("rejects an amount that is neither full nor effective", async () => {

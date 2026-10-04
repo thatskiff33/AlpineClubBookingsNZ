@@ -38,6 +38,7 @@ import {
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import {
   deriveBookingAppliedCreditCents,
+  giveBackAppliedCredit,
   lockMemberCreditLedger,
   restoreCreditFromBooking,
 } from "@/lib/member-credit";
@@ -238,6 +239,8 @@ type StripeSettlementSource = {
   paymentIntentId: string;
   amountCents: number;
   paymentMethodId: string | null;
+  /** #3864: for the applied-credit give-back, resolved before the transaction. */
+  format: ClubFormat;
 };
 
 /**
@@ -1287,7 +1290,9 @@ async function settleBookingPaymentInTransaction(
     // settlement of a full-price booking's invoice, so admitting it can never
     // under-charge the member; new bookings never mint a full-price intent, so the
     // leniency does not re-open the double-charge. The ledger read is skipped
-    // entirely for a full-price capture.
+    // entirely for a full-price capture. #3864: a full-price intent minted BEFORE
+    // credit was applied can still capture after it, so the leniency is safe only
+    // because the give-back below returns the credit such a capture leaves unspent.
     //
     // The manual path has no arriving amount to validate: it DERIVED the
     // effective price under the MEMBER-CREDIT lock in prepareManualSettlement,
@@ -1700,6 +1705,35 @@ async function settleBookingPaymentInTransaction(
     // writer is never clobbered; see clearStaleCreditElection.
     const staleCreditElectionCents = await clearStaleCreditElection(tx, booking);
 
+    // #3864 (`INV-PAY-102`), the same rule for credit already SPENT: the card
+    // capture is what the member paid, so credit stays spent only for what it
+    // did not cover (`finalPriceCents - amountCents`, the mirror's figure). A
+    // full-price intent minted before an election was spent leaves that credit
+    // unspent once it captures; it goes back to the member's balance through
+    // the one give-back, and the mirror is written to match, so the member never
+    // pays by card AND by credit (#1641's double pay). Zero on every ordinary
+    // effective-price capture. Under the member key taken above (INV-LOCK-002).
+    let givenBackCreditCents = 0;
+    if (settlement.kind === "stripe") {
+      if (settleCreditLedgerMemberId) {
+        ({ givenBackCents: givenBackCreditCents } = await giveBackAppliedCredit(
+          {
+            memberId: settleCreditLedgerMemberId,
+            bookingId: booking.id,
+            giveBackCentsOf: (appliedCreditCents) =>
+              appliedCreditCents - mirrorCreditAppliedCents,
+            description: `Applied credit returned: booking ${booking.id.slice(0, 8)} was paid in full by card`,
+            format: settlement.format,
+          },
+          tx
+        ));
+      }
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: { creditAppliedCents: mirrorCreditAppliedCents },
+      });
+    }
+
     await reconcileBedAllocationsForBookingWithLodgeLockHeld({
       bookingId: booking.id,
       db: tx,
@@ -1870,6 +1904,7 @@ async function settleBookingPaymentInTransaction(
       paymentId: payment.id,
       bumpedBookingIds: [] as string[],
       staleCreditElectionCents,
+      givenBackCreditCents,
     };
 }
 
@@ -1893,6 +1928,7 @@ export async function markBookingPaymentSucceeded({
       paymentIntentId,
       amountCents,
       paymentMethodId,
+      format,
     })
   );
 
@@ -1909,10 +1945,14 @@ export async function markBookingPaymentSucceeded({
     throw new Error("Unexpected manual settlement outcome on the Stripe path");
   }
 
-  if (
-    reconciliation.outcome === "paid" &&
-    reconciliation.staleCreditElectionCents != null
-  ) {
+  // #3864: credit the capture gave back is reported the same way as an
+  // election it cleared — both are credit the member asked to spend and kept.
+  const unspentCreditCents =
+    reconciliation.outcome === "paid"
+      ? (reconciliation.staleCreditElectionCents ?? 0) +
+        reconciliation.givenBackCreditCents
+      : 0;
+  if (reconciliation.outcome === "paid" && unspentCreditCents > 0) {
     // #2265 (#2319). Post-commit, outside the transaction: the member paid the
     // full price while holding credit they had asked to spend, so say so on
     // their booking history and put it in front of an operator who can decide
@@ -1925,7 +1965,7 @@ export async function markBookingPaymentSucceeded({
       memberLastName: bookingOwner(reconciliation.booking).member.lastName,
       checkIn: reconciliation.booking.checkIn,
       checkOut: reconciliation.booking.checkOut,
-      electionCents: reconciliation.staleCreditElectionCents,
+      electionCents: unspentCreditCents,
       paidAmountCents: amountCents,
       source: "payment-reconciliation",
       reference: paymentIntentId,
