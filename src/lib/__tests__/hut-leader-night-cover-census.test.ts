@@ -212,14 +212,18 @@ describe("hut-leader coverage census (#3818, INV-DATE-031)", () => {
     );
   });
 
-  it("the school writer still stamps the checkout day the helper derives teacher presence from", () => {
-    // `isSchoolRowPresentOnNight` reads a SCHOOL_BOOKING row's nights as
-    // [startDate, endDate) BECAUSE the school writer stamps request.checkIn ..
-    // request.checkOut. If the writer changes (lane C, #3819), change the
-    // helper's school branch in the same PR.
+  it("the school writer stamps the night before checkout as the teacher's last night (#3819)", () => {
+    // A teacher row claims request.checkIn .. request.checkOut − 1, the
+    // school's own nights (INV-DATE-002). The helper no longer derives anything
+    // from the row's last day — a teacher is present only while a school
+    // booking stays — but a writer drifting back to the checkout day would
+    // still claim, and email, a night the school is not there.
     const source = read("src/lib/school-booking-request.ts");
     expect(source).toMatch(
-      /hutLeaderAssignment\.create\(\{[\s\S]{0,200}?startDate:\s*request\.checkIn,\s*endDate:\s*request\.checkOut,[\s\S]{0,600}?source:\s*HutLeaderAssignmentSource\.SCHOOL_BOOKING/,
+      /const teacherLastNight = dateOnlyInstantOf\(\s*addCalendarDays\(calendarDateOfDateOnlyInstant\(request\.checkOut\), -1\),?\s*\)/,
+    );
+    expect(source).toMatch(
+      /hutLeaderAssignment\.create\(\{[\s\S]{0,200}?startDate:\s*request\.checkIn,\s*endDate:\s*teacherLastNight,[\s\S]{0,600}?source:\s*HutLeaderAssignmentSource\.SCHOOL_BOOKING/,
     );
   });
 });

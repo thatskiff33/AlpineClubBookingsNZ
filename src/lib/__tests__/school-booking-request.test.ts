@@ -17,6 +17,7 @@ vi.mock("@/lib/prisma", () => ({
       update: vi.fn(),
     },
     bookingRequestSettings: { findUnique: vi.fn() },
+    lodgeSettings: { findUnique: vi.fn() },
     member: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     // #2364: the hosting review is reconciled inside the approving/holding
     // transaction, so every prisma/tx double a booking-writing path runs
@@ -703,11 +704,13 @@ describe("approveSchoolBookingRequest", () => {
     mockedModuleEnabled.mockResolvedValue(true);
     mockedSeasonFindMany.mockResolvedValue(seasonWithRates() as never);
     mockedGroupDiscount.mockResolvedValue(null as never);
-    // Existing conversion tests specify the legacy enabled policy. Each OFF
-    // case below overrides this explicitly, so the setting is part of the
-    // behaviour under test rather than ambient mock state.
-    vi.mocked(prisma.bookingRequestSettings.findUnique).mockResolvedValue({
-      assignSchoolTeachersAsHutLeaders: true,
+    // Existing conversion tests run at a lodge that ticks teachers (#3819: the
+    // per-lodge setting replaced #3416's club-wide switch). Each OFF case below
+    // overrides this explicitly, so the setting is part of the behaviour under
+    // test rather than ambient mock state. Every lodge reads this own row.
+    vi.mocked(prisma.lodgeSettings.findUnique).mockResolvedValue({
+      capacity: null,
+      schoolHutLeaderTeacherOnBooking: true,
     } as never);
     vi.mocked(prisma.lodge.findFirst).mockResolvedValue({ id: "lodge-1" } as never);
 
@@ -1079,8 +1082,20 @@ describe("approveSchoolBookingRequest", () => {
     // Teachers carry the same non-member SCHOOL role as the school contact.
     expect(teacherMemberArgs.role).toBe("SCHOOL");
     expect(vi.mocked(prisma.hutLeaderAssignment.create)).toHaveBeenCalledTimes(1);
+    // #3819: the teacher leads the school's nights, first to LAST: the night
+    // before checkout, never the checkout day (INV-DATE-002). The PIN email
+    // states the same span.
+    expect(vi.mocked(prisma.hutLeaderAssignment.create).mock.calls[0]![0].data).toMatchObject({
+      startDate: CHECK_IN,
+      endDate: new Date("2026-08-02T00:00:00.000Z"),
+    });
     expect(mockedSendPin).toHaveBeenCalledWith(
-      expect.objectContaining({ email: "tana@school.test", pin: "246810" })
+      expect.objectContaining({
+        email: "tana@school.test",
+        pin: "246810",
+        startDate: CHECK_IN,
+        endDate: new Date("2026-08-02T00:00:00.000Z"),
+      })
     );
 
     expect(mockedEnqueueInvoice).toHaveBeenCalledWith(
@@ -1092,10 +1107,28 @@ describe("approveSchoolBookingRequest", () => {
     expect(mockedSendOwnerSubstitution).not.toHaveBeenCalled();
   });
 
-  it("keeps teacher guests and school contact people without hut-leader PINs when the policy is off (#3416)", async () => {
+  it("refuses, writing nothing, when the default lodge moves between the hut-leader setting read and the lock (#3819)", async () => {
+    // A null-lodge request: the setting is read for the default lodge before
+    // the transaction, and the transaction re-resolves the default.
     mockedFindUnique.mockResolvedValue(schoolRequest() as never);
-    vi.mocked(prisma.bookingRequestSettings.findUnique).mockResolvedValue({
-      assignSchoolTeachersAsHutLeaders: false,
+    let defaultReads = 0;
+    vi.mocked(prisma.lodge.findFirst).mockImplementation((async () => ({
+      id: defaultReads++ === 0 ? "lodge-1" : "lodge-9",
+    })) as never);
+
+    await expect(
+      approveSchoolBookingRequest({ requestId: "req-school", adminMemberId: "admin-1" }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(prisma.lodgeSettings.findUnique).toHaveBeenCalledWith({ where: { id: "lodge-1" } });
+    expect(prisma.booking.create).not.toHaveBeenCalled();
+    expect(prisma.hutLeaderAssignment.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps teacher guests and school contact people without hut-leader PINs when the lodge does not tick teachers (#3416, #3819)", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+    vi.mocked(prisma.lodgeSettings.findUnique).mockResolvedValue({
+      capacity: null,
+      schoolHutLeaderTeacherOnBooking: false,
     } as never);
 
     const result = await approveSchoolBookingRequest({
@@ -1714,6 +1747,8 @@ describe("approveSchoolBookingRequest", () => {
     const hutLeaderArgs = vi.mocked(prisma.hutLeaderAssignment.create).mock
       .calls[0][0].data as Record<string, unknown>;
     expect(hutLeaderArgs.lodgeId).toBe("lodge-2");
+    // #3819: and it was THAT lodge's setting that allowed it.
+    expect(prisma.lodgeSettings.findUnique).toHaveBeenCalledWith({ where: { id: "lodge-2" } });
     // #2926: the row carries its own provenance, and this is the ONLY writer
     // that stamps SCHOOL_BOOKING. It is what takes teacher rows out of the
     // hut-leader overlap predicate, so losing it here silently restores the
