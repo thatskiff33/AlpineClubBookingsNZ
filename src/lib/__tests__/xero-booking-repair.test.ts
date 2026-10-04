@@ -6768,4 +6768,55 @@ describe("a refund request's own note never answers for the payment's refund not
     const booking = await run({ operations: [requestNote({ requestPayload: null })] });
     expect(actionsNamingRequestNote(booking.actions)).toEqual([]);
   });
+
+  // Review F1 at a19beb492: the refunded total net of each request's own note
+  // is what the cancellation's note answers, so an appeal-only refund is no gap.
+  const ambiguousNote = expect.objectContaining({
+    code: "MANUAL_REVIEW_REQUIRED",
+    summary: expect.stringContaining("missing Xero refund note amount cannot be derived"),
+  });
+
+  it("raises nothing when the request's note answers the whole refunded total", async () => {
+    const booking = await run({ operations: [requestNote()], payment: { refundedAmountCents: 3000 } });
+    expect(booking.findings).not.toContainEqual(ambiguousNote);
+    expect(booking.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
+  });
+
+  it("recovers the request's amount from its link when the payload is gone", async () => {
+    const booking = await run({
+      operations: [requestNote({ requestPayload: null })],
+      payment: { refundedAmountCents: 3000 },
+    });
+    expect(booking.findings).not.toContainEqual(ambiguousNote);
+  });
+
+  it("sends it to review when a request's amount cannot be recovered", async () => {
+    const booking = await run({
+      operations: [requestNote({ requestPayload: { refundRequestId: "rr_1" } })],
+      links: [{ ...requestLink, metadata: { refundRequestId: "rr_1" } }],
+      payment: { refundedAmountCents: 3000 },
+    });
+    expect(booking.findings).toContainEqual(ambiguousNote);
+  });
+
+  // Review F2 at a19beb492: no other arm reads a request's note, so its own
+  // failed create is reported here, with its Retry and its own wording.
+  it("reports a request's failed note with its Retry", async () => {
+    const booking = await run({
+      operations: [requestNote({ status: "FAILED", xeroObjectId: null, xeroObjectType: null })],
+      links: [],
+      payment: { refundedAmountCents: 3000 },
+    });
+    expect(booking.findings).toContainEqual(
+      expect.objectContaining({
+        code: "BLOCKED_BY_XERO_OPERATION",
+        summary: expect.stringContaining("A refund request's Xero refund credit note failed"),
+        actions: [expect.objectContaining({ key: "retry:operation_request_note" })],
+      })
+    );
+    expect(booking.actions.map((action) => action.key)).toContain("retry:operation_request_note");
+    expect(booking.findings.map((finding) => finding.summary)).not.toContainEqual(
+      expect.stringContaining("cancelled booking cash refund")
+    );
+  });
 });

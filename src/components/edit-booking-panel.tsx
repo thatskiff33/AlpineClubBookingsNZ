@@ -56,7 +56,7 @@ import {
   renamedGuestsForDependantCheck,
 } from "@/lib/booking-dependant-identity-doors";
 import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
-import { PromoCodeCard } from "@/components/edit-booking/promo-code-card";
+import { hasSeveralPromoCodes, PromoCodeCard } from "@/components/edit-booking/promo-code-card";
 import { ReviewJustificationField } from "@/components/edit-booking/review-justification-field";
 import {
   exceptionProposalSignature,
@@ -370,6 +370,9 @@ export function EditBookingPanel({
     : !booking.editPolicy.checkInEditable;
   const isInProgressEdit =
     !overrideEnabled && booking.editPolicy.mode === "in-progress";
+  // In-progress and override edits never touch promo codes. A booking carrying
+  // several codes is NOT locked here: the card shows the list editor where the
+  // club's `multiPromoCodes` switch is on, and C3's read-only card otherwise.
   const promoLocked = isInProgressEdit || overrideEnabled;
 
   function handleCheckInChange(value: string) {
@@ -1057,7 +1060,9 @@ export function EditBookingPanel({
 
   // #2266: the shared PromoCodeInput validated (or cleared) a new code.
   function handleNewPromoApplied(result: PromoResult | null) {
-    if (promoLocked) return;
+    // #3828: the one-code request would release a several-code booking's
+    // other codes (and the server refuses it), so it is never staged there.
+    if (promoLocked || hasSeveralPromoCodes(booking)) return;
     setAppliedNewPromo(result);
     setPrefillPromoCode(undefined);
     if (result?.code) {
@@ -1797,7 +1802,7 @@ export function EditBookingPanel({
         }
       />
 
-      {/* Promo Code */}
+      {/* Promo Code(s) */}
       {!promoLocked && (
         <PromoCodeCard
           bookingId={booking.id}

@@ -219,6 +219,11 @@ export function PromoCodeCard({
     );
   }
 
+  // #3828: with the switch off (or not yet answered), a several-code booking's
+  // codes are shown read-only — the one-code controls below would release
+  // every other code.
+  if (hasSeveralPromoCodes({ promoLines })) return <SeveralPromoCodesCard promoLines={promoLines} />;
+
   return (
     <Card>
       <CardHeader>
@@ -344,6 +349,57 @@ export function PromoCodeCard({
             {quoteRefusal && <p className="text-sm text-danger-11">{quoteRefusal}</p>}
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * #3828: does the booking carry several promo codes? Then the one-code
+ * controls never show: `PromoCodeCard` renders #3492's list editor when the
+ * club's `multiPromoCodes` switch is on, and `SeveralPromoCodesCard` otherwise.
+ */
+export function hasSeveralPromoCodes(booking: { promoLines?: ReadonlyArray<unknown> }): boolean {
+  return (booking.promoLines?.length ?? 0) > 1;
+}
+
+/**
+ * #3828: a booking carrying several promo codes where #3492's list editor is
+ * not offered (the club's `multiPromoCodes` switch is off, or has not yet
+ * answered). The one-code controls would send the legacy one-code request,
+ * which replaces or releases EVERY code (and the server refuses it), so the
+ * codes are shown read-only. Renders nothing for one code or none.
+ */
+export function SeveralPromoCodesCard({
+  promoLines,
+}: {
+  promoLines: ReadonlyArray<PromoInfo & { amountCents: number }> | undefined;
+}) {
+  const format = useClubFormat();
+  if (!promoLines || !hasSeveralPromoCodes({ promoLines })) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Promo Codes</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <ul className="space-y-1">
+          {promoLines.map((line) => (
+            <li key={line.code}>
+              <span className="font-medium">
+                {line.workPartyEventName ? `Working bee: ${line.workPartyEventName}` : line.code}
+              </span>
+              <span className="text-sm text-muted-foreground ml-2">
+                ({formatSignedCents(line.amountCents, format)})
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p className="text-sm text-muted-foreground">
+          This booking has more than one promo code, and codes on a booking like this
+          can&apos;t be added, removed or swapped here. Any other change you make
+          re-prices them.
+        </p>
       </CardContent>
     </Card>
   );

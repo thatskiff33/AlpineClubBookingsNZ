@@ -5,10 +5,9 @@
  * `booking-modification-lines.ts` is at its size budget.
  */
 import {
-  bookingPromoRedemptions,
+  bookingPromoCodeAdjustments,
   type PromoRedemptionCarrier,
 } from "@/lib/booking-promo-redemptions";
-import type { PromoSideCodes } from "@/lib/booking-modification-promo-delta";
 import {
   computeModificationPriceLines,
   diffBookingPricing,
@@ -81,47 +80,35 @@ type PromoSideRedemption = {
   promoCode?: { code: string } | null;
 };
 
-function promoSideCodes(
-  carrier: PromoRedemptionCarrier<PromoSideRedemption> | null | undefined,
-): PromoSideCodes {
-  return bookingPromoRedemptions(carrier).flatMap((redemption) =>
-    redemption.promoCode
-      ? [{ code: redemption.promoCode.code, amountCents: redemption.priceAdjustmentCents }]
-      : [],
-  );
-}
-
 /**
  * Attach each side's per-code figures, but ONLY where either side carries more
  * than one code: a one-code edit's sides — and so its stored lines and its
  * ledger postings — are exactly what its site composed. The after side is
- * re-read in the edit's own transaction, after its re-price was written; a
- * read that cannot be made leaves the sides as composed, so the edit stores the
- * single aggregate line rather than none.
+ * re-read in the edit's own transaction, after its re-price was written.
+ *
+ * A failed read is NOT recovered here. On Postgres a failed statement aborts
+ * the interactive transaction, so there is nothing left to read the aggregate
+ * line through; the error reaches `computeModificationPriceLines`' narration
+ * guard, which logs it and stores no lines, and the transaction itself fails
+ * as it would on any other failed statement.
  */
 async function withPromoCodeSides(
   sides: ModificationPricingSides,
   context: Parameters<typeof computeModificationPricing>[0],
 ): Promise<ModificationPricingSides> {
   if (!context.promoCodes) return sides;
-  const before = promoSideCodes(context.promoCodes.before);
+  const before = bookingPromoCodeAdjustments(context.promoCodes.before);
   if (before.length === 0 && sides.after.promoAdjustmentCents === 0) return sides;
-  let after: PromoSideCodes;
-  try {
-    const rows = await context.promoCodes.store.promoRedemption.findMany({
-      where: { bookingId: context.bookingId },
-      select: {
-        id: true,
-        applicationOrder: true,
-        priceAdjustmentCents: true,
-        promoCode: { select: { code: true } },
-      },
-    });
-    if (!Array.isArray(rows)) return sides;
-    after = promoSideCodes({ promoRedemptions: rows });
-  } catch {
-    return sides;
-  }
+  const rows = await context.promoCodes.store.promoRedemption.findMany({
+    where: { bookingId: context.bookingId },
+    select: {
+      id: true,
+      applicationOrder: true,
+      priceAdjustmentCents: true,
+      promoCode: { select: { code: true } },
+    },
+  });
+  const after = bookingPromoCodeAdjustments({ promoRedemptions: rows });
   if (before.length <= 1 && after.length <= 1) return sides;
   return {
     before: { ...sides.before, promoByCode: before },

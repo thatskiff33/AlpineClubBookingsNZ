@@ -1340,7 +1340,7 @@ export function classifyBookingContext(
 
   if (payment) addUnsettledRefundCreditNoteFindings(findings, actionMap, booking.id, context.paymentRefundPaymentLinks, paymentOperations);
   if (payment && refundCreditNote) {
-    const refundAmountCents = getCashCancellationRefundCandidateCents(booking, paymentOperations);
+    const refundAmountCents = getCashCancellationRefundCandidateCents(booking, paymentOperations, paymentLinks);
     if (refundAmountCents !== null && refundAmountCents > 0) {
       addXeroAmountMismatchFinding({
         findings,
@@ -2165,7 +2165,7 @@ export function classifyBookingContext(
     }
 
     if (primaryInvoice && !refundCreditNote) {
-      const cashCancellationRefundCents = getCashCancellationRefundCandidateCents(booking, paymentOperations);
+      const cashCancellationRefundCents = getCashCancellationRefundCandidateCents(booking, paymentOperations, paymentLinks);
       if (cashCancellationRefundCents === null) {
         const action = addAction(
           actionMap,

@@ -457,7 +457,7 @@ describe("#3368: the three families stage 4 (#3369) has to answer for", () => {
 
 /** Measured, not counted by hand. Re-measure by running this test. */
 const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
-  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts:231",
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts:234",
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer.ts:38",
   "src/app/(authenticated)/bookings/[id]/page.tsx:201",
   "src/app/(authenticated)/bookings/page.tsx:183",
@@ -475,7 +475,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/confirm-payment/route.ts:85",
   "src/app/api/bookings/[id]/exception-requests/route.ts:142",
   "src/app/api/bookings/[id]/guests/route.ts:340",
-  "src/app/api/bookings/[id]/modify-quote/route.ts:360",
+  "src/app/api/bookings/[id]/modify-quote/route.ts:361",
   "src/app/api/bookings/[id]/notes/route.ts:48",
   "src/app/api/bookings/[id]/refund-request/route.ts:250",
   "src/app/api/bookings/[id]/refund-request/route.ts:47",

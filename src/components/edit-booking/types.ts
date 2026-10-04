@@ -94,8 +94,13 @@ export interface BookingData {
   discountCents: number;
   promoAdjustmentCents: number;
   promo: PromoInfo | null;
-  // #3828: a booking carrying several codes, one row per code in the booker's
-  // order (`promo` is then null). #3492's list editor starts from it.
+  /**
+   * #3828: set (with `promo: null`) when the booking carries several codes,
+   * each with its own adjustment, in the booker's order. #3492's list editor
+   * starts from it where the club's `multiPromoCodes` switch is on; elsewhere
+   * the panel shows the codes read-only, because the legacy one-code request
+   * would release the other codes.
+   */
   promoLines?: Array<PromoInfo & { amountCents: number }>;
   canEditNonMemberGuestNames: boolean;
   // Fully paid: only an identity-preserving spelling correction is allowed on a

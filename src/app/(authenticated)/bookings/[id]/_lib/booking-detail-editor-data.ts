@@ -1,4 +1,7 @@
-import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
+import {
+  bookingPromoCodeAdjustments,
+  bookingPromoRedemptions,
+} from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import type { auth } from "@/lib/auth";
@@ -235,8 +238,8 @@ export async function buildBookingDetailEditorData({
     finalPriceCents: booking.finalPriceCents,
     // #3826: the editor shows and edits one code. #3828: a booking carrying
     // several shows one money row per code (`promoLines`) and offers no
-    // one-code edit (`promo: null`) until epic #3813's chips child (C4)
-    // widens the panel.
+    // one-code edit (`promo: null`); #3492's list editor edits them where the
+    // club's `multiPromoCodes` switch is on.
     ...bookingDetailPromoFields(booking),
     hasNonMembers: booking.hasNonMembers,
     nonMemberHoldUntil: booking.nonMemberHoldUntil?.toISOString() ?? null,
@@ -364,12 +367,17 @@ function bookingDetailPromoFields(booking: {
     const promoCode = redemptions[0]?.promoCode;
     return { promo: promoCode ? describe(promoCode) : null };
   }
+  const byCode = new Map(
+    redemptions.flatMap((redemption) =>
+      redemption.promoCode ? [[redemption.promoCode.code, redemption.promoCode] as const] : [],
+    ),
+  );
   return {
     promo: null,
-    promoLines: redemptions.flatMap((redemption) =>
-      redemption.promoCode
-        ? [{ ...describe(redemption.promoCode), amountCents: redemption.priceAdjustmentCents }]
-        : [],
-    ),
+    // The one projection (`bookingPromoCodeAdjustments`), each row described.
+    promoLines: bookingPromoCodeAdjustments(booking).flatMap((line) => {
+      const promoCode = byCode.get(line.code);
+      return promoCode ? [{ ...describe(promoCode), amountCents: line.amountCents }] : [];
+    }),
   };
 }

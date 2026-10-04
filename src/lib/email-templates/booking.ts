@@ -16,13 +16,13 @@ import {
   bookingModificationSummaryRows,
   bookingModificationTypeLabel,
   promoAdjustmentSummaryRows,
-  type PromoCodeAdjustment,
   resolvePromoAdjustmentCents,
   resolveUnpaidCreditNetting,
   settledByPaymentCents,
   unpaidCreditNoteInput,
   unpaidMoneySummaryRows,
 } from "@/lib/booking-money-lines";
+import type { PromoCodeAdjustment } from "@/lib/booking-promo-redemptions";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
 import { bookingModifiedRefundSentence } from "@/lib/booking-modified-email-copy";
 import { escapeHtml } from "./escape";
@@ -104,8 +104,7 @@ export function bookingConfirmedTemplate(
     discountCents?: number;
     promoAdjustmentCents?: number;
     promoCode?: string;
-    /** #3828: each code's own adjustment, for one row per code. */
-    promoLines?: ReadonlyArray<PromoCodeAdjustment>;
+    promoLines?: ReadonlyArray<PromoCodeAdjustment>; // #3828: each code's own row
     // #2328: account credit applied to this booking, read off the ledger by
     // the sender and threaded through unchanged. Absent/zero renders no credit
     // lines and leaves the message byte-for-byte as it was.
@@ -187,9 +186,8 @@ export function bookingConfirmedTemplate(
     options?.promoCode,
     options?.promoLines,
   )) {
-    // The shared rows are unescaped plain text (the flat token path needs them
-    // raw); the promo code inside the label is club-entered data, so escape at
-    // this HTML edge.
+    // The shared rows are raw plain text (the flat token path needs them so); the
+    // club-entered promo code inside the label is escaped at this HTML edge.
     rows.push({ label: escapeHtml(row.label), value: escapeHtml(row.value) });
   }
 

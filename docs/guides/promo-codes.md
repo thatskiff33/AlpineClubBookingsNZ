@@ -232,7 +232,10 @@ module on they can add several and change their order with **Move earlier**
 and **Move later** beside each code; every amount on the review step is the
 amount in that order. Editing a booking saves the whole list, in its new
 order. With the module **off**, the chips are still offered but a booking takes
-one code, exactly as before.
+one code, exactly as before — and a booking that already carries several codes
+(the module was on when they were added) shows them read-only on its edit
+panel: they cannot be added, removed or swapped until the module is back on,
+because a one-code change would release every other member's code.
 
 **Whose codes are shown is a privacy decision.** A guest's codes appear only
 when the guest is in the booker's family, or is a member from outside the
@@ -297,6 +300,7 @@ That is the intended correction, not a fault.
 | "Only one promo code can be used on a booking" | The **Several promo codes on one booking** module is off | Turn it on (Admin → Modules) once the upgrade that added it has fully cut over |
 | A guest's code does not appear as a chip | The guest is from outside the booker's family and has not accepted yet (on a new booking, no outside guest's codes appear at all), or the code is inactive, expired, used up, or not allowed at this lodge | Ask the guest to accept their place; the chip then appears on the booking's edit panel. Check the code's settings otherwise |
 | The booker cannot add a second chip | The **Several promo codes on one booking** module is off, so a booking takes one code | Turn it on (Admin → Modules) once the upgrade that added it has fully cut over |
+| A booking's edit panel lists its codes but offers no way to change them | The booking carries several codes and the **Several promo codes on one booking** module is off | Turn it on (Admin → Modules); other changes to the booking still re-price its codes meanwhile |
 | "Too many requests" while choosing codes | The guest-code lookup is limited to 30 a quarter-hour per member | Wait a few minutes; an ordinary booking uses a handful |
 
 ## Related links

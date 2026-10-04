@@ -58,6 +58,7 @@ import {
   resolveHutFeeLineItemCode,
 } from "@/lib/xero-hut-fee-line-codes";
 import {
+  isPromoAdjustmentLineDescription,
   planPromoAdjustmentLines,
   promoAdjustmentLineItems,
   promoAdjustmentLineRecord,
@@ -1242,8 +1243,7 @@ function mergeBookingInvoiceLineItemDescriptions(
     if (
       normalizedDescription === "discount" ||
       normalizedDescription.startsWith("discount -") ||
-      normalizedDescription === "promo adjustment" ||
-      normalizedDescription.startsWith("promo adjustment -")
+      isPromoAdjustmentLineDescription(description)
     ) {
       return nextLineItem;
     }
