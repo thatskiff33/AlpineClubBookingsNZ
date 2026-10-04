@@ -327,8 +327,14 @@ const FIGURES = {
    * DEFAULT `describeReason`, like every other control on that surface: the
    * finance queue renders no `AdminViewOnlySectionBanner` at all, so each of its
    * buttons explains its own view-only state.
+   *
+   * 362 -> 364 (#50): the Other lodges panel's amenities editor adds two —
+   * **Add amenity** and the per-row **Remove amenity**. Both pass
+   * `describeReason={!ancestorRendersViewOnlyBanner}` like the panel's existing
+   * four, because the Lodges page renders the one banner and vouches for the
+   * panel at its render site. MEASURED by re-running this census.
    */
-  callSites: 362,
+  callSites: 364,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -349,8 +355,11 @@ const FIGURES = {
    * out — each of its two sections heads itself with its own banner.
    *
    * 306 -> 308 (#2942, on the eighth sync): so do the roster name-detail card's two.
+   *
+   * 308 -> 310 (#50): so do the Other lodges panel's two amenity controls,
+   * vouched rather than static (the banner is in the Lodges page, not the panel).
    */
-  optOuts: 308,
+  optOuts: 310,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -407,10 +416,16 @@ const FIGURES = {
    * banner IS in the same file — and this contract caught it: an opt-out with no
    * covering banner in its own file deletes the explanation outright for anyone
    * who later renders the card somewhere else.
+   *
+   * 34 -> 36 (#50): the Other lodges panel's Add amenity and Remove amenity
+   * controls take the same vouch as the panel's Add/Save/Edit/Delete — the
+   * Lodges page renders the lodge-area banner and passes
+   * `ancestorRendersViewOnlyBanner` at the panel's render site. Render-site
+   * vouched 29 -> 31 with them; the shell channel does not move.
    */
-  vouchedOptOuts: 34,
+  vouchedOptOuts: 36,
   /** …of the vouched: proved at a parent's own JSX render site (#2168). */
-  renderSiteVouchedOptOuts: 29,
+  renderSiteVouchedOptOuts: 31,
   /** …of the vouched: proved through the wizard shell's channel (#2324). */
   shellVouchedOptOuts: 5,
   /**
@@ -1578,6 +1593,20 @@ describe("view-only section banner coverage (#2160)", () => {
                states. Re-measured with `npx vitest run view-only-banner-contract`,
                which reports 330 / 279 / 248. READ NOTHING FROM THIS COLUMN; run
                the suite.
+
+          364  +2  #50's Other lodges panel gains an amenities editor: **Add
+               amenity** and a per-row **Remove amenity**, both
+               `ViewOnlyActionButton`s passing
+               `describeReason={!ancestorRendersViewOnlyBanner}` exactly like the
+               panel's existing Add/Save/Edit/Delete, because the Lodges page
+               renders the lodge-area banner once and vouches for the panel at
+               its JSX render site. So callSites 362 -> 364, optOuts 308 -> 310
+               and vouchedOptOuts 34 -> 36 (renderSiteVouchedOptOuts 29 -> 31)
+               move together; staticOptOuts, the shell channel, the exceptions,
+               the leaf bucket and bannerComponents do not move — no new file,
+               no new banner, nothing keeping its own reason. Re-measured with
+               `npm run test:named -- src/components/admin/__tests__/view-only-banner-contract.test.ts`,
+               which reports 364 / 310 / 274.
 
       */
       // #2259 adds the per-booking "No emails"
