@@ -107,7 +107,7 @@ let observerClient: PrismaClient;
      * A $200 PAID booking, confirmed on the ledger, paid entirely by $200 of
      * account credit: nothing captured. `ib-allocated` is a bank-transfer
      * booking whose credit is allocated against its Xero invoice;
-     * `card-invoiced` is the card path's, whose credit never was (#3836).
+     * `card-invoiced` is the card path's, whose credit was never allocated before #3836 (the repair pass now queues it).
      */
     async function creditPaidBooking(shape: "ib-allocated" | "card-invoiced" | "card-and-credit", rule: (typeof TIERS)[number]["rule"]) {
       const mixed = shape === "card-and-credit";
@@ -149,7 +149,7 @@ let observerClient: PrismaClient;
       await prisma.memberCredit.create({
         data: {
           memberId: MEMBER_ID, amountCents: appliedCents, type: "ADMIN_ADJUSTMENT", description: "race 3809 opening balance",
-          // A spent credit carries a note (#2717); the card path never allocated it (#3836).
+          // A spent credit carries a note (#2717); the card path never allocated it before #3836.
           ...(shape !== "card-invoiced" ? { xeroCreditNoteId: CREDIT_NOTE_ID } : {}),
         },
       });
@@ -333,7 +333,7 @@ let observerClient: PrismaClient;
       expect(await owed()).toBe(0);
     });
 
-    it("the card path, its credit never allocated against the invoice (#3836): no deallocation, the give-back's allocated note, and the member's app credit", async () => {
+    it("the card path, invoiced before #3836 with its credit never allocated: no deallocation, the give-back's allocated note, and the member's app credit", async () => {
       await creditPaidBooking("card-invoiced", TIERS[0]!.rule);
 
       const result = await removeLeavingGuest();
