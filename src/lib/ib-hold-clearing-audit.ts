@@ -15,6 +15,12 @@ import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import { isAdditionalAmountUncollected } from "@/lib/unpaid-finished-stays";
 import type { ClubFormat } from "@/lib/club-format";
+import {
+  INTERNET_BANKING_SETTLEMENT_EVIDENCE_SELECT,
+  internetBankingSettlementEvidence,
+  type InternetBankingSettlementEvidence,
+  type InternetBankingSettlementEvidenceInput,
+} from "@/lib/internet-banking-settlement-evidence";
 
 // ---------------------------------------------------------------------------
 // #1620 — Internet-Banking + applied-credit strand enumeration (read-only)
@@ -26,13 +32,16 @@ import type { ClubFormat } from "@/lib/club-format";
 // never reduced the invoice"). So every Internet-Banking payment carrying
 // applied credit is exposed: a member who pays that full invoice loses the
 // applied-credit slice (realized double-pay); one who has not yet paid is still
-// exposed (recoverable). This enumeration sizes that population.
+// exposed (recoverable). This enumeration sizes that population. Whether a row
+// is realized is read from settlement evidence, not the payment mirror (#3632,
+// `internet-banking-settlement-evidence.ts`); a row without that evidence is
+// UNVERIFIED, never asserted unpaid.
 //
 // CANCELLED bookings are intentionally EXCLUDED — their applied credit is the
 // #1547 domain (restored on cancel; orphans surfaced by
 // cron-credit-reconciliation + backfill-orphaned-applied-credits). This targets
-// the never-cancelled PAID (realized) and PAYMENT_PENDING (not-yet-realized)
-// shapes. Read-only: local SELECTs only, no Xero calls.
+// the never-cancelled PAID and PAYMENT_PENDING shapes. Read-only: local SELECTs
+// only, no Xero calls.
 //
 // Load-bearing invariant that lets the scan use Σ BOOKING_APPLIED directly (no
 // restore subtraction): EVERY path that writes a CANCELLATION_REFUND restore row
@@ -44,7 +53,8 @@ import type { ClubFormat } from "@/lib/club-format";
 // modifications mint BOOKING_MODIFICATION_REFUND rows; they never reverse a
 // BOOKING_APPLIED row, so they do not perturb this sum.)
 
-export interface IbAppliedCreditStrandRow {
+export interface IbAppliedCreditStrandRow
+  extends InternetBankingSettlementEvidenceInput {
   paymentId: string;
   bookingId: string;
   bookingStatus: string;
@@ -72,10 +82,11 @@ export interface IbAppliedCreditStrandFinding {
   paymentId: string;
   bookingStatus: string;
   paymentStatus: string;
-  /** true once the payment captured cash: the member has already double-paid.
+  /** true once the current IB receipt or manual settlement proves cash arrived.
    * Repair is a LOCAL credit restore (a Xero credit note does not refund cash a
    * member already sent). */
   realized: boolean;
+  settlementEvidence: InternetBankingSettlementEvidence;
   amountCents: number;
   creditAppliedCents: number;
   finalPriceCents: number;
@@ -112,7 +123,7 @@ export interface IbAppliedCreditStrandFinding {
    * the addition was collected.
    */
   uncollectedAdditionalCents: number;
-  /** Credit the member stands to lose (pending) or has lost (realized). */
+  /** Credit the member stands to lose (unverified) or has lost (realized). */
   strandExposureCents: number;
 }
 
@@ -120,21 +131,11 @@ export interface IbAppliedCreditStrandAuditResult {
   scannedInternetBankingPayments: number;
   /** Payments that captured cash while holding applied credit — double-paid. */
   realized: IbAppliedCreditStrandFinding[];
-  /** Payments not yet captured — credit still recoverable before they pay. */
-  pending: IbAppliedCreditStrandFinding[];
+  /** Local history cannot prove these rows are unpaid. */
+  unverified: IbAppliedCreditStrandFinding[];
   realizedStrandedCents: number;
-  pendingExposureCents: number;
+  unverifiedExposureCents: number;
 }
-
-// A payment is "realized" once cash has been captured. Internet-Banking payments
-// flip to SUCCEEDED when the Xero invoice reconciles to PAID; the refunded
-// variants imply an earlier capture. Everything else (PENDING / PROCESSING /
-// FAILED) has not taken the member's money yet.
-const REALIZED_PAYMENT_STATUSES = new Set<string>([
-  "SUCCEEDED",
-  "REFUNDED",
-  "PARTIALLY_REFUNDED",
-]);
 
 /**
  * Pure per-row classification. Returns a finding only when the ledger shows
@@ -147,12 +148,14 @@ export function deriveIbAppliedCreditStrandFinding(
     return null;
   }
 
+  const settlementEvidence = internetBankingSettlementEvidence(row);
   return {
     bookingId: row.bookingId,
     paymentId: row.paymentId,
     bookingStatus: row.bookingStatus,
     paymentStatus: row.paymentStatus,
-    realized: REALIZED_PAYMENT_STATUSES.has(row.paymentStatus),
+    realized: settlementEvidence !== "unverified",
+    settlementEvidence,
     amountCents: row.amountCents,
     creditAppliedCents: row.creditAppliedCents,
     finalPriceCents: row.finalPriceCents,
@@ -191,6 +194,7 @@ export async function auditIbAppliedCreditStrands(options?: {
       amountCents: true,
       creditAppliedCents: true,
       status: true,
+      ...INTERNET_BANKING_SETTLEMENT_EVIDENCE_SELECT,
       // #2397: the generalised mirror's third term.
       additionalAmountCents: true,
       additionalPaymentStatus: true,
@@ -202,9 +206,9 @@ export async function auditIbAppliedCreditStrands(options?: {
   const result: IbAppliedCreditStrandAuditResult = {
     scannedInternetBankingPayments: payments.length,
     realized: [],
-    pending: [],
+    unverified: [],
     realizedStrandedCents: 0,
-    pendingExposureCents: 0,
+    unverifiedExposureCents: 0,
   };
 
   for (const payment of payments) {
@@ -227,6 +231,9 @@ export async function auditIbAppliedCreditStrands(options?: {
       bookingId: payment.bookingId,
       bookingStatus: payment.booking.status,
       paymentStatus: payment.status,
+      xeroInvoiceId: payment.xeroInvoiceId,
+      manuallyMarkedPaidAt: payment.manuallyMarkedPaidAt,
+      transactions: payment.transactions,
       amountCents: payment.amountCents,
       creditAppliedCents: payment.creditAppliedCents,
       finalPriceCents: payment.booking.finalPriceCents,
@@ -242,8 +249,8 @@ export async function auditIbAppliedCreditStrands(options?: {
       result.realized.push(finding);
       result.realizedStrandedCents += finding.strandExposureCents;
     } else {
-      result.pending.push(finding);
-      result.pendingExposureCents += finding.strandExposureCents;
+      result.unverified.push(finding);
+      result.unverifiedExposureCents += finding.strandExposureCents;
     }
   }
 
@@ -258,6 +265,7 @@ function formatIbAppliedCreditStrandRow(
   lines.push(`- booking ${finding.bookingId} (payment ${finding.paymentId})`);
   lines.push(`    booking status:    ${finding.bookingStatus}`);
   lines.push(`    payment status:    ${finding.paymentStatus}`);
+  lines.push(`    settlement evidence: ${finding.settlementEvidence}`);
   lines.push(`    final price:       ${formatCents(finding.finalPriceCents, format)}`);
   lines.push(`    amountCents:       ${formatCents(finding.amountCents, format)}`);
   lines.push(`    creditApplied (mirror): ${formatCents(finding.creditAppliedCents, format)}`);
@@ -301,14 +309,14 @@ export function formatIbAppliedCreditStrandReport(
     `  credit already lost:                 ${formatCents(result.realizedStrandedCents, format)}`,
   );
   lines.push(
-    `PENDING strands (not yet paid):        ${result.pending.length}`,
+    `UNVERIFIED strands:                    ${result.unverified.length}`,
   );
   lines.push(
-    `  credit at risk:                      ${formatCents(result.pendingExposureCents, format)}`,
+    `  exposure requiring review:           ${formatCents(result.unverifiedExposureCents, format)}`,
   );
   lines.push("");
 
-  if (result.realized.length === 0 && result.pending.length === 0) {
+  if (result.realized.length === 0 && result.unverified.length === 0) {
     lines.push("No Internet-Banking payment carries applied credit. Nothing to size.");
     return lines.join("\n");
   }
@@ -330,16 +338,16 @@ export function formatIbAppliedCreditStrandReport(
     lines.push("");
   }
 
-  if (result.pending.length > 0) {
+  if (result.unverified.length > 0) {
     lines.push(
-      "PENDING — not yet captured. These are fixed forward by the chosen #1620",
+      "UNVERIFIED — no current IB PRIMARY receipt or manual-settlement stamp",
     );
     lines.push(
-      "remedy (reduce the outstanding invoice to effective, or restore + re-bill)",
+      "proves whether cash arrived. Check the current Xero invoice or manual",
     );
-    lines.push("before the member pays; no realized loss yet.");
+    lines.push("record before changing credit; do not call these rows definitely unpaid.");
     lines.push("");
-    for (const finding of result.pending) {
+    for (const finding of result.unverified) {
       lines.push(...formatIbAppliedCreditStrandRow(finding, format));
     }
   }

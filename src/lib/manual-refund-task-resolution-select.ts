@@ -57,6 +57,10 @@ export const MANUAL_REFUND_TASK_RESOLUTION_SELECT = Prisma.validator<Prisma.Manu
       // a booking whose invoice was issued has to correct that invoice, or
       // the ledger and Xero disagree permanently.
       status: true,
+      // #3653: a charge on a booking the group organiser paid for by card is
+      // refused (`chooseEditReviewChargeRoute`).
+      organiserSettled: true,
+      parentBookingId: true,
       payment: {
         select: {
           id: true,

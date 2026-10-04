@@ -21,7 +21,7 @@ import {
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
 import {
-  ForcedCreditRefundNote,
+  ForcedRefundNote,
   NoRefundablePaymentNote,
 } from "@/components/cancel-booking-payment-notes";
 
@@ -46,13 +46,15 @@ interface CancelPreview {
    * internet banking payment, decided in `cancel-refund-method.ts` and returned
    * by the preview. When set, the dialog shows only that option.
    */
-  refundMethodForced?: "credit" | null;
+  refundMethodForced?: "credit" | "organiser_card" | null;
   /**
    * #3643 DECISION 2: Xero shows a payment the app cannot hand back as credit,
    * so an officer's cancel treats the booking as unpaid and the treasurer
    * settles that payment by hand.
    */
   paymentSettledByHand?: boolean;
+  /** #3653: the organiser's cancellation of the group already refunds this booking; the cancel's own sentence. */
+  groupCancellationRefundNote?: string;
 }
 
 export function CancelBookingButton({
@@ -200,7 +202,7 @@ export function CancelBookingButton({
       }
       const data: CancelPreview = await res.json();
       setPreview(data);
-      setRefundMethod(data.refundMethodForced ?? "card");
+      setRefundMethod(data.refundMethodForced === "credit" ? "credit" : "card");
       setStep("preview");
     } catch {
       setErrorMsg("Failed to load cancellation details");
@@ -452,10 +454,13 @@ export function CancelBookingButton({
           </div>
         ) : !hasRefund ? (
           <p className="text-sm text-muted-foreground">
-            No refund applies per cancellation policy.
+            {preview.groupCancellationRefundNote ?? "No refund applies per cancellation policy."}
           </p>
         ) : (
           <div className="space-y-3 text-sm">
+            {preview.groupCancellationRefundNote && (
+              <p className="text-sm text-muted-foreground">{preview.groupCancellationRefundNote}</p>
+            )}
             {/* Refund method selection — only meaningful when a card/bank slice
                 can be refunded. A credit-only cancel (#1164) has no card slice,
                 so the radios are hidden and only the restored-credit row shows. */}
@@ -470,12 +475,8 @@ export function CancelBookingButton({
                 back to {onBehalfOfMember ? "the member" : "you"} directly.
               </p>
             )}
-            {!preview.manualRefund && hasCardRefund && preview.refundMethodForced === "credit" && (
-              <ForcedCreditRefundNote
-                creditRefundAmountCents={preview.creditRefundAmountCents}
-                creditRefundPercentage={preview.creditRefundPercentage}
-                format={format}
-              />
+            {!preview.manualRefund && hasCardRefund && preview.refundMethodForced && (
+              <ForcedRefundNote preview={preview} forced={preview.refundMethodForced} format={format} />
             )}
             {!preview.manualRefund && hasCardRefund && !preview.refundMethodForced && (
               <div className="space-y-2">
