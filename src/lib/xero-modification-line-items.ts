@@ -33,7 +33,7 @@
  * refund as a give-back. Never a guest-night line invented from the figure:
  * the adjustment is named for what it is (owner direction on #3527).
  */
-import { soleBookingPromoRedemption } from "@/lib/booking-promo-redemptions";
+import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import type { LineItem } from "xero-node";
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
@@ -65,6 +65,8 @@ import {
 } from "@/lib/edit-financial-review-charge-shape";
 import type { ClubFormat } from "@/lib/club-format";
 
+type PromoDeltaLine = Extract<ModificationLine, { kind: "PROMO_DELTA" }>;
+
 export type ModificationDocumentKind = "SUPPLEMENTARY_INVOICE" | "MODIFICATION_CREDIT_NOTE";
 
 /** The change-fee line's words, on every document that carries one. */
@@ -90,6 +92,14 @@ export type ModificationDocumentCodingContext = {
   itemCodeResolver: HutFeeItemCodeResolver;
   seasonType: string | null;
   promo: { xeroItemCode: string | null; xeroAccountCode: string | null } | null;
+  /**
+   * #3828: each named code's own Xero codes — set whenever a line's coding
+   * differs from "the booking's one code" (`loadModificationDocumentCodingContext`
+   * says when). Then every `PROMO_DELTA` is coded by the code it names (generic
+   * coding for a line naming none, or a code that is not found), and `promo`
+   * above is unused.
+   */
+  promosByCode?: ReadonlyMap<string, { xeroItemCode: string | null; xeroAccountCode: string | null }>;
   firstGuest: { ageTier: string; isMember: boolean; rateMembershipTypeId: string | null } | null;
 };
 
@@ -100,14 +110,21 @@ export type ModificationDocumentCodingContext = {
  */
 export async function loadModificationDocumentCodingContext(
   bookingId: string,
+  /** The document's `PROMO_DELTA` lines, in line order. */
+  promoLines: ReadonlyArray<Pick<PromoDeltaLine, "promoCode" | "codesBefore">> = [],
 ): Promise<ModificationDocumentCodingContext> {
+  const lineCodes = promoLines.map((line) => line.promoCode);
   const booking = await prisma.booking.findUniqueOrThrow({
     where: { id: bookingId },
     select: {
       checkIn: true,
       lodgeId: true,
       promoRedemptions: {
-        select: { promoCode: { select: { xeroItemCode: true, xeroAccountCode: true } } },
+        select: {
+          id: true,
+          applicationOrder: true,
+          promoCode: { select: { code: true, xeroItemCode: true, xeroAccountCode: true } },
+        },
       },
       guests: { select: { ageTier: true, isMember: true, rateMembershipTypeId: true } },
     },
@@ -121,13 +138,59 @@ export async function loadModificationDocumentCodingContext(
     // the season it now starts in, as that invoice's own update would be.
     getHutFeeSeasonType(new Date(booking.checkIn), booking.lodgeId),
   ]);
+  const redemptions = bookingPromoRedemptions(booking);
+  const sole = redemptions.length === 1 ? (redemptions[0]!.promoCode?.code ?? null) : null;
+  // #3828 (INV-MONEY-039): a line is coded by the code it names — the
+  // booking's, or for a code an edit released, the code's own row — unless the
+  // coding this document always had already says the same thing. Kept as it
+  // was, byte for byte:
+  //  - one line naming the booking's sole code: that code;
+  //  - one line and no code left on the booking, which held at most one code
+  //    before the edit: generic. A one-code booking losing its code is coded
+  //    generically as it always was.
+  // Anything else — several codes or lines, a line naming a code the booking
+  // no longer carries beside the one it does, a line naming none (the
+  // several-code fallback), or a booking that held several codes before the
+  // edit (`codesBefore`, which tells it apart once the released redemptions
+  // are deleted) — is coded per line. A stored row written before
+  // `codesBefore` existed carries none: it is coded as it always was while the
+  // booking still carries the code it names, and by the code it names
+  // (INV-MONEY-039) once a later edit has swapped that code away.
+  const perCode =
+    redemptions.length > 1 ||
+    lineCodes.length > 1 ||
+    (redemptions.length === 1 && lineCodes.some((code) => code !== sole)) ||
+    promoLines.some((line) => (line.codesBefore?.length ?? 0) > 1);
+  let promosByCode: ModificationDocumentCodingContext["promosByCode"];
+  if (perCode) {
+    const byCode = new Map(
+      redemptions.flatMap((redemption) =>
+        redemption.promoCode ? [[redemption.promoCode.code, redemption.promoCode] as const] : [],
+      ),
+    );
+    const released = [
+      ...new Set(lineCodes.filter((code): code is string => !!code && !byCode.has(code))),
+    ];
+    if (released.length > 0) {
+      for (const promoCode of await prisma.promoCode.findMany({
+        where: { code: { in: released } },
+        select: { code: true, xeroItemCode: true, xeroAccountCode: true },
+      })) {
+        byCode.set(promoCode.code, promoCode);
+      }
+    }
+    promosByCode = byCode;
+  }
   return {
     incomeMapping,
     refundMapping,
     itemCodeResolver,
     seasonType,
-    // #3826: per-code coding is epic #3813 C3; one code until then.
-    promo: soleBookingPromoRedemption(booking)?.promoCode ?? null,
+    promo: ((only) =>
+      only ? { xeroItemCode: only.xeroItemCode, xeroAccountCode: only.xeroAccountCode } : null)(
+      redemptions.length === 1 ? redemptions[0]!.promoCode : null,
+    ),
+    ...(promosByCode ? { promosByCode } : {}),
     firstGuest: booking.guests[0] ?? null,
   };
 }
@@ -170,7 +233,9 @@ export function buildModificationDocumentLineItems(args: {
       return applyHutFeeLineCodes(
         base,
         resolvePromoLineCodes({
-          promo: context.promo,
+          promo: context.promosByCode
+            ? (line.promoCode ? context.promosByCode.get(line.promoCode) : undefined) ?? null
+            : context.promo,
           firstGuest: context.firstGuest,
           itemCodeResolver: context.itemCodeResolver,
           seasonType: context.seasonType,
@@ -356,7 +421,10 @@ export async function resolveModificationDocumentLineItems(args: {
         },
       };
     }
-    const context = await loadModificationDocumentCodingContext(args.bookingId);
+    const context = await loadModificationDocumentCodingContext(
+      args.bookingId,
+      selection.lines.filter((line): line is PromoDeltaLine => line.kind === "PROMO_DELTA"),
+    );
     const lineItems = buildModificationDocumentLineItems({
       lines: selection.lines,
       shares: selection.shares,

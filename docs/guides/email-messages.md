@@ -129,6 +129,11 @@ refund $X to you by bank transfer.", and a booking paid partly by card names
 both parts (#3827). `{{amount}}` is still available to a saved override, but it
 cannot say which way the money goes, so use `{{refundSentence}}`.
 
+`{{promoSummary}}` on a booking that carries several promo codes shows one
+`Promo adjustment (CODE)` line per code, each with its own amount, while
+`{{promoCode}}` names every code, comma-separated (#3828). A booking with one
+code reads exactly as before.
+
 One of these blocks is several lines at once: **`{{ical}}`** on the Booking
 Confirmed message renders a short add-to-calendar section — a link that
 downloads the stay as a calendar file (`.ics`), plus links for Google Calendar

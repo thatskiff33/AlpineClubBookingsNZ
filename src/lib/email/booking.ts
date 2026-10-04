@@ -64,6 +64,7 @@ import {
 import { renderEmailHtml } from "@/lib/email-theme";
 import { emailCalendarDay, emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
+import type { PromoCodeAdjustment } from "@/lib/booking-promo-redemptions";
 
 /**
  * #2328 (review): what the confirmation renders when the applied-credit read
@@ -99,6 +100,7 @@ export async function sendBookingConfirmedEmail(
     discountCents?: number;
     promoAdjustmentCents?: number;
     promoCode?: string;
+    promoLines?: ReadonlyArray<PromoCodeAdjustment>; // #3828: a row per code
     // Booking's lodge (multi-lodge phase 8): the email carries this lodge's
     // name, travel note, and door code. Omitted/null resolves the club's
     // default lodge — including its real door code, so always thread the
@@ -218,6 +220,7 @@ export async function sendBookingConfirmedEmail(
     promoAdjustmentCents,
     format,
     options?.promoCode,
+    options?.promoLines,
   )
     .map((row) => `${row.label}: ${row.value}\n`)
     .join("");

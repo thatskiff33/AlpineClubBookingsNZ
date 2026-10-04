@@ -209,6 +209,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { POST } from "@/app/api/bookings/[id]/modify-quote/route";
+import { SEVERAL_PROMO_CODES_ONE_CODE_EDIT_MESSAGE } from "@/lib/promo-code-list-rules";
 
 const D = (s: string) => new Date(`${s}T00:00:00.000Z`);
 const NOW = new Date("2026-08-01T06:00:00.000Z");
@@ -470,3 +471,41 @@ describe("POST /api/bookings/[id]/modify-quote — promo guest targeting (#2266)
     expect(body.newPromoAdjustmentCents).toBe(0);
   });
 });
+
+describe("POST /api/bookings/[id]/modify-quote — one-code fields on a several-code booking (#3828)", () => {
+  function twoCodeDraft() {
+    const code = (id: string, value: string, order: number) => ({
+      id: `r-${id}`,
+      promoCodeId: `pc-${id}`,
+      applicationOrder: order,
+      priceAdjustmentCents: -2_500,
+      guestTargets: [],
+      promoCode: { id: `pc-${id}`, code: value, internal: false, assignments: [], lodges: [] },
+    });
+    return {
+      ...memberDraft(),
+      discountCents: 5_000,
+      promoAdjustmentCents: -5_000,
+      finalPriceCents: 15_000,
+      promoRedemptions: [code("a", "SPRING10", 0), code("b", "GUESTFREE", 1)],
+    };
+  }
+
+  it.each([
+    ["a single code, which would replace both", { promoCode: "MATES50" }],
+    ["a removal, which would release both", { removePromoCode: true }],
+  ])("refuses %s, as the save does", async (_label, fields) => {
+    h.bookingFindUnique.mockResolvedValue(twoCodeDraft());
+
+    const res = await POST(req(fields), { params });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.promoValidation).toEqual({
+      valid: false,
+      error: SEVERAL_PROMO_CODES_ONE_CODE_EDIT_MESSAGE,
+    });
+    expect(h.validateAndCalculatePromoDiscount).not.toHaveBeenCalled();
+  });
+});
+

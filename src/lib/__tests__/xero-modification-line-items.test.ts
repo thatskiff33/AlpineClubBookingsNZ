@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   bookingFindUniqueOrThrow: vi.fn(),
   bookingModificationFindUnique: vi.fn(),
   manualRefundTaskFindMany: vi.fn(),
+  promoCodeFindMany: vi.fn(),
   loggerError: vi.fn(),
   getResolvedAccountMapping: vi.fn(),
   getHutFeeItemCodeMap: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock("@/lib/prisma", () => ({
     booking: { findUniqueOrThrow: mocks.bookingFindUniqueOrThrow },
     bookingModification: { findUnique: mocks.bookingModificationFindUnique },
     manualRefundTask: { findMany: mocks.manualRefundTaskFindMany },
+    promoCode: { findMany: mocks.promoCodeFindMany },
   },
 }));
 
@@ -202,6 +204,30 @@ describe("buildModificationDocumentLineItems", () => {
     expect(credited[0].unitAmount).toBe(-10);
   });
 
+  it("codes each of several promotion deltas by its own code (#3828)", () => {
+    const lines: ModificationLine[] = [
+      { v: 1, kind: "PROMO_DELTA", sign: -1, promoCode: "SUMMER25", amountCents: -1000 },
+      { v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: "GUESTFREE", amountCents: 2000 },
+      { v: 1, kind: "PROMO_DELTA", sign: -1, promoCode: "GONE", amountCents: -300 },
+    ];
+    const items = buildModificationDocumentLineItems({
+      lines, changeFeeCents: 0, document: "SUPPLEMENTARY_INVOICE",
+      context: context({
+        promosByCode: new Map([
+          ["SUMMER25", { xeroItemCode: "PROMO", xeroAccountCode: "260" }],
+          ["GUESTFREE", { xeroItemCode: "FREE-NIGHT", xeroAccountCode: "205" }],
+        ]),
+      }),
+    }, CLUB_FORMAT_TEST);
+    expect(items).toEqual([
+      { description: "Promotion SUMMER25 increased by $10.00", quantity: 1, unitAmount: -10, taxType: "OUTPUT2", itemCode: "PROMO", accountCode: "260" },
+      { description: "Promotion GUESTFREE reduced by $20.00", quantity: 1, unitAmount: 20, taxType: "OUTPUT2", itemCode: "FREE-NIGHT", accountCode: "205" },
+      // A code that cannot be found takes the original invoice's fallback.
+      { description: "Promotion GONE increased by $3.00", quantity: 1, unitAmount: -3, taxType: "OUTPUT2", itemCode: "HUT-NONMEMBER-ADULT" },
+    ]);
+    expect(lineTotalCents(items)).toBe(700);
+  });
+
   it("with no season known, an added night takes the single hutFeesIncome item code, as the original invoice does", () => {
     const lines = linesOf(
       { guests: [], promoAdjustmentCents: 0 },
@@ -271,6 +297,119 @@ describe("resolveModificationDocumentLineItems", () => {
     expect(result.lineItems).toHaveLength(1);
     expect(result.record).toEqual({ source: "STORED", reason: null, storedSumCents: 8000, sharesSumCents: null, billedCents: 8000, lineCount: 1, shareCount: 0 });
     expect(mocks.getHutFeeSeasonType).toHaveBeenCalledWith(day("2026-08-14"), "lodge-1");
+  });
+
+  it("a several-code booking's document no longer refuses: each delta is coded by its own code, a released one read by code (#3828)", async () => {
+    mocks.bookingFindUniqueOrThrow.mockResolvedValue({
+      checkIn: day("2026-08-14"),
+      lodgeId: "lodge-1",
+      promoRedemptions: [
+        { id: "r2", applicationOrder: 1, promoCode: { code: "GUESTFREE", xeroItemCode: "FREE-NIGHT", xeroAccountCode: "205" } },
+        { id: "r1", applicationOrder: 0, promoCode: { code: "SUMMER25", xeroItemCode: "PROMO", xeroAccountCode: "260" } },
+      ],
+      guests: [{ ageTier: "ADULT", isMember: false, rateMembershipTypeId: NON_MEMBER }],
+    });
+    mocks.promoCodeFindMany.mockResolvedValue([
+      { code: "RELEASED", xeroItemCode: "OLD-PROMO", xeroAccountCode: null },
+    ]);
+    const priceLines: ModificationLine[] = [
+      { v: 1, kind: "PROMO_DELTA", sign: -1, promoCode: "SUMMER25", amountCents: -1000 },
+      { v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: "RELEASED", amountCents: 1500 },
+    ];
+    const result = await resolveModificationDocumentLineItems({
+      bookingId: "bk1",
+      row: { priceLines, priceDiffCents: 500, changeFeeCents: 0 },
+      document: "SUPPLEMENTARY_INVOICE",
+      billedCents: 500,
+      billedFigures: { priceDiffCents: 500, changeFeeCents: 0 },
+    }, CLUB_FORMAT_TEST);
+    expect(result.record).toMatchObject({ source: "STORED", reason: null, lineCount: 2 });
+    expect(result.lineItems).toEqual([
+      expect.objectContaining({ description: "Promotion SUMMER25 increased by $10.00", itemCode: "PROMO", accountCode: "260" }),
+      expect.objectContaining({ description: "Promotion RELEASED reduced by $15.00", itemCode: "OLD-PROMO" }),
+    ]);
+    expect(mocks.promoCodeFindMany).toHaveBeenCalledWith({
+      where: { code: { in: ["RELEASED"] } },
+      select: { code: true, xeroItemCode: true, xeroAccountCode: true },
+    });
+  });
+
+  describe("which code codes a lone promotion delta (#3828 review X1, INV-MONEY-039)", () => {
+    const codeA = { code: "SUMMER25", xeroItemCode: "PROMO", xeroAccountCode: "260" };
+    const codeB = { code: "GUESTFREE", xeroItemCode: "FREE-NIGHT", xeroAccountCode: "205" };
+    async function codedLone(
+      redemptions: Array<typeof codeA>,
+      line: { promoCode: string | null; amountCents: number; codesBefore?: string[] },
+    ) {
+      mocks.bookingFindUniqueOrThrow.mockResolvedValue({
+        checkIn: day("2026-08-14"),
+        lodgeId: "lodge-1",
+        promoRedemptions: redemptions.map((promoCode, index) => ({ id: `r${index}`, applicationOrder: index, promoCode })),
+        guests: [{ ageTier: "ADULT", isMember: false, rateMembershipTypeId: NON_MEMBER }],
+      });
+      const priceLines: ModificationLine[] = [
+        { v: 1, kind: "PROMO_DELTA", sign: line.amountCents > 0 ? 1 : -1, ...line },
+      ];
+      const result = await resolveModificationDocumentLineItems({
+        bookingId: "bk1",
+        row: { priceLines, priceDiffCents: line.amountCents, changeFeeCents: 0 },
+        document: "SUPPLEMENTARY_INVOICE",
+        billedCents: line.amountCents,
+        billedFigures: { priceDiffCents: line.amountCents, changeFeeCents: 0 },
+      }, CLUB_FORMAT_TEST);
+      const item = result.lineItems?.[0];
+      return { itemCode: item?.itemCode, accountCode: item?.accountCode };
+    }
+
+    it("a code dropped beside one that remains is coded to the dropped code's own account, not the remaining one's", async () => {
+      mocks.promoCodeFindMany.mockResolvedValue([codeB]);
+      expect(await codedLone([codeA], { promoCode: "GUESTFREE", amountCents: 2000 })).toEqual({
+        itemCode: "FREE-NIGHT",
+        accountCode: "205",
+      });
+      expect(mocks.promoCodeFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { code: { in: ["GUESTFREE"] } } }),
+      );
+    });
+
+    it("a line naming the booking's sole code is coded to it, as always", async () => {
+      expect(await codedLone([codeA], { promoCode: "SUMMER25", amountCents: 1000 })).toEqual({
+        itemCode: "PROMO",
+        accountCode: "260",
+      });
+      expect(mocks.promoCodeFindMany).not.toHaveBeenCalled();
+    });
+
+    it("a one-code booking losing its code is coded generically, byte for byte as before", async () => {
+      // Its line carries no `codesBefore` — nor does any row stored before the
+      // field existed, which is therefore coded exactly as it always was.
+      mocks.promoCodeFindMany.mockResolvedValue([codeA]);
+      expect(await codedLone([], { promoCode: "SUMMER25", amountCents: 5000 })).toEqual({
+        itemCode: "HUT-NONMEMBER-ADULT",
+        accountCode: undefined,
+      });
+      expect(mocks.promoCodeFindMany).not.toHaveBeenCalled();
+    });
+
+    it("a several-code booking losing every code, only one moving, is coded to that code's own account", async () => {
+      // Both redemptions were released and deleted; only the line's record of
+      // the codes the booking held before the edit tells this apart from a
+      // one-code booking losing its code.
+      mocks.promoCodeFindMany.mockResolvedValue([codeA]);
+      expect(
+        await codedLone([], { promoCode: "SUMMER25", amountCents: 5000, codesBefore: ["SUMMER25", "GUESTFREE"] }),
+      ).toEqual({ itemCode: "PROMO", accountCode: "260" });
+      expect(mocks.promoCodeFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { code: { in: ["SUMMER25"] } } }),
+      );
+    });
+
+    it("a several-code fallback line naming no code is coded generically, never to the remaining code", async () => {
+      expect(await codedLone([codeA], { promoCode: null, amountCents: 2000 })).toEqual({
+        itemCode: "HUT-NONMEMBER-ADULT",
+        accountCode: undefined,
+      });
+    });
   });
 
   it("falls back with the reason and reads nothing else when the lines do not explain the document", async () => {

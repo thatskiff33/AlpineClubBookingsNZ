@@ -16,10 +16,10 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import {
-  MultiplePromoRedemptionsError,
+  bookingPromoCodeAdjustments,
   bookingPromoCodeLabel,
   bookingPromoRedemptions,
-  soleBookingPromoRedemption,
+  perCodePromoAdjustmentRows,
 } from "../booking-promo-redemptions";
 import { bookingPromoEmailOptions } from "../booking-promo-email-options";
 import { redeemPromoCode, releaseBookingPromoRedemptions } from "../promo";
@@ -58,14 +58,12 @@ describe("booking promo redemption readers (#3826)", () => {
     expect(bookingPromoRedemptions({ promoRedemptions: [] })).toEqual([]);
     expect(bookingPromoRedemptions({})).toEqual([]);
     expect(bookingPromoRedemptions(null)).toEqual([]);
-    expect(soleBookingPromoRedemption({ promoRedemptions: [] })).toBeNull();
     expect(bookingPromoCodeLabel({ promoRedemptions: [] })).toBeNull();
   });
 
   it("answers a single-code booking exactly as the one-to-one relation did", () => {
-    const only = { id: "r1", promoCode: { code: "FREE3" } };
+    const only = { id: "r1", priceAdjustmentCents: -4500, promoCode: { code: "FREE3" } };
     const booking = { promoRedemptions: [only] };
-    expect(soleBookingPromoRedemption(booking)).toBe(only);
     expect(bookingPromoCodeLabel(booking)).toBe("FREE3");
     expect(
       bookingPromoEmailOptions({
@@ -82,15 +80,31 @@ describe("booking promo redemption readers (#3826)", () => {
     });
   });
 
-  it("refuses a single-code reader a booking carrying several codes rather than answering with the first", () => {
+  it("hands a several-code booking's confirmation one line per code, in the booker's order (#3828)", () => {
     const booking = {
       promoRedemptions: [
-        { id: "r1", applicationOrder: 0, promoCode: { code: "A" } },
-        { id: "r2", applicationOrder: 1, promoCode: { code: "B" } },
+        { id: "r2", applicationOrder: 1, priceAdjustmentCents: -2000, promoCode: { code: "B" } },
+        { id: "r1", applicationOrder: 0, priceAdjustmentCents: -3000, promoCode: { code: "A" } },
       ],
     };
-    expect(() => soleBookingPromoRedemption(booking)).toThrow(MultiplePromoRedemptionsError);
     expect(bookingPromoCodeLabel(booking)).toBe("A, B");
+    expect(
+      bookingPromoEmailOptions({
+        lodgeId: "lodge-1",
+        discountCents: 5000,
+        promoAdjustmentCents: -5000,
+        ...booking,
+      }),
+    ).toEqual({
+      lodgeId: "lodge-1",
+      discountCents: 5000,
+      promoAdjustmentCents: -5000,
+      promoCode: "A, B",
+      promoLines: [
+        { code: "A", amountCents: -3000 },
+        { code: "B", amountCents: -2000 },
+      ],
+    });
   });
 });
 
@@ -432,5 +446,37 @@ describe("member merge (#3826)", () => {
     expect(
       MEMBER_MERGE_RELATION_SPECS.find((spec) => spec.key === "PromoRedemption.member"),
     ).toMatchObject({ column: "memberId", bucket: "move" });
+  });
+});
+
+describe("the one per-code projection and the one per-code-rows rule (#3828)", () => {
+  it("projects each code with its own adjustment, in application order", () => {
+    expect(
+      bookingPromoCodeAdjustments({
+        promoRedemptions: [
+          { id: "r2", applicationOrder: 1, priceAdjustmentCents: -2000, promoCode: { code: "B" } },
+          { id: "r0", applicationOrder: 0, priceAdjustmentCents: 0, promoCode: null },
+          { id: "r1", applicationOrder: 0, priceAdjustmentCents: -3000, promoCode: { code: "A" } },
+        ],
+      }),
+    ).toEqual([
+      { code: "A", amountCents: -3000 },
+      { code: "B", amountCents: -2000 },
+    ]);
+    expect(bookingPromoCodeAdjustments(null)).toEqual([]);
+  });
+
+  it("gives per-code rows only for several codes that add up, dropping zero rows", () => {
+    const lines = [
+      { code: "A", amountCents: -3000 },
+      { code: "Z", amountCents: 0 },
+      { code: "B", amountCents: -2000 },
+    ];
+    expect(perCodePromoAdjustmentRows(lines, -5000)).toEqual([lines[0], lines[2]]);
+    // Drifted: the codes no longer add up to the booking's adjustment.
+    expect(perCodePromoAdjustmentRows(lines, -6000)).toBeNull();
+    // One code is the one combined row, as always.
+    expect(perCodePromoAdjustmentRows([lines[0]!], -3000)).toBeNull();
+    expect(perCodePromoAdjustmentRows(undefined, -3000)).toBeNull();
   });
 });

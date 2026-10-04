@@ -1,4 +1,8 @@
-import { bookingPromoCodeLabel } from "@/lib/booking-promo-redemptions";
+import {
+  bookingPromoCodeAdjustments,
+  bookingPromoCodeLabel,
+  type PromoCodeAdjustment,
+} from "@/lib/booking-promo-redemptions";
 
 /**
  * #2267: the promo options a booking-confirmation email needs, read off a
@@ -16,13 +20,18 @@ import { bookingPromoCodeLabel } from "@/lib/booking-promo-redemptions";
  *
  * #3826: a booking may carry several codes; `promoCode` names them all, in
  * application order, through `bookingPromoCodeLabel` — exactly the one code a
- * single-code booking always showed.
+ * single-code booking always showed. #3828: such a booking also carries
+ * `promoLines`, each code's own adjustment, so the confirmation shows one row
+ * per code; a single-code booking's fields are exactly what they always were.
  */
 type BookingPromoEmailSource = {
   discountCents: number;
   promoAdjustmentCents: number;
   promoRedemptions?: ReadonlyArray<{
+    id?: string | null;
     applicationOrder?: number | null;
+    // Required so a send site cannot load the codes without their figures.
+    priceAdjustmentCents: number;
     promoCode?: { code: string } | null;
   }> | null;
 };
@@ -35,13 +44,16 @@ export function bookingPromoEmailFields(booking: BookingPromoEmailSource): {
   discountCents?: number;
   promoAdjustmentCents?: number;
   promoCode?: string;
+  promoLines?: PromoCodeAdjustment[];
 } {
   const promoCode = bookingPromoCodeLabel(booking);
+  const promoLines = bookingPromoCodeAdjustments(booking);
   return promoCode
     ? {
         discountCents: booking.discountCents,
         promoAdjustmentCents: booking.promoAdjustmentCents,
         promoCode,
+        ...(promoLines.length > 1 ? { promoLines } : {}),
       }
     : {};
 }
@@ -53,6 +65,7 @@ export function bookingPromoEmailOptions(
   discountCents?: number;
   promoAdjustmentCents?: number;
   promoCode?: string;
+  promoLines?: PromoCodeAdjustment[];
 } {
   return {
     lodgeId: booking.lodgeId,

@@ -15,6 +15,7 @@ import {
   requireCalendarDate,
 } from "@/lib/club-time";
 import { useClubFormat } from "@/components/club-format-provider";
+import { perCodePromoAdjustmentRows } from "@/lib/booking-promo-redemptions";
 
 /**
  * The two headline stay dates, spelled out in full — long weekday, long month —
@@ -106,6 +107,11 @@ export interface BookingEditorData {
   promoAdjustmentCents: number;
   finalPriceCents: number;
   promo: PromoInfo | null;
+  /**
+   * #3828: a booking carrying several codes — one money row per code, each
+   * with its own signed adjustment. Absent for one code or none.
+   */
+  promoLines?: Array<PromoInfo & { amountCents: number }>;
   hasNonMembers: boolean;
   nonMemberHoldUntil: string | null;
   canEditNonMemberGuestNames: boolean;
@@ -171,6 +177,43 @@ export interface BookingEditorData {
 }
 
 
+/**
+ * One promotion money row: the booking's single adjustment, or (#3828) one
+ * code's own adjustment on a booking carrying several.
+ */
+function PromoAdjustmentRow({
+  promo,
+  amountCents,
+  format,
+}: {
+  promo: PromoInfo | null;
+  amountCents: number;
+  format: ReturnType<typeof useClubFormat>;
+}) {
+  return (
+    <div className={`flex justify-between ${amountCents > 0 ? "text-warning-11" : "text-success-11"}`}>
+      <span>
+        {promo?.workPartyEventName
+          ? "Working bee discount"
+          : "Promo adjustment"}
+        {promo?.workPartyEventName ? (
+          <span className="ml-1 text-xs">
+            ({promo.workPartyEventName})
+          </span>
+        ) : (
+          promo?.code && (
+            <span className="ml-1 text-xs">({promo.code})</span>
+          )
+        )}
+      </span>
+      <span>
+        {amountCents > 0 ? "+" : "-"}
+        {formatCents(Math.abs(amountCents), format)}
+      </span>
+    </div>
+  );
+}
+
 export function BookingEditor({
   booking,
   canModify,
@@ -183,6 +226,11 @@ export function BookingEditor({
   canAdminOverride?: boolean;
 }) {
   const format = useClubFormat();
+  // #3828: one row per code, or the one combined row — the email's own answer.
+  const perCodePromoRows = perCodePromoAdjustmentRows(
+    booking.promoLines,
+    booking.promoAdjustmentCents,
+  );
   const searchParams = useSearchParams();
   /**
    * #2562: the open policy-exception request this visit is here to REPLACE, from
@@ -224,6 +272,7 @@ export function BookingEditor({
           discountCents: booking.discountCents,
           promoAdjustmentCents: booking.promoAdjustmentCents,
           promo: booking.promo,
+          promoLines: booking.promoLines,
           canEditNonMemberGuestNames: booking.canEditNonMemberGuestNames,
           canFixNonMemberGuestNameTypos: booking.canFixNonMemberGuestNameTypos,
           editPolicy: booking.editPolicy,
@@ -374,28 +423,22 @@ export function BookingEditor({
             <span>Subtotal</span>
             <span>{formatCents(booking.totalPriceCents, format)}</span>
           </div>
-          {booking.promoAdjustmentCents !== 0 && (
-            <div className={`flex justify-between ${booking.promoAdjustmentCents > 0 ? "text-warning-11" : "text-success-11"}`}>
-              <span>
-                {booking.promo?.workPartyEventName
-                  ? "Working bee discount"
-                  : "Promo adjustment"}
-                {booking.promo?.workPartyEventName ? (
-                  <span className="ml-1 text-xs">
-                    ({booking.promo.workPartyEventName})
-                  </span>
-                ) : (
-                  booking.promo?.code && (
-                    <span className="ml-1 text-xs">({booking.promo.code})</span>
-                  )
-                )}
-              </span>
-              <span>
-                {booking.promoAdjustmentCents > 0 ? "+" : "-"}
-                {formatCents(Math.abs(booking.promoAdjustmentCents), format)}
-              </span>
-            </div>
-          )}
+          {perCodePromoRows
+            ? perCodePromoRows.map((line) => (
+                <PromoAdjustmentRow
+                  key={line.code}
+                  promo={line}
+                  amountCents={line.amountCents}
+                  format={format}
+                />
+              ))
+            : booking.promoAdjustmentCents !== 0 && (
+                <PromoAdjustmentRow
+                  promo={booking.promo}
+                  amountCents={booking.promoAdjustmentCents}
+                  format={format}
+                />
+              )}
           <div className="flex justify-between border-t pt-2 font-bold">
             <span>Total</span>
             <span>{formatCents(booking.finalPriceCents, format)}</span>
