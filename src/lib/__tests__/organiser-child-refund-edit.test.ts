@@ -14,6 +14,10 @@ import { paymentEligibleForPaidCancelPath } from "@/lib/booking-cancel";
 import { ORGANISER_CHILD_CHARGE_REFUSAL } from "@/lib/group-organiser-paid";
 import type { BookingModificationSettlementOptions } from "@/lib/booking-modify-settlement";
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+
+/** #3809: the club's day and format the shared settlement now takes, resolved before its transaction. */
+const SETTLEMENT_DAY = { todayAtClub: requireCalendarDate("2026-07-01"), format: CLUB_FORMAT_TEST };
 import { OrganiserChildRefundRefusedError } from "@/lib/organiser-child-refund";
 import { reopenedRetryAt } from "@/lib/organiser-child-refund-executor";
 
@@ -88,6 +92,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
   it("returns the reduction to the organiser's card from the combined payment, with no method chosen", async () => {
     const tx = txWithSettlement(CARD_SETTLEMENT);
     const result = await applyPaymentAdjustments(tx, {
+      ...SETTLEMENT_DAY,
       booking: child(),
       priceDiffCents: -1500,
       changeFeeCents: 0,
@@ -105,6 +110,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
   it("refuses account credit for a booking the organiser paid for, before the edit commits", async () => {
     await expect(
       applyPaymentAdjustments(txWithSettlement(CARD_SETTLEMENT), {
+        ...SETTLEMENT_DAY,
         booking: child(),
         priceDiffCents: -1500,
         changeFeeCents: 0,
@@ -118,6 +124,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     for (const settlement of [null, { ...CARD_SETTLEMENT, status: PaymentStatus.REFUNDED }]) {
       await expect(
         applyPaymentAdjustments(txWithSettlement(settlement), {
+          ...SETTLEMENT_DAY,
           booking: child(),
           priceDiffCents: -1500,
           changeFeeCents: 0,
@@ -130,6 +137,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
   it("leaves an ordinary booking's refund on the ordinary path", async () => {
     const tx = txWithSettlement(CARD_SETTLEMENT);
     const result = await applyPaymentAdjustments(tx, {
+      ...SETTLEMENT_DAY,
       booking: child({ organiserSettled: false, parentBookingId: null }),
       priceDiffCents: -1500,
       changeFeeCents: 0,
@@ -185,6 +193,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
   it("leaves an Internet Banking organiser child's reduction off the organiser's card", async () => {
     const tx = txWithSettlement(CARD_SETTLEMENT);
     const result = await applyPaymentAdjustments(tx, {
+      ...SETTLEMENT_DAY,
       booking: ibChild(),
       priceDiffCents: -1500,
       changeFeeCents: 0,
@@ -207,6 +216,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
     // re-promised the 4000 to a later cancellation.
     await expect(
       applyPaymentAdjustments(txWithSettlement(CARD_SETTLEMENT), {
+        ...SETTLEMENT_DAY,
         booking: child(),
         priceDiffCents: 1000,
         changeFeeCents: 0,
@@ -215,6 +225,7 @@ describe("an organiser child's reduction at the edit door (#3653)", () => {
 
     // The Internet Banking child keeps its supplementary-invoice path.
     const ib = await applyPaymentAdjustments(txWithSettlement(null), {
+      ...SETTLEMENT_DAY,
       booking: ibChild(),
       priceDiffCents: 1000,
       changeFeeCents: 0,
