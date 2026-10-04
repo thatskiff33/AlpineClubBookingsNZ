@@ -1720,7 +1720,8 @@ amountCents + creditAppliedCents + (uncollected addition) = finalPriceCents
 It is not asserted at runtime inside the settle — the settled figure is defined
 as the left-hand side, so any in-transaction check is a tautology. It is upheld
 by construction (the two rows are a split of one figure), by the fenced write's
-WHERE clauses, and after the fact by `auditIbAppliedCreditStrands`; see
+WHERE clauses, and after the fact by the booking-ledger census
+(`pnpm run booking-ledger:census`, `INV-MONEY-037`); see
 `docs/DOMAIN_INVARIANTS.md` for the full statement.
 
 Stripe-intent hygiene differs by answer. Both answers enqueue a durable

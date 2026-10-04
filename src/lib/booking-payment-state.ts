@@ -477,6 +477,33 @@ export function sumRefundedAndCreditedCents(
 }
 
 /**
+ * #3809: the applied-credit slice a paid cancellation tiers, capped exactly as
+ * the card slice is - money paid and credit applied together count no further
+ * than the booking is now worth, money first. Without the cap, credit left
+ * applied above a reduced price (a reduction's policy-kept share) came back at
+ * the cancellation, so a credit-paid member got more than a card-paid one.
+ * The difference of two `cancelRefundableBaseCents`, so there is one base rule.
+ *
+ * ONLY FOR A BOOKING REDUCED THROUGH #3809's SETTLEMENT (owner decision of 4 Oct
+ * 2026, "Cap new reductions only"): `capAtWorth` is
+ * `bookingReducedThroughCreditGiveBack`. Any other booking tiers all the credit
+ * still applied, as before the cap - a credit-paid booking reduced before that
+ * release is never short.
+ */
+export function cancelAppliedCreditBaseCents(input: {
+  amountCents: number;
+  refundedAmountCents: number;
+  finalPriceCents: number;
+  changeFeeCents: number;
+  creditAppliedCents: number;
+  capAtWorth: boolean;
+}): number {
+  if (!input.capAtWorth) return Math.max(0, input.creditAppliedCents);
+  const withCredit = cancelRefundableBaseCents({ ...input, amountCents: input.amountCents + input.creditAppliedCents });
+  return Math.max(0, Math.min(input.creditAppliedCents, withCredit - cancelRefundableBaseCents(input)));
+}
+
+/**
  * #1473/#1491: the pre-ledger half of a cancel's capture evidence, for a payment
  * with no captured `PaymentTransaction` row to read. A STRIPE payment's refund
  * mirror is trustworthy there: a Stripe refund needs a captured charge, and the
