@@ -1589,7 +1589,9 @@ mispricing a booking.
   one settlement writer that reaches the ledger without lock(1), the card-refund
   writer (`lockPaymentForRefundedTotal`); `NO KEY UPDATE`, not `UPDATE`, so the
   foreign-key share lock a concurrent writer's ledger line takes on the booking
-  is never refused (with `FOR UPDATE` the two deadlocked on real PostgreSQL).
+  is never refused. Taken booking-first with `FOR UPDATE`, the back-post and a
+  live card refund deadlocked on real PostgreSQL; either change alone cleared
+  it in the race suite, and both are kept.
   Both statements may match nothing (no payment), which reads as nothing to
   lock. Raced against a live date shift and a live card refund in
   `booking-ledger-back-post.realdb.test.ts`.

@@ -144,6 +144,9 @@ async function lines(bookingId: string) {
       ["GUEST_NIGHT", -5_000],
     ]);
     expect(removal.every((line) => line.postingKey?.startsWith("reversal:") && line.reversesLineId !== null)).toBe(true);
+    // ...its stored narration lines were read only to check that total.
+    const stored = await prisma.bookingModification.findUniqueOrThrow({ where: { id: `${built["card-refund-edits"]}-removal` }, select: { priceLines: true } });
+    expect(stored.priceLines).not.toBeNull();
 
     // The closure's re-price, from before #3582, posts on its own PRICE_REBASE row.
     const rebase = await prisma.bookingModification.findFirstOrThrow({ where: { bookingId: built["review-closure"], modificationType: "PRICE_REBASE" }, select: { id: true } });

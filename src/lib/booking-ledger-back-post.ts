@@ -188,7 +188,8 @@ async function lockBookingForBackPost(tx: Tx, bookingId: string): Promise<boolea
   // The payment row before the booking row, as the card-refund writer takes it
   // (`lockPaymentForRefundedTotal`) — the one settlement writer that reaches the
   // ledger without lock(1) — and NO KEY UPDATE on both, so a ledger line's
-  // foreign-key share lock on the booking is not refused.
+  // foreign-key share lock on the booking is not refused. Booking-first with
+  // FOR UPDATE deadlocked against a live card refund on real PostgreSQL.
   await tx.$executeRaw`SELECT 1 FROM "Payment" WHERE "bookingId" = ${bookingId} FOR NO KEY UPDATE`;
   await tx.$executeRaw`SELECT 1 FROM "Booking" WHERE "id" = ${bookingId} FOR NO KEY UPDATE`;
   return true;

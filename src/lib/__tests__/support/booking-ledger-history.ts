@@ -172,7 +172,7 @@ async function postedEdit(
   });
   const removed = before.find((guest) => guest.id === edit.removeGuestId);
   const priceDiffCents = -(removed?.nights.reduce((sum, night) => sum + (night.priceCents ?? 0), 0) ?? 0);
-  const { pricingSideFromWrittenGuests } = await import("@/lib/booking-modification-lines");
+  const { diffBookingPricing, modificationPriceLinesToStore, pricingSideFromWrittenGuests } = await import("@/lib/booking-modification-lines");
   const { postModificationLedgerLines } = await import("@/lib/booking-ledger-modification-sync");
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -184,6 +184,12 @@ async function postedEdit(
     });
     await tx.payment.update({ where: { bookingId }, data: { changeFeeCents: { increment: edit.changeFeeCents } } });
     const after = before.filter((guest) => guest.id !== removed?.id);
+    const sides = {
+      before: pricingSideFromWrittenGuests(before, { promoAdjustmentCents: 0 }),
+      after: pricingSideFromWrittenGuests(after, { promoAdjustmentCents: 0 }),
+    };
+    // The door's folded narration lines (#3530), as every priced edit stores them.
+    const priceLines = modificationPriceLinesToStore(diffBookingPricing(sides.before, sides.after, priceDiffCents));
     const row = await tx.bookingModification.create({
       data: {
         id: modificationId,
@@ -194,6 +200,7 @@ async function postedEdit(
         newData: {},
         priceDiffCents,
         changeFeeCents: edit.changeFeeCents,
+        ...(priceLines ? { priceLines } : {}),
       },
     });
     await postModificationLedgerLines({
@@ -201,10 +208,7 @@ async function postedEdit(
       bookingId,
       lodgeId: booking.lodgeId,
       bookingModification: row,
-      sides: {
-        before: pricingSideFromWrittenGuests(before, { promoAdjustmentCents: 0 }),
-        after: pricingSideFromWrittenGuests(after, { promoAdjustmentCents: 0 }),
-      },
+      sides,
       site: "booking-ledger-history",
     });
   });
