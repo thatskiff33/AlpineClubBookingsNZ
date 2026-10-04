@@ -532,10 +532,11 @@ one row beside a give-back line, **fails closed** as `AMBIGUOUS_REVIEW_GIVE_BACK
 three booking-level instances — the give-back lines, the rows and the
 unmatched drops — each acknowledged to the cent, so the owner's sign-off goes
 stale if any moves. The exact checks still run beside it. A cancelled
-booking's `owed(b) == 0` checks only the total, so where two or more tasks'
-stand-ins draw on one pool of give-back and share-credit rows, lines swapped
-between them still agree; that booking fails closed too (#3913), its figures
-the stand-ins, their own refunds and the pooled rows. One task's stays exact.
+booking's `owed(b) == 0` checks only the total, so where its give-back and
+share-credit rows could make its stand-ins another way at the same total,
+lines swapped between siblings still agree; that booking fails closed too
+(#3913), its figures the stand-ins, their own refunds and the rows. One
+task's, or stand-ins the rows make only one way, stay exact.
 No field of the give-back row can name its task: stamping it needs a column,
 so it is left to a later change.
 

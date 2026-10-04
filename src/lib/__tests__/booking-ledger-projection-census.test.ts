@@ -864,7 +864,7 @@ describe("#3791's review closures: a line is judged by what the member was credi
     expect(findings(subject)).toEqual(["SOURCE_DRIFT:line-3", "SOURCE_DRIFT:line-4"]);
   });
 
-  it("#3913 F2: two tasks' stand-ins drawing on one pool of rows fail closed as AMBIGUOUS_REVIEW_GIVE_BACK, swapped or not; one task's stays exact", () => {
+  it("#3913 F2: stand-ins the rows could make another way at the same total fail closed as AMBIGUOUS_REVIEW_GIVE_BACK, swapped or not; one task's, or one way's, stays exact", () => {
     const debt = (cents: number, taskId: string) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId) });
     const sibling = { ...task, id: "task-sibling", amountCents: 2_500 };
     const siblingLine = (cents: number) =>
@@ -881,9 +881,9 @@ describe("#3791's review closures: a line is judged by what the member was credi
     const figures = (subject: BookingLedgerCensusRow) =>
       evaluateBookingLedgerIdentities(subject).bookingInstances.map((instance) => [instance.name, instance.detail, instance.cents]);
     const ambiguous = [
-      ["AMBIGUOUS_REVIEW_GIVE_BACK", "review stand-ins credited after the cancellation", 3_500],
+      ["AMBIGUOUS_REVIEW_GIVE_BACK", "review stand-ins after the cancellation", 3_500],
       ["AMBIGUOUS_REVIEW_GIVE_BACK", "their own refunds to the capture", 2_000],
-      ["AMBIGUOUS_REVIEW_GIVE_BACK", "review give-back and share credit rows they share", 1_500],
+      ["AMBIGUOUS_REVIEW_GIVE_BACK", "review give-back and share credit rows beside them", 1_500],
     ];
     const correct = siblings(1_500, 2_000);
     const swapped = siblings(2_000, 1_500);
@@ -900,13 +900,41 @@ describe("#3791's review closures: a line is judged by what the member was credi
     const signed = report([correct], acknowledge(correct));
     expect(signed.classes.AMBIGUOUS_REVIEW_GIVE_BACK.unacknowledged).toBe(0);
     expect(signed.acknowledged.matched).toHaveLength(3);
-    const moved = report([siblings(1_500, 2_000, [giveBack(500, "c-give-a"), giveBack(1_100, "c-give-b")])], acknowledge(correct));
-    expect(moved.classes.AMBIGUOUS_REVIEW_GIVE_BACK.unacknowledged).toBe(1);
-    expect(moved.acknowledged.stale.map((entry) => entry.cents)).toEqual([1_500]);
+    // A give-back a dollar larger: the lines are no longer made, and the sign-off matches nothing.
+    const moved = siblings(1_500, 2_000, [giveBack(500, "c-give-a"), giveBack(1_100, "c-give-b")]);
+    expect(findings(moved)).not.toEqual([]);
+    expect(report([moved], acknowledge(correct)).acknowledged.matched).toEqual([]);
     // No pooled row, each line its own refund alone: exact, not ambiguous.
     const ownOnly = { ...siblings(1_000, 1_000, []) };
     expect(findings(ownOnly)).toEqual([]);
     expect(figures(ownOnly)).toEqual([]);
+    // A full share and a netted one swap too: $20 typed and posted whole, $20 typed and $10 given back.
+    const pair = row({
+      lines: new Ledger().post([share(2_000), siblingLine(1_000)], LATER).lines,
+      credits: [giveBack(1_000)],
+      tasks: [{ ...task, amountCents: 2_000 }, { ...sibling, amountCents: 2_000 }],
+      booking: { id: B, status: "CANCELLED", deletedAt: null, organiserSettled: false, finalPriceCents: 19_000 },
+    });
+    expect(findings(pair)).toEqual([]);
+    expect(figures(pair).map(([name]) => name)).toEqual(Array(3).fill("AMBIGUOUS_REVIEW_GIVE_BACK"));
+    // A give-back and an account-credit share's minted credit swap the same way: $10 and $5 or $5 and $10.
+    const withMint = row({
+      lines: new Ledger().post([share(1_000), siblingLine(500)], LATER).lines,
+      credits: [giveBack(1_000), credit("c-mint", "BOOKING_MODIFICATION_REFUND", 500)],
+      tasks: [{ ...task, amountCents: 2_000 }, { ...sibling, amountCents: 2_000 }],
+      booking: { id: B, status: "CANCELLED", deletedAt: null, organiserSettled: false, finalPriceCents: 19_000 },
+    });
+    expect(findings(withMint)).toEqual([]);
+    expect(figures(withMint).map(([, , cents]) => cents)).toEqual([1_500, 0, 1_500]);
+    // Two siblings the rows make only one way - $10 each from two $10 give-backs - are exact.
+    const once = row({
+      lines: new Ledger().post([share(1_000), siblingLine(1_000)], LATER).lines,
+      credits: [giveBack(1_000, "c-1"), giveBack(1_000, "c-2")],
+      tasks: [{ ...task, amountCents: 2_000 }, { ...sibling, amountCents: 2_000 }],
+      booking: { id: B, status: "CANCELLED", deletedAt: null, organiserSettled: false, finalPriceCents: 19_000 },
+    });
+    expect(findings(once)).toEqual([]);
+    expect(figures(once)).toEqual([]);
     // One task drawing on the rows: exact, as before.
     const single = row({ lines: new Ledger().post([share(2_500)], LATER).lines, credits: [giveBack(1_000)], tasks: [task], recoveryOperations: [debt(1_500, TASK)], booking: { id: B, status: "CANCELLED", deletedAt: null, organiserSettled: false, finalPriceCents: 19_000 } });
     expect(findings(single)).toEqual([]);

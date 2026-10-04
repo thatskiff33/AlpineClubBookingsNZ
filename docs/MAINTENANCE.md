@@ -1666,7 +1666,7 @@ owed — against the ledger lines that project them, and prints:
   `AMBIGUOUS_REVIEW_GIVE_BACK`, a booking whose #3791 review give-back
   rows it cannot attribute to their reviews (a sibling review's price drop, a
   dismissed one's included, or two rows beside a give-back line; once
-  cancelled, two reviews' stand-ins drawing on the same rows). It prints
+  cancelled, rows that could make its reviews' lines another way). It prints
   three figures — the give-back lines, the rows and the unmatched drops; on a
   cancelled booking the stand-ins, their own refunds and the shared rows — so
   check the booking's reviews by hand before signing off all three. The

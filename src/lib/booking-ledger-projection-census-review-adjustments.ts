@@ -20,8 +20,8 @@
  * that is missing. Where a row could instead be absorbed by another task's
  * re-price, or two rows sit beside give-back lines, nothing says which task a
  * row is: that live booking fails closed as `AMBIGUOUS_REVIEW_GIVE_BACK`
- * (#3583's delta review). After a cancellation, two or more tasks drawing
- * on one pool of rows fail closed the same way (#3913).
+ * (#3583's delta review). After a cancellation, stand-ins the rows could
+ * make another way at the same total fail closed the same way (#3913).
  *
  * #3835 (#3907): on a CAPTURED payment the same netting sends the capture's
  * part back to the capture - a card refund (the task's frozen Stripe debt,
@@ -109,6 +109,46 @@ function creditedFromRows(credited: readonly CreditedShare[], giveBacks: readonl
     }
   }
   return false;
+}
+
+/**
+ * How many different sets of stand-in figures (counted to two) the census
+ * would accept at the booking's total: each its task's own refund plus at
+ * most one give-back row and, where it refunded nothing, one share credit -
+ * no row used twice - up to the share, or the share itself where it refunded
+ * nothing. One is the lines as posted; a second is a set the rows cannot tell
+ * from it (#3913 F2).
+ */
+function distinctMakings(
+  standIns: readonly { shareCents: number; ownRefundCents: number; creditedCents: number }[],
+  giveBacks: readonly number[],
+  minted: readonly number[],
+): number {
+  const totalCents = standIns.reduce((sum, share) => sum + share.creditedCents, 0);
+  const found = new Set<string>();
+  const walk = (index: number, giveBacksLeft: number[], mintedLeft: number[], sumCents: number, figures: number[]): void => {
+    if (found.size > 1 || sumCents > totalCents) return;
+    const share = standIns[index];
+    if (share === undefined) {
+      if (sumCents === totalCents) found.add(figures.join(","));
+      return;
+    }
+    const own = share.ownRefundCents;
+    if (own === 0) walk(index + 1, giveBacksLeft, mintedLeft, sumCents + share.shareCents, [...figures, share.shareCents]);
+    for (const givenBack of [0, ...new Set(giveBacksLeft)]) {
+      for (const mint of own > 0 ? [0] : [0, ...new Set(mintedLeft)]) {
+        const cents = own + givenBack + mint;
+        if (cents <= 0 || cents > share.shareCents || (own === 0 && cents === share.shareCents)) continue;
+        const nextGiveBacks = [...giveBacksLeft];
+        const nextMinted = [...mintedLeft];
+        if (givenBack !== 0) take(nextGiveBacks, givenBack);
+        if (mint !== 0) take(nextMinted, mint);
+        walk(index + 1, nextGiveBacks, nextMinted, sumCents + cents, [...figures, cents]);
+      }
+    }
+  };
+  walk(0, [...giveBacks], [...minted], 0, []);
+  return found.size;
 }
 
 /**
@@ -200,18 +240,17 @@ export function reviewAdjustmentEvidence(row: BookingLedgerCensusRow): ReviewAdj
   // it (#3791). A stand-in whose task refunded the capture is judged so too,
   // since its hand-back is borne out only by it. Anything else is the share.
   const refunded = new Set<string>();
-  const credited = cancelled
+  const refundStandIns = cancelled
     ? standIns.flatMap((line) => {
         const task = tasks.get(line.anchorId);
         if (task?.settlementDirection !== "REFUND_TO_MEMBER" || line.amountCents >= 0) return [];
         // A task's own refund is used once: by its first live stand-in.
         const own = refunded.has(task.id) ? { cents: 0, handBackLineIds: [] } : ownRefundOf(row, task.id);
         refunded.add(task.id);
-        return -line.amountCents < (task.amountCents ?? 0) || own.cents > 0
-          ? [{ line, creditedCents: -line.amountCents, ownRefundCents: own.cents, handBackLineIds: own.handBackLineIds }]
-          : [];
+        return [{ line, shareCents: task.amountCents ?? 0, creditedCents: -line.amountCents, ownRefundCents: own.cents, handBackLineIds: own.handBackLineIds }];
       })
     : [];
+  const credited = refundStandIns.filter((share) => share.creditedCents < share.shareCents || share.ownRefundCents > 0);
   const nettedShares = credited.filter(({ line }) => -line.amountCents < (tasks.get(line.anchorId)?.amountCents ?? 0)).map(({ line }) => line);
   if (!creditedFromRows(credited, giveBacks, minted)) {
     // Name the lines the rows cannot make on their own. Where each can, but
@@ -240,15 +279,15 @@ export function reviewAdjustmentEvidence(row: BookingLedgerCensusRow): ReviewAdj
   // The same gap after a cancellation (#3913 F2): `owed(b) == 0` checks only
   // the total, and no give-back or minted row names its task (the give-back
   // row has no field that could, and its description is rewritten by the
-  // Xero repair). So where two or more tasks' stand-ins draw on one pool of
-  // rows, lines swapped between them, the total kept, would still be made of
-  // it. That booking fails closed too, to the cent; one task's stays exact.
-  const pooledCents = [...giveBacks, ...minted].reduce((sum, cents) => sum + cents, 0);
-  if (cancelled && new Set(credited.map(({ line }) => line.anchorId)).size > 1 && pooledCents > 0) {
+  // Xero repair). So where the booking's rows could make its stand-ins in more
+  // than one way at the same total - lines swapped between siblings still
+  // made of them - the lines cannot be told right. That booking fails closed
+  // too, to the cent. One task's, or one the rows make only one way, is exact.
+  if (distinctMakings(refundStandIns, giveBacks, minted) > 1) {
     ambiguous = [
-      { detail: "review stand-ins credited after the cancellation", cents: credited.reduce((sum, { line }) => sum - line.amountCents, 0) },
-      { detail: "their own refunds to the capture", cents: credited.reduce((sum, share) => sum + share.ownRefundCents, 0) },
-      { detail: "review give-back and share credit rows they share", cents: pooledCents },
+      { detail: "review stand-ins after the cancellation", cents: refundStandIns.reduce((sum, share) => sum + share.creditedCents, 0) },
+      { detail: "their own refunds to the capture", cents: refundStandIns.reduce((sum, share) => sum + share.ownRefundCents, 0) },
+      { detail: "review give-back and share credit rows beside them", cents: [...giveBacks, ...minted].reduce((sum, cents) => sum + cents, 0) },
     ];
   }
 
