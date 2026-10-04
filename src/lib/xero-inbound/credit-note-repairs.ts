@@ -15,6 +15,7 @@ import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-a
 import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { formatCents } from "@/lib/utils";
+import { capOrganiserChildMirrorAtStripeRefunds } from "@/lib/organiser-child-refund";
 
 /** #3792: the operator alert, and the audit action, for a refused change. */
 const RESTORED_BOOKING_ALLOCATION_CHANGE_ERROR_TYPE =
@@ -247,6 +248,7 @@ export async function repairRefundedPaymentBusinessState(input: {
       status: true,
       // F5 (#1353): Stripe payments get a raise-only ledger floor below.
       source: true,
+      booking: { select: { organiserSettled: true } },
     },
   });
   if (payments.length === 0) {
@@ -468,6 +470,11 @@ export async function repairRefundedPaymentBusinessState(input: {
         errorMessage: `Xero-derived refund total (${formatCents(nextRefundedTotalCents, format)}) for payment ${payment.id} is below the local Stripe refund ledger (${formatCents(payment.refundedAmountCents, format)}). The local ledger was kept (raise-only floor, #1353). Likely causes: a missing refund-delta credit note in Xero, or a refund credit note voided in Xero after Stripe paid the refund out.`,
       });
       effectiveRefundedTotalCents = payment.refundedAmountCents;
+    }
+    // #3653 (`INV-PAY-114`): a Xero note never raises an organiser child's cash
+    // mirror past the refunds Stripe recorded for it.
+    if (isStripePayment && payment.booking.organiserSettled) {
+      effectiveRefundedTotalCents = await capOrganiserChildMirrorAtStripeRefunds(prisma, payment, effectiveRefundedTotalCents);
     }
 
     let nextStatus = getNextRefundedPaymentStatus(

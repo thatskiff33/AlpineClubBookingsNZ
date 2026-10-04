@@ -28,6 +28,16 @@ export const REVIEW_CHARGE_WRONG_KIND_MESSAGE =
   "This task is money the club owes the member, so it cannot be used to collect money from them. If the member owes the club for a booking change, make that change on the booking itself.";
 
 /**
+ * #3653 (`INV-PAY-114`): a charge on a joiner's booking the group organiser paid
+ * for by card. The card behind the booking's payment mirror is the ORGANISER's
+ * combined payment, and an invoice would bill the joiner for a booking somebody
+ * else paid for, so neither instrument is the right one. Refused before the
+ * claim, so the task stays open for a person to settle with the organiser.
+ */
+export const REVIEW_CHARGE_ORGANISER_PAID_MESSAGE =
+  "The group organiser paid for this booking by card, so the extra amount cannot be charged to the joiner from here. Agree it with the organiser and collect it another way, then dismiss this task with a note recording what was collected and how.";
+
+/**
  * #3170: the officer said the club is owed, and there is no way to ask for it.
  *
  * The club collects a price increase in exactly two ways: an additional card
