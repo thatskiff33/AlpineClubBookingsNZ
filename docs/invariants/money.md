@@ -519,7 +519,9 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   **A group organiser's settlement posts on its children** (#3854). The group
   settle confirms each child on the ledger and posts its share, its own price,
   as `CARD_CAPTURE` or `BANK_RECEIPT` anchored `GROUP_SETTLEMENT`; a frozen
-  cancel plan posts the matching refund there (design §5.2).
+  cancel plan posts the matching refund there (design §5.2). #3583's back-post
+  posts a child settled before it through the same planners and keys, so a
+  later live event finds its line posted.
 
 ## INV-MONEY-035
 
@@ -593,7 +595,7 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   the gate until the owner's `--acknowledged` file, kept outside the
   repository, names its instance to the cent — `KNOWN_DEFECT_HISTORY` too —
   except `GROUP_SETTLEMENT_OFF_LEDGER`, listed only (owner decisions,
-  #3583; poster #3854). A moved figure is stale and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
+  #3583); back-posted since #3854. A moved figure is stale and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
   on bookings the real writers built.
 
 ## INV-MONEY-006

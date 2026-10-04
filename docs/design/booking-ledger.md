@@ -396,8 +396,8 @@ the database makes — and its lines cascade with it.)
 | Reduction credited to account (`BOOKING_MODIFICATION_REFUND`) | `CREDIT_ISSUED` (−), `method = ACCOUNT_CREDIT` | `MEMBER_CREDIT` | `createBookingModificationCredit`, through `syncBookingLedgerCredits` |
 | Hand-back completed on the `local-allocation` route — an IB/cash cancellation (`CANCELLED_BOOKING_HAND_BACK`, #3529), or a review refund the club sends back itself — on a payment that is not a card payment | `BANK_REFUND` (−), `method = INTERNET_BANKING` by #3529's wording decision (`refundMethodForEditReviewRoute`, `INV-PAY-101`), `postedByMemberId` = the officer. A legacy task on a card capture posts none: that money goes back on the card and posts `CARD_REFUND` from its refund row | `REVIEW_TASK` | `manual-refund-task-resolution.ts` |
 | Applied credit restored on cancellation (`INV-PAY-019`) | `CREDIT_ISSUED` (−) for exactly what was restored — **not** a reversal of the `CREDIT_APPLIED` line, because the restore is tiered (see above) | `CANCELLATION` (the booking) | `restoreCreditFromBooking`, through `syncBookingLedgerCredits` |
-| A group organiser's settlement paid — card capture, or the combined Internet Banking invoice's inbound reconcile (#3854) | per child it paid: the child's confirmation lines (§5.1, fenced per booking), and its share — the child's own `finalPriceCents`, never a split of the total — as `CARD_CAPTURE` (`method = CARD`) or `BANK_RECEIPT` (`method = INTERNET_BANKING`), keyed `groupSettlementShareKey`; sum or nothing against what the settlement collected | `GROUP_SETTLEMENT` / settlement id | `settleConfirmedChildrenAndNotify`, in the claim that flips the children PAID, under its `lock(1)` and the children's lodge keys, through `postGroupSettlementLedgerLines` |
-| Organiser cancel's frozen mirror plan (`refundPlan`, #1236): a card plan frozen before #3653, or an Internet Banking settlement's | `CARD_REFUND` or `BANK_REFUND` (−) for the child's planned share, beside the mirror that records it, keyed `groupSettlementRefundKey` — only where this settlement's share is on the child's ledger, so a child settled before #3854 waits for the back-post to post share, refund and kept together | `GROUP_SETTLEMENT` / settlement id | the organiser cancel's per-child claim, and the plan's recovery replay (`executeGroupSettlementRefundPlan`) for a refund that failed inline — one key, so only one posts |
+| A group organiser's settlement paid — card capture, or the combined Internet Banking invoice's inbound reconcile (#3854) | per child it paid: the child's confirmation lines (§5.1, fenced per booking), and its share — the child's own `finalPriceCents`, never a split of the total — as `CARD_CAPTURE` (`method = CARD`) or `BANK_RECEIPT` (`method = INTERNET_BANKING`), keyed `groupSettlementShareKey`; sum or nothing against what the settlement collected | `GROUP_SETTLEMENT` / settlement id | `settleConfirmedChildrenAndNotify`, in the claim that flips the children PAID, under its `lock(1)` and the children's lodge keys, through `postGroupSettlementLedgerLines`; for a child settled before #3854, the back-post (§6), through the same planner and key |
+| Organiser cancel's frozen mirror plan (`refundPlan`, #1236): a card plan frozen before #3653, or an Internet Banking settlement's | `CARD_REFUND` or `BANK_REFUND` (−) for the child's planned share, beside the mirror that records it, keyed `groupSettlementRefundKey` — only where this settlement's share is on the child's ledger, so a child settled before #3854 waits for the back-post to post share, refund and kept together | `GROUP_SETTLEMENT` / settlement id | the organiser cancel's per-child claim, and the plan's recovery replay (`executeGroupSettlementRefundPlan`) for a refund that failed inline, and the back-post (§6) for a mirror written before #3854 — one key, so only one posts |
 | A refund out of the combined card payment (#3653: an edit's reduction, a joiner's own cancel, the organiser cancel's per-child debt) | `CARD_REFUND` (−) from the child's `PaymentRefund` row, and its reversal if Stripe later fails it — the convergence above | `PAYMENT_REFUND` | `processOrganiserChildRefundOperation` and `reconcilePendingOrganiserChildRefunds`, through `syncBookingLedgerSettlements` in the transaction that writes the row |
 | Hold-expiry release / stale-invoice clearing note (`INV-PAY-017`) | no settlement line — no money moved. The charge side is §5.1's cancellation row: the stay's reversals, and no fee, since nothing was kept; the Xero note is a rendering of `owed(b)` going to zero | — | — |
 
@@ -575,7 +575,9 @@ of its own and no credit, refund or change-fee figure, whose money moved only
 through the organiser's settlement. Since #3854 a newly settled child holds
 lines, so the class is history only: its `GROUP_SETTLEMENT` share is checked
 against the child's payment and a plan refund against the frozen plan
-(`booking-ledger-projection-census-group.ts`); a child settled before #3854
+(`booking-ledger-projection-census-group.ts`); the back-post posts a child
+settled before #3854, so the class stays only for history it could not post
+(above); a child settled before #3854
 that holds only a #3653 refund line is `NOT_CONFIRMED_ON_LEDGER` coverage; a
 pre-#3653 plan's one group retry still in flight is the child's planned share
 as `IN_FLIGHT_REFUND`; and an organiser cancel freezes no kept figure, so its
@@ -651,8 +653,20 @@ with an integrity finding is rolled back and listed with its reason and both
 figures; so is one it cannot plan (an unpriced night, nights that do not make
 the final price), and so is one whose transaction fails for any other reason
 (`UNEXPECTED_ERROR`) or waits past its lock timeout (`LOCK_TIMEOUT`), without
-stopping the run. A named class is not a refusal. A group-settled child with no
-money of its own is left to #3854. The dry run is the same transaction, rolled
+stopping the run. A named class is not a refusal. **A group organiser's
+settled child (#3854, `booking-ledger-back-post-group.ts`)** is posted through
+the live group posters' planners and keys: its confirmation (the settle's own
+rule, cancelled or not), its share from `planGroupSettlementShareLines` over
+every child the settlement paid, each at its payment's `amountCents` — sum or
+nothing, refused as `GROUP_SHARES_DO_NOT_RECONCILE` — a mirror plan's refund
+from `planGroupSettlementRefundLine` only once its mirror is written (an
+unmirrored one is the recovery replay's to post, under the same key), and an
+organiser cancel's kept figure from `groupSettledChildKeptCents`, with the
+payment as it stood at the cancel. A #3653 refund posts from its own row
+through the settlement sync. A later replay, retry or #3653 refund therefore
+finds its key posted. A child with no lines it cannot post stays
+`GROUP_SETTLEMENT_OFF_LEDGER`, listed with its reason; one with money of its own
+stays a coverage gap. The dry run is the same transaction, rolled
 back. Every run has an id and window, and names each line it inserted. What it does not reconstruct, and so lists: a review give-back or stand-in
 a closure before #3582 would have posted, an edit-review hand-back made by hand
 before #3599, and a legacy refund with no `PaymentRefund` row.

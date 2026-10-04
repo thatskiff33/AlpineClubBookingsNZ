@@ -1747,8 +1747,9 @@ damaged — named by shape, since that path may still be live) holds the gate
 until each is corrected, or written off in the acknowledgement file, and
 `GROUP_SETTLEMENT_OFF_LEDGER` (children whose money moved only through the
 organiser's group settlement — no transaction, refund or credit row of their
-own, no credit, refund or change-fee figure — whose poster is #3854) is listed
-only. Every other class is an expected state, an in-flight refund among them:
+own, no credit, refund or change-fee figure — and that hold no line: since
+#3854 the settle posts them, and the back-post below posts the history) is
+listed only. Every other class is an expected state, an in-flight refund among them:
 acknowledge each instance with its reference, and a figure that moves after
 sign-off goes stale and holds the gate again, so nothing stays "in flight"
 unseen. The census takes no lock, so run it off-peak against
@@ -1802,13 +1803,19 @@ DATABASE_URL=<...> pnpm run booking-ledger:back-post --json           # the repo
 
 **Reading the report.** One summary line — bookings, how many it posted (or
 would) and how many lines, how many had nothing to post, how many it cannot
-post, and how many group-settled children it left alone — then one line per
-booking that posts or cannot:
+post, and how many group-settled children it left `GROUP_SETTLEMENT_OFF_LEDGER`
+(none, on a clean run) — then one line per booking that posts or cannot:
 
 - `POSTED` / `WOULD POST <id>  <n> line(s): …` names the steps: the
   confirmation (one line per guest-night, an evenly split strand included), an
   old edit's change fee or the nights it moved, the cancellation with the kept
-  figure, and in brackets any census class the booking now shows.
+  figure, and in brackets any census class the booking now shows. A child a
+  group organiser settled (#3854) also names `group share (<cents>)` and, where
+  the organiser cancelled under a frozen refund plan whose refund was made,
+  `group plan refund (<cents>)`; its kept figure is the organiser cancel's own
+  (the share less every refund made or still owed). A plan refund still being
+  retried is not posted: the census names it `IN_FLIGHT_REFUND`, and the retry
+  posts it when it goes through.
 - `CANNOT POST <id>  <reason>: …`. `UNPRICED_NIGHT` — a strand has a night with
   no price, which is an open review: close the review, then re-run.
   `CONFIRMATION_DOES_NOT_RECONCILE` — the night rows and promotion do not make
@@ -1816,15 +1823,25 @@ booking that posts or cannot:
   another writer held the booking; re-run. `UNEXPECTED_ERROR` — anything else
   (a legacy negative night price, for one), with its message. `EDIT_NOT_DERIVABLE`,
   `PRICE_LINES_DISAGREE`, `REBASE_MOVEMENT_UNREADABLE`, `LIVE_LINE_NOT_ONE_NIGHT`
-  — an old edit cannot be re-derived from what the rows hold. `CENSUS_WOULD_NOT_PASS`
+  — an old edit cannot be re-derived from what the rows hold.
+  `GROUP_SHARES_DO_NOT_RECONCILE` — the payments of the children a group
+  settlement paid do not add up to what it collected, so no share is guessed;
+  an officer looks at the group. `CENSUS_WOULD_NOT_PASS`
   — the lines it could post would leave the census disagreeing, gapped or
   finding a line wrong; the figures follow. What the back-post does not
   reconstruct, and so lists here: a review give-back or stand-in a closure made
   before #3582, a review refund an officer handed back by hand before #3599,
   and a legacy refund with no refund row. Each is for an officer to look at;
   report it on #3583 with the figures printed.
-- `LISTED <id>  GROUP_SETTLEMENT_OFF_LEDGER` — a group-settled child whose money
-  moved only through its organiser; its poster is #3854 (owner decision 2).
+- `LISTED <id>  GROUP_SETTLEMENT_OFF_LEDGER, not posted  <reason>: …` — a
+  group-settled child with no lines that the back-post could not post, with
+  the reason and figures as for `CANNOT POST`. It stays in that class, which is
+  listed only (owner decision 2A); report it on #3854 with the figures. A
+  group child that already holds money of its own (a refund mirror, a refund
+  row) is not in the class: it is a coverage gap and prints as `CANNOT POST`.
+  Run the back-post only once the blue/green colour switch to the #3854 release
+  is finished, and finish that switch before processing any organiser
+  cancellation (the release's deploy note).
 
 **The owner's run.** Agents never touch production. Run it twice: first as a
 rehearsal on a restored backup, then for real.

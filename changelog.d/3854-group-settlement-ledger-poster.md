@@ -8,7 +8,11 @@
   that joiner, and taken back off if Stripe later fails it. Nothing anyone sees
   changes yet: every screen, email and report still reads the existing figures.
   This is the groundwork for moving those readers onto the ledger (#3584)
-  without showing a group joiner's booking as unpaid. A database change adds
+  without showing a group joiner's booking as unpaid. The booking-ledger
+  back-post (#3583) now records the same for groups settled before this
+  release — each joiner's share, and for a cancelled group its planned refund
+  and what the club kept — so a joiner it covers is no longer only listed; a
+  joiner it cannot explain is listed with the reason. A database change adds
   one value to the ledger's list of anchors; it is safe to run while the
   previous version is still serving.
 
