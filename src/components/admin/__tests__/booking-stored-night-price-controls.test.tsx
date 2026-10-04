@@ -182,7 +182,7 @@ describe("nothing on this screen produces an amount", () => {
 
     const strand = screen.getByTestId("stored-night-price-strand");
     const buttonName = (button: HTMLElement) =>
-      (button.textContent ?? "").trim();
+      button.getAttribute("aria-label") ?? (button.textContent ?? "").trim();
     /*
       The inventory, pinned. A new control fails HERE and has to be added below
       - at which point the loop underneath presses it and proves it does not
@@ -195,9 +195,21 @@ describe("nothing on this screen produces an amount", () => {
       census provably cannot see - so the scope that matters is every button
       this component renders, wherever it hangs.
     */
+    const firstNightName = (nightBox("2026-08-01") as HTMLInputElement)
+      .labels?.[0]?.textContent?.trim();
+    const secondNightName = (nightBox("2026-08-02") as HTMLInputElement)
+      .labels?.[0]?.textContent?.trim();
     expect(new Set(screen.getAllByRole("button").map(buttonName))).toEqual(
-      new Set([STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL]),
+      new Set([
+        STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL,
+        `Increase ${firstNightName} by one dollar`,
+        `Decrease ${firstNightName} by one dollar`,
+        `Increase ${secondNightName} by one dollar`,
+        `Decrease ${secondNightName} by one dollar`,
+      ]),
     );
+    expect(screen.getByRole("button", { name: `Increase ${secondNightName} by one dollar` })).toBeDisabled();
+    expect(screen.getByRole("button", { name: `Decrease ${secondNightName} by one dollar` })).toBeDisabled();
 
     const confirm = within(strand).getByRole("button", {
       name: STORED_NIGHT_PRICE_RECORD_CONTROL_LABEL,

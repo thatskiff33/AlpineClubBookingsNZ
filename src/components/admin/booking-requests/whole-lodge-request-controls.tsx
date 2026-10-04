@@ -5,8 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MoneyInput } from "@/components/ui/money-input";
 import { type ClubDateFormat, formatClubDate, requireCalendarDate } from "@/lib/club-time";
-import { MONEY_INPUT_PROPS } from "@/lib/money-input";
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
 
@@ -347,13 +347,12 @@ export function MemberWholeLodgeApprovalFields({
         <Label htmlFor={`whole-lodge-price-${requestId}`}>
           Total price override (optional)
         </Label>
-        <Input
+        <MoneyInput
           id={`whole-lodge-price-${requestId}`}
-          {...MONEY_INPUT_PROPS}
           className="w-40"
           value={priceDollars}
           disabled={disabled}
-          onChange={(event) => onPriceChange(event.target.value)}
+          onValueChange={onPriceChange}
         />
         <p className="text-xs text-muted-foreground">
           {flatRateOffered
