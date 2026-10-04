@@ -21,6 +21,9 @@ import type {
   SettlementMethod,
 } from "@prisma/client";
 
+import type { ConfirmationPostingBooking } from "@/lib/booking-ledger-confirmation-posting";
+import type { GroupChildSibling } from "@/lib/booking-ledger-group-child-plan";
+
 // ---------------------------------------------------------------------------
 // The snapshot one booking is judged from
 // ---------------------------------------------------------------------------
@@ -120,8 +123,13 @@ export type BookingLedgerCensusRow = {
   recoveryOperations: ReadonlyArray<{
     type: PaymentRecoveryOperationType;
     status: PaymentRecoveryOperationStatus;
+    /** With `nextRetryAt`, whether a FAILED row is still retried (`isPaymentRecoveryOperationInFlight`). */
+    attempts: number;
+    nextRetryAt: Date | null;
     amountCents: number;
     idempotencyKey: string;
+    paymentId: string;
+    paymentIntentId: string;
   }>;
   /**
    * The paid path's CANCELLED event snapshot (`writePaidCancellationEvent`):
@@ -139,8 +147,27 @@ export type BookingLedgerCensusRow = {
     id: string;
     source: PaymentSource;
     status: PaymentStatus;
+    /** What the settlement collected: its children's shares must add up to it. */
+    amountCents: number;
+    stripePaymentIntentId: string | null;
     refundPlan: unknown;
     refundRecoveryInFlight: boolean;
+  } | null;
+  /**
+   * #3854 F1: what the group child planner needs to plan, in memory, the lines
+   * the back-post would post on a child with none — read only for a child that
+   * would otherwise be `GROUP_SETTLEMENT_OFF_LEDGER` (`isGroupSettlementOffLedger`),
+   * from the same snapshot. Null on every other booking.
+   */
+  groupChild: {
+    /** The night rows the confirmation is planned from (`planConfirmationChargeLines`). */
+    pricing: ConfirmationPostingBooking;
+    /** Every child of the organiser's booking that the organiser settled, this one included. */
+    siblings: GroupChildSibling[];
+    /** Cancelled with no paid-path CANCELLED snapshot: the organiser cancel's kept figure applies. */
+    cancelledWithoutSnapshot: boolean;
+    /** The kept figure the CANCELLED snapshot gives, as the back-post reads it; null where it gives none. */
+    snapshotKept: { keptCents: number; policyKeptCents?: number } | null;
   } | null;
   lines: readonly CensusLedgerLine[];
 };

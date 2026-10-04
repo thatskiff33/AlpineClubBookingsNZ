@@ -71,3 +71,24 @@ export function mirrorPlanRefundedCents(
 export function isMirrorRefundPlan(settlement: { refundPlan: unknown; stripePaymentIntentId: string | null }): boolean {
   return readPerChildRefundPlan(settlement.refundPlan) === null && (settlement.refundPlan != null || !settlement.stripePaymentIntentId);
 }
+
+/**
+ * What a card organiser's settlement since #3653 has already handed back, or
+ * still owes, on one child — the figure a cancellation of the child tiers from.
+ * The ONE formula (`INV-SSOT`; #3854 F1): the larger of the child's stored
+ * mirror and the refund rows recorded against its payment (the mirror alone can
+ * be zeroed by a reconcile; the rows survive), plus every child-refund debt
+ * not yet closed. `organiserChildCommittedRefundCents` reads the evidence from
+ * the database; the booking-ledger census and back-post read it from the rows
+ * they already hold.
+ */
+export type OrganiserChildRefundEvidence = {
+  /** Σ the child payment's `PaymentRefund` rows that count (`isRecordedRefundStatus`). */
+  recordedRefundCents: number;
+  /** Σ the child's `organiser_child_refund_` debts on the settlement's intent not yet SUCCEEDED. */
+  childOwedCents: number;
+};
+
+export function organiserChildCommittedRefundFrom(refundedAmountCents: number, evidence: OrganiserChildRefundEvidence): number {
+  return Math.max(refundedAmountCents, evidence.recordedRefundCents) + evidence.childOwedCents;
+}

@@ -11,13 +11,18 @@ import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-p
 import { planGroupSettlementRefundLine, planGroupSettlementShareLines } from "@/lib/booking-ledger-group-settlement-posting";
 import { planCancellationChargeLines } from "@/lib/booking-ledger-cancellation-posting";
 import { refundKey } from "@/lib/booking-ledger-posting-keys";
+import { isPaymentRecoveryOperationInFlight } from "@/lib/payment-recovery-constants";
+import { buildOrganiserChildCancellationRefundKey } from "@/lib/payment-recovery-keys";
+import { summarizeBookingLedgerCensus } from "@/lib/booking-ledger-projection-census-report";
 import { evaluateBookingLedgerIdentities } from "@/lib/booking-ledger-projection-census";
 import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
 import { ledgerLineAmountCents, type BookingLedgerPosting } from "@/lib/booking-ledger-write";
 
 const B = "child-1";
+const PI = "pi-group";
 const D1 = new Date("2027-09-01T00:00:00.000Z");
 const D2 = new Date("2027-09-02T00:00:00.000Z");
+const LATER = new Date("2027-08-01T00:00:00.000Z");
 let seq = 0;
 
 function toLines(postings: readonly BookingLedgerPosting[]): CensusLedgerLine[] {
@@ -41,28 +46,31 @@ function toLines(postings: readonly BookingLedgerPosting[]): CensusLedgerLine[] 
   }));
 }
 
+/** The child's night rows: one guest, two nights at $22.50. */
+const PRICING = {
+  id: B,
+  lodgeId: "l1",
+  totalPriceCents: 4_500,
+  promoAdjustmentCents: 0,
+  guests: [
+    {
+      id: "g1",
+      firstName: "Joiner",
+      lastName: "One",
+      ageTier: "ADULT" as const,
+      rateMembershipTypeId: null,
+      nights: [
+        { stayDate: D1, priceCents: 2_250 },
+        { stayDate: D2, priceCents: 2_250 },
+      ],
+    },
+  ],
+};
+
 /** A $45 child its organiser settled, confirmed and its share posted by the settle's own planners. */
 function settledChild(source: "STRIPE" | "INTERNET_BANKING"): { row: BookingLedgerCensusRow; settlement: { id: string; source: typeof source } } {
   const settlement = { id: "gs1", source };
-  const charges = planConfirmationChargeLines({
-    id: B,
-    lodgeId: "l1",
-    totalPriceCents: 4_500,
-    promoAdjustmentCents: 0,
-    guests: [
-      {
-        id: "g1",
-        firstName: "Joiner",
-        lastName: "One",
-        ageTier: "ADULT",
-        rateMembershipTypeId: null,
-        nights: [
-          { stayDate: D1, priceCents: 2_250 },
-          { stayDate: D2, priceCents: 2_250 },
-        ],
-      },
-    ],
-  }).postings;
+  const charges = planConfirmationChargeLines(PRICING).postings;
   const share = planGroupSettlementShareLines({
     settlement: { ...settlement, amountCents: 4_500 },
     children: [{ bookingId: B, lodgeId: "l1", shareCents: 4_500 }],
@@ -91,7 +99,8 @@ function settledChild(source: "STRIPE" | "INTERNET_BANKING"): { row: BookingLedg
       modifications: [],
       recoveryOperations: [],
       cancellation: null,
-      groupSettlement: { id: "gs1", source, status: "SUCCEEDED", refundPlan: null, refundRecoveryInFlight: false },
+      groupSettlement: { id: "gs1", source, status: "SUCCEEDED", amountCents: 4_500, stripePaymentIntentId: source === "STRIPE" ? PI : null, refundPlan: null, refundRecoveryInFlight: false },
+      groupChild: null,
       lines: toLines([...charges, ...share]),
     },
   };
@@ -186,5 +195,194 @@ describe("the census on a group-settled child (#3854)", () => {
     const result = evaluateBookingLedgerIdentities(subject);
     expect(result.identities.find((identity) => identity.identity === "PRICE")).toMatchObject({ status: "COVERAGE" });
     expect(result.coverage).toContain("NOT_CONFIRMED_ON_LEDGER");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3854's delta review: F1, K1, K2
+// ---------------------------------------------------------------------------
+
+type Op = BookingLedgerCensusRow["recoveryOperations"][number];
+
+/** The #3653 debt the organiser cancel wrote for this child, in the state given. */
+function childDebt(cents: number, state: Pick<Op, "status" | "attempts" | "nextRetryAt">): Op {
+  return {
+    type: "REFUND_BOOKING_MODIFICATION",
+    ...state,
+    amountCents: cents,
+    idempotencyKey: buildOrganiserChildCancellationRefundKey("gs1", B),
+    paymentId: "pay-1",
+    paymentIntentId: PI,
+  };
+}
+
+const PENDING = { status: "PENDING", attempts: 0, nextRetryAt: LATER } as const;
+const RETRYING = { status: "FAILED", attempts: 2, nextRetryAt: LATER } as const;
+const EXHAUSTED = { status: "FAILED", attempts: 5, nextRetryAt: null } as const;
+
+/**
+ * A child settled by card before #3854, holding no line, that its organiser
+ * cancelled under #3653's per-child plan with `refundCents` owed back to it as a
+ * debt (none made yet): the census plans its lines from the snapshot's evidence.
+ */
+function offLedgerCancelledChild(refundCents: number, debt: Pick<Op, "status" | "attempts" | "nextRetryAt"> | null): BookingLedgerCensusRow {
+  const { row } = settledChild("STRIPE");
+  return {
+    ...row,
+    booking: { ...row.booking, status: "CANCELLED" },
+    groupSettlement: { ...row.groupSettlement!, refundPlan: { perChildRefunds: { [B]: refundCents } } },
+    recoveryOperations: debt ? [childDebt(refundCents, debt)] : [],
+    groupChild: {
+      pricing: PRICING,
+      siblings: [{ id: B, lodgeId: "l1", payment: { amountCents: 4_500, status: "SUCCEEDED", source: "STRIPE" } }],
+      cancelledWithoutSnapshot: true,
+      snapshotKept: null,
+    },
+    lines: [],
+  };
+}
+
+const census = (rows: BookingLedgerCensusRow[]) => summarizeBookingLedgerCensus(rows.map(evaluateBookingLedgerIdentities), null, []);
+
+describe("F1: GROUP_SETTLEMENT_OFF_LEDGER only where the back-post's planned lines would agree (#3854)", () => {
+  it("a settled child whose planned confirmation and share agree is in the class, and the gate stays open", () => {
+    const { row } = settledChild("STRIPE");
+    const subject = { ...row, lines: [], groupChild: { pricing: PRICING, siblings: [{ id: B, lodgeId: "l1", payment: { amountCents: 4_500, status: "SUCCEEDED", source: "STRIPE" as const } }], cancelledWithoutSnapshot: false, snapshotKept: null } };
+    expect(evaluateBookingLedgerIdentities(subject)).toMatchObject({ bookingClass: "GROUP_SETTLEMENT_OFF_LEDGER", coverage: [] });
+    expect(census([subject]).verdict).toBe("GATE_OPEN");
+  });
+
+  it("an organiser cancel that refunds the child nothing: kept is the whole share, the planned lines agree, still in the class", () => {
+    const subject = offLedgerCancelledChild(0, null);
+    expect(evaluateBookingLedgerIdentities(subject)).toMatchObject({ bookingClass: "GROUP_SETTLEMENT_OFF_LEDGER", coverage: [] });
+  });
+
+  it("the review's scenario: a 100% #3653 refund whose retry is exhausted, never paid, holds the gate (unsignable), live", () => {
+    const subject = offLedgerCancelledChild(4_500, EXHAUSTED);
+    const evaluation = evaluateBookingLedgerIdentities(subject);
+    expect(evaluation).toMatchObject({ bookingClass: null, coverage: ["GROUP_SETTLEMENT_UNPOSTABLE"] });
+    const report = census([subject]);
+    expect(report.classes.GROUP_SETTLEMENT_OFF_LEDGER.bookings).toBe(0);
+    expect(report.verdict).toBe("GATE_CLOSED");
+    expect(report.gateClosedBecause).toEqual(["1 booking(s) with coverage gap GROUP_SETTLEMENT_UNPOSTABLE"]);
+  });
+
+  it("a refund still in flight is not waved through either: once posted it is a class the owner acknowledges, so until then it holds", () => {
+    for (const state of [PENDING, RETRYING]) {
+      expect(evaluateBookingLedgerIdentities(offLedgerCancelledChild(4_500, state)).coverage, state.status).toEqual(["GROUP_SETTLEMENT_UNPOSTABLE"]);
+    }
+  });
+
+  it("shares that do not add up to what the settlement collected hold the gate", () => {
+    const { row } = settledChild("STRIPE");
+    const subject = {
+      ...row,
+      lines: [],
+      groupChild: {
+        pricing: PRICING,
+        siblings: [
+          { id: B, lodgeId: "l1", payment: { amountCents: 4_500, status: "SUCCEEDED", source: "STRIPE" as const } },
+          { id: "child-2", lodgeId: "l1", payment: { amountCents: 1, status: "SUCCEEDED", source: "STRIPE" as const } },
+        ],
+        cancelledWithoutSnapshot: false,
+        snapshotKept: null,
+      },
+    };
+    expect(evaluateBookingLedgerIdentities(subject)).toMatchObject({ bookingClass: null, coverage: ["GROUP_SETTLEMENT_UNPOSTABLE"] });
+  });
+
+  it("night rows that do not make the price, or an unreadable snapshot on a cancelled child, hold the gate", () => {
+    const { row } = settledChild("STRIPE");
+    const evidence = { pricing: PRICING, siblings: [{ id: B, lodgeId: "l1", payment: { amountCents: 4_500, status: "SUCCEEDED", source: "STRIPE" as const } }], cancelledWithoutSnapshot: false, snapshotKept: null };
+    const unpriced = { ...row, lines: [], groupChild: { ...evidence, pricing: { ...PRICING, guests: [{ ...PRICING.guests[0]!, nights: [{ stayDate: D1, priceCents: null }] }] } } };
+    expect(evaluateBookingLedgerIdentities(unpriced).coverage).toEqual(["GROUP_SETTLEMENT_UNPOSTABLE"]);
+    const unreadable = { ...offLedgerCancelledChild(0, null), groupChild: { ...evidence, cancelledWithoutSnapshot: false, snapshotKept: null } };
+    expect(evaluateBookingLedgerIdentities(unreadable).coverage).toEqual(["GROUP_SETTLEMENT_UNPOSTABLE"]);
+  });
+});
+
+/** The same child after the back-post: confirmation, share, and the cancellation keeping nothing. */
+function backPostedCancelledChild(debt: Pick<Op, "status" | "attempts" | "nextRetryAt">): BookingLedgerCensusRow {
+  const { row } = settledChild("STRIPE");
+  const cancellation = planCancellationChargeLines({
+    bookingId: B,
+    lodgeId: "l1",
+    keptCents: 0,
+    chargeLines: row.lines
+      .filter((line) => line.kind === "GUEST_NIGHT")
+      .map((line) => ({ ...line, kind: "GUEST_NIGHT" as const, sign: line.sign === -1 ? -1 : 1, rateMembershipTypeId: null, ageTier: "ADULT", guestNames: ["Joiner One"], narration: "night" })),
+    adjustmentLines: [],
+  });
+  if (cancellation.kind !== "lines") throw new Error("expected cancellation lines");
+  return {
+    ...offLedgerCancelledChild(4_500, debt),
+    groupChild: null,
+    lines: [...row.lines, ...toLines(cancellation.postings)],
+  };
+}
+
+describe("K1: a FAILED refund the runner will retry is in flight; an exhausted one is not (#3854)", () => {
+  it("the one predicate: PENDING, PROCESSING, and FAILED with a retry scheduled and attempts left", () => {
+    expect(isPaymentRecoveryOperationInFlight({ status: "PENDING", attempts: 0, nextRetryAt: LATER })).toBe(true);
+    expect(isPaymentRecoveryOperationInFlight({ status: "PROCESSING", attempts: 5, nextRetryAt: null })).toBe(true);
+    expect(isPaymentRecoveryOperationInFlight({ status: "FAILED", attempts: 4, nextRetryAt: LATER })).toBe(true);
+    expect(isPaymentRecoveryOperationInFlight({ status: "FAILED", attempts: 5, nextRetryAt: LATER })).toBe(false);
+    expect(isPaymentRecoveryOperationInFlight({ status: "FAILED", attempts: 1, nextRetryAt: null })).toBe(false);
+    expect(isPaymentRecoveryOperationInFlight({ status: "SUCCEEDED", attempts: 1, nextRetryAt: null })).toBe(false);
+  });
+
+  it("a back-posted child whose #3653 refund is pending or retrying names it IN_FLIGHT_REFUND; exhausted, it disagrees", () => {
+    for (const state of [PENDING, RETRYING]) {
+      const price = evaluateBookingLedgerIdentities(backPostedCancelledChild(state)).identities.find((result) => result.identity === "PRICE");
+      expect(price, `${state.status}/${state.attempts}`).toMatchObject({ status: "CLASSIFIED", explainedBy: [{ name: "IN_FLIGHT_REFUND", cents: 4_500 }] });
+    }
+    const exhausted = evaluateBookingLedgerIdentities(backPostedCancelledChild(EXHAUSTED));
+    expect(exhausted.identities.find((result) => result.identity === "PRICE")).toMatchObject({ status: "DISAGREE", deltaCents: 4_500 });
+    expect(census([backPostedCancelledChild(EXHAUSTED)]).verdict).toBe("GATE_CLOSED");
+  });
+});
+
+describe("K2: a share's evidence is that the settlement captured, a REFUNDED one included (#3854)", () => {
+  it("a child of a settlement an organiser cancel refunded in full agrees, live and back-posted", () => {
+    // Live (or back-posted, the same lines): the share and the plan's whole refund beside it, nothing kept.
+    const { row, settlement } = settledChild("INTERNET_BANKING");
+    const refund = planGroupSettlementRefundLine({ settlement, bookingId: B, lodgeId: "l1", refundCents: 4_500 })!;
+    const cancellation = planCancellationChargeLines({
+      bookingId: B,
+      lodgeId: "l1",
+      keptCents: 0,
+      chargeLines: row.lines
+        .filter((line) => line.kind === "GUEST_NIGHT")
+        .map((line) => ({ ...line, kind: "GUEST_NIGHT" as const, sign: line.sign === -1 ? -1 : 1, rateMembershipTypeId: null, ageTier: "ADULT", guestNames: ["Joiner One"], narration: "night" })),
+      adjustmentLines: [],
+    });
+    if (cancellation.kind !== "lines") throw new Error("expected cancellation lines");
+    const subject: BookingLedgerCensusRow = {
+      ...row,
+      booking: { ...row.booking, status: "CANCELLED" },
+      payment: { ...row.payment!, status: "REFUNDED", refundedAmountCents: 4_500 },
+      groupSettlement: { ...row.groupSettlement!, status: "REFUNDED", refundPlan: { [B]: 4_500 } },
+      lines: [...row.lines, ...toLines([refund, ...cancellation.postings])],
+    };
+    expect(statuses(subject)).toMatchObject({ PRICE: "AGREE", CAPTURED: "AGREE", REFUNDED: "AGREE" });
+    expect(integrity(subject)).toEqual([]);
+    // A settled, uncancelled child under a REFUNDED settlement: the share still stands.
+    const settled = settledChild("STRIPE").row;
+    expect(integrity({ ...settled, groupSettlement: { ...settled.groupSettlement!, status: "REFUNDED" } })).toEqual([]);
+    // A settlement that never captured is still drift.
+    for (const status of ["PENDING", "FAILED"] as const) {
+      expect(integrity({ ...settled, groupSettlement: { ...settled.groupSettlement!, status } }), status).toContain("SOURCE_DRIFT");
+    }
+  });
+
+  it("before the back-post, a child with no lines under a REFUNDED settlement is planned to agree, so it is in the class", () => {
+    const { row } = settledChild("STRIPE");
+    const subject = {
+      ...row,
+      lines: [],
+      groupSettlement: { ...row.groupSettlement!, status: "REFUNDED" as const },
+      groupChild: { pricing: PRICING, siblings: [{ id: B, lodgeId: "l1", payment: { amountCents: 4_500, status: "SUCCEEDED", source: "STRIPE" as const } }], cancelledWithoutSnapshot: false, snapshotKept: null },
+    };
+    expect(evaluateBookingLedgerIdentities(subject)).toMatchObject({ bookingClass: "GROUP_SETTLEMENT_OFF_LEDGER", coverage: [] });
   });
 });

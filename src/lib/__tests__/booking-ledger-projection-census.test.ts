@@ -180,6 +180,7 @@ function row(overrides: Partial<BookingLedgerCensusRow> & { lines: CensusLedgerL
     recoveryOperations: [],
     cancellation: null,
     groupSettlement: null,
+    groupChild: null,
     ...overrides,
   };
 }
@@ -305,7 +306,16 @@ function cardCancelled(plannedCents: number, refunded: boolean): BookingLedgerCe
     transactions: [txn("t1", 19_000, { refundedAmountCents: refunded ? plannedCents : 0 })],
     payment: payment({ refundedAmountCents: refunded ? plannedCents : 0 }),
     recoveryOperations: [
-      { type: "REFUND_BOOKING_MODIFICATION", status: refunded ? "SUCCEEDED" : "PENDING", amountCents: plannedCents, idempotencyKey: buildBookingCancellationRefundIdempotencyKey(B) },
+      {
+        type: "REFUND_BOOKING_MODIFICATION",
+        status: refunded ? "SUCCEEDED" : "PENDING",
+        attempts: refunded ? 1 : 0,
+        nextRetryAt: refunded ? null : LATER,
+        amountCents: plannedCents,
+        idempotencyKey: buildBookingCancellationRefundIdempotencyKey(B),
+        paymentId: "pay-3583",
+        paymentIntentId: "pi-3583",
+      },
     ],
     cancellation: { refundMethod: "card", settledAmountCents: 9_500, keptCents: 9_500 },
     lines: [],
@@ -554,6 +564,23 @@ function retriedRefundUnposted(): BookingLedgerCensusRow {
 
 const groupChild = (overrides: Partial<Omit<BookingLedgerCensusRow, "lines">>) =>
   row({ lines: [], booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: true, finalPriceCents: 19_000 }, ...overrides });
+
+/**
+ * A $190 child its organiser settled by card before #3854, with no line and no
+ * money of its own, and the snapshot's group evidence: the lines the back-post
+ * would post agree, so it is `GROUP_SETTLEMENT_OFF_LEDGER` (#3854 F1).
+ */
+const offLedgerChild = (overrides: Partial<Omit<BookingLedgerCensusRow, "lines">> = {}) =>
+  groupChild({
+    groupSettlement: { id: "gs-3583", source: "STRIPE", status: "SUCCEEDED", amountCents: 19_000, stripePaymentIntentId: "pi-group", refundPlan: null, refundRecoveryInFlight: false },
+    groupChild: {
+      pricing: { id: B, lodgeId: LODGE, totalPriceCents: 20_000, promoAdjustmentCents: -1_000, guests: GUESTS },
+      siblings: [{ id: B, lodgeId: LODGE, payment: { amountCents: 19_000, status: "SUCCEEDED", source: "STRIPE" } }],
+      cancelledWithoutSnapshot: false,
+      snapshotKept: null,
+    },
+    ...overrides,
+  });
 
 describe("the second review's gate escapes are closed (fix round 2 of #3583)", () => {
   it("H1: a failed refund with no line of its own explains nothing, and the retry's missing line is UNPOSTED_SETTLEMENT", () => {
@@ -1067,7 +1094,8 @@ describe("every named class lands in its class; a cent either way, or its eviden
       "PRICE",
       () => cardCancelled(9_500, false),
       (s, by) => bumpLine(s, "CANCELLATION_FEE", by),
-      (s) => ({ ...s, recoveryOperations: s.recoveryOperations.map((op) => ({ ...op, status: "FAILED" as const })) }),
+      // Exhausted: FAILED with no retry scheduled (K1), so nothing is in flight.
+      (s) => ({ ...s, recoveryOperations: s.recoveryOperations.map((op) => ({ ...op, status: "FAILED" as const, attempts: 5, nextRetryAt: null })) }),
     ],
     [
       "V5_PLANNED_REFUND_SHORT",
@@ -1142,9 +1170,11 @@ describe("every named class lands in its class; a cent either way, or its eviden
   });
 
   it("GROUP_SETTLEMENT_OFF_LEDGER is a booking-level class, and a child with a transaction of its own is a coverage gap instead", () => {
-    const child = row({ lines: [], booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: true, finalPriceCents: 19_000 } });
+    const child = offLedgerChild();
     expect(evaluateBookingLedgerIdentities(child)).toMatchObject({ bookingClass: "GROUP_SETTLEMENT_OFF_LEDGER", coverage: [] });
     expect(evaluateBookingLedgerIdentities({ ...child, transactions: [txn("t1", 19_000)] })).toMatchObject({ bookingClass: null, coverage: ["NO_LINES"] });
+    // #3854 F1: without the evidence to plan its lines, the shape alone exempts nothing.
+    expect(evaluateBookingLedgerIdentities({ ...child, groupChild: null })).toMatchObject({ bookingClass: null, coverage: ["GROUP_SETTLEMENT_UNPOSTABLE"] });
   });
 });
 
@@ -1425,11 +1455,15 @@ describe("the verdict", () => {
 
   it("the owner's two decisions on #3583 (both A) are the policy: KNOWN_DEFECT_HISTORY holds, GROUP_SETTLEMENT_OFF_LEDGER is listed only", () => {
     expect(BOOKING_LEDGER_CENSUS_GATE_POLICY).toEqual({ knownDefectHistoryHoldsGate: true, groupSettlementOffLedgerHoldsGate: false });
-    const child = row({ lines: [], booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: true, finalPriceCents: 19_000 } });
-    const summary = report([child]);
+    const summary = report([offLedgerChild()]);
     expect(summary.classes.GROUP_SETTLEMENT_OFF_LEDGER).toMatchObject({ gateRule: "OPEN", holdsGate: false, bookings: 1, unacknowledged: 0 });
     expect(summary.unacknowledgedClassInstances).toBe(0);
     expect(summary.verdict).toBe("GATE_OPEN");
+    // A child its planned lines would not explain is a gap, which holds whatever is acknowledged (#3854 F1).
+    const unpostable = report([offLedgerChild({ payment: payment({ amountCents: 18_999 }) })]);
+    expect(unpostable.classes.GROUP_SETTLEMENT_OFF_LEDGER.bookings).toBe(0);
+    expect(unpostable.verdict).toBe("GATE_CLOSED");
+    expect(unpostable.gateClosedBecause).toEqual(["1 booking(s) with coverage gap GROUP_SETTLEMENT_UNPOSTABLE"]);
   });
 
   it("reports per identity applicable, agree, disagree, classified and coverage counts, and the #1620 line with each booking", () => {

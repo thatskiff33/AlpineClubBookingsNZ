@@ -41,6 +41,7 @@ import {
   type GroupSettlementForPosting,
 } from "@/lib/booking-ledger-group-settlement-posting";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
+import { groupSettledChildKeptFrom } from "@/lib/booking-ledger-group-child-plan";
 import { bookingHasConfirmationLines } from "@/lib/booking-ledger-read";
 import { groupSettlementShareKey } from "@/lib/booking-ledger-posting-keys";
 import {
@@ -49,9 +50,7 @@ import {
   type BookingLedgerPosting,
 } from "@/lib/booking-ledger-write";
 import logger from "@/lib/logger";
-import { mirrorPlanRefundedCents } from "@/lib/group-settlement-refund-plan";
 import { organiserChildCommittedRefundCents } from "@/lib/organiser-child-refund";
-import { cancellationKeptCents } from "@/lib/paid-cancellation-money";
 
 type SettleStore = Pick<Prisma.TransactionClient, "booking" | "bookingLedgerLine">;
 
@@ -213,28 +212,26 @@ async function groupSettledChildCancellationKeptCents(
   return groupSettledChildKeptCents(db, payment, plan);
 }
 
-export type GroupCancelRefundPlan = { kind: "per-child"; paymentIntentId: string } | { kind: "mirror"; plannedRefundCents: number };
+type GroupCancelRefundPlan = { kind: "per-child"; paymentIntentId: string } | { kind: "mirror"; plannedRefundCents: number };
 
 /**
  * The kept figure for a child the settlement paid, `payment` as it stood when
- * the organiser cancelled it. Shared by the live cancel (above) and the
- * back-post (#3583, `booking-ledger-back-post-group.ts`), so history keeps
- * what the live cancel would have kept.
+ * the organiser cancelled it: the per-child plan's committed refunds read from
+ * the database, then the one formula the back-post and the census plan with
+ * (`groupSettledChildKeptFrom`, #3854 F1), so history keeps what the live
+ * cancel would have kept.
  */
-export async function groupSettledChildKeptCents(
+async function groupSettledChildKeptCents(
   db: Prisma.TransactionClient,
   payment: { id: string; amountCents: number; refundedAmountCents: number },
   plan: GroupCancelRefundPlan,
 ): Promise<number> {
-  const committedRefundCents =
+  return groupSettledChildKeptFrom(
+    payment,
     plan.kind === "per-child"
-      ? await organiserChildCommittedRefundCents(db, payment, plan.paymentIntentId)
-      : mirrorPlanRefundedCents(payment, plan.plannedRefundCents);
-  return cancellationKeptCents({
-    retainedAmountCents: Math.max(0, payment.amountCents - committedRefundCents),
-    appliedCreditCents: 0,
-    creditRestoredCents: 0,
-  });
+      ? { kind: "per-child", committedRefundCents: await organiserChildCommittedRefundCents(db, payment, plan.paymentIntentId) }
+      : plan,
+  );
 }
 
 /**

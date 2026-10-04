@@ -41,9 +41,9 @@ import "server-only";
  * integrity finding is rolled back and LISTED with the reason and both figures;
  * a named class is not a refusal (the census reports it, and the owner signs it
  * off). A booking that cannot be planned at all — an unpriced night, a price its
- * nights do not reach — is listed the same way. A group-settled child with no
- * lines that cannot be posted stays `GROUP_SETTLEMENT_OFF_LEDGER` (owner
- * decision 2A), listed with its reason.
+ * nights do not reach — is listed the same way, a group-settled child included:
+ * the census plans that child's lines itself and holds the gate on one that
+ * could not be posted (#3854 F1), so it never stays `GROUP_SETTLEMENT_OFF_LEDGER`.
  *
  * CONCURRENCY. Each booking's transaction takes the locks its live posters take,
  * in canonical order (`INV-LOCK-002`, `docs/CONCURRENCY_AND_LOCKING.md`): the
@@ -85,9 +85,8 @@ import {
   postConfirmationEditsWithoutLines,
   type BookingLedgerEvaluation,
 } from "@/lib/booking-ledger-projection-census";
-import { isGroupSettlementOffLedger } from "@/lib/booking-ledger-projection-census-classes";
 import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-row";
-import { parseCancelledEventSnapshot, readBookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-store";
+import { cancelledSnapshotKept, readBookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-store";
 import { bookingHasConfirmationLines, findPostedChargeLines } from "@/lib/booking-ledger-read";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import {
@@ -238,31 +237,24 @@ type BackPostBooking = Prisma.BookingGetPayload<{ select: typeof BOOKING_SELECT 
 
 /**
  * What the club kept on a cancellation, from the paid path's CANCELLED snapshot
- * (`parseCancelledEventSnapshot`, the census's own parser). Since #3611 it froze
- * the ledger's kept figure; before, only the retained one, from which the kept
- * figure is replayed with the booking's credit rows through the one formula
- * (`cancellationKeptCents`). Null where the snapshot holds neither.
+ * (`cancelledSnapshotKept`, the reading the census plans a group child by). A
+ * snapshot from before #3611 froze only the retained figure, from which the
+ * kept figure is replayed with the booking's credit rows through the one
+ * formula (`cancellationKeptCents`). Null where the snapshot holds neither.
  */
 async function cancellationKept(
   tx: Tx,
   booking: BackPostBooking,
 ): Promise<{ keptCents: number; policyKeptCents?: number } | null> {
-  const raw = booking.events[0]?.snapshot;
-  // Design §5.1: a booking cancelled with no paid-path snapshot kept nothing.
-  if (raw === undefined || raw === null) return { keptCents: 0 };
-  const snapshot = parseCancelledEventSnapshot(raw);
-  if (!snapshot) return null;
-  if (snapshot.keptCents !== null) {
-    return { keptCents: snapshot.keptCents, ...(snapshot.policyKeptCents === null ? {} : { policyKeptCents: snapshot.policyKeptCents }) };
-  }
-  if (snapshot.retainedAmountCents === null) return null;
+  const kept = cancelledSnapshotKept(booking.events[0]?.snapshot);
+  if (kept === null || !("retainedAmountCents" in kept)) return kept;
   const restored = await tx.memberCredit.aggregate({
     where: { restoredFromBookingId: booking.id },
     _sum: { amountCents: true },
   });
   return {
     keptCents: cancellationKeptCents({
-      retainedAmountCents: snapshot.retainedAmountCents,
+      retainedAmountCents: kept.retainedAmountCents,
       appliedCreditCents: await deriveBookingAppliedCreditCents(booking.id, tx),
       creditRestoredCents: restored._sum.amountCents ?? 0,
     }),
@@ -508,10 +500,10 @@ async function backPostBooking(tx: Tx, bookingId: string): Promise<BookingBackPo
 
   const first = await readBookingLedgerCensusRow(tx, bookingId);
   if (!first) return { bookingId, kind: "NOTHING_TO_POST", classes: [] };
-  // A group child with no lines that cannot be posted stays in its class (#3854).
-  const offLedger = isGroupSettlementOffLedger(first);
-  const refuse = (outcome: CannotPost) =>
-    new BackPostRollback(offLedger ? { ...outcome, kind: "LISTED_GROUP_SETTLEMENT_OFF_LEDGER" } : outcome);
+  // A group child with no lines that cannot be posted is refused like any
+  // other booking: the census plans the same lines and holds the gate on it
+  // (#3854 F1), so it is never left in `GROUP_SETTLEMENT_OFF_LEDGER`.
+  const refuse = (outcome: CannotPost) => new BackPostRollback(outcome);
 
   const booking = await tx.booking.findUniqueOrThrow({ where: { id: bookingId }, select: BOOKING_SELECT });
   const steps: string[] = [];
@@ -680,7 +672,6 @@ export async function runBookingLedgerBackPost(args: {
     lines: outcomes.reduce((sum, outcome) => sum + (outcome.kind === "POSTED" ? outcome.lines : 0), 0),
     nothingToPost: outcomes.filter((outcome) => outcome.kind === "NOTHING_TO_POST").length,
     cannotPost: outcomes.filter((outcome) => outcome.kind === "CANNOT_POST").length,
-    groupSettlementOffLedger: outcomes.filter((outcome) => outcome.kind === "LISTED_GROUP_SETTLEMENT_OFF_LEDGER").length,
   };
   return { mode: args.apply ? "apply" : "dry-run", runId, startedAt, finishedAt: new Date().toISOString(), outcomes, totals };
 }

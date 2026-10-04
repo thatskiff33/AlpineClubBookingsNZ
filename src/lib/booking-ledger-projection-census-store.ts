@@ -21,10 +21,12 @@ import {
   type BookingLedgerCensusReport,
   type LedgerTableStatistics,
 } from "@/lib/booking-ledger-projection-census-report";
+import { isGroupSettlementOffLedger } from "@/lib/booking-ledger-projection-census-classes";
 import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-row";
 import { INTERNET_BANKING_SETTLEMENT_EVIDENCE_SELECT } from "@/lib/internet-banking-settlement-evidence";
 import { bookingIdOfCreditRow, bookingsCreditRowsWhere } from "@/lib/member-credit-booking-rows";
 import { decodeRawRows } from "@/lib/raw-sql-rows";
+import { isPaymentRecoveryOperationInFlight } from "@/lib/payment-recovery-constants";
 import { buildGroupSettlementRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
 
 const ASC = { id: "asc" } as const;
@@ -35,6 +37,7 @@ const CENSUS_SELECT = {
   deletedAt: true,
   organiserSettled: true,
   finalPriceCents: true,
+  parentBookingId: true,
   payment: {
     select: {
       id: true,
@@ -83,11 +86,15 @@ const CENSUS_SELECT = {
   },
   paymentRecoveryOperations: {
     orderBy: ASC,
-    select: { type: true, status: true, amountCents: true, idempotencyKey: true },
+    select: { type: true, status: true, attempts: true, nextRetryAt: true, amountCents: true, idempotencyKey: true, paymentId: true, paymentIntentId: true },
   },
   // #3854: a group child's settlement, through its organiser's booking.
   parentBooking: {
-    select: { groupBookingAsOrganiser: { select: { settlement: { select: { id: true, source: true, status: true, refundPlan: true } } } } },
+    select: {
+      groupBookingAsOrganiser: {
+        select: { settlement: { select: { id: true, source: true, status: true, amountCents: true, stripePaymentIntentId: true, refundPlan: true } } },
+      },
+    },
   },
   events: {
     where: { type: "CANCELLED" },
@@ -155,6 +162,26 @@ export function parseCancelledEventSnapshot(snapshot: unknown): CancelledEventSn
   };
 }
 
+/**
+ * What the club kept on a cancellation, as the paid path's CANCELLED snapshot
+ * gives it — the one reading the back-post posts by and the census plans a
+ * group child by (#3854 F1, `INV-SSOT`). Design §5.1: no snapshot, nothing
+ * kept. Since #3611 the snapshot froze the ledger's kept figure; before, only
+ * the retained one, which the caller replays with the booking's credit rows
+ * through `cancellationKeptCents`. Null where the snapshot holds neither.
+ */
+export function cancelledSnapshotKept(
+  raw: unknown,
+): { keptCents: number; policyKeptCents?: number } | { retainedAmountCents: number } | null {
+  if (raw === undefined || raw === null) return { keptCents: 0 };
+  const snapshot = parseCancelledEventSnapshot(raw);
+  if (!snapshot) return null;
+  if (snapshot.keptCents !== null) {
+    return { keptCents: snapshot.keptCents, ...(snapshot.policyKeptCents === null ? {} : { policyKeptCents: snapshot.policyKeptCents }) };
+  }
+  return snapshot.retainedAmountCents === null ? null : { retainedAmountCents: snapshot.retainedAmountCents };
+}
+
 function cancellationOf(booking: StoredCensusBooking): BookingLedgerCensusRow["cancellation"] {
   const parsed = parseCancelledEventSnapshot(booking.events[0]?.snapshot);
   if (!parsed) return null;
@@ -191,6 +218,7 @@ export function toCensusRow(
   booking: StoredCensusBooking,
   credits: BookingLedgerCensusRow["credits"],
   inFlightGroupRefundSettlementIds: ReadonlySet<string> = new Set(),
+  groupChildren: ReadonlyMap<string, NonNullable<BookingLedgerCensusRow["groupChild"]>> = new Map(),
 ): BookingLedgerCensusRow {
   const { payment } = booking;
   const settlement = booking.organiserSettled ? (booking.parentBooking?.groupBookingAsOrganiser?.settlement ?? null) : null;
@@ -234,6 +262,7 @@ export function toCensusRow(
     groupSettlement: settlement
       ? { ...settlement, refundRecoveryInFlight: inFlightGroupRefundSettlementIds.has(settlement.id) }
       : null,
+    groupChild: groupChildren.get(booking.id) ?? null,
     lines: booking.ledgerLines,
   };
 }
@@ -273,12 +302,9 @@ export async function readBookingLedgerCensusRow(
   const booking = await tx.booking.findUnique({ where: { id: bookingId }, select: CENSUS_SELECT });
   if (!booking) return null;
   const credits = await tx.memberCredit.findMany({ where: bookingsCreditRowsWhere([bookingId]), orderBy: ASC, select: CREDIT_SELECT });
-  return toCensusRow(
-    booking,
-    credits.filter((credit) => bookingIdOfCreditRow(credit) === bookingId),
-    // #3854: a group child's in-flight plan retry, read as the census pages read it.
-    await inFlightGroupRefunds(tx, [booking]),
-  );
+  return (
+    await censusRows(tx, [booking], (id) => (id === bookingId ? credits.filter((credit) => bookingIdOfCreditRow(credit) === bookingId) : []))
+  )[0]!;
 }
 
 /** Bookings read per page inside the snapshot: bounds memory on a whole history. */
@@ -296,15 +322,91 @@ async function inFlightGroupRefunds(tx: CensusReadStore, page: readonly StoredCe
   ];
   if (settlementIds.length === 0) return new Set();
   const operations = await tx.paymentRecoveryOperation.findMany({
-    where: {
-      idempotencyKey: { in: settlementIds.map(buildGroupSettlementRefundRecoveryIdempotencyKey) },
-      status: { in: ["PENDING", "PROCESSING"] },
-    },
+    where: { idempotencyKey: { in: settlementIds.map(buildGroupSettlementRefundRecoveryIdempotencyKey) } },
     orderBy: ASC,
-    select: { idempotencyKey: true },
+    select: { idempotencyKey: true, status: true, attempts: true, nextRetryAt: true },
   });
-  const inFlight = new Set(operations.map((operation) => operation.idempotencyKey));
+  // In flight as the runner reads it (K1): a FAILED retry still scheduled
+  // counts; an exhausted one does not, so its plan's money holds the gate.
+  const inFlight = new Set(operations.filter(isPaymentRecoveryOperationInFlight).map((operation) => operation.idempotencyKey));
   return new Set(settlementIds.filter((id) => inFlight.has(buildGroupSettlementRefundRecoveryIdempotencyKey(id))));
+}
+
+/**
+ * A page's snapshot rows, with the group facts read beside them in the same
+ * snapshot (#3854): each settlement's in-flight plan retry, and, for a child
+ * that would otherwise be `GROUP_SETTLEMENT_OFF_LEDGER`, what the group child
+ * planner needs (F1).
+ */
+async function censusRows(
+  tx: CensusReadStore,
+  page: readonly StoredCensusBooking[],
+  creditsOf: (bookingId: string) => BookingLedgerCensusRow["credits"],
+): Promise<BookingLedgerCensusRow[]> {
+  const inFlight = await inFlightGroupRefunds(tx, page);
+  const rows = page.map((booking) => toCensusRow(booking, creditsOf(booking.id), inFlight));
+  const candidates = page.filter((_, index) => rows[index]!.groupSettlement !== null && isGroupSettlementOffLedger(rows[index]!));
+  if (candidates.length === 0) return rows;
+  const groupChildren = await groupChildEvidence(tx, candidates);
+  return page.map((booking) => toCensusRow(booking, creditsOf(booking.id), inFlight, groupChildren));
+}
+
+/**
+ * #3854 F1: for each candidate child (organiser-settled, no line and no money
+ * of its own), its night rows, its organiser's settled children and payments,
+ * and its CANCELLED snapshot's kept figure. A candidate holds no credit row
+ * (`isGroupSettlementOffLedger`), so a pre-#3611 snapshot's retained figure is
+ * its kept figure: no applied credit to add, no restore to take off.
+ */
+async function groupChildEvidence(
+  tx: CensusReadStore,
+  candidates: readonly StoredCensusBooking[],
+): Promise<Map<string, NonNullable<BookingLedgerCensusRow["groupChild"]>>> {
+  const pricing = await tx.booking.findMany({
+    where: { id: { in: candidates.map((booking) => booking.id) } },
+    orderBy: ASC,
+    select: {
+      id: true,
+      lodgeId: true,
+      totalPriceCents: true,
+      promoAdjustmentCents: true,
+      guests: {
+        orderBy: ASC,
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          ageTier: true,
+          rateMembershipTypeId: true,
+          nights: { orderBy: { stayDate: "asc" }, select: { stayDate: true, priceCents: true } },
+        },
+      },
+    },
+  });
+  const organiserIds = [...new Set(candidates.flatMap((booking) => (booking.parentBookingId ? [booking.parentBookingId] : [])))];
+  const siblings = await tx.booking.findMany({
+    where: { parentBookingId: { in: organiserIds }, organiserSettled: true },
+    orderBy: ASC,
+    select: { id: true, lodgeId: true, parentBookingId: true, payment: { select: { amountCents: true, status: true, source: true } } },
+  });
+  const pricingById = new Map(pricing.map((booking) => [booking.id, booking]));
+  const evidence = new Map<string, NonNullable<BookingLedgerCensusRow["groupChild"]>>();
+  for (const booking of candidates) {
+    const prices = pricingById.get(booking.id);
+    if (!prices) continue;
+    const raw = booking.events[0]?.snapshot ?? null;
+    const kept = cancelledSnapshotKept(raw);
+    evidence.set(booking.id, {
+      pricing: prices,
+      siblings: siblings
+        .filter((sibling) => sibling.parentBookingId === booking.parentBookingId)
+        .map(({ id, lodgeId, payment }) => ({ id, lodgeId, payment })),
+      cancelledWithoutSnapshot: booking.status === "CANCELLED" && raw === null,
+      // `cancellationKeptCents` of the retained figure with no credit applied or restored.
+      snapshotKept: kept === null ? null : "retainedAmountCents" in kept ? { keptCents: kept.retainedAmountCents } : kept,
+    });
+  }
+  return evidence;
 }
 
 /**
@@ -337,10 +439,7 @@ export async function evaluateBookingLedgerPages(
       const bookingId = bookingIdOfCreditRow(credit);
       if (bookingId) creditsByBooking.set(bookingId, [...(creditsByBooking.get(bookingId) ?? []), credit]);
     }
-    const groupRefundsInFlight = await inFlightGroupRefunds(tx, page);
-    for (const booking of page) {
-      evaluations.push(evaluate(toCensusRow(booking, creditsByBooking.get(booking.id) ?? [], groupRefundsInFlight)));
-    }
+    for (const row of await censusRows(tx, page, (id) => creditsByBooking.get(id) ?? [])) evaluations.push(evaluate(row));
     after = page[page.length - 1]!.id;
     if (page.length < pageSize) break;
   }

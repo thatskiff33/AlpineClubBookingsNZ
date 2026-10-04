@@ -60,7 +60,7 @@ import {
 } from "@/lib/payment-recovery-keys";
 import { EXCLUDED_LEDGER_REFUND_STATUSES } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
-import { readPerChildRefundPlan } from "@/lib/group-settlement-refund-plan";
+import { organiserChildCommittedRefundFrom, readPerChildRefundPlan } from "@/lib/group-settlement-refund-plan";
 import type { ClubFormat } from "@/lib/club-format";
 import { formatCents } from "@/lib/utils";
 
@@ -190,11 +190,16 @@ export async function organiserChildRefundedCents(
   db: Db,
   payment: { id: string; refundedAmountCents: number },
 ): Promise<number> {
+  return Math.max(payment.refundedAmountCents, await recordedRefundCents(db, payment.id));
+}
+
+/** Σ the payment's `PaymentRefund` rows that count as money back (`isRecordedRefundStatus`). */
+async function recordedRefundCents(db: Db, paymentId: string): Promise<number> {
   const recorded = await db.paymentRefund.aggregate({
-    where: { paymentId: payment.id, status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES } },
+    where: { paymentId, status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES } },
     _sum: { amountCents: true },
   });
-  return Math.max(payment.refundedAmountCents, recorded._sum.amountCents ?? 0);
+  return recorded._sum.amountCents ?? 0;
 }
 
 /**
@@ -208,11 +213,15 @@ export async function organiserChildCommittedRefundCents(
   payment: { id: string; refundedAmountCents: number },
   paymentIntentId: string,
 ): Promise<number> {
-  const [refundedCents, committed] = await Promise.all([
-    organiserChildRefundedCents(db, payment),
+  const [recorded, committed] = await Promise.all([
+    recordedRefundCents(db, payment.id),
     committedCents(db, paymentIntentId, payment.id),
   ]);
-  return refundedCents + committed.childOwedCents;
+  // The one formula, shared with the booking-ledger census (#3854 F1).
+  return organiserChildCommittedRefundFrom(payment.refundedAmountCents, {
+    recordedRefundCents: recorded,
+    childOwedCents: committed.childOwedCents,
+  });
 }
 
 /**

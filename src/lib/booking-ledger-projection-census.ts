@@ -78,6 +78,7 @@ import {
   GROUP_SETTLEMENT_KEY_EXAMPLES,
   groupSettlementBankRefundCents,
   groupSettlementSourceDrift,
+  plannedGroupChildLines,
 } from "@/lib/booking-ledger-projection-census-group";
 import { reviewAdjustmentEvidence, type ReviewAdjustmentEvidence } from "@/lib/booking-ledger-projection-census-review-adjustments";
 
@@ -315,8 +316,13 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
 
   if (lines.length === 0) {
     const money = hasMoneyColumns(row);
-    const offLedger = money && isGroupSettlementOffLedger(row);
-    if (money && !offLedger) coverage.add("NO_LINES");
+    const shape = money && isGroupSettlementOffLedger(row);
+    // Owner decision 2A exempts the class because #3854's poster posts the
+    // child; so it names only a child whose planned lines the census would
+    // agree on. One the back-post would refuse is a gap that holds (F1).
+    const offLedger = shape && groupSettledChildWouldAgree(row);
+    if (shape && !offLedger) coverage.add("GROUP_SETTLEMENT_UNPOSTABLE");
+    if (money && !shape) coverage.add("NO_LINES");
     if (unpostedCredits(row).length > 0) coverage.add("UNPOSTED_CREDIT");
     return {
       ...base,
@@ -465,6 +471,26 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
     bookingClass: null,
     bookingInstances: ambiguousReviewGiveBack(reviewAdjustments),
   };
+}
+
+/**
+ * #3854 F1: would the lines the back-post posts on this group-settled child —
+ * planned in memory by its own planners (`plannedGroupChildLines`) — leave the
+ * census agreeing outright: every identity agreeing, no coverage, no integrity
+ * finding, no class? Anything less (a class included, which would want the
+ * owner's acknowledgement once posted) is not money the poster will simply
+ * record, so the child is not exempt.
+ */
+function groupSettledChildWouldAgree(row: BookingLedgerCensusRow): boolean {
+  const planned = plannedGroupChildLines(row);
+  if (planned === null) return false;
+  const evaluation = evaluateBookingLedgerIdentities({ ...row, lines: planned });
+  return (
+    evaluation.identities.every((identity) => identity.status === "AGREE" || identity.status === "NOT_APPLICABLE") &&
+    evaluation.coverage.length === 0 &&
+    evaluation.integrity.length === 0 &&
+    evaluation.bookingInstances.length === 0
+  );
 }
 
 /** One instance per figure, so the acknowledgement goes stale if any of them moves. */

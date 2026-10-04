@@ -58,12 +58,6 @@ export type BookingBackPostOutcome =
       steps: string[];
       classes: string[];
     }
-  /**
-   * A group-settled child with no lines (`GROUP_SETTLEMENT_OFF_LEDGER`) the
-   * back-post could not post (#3854): rolled back, so it stays in that class,
-   * listed with why.
-   */
-  | (BackPostRefused & { kind: "LISTED_GROUP_SETTLEMENT_OFF_LEDGER" })
   | (BackPostRefused & { kind: "CANNOT_POST" });
 
 export type BookingLedgerBackPostRun = {
@@ -73,7 +67,7 @@ export type BookingLedgerBackPostRun = {
   startedAt: string;
   finishedAt: string;
   outcomes: BookingBackPostOutcome[];
-  totals: { bookings: number; posted: number; lines: number; nothingToPost: number; cannotPost: number; groupSettlementOffLedger: number };
+  totals: { bookings: number; posted: number; lines: number; nothingToPost: number; cannotPost: number };
 };
 
 /** One booking's report line(s); nothing for a booking with nothing to post. */
@@ -88,13 +82,9 @@ export function formatBookingLedgerBackPostOutcome(
       `${verb}  ${outcome.bookingId}  ${outcome.lines} line(s): ${outcome.steps.join("; ") || "settlement and credit lines"}${outcome.classes.length > 0 ? `  [census classes: ${outcome.classes.join(", ")}]` : ""}`,
     ];
   }
-  if (outcome.kind === "CANNOT_POST" || outcome.kind === "LISTED_GROUP_SETTLEMENT_OFF_LEDGER") {
-    const head =
-      outcome.kind === "CANNOT_POST"
-        ? `CANNOT POST  ${outcome.bookingId}`
-        : `LISTED  ${outcome.bookingId}  GROUP_SETTLEMENT_OFF_LEDGER, not posted`;
+  if (outcome.kind === "CANNOT_POST") {
     return [
-      `${head}  ${outcome.reason}: ${outcome.detail}`,
+      `CANNOT POST  ${outcome.bookingId}  ${outcome.reason}: ${outcome.detail}`,
       ...outcome.disagreements.map((row) => `    ${row.identity}: column ${money(row.columnCents)}, ledger ${money(row.ledgerCents)}, delta ${money(row.deltaCents)}`),
       ...outcome.coverage.map((kind) => `    coverage: ${kind}`),
       ...outcome.integrity.map((finding) => `    integrity: ${finding}`),
@@ -108,7 +98,7 @@ export function formatBookingLedgerBackPostSummary(run: BookingLedgerBackPostRun
   const verb = run.mode === "apply" ? "posted" : "would post";
   return [
     `Booking ledger back-post (#3583) — ${run.mode === "apply" ? "APPLIED" : "DRY RUN, nothing was committed"}. Run ${run.runId}, ${run.startedAt} to ${run.finishedAt}.`,
-    `Bookings: ${run.totals.bookings}   ${verb}: ${run.totals.posted} (${run.totals.lines} line(s))   nothing to post: ${run.totals.nothingToPost}   cannot post: ${run.totals.cannotPost}   group children left GROUP_SETTLEMENT_OFF_LEDGER: ${run.totals.groupSettlementOffLedger}`,
+    `Bookings: ${run.totals.bookings}   ${verb}: ${run.totals.posted} (${run.totals.lines} line(s))   nothing to post: ${run.totals.nothingToPost}   cannot post: ${run.totals.cannotPost}`,
   ].join("\n");
 }
 
