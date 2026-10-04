@@ -1,8 +1,6 @@
-import {
-  BookingRequestType,
-  HutLeaderAssignmentSource,
-  type Prisma,
-} from "@prisma/client";
+import { HutLeaderAssignmentSource, type Prisma } from "@prisma/client";
+import { capacityHoldingBookingFilter } from "@/lib/booking-status";
+import { SCHOOL_GROUP_BOOKING_WHERE } from "@/lib/school-group-booking";
 import {
   isGuestActiveOnNight,
   type GuestStayRange,
@@ -120,17 +118,6 @@ export type HutLeaderSchoolNights = {
   kindsByLodge: ReadonlyMap<string, SchoolHutLeaderKinds>;
 };
 
-/**
- * A school group's booking: one converted from, or held for, a SCHOOL booking
- * request — the same test bed allocation's `isSchoolGroup` applies (#1768).
- * Spread under `AND`, so it composes with a where that has an `OR` of its own.
- */
-export const SCHOOL_GROUP_BOOKING_WHERE = {
-  OR: [
-    { originBookingRequest: { is: { type: BookingRequestType.SCHOOL } } },
-    { heldForBookingRequest: { is: { type: BookingRequestType.SCHOOL } } },
-  ],
-} as const satisfies Prisma.BookingWhereInput;
 
 export type HutLeaderNightCoverScope =
   | { kind: "lodge"; lodgeId: string }
@@ -375,16 +362,18 @@ export async function loadHutLeaderNightCover(
     return buildHutLeaderNightCover(shifts, []);
   }
 
-  // The same stay definition as everything else here, narrowed to school
-  // groups: a cancelled or deleted school booking makes no school night.
+  // A school group is "staying" on the nights its booking HOLDS CAPACITY — the
+  // capacity engine's own population (`capacityHoldingBookingFilter`), never a
+  // second status list. An approved school booking is CONFIRMED until its Xero
+  // invoice is paid, which can be after arrival, so the paid-only member stay
+  // definition would drop its nights. A cancelled or deleted one makes none.
   const schoolBookings = (await db.booking.findMany({
     where: {
-      ...hutLeaderStayBookingWhere({
-        lodgeId: shiftLodgeIds,
-        rangeStart: input.from,
-        rangeEnd: input.to,
-      }),
-      AND: [SCHOOL_GROUP_BOOKING_WHERE],
+      deletedAt: null,
+      lodgeId: { in: shiftLodgeIds },
+      checkIn: { lte: input.to },
+      checkOut: { gt: input.from },
+      AND: [capacityHoldingBookingFilter(), SCHOOL_GROUP_BOOKING_WHERE],
     },
     select: { id: true, lodgeId: true, checkIn: true, checkOut: true },
   })) as HutLeaderSchoolBooking[];

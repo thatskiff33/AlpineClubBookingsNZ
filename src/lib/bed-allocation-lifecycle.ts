@@ -1,5 +1,6 @@
 import { BookingStatus, Prisma, type BedAllocation } from "@prisma/client";
 
+import { isSchoolGroupBooking } from "@/lib/school-group-booking";
 import {
   buildFirstFitBedAllocationPlan,
   type BedAllocationBooking,
@@ -830,9 +831,7 @@ async function autoAllocateMissingBedNights({
             }),
             // SCHOOL request bookings (#1768): adults room together,
             // students separately.
-            isSchoolGroup:
-              booking.originBookingRequest?.type === "SCHOOL" ||
-              booking.heldForBookingRequest?.type === "SCHOOL",
+            isSchoolGroup: isSchoolGroupBooking(booking),
             guests,
           }
         : null;
@@ -948,9 +947,7 @@ async function autoAllocateMissingBedNights({
           ) ?? [],
         bookingRequestedRoomId:
           allocation.booking?.requestedRoomId ?? null,
-        bookingIsSchoolGroup:
-          allocation.booking?.originBookingRequest?.type === "SCHOOL" ||
-          allocation.booking?.heldForBookingRequest?.type === "SCHOOL",
+        bookingIsSchoolGroup: isSchoolGroupBooking(allocation.booking),
         approvedAt: allocation.approvedAt,
         // #1677: newest provisional bookings are evicted first when a held
         // booking needs a whole room.

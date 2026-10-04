@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { BookingStatus } from "@prisma/client";
+
+import { capacityHoldingBookingFilter } from "@/lib/booking-status";
+import { SCHOOL_GROUP_BOOKING_WHERE } from "@/lib/school-group-booking";
 
 import {
   buildHutLeaderNightCover,
@@ -265,18 +269,14 @@ describe("loadHutLeaderNightCover", () => {
     });
 
     const [[args]] = db.booking.findMany.mock.calls as [[{ where: Record<string, unknown> }]];
-    expect(args.where).toMatchObject({
+    expect(args.where).toEqual({
       lodgeId: { in: ["lodge-a"] },
-      status: { in: ["PAID", "COMPLETED"] },
       deletedAt: null,
-      AND: [
-        {
-          OR: [
-            { originBookingRequest: { is: { type: "SCHOOL" } } },
-            { heldForBookingRequest: { is: { type: "SCHOOL" } } },
-          ],
-        },
-      ],
+      checkIn: { lte: d("2026-08-31") },
+      checkOut: { gt: d("2026-08-01") },
+      // The capacity engine's population, not the paid-only stay list: an
+      // approved school booking is CONFIRMED until its invoice is paid.
+      AND: [capacityHoldingBookingFilter(), SCHOOL_GROUP_BOOKING_WHERE],
     });
     expect(db.lodgeSettings.findUnique).toHaveBeenCalledWith({ where: { id: "lodge-a" } });
     // The custodian is present, but this lodge does not accept a custodian
@@ -284,6 +284,26 @@ describe("loadHutLeaderNightCover", () => {
     expect(cover.isCovered("lodge-a", d("2026-08-11"))).toBe(false);
     expect(cover.isCovered("lodge-a", d("2026-08-13"))).toBe(false);
     expect(cover.isCovered("lodge-a", d("2026-08-09"))).toBe(false);
+  });
+
+  it("counts a CONFIRMED, not-yet-paid school booking as staying (its teachers cover)", async () => {
+    // What the population admits: an approved school booking awaiting its
+    // invoice is CONFIRMED, which holds capacity.
+    const filter = capacityHoldingBookingFilter() as { OR: Array<{ status?: { in?: string[] } }> };
+    expect(filter.OR[0]?.status?.in).toContain(BookingStatus.CONFIRMED);
+
+    // And when the read returns that booking, the lodge's ticked teacher covers.
+    const db = buildDb(
+      [shift({ source: "SCHOOL_BOOKING", startDate: d("2026-08-10"), endDate: d("2026-08-12") })],
+      [],
+      { bookings: [SCHOOL], settingsRow: { capacity: null, schoolHutLeaderTeacherOnBooking: true } },
+    );
+    const cover = await loadHutLeaderNightCover(db, {
+      scope: { kind: "lodge", lodgeId: "lodge-a" },
+      from: d("2026-08-01"),
+      to: d("2026-08-31"),
+    });
+    expect(cover.isCovered("lodge-a", d("2026-08-11"))).toBe(true);
   });
 
   it("reads no lodge settings when no school booking is in the window", async () => {
