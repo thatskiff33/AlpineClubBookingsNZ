@@ -1,0 +1,23 @@
+-- #3854 (programme #3527, Stage 4; owner decision 2A on #3583, 3 Oct 2026): a
+-- group organiser's GroupBookingSettlement pays every joiner's child booking in
+-- one payment, and each child's share now posts to the booking ledger under the
+-- settlement as its own anchor, GROUP_SETTLEMENT (anchorId = the settlement id).
+--
+-- Purely additive EXPAND: one enum value, catalog-only, no table lock, no DML.
+-- The new colour starts writing it in the same release, and that is safe for
+-- the draining colour because no read it makes can return such a row. Every
+-- BookingLedgerLine read in the release before this one is filtered, all in
+-- src/lib/booking-ledger-read.ts:
+--   anchorKind CONFIRMATION                        (bookingHasConfirmationLines)
+--   anchorKind PAYMENT_TRANSACTION, PAYMENT_REFUND (findPostedSettlementLines)
+--   kind CREDIT_APPLIED, CREDIT_ISSUED             (findPostedCreditLines)
+--   kind GUEST_NIGHT, PROMOTION[, CHANGE_FEE]      (the charge-line reads)
+--   kind AGREED_ADJUSTMENT                         (findPostedAdjustmentLines)
+-- A GROUP_SETTLEMENT line is a settlement-side kind (CARD_CAPTURE, BANK_RECEIPT,
+-- CARD_REFUND, BANK_REFUND) under the new anchor, so none of them returns it,
+-- and no unfiltered read of the table exists.
+--
+-- Nothing in this migration uses the value, so PostgreSQL's refusal to use a
+-- label in the transaction that added it does not arise. PostgreSQL cannot
+-- drop an enum value; the reverse is to leave it unused.
+ALTER TYPE "LedgerAnchorKind" ADD VALUE IF NOT EXISTS 'GROUP_SETTLEMENT';
