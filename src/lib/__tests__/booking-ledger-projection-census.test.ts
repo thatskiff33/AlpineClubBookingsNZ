@@ -806,6 +806,55 @@ describe("#3791's review closures: a line is judged by what the member was credi
     expect(refunded).toMatchObject({ status: "DISAGREE", deltaCents: 12_500, explainedBy: [] });
   });
 
+  it("#3913 F2: two tasks' stand-ins drawing on one pool of rows fail closed as AMBIGUOUS_REVIEW_GIVE_BACK, swapped or not; one task's stays exact", () => {
+    const debt = (cents: number, taskId: string) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId) });
+    const sibling = { ...task, id: "task-sibling", amountCents: 2_500 };
+    const siblingLine = (cents: number) =>
+      planAgreedAdjustmentLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: sibling.id, direction: "REFUND_TO_MEMBER", amountCents: cents, note: "agreed", officerMemberId: "officer" });
+    // Two $25 shares, each a $10 card debt under its own key; give-backs of $5 and $10.
+    const siblings = (taskLineCents: number, siblingLineCents: number, rows = [giveBack(500, "c-give-a"), giveBack(1_000, "c-give-b")]) =>
+      row({
+        lines: new Ledger().post([share(taskLineCents), siblingLine(siblingLineCents)], LATER).lines,
+        credits: rows,
+        tasks: [{ ...task, amountCents: 2_500 }, sibling],
+        recoveryOperations: [debt(1_000, TASK), debt(1_000, sibling.id)],
+        booking: { id: B, status: "CANCELLED", deletedAt: null, organiserSettled: false, finalPriceCents: 19_000 },
+      });
+    const figures = (subject: BookingLedgerCensusRow) =>
+      evaluateBookingLedgerIdentities(subject).bookingInstances.map((instance) => [instance.name, instance.detail, instance.cents]);
+    const ambiguous = [
+      ["AMBIGUOUS_REVIEW_GIVE_BACK", "review stand-ins credited after the cancellation", 3_500],
+      ["AMBIGUOUS_REVIEW_GIVE_BACK", "their own refunds to the capture", 2_000],
+      ["AMBIGUOUS_REVIEW_GIVE_BACK", "review give-back and share credit rows they share", 1_500],
+    ];
+    const correct = siblings(1_500, 2_000);
+    const swapped = siblings(2_000, 1_500);
+    for (const subject of [correct, swapped]) {
+      // The rows make either assignment, so neither is drift - and neither is agreement.
+      expect(findings(subject)).toEqual([]);
+      expect(figures(subject)).toEqual(ambiguous);
+      expect(report([subject]).verdict).toBe("GATE_CLOSED");
+    }
+    // Acknowledged to the cent, as #3583 treats a live booking; a moved figure is stale.
+    const acknowledge = (subject: BookingLedgerCensusRow) =>
+      evaluateBookingLedgerIdentities(subject).bookingInstances.map((instance) => ({ bookingId: B, class: "AMBIGUOUS_REVIEW_GIVE_BACK" as const, cents: instance.cents, reference: "owner, #3913" }));
+    // (This bare row holds the gate for its own reasons, so the class is read directly.)
+    const signed = report([correct], acknowledge(correct));
+    expect(signed.classes.AMBIGUOUS_REVIEW_GIVE_BACK.unacknowledged).toBe(0);
+    expect(signed.acknowledged.matched).toHaveLength(3);
+    const moved = report([siblings(1_500, 2_000, [giveBack(500, "c-give-a"), giveBack(1_100, "c-give-b")])], acknowledge(correct));
+    expect(moved.classes.AMBIGUOUS_REVIEW_GIVE_BACK.unacknowledged).toBe(1);
+    expect(moved.acknowledged.stale.map((entry) => entry.cents)).toEqual([1_500]);
+    // No pooled row, each line its own refund alone: exact, not ambiguous.
+    const ownOnly = { ...siblings(1_000, 1_000, []) };
+    expect(findings(ownOnly)).toEqual([]);
+    expect(figures(ownOnly)).toEqual([]);
+    // One task drawing on the rows: exact, as before.
+    const single = row({ lines: new Ledger().post([share(2_500)], LATER).lines, credits: [giveBack(1_000)], tasks: [task], recoveryOperations: [debt(1_500, TASK)], booking: { id: B, status: "CANCELLED", deletedAt: null, organiserSettled: false, finalPriceCents: 19_000 } });
+    expect(findings(single)).toEqual([]);
+    expect(figures(single)).toEqual([]);
+  });
+
   it("before a cancellation the stand-in is the typed share, whatever rows the booking holds", () => {
     const live = row({ lines: new Ledger().post([share(2_500)], LATER).lines, credits: [giveBack(2_500)], tasks: [task] });
     expect(findings(live)).toEqual(["SOURCE_DRIFT:line-1"]);
@@ -868,6 +917,7 @@ describe("AMBIGUOUS_REVIEW_GIVE_BACK: a live booking whose give-back rows no tas
     expect(figures(correct)).toEqual({ "agreed give-back lines": 5_000, "review give-back rows": 5_000, "re-price drops on reviews with no give-back line": 5_000 });
     expect(report([correct]).verdict).toBe("GATE_CLOSED");
     expect(draftBookingLedgerAcknowledgements(report([correct])).entries.map((entry) => entry.class)).toEqual(Array(3).fill("AMBIGUOUS_REVIEW_GIVE_BACK"));
+    console.log(JSON.stringify(report([correct], acknowledge(correct))));
     expect(report([correct], acknowledge(correct)).verdict).toBe("GATE_OPEN");
 
     const deleted = p1(false);
@@ -910,7 +960,7 @@ describe("AMBIGUOUS_REVIEW_GIVE_BACK: a live booking whose give-back rows no tas
     expect(evaluation.integrity.map((finding) => finding.kind)).toEqual(["SOURCE_DRIFT"]);
   });
 
-  it("a cancelled booking is never ambiguous: its owed(b) == 0 checks the total exactly", () => {
+  it("a cancelled booking's rows no two tasks' stand-ins draw on are not ambiguous: its owed(b) == 0 checks the total exactly", () => {
     const cancelled = live([completed(K, 4_000), dismissed("task-d")], [giveBack("c-k", 4_000)], [], [rebased("m-d", "task-d", -5_000)]);
     expect(evaluateBookingLedgerIdentities({ ...cancelled, booking: { ...cancelled.booking, status: "CANCELLED" } }).bookingInstances).toEqual([]);
   });

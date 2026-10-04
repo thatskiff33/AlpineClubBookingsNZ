@@ -20,7 +20,8 @@
  * that is missing. Where a row could instead be absorbed by another task's
  * re-price, or two rows sit beside give-back lines, nothing says which task a
  * row is: that live booking fails closed as `AMBIGUOUS_REVIEW_GIVE_BACK`
- * (#3583's delta review).
+ * (#3583's delta review). After a cancellation, two or more tasks drawing
+ * on one pool of rows fail closed the same way (#3913).
  *
  * #3835 (#3907): on a CAPTURED payment the same netting sends the capture's
  * part back to the capture - a card refund (the task's frozen Stripe debt,
@@ -50,11 +51,11 @@ export type ReviewAdjustmentEvidence = {
    */
   agreedGiveBackEvidenceCents: number;
   /**
-   * A live booking whose give-back rows cannot be attributed to its tasks
-   * (`AMBIGUOUS_REVIEW_GIVE_BACK`), with the figures the owner signs off, all
-   * as positive cents; null where every row is attributed exactly.
+   * A booking whose give-back rows cannot be attributed to its tasks
+   * (`AMBIGUOUS_REVIEW_GIVE_BACK`), with the figures the owner signs off, each
+   * named and as positive cents; null where every row is attributed exactly.
    */
-  ambiguous: { giveBackLineCents: number; giveBackRowCents: number; repricedWithoutLineCents: number } | null;
+  ambiguous: ReadonlyArray<{ detail: string; cents: number }> | null;
   /** #3835: hand-backs smaller than their share, each borne out by its task's stand-in (by line id). */
   nettedHandBackLineIds: ReadonlySet<string>;
 };
@@ -180,9 +181,13 @@ export function reviewAdjustmentEvidence(row: BookingLedgerCensusRow): ReviewAdj
   // missing, forged or overstated line, and so, conservatively, can a second
   // row beside a give-back line. Such a live booking fails closed, as a class
   // the owner acknowledges to the cent, never as agreement.
-  const ambiguous =
+  let ambiguous: ReviewAdjustmentEvidence["ambiguous"] =
     !cancelled && giveBackRowCents > 0 && (repricedWithoutLineCents > 0 || (giveBackRowCount > 1 && agreedGiveBackLineCents !== 0))
-      ? { giveBackLineCents: -agreedGiveBackLineCents || 0, giveBackRowCents, repricedWithoutLineCents }
+      ? [
+          { detail: "agreed give-back lines", cents: -agreedGiveBackLineCents || 0 },
+          { detail: "review give-back rows", cents: giveBackRowCents },
+          { detail: "re-price drops on reviews with no give-back line", cents: repricedWithoutLineCents },
+        ]
       : null;
 
   // After a cancellation (which reverses every stand-in it found live), a
@@ -224,6 +229,20 @@ export function reviewAdjustmentEvidence(row: BookingLedgerCensusRow): ReviewAdj
   const nettedHandBackLineIds = new Set(
     credited.filter(({ line }) => !drift.has(line.id)).flatMap((share) => share.handBackLineIds),
   );
+  // The same gap after a cancellation (#3913 F2): `owed(b) == 0` checks only
+  // the total, and no give-back or minted row names its task (the give-back
+  // row has no field that could, and its description is rewritten by the
+  // Xero repair). So where two or more tasks' stand-ins draw on one pool of
+  // rows, lines swapped between them, the total kept, would still be made of
+  // it. That booking fails closed too, to the cent; one task's stays exact.
+  const pooledCents = [...giveBacks, ...minted].reduce((sum, cents) => sum + cents, 0);
+  if (cancelled && new Set(credited.map(({ line }) => line.anchorId)).size > 1 && pooledCents > 0) {
+    ambiguous = [
+      { detail: "review stand-ins credited after the cancellation", cents: credited.reduce((sum, { line }) => sum - line.amountCents, 0) },
+      { detail: "their own refunds to the capture", cents: credited.reduce((sum, share) => sum + share.ownRefundCents, 0) },
+      { detail: "review give-back and share credit rows they share", cents: pooledCents },
+    ];
+  }
 
   return {
     drift,

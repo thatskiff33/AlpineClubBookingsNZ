@@ -11,3 +11,9 @@
   with the credit it gave back. A review whose figures do not add up to the
   cent is still reported, and still holds the cut-over. Nothing about what a
   member is refunded has changed.
+
+  Where two or more reviews on one cancelled booking draw on the same credit
+  given back, nothing records which review each part belongs to, so lines
+  swapped between them would still add up. The check now reports such a
+  booking for the owner to check by hand and sign off to the cent, as it
+  already did for a booking that is not cancelled, rather than passing it.
