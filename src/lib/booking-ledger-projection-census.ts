@@ -541,7 +541,11 @@ function sourceDrift(row: BookingLedgerCensusRow, line: CensusLedgerLine, review
       if (!task) return `no task ${line.anchorId} on this booking`;
       if (task.status !== "COMPLETED") return `task ${task.id} is ${task.status}`;
       const amount = task.amountCents ?? 0;
-      if (line.kind === "BANK_REFUND") return line.amountCents === -amount ? null : `task holds ${amount}, line ${line.amountCents}`;
+      // A hand-back is the share, or after a cancellation the capture's part
+      // of what was still owed, which only its task's stand-in bears out (#3835).
+      if (line.kind === "BANK_REFUND") {
+        return line.amountCents === -amount || reviewAdjustments.nettedHandBackLineIds.has(line.id) ? null : `task holds ${amount}, line ${line.amountCents}`;
+      }
       // What the closure credited, borne out by the booking's rows (#3791).
       if (line.kind === "AGREED_ADJUSTMENT") return reviewAdjustments.drift.get(line.id) ?? null;
       return null;

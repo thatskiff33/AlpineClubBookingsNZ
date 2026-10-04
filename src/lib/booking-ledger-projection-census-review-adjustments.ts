@@ -20,12 +20,22 @@
  * that is missing. Where a row could instead be absorbed by another task's
  * re-price, or two rows sit beside give-back lines, nothing says which task a
  * row is: that live booking fails closed as `AMBIGUOUS_REVIEW_GIVE_BACK`
- * (#3583's delta review). Pure: the snapshot row in, the judgement out.
+ * (#3583's delta review).
+ *
+ * #3835 (#3907): on a CAPTURED payment the same netting sends the capture's
+ * part back to the capture - a card refund (the task's frozen Stripe debt,
+ * `buildEditFinancialReviewRefundRecoveryIdempotencyKey`) or a hand-back (its
+ * `BANK_REFUND` line) - and only the credit's part comes back as a give-back.
+ * So after a cancellation a stand-in is borne out by that task's own refund
+ * plus the rows, the facts #3835's `settledSinceCancellation` reads, and a
+ * hand-back smaller than the share is borne out only by such a stand-in. Pure:
+ * the snapshot row in, the judgement out.
  */
 import { liveLines } from "@/lib/booking-ledger-modification-posting";
 import { isAgreedGiveBackKey } from "@/lib/booking-ledger-posting-keys";
 import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
 import { editReviewSettlementSign } from "@/lib/edit-financial-review-charge-shape";
+import { buildEditFinancialReviewRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
 
 export type ReviewAdjustmentEvidence = {
   /** A live review `AGREED_ADJUSTMENT` the rows do not bear out, by line id, with why. */
@@ -45,6 +55,8 @@ export type ReviewAdjustmentEvidence = {
    * as positive cents; null where every row is attributed exactly.
    */
   ambiguous: { giveBackLineCents: number; giveBackRowCents: number; repricedWithoutLineCents: number } | null;
+  /** #3835: hand-backs smaller than their share, each borne out by its task's stand-in (by line id). */
+  nettedHandBackLineIds: ReadonlySet<string>;
 };
 
 function isReviewAdjustment(line: CensusLedgerLine): boolean {
@@ -67,17 +79,24 @@ function repricedAwayCents(row: BookingLedgerCensusRow, taskId: string): number 
   );
 }
 
+/** A stand-in after the cancellation: what it credited, and what its task's own route returned to the capture. */
+type CreditedShare = { creditedCents: number; ownRefundCents: number };
+
 /**
- * Can every credited figure be made of one give-back row, one share credit, or
- * one of each, no row used twice? A small exact search: a booking carries a
- * handful of reviews at most.
+ * Can every credited figure be made of its task's own refund plus one
+ * give-back row, one share credit, or one of each, no row used twice? A
+ * figure the refund makes alone needs no row; nothing makes a figure of zero.
+ * A small exact search: a booking carries a handful of reviews at most.
  */
-function creditedFromRows(credited: readonly number[], giveBacks: readonly number[], minted: readonly number[]): boolean {
+function creditedFromRows(credited: readonly CreditedShare[], giveBacks: readonly number[], minted: readonly number[]): boolean {
   const [first, ...rest] = credited;
   if (first === undefined) return true;
+  const fromRowsCents = first.creditedCents - first.ownRefundCents;
+  if (fromRowsCents < 0) return false;
+  if (fromRowsCents === 0) return first.ownRefundCents > 0 && creditedFromRows(rest, giveBacks, minted);
   for (const givenBack of [0, ...new Set(giveBacks)]) {
     for (const mint of [0, ...new Set(minted)]) {
-      if (givenBack + mint !== first || first === 0) continue;
+      if (givenBack + mint !== fromRowsCents) continue;
       const giveBacksLeft = [...giveBacks];
       const mintedLeft = [...minted];
       if (givenBack !== 0) take(giveBacksLeft, givenBack);
@@ -86,6 +105,17 @@ function creditedFromRows(credited: readonly number[], giveBacks: readonly numbe
     }
   }
   return false;
+}
+
+/**
+ * What one review's captured route returned to the capture (#3835), from its
+ * own rows: the card refund it froze as a debt, and the hand-back it posted.
+ */
+function ownRefundOf(row: BookingLedgerCensusRow, taskId: string): { cents: number; handBackLineIds: string[] } {
+  const key = buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId);
+  const cardCents = row.recoveryOperations.filter((operation) => operation.idempotencyKey === key).reduce((sum, operation) => sum + operation.amountCents, 0);
+  const handBacks = liveLines(row.lines).filter((line) => line.kind === "BANK_REFUND" && line.anchorKind === "REVIEW_TASK" && line.anchorId === taskId);
+  return { cents: cardCents - handBacks.reduce((sum, line) => sum + line.amountCents, 0), handBackLineIds: handBacks.map((line) => line.id) };
 }
 
 export function reviewAdjustmentEvidence(row: BookingLedgerCensusRow): ReviewAdjustmentEvidence {
@@ -155,23 +185,36 @@ export function reviewAdjustmentEvidence(row: BookingLedgerCensusRow): ReviewAdj
       ? { giveBackLineCents: -agreedGiveBackLineCents || 0, giveBackRowCents, repricedWithoutLineCents }
       : null;
 
-  // After a cancellation (which reverses every stand-in it found live), an
-  // account-credit share credits what is still owed: up to the share, made of
-  // a give-back and the credit minted beside it. Anything else is the share.
-  const nettedShares = cancelled
-    ? standIns.filter((line) => {
+  // After a cancellation (which reverses every stand-in it found live), a
+  // share credits what is still owed: up to the share, made of the task's own
+  // refund to the capture (#3835) and a give-back and the credit minted beside
+  // it (#3791). A stand-in whose task refunded the capture is judged so too,
+  // since its hand-back is borne out only by it. Anything else is the share.
+  const refunded = new Set<string>();
+  const credited = cancelled
+    ? standIns.flatMap((line) => {
         const task = tasks.get(line.anchorId);
-        return task?.settlementDirection === "REFUND_TO_MEMBER" && line.amountCents < 0 && -line.amountCents < (task.amountCents ?? 0);
+        if (task?.settlementDirection !== "REFUND_TO_MEMBER" || line.amountCents >= 0) return [];
+        // A task's own refund is used once: by its first live stand-in.
+        const own = refunded.has(task.id) ? { cents: 0, handBackLineIds: [] } : ownRefundOf(row, task.id);
+        refunded.add(task.id);
+        return -line.amountCents < (task.amountCents ?? 0) || own.cents > 0
+          ? [{ line, creditedCents: -line.amountCents, ownRefundCents: own.cents, handBackLineIds: own.handBackLineIds }]
+          : [];
       })
     : [];
-  if (!creditedFromRows(nettedShares.map((line) => -line.amountCents), giveBacks, minted)) {
+  const nettedShares = credited.filter(({ line }) => -line.amountCents < (tasks.get(line.anchorId)?.amountCents ?? 0)).map(({ line }) => line);
+  if (!creditedFromRows(credited, giveBacks, minted)) {
     // Name the lines the rows cannot make on their own; where each can, but
     // not all together, every one of them.
-    const alone = nettedShares.filter((line) => !creditedFromRows([-line.amountCents], giveBacks, minted));
-    for (const line of alone.length > 0 ? alone : nettedShares) {
-      drift.set(line.id, `a share credited at ${-line.amountCents} after the cancellation, which no review give-back and share credit on this booking make`);
+    const alone = credited.filter((share) => !creditedFromRows([share], giveBacks, minted));
+    for (const { line } of alone.length > 0 ? alone : credited) {
+      drift.set(line.id, `a share credited at ${-line.amountCents} after the cancellation, which no refund of its own, review give-back and share credit on this booking make`);
     }
   }
+  const nettedHandBackLineIds = new Set(
+    credited.filter(({ line }) => !drift.has(line.id)).flatMap((share) => share.handBackLineIds),
+  );
   for (const line of standIns) {
     const task = tasks.get(line.anchorId);
     if (!task || task.settlementDirection === null || nettedShares.includes(line)) continue;
@@ -184,5 +227,6 @@ export function reviewAdjustmentEvidence(row: BookingLedgerCensusRow): ReviewAdj
     agreedGiveBackLineCents,
     agreedGiveBackEvidenceCents: cancelled ? 0 : borneOutCents - unaccountedCents,
     ambiguous,
+    nettedHandBackLineIds,
   };
 }

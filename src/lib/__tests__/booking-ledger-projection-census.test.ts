@@ -31,7 +31,7 @@ import { buildBookingLedgerRows, type BookingLedgerPosting } from "@/lib/booking
 import type { ModificationPricingSide } from "@/lib/booking-modification-lines";
 import type { ReversibleChargeLine } from "@/lib/booking-ledger-charge-line";
 import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
-import { buildBookingCancellationRefundIdempotencyKey } from "@/lib/payment-recovery-keys";
+import { buildBookingCancellationRefundIdempotencyKey, buildEditFinancialReviewRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
 
 const B = "bk-3583";
 const LODGE = "lodge-3583";
@@ -723,6 +723,45 @@ describe("#3791's review closures: a line is judged by what the member was credi
     for (const [cents, rows] of [[2_500, []], [2_400, [giveBack(2_500)]], [2_600, [giveBack(2_500)]], [5_100, []]] as const) {
       expect(findings(cancelled(cents, [...rows])), `${cents}`).toEqual([`SOURCE_DRIFT:line-1`]);
     }
+  });
+
+  it("#3835 (#3907): on a captured payment the task's own refund - its card debt or its hand-back - makes the stand-in with any give-back, and only that bears out a smaller hand-back", () => {
+    const debt = (cents: number, taskId = TASK) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId) });
+    const handBack = (cents: number, taskId = TASK) =>
+      planHandBackLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: taskId, amountCents: cents, settlementMethod: "INTERNET_BANKING", officerMemberId: "officer" });
+    const captured = (lineCents: number, { debts = [] as ReturnType<typeof debt>[], handBacks = [] as number[], rows = [] as BookingLedgerCensusRow["credits"] }) =>
+      row({
+        lines: new Ledger().post([share(lineCents), ...handBacks.map((cents) => handBack(cents))], LATER).lines,
+        credits: rows,
+        tasks: [task],
+        recoveryOperations: debts,
+        booking: { id: B, status: "CANCELLED", deletedAt: null, organiserSettled: false, finalPriceCents: 19_000 },
+      });
+    // Borne out: the card's part, the bank's part, each with or without a credit part.
+    expect(findings(captured(2_500, { debts: [debt(2_500)] }))).toEqual([]);
+    expect(findings(captured(2_500, { debts: [debt(1_500)], rows: [giveBack(1_000)] }))).toEqual([]);
+    expect(findings(captured(5_000, { debts: [debt(2_500)], rows: [giveBack(2_500)] }))).toEqual([]);
+    expect(findings(captured(2_500, { handBacks: [2_500] }))).toEqual([]);
+    expect(findings(captured(5_000, { handBacks: [2_500], rows: [giveBack(2_500)] }))).toEqual([]);
+    // A line a cent off its refund, a refund a cent short, larger than the line, or another task's: drift.
+    expect(findings(captured(2_501, { debts: [debt(2_500)] }))).toEqual(["SOURCE_DRIFT:line-1"]);
+    expect(findings(captured(2_500, { debts: [debt(2_499)] }))).toEqual(["SOURCE_DRIFT:line-1"]);
+    expect(findings(captured(2_500, { debts: [debt(3_000)] }))).toEqual(["SOURCE_DRIFT:line-1"]);
+    expect(findings(captured(2_500, { debts: [debt(2_500, "task-other")] }))).toEqual(["SOURCE_DRIFT:line-1"]);
+    // A hand-back a cent off, or its credit part missing: neither it nor the stand-in is borne out.
+    expect(findings(captured(2_500, { handBacks: [2_501] }))).toEqual(["SOURCE_DRIFT:line-1", "SOURCE_DRIFT:line-2"]);
+    expect(findings(captured(5_000, { handBacks: [2_500] }))).toEqual(["SOURCE_DRIFT:line-1", "SOURCE_DRIFT:line-2"]);
+    // One task's refund makes one line: a sibling with none of its own is not made by it.
+    const sibling = { ...task, id: "task-sibling", amountCents: 2_000 };
+    const siblingLine = { ...planAgreedAdjustmentLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: sibling.id, direction: "REFUND_TO_MEMBER", amountCents: 1_000, note: "agreed", officerMemberId: "officer" }) };
+    const both = row({
+      lines: new Ledger().post([share(2_500), siblingLine], LATER).lines,
+      tasks: [task, sibling],
+      recoveryOperations: [debt(2_500)],
+      booking: { id: B, status: "CANCELLED", deletedAt: null, organiserSettled: false, finalPriceCents: 19_000 },
+    });
+    expect(findings(both)).toEqual(["SOURCE_DRIFT:line-2"]);
+    expect(findings({ ...both, recoveryOperations: [debt(2_500), debt(1_000, sibling.id)] })).toEqual([]);
   });
 
   it("before a cancellation the stand-in is the typed share, whatever rows the booking holds", () => {
