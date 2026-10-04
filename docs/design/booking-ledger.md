@@ -136,9 +136,10 @@ negative; a `GUEST_NIGHT` names its strand and nights; and no other kind names
 any of them. **Which side a kind belongs to is not a database check**: the write
 door refuses a kind on the wrong side (`assertPostable`, #3611), and nothing
 else does. `reversesLineId` is unique, so a line is reversed at most once. There is **no `UPDATE` and no `DELETE`** on this table
-from application code; the census in §6 scans for either (the
-`stored-night-price-repair-census` pattern) and the Prisma extension the
-writers share exposes only `create` and `createMany`.
+from application code; `booking-ledger-append-only-census.test.ts` scans the
+tree for either (the `stored-night-price-repair-census` pattern), the §6 census
+reports PostgreSQL's update and delete counts for the table as information, and
+the write door exposes only `create` and `createMany`.
 
 ### 4.1 Derived quantities, and the one place they are derived
 
@@ -240,7 +241,8 @@ modification. Every line is anchored on the edit's `BookingModification`,
 reversals included, so an edit's slice is what that edit changed. **Sum or
 nothing**: the lines must add up to `priceDiffCents + changeFeeCents`, and a
 night with no live line, a live line at a different price, or any other
-disagreement posts nothing and is logged for C4 (#3583) to count. Only a
+disagreement posts nothing and is logged for C4 (#3583) to count (its census
+names it coverage, `UNPOSTED_EDIT`). Only a
 booking already confirmed on the ledger posts (§4.1a), asked under `lock(1)`.
 The planner is `booking-ledger-modification-posting.ts`; the writer calls are in
 `booking-ledger-modification-sync.ts` (`INV-MONEY-036`).
@@ -318,7 +320,7 @@ proves the ledger was in step rather than assuming it. The completion takes
 
 | Event today | Lines posted | Anchor | Writer |
 | --- | --- | --- | --- |
-| Booking confirmed / paid for the first time (`booking-create.ts`, the pay routes, waitlist confirm, quote conversion) | one `GUEST_NIGHT` (+) per `BookingGuestNight` row, quantity 1, `unitCents = priceCents`, rate tier and age tier from the guest's snapshot (`INV-MOD-010`); one `PROMOTION` (−) for `promoAdjustmentCents` when non-zero. As built (C1, `booking-ledger-confirmation-posting.ts`), nothing else: no `GROUP_DISCOUNT` (`discountCents` is a projection of the promotion, `INV-MONEY-031`, so a line would count it twice) and no `CHANGE_FEE` — a change fee charged before the booking was confirmed on the ledger has no line, which #3583 back-posts or counts (review of #3611, V4) | `CONFIRMATION` / booking id | the settle body (`INV-PAY-038`: mark-paid, card and IB all enter it) |
+| Booking confirmed / paid for the first time (`booking-create.ts`, the pay routes, waitlist confirm, quote conversion) | one `GUEST_NIGHT` (+) per `BookingGuestNight` row, quantity 1, `unitCents = priceCents`, rate tier and age tier from the guest's snapshot (`INV-MOD-010`); one `PROMOTION` (−) for `promoAdjustmentCents` when non-zero. As built (C1, `booking-ledger-confirmation-posting.ts`), nothing else: no `GROUP_DISCOUNT` (`discountCents` is a projection of the promotion, `INV-MONEY-031`, so a line would count it twice) and no `CHANGE_FEE` — a change fee charged before the booking was confirmed on the ledger has no line, which #3583 back-posts, and counts until then as coverage `UNPOSTED_CHANGE_FEE` (review of #3611, V4) | `CONFIRMATION` / booking id | the settle body (`INV-PAY-038`: mark-paid, card and IB all enter it) |
 | Whole-lodge / officer flat price (`INV-MONEY-004`) | the same `GUEST_NIGHT` lines from the night rows the rebase wrote; a flat price that does not divide is a `GUEST_NIGHT` per strand at the rebased strand figure (`INV-MOD-038`) | `CONFIRMATION` | same |
 | Booking edited and priced (four doors + batch, `INV-MOD-044`) | per guest-night, all or nothing (the rule above); a `PROMOTION` reversal + re-post when the promo delta is non-zero; a `CHANGE_FEE` (+) when the edit charged one | `MODIFICATION` / modification id | the four edit services and the batch path, in the transaction that already writes `priceLines` (`INV-MOD-058`) |
 | Admin date shift (`adminShiftBookingDates`, #3741) | the same per-night rule: each old-date night's live line reversed, each new-date night posted at the same figure, netting to the row's zero; both sides read as written rows, since a shift sells nothing | `MODIFICATION` / the `ADMIN_DATE_SHIFT` row | `adminShiftBookingDates`, under the `lock(1)` it takes first |
@@ -449,8 +451,9 @@ back, a goodwill figure, a share on a closure that moved nothing) leaves
 unparked removal with a policy-retained amount does today. A CHARGE share the
 price does not carry also leaves its pending ask above `max(0, owed(b))`, so
 §6's `additionalAmountCents` identity does not hold until it is captured or
-withdrawn; #3583's census classifies that booking as `retained`, not as a
-disagreement. #3611 named what the club keeps for a **cancellation**
+withdrawn; #3583's census classifies that booking as `RETAINED_REVIEW_SHARE`,
+not as a disagreement (and, once collected, counts it as `RETAINED_COLLECTED`
+information). #3611 named what the club keeps for a **cancellation**
 (`CANCELLATION_FEE`, §5.1). An edit's kept-back share is not a cancellation fee,
 but a later cancellation does carry it: it sits in paid money above the price,
 outside every tier, so the cancellation's kept line holds it, names it as more
@@ -469,32 +472,126 @@ Until §7's reads switch, `Payment.amountCents`, `creditAppliedCents`,
 `Booking.finalPriceCents` are **projections** of the ledger:
 
 ```
-finalPriceCents        == charged(b) + adjusted(b)
+finalPriceCents        == Σ GUEST_NIGHT + PROMOTION + GROUP_DISCOUNT + adjusted(b) − agreed give-backs   (not cancelled)
+owed(b)                == 0                                                          (cancelled, once its refunds have posted)
 amountCents            == Σ CARD_CAPTURE + BANK_RECEIPT + CASH_RECORDED     (gross of refunds — today's meaning)
-creditAppliedCents     == Σ CREDIT_APPLIED (a give-back is a negative line; a restore is CREDIT_ISSUED and leaves it alone) — EXCEPT where the mirror is not the applied-row sum: the manual settle derives it as price − settlement, and the Xero allocation repair caps it at the payment amount; C4 classifies those
+creditAppliedCents     == Σ CREDIT_APPLIED (a give-back is a negative line; a restore is CREDIT_ISSUED and leaves it alone) — EXCEPT where the Xero allocation repair capped the mirror at the payment amount; C4 classifies that, on evidence the money adds up
 refundedAmountCents    == -Σ CARD_REFUND
 changeFeeCents         == Σ CHANGE_FEE
-additionalAmountCents  == max(0, owed(b)) when an ADDITIONAL PENDING row exists, else 0
+uncollected ask        == max(0, owed(b)) while the payment's latest, unwithdrawn ADDITIONAL row is not captured, else 0   (not cancelled)
+owed(b)                == INV-PAY-047's residual + the uncollected ask + issued credit the refunded column never counted − the agreed give-backs the credit rows evidence   (not cancelled, confirmed)
 ```
 
-`pnpm run booking-ledger:census` (read-only, one `RepeatableRead` snapshot —
-the `censusBookingMoneyReconciliation` pattern, `INV-MONEY-031`) evaluates
-those six identities for every booking and reports, per identity, the count
-that agrees, the count that disagrees, and per disagreeing booking the six
-figures and the delta — never a repair. It also reports **coverage**:
-bookings with money columns and no lines at all.
+**The six leave a gap, which the seventh closes** (#3583's review). A
+`CREDIT_ISSUED` or `BANK_REFUND` line projects no column of its own, so one
+could be missing or wrong with all six agreeing — a reduction credited to
+account without its line read the same as with it, `owed(b)` −$50 against $0.
+Every line moves `owed(b)`, so a live booking's `owed(b)` is held against what
+its columns say is owed, and a missing credit line is coverage
+(`UNPOSTED_CREDIT`). A settle that wrote the credit mirror as price minus
+settlement can only differ from the applied rows when the money does not add
+up — #1641's double charge — so that shape is `KNOWN_DEFECT_HISTORY`, which
+holds the gate, not a mirror class. It is named by shape, not by date: the path
+that makes it may still be live.
+
+**The first identity as first written was wrong** (#3583's plan): it read
+`finalPriceCents == charged(b) + adjusted(b)`, but `charged(b)` includes the
+change fees and `finalPriceCents` never does (`INV-PAY-047`'s change-fee term).
+The price is the night, promotion and group-discount lines plus the agreed
+adjustments — the form §5.3's closure rule already uses. The ask's column side
+is `outstandingAdditionalAskCents`, the money half of `INV-PAY-047`'s own term.
+
+**A review line is judged by what its closure credited** (#3583 against
+#3791, `booking-ledger-projection-census-review-adjustments.ts`). An agreed
+give-back (§5.3) is a price below the strands', and `finalPriceCents` is
+re-based from the strands, so the price identity leaves it out; the residual
+counts the give-back as still owed, so `owed(b)`'s column side takes it off.
+Neither figure is stored per task, so each is read from the money it is made
+of, each row used once: a give-back line plus its closure's re-price (the
+`PRICE_REBASE` row's `newData`) must equal one review give-back row
+(`BOOKING_APPLIED` naming the booking as source and target), and a stand-in
+posted after a cancellation for less than the share must be one give-back row,
+one share credit, or both. Any other stand-in is the share as typed. On a live
+booking, a give-back row no line records and no re-price of a task without
+one could absorb is counted on `owed(b)`'s column side, so a missing give-back
+line is a disagreement. What the rows cannot say is which sibling a row
+belongs to. That is harmless only while no row could be absorbed elsewhere:
+a re-price drop on a review with no give-back line — a dismissed review's
+included — can soak up a row, so a missing, forged or overstated give-back
+line can leave every identity agreeing (#3583's delta review). So a live
+booking holding a review give-back row and either such a drop, or more than
+one row beside a give-back line, **fails closed** as `AMBIGUOUS_REVIEW_GIVE_BACK`:
+three booking-level instances — the give-back lines, the rows and the
+unmatched drops — each acknowledged to the cent, so the owner's sign-off goes
+stale if any moves. The exact checks still run beside it. A cancelled
+booking is never ambiguous: its `owed(b) == 0` checks the total exactly.
+Stamping the task on each give-back row would remove the ambiguity; it needs
+a column, so it is left to a later change.
+
+`pnpm run booking-ledger:census` (#3583, `INV-MONEY-037`; read-only, one
+`RepeatableRead`, `READ ONLY` snapshot — the `censusBookingMoneyReconciliation`
+pattern, `INV-MONEY-031`) evaluates those seven identities for every booking and
+reports, per identity, the count that applies, agrees, disagrees, is
+classified or is a coverage gap, and per disagreeing booking both figures and
+the delta — never a repair. It also reports **coverage** (bookings with money
+columns and no lines at all; paid bookings not confirmed on the ledger; edits,
+change fees and credit rows no line records; a captured transaction or a
+recorded refund with no live `capture:` / `refund:` line of its own,
+`UNPOSTED_SETTLEMENT`; and, on `owed(b)`, a legacy seed's refund or a V3
+hand-back no line can yet record, `UNPOSTED_LEGACY_REFUND`), **integrity** (a reversal naming
+no line or not its exact opposite, a second live night, an unknown key
+namespace or one on an anchor it never posts under, a live line its source row
+— or the CANCELLED event's frozen kept figure — no longer bears out) and a
+verdict, `GATE_OPEN` or `GATE_CLOSED`.
+
+**A named class explains an exact amount.** The differences this section
+already expects — and the ones its children found — are classes in
+`booking-ledger-projection-census-classes.ts`, each computed from the
+booking's own rows — never from the delta — and matched to the delta to the
+cent: `NOTHING_CAPTURED` (a booking not paid whose payment is not captured);
+`CREDIT_MIRROR_XERO_CAP`; the refunded residual's `REFUND_MIRROR_HAND_BACK`,
+`_CREDIT_ALLOCATION`, `_FAILED_REFUND` (only where the refund's own line was
+posted and reversed) and `_LEGACY_SEED` (only what no credit or hand-back
+row explains: an allocation onto a backfilled transaction is counted once),
+and `V3_LEGACY_HAND_BACK` — the last
+two on the refunded column only, since on `owed(b)` they are money the ledger
+is missing; `CHANGE_FEE_REVERSED_BY_CANCELLATION`;
+`RETAINED_REVIEW_SHARE` (§5.3); and a cancelled booking's `IN_FLIGHT_HAND_BACK`,
+`IN_FLIGHT_REFUND`, `V5_PLANNED_REFUND_SHORT` and `D2_DISMISSED_HAND_BACK`.
+`AMBIGUOUS_REVIEW_GIVE_BACK` is a live booking whose review give-back rows
+the census cannot attribute to their tasks (below the review-line paragraph).
+`KNOWN_DEFECT_HISTORY` finds bookings #3791, #3792 or #1641's shape damaged,
+where the ledger is right, and `GROUP_SETTLEMENT_OFF_LEDGER` the group-settled
+children no poster reaches — a child with no transaction, refund or credit row
+of its own and no credit, refund or change-fee figure, whose money moved only
+through the organiser's settlement. The owner releases a finding from the gate by listing it, to the
+cent, in an acknowledgement file the census reads; a figure that has moved since
+is reported stale and still holds.
 
 **This census is the cut-over gate, not a monitor** (§7, D-3532-1). Its
 load-bearing run is once, over the club's whole booking history, after the
 back-post: every booking ever made, every event kind that has ever occurred,
 compared line-against-column. Zero disagreements and zero coverage gaps is
-what permits Release 2; a disagreement is a poster bug, fixed and re-run. It
+what permits Release 2 — precisely, zero **unclassified** disagreements, zero
+coverage gaps, zero integrity findings and no booking in a class that holds
+the gate, every other class acknowledged by the owner on #3583 — instance by
+instance, to the cent, in the acknowledgement file, save
+`GROUP_SETTLEMENT_OFF_LEDGER`, which the owner decided is listed only — because a
+literal zero is not reachable on a live history (in-flight refunds and the
+classes above are expected states). A disagreement is a poster bug, fixed and
+re-run. It
 then keeps running — in CI against the seeded database, and on the operator's
 word against production read-only — for as long as the columns exist, which
 is what makes Release 2 reversible.
 
-The census reuses `auditIbAppliedCreditStrands`'s shape (`INV-PAY-047` (3)) and
-retires it: that script's identity is one of the six.
+The census retired `auditIbAppliedCreditStrands` (`INV-PAY-047` (3)): that
+script's identity is one of the seven, and its #1620 count — applied credit on a
+live internet-banking payment that no Xero note allocates — is reported beside
+the credit identity as information, since it is a Xero exposure figure rather
+than a ledger identity. Each booking on it is realized only where settlement
+evidence proves its current invoice paid, and otherwise unverified, never
+unpaid (#3632, `internet-banking-settlement-evidence.ts`). #1641's card
+double-pay audit stays where it is.
 
 **The back-post skips an edit that has already posted (#3582).** Any
 `BookingModification` with a line anchored `MODIFICATION`/`<its id>` has posted,
@@ -508,9 +605,9 @@ through the key functions in `booking-ledger-posting-keys.ts`.
 
 **A cancelled booking leaves the price identity (#3611).** A cancellation does
 not touch `finalPriceCents`, while its charge side becomes what the club kept
-(§5.1). So `finalPriceCents == charged(b) + adjusted(b)`
-holds only for a booking that is not cancelled; for a cancelled one, the
-census's question is whether `owed(b)` is zero once its refunds have posted.
+(§5.1). So the price identity above holds only for a booking that is not
+cancelled; for a cancelled one, the census's question is whether `owed(b)` is
+zero once its refunds have posted.
 
 ## 7. Cut-over order
 
@@ -705,7 +802,7 @@ to bundle.
 | [#3581](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3581) | Settlement lines from payment rows — card capture, bank receipt, cash recorded, card refund, and their reversals — converging where the payment mirror is derived | lines nothing reads | High (money writers touched, no behaviour change) |
 | [#3599](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3599) | Settlement lines from account credit (applied, issued, restored) and the hand-back — split from #3581, whose chokepoint never sees them | lines nothing reads | High |
 | [#3582](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3582) | Posting from the edit, review-share, rebase and cancellation writers | lines nothing reads | High |
-| [#3583](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3583) | The back-post script for every existing booking, and `pnpm run booking-ledger:census`: the six identities, coverage, the invariant entry, the CI seed run | a dry-run report and a read-only census — **the cut-over gate** | High |
+| [#3583](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3583) | The back-post script for every existing booking, and `pnpm run booking-ledger:census`: the seven identities (§6), coverage, the invariant entry, the CI seed run | a dry-run report and a read-only census — **the cut-over gate** | High |
 | [#3584](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3584) | Reads switch, one surface per PR: statement, emails, history, reports, officer panel | member-visible figures from the ledger, census-proven equal | High |
 | [#3585](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3585) | Xero renderers read ledger slices; `settlementMethod` names the method on every credit note | Xero documents unchanged in content | High |
 | [#3586](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3586) | Contract: drop the six columns; delete the `INV-PAY-047` fences; retire §9's `P` rows | the mirror is gone | Critical |
@@ -749,7 +846,7 @@ rules apply to the column as they do to the guest row.
 
 **D-3532-1 — decided 23 Sep 2026: prove against history, then cut over fast.**
 No shadow period. Release 1 posts and back-posts, and the census proves the
-six identities over every booking ever made; Release 2 moves the reads as soon
+identities of §6 over every booking ever made; Release 2 moves the reads as soon
 as that is clean; Release 3 drops the columns on the owner's word. §7 carries
 the reasoning and the two rules that survive the compression.
 
