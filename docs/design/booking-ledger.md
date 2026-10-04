@@ -125,7 +125,7 @@ enum LedgerLineKind    {
   CREDIT_ISSUED      // SETTLEMENT -   (account credit minted to the member)
   AGREED_ADJUSTMENT  // ADJUSTMENT ±   ("Adjustment agreed with member: <note>")
 }
-enum LedgerAnchorKind  { CONFIRMATION MODIFICATION REVIEW_TASK PAYMENT_TRANSACTION PAYMENT_REFUND MEMBER_CREDIT CANCELLATION }
+enum LedgerAnchorKind  { CONFIRMATION MODIFICATION REVIEW_TASK PAYMENT_TRANSACTION PAYMENT_REFUND MEMBER_CREDIT CANCELLATION GROUP_SETTLEMENT }  // GROUP_SETTLEMENT: #3854
 enum SettlementMethod  { CARD INTERNET_BANKING ACCOUNT_CREDIT CASH }
 ```
 
@@ -267,7 +267,8 @@ booking id) and posted in one batch:
 **The kept figure, and its one relationship to the CANCELLED event.** Both come
 from one call, `paidCancellationMoney` (`paid-cancellation-money.ts`), which
 also returns the refund and the restore exactly as the cancel path always
-computed them:
+computed them (a group organiser's cancel has its own kept figure for its
+settled children, below):
 
 ```
 retainedAmountCents = max(paid − refund, 0)             (the CANCELLED event; the member's narrative)
@@ -287,8 +288,13 @@ money deserves a line of its own is the Xero rendering's question (C6, #3585).
 
 `paid` is the payment net of earlier refunds, change fees included; `applied` is
 the credit the booking's applied rows actually hold, which the mirror can
-disagree with. Only the paid `cancelBooking` branch keeps anything; every other
-cancel keeps nothing. The CANCELLED snapshot freezes `ledger: { keptCents,
+disagree with. Only the paid `cancelBooking` branch and the organiser cancel's
+settled children (#3854) keep anything; every other cancel keeps nothing. A
+group organiser's settled child keeps its share of the settlement less every
+refund made or still owed on it, the cancel's own plan included
+(`groupSettledChildCancellationKeptCents`): its #3653 per-child debts for a card
+settlement, its frozen mirror-plan share otherwise, counted whether or not the
+refund has gone through yet. The CANCELLED snapshot freezes `ledger: { keptCents,
 policyKeptCents, keptBeyondPolicyCents, appliedCreditCents, creditRestoredCents }`
 in the same claim, so #3583's
 back-post replays the figure instead of re-deriving it from a mirror that keeps
@@ -313,12 +319,12 @@ proves the ledger was in step rather than assuming it. The completion takes
 
 | Event today | Lines posted | Anchor | Writer |
 | --- | --- | --- | --- |
-| Booking confirmed / paid for the first time (`booking-create.ts`, the pay routes, waitlist confirm, quote conversion) | one `GUEST_NIGHT` (+) per `BookingGuestNight` row, quantity 1, `unitCents = priceCents`, rate tier and age tier from the guest's snapshot (`INV-MOD-010`); one `PROMOTION` (−) for `promoAdjustmentCents` when non-zero. As built (C1, `booking-ledger-confirmation-posting.ts`), nothing else: no `GROUP_DISCOUNT` (`discountCents` is a projection of the promotion, `INV-MONEY-031`, so a line would count it twice) and no `CHANGE_FEE` — a change fee charged before the booking was confirmed on the ledger has no line, which #3583 back-posts or counts (review of #3611, V4) | `CONFIRMATION` / booking id | the settle body (`INV-PAY-038`: mark-paid, card and IB all enter it) |
+| Booking confirmed / paid for the first time (`booking-create.ts`, the pay routes, waitlist confirm, quote conversion) | one `GUEST_NIGHT` (+) per `BookingGuestNight` row, quantity 1, `unitCents = priceCents`, rate tier and age tier from the guest's snapshot (`INV-MOD-010`); one `PROMOTION` (−) for `promoAdjustmentCents` when non-zero. As built (C1, `booking-ledger-confirmation-posting.ts`), nothing else: no `GROUP_DISCOUNT` (`discountCents` is a projection of the promotion, `INV-MONEY-031`, so a line would count it twice) and no `CHANGE_FEE` — a change fee charged before the booking was confirmed on the ledger has no line, which #3583 back-posts or counts (review of #3611, V4) | `CONFIRMATION` / booking id | the settle body (`INV-PAY-038`: mark-paid, card and IB all enter it); for a group organiser's settled child, which never enters it, the group settle, through the same planner and per-booking fence (#3854) |
 | Whole-lodge / officer flat price (`INV-MONEY-004`) | the same `GUEST_NIGHT` lines from the night rows the rebase wrote; a flat price that does not divide is a `GUEST_NIGHT` per strand at the rebased strand figure (`INV-MOD-038`) | `CONFIRMATION` | same |
 | Booking edited and priced (four doors + batch, `INV-MOD-044`) | per guest-night, all or nothing (the rule above); a `PROMOTION` reversal + re-post when the promo delta is non-zero; a `CHANGE_FEE` (+) when the edit charged one | `MODIFICATION` / modification id | the four edit services and the batch path, in the transaction that already writes `priceLines` (`INV-MOD-058`) |
 | Admin date shift (`adminShiftBookingDates`, #3741) | the same per-night rule: each old-date night's live line reversed, each new-date night posted at the same figure, netting to the row's zero; both sides read as written rows, since a shift sells nothing | `MODIFICATION` / the `ADMIN_DATE_SHIFT` row | `adminShiftBookingDates`, under the `lock(1)` it takes first |
 | Booking edited and **parked** (`INV-MOD-040`) | **nothing** — a parked edit writes structure, never an amount; the lines post when the review closes | — | — |
-| Booking cancelled — member or admin cancel (all four `cancelBooking` branches), the linked provisional child, the internet banking hold-expiry release, a group organiser's settled children, the settle's capacity void, the late internet banking capacity cancel, and `cron-confirm-pending`'s three hold-window cancels | the rule above. Only the paid `cancelBooking` branch keeps anything; every other path keeps nothing and posts reversals only — a group organiser's settled children included, since they hold no settlement line of their own (where their kept money belongs is #3583's) | `CANCELLATION` / booking id | each cancel path, in the claim transaction that flips the booking `CANCELLED`, under its `lock(1)` |
+| Booking cancelled — member or admin cancel (all four `cancelBooking` branches), the linked provisional child, the internet banking hold-expiry release, a group organiser's settled children, the settle's capacity void, the late internet banking capacity cancel, and `cron-confirm-pending`'s three hold-window cancels | the rule above. Only the paid `cancelBooking` branch and a group organiser's settled children keep anything; every other path keeps nothing and posts reversals only. A settled child keeps its share less every refund made or owed on it (#3854; before #3854 it held no settlement line and kept nothing) | `CANCELLATION` / booking id | each cancel path, in the claim transaction that flips the booking `CANCELLED`, under its `lock(1)` |
 | Review closed by re-pricing (`INV-MOD-055`) — the admin price rebase (`booking-review-price-rebase.ts`), whose only caller is the closure | reversal of every live `GUEST_NIGHT` the re-price changed + re-post at the new figure, and the promotion likewise — all or nothing against the re-base's movement of the final price; **nothing** where the re-base declines or writes no history row | `MODIFICATION` / the `PRICE_REBASE` history row the re-base writes (both money components zero) | the closure (`recordReviewClosurePricing`), under the completion's `lock(1)` |
 
 ### 5.2 Moving money (SETTLEMENT)
@@ -384,6 +390,9 @@ the database makes — and its lines cascade with it.)
 | Reduction credited to account (`BOOKING_MODIFICATION_REFUND`) | `CREDIT_ISSUED` (−), `method = ACCOUNT_CREDIT` | `MEMBER_CREDIT` | `createBookingModificationCredit`, through `syncBookingLedgerCredits` |
 | Hand-back completed on the `local-allocation` route — an IB/cash cancellation (`CANCELLED_BOOKING_HAND_BACK`, #3529), or a review refund the club sends back itself — on a payment that is not a card payment | `BANK_REFUND` (−), `method = INTERNET_BANKING` by #3529's wording decision (`refundMethodForEditReviewRoute`, `INV-PAY-101`), `postedByMemberId` = the officer. A legacy task on a card capture posts none: that money goes back on the card and posts `CARD_REFUND` from its refund row | `REVIEW_TASK` | `manual-refund-task-resolution.ts` |
 | Applied credit restored on cancellation (`INV-PAY-019`) | `CREDIT_ISSUED` (−) for exactly what was restored — **not** a reversal of the `CREDIT_APPLIED` line, because the restore is tiered (see above) | `CANCELLATION` (the booking) | `restoreCreditFromBooking`, through `syncBookingLedgerCredits` |
+| A group organiser's settlement paid — card capture, or the combined Internet Banking invoice's inbound reconcile (#3854) | per child it paid: the child's confirmation lines (§5.1, fenced per booking), and its share — the child's own `finalPriceCents`, never a split of the total — as `CARD_CAPTURE` (`method = CARD`) or `BANK_RECEIPT` (`method = INTERNET_BANKING`), keyed `groupSettlementShareKey`; sum or nothing against what the settlement collected | `GROUP_SETTLEMENT` / settlement id | `settleConfirmedChildrenAndNotify`, in the claim that flips the children PAID, under its `lock(1)` and the children's lodge keys, through `postGroupSettlementLedgerLines` |
+| Organiser cancel's frozen mirror plan (`refundPlan`, #1236): a card plan frozen before #3653, or an Internet Banking settlement's | `CARD_REFUND` or `BANK_REFUND` (−) for the child's planned share, beside the mirror that records it, keyed `groupSettlementRefundKey` | `GROUP_SETTLEMENT` / settlement id | the organiser cancel's per-child claim, and the plan's recovery replay (`executeGroupSettlementRefundPlan`) for a refund that failed inline — one key, so only one posts |
+| A refund out of the combined card payment (#3653: an edit's reduction, a joiner's own cancel, the organiser cancel's per-child debt) | `CARD_REFUND` (−) from the child's `PaymentRefund` row, and its reversal if Stripe later fails it — the convergence above | `PAYMENT_REFUND` | `processOrganiserChildRefundOperation` and `reconcilePendingOrganiserChildRefunds`, through `syncBookingLedgerSettlements` in the transaction that writes the row |
 | Hold-expiry release / stale-invoice clearing note (`INV-PAY-017`) | no settlement line — no money moved. The charge side is §5.1's cancellation row: the stay's reversals, and no fee, since nothing was kept; the Xero note is a rendering of `owed(b)` going to zero | — | — |
 
 ### 5.3 A person decides (ADJUSTMENT) and the ask
@@ -636,7 +645,8 @@ No row is "unknown". Codes:
 | 023, 024 | U | how applied credit reaches Xero and Stripe (allocation, effective intent amount) |
 | 025, 026 | U | cash evidence before crediting; a `BANK_RECEIPT` posts only on that evidence |
 | 027, 028, 029, 030 | U | idempotency and provider retry; posting is inside the same idempotent claims |
-| 031–037 | U | group settlement and organiser cancel; each child posts its own lines under its own anchor; 037's "no child mirror applies twice" is C once the mirror is gone |
+| 031–037 | L | group settlement and organiser cancel (#3854): each paid child posts its share anchored `GROUP_SETTLEMENT`, and a frozen plan's refund under the same anchor; 037's "no child mirror applies twice" is C once the mirror is gone |
+| 114 | L | a child's refund out of the combined card payment posts `CARD_REFUND` from its refund row, reversed if Stripe fails it (#3854) |
 
 ### 9.3 `INV-MOD`
 
@@ -697,6 +707,7 @@ to bundle.
 | [#3599](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3599) | Settlement lines from account credit (applied, issued, restored) and the hand-back — split from #3581, whose chokepoint never sees them | lines nothing reads | High |
 | [#3582](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3582) | Posting from the edit, review-share, rebase and cancellation writers | lines nothing reads | High |
 | [#3583](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3583) | The back-post script for every existing booking, and `pnpm run booking-ledger:census`: the six identities, coverage, the invariant entry, the CI seed run | a dry-run report and a read-only census — **the cut-over gate** | High |
+| [#3854](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3854) | A group organiser's settlement: the `GROUP_SETTLEMENT` anchor (expand), each settled child's confirmation and share, the organiser cancel's plan refunds — owner decision 2A on #3583, before #3584 moves a reader that shows a group child | lines nothing reads | High (schema, money writers) |
 | [#3584](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3584) | Reads switch, one surface per PR: statement, emails, history, reports, officer panel | member-visible figures from the ledger, census-proven equal | High |
 | [#3585](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3585) | Xero renderers read ledger slices; `settlementMethod` names the method on every credit note | Xero documents unchanged in content | High |
 | [#3586](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3586) | Contract: drop the six columns; delete the `INV-PAY-047` fences; retire §9's `P` rows | the mirror is gone | Critical |

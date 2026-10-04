@@ -512,6 +512,12 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   (#3583) classifies those as known divergences. A line whose source amount
   later changes is reported, not corrected.
 
+  **A group organiser's settlement posts on its children** (#3854). The group
+  settle confirms each child on the ledger and posts its share, its own price,
+  as `CARD_CAPTURE` or `BANK_RECEIPT` anchored `GROUP_SETTLEMENT`; a frozen
+  cancel plan posts the matching refund there; a #3653 refund row converges
+  here (design §5.2).
+
 ## INV-MONEY-035
 
 - **Every credit row a booking owns, and every hand-back, posts exactly one
