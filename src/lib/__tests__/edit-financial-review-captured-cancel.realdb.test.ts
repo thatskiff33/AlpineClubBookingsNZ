@@ -517,6 +517,29 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       expect(task.status).toBe("COMPLETED");
     });
 
+    it("integration review H: $100 card + $100 credit on a booking #3809's give-back reduced to $150, cancelled at 50% less $20 under the cap ($55), then a $30 review: $85 in all, the review-first figure", async () => {
+      await paid(PAYMENTS[1]!);
+      const raised = await raise("2026-08-01");
+      // #3809's reduction to $150: the marker the cancel's cap reads.
+      await prisma.booking.update({ where: { id: BOOKING_ID }, data: { totalPriceCents: 15_000, finalPriceCents: 15_000 } });
+      await prisma.bookingModification.create({
+        data: { bookingId: BOOKING_ID, memberId: MEMBER_ID, modificationType: "BATCH_MODIFY", previousData: {}, newData: { appliedCreditGiveBack: { basisCents: 5_000, givenBackCents: 0 } } },
+      });
+
+      await cancelAt(TIERS[1]!.rule);
+      const cancelled = await prisma.bookingEvent.findFirstOrThrow({ where: { bookingId: BOOKING_ID, type: "CANCELLED" }, select: { snapshot: true } });
+      // The cap tiered $50 of the $100 credit: $30 to the card, $25 restored.
+      expect(cancelled.snapshot).toMatchObject({ settledAmountCents: 3_000, ledger: { appliedCreditCents: 10_000, appliedCreditBaseCents: 5_000, creditRestoredCents: 2_500 } });
+      expect(await totalBackCents()).toBe(5_500);
+
+      // Review first: $30 back to the card leaves $70 tiered (less $20: $15) and room under the cap for $80 of credit ($40).
+      expect(await dialogSays(raised.taskId, 3_000)).toMatchObject({ stillOwedCents: 3_000, captureCents: 1_500, creditCents: 1_500, route: "card" });
+      await completeShare(raised.taskId, 3_000);
+
+      expect(await totalBackCents()).toBe(8_500);
+      expect((await cardDebts()).reduce((sum, debt) => sum + debt.amountCents, 0)).toBeLessThanOrEqual(await capture());
+    });
+
     it("review F1: $150 credit + $50 card, cancelled at 50% (no fee), a $100 share: $25 to the card and $25 given back as credit - the card never promised more than it took", async () => {
       await paid({ paid: "credit plus card", cardCents: 5_000, appliedCents: 15_000, source: "STRIPE" });
       const raised = await raise("2026-08-01");

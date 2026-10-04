@@ -66,16 +66,19 @@ type Rule = { daysBeforeStay: number; refundPercentage: number; fixedFeeCents: n
 type Method = "card" | "credit";
 
 /** The cancel path's money on a booking of `priceCents` with that capture and credit behind it. */
-const cancelMoney = (cardCents: number, appliedCents: number, priceCents: number, rule: Rule, method: Method = "card") =>
+const cancelMoney = (
+  cardCents: number, appliedCents: number, priceCents: number, rule: Rule, method: Method = "card",
+  { cap = false, changeFeeCents = 0 }: { cap?: boolean; changeFeeCents?: number } = {},
+) =>
   paidCancellationMoney({
-    payment: { amountCents: cardCents, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: appliedCents },
+    payment: { amountCents: cardCents, refundedAmountCents: 0, changeFeeCents, creditAppliedCents: appliedCents },
     finalPriceCents: priceCents,
     appliedCreditCents: appliedCents,
     restoresToMemberLedger: true,
     days: DAYS,
     policy: [rule],
     refundMethod: method,
-    capAppliedCredit: false,
+    capAppliedCredit: cap,
   });
 
 const rows = {
@@ -100,8 +103,12 @@ const store = {
 };
 
 /** The CANCELLED event `writePaidCancellationEvent` writes for that cancellation. */
-function cancelledAt(cardCents: number, appliedCents: number, rule: Rule, method: Method = "card", priceCents = 20_000) {
-  const money = cancelMoney(cardCents, appliedCents, priceCents, rule, method);
+function cancelledAt(
+  cardCents: number, appliedCents: number, rule: Rule, method: Method = "card", priceCents = 20_000,
+  options: { cap?: boolean; changeFeeCents?: number } = {},
+) {
+  const money = cancelMoney(cardCents, appliedCents, priceCents, rule, method, options);
+  rows.capped = options.cap ?? false;
   h.appliedNowCents = appliedCents;
   rows.cancelled = {
     occurredAt: CANCELLED_AT,
@@ -109,8 +116,13 @@ function cancelledAt(cardCents: number, appliedCents: number, rule: Rule, method
       refundMethod: money.refundAmountCents > 0 ? method : "card",
       paidAmountCents: money.paidAmountCents,
       settledAmountCents: money.refundAmountCents,
-      changeFeeCents: 0,
-      ledger: { appliedCreditCents: appliedCents, creditRestoredCents: money.creditRestoredCents },
+      changeFeeCents: options.changeFeeCents ?? 0,
+      ledger: {
+        appliedCreditCents: appliedCents,
+        creditRestoredCents: money.creditRestoredCents,
+        // #3809: the base its cap tiered, where it ran.
+        ...(options.cap ? { appliedCreditBaseCents: money.appliedCreditBaseCents } : {}),
+      },
       // #3835: what the tier ran on, and the reviews settled before it.
       tierRefundMethod: method,
       refundableBaseCents: money.refundableBaseCents,
@@ -366,23 +378,18 @@ describe("#3835 review: the cancellation's own frozen figures", () => {
     expect(await owed()).toBe(2_500);
   });
 
-  it("MUTATION: reads #3809's appliedCreditBaseCents where the event has it: $200 credit applied, $150 tiered", async () => {
-    // $50 card + $200 credit on a $200 price, of which $150 was tiered.
+  it("MUTATION: reads #3809's ledger.appliedCreditBaseCents: $50 card + $200 credit at $200, $150 tiered - at 100% the $50 share frees $50 of headroom", async () => {
     const rule = { daysBeforeStay: 0, refundPercentage: 100, fixedFeeCents: 0 };
-    cancelledAt(5_000, 15_000, rule);
-    // #3809 writes it inside the ledger snapshot, beside the rows' figure.
-    (snapshotOf().ledger as Record<string, number>).appliedCreditBaseCents = 15_000;
-    (snapshotOf().ledger as Record<string, number>).appliedCreditCents = 20_000;
+    const returnedCents = cancelledAt(5_000, 20_000, rule, "card", 20_000, { cap: true });
+    expect(returnedCents).toBe(20_000); // $50 card + $150 of the credit
 
-    // The re-tier reproduces the $150 restore from the $150 base; nothing is owed at 100%.
-    expect(await owed()).toBe(0);
+    // Review first: $50 back to the card, then the cap leaves room for all $200 of the credit: $250 in all.
+    expect(await split()).toEqual({ captureCents: 0, creditCents: 5_000 });
   });
 
   it("MUTATION: #3809 - a booking its give-back capped re-tiers on the cap, and one whose cancel froze no capped base is refused", async () => {
     // $100 card + $100 credit, cancelled at 50% less $20 under the cap.
-    cancelledAt(10_000, 10_000, TIERS[1]!.rule);
-    (snapshotOf().ledger as Record<string, number>).appliedCreditBaseCents = 10_000;
-    rows.capped = true;
+    cancelledAt(10_000, 10_000, TIERS[1]!.rule, "card", 20_000, { cap: true });
     expect(await owed()).toBe(2_500);
     expect(store.bookingModification.findFirst).toHaveBeenCalled();
 
@@ -393,10 +400,10 @@ describe("#3835 review: the cancellation's own frozen figures", () => {
   it("MUTATION: #3809 - applied credit above the cap the cancel left untiered is taken before the credit it tiered", async () => {
     // $50 card + $200 applied, $150 of it tiered; 50% (no fee): $25 refunded, $75 restored.
     const rule = { daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 0 };
-    cancelledAt(5_000, 15_000, rule);
-    (snapshotOf().ledger as Record<string, number>).appliedCreditBaseCents = 15_000;
-    (snapshotOf().ledger as Record<string, number>).appliedCreditCents = 20_000;
-    h.appliedNowCents = 20_000;
+    // $50 card + $200 credit at a $200 price, capped: $150 of the credit tiered.
+    const returnedCents = cancelledAt(5_000, 20_000, rule, "card", 20_000, { cap: true });
+    expect((snapshotOf().ledger as Record<string, number>).appliedCreditBaseCents).toBe(15_000);
+    expect(returnedCents).toBe(10_000);
 
     // A $100 share: $50 off the card, $50 off the untiered credit; the $150 tiered still returns $75.
     expect(await split(10_000)).toEqual({ captureCents: 2_500, creditCents: 5_000 });
@@ -421,5 +428,36 @@ describe("#3835 review: the cancellation's own frozen figures", () => {
     expect(store.manualRefundTask.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: { notIn: ["task-2", "task-before"] } }),
     }));
+  });
+});
+
+describe("#3835 integration review H: #3809's money-first cap, the review first", () => {
+  /** What the member gets in all, the review first: the share off the card, then the cancel on what is left. */
+  const reviewFirstTotal = (shape: { card: number; credit: number; price: number; fee: number; share: number }, rule: Rule) => {
+    const toCard = Math.min(shape.share, shape.card - shape.fee);
+    const money = cancelMoney(shape.card - toCard, shape.credit - (shape.share - toCard), shape.price, rule, "card", { cap: true, changeFeeCents: shape.fee });
+    return shape.share + money.refundAmountCents + money.creditRestoredCents;
+  };
+  const SHAPES = [
+    { name: "$100 card + $100 credit at $150, a $30 share", card: 10_000, credit: 10_000, price: 15_000, fee: 0, share: 3_000, full: 18_000, half: 8_500 },
+    { name: "$50 card + $200 credit at $200, a $30 share", card: 5_000, credit: 20_000, price: 20_000, fee: 0, share: 3_000, full: 23_000, half: 11_000 },
+    { name: "$200 card + $50 credit at $150, a $10 fee, a $60 share", card: 20_000, credit: 5_000, price: 15_000, fee: 1_000, share: 6_000, full: 21_000, half: 11_500 },
+  ];
+  for (const shape of SHAPES) {
+    for (const [tier, rule, expectedCents] of [["100%", TIERS[0]!.rule, shape.full], ["50% less $20", TIERS[1]!.rule, shape.half]] as const) {
+      it(`MUTATION: ${shape.name}, cancelled at ${tier}: the member gets ${expectedCents} cents in all, as the review first`, async () => {
+        const returnedCents = cancelledAt(shape.card, shape.credit, rule, "card", shape.price, { cap: true, changeFeeCents: shape.fee });
+
+        const { captureCents, creditCents } = await split(shape.share);
+
+        expect(reviewFirstTotal(shape, rule)).toBe(expectedCents);
+        expect(returnedCents + captureCents + creditCents).toBe(expectedCents);
+      });
+    }
+  }
+
+  it("an uncapped booking at 0% is exact either way: the share whole", async () => {
+    cancelledAt(10_000, 10_000, TIERS[2]!.rule, "card", 15_000);
+    expect(await owed(3_000)).toBe(3_000);
   });
 });
