@@ -194,6 +194,31 @@ export function cancelRefundableBaseCents(input: {
 }
 
 /**
+ * #1473/#1491: the pre-ledger half of a cancel's capture evidence, for a payment
+ * with no captured `PaymentTransaction` row to read. A STRIPE payment's refund
+ * mirror is trustworthy there: a Stripe refund needs a captured charge, and the
+ * invoice-side fold cannot reach an uncaptured Stripe booking (its Xero invoice
+ * is issued only at or after capture). Any other source's mirror is NOT: the
+ * inbound reconcile folds invoice-applied modification credit notes into
+ * `refundedAmountCents` / `PARTIALLY_REFUNDED` on never-captured Internet
+ * Banking payments, which is bookkeeping, not cash. The one home for that rule
+ * (`INV-SSOT-001`, #3630): `booking-cancel.ts` asks it after a ledger query,
+ * `cancel-flattened-payment-backfill.ts` after an in-memory ledger read.
+ */
+export function stripeRefundMirrorShowsCapture(payment: {
+  source: string;
+  status: string;
+  refundedAmountCents: number;
+}): boolean {
+  return (
+    payment.source === "STRIPE" &&
+    (payment.status === "REFUNDED" ||
+      payment.status === "PARTIALLY_REFUNDED" ||
+      payment.refundedAmountCents > 0)
+  );
+}
+
+/**
  * The payment shape the two accessors below need, spelled out so a caller cannot
  * hand them a payment row loaded without its id.
  */

@@ -84,6 +84,7 @@ import { bookingStayHasStarted } from "@/lib/booking-edit-policy";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
+import { stripeRefundMirrorShowsCapture } from "@/lib/booking-payment-state";
 
 // #3497: the cancellable sets live in `booking-cancel-eligibility.ts`, a leaf
 // module the member-facing doors also read — one home, no copy.
@@ -2640,14 +2641,10 @@ export async function paymentEligibleForPaidCancelPath(
 
 // #1473/#1491: capture evidence for cancel-time decisions. Ledger truth
 // first — any transaction row that holds/held money — because the aggregate
-// mirror lies in both directions: the inbound reconcile folds invoice-applied
-// modification credit notes into refundedAmountCents/PARTIALLY_REFUNDED on
-// never-captured IB payments (pure bookkeeping, zero cash), and the pre-#1473
-// cancel flow used to flatten captured statuses to FAILED. For STRIPE rows
-// with no ledger rows (pre-ledger data) the refund mirror IS trustworthy:
-// Stripe refunds require a captured charge, and the invoice-side fold cannot
-// reach an uncaptured Stripe booking (its Xero invoice is only issued
-// at/after capture).
+// mirror lies in both directions (the invoice-side fold on never-captured IB
+// payments, and the pre-#1473 cancel flow flattening captured statuses to
+// FAILED); then the pre-ledger STRIPE mirror, whose one home is
+// `stripeRefundMirrorShowsCapture`.
 async function paymentHasCaptureEvidence(
   payment: {
     id: string;
@@ -2666,13 +2663,7 @@ async function paymentHasCaptureEvidence(
     },
     select: { id: true },
   });
-  return Boolean(
-    capturedTransaction ||
-      (payment.source === "STRIPE" &&
-        (payment.status === "REFUNDED" ||
-          payment.status === "PARTIALLY_REFUNDED" ||
-          payment.refundedAmountCents > 0))
-  );
+  return Boolean(capturedTransaction) || stripeRefundMirrorShowsCapture(payment);
 }
 
 // #1547: every cancel branch that restores applied credit appends this line to
