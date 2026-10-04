@@ -3,12 +3,13 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
-import { bookingOwner } from "@/lib/booking-owner";
+import { refuseOnBehalfUnlessBookingOfficer } from "@/lib/on-behalf-booking";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import {
   auditGuestPromoCodeLookup,
+  bookingForPromoLookup,
   familyGuestCandidatesForParty,
   guestPromoCodeGroups,
   presentGuestCandidatesForBooking,
@@ -75,27 +76,18 @@ export async function POST(req: NextRequest) {
   let onBehalfOfMemberId: string | null = null;
 
   if ("bookingId" in parsed.data) {
-    const booking = await prisma.booking.findUnique({
-      where: { id: parsed.data.bookingId },
-      select: { id: true, memberId: true, lodgeId: true },
+    const booking = await bookingForPromoLookup({
+      bookingId: parsed.data.bookingId,
+      actorMemberId,
+      isBookingOfficer: isAdmin,
     });
-    const ownerMemberId = booking ? bookingOwner(booking).memberId ?? null : null;
-    if (!booking || (!isAdmin && ownerMemberId !== actorMemberId)) {
-      return NextResponse.json(NOT_FOUND, { status: 404 });
-    }
+    if (!booking) return NextResponse.json(NOT_FOUND, { status: 404 });
     bookingId = booking.id;
     lodgeId = booking.lodgeId;
-    lookup = await presentGuestCandidatesForBooking(prisma, {
-      id: booking.id,
-      ownerMemberId,
-    });
+    lookup = await presentGuestCandidatesForBooking(prisma, booking);
   } else {
-    if (parsed.data.forMemberId && !isAdmin) {
-      return NextResponse.json(
-        { error: "Only admins can book on behalf of another member" },
-        { status: 403 },
-      );
-    }
+    const onBehalfRefusal = refuseOnBehalfUnlessBookingOfficer(session.user, parsed.data.forMemberId);
+    if (onBehalfRefusal) return onBehalfRefusal;
     const resolvedLodgeId = await resolveOptionalActiveLodgeId(prisma, parsed.data.lodgeId);
     if (!resolvedLodgeId) {
       return NextResponse.json({ error: "Unknown or inactive lodgeId" }, { status: 400 });

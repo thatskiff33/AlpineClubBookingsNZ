@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   prisma: {
     booking: { findUnique: vi.fn() },
     bookingGuest: { findMany: vi.fn() },
-    promoCodeLodge: { findMany: vi.fn() },
+    promoCode: { findMany: vi.fn() },
     lodge: { findUnique: vi.fn(), findFirst: vi.fn() },
   },
   rateLimited: null as Response | null,
@@ -83,6 +83,15 @@ function post(body: unknown) {
   );
 }
 
+/** An own-night assignment, open to any booker while its member stays. */
+const OWN_NIGHTS = {
+  type: "FREE_NIGHTS",
+  memberGuestsOnly: false,
+  assignedMembersOnlyOwnNights: true,
+  lodges: [] as Array<{ lodgeId: string }>,
+};
+let promoRules: Record<string, Partial<typeof OWN_NIGHTS>> = {};
+
 const codesByMember: Record<string, ReturnType<typeof summary>[]> = {
   "guest-b": [summary("BFREE")],
   "guest-c": [summary("CFREE")],
@@ -97,7 +106,10 @@ beforeEach(() => {
   mocks.applyMemberScopedRateLimit.mockResolvedValue(null);
   mocks.multiPromoCodesEnabled.mockResolvedValue(true);
   mocks.createStructuredAuditLog.mockResolvedValue(undefined);
-  mocks.prisma.promoCodeLodge.findMany.mockResolvedValue([]);
+  mocks.prisma.promoCode.findMany.mockImplementation(async ({ where }: { where: { id: { in: string[] } } }) =>
+    where.id.in.map((id) => ({ id, ...(promoRules[id] ?? OWN_NIGHTS) })),
+  );
+  promoRules = {};
   mocks.prisma.lodge.findUnique.mockResolvedValue({ id: "lodge-1", active: true });
   mocks.prisma.lodge.findFirst.mockResolvedValue({ id: "lodge-1", active: true });
   mocks.getAssignedPromoCodeSummariesForMember.mockImplementation(
@@ -163,9 +175,31 @@ describe("existing booking", () => {
   });
 
   it("omits a code restricted to another lodge", async () => {
-    mocks.prisma.promoCodeLodge.findMany.mockResolvedValue([{ promoCodeId: "pc-BFREE", lodgeId: "lodge-2" }]);
+    promoRules = { "pc-BFREE": { lodges: [{ lodgeId: "lodge-2" }] } };
     const body = await (await post({ bookingId: "booking-1" })).json();
     expect(body.guests).toEqual([]);
+  });
+
+  // C4 review (correctness 4 / privacy 2): a mode that needs the BOOKER to be
+  // the assigned member is always refused on somebody else's booking ("not
+  // assigned to you"), so offering it would only disclose an unusable code.
+  it.each([
+    ["booker picks guests", { assignedMembersOnlyOwnNights: false }],
+    ["group fixed-nightly", { type: "FIXED_NIGHTLY_PRICE", assignedMembersOnlyOwnNights: false }],
+  ])("omits a %s assignment, which only its own member can book with", async (_mode, rule) => {
+    promoRules = { "pc-BFREE": rule };
+    const body = await (await post({ bookingId: "booking-1" })).json();
+    expect(body.guests).toEqual([]);
+    expect(mocks.createStructuredAuditLog.mock.calls[0]![0].metadata).toMatchObject({
+      disclosedMemberIds: [],
+      codeCount: 0,
+    });
+  });
+
+  it("keeps an own-night fixed-nightly assignment", async () => {
+    promoRules = { "pc-BFREE": { type: "FIXED_NIGHTLY_PRICE", assignedMembersOnlyOwnNights: true } };
+    const body = await (await post({ bookingId: "booking-1" })).json();
+    expect(body.guests).toHaveLength(1);
   });
 });
 
