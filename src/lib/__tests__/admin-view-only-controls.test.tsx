@@ -2242,7 +2242,7 @@ describe("LodgeConfigurationHubPage view-only gating (#1940, lodge)", () => {
       await screen.findByLabelText(/Capacity for this lodge/i),
     ).toBeDisabled();
     expect(
-      screen.getByText(/can view this lodge.s capacity but cannot change/i),
+      screen.getByText(/can view this lodge.s capacity and who can be hut\s+leader for its school bookings, but cannot change/i),
     ).toBeInTheDocument();
   });
 

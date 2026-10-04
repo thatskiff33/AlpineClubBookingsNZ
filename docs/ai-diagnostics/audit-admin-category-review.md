@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  497
+row-producing sites:  498
 uncategorised:        0
-category values: admin 109, booking 106, xero 39, family 35, payment 52,
+category values: admin 110, booking 106, xero 39, family 35, payment 52,
                  lodge 66, account 19, security 25, privacy 20,
                  communication 21, system 4
 ```
@@ -767,7 +767,9 @@ inbound credit-note sync refused to post to a cancelled booking whose applied
 credit was already restored. #3653 (epic #3503) then added one, disjoint from
 #3792's, so the composed figure is both (`booking` 105 -> 106, 496 -> 497,
 RE-MEASURED on the merged tree): the organiser child refund recovery record,
-`booking.payment.refund_recovered`.
+`booking.payment.refund_recovered`. #3819 then added one (`admin` 109 -> 110,
+497 -> 498, RE-MEASURED): the per-lodge "Who can be hut leader for school
+bookings" save, `LODGE_SETTINGS_UPDATED` beside its lodge-settings sibling.
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):

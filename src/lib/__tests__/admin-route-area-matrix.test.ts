@@ -339,6 +339,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/lodge": "lodge",
   "/api/admin/lodge-instructions": "lodge",
   "/api/admin/lodge-settings": "lodge",
+  "/api/admin/lodge-settings/school-hut-leaders": "lodge",
   "/api/admin/lodges": "lodge",
   "/api/admin/lodges/[id]": "lodge",
   // The member lodge roster's per-lodge name-detail dial (#2942). It sits under
