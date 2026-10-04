@@ -64,6 +64,7 @@ const fakeXero = vi.hoisted(() => {
     seenKeys: new Map<string, unknown>(),
     providerWrites: 0,
     onProviderWrite: null as null | (() => Promise<void>),
+    refuseNextAllocation: false,
   };
   const allocatedTo = (invoiceID: string) =>
     [...state.notes.values()].flatMap((note) => note.allocations).filter((a) => a.invoiceID === invoiceID).reduce((sum, a) => sum + a.amountCents, 0);
@@ -77,6 +78,10 @@ const fakeXero = vi.hoisted(() => {
     async createCreditNoteAllocation(_tenant: string, creditNoteID: string, body: { allocations: Array<{ invoice: { invoiceID: string }; amount: number }> }, _summarize: unknown, idempotencyKey?: string) {
       state.providerWrites += 1;
       await state.onProviderWrite?.();
+      if (state.refuseNextAllocation) {
+        state.refuseNextAllocation = false;
+        throw new Error("fake Xero: the allocation request failed");
+      }
       if (idempotencyKey && state.seenKeys.has(idempotencyKey)) return { body: state.seenKeys.get(idempotencyKey) };
       const note = state.notes.get(creditNoteID);
       if (!note) throw new Error(`fake Xero: no credit note ${creditNoteID}`);
@@ -173,7 +178,8 @@ let observerClient: PrismaClient;
      * booking confirmed at $0 by $200 of credit (a cancellation's floating note
      * in Xero), its full-price invoice raised, its credit not yet allocated.
      */
-    async function creditOnlyCardBooking() {
+    async function creditOnlyCardBooking({ cardCents = 0, source = "STRIPE" as "STRIPE" | "INTERNET_BANKING" } = {}) {
+      const creditCents = PRICE_CENTS - cardCents;
       await deleteFixtures();
       await prisma.member.create({
         data: { id: MEMBER_ID, email: "race-3836@example.invalid", passwordHash: "x", firstName: "Credit", lastName: "Payer", role: "USER", ageTier: "ADULT" },
@@ -199,14 +205,26 @@ let observerClient: PrismaClient;
           } });
         }
       }
-      // The $0 row the credit-covered settle writes (booking-create.ts).
+      // The $0 row the credit-covered settle writes (booking-create.ts); with
+      // cardCents, a card-and-credit capture, or with INTERNET_BANKING a bank
+      // transfer received, whose credit #1620's own operation allocates.
+      const bank = source === "INTERNET_BANKING";
       await prisma.payment.create({
-        data: { id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: 0, status: "SUCCEEDED", creditAppliedCents: PRICE_CENTS, source: "STRIPE", xeroInvoiceId: XERO_INVOICE_ID },
+        data: {
+          id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: cardCents, status: "SUCCEEDED", creditAppliedCents: creditCents, source, xeroInvoiceId: XERO_INVOICE_ID,
+        },
       });
+      if (cardCents > 0) {
+        await prisma.paymentTransaction.create({
+          data: bank
+            ? { paymentId: PAYMENT_ID, kind: "PRIMARY", source: "INTERNET_BANKING", reference: "race-3836-ref", amountCents: cardCents, status: "SUCCEEDED" }
+            : { paymentId: PAYMENT_ID, kind: "PRIMARY", source: "STRIPE", stripePaymentIntentId: "race-3836-pi", amountCents: cardCents, status: "SUCCEEDED" },
+        });
+      }
       await prisma.memberCredit.create({
-        data: { memberId: MEMBER_ID, amountCents: PRICE_CENTS, type: "CANCELLATION_REFUND", description: "race 3836 earlier cancellation", xeroCreditNoteId: CREDIT_NOTE_ID },
+        data: { memberId: MEMBER_ID, amountCents: creditCents, type: "CANCELLATION_REFUND", description: "race 3836 earlier cancellation", xeroCreditNoteId: CREDIT_NOTE_ID },
       });
-      await prisma.$transaction((tx) => credit.applyCreditToBooking(MEMBER_ID, PRICE_CENTS, BOOKING_ID, tx, CLUB_FORMAT_TEST));
+      await prisma.$transaction((tx) => credit.applyCreditToBooking(MEMBER_ID, creditCents, BOOKING_ID, tx, CLUB_FORMAT_TEST));
 
       fakeXero.state.on = true;
       fakeXero.state.seq = 0;
@@ -214,9 +232,10 @@ let observerClient: PrismaClient;
       fakeXero.state.onProviderWrite = null;
       fakeXero.state.seenKeys.clear();
       fakeXero.state.invoices = new Map([[XERO_INVOICE_ID, PRICE_CENTS]]);
-      fakeXero.state.notes = new Map([[CREDIT_NOTE_ID, { totalCents: PRICE_CENTS, allocations: [] }]]);
+      fakeXero.state.refuseNextAllocation = false;
+      fakeXero.state.notes = new Map([[CREDIT_NOTE_ID, { totalCents: creditCents, allocations: [] }]]);
       expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(0);
-      expect(await owed()).toBe(0);
+      if (cardCents === 0) expect(await owed()).toBe(0);
     }
 
     const owed = async () => ledger.bookingLedgerBalance(await prisma.bookingLedgerLine.findMany({ where: { bookingId: BOOKING_ID } })).owedCents;
@@ -272,9 +291,9 @@ let observerClient: PrismaClient;
       return Number(operation.correlationKey?.split(":").at(-2));
     }
 
-    async function cancel() {
+    async function cancel(refundMethod: "card" | "credit" = "card") {
       const { cancelBooking } = await import("@/lib/booking-cancel");
-      const result = await cancelBooking(BOOKING_ID, MEMBER_ID, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+      const result = await cancelBooking(BOOKING_ID, MEMBER_ID, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, refundMethod);
       expect(result.status).toBe(200);
     }
 
@@ -430,6 +449,138 @@ let observerClient: PrismaClient;
       // With that note: Xero owes nothing, and the floating note is the member's restored credit.
       expect(PRICE_CENTS - PRICE_CENTS - allocatedCents()).toBe(await owed());
       expect(xeroCreditCents()).toBe(await credit.getMemberCreditBalance(MEMBER_ID));
+    });
+
+    const mirror = async () => (await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { creditAppliedCents: true } })).creditAppliedCents;
+    async function inboundSync(amountCents: number) {
+      const { repairAccountCreditAllocationBusinessState } = await import("@/lib/xero-inbound/credit-note-repairs");
+      await repairAccountCreditAllocationBusinessState(CREDIT_NOTE_ID, [{ invoiceId: XERO_INVOICE_ID, amountCents }]);
+    }
+    /** The booking's invoice operation, as the outbox left it after a raise. */
+    async function invoiceOperation(status: "PARTIAL" | "FAILED" | "RUNNING") {
+      return prisma.xeroSyncOperation.create({
+        data: {
+          direction: "OUTBOUND", entityType: "INVOICE", operationType: "CREATE", localModel: "Payment", localId: PAYMENT_ID, status, replayable: true,
+          queueType: "BOOKING_INVOICE", requestPayload: { queueType: "BOOKING_INVOICE", bookingId: BOOKING_ID }, xeroObjectType: "INVOICE", xeroObjectId: XERO_INVOICE_ID,
+        },
+        select: { id: true },
+      });
+    }
+    async function replayInvoiceOperation(operationId: string) {
+      await prisma.xeroSyncOperation.update({ where: { id: operationId }, data: { status: "RUNNING" } });
+      const { createXeroInvoiceForBooking } = await import("@/lib/xero-booking-invoices");
+      await createXeroInvoiceForBooking(BOOKING_ID, { syncOperationId: operationId });
+    }
+    const sweepActions = async () => (await repairReport()).passes[0]!.bookings.flatMap((booking) => booking.actions);
+    const clearingNoteQueued = async () => (await sweepActions()).some((action) => action.key === `queue:cancelled-open-invoice:${BOOKING_ID}`);
+
+    it("C1: the inbound credit-note sync keeps a credit-only card payment's applied credit at $200, not its $0 card amount, and the cancel then restores the $200", async () => {
+      await creditOnlyCardBooking();
+      await raiseReplay();
+
+      await inboundSync(PRICE_CENTS);
+      expect(await mirror()).toBe(PRICE_CENTS);
+
+      await cancel();
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(PRICE_CENTS);
+    });
+
+    it("C1: a card-and-credit payment ($50 card, $150 credit) is not clipped to its card amount, and the cancel (to account credit) returns all $200", async () => {
+      await creditOnlyCardBooking({ cardCents: 5_000 });
+      await raiseReplay();
+      expect(allocatedCents()).toBe(15_000);
+
+      await inboundSync(15_000);
+      expect(await mirror()).toBe(15_000);
+
+      await cancel("credit");
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(PRICE_CENTS);
+    });
+
+    it.each([
+      { shape: "credit-only, zeroed", cardCents: 0, clippedCents: 0 },
+      { shape: "card-and-credit, clipped to the card", cardCents: 5_000, clippedCents: 5_000 },
+    ])("C1: a mirror the old sync already wrote ($shape) is tiered from the ledger, so the cancel still returns all $200", async ({ cardCents, clippedCents }) => {
+      await creditOnlyCardBooking({ cardCents });
+      await raiseReplay();
+      await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { creditAppliedCents: clippedCents } });
+
+      await cancel("credit");
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(PRICE_CENTS);
+    });
+
+    it("H1 probe 4: a pre-#3836 invoice whose operation failed after its raise, then cancelled - the sweep waits for the operation, its replay allocates nothing, and only then is the invoice cleared, once", async () => {
+      await creditOnlyCardBooking();
+      const operation = await invoiceOperation("FAILED");
+      await cancel();
+
+      const waiting = await sweepActions();
+      expect(waiting.map((action) => action.key)).toContain(`retry:${operation.id}`);
+      expect(await clearingNoteQueued()).toBe(false);
+
+      await replayInvoiceOperation(operation.id);
+      expect(allocatedCents()).toBe(0);
+      expect(await prisma.memberCreditNoteAllocation.count({ where: { appliedToBookingId: BOOKING_ID } })).toBe(0);
+
+      await repairReport(true);
+      expect(await queuedInvoiceNotesCents()).toBe(PRICE_CENTS);
+      expect(PRICE_CENTS - (await queuedInvoiceNotesCents()) - allocatedCents(), "the invoice credited exactly once").toBe(0);
+      // The member's note was never consumed: it is the restored credit, so Xero and the app agree.
+      expect(xeroCreditCents()).toBe(await credit.getMemberCreditBalance(MEMBER_ID));
+    });
+
+    it("H1 probe 5: the sweep queues the allocation, the booking is cancelled, and the allocation then finds the cancel settled it - the clearing note alone credits the invoice", async () => {
+      await creditOnlyCardBooking();
+      await repairReport(true);
+      const queued = await prisma.xeroSyncOperation.findFirstOrThrow({ where: { localModel: "Payment", localId: PAYMENT_ID, queueType: "APPLIED_CREDIT_ALLOCATION" }, select: { id: true } });
+      await cancel();
+
+      expect(await clearingNoteQueued()).toBe(false);
+      await prisma.xeroSyncOperation.update({ where: { id: queued.id }, data: { status: "RUNNING" } });
+      const { allocateAppliedCreditForBooking } = await import("@/lib/xero-applied-credit-allocation");
+      await allocateAppliedCreditForBooking(BOOKING_ID, { syncOperationId: queued.id });
+      expect(allocatedCents()).toBe(0);
+
+      await repairReport(true);
+      expect(PRICE_CENTS - (await queuedInvoiceNotesCents()) - allocatedCents(), "the invoice credited exactly once").toBe(0);
+      expect(await queuedInvoiceNotesCents()).toBe(PRICE_CENTS);
+      expect(xeroCreditCents()).toBe(await credit.getMemberCreditBalance(MEMBER_ID));
+    });
+
+    it("H1 orphan slice: a slice committed before Xero failed is finished after the cancel (the cancel counted it), so no clearing note is needed and the member's note is not left floating", async () => {
+      await creditOnlyCardBooking();
+      const operation = await invoiceOperation("RUNNING");
+      fakeXero.state.refuseNextAllocation = true;
+      await expect(replayInvoiceOperation(operation.id)).rejects.toThrow(/fake Xero/);
+      await prisma.xeroSyncOperation.update({ where: { id: operation.id }, data: { status: "FAILED" } });
+      expect(await prisma.memberCreditNoteAllocation.count({ where: { appliedToBookingId: BOOKING_ID } })).toBe(1);
+
+      await cancel();
+      expect(await clearingNoteQueued()).toBe(false);
+      await replayInvoiceOperation(operation.id);
+
+      expect(allocatedCents()).toBe(PRICE_CENTS);
+      expect(await clearingNoteQueued()).toBe(false);
+      expect(PRICE_CENTS - (await queuedInvoiceNotesCents()) - allocatedCents(), "the invoice credited exactly once").toBe(0);
+      expect(xeroCreditCents() + (await notelessRestoredCents()), "the member's Xero credit + the noteless restore (#2717) = the app's").toBe(
+        await credit.getMemberCreditBalance(MEMBER_ID),
+      );
+    });
+
+    it("H1, captured money: a bank-transfer booking ($150 paid, $50 credit) cancelled before #1620's allocation ran keeps the allocation - its cancel clears nothing, so the invoice is not left owing the credit", async () => {
+      await creditOnlyCardBooking({ cardCents: 15_000, source: "INTERNET_BANKING" });
+      const { enqueueXeroAppliedCreditAllocationOperation } = await import("@/lib/xero-operation-outbox");
+      const queued = await enqueueXeroAppliedCreditAllocationOperation(BOOKING_ID);
+      await cancel("credit");
+      expect(await clearingNoteQueued()).toBe(false);
+
+      await prisma.xeroSyncOperation.update({ where: { id: queued.queueOperationId! }, data: { status: "RUNNING" } });
+      const { allocateAppliedCreditForBooking } = await import("@/lib/xero-applied-credit-allocation");
+      await allocateAppliedCreditForBooking(BOOKING_ID, { syncOperationId: queued.queueOperationId! });
+
+      // $150 of cash and the $50 note pay the $200 invoice: nothing owing, nothing over.
+      expect(allocatedCents()).toBe(5_000);
+      expect(PRICE_CENTS - 15_000 - allocatedCents()).toBe(0);
     });
 
     it("FORCES the lock order and keeps the provider outside it: the engine queues on the member's credit-ledger key holding no row lock, and no ledger key is held during a Xero write", async () => {
