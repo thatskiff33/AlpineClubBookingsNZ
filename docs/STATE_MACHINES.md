@@ -1931,7 +1931,7 @@ is marked so the narrative never reads it as a cancellation's settlement. While
 it is OPEN its amount is cash already promised back: later edits, acceptances
 and cancellations refund only what is left, and a DISMISSED one cannot be
 reopened past that. See
-[`INV-PAY-117`](invariants/payment-and-settlement.md#inv-pay-115).
+[`INV-PAY-117`](invariants/payment-and-settlement.md#inv-pay-117).
 
 **#3827 (owner decision D-3813-7): so does an approved refund appeal's.**
 Approving a refund request raises the task OPEN for the part of the approved
@@ -1942,7 +1942,7 @@ queues that request's own Xero refund credit note for the amount paid back
 `REFUNDED` event is marked the same way. It may be DISMISSED with a note even
 though the booking is cancelled, because the cancel came first and never
 counted it. See
-[`INV-PAY-118`](invariants/payment-and-settlement.md#inv-pay-116).
+[`INV-PAY-118`](invariants/payment-and-settlement.md#inv-pay-118).
 
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED
 row can be put back OPEN by an officer, which is the arm above; a COMPLETED row
