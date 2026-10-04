@@ -295,7 +295,7 @@ import {
   queueXeroBookingEditSettlement,
 } from "@/lib/xero-booking-edit-settlement";
 import { XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
-import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
+import { XeroAppliedCreditOperationBusyError, XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("enqueueXeroEntranceFeeInvoiceOperation", () => {
@@ -2257,6 +2257,32 @@ describe("processQueuedXeroOutboxOperations", () => {
       syncOperationId: "op_credit_note_1",
       watermarkCents: 8000,
     });
+  });
+
+  it("MUTATION (#3880): a refund-note row whose payment has another note mid-raise goes back to PENDING, reason kept, never FAILED", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_hand_back_2",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: null,
+        requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 1000, watermarkCents: 1000, refundMethod: "internet-banking" },
+      },
+    ]);
+    mocks.createXeroCreditNote.mockRejectedValue(new XeroRefundCreditNoteInFlightError("payment_1", "op_hand_back_1"));
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 0,
+      failed: 0,
+      skipped: 1,
+    });
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: "op_hand_back_2", status: "RUNNING" },
+      data: { status: "PENDING", startedAt: null, lastErrorCode: null, lastErrorMessage: expect.stringContaining("op_hand_back_1") },
+    });
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
   });
 
   // #3548 (`INV-PAY-111`): the outbox's half of the crash-window contract. A

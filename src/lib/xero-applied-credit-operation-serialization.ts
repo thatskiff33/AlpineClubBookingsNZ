@@ -81,6 +81,21 @@ export class XeroAppliedCreditDeallocationEventualConsistencyError extends XeroA
   }
 }
 
+/**
+ * #3880 (`INV-PAY-111`): another refund credit note on this payment is being
+ * sized, raised or recorded right now. A subclass of the applied-credit busy
+ * error so the outbox treats it the same way: the row goes back to PENDING,
+ * reason kept, and the next scan raises it once the other has recorded.
+ */
+export class XeroRefundCreditNoteInFlightError extends XeroAppliedCreditOperationBusyError {
+  constructor(paymentId: string, inFlightOperationId: string) {
+    super(
+      `Refund credit note operation ${inFlightOperationId} on payment ${paymentId} is still running; this note waits for it to record before sizing`
+    );
+    this.name = "XeroRefundCreditNoteInFlightError";
+  }
+}
+
 export function isXeroAppliedCreditOperationBusyError(
   error: unknown
 ): error is XeroAppliedCreditOperationBusyError {

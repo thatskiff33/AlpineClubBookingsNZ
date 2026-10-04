@@ -16,6 +16,7 @@
  */
 
 import { reviewTaskKeyParts } from "@/lib/xero-review-task-key";
+import { assertNoRefundCreditNoteInFlight } from "@/lib/xero-refund-note-in-flight";
 import {
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
@@ -96,6 +97,8 @@ export interface CreateXeroRefundCreditNoteOptions
   refundMethod?: CashRefundMethod;
   /** #3635 round-3 R4: the late capture this note answers (its receipt is named). */
   paymentIntentId?: string;
+  /** #3880: the operator's REQUEUE row this retry runs under - its own claim. */
+  requeueOperationId?: string;
   /** #3635 round-3 R3: the club day the refund left Stripe; omitted, today. */
   documentDate?: string;
 }
@@ -260,6 +263,8 @@ export async function createXeroCreditNote(
   let effectiveWatermarkCents: number | null = null;
 
   if (isDeltaMode) {
+    // #3880: no other run on this payment between its coverage read and its record.
+    await assertNoRefundCreditNoteInFlight(paymentId, [queuedOperationId, options?.requeueOperationId]);
     // Per-delta refunds (#1162): a payment refunded in steps has one active note
     // per delta. Skip only when an existing note already covers this watermark;
     // a lower-watermark note is an earlier, smaller delta and must not block this

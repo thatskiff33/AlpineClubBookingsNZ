@@ -52,10 +52,14 @@ function matches(row: Row, where: Row | undefined): boolean {
   if (!where) return true;
   return Object.entries(where).every(([key, expected]) => {
     if (expected === undefined) return true;
+    // #3880: the in-flight check's shapes - an OR of alternatives, `notIn`, and a date floor.
+    if (key === "OR") return (expected as Row[]).some((alternative) => matches(row, alternative));
     const actual = row[key] ?? null;
     if (expected && typeof expected === "object" && !(expected instanceof Date)) {
       if ("in" in expected) return (expected as { in: unknown[] }).in.includes(actual);
+      if ("notIn" in expected) return !(expected as { notIn: unknown[] }).notIn.includes(actual);
       if ("not" in expected) return actual !== (expected as { not: unknown }).not;
+      if ("gte" in expected) return actual instanceof Date && actual >= (expected as { gte: Date }).gte;
       return true;
     }
     return actual === expected;
@@ -123,6 +127,7 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
         ...input,
         id: `op_started_${++nextId}`,
         status: input.status ?? "RUNNING",
+        startedAt: input.status === "PENDING" ? null : new Date(),
         replayable: true,
         manuallyResolvedAt: null,
         xeroObjectId: null,
@@ -341,6 +346,7 @@ import {
 } from "@/lib/xero-refund-note-unsettled";
 import { REFUND_UNSETTLED_NO_ACCOUNT_REASON } from "@/lib/xero-invoice-payments";
 import { retryXeroSyncOperation } from "@/lib/xero-operation-retry";
+import { XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
 import { addUnsettledRefundCreditNoteFindings } from "@/lib/xero-booking-repair-findings";
 import type { BookingXeroRepairAction, MutableFinding } from "@/lib/xero-booking-repair-types";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -369,7 +375,7 @@ function seedPayment(source: PaymentSource = PaymentSource.STRIPE) {
   };
 }
 
-/** A row exactly as `enqueueXeroRefundCreditNoteOperation` writes it, claimed. */
+/** A row exactly as `enqueueXeroRefundCreditNoteOperation` writes it; `dispatch` claims it. */
 function queueRefundNote(id: string, refundAmountCents: number, watermarkCents: number, refundMethod = "card") {
   state.operations.push({
     id,
@@ -378,7 +384,8 @@ function queueRefundNote(id: string, refundAmountCents: number, watermarkCents: 
     operationType: "CREATE",
     localModel: "Payment",
     localId: PAYMENT_ID,
-    status: "RUNNING",
+    status: "PENDING",
+    startedAt: null,
     replayable: true,
     manuallyResolvedAt: null,
     xeroObjectId: null,
@@ -394,6 +401,9 @@ function queueRefundNote(id: string, refundAmountCents: number, watermarkCents: 
 /** The outbox's own call for a queued row (`xero-operation-outbox.ts`, REFUND_CREDIT_NOTE). */
 function dispatch(id: string) {
   const row = state.operations.find((operation) => operation.id === id)!;
+  // The worker's claim (`claimQueuedOutboxOperation`): RUNNING, stamped now.
+  row.status = "RUNNING";
+  row.startedAt = new Date();
   const payload = row.requestPayload as { refundAmountCents: number; watermarkCents: number; refundMethod: "card" | "internet-banking" };
   return createXeroCreditNote(PAYMENT_ID, payload.refundAmountCents, {
     syncOperationId: id,
@@ -764,6 +774,64 @@ describe("a refund note interrupted between the two persists (#3548)", () => {
     expect(state.xero.notes.size).toBe(1);
     expect(row()).toMatchObject({ status: "SUCCEEDED" });
     expect(row().responsePayload).toMatchObject({ refundPayment: { paymentID: "pay_1" }, interruptedAttemptCompleted: true });
+  });
+});
+
+describe("#3880: one refund note in flight per payment, from coverage read to record", () => {
+  /** Two $10 bank-transfer hand-backs on one payment, each its own queued row. */
+  function twoHandBacks() {
+    seedPayment(PaymentSource.INTERNET_BANKING);
+    state.eligibleCents = 2000;
+    queueRefundNote("op_a", 1000, 1000, "internet-banking");
+    queueRefundNote("op_b", 1000, 1000, "internet-banking");
+  }
+  const claimedAgo = (id: string, minutes: number) => {
+    row(id).status = "RUNNING";
+    row(id).startedAt = new Date(Date.now() - minutes * 60_000);
+  };
+
+  it("MUTATION: a hand-back claimed while its sibling is mid-raise waits - no Xero call - then sizes past the sibling's note: two $10 notes for the $20", async () => {
+    twoHandBacks();
+    claimedAgo("op_a", 0);
+
+    const waited = await dispatch("op_b").then(() => null, (error: unknown) => error);
+    expect(waited).toBeInstanceOf(XeroRefundCreditNoteInFlightError);
+    expect((waited as Error).message).toContain("op_a");
+    expect(state.xero.notes.size).toBe(0);
+    // The outbox returns it to PENDING (`isXeroAppliedCreditOperationBusyError`).
+    row("op_b").status = "PENDING";
+
+    await dispatch("op_a");
+    await dispatch("op_b");
+
+    expect([...state.xero.notes.values()].map((note) => note.total)).toEqual([10, 10]);
+    expect(coveredCents()).toBe(2000);
+    expect(row("op_a")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_1" });
+    expect(row("op_b")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_2" });
+  });
+
+  it("MUTATION: a sibling RUNNING past the stale threshold is a dead worker and does not hold the payment", async () => {
+    twoHandBacks();
+    claimedAgo("op_a", 16);
+
+    await dispatch("op_b");
+
+    expect(row("op_b")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_1" });
+  });
+
+  it("an operator's retry of a refund note on the payment, running, holds it too; an account-credit note does not", async () => {
+    twoHandBacks();
+    state.operations.push(
+      { id: "op_requeue", direction: "OUTBOUND", entityType: "CREDIT_NOTE", operationType: "REQUEUE", localModel: "Payment", localId: PAYMENT_ID, status: "RUNNING", startedAt: new Date(), queueType: null },
+      { id: "op_account", direction: "OUTBOUND", entityType: "CREDIT_NOTE", operationType: "CREATE", localModel: "Payment", localId: PAYMENT_ID, status: "RUNNING", startedAt: new Date(), queueType: "ACCOUNT_CREDIT_NOTE" },
+    );
+
+    await expect(dispatch("op_b")).rejects.toThrow("op_requeue");
+    row("op_requeue").status = "SUCCEEDED";
+    row("op_b").status = "PENDING";
+
+    await dispatch("op_b");
+    expect(row("op_b")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_1" });
   });
 });
 

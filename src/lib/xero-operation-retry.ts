@@ -1199,7 +1199,11 @@ async function getBookingModificationRetryData(bookingModificationId: string) {
 export async function retryXeroSyncOperation(
   operationId: string,
   format: ClubFormat,
-  options?: { createdByMemberId?: string }
+  options?: {
+    createdByMemberId?: string;
+    /** #3880: the REQUEUE row this retry runs under, so a refund note's in-flight check skips it. */
+    requeueOperationId?: string;
+  }
 ): Promise<{ message: string }> {
   const operation = await prisma.xeroSyncOperation.findUnique({
     where: { id: operationId },
@@ -1648,6 +1652,7 @@ export async function retryXeroSyncOperation(
           ...(retryInput.refundMethod ? { refundMethod: retryInput.refundMethod } : {}),
           ...(retryInput.paymentIntentId ? { paymentIntentId: retryInput.paymentIntentId } : {}),
           ...(retryInput.documentDate ? { documentDate: retryInput.documentDate } : {}),
+          ...(options?.requeueOperationId ? { requeueOperationId: options.requeueOperationId } : {}),
         });
         return { message: "Retried Xero refund credit note creation." };
       }

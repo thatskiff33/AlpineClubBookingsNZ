@@ -59,6 +59,7 @@ import {
   processQueuedXeroOperationRetries,
   XERO_OPERATION_REQUEUE_TYPE,
 } from "@/lib/xero-operation-queue";
+import { XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
 import { XeroOperationResolvedInXeroError } from "@/lib/xero-operation-retry";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -228,6 +229,7 @@ describe("processQueuedXeroOperationRetries", () => {
     );
     expect(mocks.retryXeroSyncOperation).toHaveBeenCalledWith("op_123", CLUB_FORMAT_TEST, {
       createdByMemberId: "admin_1",
+      requeueOperationId: "queue_1",
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
       "queue_1",
@@ -264,7 +266,32 @@ describe("processQueuedXeroOperationRetries", () => {
 
     expect(mocks.retryXeroSyncOperation).toHaveBeenCalledWith(originalOperationId, CLUB_FORMAT_TEST, {
       createdByMemberId: "admin_1",
+      requeueOperationId: "queue_1",
     });
+  });
+
+  it("MUTATION (#3880): a refund note's retry that finds another note on its payment mid-raise waits in PENDING, nothing failed", async () => {
+    mocks.findManyQueued.mockResolvedValue([makeQueuedOperation()]);
+    mocks.retryXeroSyncOperation.mockRejectedValue(new XeroRefundCreditNoteInFlightError("payment_1", "op_running"));
+
+    await expect(processQueuedXeroOperationRetries({ limit: 5 }, CLUB_FORMAT_TEST)).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 0,
+      failed: 0,
+      skipped: 1,
+    });
+
+    expect(mocks.updateManyOperation).toHaveBeenLastCalledWith({
+      where: { id: "queue_1", status: "RUNNING" },
+      data: {
+        status: "PENDING",
+        startedAt: null,
+        lastErrorCode: null,
+        lastErrorMessage: expect.stringContaining("op_running"),
+      },
+    });
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
   });
 
   it("fails queued retries with malformed payloads", async () => {
