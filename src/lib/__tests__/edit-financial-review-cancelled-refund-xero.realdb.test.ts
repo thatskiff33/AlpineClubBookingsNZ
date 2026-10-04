@@ -714,6 +714,10 @@ let outbox: typeof import("@/lib/xero-operation-outbox");
           where: { localId: PAYMENT_ID, entityType: "CREDIT_NOTE", operationType: "CREATE", queueType: null, status: "FAILED" },
         });
         expect(inline.requestPayload).toMatchObject({ watermarkCents: 7_500, perDelta: true, reviewTaskId: raised.taskId });
+        // The rollback note's step (1) list (docs/xero/ARCHITECTURE.md, #3880), as
+        // written there: the inline row with no queue type is listed beside the queued one.
+        const unfinished: unknown = await prisma.$queryRaw`SELECT id, "queueType", status FROM "XeroSyncOperation" WHERE "localModel" = 'Payment' AND "entityType" = 'CREDIT_NOTE' AND "requestPayload"->>'reviewTaskId' IS NOT NULL AND status IN ('PENDING', 'RUNNING', 'FAILED', 'PARTIAL')`;
+        expect(new Set((unfinished as Array<{ id: string }>).map((row) => row.id))).toEqual(new Set([reviewRow.id, inline.id]));
 
         // Retrying the inline row raises the review's own note.
         refuseCreate = false;
@@ -726,6 +730,103 @@ let outbox: typeof import("@/lib/xero-operation-outbox");
           .toEqual([[true, 5_000, false], [true, 2_500, true]]);
       });
       expect(await coveredCents()).toBe(await bankCashOutCents());
+    });
+
+    /**
+     * Round 3 of the #3880 review. The daily `xero-link-cleanup` once exempted
+     * only Stripe per-delta links, so on a bank payment a review's per-refund
+     * note D - never the field's note - was deactivated every night, coverage
+     * under-read, and inbound reconcile (which reaches only active links) never
+     * brought it back. The drift report listed D as stale.
+     */
+    it("round 3: the daily link cleanup and the drift report keep a bank payment's per-refund note, and still retire a VOIDED one", async () => {
+      await paid(BANK);
+      const raised = await raise("2026-08-01");
+      await cancelAt(TIERS[1]!.rule);
+      const ids = await withFakeXero({}, async ({ noteIds }) => {
+        await completeCancellationHandBack(5_000);
+        expect(await processOnly((await refundNoteRow(false)).id)).toMatchObject({ succeeded: 1 });
+        await completeShare(raised.taskId);
+        expect(await processOnly((await refundNoteRow(true)).id)).toMatchObject({ succeeded: 1 });
+        return noteIds();
+      });
+      const [h, d] = ids;
+      expect(await refundNoteField()).toBe(h);
+      const cashOut = await bankCashOutCents();
+      expect(cashOut).toBe(7_500);
+      expect(await coveredCents()).toBe(cashOut);
+
+      const { cleanupStaleCanonicalXeroObjectLinks } = await import("@/lib/xero-hardening-canonical-links");
+      const { buildXeroReconciliationReport } = await import("@/lib/xero-hardening-report");
+      const driftOnPayment = async () =>
+        (await buildXeroReconciliationReport(CLUB_FORMAT_TEST)).issueSections
+          .filter((section) => section.id === "canonical-link-drift")
+          .flatMap((section) => section.items)
+          // The fixture's invoice has no link row; only the refund notes are judged here.
+          .filter((item) => item.localId === PAYMENT_ID && item.xeroObjectType === "CREDIT_NOTE")
+          .map((item) => item.xeroObjectId);
+
+      // Live: both notes stay active and counted, and the report names neither.
+      await cleanupStaleCanonicalXeroObjectLinks();
+      expect((await refundNoteLinks()).map((link) => [link.xeroObjectId, link.active])).toEqual([[h, true], [d, true]]);
+      expect(await coveredCents()).toBe(cashOut);
+      expect(await driftOnPayment()).toEqual([]);
+
+      // H's link lost: H is missing - and D, a sibling, is not "the active
+      // link" the field disagrees with, so no mismatch is reported beside it.
+      await prisma.xeroObjectLink.updateMany({ where: { localId: PAYMENT_ID, xeroObjectId: h }, data: { active: false } });
+      expect(await driftOnPayment()).toEqual([h]);
+      await prisma.xeroObjectLink.updateMany({ where: { localId: PAYMENT_ID, xeroObjectId: h }, data: { active: true } });
+
+      // VOIDED in Xero: D's mirror is stale drift - reported, then deactivated.
+      const dLink = await prisma.xeroObjectLink.findFirstOrThrow({ where: { localId: PAYMENT_ID, xeroObjectId: d } });
+      await prisma.xeroObjectLink.update({ where: { id: dLink.id }, data: { metadata: { ...(dLink.metadata as Record<string, unknown>), status: "VOIDED" } } });
+      expect(await driftOnPayment()).toEqual([d]);
+      await cleanupStaleCanonicalXeroObjectLinks();
+      expect((await refundNoteLinks()).map((link) => [link.xeroObjectId, link.active])).toEqual([[h, true], [d, false]]);
+    });
+
+    /**
+     * Round 3 of the #3880 review. The booking-repair pass read the refund-note
+     * gap for Stripe payments only, and a per-refund note is never the
+     * canonical note it resolves - so a cancelled bank booking documented only
+     * by a review's per-refund note fell into the missing-refund-note arm on
+     * every scan: here, beside the cancellation's account credit, a spurious
+     * "ambiguous" manual review; without credit, a critical ask for the cash.
+     */
+    it("round 3: the booking repair finds nothing missing on a cancelled bank booking its per-refund note covers, and still flags a real gap", async () => {
+      await paid(BANK);
+      const raised = await raise("2026-08-01");
+      await cancelAt(TIERS[1]!.rule);
+      await withFakeXero({}, async () => {
+        await completeShare(raised.taskId);
+        expect(await processOnly((await refundNoteRow(true)).id)).toMatchObject({ succeeded: 1 });
+      });
+      const links = await refundNoteLinks();
+      expect(links.map((link) => [link.active, (link.metadata as { amountCents: number; perDelta?: boolean }).amountCents, (link.metadata as { perDelta?: boolean }).perDelta]))
+        .toEqual([[true, 2_500, true]]);
+      expect(await refundNoteField()).toBeNull();
+
+      const { runBookingXeroRepair } = await import("@/lib/xero-booking-repair");
+      const missingNote = async () => {
+        const booking = (await runBookingXeroRepair(CLUB_FORMAT_TEST, { scope: { bookingId: BOOKING_ID } })).passes[0]!.bookings[0]!;
+        return [
+          ...booking.actions.filter((action) => action.type === "QUEUE_REFUND_CREDIT_NOTE").map((action) => action.type),
+          ...booking.findings
+            .filter((finding) => finding.code === "CANCELLED_BOOKING_OPEN_INVOICE" || /missing Xero (cancellation credit|refund) note amount/.test(finding.summary))
+            .map((finding) => finding.code),
+        ];
+      };
+      // The cash the cancellation handed back as account credit is the account
+      // note's; the review's $25 of bank cash is its per-refund note's: covered.
+      expect(await missingNote()).toEqual([]);
+
+      // A per-refund note that answers $10 of the $25 leaves a real gap, still flagged.
+      await prisma.xeroObjectLink.updateMany({
+        where: { localId: PAYMENT_ID, role: "REFUND_CREDIT_NOTE" },
+        data: { metadata: { ...(links[0]!.metadata as Record<string, unknown>), amountCents: 1_000 } },
+      });
+      expect(await missingNote()).not.toEqual([]);
     });
 
     it("a replay of the review's note while queued, or after Xero raised it, raises nothing more", async () => {

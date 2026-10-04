@@ -2206,7 +2206,10 @@ export function classifyBookingContext(
       }
     }
 
-    if (primaryInvoice && !refundCreditNote) {
+    // #3880 round 3: no canonical note, but notes - a bank payment's
+    // per-refund ones - already answer every cent a note may: nothing is
+    // missing, and nothing is ambiguous.
+    if (primaryInvoice && !refundCreditNote && context.refundNoteUncoveredCents !== 0) {
       const cashCancellationRefundCents = getCashCancellationRefundCandidateCents(booking);
       if (cashCancellationRefundCents === null) {
         const action = addAction(
