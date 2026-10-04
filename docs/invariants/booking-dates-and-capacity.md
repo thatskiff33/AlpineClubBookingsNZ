@@ -218,8 +218,8 @@ covered?": many rows were stamped through the leader's check-out day.
   judged by `isGuestActiveOnNight` (`INV-DATE-005`), never a restated range. A
   custodian — holding a bed or ticked, `isCustodianOccupancy` — is present on
   every night the assignment covers (`INV-LIFE-062`). A school teacher row is
-  present on a night its dates claim only while a school booking stays at its
-  lodge (#3819); the writer stamps arrival to checkout − 1.
+  present on a night its dates claim only while a school booking holds capacity
+  at its lodge (#3819); the writer stamps arrival to checkout − 1.
 - **School nights obey the lodge (#3819).** On a night a school booking stays,
   a present leader covers only if a kind the lodge ticks applies: teacher,
   custodian, member on that booking, or member staying separately.

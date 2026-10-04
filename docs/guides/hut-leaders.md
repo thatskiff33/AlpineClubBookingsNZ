@@ -122,10 +122,14 @@ custodian and both member kinds are ticked and teachers are not; an upgrade
 carried the old club-wide **Assign school teachers as hut leaders** switch into
 every lodge's teacher tick.
 
-The nightly automatic assignment checks coverage the same way, so on a school
-night it can add the one adult member staying — but if that member's kind is not
-ticked, the night stays red and the assignment it made does not count. Delete it
-or tick the kind.
+A school group counts as staying from the moment its booking holds beds — an
+approved school booking awaiting its invoice included — not only once it is paid.
+
+The nightly automatic assignment follows the same rule: on a school night it
+adds the one adult member staying only if their kind is ticked, and otherwise
+leaves the night for you. The member suggestions on this page leave such nights
+out of a member's suggested dates and say how many school-group nights this
+lodge does not accept them for.
 
 So an assignment that runs past the leader's departure does **not** cover the
 nights after they leave. Older automatic assignments were recorded through the
