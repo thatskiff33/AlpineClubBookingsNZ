@@ -423,16 +423,21 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   `CODE_LINES_DO_NOT_SUM`); the total never depends on the split.
 
   An edit stores one `PROMO_DELTA` per code that moved, in the unchanged
-  stored shape, unless the per-code changes do not sum to the aggregate
-  change; its document codes each line by the code it names. Confirmation
-  emails, the booking page and the data export name each code with its amount.
+  stored shape; where the per-code changes do not sum to the aggregate change,
+  one line naming no code. Its document codes each line by the code it names,
+  generically for none; a lone line naming the booking's sole code, or with no
+  code left, keeps its one-code coding. The one-code edit fields (`promoCode`,
+  `removePromoCode`) are refused on a booking holding several of the booker's
+  codes, since they would replace or release them all. Confirmation emails,
+  the booking page and the data export name each code with its amount, falling
+  back together to one row (`perCodePromoAdjustmentRows`).
 
   A booking with one code is not split: its invoice line, coding, payload,
   edit lines and emails are byte-identical to before. Pinned by
   `xero-promo-adjustment-lines.test.ts`, `xero-booking-invoice.test.ts`,
   `xero-group-settlement-invoice-lines.test.ts`,
-  `booking-modification-lines.test.ts` and
-  `xero-modification-line-items.test.ts`.
+  `booking-modification-lines.test.ts`,
+  `xero-modification-line-items.test.ts` and `multi-promo-pricing.test.ts`.
 
 ## INV-MONEY-030
 

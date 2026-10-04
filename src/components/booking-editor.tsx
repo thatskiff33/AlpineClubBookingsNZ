@@ -272,6 +272,7 @@ export function BookingEditor({
           discountCents: booking.discountCents,
           promoAdjustmentCents: booking.promoAdjustmentCents,
           promo: booking.promo,
+          promoLines: booking.promoLines,
           canEditNonMemberGuestNames: booking.canEditNonMemberGuestNames,
           canFixNonMemberGuestNameTypos: booking.canFixNonMemberGuestNameTypos,
           editPolicy: booking.editPolicy,

@@ -209,3 +209,43 @@ export function PromoCodeCard({
     </Card>
   );
 }
+
+/**
+ * #3828: a booking carrying several promo codes. The one-code controls above
+ * would send the legacy one-code request, which replaces or releases EVERY
+ * code (and the server refuses it), so the panel shows the codes read-only
+ * instead. Epic #3813's chips child (#3492) edits the list.
+ */
+export function SeveralPromoCodesCard({
+  promoLines,
+}: {
+  promoLines: ReadonlyArray<PromoInfo & { amountCents: number }>;
+}) {
+  const format = useClubFormat();
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Promo Codes</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <ul className="space-y-1">
+          {promoLines.map((line) => (
+            <li key={line.code}>
+              <span className="font-medium">
+                {line.workPartyEventName ? `Working bee: ${line.workPartyEventName}` : line.code}
+              </span>
+              <span className="text-sm text-muted-foreground ml-2">
+                ({formatSignedCents(line.amountCents, format)})
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p className="text-sm text-muted-foreground">
+          This booking has more than one promo code, and codes on a booking like this
+          can&apos;t be added, removed or swapped here yet. Any other change you make
+          re-prices them.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}

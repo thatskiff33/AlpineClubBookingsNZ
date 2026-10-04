@@ -18,6 +18,14 @@ export function normalizePromoCodeInput(code: string): string {
 export const ONE_PROMO_CODE_PER_BOOKING_MESSAGE =
   "Only one promo code can be used on a booking.";
 
+/**
+ * #3828 (`INV-MOD`): the legacy one-code request fields cannot edit a booking
+ * that carries several of the booker's codes — `promoCode` would replace every
+ * one of them and `removePromoCode` would release them all.
+ */
+export const SEVERAL_PROMO_CODES_ONE_CODE_EDIT_MESSAGE =
+  "This booking has more than one promo code, so its codes can't be changed one at a time.";
+
 export const DUPLICATE_PROMO_CODE_MESSAGE =
   "The same promo code was entered more than once.";
 

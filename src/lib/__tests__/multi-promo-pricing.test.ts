@@ -24,12 +24,17 @@ import {
 import { validateAndCalculatePromoDiscount, type PromoApplicationSubject } from "../promo";
 import { resolvePromotionsInTransaction } from "../booking-create-promo";
 import { applyPromoCodeChanges } from "../booking-modify-plan";
-import { requestedPromoCodeListFor, splitRequestedPromoCodes } from "../booking-modify-promo-request";
+import {
+  oneCodeFieldsOnSeveralCodesRefusal,
+  requestedPromoCodeListFor,
+  splitRequestedPromoCodes,
+} from "../booking-modify-promo-request";
 import {
   DUPLICATE_PROMO_CODE_MESSAGE,
   ONE_PROMO_CODE_PER_BOOKING_MESSAGE,
   PROMO_WORK_PARTY_EXCLUSION_MESSAGE,
   promoCodeListRefusal,
+  SEVERAL_PROMO_CODES_ONE_CODE_EDIT_MESSAGE,
 } from "../promo-code-list-rules";
 import { PROMO_LODGE_RESTRICTION_MESSAGE } from "../promo";
 import { bookingDiscountCents } from "../booking-final-price";
@@ -615,6 +620,75 @@ describe("a legacy removal on a working-bee booking follows the club's multiProm
     expect(deleted).toEqual([]);
     expect(result.promoCodeLabel).toBe("WB");
     expect(result.newDiscountCents).toBe(4500);
+  });
+});
+
+describe("the one-code edit fields cannot rewrite a several-code booking (#3828)", () => {
+  const booker = (code: string) => ({ code, internal: false });
+  const workBee = { code: "WB", internal: true };
+
+  it("refuses a single code or a removal when the booking holds several of the booker's codes", () => {
+    const stored = [booker("ANN"), booker("PCT")];
+    expect(oneCodeFieldsOnSeveralCodesRefusal({ promoCode: "NEW" }, stored)).toBe(
+      SEVERAL_PROMO_CODES_ONE_CODE_EDIT_MESSAGE,
+    );
+    expect(oneCodeFieldsOnSeveralCodesRefusal({ removePromoCode: true }, stored)).toBe(
+      SEVERAL_PROMO_CODES_ONE_CODE_EDIT_MESSAGE,
+    );
+  });
+
+  it("lets the list field, silence, a one-code booking and a working-bee pair through", () => {
+    expect(
+      oneCodeFieldsOnSeveralCodesRefusal(
+        { promoCode: "ANN", promoCodes: [{ code: "ANN" }] },
+        [booker("ANN"), booker("PCT")],
+      ),
+    ).toBeNull();
+    expect(oneCodeFieldsOnSeveralCodesRefusal({}, [booker("ANN"), booker("PCT")])).toBeNull();
+    expect(oneCodeFieldsOnSeveralCodesRefusal({ promoCode: "NEW" }, [booker("ANN")])).toBeNull();
+    // The working-bee discount is carried, not replaced (D-3813-3), so nothing is lost.
+    expect(
+      oneCodeFieldsOnSeveralCodesRefusal({ removePromoCode: true }, [workBee, booker("ANN")]),
+    ).toBeNull();
+  });
+
+  it("the save refuses before it locks, releases or prices anything", async () => {
+    const tx = {
+      $executeRaw: vi.fn(),
+      clubModuleSettings: { findUnique: vi.fn() },
+      promoCode: { findMany: vi.fn() },
+      promoRedemption: { delete: vi.fn(), update: vi.fn() },
+    };
+    const stored = (id: string, code: string, order: number) => ({
+      id,
+      promoCodeId: `pc-${id}`,
+      bookingId: "booking-1",
+      memberId: "ann",
+      applicationOrder: order,
+      guestTargets: [],
+      promoCode: { ...PCT, id: `pc-${id}`, code, internal: false, assignments: [], lodges: [] },
+    });
+    for (const input of [{ promoCode: "NEW" }, { removePromoCode: true }]) {
+      await expect(
+        applyPromoCodeChanges(tx as never, {
+          booking: {
+            memberId: "ann",
+            lodgeId: "lodge-1",
+            promoRedemptions: [stored("r-1", "ANN", 0), stored("r-2", "PCT", 1)],
+          } as never,
+          bookingId: "booking-1",
+          input: input as never,
+          inProgressPlan: null,
+          newCheckIn: N1,
+          newTotalPriceCents: 19000,
+          guestNightRates: [{ ...guest("ann", [10000, 9000]), nightDates: [N1, N2] }],
+          todayAtClub: TODAY,
+        }),
+      ).rejects.toMatchObject({ message: SEVERAL_PROMO_CODES_ONE_CODE_EDIT_MESSAGE, status: 400 });
+    }
+    expect(tx.$executeRaw).not.toHaveBeenCalled();
+    expect(tx.promoCode.findMany).not.toHaveBeenCalled();
+    expect(tx.promoRedemption.delete).not.toHaveBeenCalled();
   });
 });
 

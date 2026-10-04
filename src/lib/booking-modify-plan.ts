@@ -10,6 +10,7 @@ import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import {
   keptStoredPromoRedemption,
   promoRequestReadsMultiPromoSwitch,
+  oneCodeFieldsOnSeveralCodesRefusal,
   requestedPromoCodeListFor,
   splitRequestedPromoCodes,
 } from "@/lib/booking-modify-promo-request";
@@ -2378,6 +2379,10 @@ export async function applyPromoCodeChanges(
   // is carried only while it is on), so it is read whenever it can matter,
   // and the same answer gates the list's refusal below.
   const storedCodes = existing.map((redemption) => redemption.promoCode);
+  // #3828: a one-code field on a several-code booking would release the other
+  // codes; refused before anything is read or written.
+  const oneCodeRefusal = oneCodeFieldsOnSeveralCodesRefusal(input, storedCodes);
+  if (oneCodeRefusal) throw new ApiError(oneCodeRefusal, 400);
   const multiPromoCodes = promoRequestReadsMultiPromoSwitch(input, storedCodes)
     ? await multiPromoCodesEnabled(tx)
     : true;
