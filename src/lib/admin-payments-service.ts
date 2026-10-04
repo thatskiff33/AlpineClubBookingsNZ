@@ -161,8 +161,7 @@ type PaymentCandidate = {
   updatedAt: Date;
   transactions: Array<{ updatedAt: Date; kind: PaymentTransactionKind; status: PaymentStatus; amountCents: number }>;
   refunds: Array<{ updatedAt: Date }>;
-  // #3372: captured ledger rows, the Net Collected capture evidence.
-  _count: NetCollectedPaymentRow["_count"];
+  _count: NetCollectedPaymentRow["_count"]; // #3372: Net Collected's capture evidence
   booking: {
     id: string;
     status: string;
@@ -466,8 +465,6 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
     const candidates = await prisma.payment.findMany({
       where,
       select: {
-        // #3372: the capture evidence a refunded status needs to count in
-        // Net Collected.
         ...netCollectedCaptureEvidenceSelect,
         id: true,
         bookingId: true,

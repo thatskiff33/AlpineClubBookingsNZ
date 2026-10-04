@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 // Deliberately diverge the two captured-status authorities in this test. The
 // production enum members currently agree, so ordinary examples cannot prove
 // which status home the ADDITIONAL transaction reader uses (#3632).
-vi.mock("@/lib/payment-transaction-status", () => ({
+vi.mock("@/lib/payment-transaction-status", async (importOriginal) => ({
+  // The module reads the list at import time for Net Collected's capture
+  // evidence select (#3372); only the predicate is diverged.
+  ...(await importOriginal<typeof import("@/lib/payment-transaction-status")>()),
   isCapturedTransactionStatus: (status: PaymentStatus) =>
     status === PaymentStatus.REFUNDED,
 }));

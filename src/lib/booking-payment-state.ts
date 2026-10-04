@@ -362,18 +362,8 @@ export interface NetCollectedPaymentRow {
   status: string | null;
   amountCents: number;
   refundedAmountCents: number;
-  /**
-   * With `_count` below, the capture evidence a refunded status needs before it
-   * counts as money received (`netCollectedPaymentTookMoney`). Both are loaded by
-   * `netCollectedCaptureEvidenceSelect` in `additional-ledger-gap.ts`.
-   */
+  /** Capture evidence (`netCollectedCaptureEvidenceSelect`): `_count` counts CAPTURED ledger rows only. */
   source: string;
-  /**
-   * `transactions`: how many of the payment's `PaymentTransaction` rows hold a
-   * CAPTURED status (`CAPTURED_TRANSACTION_STATUS_LIST`) - a filtered relation
-   * count, never a count of every row: an Internet Banking payment carries a
-   * PENDING ledger row before it is paid.
-   */
   _count: { transactions: number };
   booking: NetCollectedBookingFields;
 }
@@ -391,20 +381,12 @@ export interface NetCollectedPaymentParts {
 }
 
 /**
- * #3372 (owner's rule on PR #3811: only money actually received counts): did
- * this payment take money, for a Net Collected figure?
- *
- * A captured `Payment.status` is not enough on its own. `SUCCEEDED` is taken at
- * its word, as before. A refunded status (`REFUNDED` / `PARTIALLY_REFUNDED`)
- * counts only with the capture evidence the cancel path asks
- * (`paymentShowsCaptureEvidence`): a captured ledger row, or a STRIPE refund
- * mirror. The Xero inbound reconcile folds an invoice-applied modification
- * credit note into a never-paid Internet Banking payment's mirror and marks it
- * `PARTIALLY_REFUNDED` - bookkeeping, not cash - and that payment's
- * `amountCents` is the full price it was created at, so without the evidence
- * the figure counted most of an unpaid booking's price as received. A paid
- * Internet Banking payment carries a captured ledger row (the receipt writes
- * one), so a later partial refund still leaves its remaining cash counted.
+ * #3372 (owner, PR #3811: only money actually received counts). `SUCCEEDED` is
+ * taken at its word; a refunded status counts only with the cancel path's
+ * capture evidence (`paymentShowsCaptureEvidence`). The Xero inbound reconcile
+ * folds a modification credit note into a never-paid Internet Banking payment
+ * (`amountCents` = its full price) and marks it PARTIALLY_REFUNDED: bookkeeping,
+ * not cash. A paid one has a captured ledger row, so its remainder still counts.
  */
 function netCollectedPaymentTookMoney(
   payment: NetCollectedPaymentRow & { status: string },
@@ -420,11 +402,8 @@ function netCollectedPaymentTookMoney(
  * booking scope; `summarizeCollectedCash` does, before calling it.
  *
  * - Cash: what the payment took and has not refunded or credited back
- *   (`getRemainingRefundableCents`): 0 if it never took money, never below 0.
- *   "Took money" is `netCollectedPaymentTookMoney`: a refunded status counts
- *   only with captured-ledger or STRIPE-mirror evidence, so a never-paid
- *   Internet Banking payment the inbound reconcile marked PARTIALLY_REFUNDED
- *   adds nothing, live or cancelled.
+ *   (`getRemainingRefundableCents`): 0 if it never took money
+ *   (`netCollectedPaymentTookMoney`), never below 0.
  * - On a CANCELLED booking, two more facts, each from its canonical reader:
  *   a hand-back refund still owed by hand is treated as gone straight away
  *   (`openCancellationHandBackOwedCents`), so only what the policy keeps
@@ -543,14 +522,10 @@ export function stripeRefundMirrorShowsCapture(payment: {
 }
 
 /**
- * #1473/#1491: THE capture evidence for a payment whose aggregate status cannot
- * be taken at its word - ledger truth first (the caller says whether the
- * payment has a `PaymentTransaction` row with a captured status, read through
- * `CAPTURED_TRANSACTION_STATUS_LIST` / `isCapturedTransactionStatus`), then the
- * pre-ledger STRIPE mirror (`stripeRefundMirrorShowsCapture`). One home
- * (`INV-SSOT-001`) for the cancel path (`booking-cancel.ts`, after a ledger
- * query), the flattened-status backfill (an in-memory ledger read) and Net
- * Collected (`netCollectedPaymentTookMoney`, a filtered relation count).
+ * #1473/#1491: THE capture evidence for a payment whose status cannot be taken
+ * at its word - a captured ledger row (each caller's own read), else the STRIPE
+ * mirror. One home (`INV-SSOT-001`): `booking-cancel.ts`, the flattened-status
+ * backfill and Net Collected (`netCollectedPaymentTookMoney`) all ask it.
  */
 export function paymentShowsCaptureEvidence(
   payment: { source: string; status: string; refundedAmountCents: number },
@@ -575,8 +550,8 @@ export function paymentShowsCaptureEvidence(
  * PER PAYMENT, never pooled (owner review on PR #3811): each in-scope payment
  * adds what it received and has not refunded or credited back -
  * `getRemainingRefundableCents`, the one "money taken and still held" reading,
- * which is never below 0, and 0 for a payment that never took money
- * (`netCollectedPaymentTookMoney`: a refunded status needs capture evidence). So a cancelled booking that was never paid adds nil. The old
+ * which is 0 for a payment that never took money (`netCollectedPaymentTookMoney`)
+ * and never below 0. So a cancelled booking that was never paid adds nil. The old
  * pooled sum (all captured gross less ALL refunds) let a refund recorded on a
  * never-captured payment - the inbound reconcile folds a modification credit
  * note into an unpaid Internet Banking payment's mirror, and the unpaid cancel
