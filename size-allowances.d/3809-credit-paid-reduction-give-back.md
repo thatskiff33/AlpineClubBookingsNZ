@@ -63,12 +63,14 @@ reason: one line: the guest-add email passes 0 for the credit given back, which
   the sender now requires of every caller.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 2299
+lines: 2301
 reason: the missing-modification-credit-note finding sizes a credit-paid
   booking's lost note from the give-back its edit's history row records, and
   expects none where the tier gave nothing back, and checks a give-back note
   raised beside the edit's own under its own scope, reading the edit's own
-  without it; the rules for that finding live only here.
+  without it; the rules for that finding live only here. Stacked #3836 adds
+  two lines: the import and the call of its unallocated-credit arm, whose
+  rules live in `xero-booking-repair-applied-credit.ts`.
 
 file: src/lib/xero-inbound/credit-note-repairs.ts
 lines: 1135

@@ -1,3 +1,5 @@
+import type { Prisma } from "@prisma/client";
+
 import { isCreditOnlyCardPayment } from "@/lib/credit-only-card-payment";
 import {
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
@@ -10,6 +12,25 @@ import type {
 } from "./xero-booking-repair-types";
 import { getBlockingOperation, isStuckOperation } from "./xero-booking-repair-object-resolution";
 import { addAction, addFinding, addResolvedInXeroFinding, buildRetryAction } from "./xero-booking-repair-findings";
+
+/**
+ * #3836: each booking's applied credit with no Xero note stamped - the
+ * engine's own unallocated predicate (`unallocatedAppliedCents`).
+ */
+export async function loadUnallocatedAppliedCreditCents(
+  db: { memberCredit: Pick<Prisma.TransactionClient["memberCredit"], "groupBy"> },
+  bookingIds: string[],
+): Promise<Map<string, number>> {
+  if (bookingIds.length === 0) return new Map();
+  const rows = await db.memberCredit.groupBy({
+    by: ["appliedToBookingId"],
+    where: { appliedToBookingId: { in: bookingIds }, type: "BOOKING_APPLIED", xeroCreditNoteId: null },
+    _sum: { amountCents: true },
+  });
+  return new Map(
+    rows.flatMap((row) => (row.appliedToBookingId ? [[row.appliedToBookingId, Math.max(0, -(row._sum.amountCents ?? 0))] as const] : [])),
+  );
+}
 
 /**
  * #3836 (`INV-PAY-024`): a booking paid entirely by account credit on the card
