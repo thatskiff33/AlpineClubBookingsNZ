@@ -20,7 +20,8 @@
  * outbox worker, outside the ledger transactions.
  */
 import { CreditNote, LineAmountTypes } from "xero-node";
-import { BookingStatus, CreditType, Prisma } from "@prisma/client";
+import { CreditType, Prisma } from "@prisma/client";
+import { appliedCreditSettledByCancel, unallocatedAppliedCreditCentsByBooking } from "./xero-applied-credit-ledger-state";
 import { prisma } from "./prisma";
 import { lockMemberCreditLedger } from "./member-credit";
 import { allocateCreditNoteToInvoice } from "./xero-credit-notes";
@@ -49,7 +50,6 @@ import logger from "@/lib/logger";
 import { getClubFormat } from "@/lib/club-format-settings";
 import type { ClubFormat } from "@/lib/club-format";
 import { formatCents } from "@/lib/utils";
-import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
 import {
   assertNoAppliedCreditDeallocationFence,
 } from "./xero-applied-credit-operation-serialization";
@@ -60,111 +60,14 @@ const APPLIED_CREDIT_REMAINDER_NOTE_ROLE = "APPLIED_CREDIT_REMAINDER_NOTE";
 const APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE =
   "APPLIED_CREDIT_REMAINDER_ALLOCATION";
 
-// ---------------------------------------------------------------------------
-// Pure allocation planner (unit-tested)
-// ---------------------------------------------------------------------------
-
-export interface AppliedCreditLot {
-  memberCreditId: string;
-  /** The lot's floating Xero note, or null for a noteless lot (admin adjustment
-   * or #1547-restored credit) that must be covered by a freshly minted note. */
-  xeroCreditNoteId: string | null;
-  /**
-   * The ledger row's own credit type. REQUIRED (#2717): it is what decides
-   * which Xero mapping a MINTED slice of this lot posts to, and "noteless"
-   * does not answer that — an admin adjustment and #1547-restored cancellation
-   * credit are both noteless and are opposite accounting events. Making it a
-   * required field rather than an optional hint is deliberate: a caller that
-   * forgets it cannot compile, so a new lot loader cannot silently book a
-   * member's own refunded money as a discretionary club expense.
-   */
-  creditType: CreditType;
-  /** lot.amountCents − Σ already-allocated slices (>= 0). */
-  remainingCents: number;
-}
-
-export interface PlannedNoteAllocation {
-  memberCreditId: string;
-  xeroCreditNoteId: string;
-  amountCents: number;
-}
-
-export interface PlannedMintSlice {
-  memberCreditId: string;
-  /** Carried from the lot — see `AppliedCreditLot.creditType` (#2717). */
-  creditType: CreditType;
-  amountCents: number;
-}
-
-export interface AppliedCreditPlan {
-  /** Existing floating notes to allocate against the invoice. */
-  noteAllocations: PlannedNoteAllocation[];
-  /** Noteless lots to cover with a single freshly minted note. */
-  mintSlices: PlannedMintSlice[];
-  /** Σ mintSlices — the amount of the fresh note to mint (0 when none). */
-  mintTotalCents: number;
-  /** Total planned; always equals appliedCents for a well-formed ledger. */
-  coveredCents: number;
-}
-
-/**
- * Decide which credit lots fund `appliedCents`, oldest-first. Conservation is
- * independent of lot order (owner/advisor: lot order is neutral); oldest-first is
- * a deterministic default. Throws if the lots cannot cover the applied amount —
- * that can only happen on a corrupted ledger, since applied credit never exceeds
- * the balance at apply-time and allocations never exceed prior applications.
- */
-export function planAppliedCreditAllocation(
-  lots: AppliedCreditLot[],
-  appliedCents: number,
-  format: ClubFormat,
-): AppliedCreditPlan {
-  const noteAllocations: PlannedNoteAllocation[] = [];
-  const mintSlices: PlannedMintSlice[] = [];
-  let outstanding = appliedCents;
-
-  for (const lot of lots) {
-    if (outstanding <= 0) {
-      break;
-    }
-    const slice = Math.min(lot.remainingCents, outstanding);
-    if (slice <= 0) {
-      continue;
-    }
-    if (lot.xeroCreditNoteId) {
-      noteAllocations.push({
-        memberCreditId: lot.memberCreditId,
-        xeroCreditNoteId: lot.xeroCreditNoteId,
-        amountCents: slice,
-      });
-    } else {
-      mintSlices.push({
-        memberCreditId: lot.memberCreditId,
-        creditType: lot.creditType,
-        amountCents: slice,
-      });
-    }
-    outstanding -= slice;
-  }
-
-  if (outstanding > 0) {
-    throw new Error(
-      `Applied credit ${formatCents(appliedCents, format)} exceeds available credit-lot remaining by ${formatCents(outstanding, format)} — member-credit ledger inconsistency`,
-    );
-  }
-
-  const mintTotalCents = mintSlices.reduce((sum, m) => sum + m.amountCents, 0);
-  return {
-    noteAllocations,
-    mintSlices,
-    mintTotalCents,
-    coveredCents: appliedCents - outstanding,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Ledger reads
-// ---------------------------------------------------------------------------
+export {
+  planAppliedCreditAllocation,
+  type AppliedCreditLot,
+  type AppliedCreditPlan,
+  type PlannedMintSlice,
+  type PlannedNoteAllocation,
+} from "./xero-applied-credit-plan";
+import { planAppliedCreditAllocation, type AppliedCreditLot } from "./xero-applied-credit-plan";
 
 /**
  * Gather the member's positive credit lots (oldest-first) with each lot's
@@ -227,65 +130,11 @@ async function gatherAppliedCreditLots(
   return lots;
 }
 
-/**
- * THE unallocated predicate (#1620, #3836 `INV-PAY-024`): per booking, the
- * applied credit whose `BOOKING_APPLIED` rows carry no Xero note yet. The
- * engine, its enqueue and the Xero booking repair pass all read this one form.
- */
-export async function unallocatedAppliedCreditCentsByBooking(
-  bookingIds: string[],
-  db: { memberCredit: Pick<Prisma.TransactionClient["memberCredit"], "groupBy"> } = prisma,
-): Promise<Map<string, number>> {
-  if (bookingIds.length === 0) return new Map();
-  const rows = await db.memberCredit.groupBy({
-    by: ["appliedToBookingId"],
-    where: { appliedToBookingId: { in: bookingIds }, type: CreditType.BOOKING_APPLIED, xeroCreditNoteId: null },
-    _sum: { amountCents: true },
-  });
-  return new Map(
-    rows.flatMap((row) =>
-      row.appliedToBookingId ? [[row.appliedToBookingId, Math.max(0, -(row._sum.amountCents ?? 0))] as const] : [],
-    ),
-  );
-}
-
 async function unallocatedAppliedCents(
   bookingId: string,
   db: Prisma.TransactionClient | typeof prisma,
 ): Promise<number> {
   return (await unallocatedAppliedCreditCentsByBooking([bookingId], db)).get(bookingId) ?? 0;
-}
-
-/**
- * #3836 (H1): whether the cancel has settled this booking's applied credit -
- * the booking is CANCELLED, or a restore row names it, AND its payment holds no
- * captured money (`paymentHasCaptureEvidence`). Such an invoice is answered by
- * a clearing note sized net of the slices already committed (the unpaid
- * cancel's, or the repair pass's `CANCELLED_BOOKING_OPEN_INVOICE`), so the
- * engine then only finishes those slices: a new plan or mint would credit the
- * invoice a second time beside that note. A captured booking's cancel clears
- * nothing - its invoice stands as paid - so its allocation still runs, as
- * before. Read under the member's credit-ledger key, which the cancel's
- * restore takes too.
- */
-async function appliedCreditSettledByCancel(
-  bookingId: string,
-  db: Prisma.TransactionClient | typeof prisma,
-): Promise<boolean> {
-  const [booking, restore] = await Promise.all([
-    db.booking.findUnique({
-      where: { id: bookingId },
-      select: {
-        status: true,
-        payment: {
-          select: { id: true, bookingId: true, source: true, status: true, amountCents: true, refundedAmountCents: true, transactions: { select: { status: true } } },
-        },
-      },
-    }),
-    db.memberCredit.findUnique({ where: { restoredFromBookingId: bookingId }, select: { id: true } }),
-  ]);
-  const cancelled = booking?.status === BookingStatus.CANCELLED || restore !== null;
-  return cancelled && !(booking?.payment && paymentHasCaptureEvidence(booking.payment));
 }
 
 /** The remainder note this payment already minted, if any. */

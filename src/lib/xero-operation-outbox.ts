@@ -46,7 +46,8 @@ import {
   type EntranceFeeContext,
 } from "@/lib/xero-mappings";
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
-import { allocateAppliedCreditForBooking, unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-allocation";
+import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
+import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
 import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-credit-deallocation";
 import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import {

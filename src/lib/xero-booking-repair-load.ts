@@ -23,7 +23,7 @@ import {
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
 } from "./payment-recovery-keys";
-import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-allocation";
+import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
 import {
   editReviewChargeShareTaskSelect,
   editReviewChargeShareTaskWhere,

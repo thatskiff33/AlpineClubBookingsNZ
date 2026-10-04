@@ -96,19 +96,13 @@ export type PaymentAdjustmentResult = {
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   /**
-   * #3809: applied credit a paid booking's reduction gave back - the part the
-   * card basis could not return, tiered like a card refund
-   * (`giveBackPaidReductionCredit`). Neither a refund nor minted credit, so it
-   * is in neither figure above and nothing mints it again. The Xero leg takes
-   * it as an invoice-allocated note worded as account credit
-   * (`appliedCreditGiveBackCents` on `queueXeroBookingEditSettlement`).
+   * #3809: applied credit a paid booking's reduction gave back - what the card
+   * basis could not return, tiered like a card refund (`giveBackPaidReductionCredit`);
+   * neither a refund nor minted credit, so in neither figure above. The Xero leg
+   * takes it as an allocated note worded as account credit (`appliedCreditGiveBackCents`).
    */
   appliedCreditGivenBackCents: number;
-  /**
-   * #3809: the settlement of applied credit, null where the reduction did not
-   * reach it. The edit's history row records it (`creditGiveBackHistory`),
-   * which is what a later cancellation caps by (`INV-PAY-115`).
-   */
+  /** #3809: the settlement of applied credit (null where not reached), on the edit's history row (`creditGiveBackHistory`); a later cancel caps by it (`INV-PAY-115`). */
   appliedCreditGiveBack: PaidReductionCreditGiveBack | null;
   /**
    * #3653: the refund an organiser-settled child's reduction returns from the
