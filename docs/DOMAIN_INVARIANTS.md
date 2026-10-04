@@ -265,6 +265,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-097` | One withheld share is one item; a credit-only completion records no refund |
 | `INV-PAY-061` | Confirmed amounts settle through an existing path, chosen at completion |
 | `INV-PAY-113` | A credit-paid share is applied credit given back, once |
+| `INV-PAY-115` | A cancellation tiers applied credit capped at what the booking is worth |
 | `INV-PAY-069` | Completions record their direction; charging re-enters the additional-payment path |
 | `INV-PAY-062` | One booking edit raises one charge request, derived from settled shares |
 | `INV-PAY-098` | A replacement ask carries the unpaid balance it retires, and records it |
@@ -322,6 +323,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-035` | Organiser cancellation is a durable settlement fence, written under `lock(1)` first |
 | `INV-PAY-036` | Each group-cancel child's refund credit-note enqueue commits inside that child's cancel transaction |
 | `INV-PAY-037` | Failed settlement refunds stay durably owed; no child mirror applies twice |
+| `INV-PAY-114` | An organiser child's refund: one recorded Stripe refund from the combined payment |
 | `INV-PAY-105` | Group settlements stay bound to their emailed invoice until paid or voided |
 | `INV-PAY-109` | Joiners a paid organiser bill does not cover pay for themselves |
 
@@ -390,7 +392,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-008` | An unpaid member repriced under `NON_MEMBER_PRICING` is `NON_MEMBER_DEFAULT`, not forced |
 | `INV-MOD-009` | Membership, not the subscription, gates member-only promotions; a repriced member stays eligible |
 | `INV-MOD-010` | Priced guests store a rate-type snapshot; kept locked nights stay stale |
-| `INV-MOD-011` | Reductions refund within the cancellation tier; captured payments need settlement elections |
+| `INV-MOD-011` | Reductions settle within the cancellation tier, credit-paid ones as applied credit |
 | `INV-MOD-012` | Pre-payment reduction below applied credit refunds the over-consumed slice under lock |
 | `INV-MOD-013` | A modification parked to AWAITING_REVIEW refunds no credit, auto-pays nothing until released |
 | `INV-MOD-014` | Xero deallocation commits the clamp offset and outbox op together, member-credit-locked |

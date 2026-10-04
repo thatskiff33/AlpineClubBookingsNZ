@@ -14,6 +14,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import {
   cancellationReturnOf,
   cancellationTierOf,
+  capAppliedCreditForReTier,
   capturedShareOwedAfterCancellation,
   frozenAppliedCreditBaseCents,
   frozenCents,
@@ -387,30 +388,35 @@ async function creditSliceStillOwedAfterCancellation({
   }
 
   const frozen = await frozenAppliedAtCancellationCents({ bookingId, restoredAt: restore.createdAt, store });
-  // #3809: the applied credit the cancel TIERED, which can be less than the rows.
-  const appliedAtCancelCents = frozen?.tieredCents ?? null;
-  if (frozen === null || appliedAtCancelCents === null || appliedAtCancelCents <= 0) {
+  if (frozen === null || frozen.rowsCents <= 0) {
     throw new ManualBookingPaymentError(REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE, 409);
   }
+  // `A` is the applied rows; the cancel tiered `tieredCents` of them, the rest
+  // above #3809's cap left untiered (`INV-PAY-115`), so a share takes that first.
   const earlierSharesCents = await sharesSettledSinceCents({ bookingId, taskId, snapshot: frozen.snapshot, since: restore.createdAt, store });
-  const earlierSliceCents = Math.min(appliedAtCancelCents, earlierSharesCents);
-  const sliceCents = Math.max(0, Math.min(shareCents, appliedAtCancelCents - earlierSliceCents));
-  if (restoredCents >= appliedAtCancelCents) return { sliceCents, owedCents: 0 };
+  const earlierSliceCents = Math.min(frozen.rowsCents, earlierSharesCents);
+  const sliceCents = Math.max(0, Math.min(shareCents, frozen.rowsCents - earlierSliceCents));
 
-  const days = daysUntilDate(booking.checkIn, clubCalendarDateOf(restore.createdAt, clubZone));
-  const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, store);
-  if (cancellationTierOf(days, policy, "card")(0, appliedAtCancelCents).creditCents !== restoredCents) {
-    throw new ManualBookingPaymentError(REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE, 409);
+  // A restore of everything tiered returns all of less too: no policy needed.
+  let returnOf = (_baseCents: number, appliedCents: number) => appliedCents;
+  if (restoredCents < frozen.tieredCents) {
+    const days = daysUntilDate(booking.checkIn, clubCalendarDateOf(restore.createdAt, clubZone));
+    const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, store);
+    const refusal = () => new ManualBookingPaymentError(REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE, 409);
+    const capAppliedCredit = await capAppliedCreditForReTier({ bookingId, snapshot: frozen.snapshot, refusal }, store);
+    if (cancellationTierOf(days, policy, "card", capAppliedCredit)(0, frozen.tieredCents).creditCents !== restoredCents) throw refusal();
+    returnOf = cancellationReturnOf(days, policy, "card", capAppliedCredit);
   }
   // What reviews have given back since the cancellation: the restore leaves the
   // applied rows alone, so it is exactly how far they have fallen from `A`.
   const owedCents = shareOwedAfterCancellationCents({
     sharesCents: earlierSliceCents + sliceCents,
     cardBaseCents: 0,
-    appliedCents: appliedAtCancelCents,
+    untieredCreditCents: Math.max(0, frozen.rowsCents - frozen.tieredCents),
+    appliedCents: frozen.tieredCents,
     returnedByCancellationCents: restoredCents,
     returnedSinceCents: Math.max(0, frozen.rowsCents - appliedNowCents),
-    returnOf: cancellationReturnOf(days, policy, "card"),
+    returnOf,
   });
   return { sliceCents, owedCents };
 }
@@ -419,6 +425,8 @@ async function creditSliceStillOwedAfterCancellation({
  * The applied credit the cancellation tiered, as frozen then: the CANCELLED
  * event's `snapshot.ledger.appliedCreditCents` (#3611) where it has one, else
  * the booking's applied rows as they stood when the restore row was written.
+ * With it, the cap the cancellation's tier was applied under (#3809), or no
+ * cap where the event froze none: such a cancellation tiered all of it.
  */
 async function frozenAppliedAtCancellationCents({
   bookingId,

@@ -482,6 +482,41 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       expect(await totalBackCents()).toBe(15_000);
     });
 
+    it("#3809 then #3835: a credit-paid $200 booking reduced to $150 through the give-back ($5 back), cancelled at 50% less $20 on the cap ($55), then a $50 review: the re-tier reproduces on the cap and nets to $47.50 - what the review first would have left", async () => {
+      await clearRun();
+      await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAID", totalPriceCents: 20_000, finalPriceCents: 20_000 } });
+      await prisma.payment.create({
+        data: { id: PAYMENT_ID, bookingId: BOOKING_ID, amountCents: 0, creditAppliedCents: 20_000, source: "STRIPE", status: "SUCCEEDED" },
+      });
+      await prisma.memberCredit.create({ data: { memberId: MEMBER_ID, amountCents: 20_000, type: "ADMIN_ADJUSTMENT", description: "race 3835 opening balance" } });
+      await prisma.$transaction((tx) => credit.applyCreditToBooking(MEMBER_ID, 20_000, BOOKING_ID, tx, CLUB_FORMAT_TEST));
+      const raised = await raise("2026-08-01", null);
+      // #3809's settlement of a $50 reduction at 50% less $20: the price drops,
+      // $5 of applied credit comes back, and the edit's history marks the cap.
+      const { giveBackCancelledShareCredit } = await import("@/lib/edit-financial-review-account-credit");
+      await prisma.booking.update({ where: { id: BOOKING_ID }, data: { totalPriceCents: 15_000, finalPriceCents: 15_000 } });
+      await prisma.$transaction((tx) => giveBackCancelledShareCredit({ memberId: MEMBER_ID, bookingId: BOOKING_ID, cents: 500, format: CLUB_FORMAT_TEST, store: tx }));
+      await prisma.bookingModification.create({
+        data: { bookingId: BOOKING_ID, memberId: MEMBER_ID, modificationType: "BATCH_MODIFY", previousData: {}, newData: { appliedCreditGiveBack: { basisCents: 5_000, givenBackCents: 500 } } },
+      });
+      const { bookingReducedThroughCreditGiveBack } = await import("@/lib/booking-credit-give-back-marker");
+      expect(await bookingReducedThroughCreditGiveBack(BOOKING_ID, prisma)).toBe(true);
+
+      await cancelAt(TIERS[1]!.rule);
+      const cancelled = await prisma.bookingEvent.findFirstOrThrow({ where: { bookingId: BOOKING_ID, type: "CANCELLED" }, select: { snapshot: true } });
+      expect(cancelled.snapshot).toMatchObject({ ledger: { appliedCreditCents: 19_500, appliedCreditBaseCents: 15_000, creditRestoredCents: 5_500 } });
+      const balanceAfterCancel = await credit.getMemberCreditBalance(MEMBER_ID);
+      expect(balanceAfterCancel).toBe(6_000); // $5 given back + $55 restored
+
+      await completeShare(raised.taskId);
+
+      // Review first: $50 back leaves $145 applied, tiered under the cap at 50% less $20: $52.50.
+      // So $5 + $50 + $52.50 = $107.50 in all; cancel first gave $60, so $47.50 more.
+      expect(await credit.getMemberCreditBalance(MEMBER_ID) - balanceAfterCancel).toBe(4_750);
+      const task = await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: raised.taskId }, select: { status: true } });
+      expect(task.status).toBe("COMPLETED");
+    });
+
     it("review F1: $150 credit + $50 card, cancelled at 50% (no fee), a $100 share: $25 to the card and $25 given back as credit - the card never promised more than it took", async () => {
       await paid({ paid: "credit plus card", cardCents: 5_000, appliedCents: 15_000, source: "STRIPE" });
       const raised = await raise("2026-08-01");

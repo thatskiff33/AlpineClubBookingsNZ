@@ -272,24 +272,29 @@ computed them:
 ```
 retainedAmountCents = max(paid − refund, 0)             (the CANCELLED event; the member's narrative)
 ledgerKeptCents     = retainedAmountCents + (applied − restored)
-policyKeptCents     = (refundableBase − refund) + changeFee + (mirrorApplied − restored)
-ledgerKeptCents − policyKeptCents = paidAboveRefundable + (applied − mirrorApplied)
+policyKeptCents     = (refundableBase − refund) + changeFee + (creditBase − restored)
+ledgerKeptCents − policyKeptCents = paidAboveRefundable + (applied − mirrorApplied) + (mirrorApplied − creditBase)
 ```
 
 **The ledger's figure can hold more than the policy decided** (review D1), and
 says so. Paid money above price plus change fee — an edit's kept-back
 reduction, a captured `CHARGE_TO_MEMBER` share, a legacy double payment — and
-applied rows the mirror never counted are outside the refundable base, so no
-tier refunds them, even at 100%. The ledger keeps them so `owed(b)` reaches
+applied rows the mirror never counted, and applied credit above what the
+booking is now worth (`creditBase`, capped with the money paid at the price
+like the card slice, #3809: a credit-paid reduction's kept-back share), are
+outside the refundable base, so no tier refunds them, even at 100%. The ledger keeps them so `owed(b)` reaches
 zero; the claim logs a warning naming both components, the line's narration
 stops calling them a fee, and the snapshot freezes the difference. Whether that
 money deserves a line of its own is the Xero rendering's question (C6, #3585).
 
 `paid` is the payment net of earlier refunds, change fees included; `applied` is
 the credit the booking's applied rows actually hold, which the mirror can
-disagree with. Only the paid `cancelBooking` branch keeps anything; every other
+disagree with. Only the paid `cancelBooking` branch keeps anything - and, since
+#3809, the unpaid branch on a payment that captured money and was refunded
+whole, which keeps the applied credit its tier did not restore
+(`INV-PAY-115`); every other
 cancel keeps nothing. The CANCELLED snapshot freezes `ledger: { keptCents,
-policyKeptCents, keptBeyondPolicyCents, appliedCreditCents, creditRestoredCents }`
+policyKeptCents, keptBeyondPolicyCents, appliedCreditCents, creditRestoredCents, appliedCreditBaseCents }`
 in the same claim, so #3583's
 back-post replays the figure instead of re-deriving it from a mirror that keeps
 moving. A booking cancelled with no such snapshot kept nothing. Once the
@@ -318,7 +323,7 @@ proves the ledger was in step rather than assuming it. The completion takes
 | Booking edited and priced (four doors + batch, `INV-MOD-044`) | per guest-night, all or nothing (the rule above); a `PROMOTION` reversal + re-post when the promo delta is non-zero; a `CHANGE_FEE` (+) when the edit charged one | `MODIFICATION` / modification id | the four edit services and the batch path, in the transaction that already writes `priceLines` (`INV-MOD-058`) |
 | Admin date shift (`adminShiftBookingDates`, #3741) | the same per-night rule: each old-date night's live line reversed, each new-date night posted at the same figure, netting to the row's zero; both sides read as written rows, since a shift sells nothing | `MODIFICATION` / the `ADMIN_DATE_SHIFT` row | `adminShiftBookingDates`, under the `lock(1)` it takes first |
 | Booking edited and **parked** (`INV-MOD-040`) | **nothing** — a parked edit writes structure, never an amount; the lines post when the review closes | — | — |
-| Booking cancelled — member or admin cancel (all four `cancelBooking` branches), the linked provisional child, the internet banking hold-expiry release, a group organiser's settled children, the settle's capacity void, the late internet banking capacity cancel, and `cron-confirm-pending`'s three hold-window cancels | the rule above. Only the paid `cancelBooking` branch keeps anything; every other path keeps nothing and posts reversals only — a group organiser's settled children included, since they hold no settlement line of their own (where their kept money belongs is #3583's) | `CANCELLATION` / booking id | each cancel path, in the claim transaction that flips the booking `CANCELLED`, under its `lock(1)` |
+| Booking cancelled — member or admin cancel (all four `cancelBooking` branches), the linked provisional child, the internet banking hold-expiry release, a group organiser's settled children, the settle's capacity void, the late internet banking capacity cancel, and `cron-confirm-pending`'s three hold-window cancels | the rule above. Only the paid `cancelBooking` branch keeps anything (and the unpaid branch's tiered credit on a captured, refunded-whole payment, #3809); every other path keeps nothing and posts reversals only — a group organiser's settled children included, since they hold no settlement line of their own (where their kept money belongs is #3583's) | `CANCELLATION` / booking id | each cancel path, in the claim transaction that flips the booking `CANCELLED`, under its `lock(1)` |
 | Review closed by re-pricing (`INV-MOD-055`) — the admin price rebase (`booking-review-price-rebase.ts`), whose only caller is the closure | reversal of every live `GUEST_NIGHT` the re-price changed + re-post at the new figure, and the promotion likewise — all or nothing against the re-base's movement of the final price; **nothing** where the re-base declines or writes no history row | `MODIFICATION` / the `PRICE_REBASE` history row the re-base writes (both money components zero) | the closure (`recordReviewClosurePricing`), under the completion's `lock(1)` |
 
 ### 5.2 Moving money (SETTLEMENT)
@@ -376,7 +381,7 @@ the database makes — and its lines cascade with it.)
 | --- | --- | --- | --- |
 | Card capture, PRIMARY or ADDITIONAL (`INV-PAY-055`, `INV-PAY-081`) | `CARD_CAPTURE` (+) for the captured amount, `method = CARD` | `PAYMENT_TRANSACTION` | the Stripe webhook / recovery settle, inside the fenced claim |
 | Internet Banking invoice paid (`INV-PAY-015`, `INV-PAY-026`) | `BANK_RECEIPT` (+) for the cash evidenced, `method = INTERNET_BANKING` | `PAYMENT_TRANSACTION` | the inbound Xero reconciler's settle |
-| Account credit applied at confirmation (`INV-PAY-002`, `INV-PAY-024`) | `CREDIT_APPLIED` (+), `method = ACCOUNT_CREDIT`, linked to the `BOOKING_APPLIED` `MemberCredit` row; a clamp give-back (a positive applied row) posts a negative one, and so does a credit-paid booking's review share, which goes through that same `giveBackAppliedCredit` (#3791, `INV-PAY-113`) | `MEMBER_CREDIT` | every writer of the row, through `syncBookingLedgerCredits` |
+| Account credit applied at confirmation (`INV-PAY-002`, `INV-PAY-024`) | `CREDIT_APPLIED` (+), `method = ACCOUNT_CREDIT`, linked to the `BOOKING_APPLIED` `MemberCredit` row; a clamp give-back (a positive applied row) posts a negative one, and so does a credit-paid booking's review share, which goes through that same `giveBackAppliedCredit` (#3791, `INV-PAY-113`), and its ordinary price reduction (#3809, `INV-MOD-011`) | `MEMBER_CREDIT` | every writer of the row, through `syncBookingLedgerCredits` |
 | Manual mark-paid (`INV-PAY-001`, `INV-PAY-038`) | `CASH_RECORDED` (+), `method = CASH`, `postedByMemberId` = the officer | `PAYMENT_TRANSACTION` | the mark-paid settle |
 | Mark-paid reversal (`INV-PAY-045`) | reversal of the `CASH_RECORDED` line | `PAYMENT_TRANSACTION` | the reversal |
 | Card refund — cancellation tier, reduction, superseded payment, duplicate capture (`INV-MOD-011`, `INV-PAY-043`, `INV-PAY-065`) | `CARD_REFUND` (−), `method = CARD` | `PAYMENT_REFUND` | converges from the `PaymentRefund` row once it records the refund (see above: the debt is durable before the provider call, `INV-ADDPAY-018`; the ledger line follows the answer) |

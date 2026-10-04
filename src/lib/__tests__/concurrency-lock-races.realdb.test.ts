@@ -63,6 +63,11 @@ import "./bed-allocation-removal-races.realdb.test";
 // issue exactly one credit. Its own describe stays skipped unless the shared race
 // flag is set, and its uniquely-namespaced fixtures are cleaned independently.
 import "./edit-financial-review-races.realdb.test";
+// #3809 reuses it to prove a credit-paid booking's price reduction gives back
+// like a card refund through the REAL guest removal and cancel, and that the
+// removal takes the member's credit-ledger key before any Payment row lock.
+// Its describe stays skipped unless the shared race flag is set.
+import "./credit-paid-reduction.realdb.test";
 // #2595 reuses the same guarded disposable PostgreSQL to prove that a member
 // merge cannot leave two people sharing a double bed with no confirmed
 // partnership, driving the real `executeMemberMerge` and the real
@@ -205,6 +210,13 @@ import "./edit-financial-review-captured-cancel.realdb.test";
 // mirror back with it. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it clears
 // the singleton `XeroToken` table and its own `xero-oauth` row.
 import "./xero-token-credential-store.realdb.test";
+// #3653 reuses it to prove an organiser-settled child's refund out of the
+// group's combined card payment: recorded once, converged after an ambiguous
+// Stripe answer, capped under lock(1) against a racing reduction, and planned
+// for a cancellation from what remains. Stripe is an in-memory double handed to
+// the executor's seam. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
+// cleans its own `race-3653-` fixtures.
+import "./organiser-child-refund.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

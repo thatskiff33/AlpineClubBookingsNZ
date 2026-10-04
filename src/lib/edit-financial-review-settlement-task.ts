@@ -26,6 +26,7 @@ export type EditReviewSettlementTask = {
      * selected by the caller for `hasIssuedPrimaryXeroInvoice`.
      */
     status: string;
+    organiserSettled: boolean; parentBookingId: string | null; // #3653: `paidByOrganiserCard`
     /** #3835: what a cancelled booking's netting re-tiers by (`capturedShareOwedAfterCancellationCents`). */
     checkIn: Date;
     lodgeId: string;

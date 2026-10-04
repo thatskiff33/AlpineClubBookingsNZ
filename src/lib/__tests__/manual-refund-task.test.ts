@@ -304,6 +304,8 @@ const tx = {
     create: (...a: unknown[]) => mocks.bookingModificationCreate(...a),
     // #3791: the review re-prices a later review's unpaid limit reads.
     findMany: vi.fn().mockResolvedValue([]),
+    // #3809's marker (`bookingReducedThroughCreditGiveBack`): none here.
+    findFirst: vi.fn().mockResolvedValue(null),
   },
   // #3791: what a netted or limited give-back reads of earlier reviews and
   // the cancellation - none of either unless a case installs some.

@@ -35,7 +35,10 @@ import {
   capturedShareOwedAfterCancellation,
   shareOwedAfterCancellationCents,
 } from "@/lib/edit-financial-review-cancel-netting";
-import { REVIEW_CANCELLATION_REFUND_UNREPRODUCIBLE_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
+import {
+  REVIEW_CANCELLATION_ORGANISER_PAID_MESSAGE,
+  REVIEW_CANCELLATION_REFUND_UNREPRODUCIBLE_MESSAGE,
+} from "@/lib/edit-financial-review-refund-refusals";
 import { paidCancellationMoney } from "@/lib/paid-cancellation-money";
 import { buildEditFinancialReviewRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
 
@@ -72,6 +75,7 @@ const cancelMoney = (cardCents: number, appliedCents: number, priceCents: number
     days: DAYS,
     policy: [rule],
     refundMethod: method,
+    capAppliedCredit: false,
   });
 
 const rows = {
@@ -80,8 +84,14 @@ const rows = {
   refundedBySiblingsCents: 0,
   mintedBySiblingsCents: 0,
   handedBackBySiblingsCents: 0,
+  owner: { organiserSettled: false, parentBookingId: null as string | null, payment: { source: "STRIPE" } },
+  capped: false,
 };
 const store = {
+  // #3653: an ordinary booking unless a case makes it a joiner the organiser paid for.
+  booking: { findUniqueOrThrow: vi.fn(async () => rows.owner) },
+  // #3809's marker (`bookingReducedThroughCreditGiveBack`).
+  bookingModification: { findFirst: vi.fn(async () => (rows.capped ? { id: "mod-give-back" } : null)) },
   bookingEvent: { findFirst: vi.fn(async () => rows.cancelled) },
   manualRefundTask: { findMany: vi.fn(async () => rows.siblings) },
   paymentRecoveryOperation: { aggregate: vi.fn(async () => ({ _sum: { amountCents: rows.refundedBySiblingsCents || null } })) },
@@ -130,7 +140,11 @@ const snapshotOf = () => (rows.cancelled as { snapshot: Record<string, unknown> 
 beforeEach(() => {
   vi.clearAllMocks();
   h.appliedNowCents = null;
-  Object.assign(rows, { cancelled: null, siblings: [], refundedBySiblingsCents: 0, mintedBySiblingsCents: 0, handedBackBySiblingsCents: 0 });
+  Object.assign(rows, {
+    cancelled: null, siblings: [], refundedBySiblingsCents: 0, mintedBySiblingsCents: 0, handedBackBySiblingsCents: 0,
+    owner: { organiserSettled: false, parentBookingId: null, payment: { source: "STRIPE" } },
+    capped: false,
+  });
 });
 
 describe("the worked example: $200 paid, a $50 share, the booking cancelled first", () => {
@@ -362,6 +376,38 @@ describe("#3835 review: the cancellation's own frozen figures", () => {
 
     // The re-tier reproduces the $150 restore from the $150 base; nothing is owed at 100%.
     expect(await owed()).toBe(0);
+  });
+
+  it("MUTATION: #3809 - a booking its give-back capped re-tiers on the cap, and one whose cancel froze no capped base is refused", async () => {
+    // $100 card + $100 credit, cancelled at 50% less $20 under the cap.
+    cancelledAt(10_000, 10_000, TIERS[1]!.rule);
+    (snapshotOf().ledger as Record<string, number>).appliedCreditBaseCents = 10_000;
+    rows.capped = true;
+    expect(await owed()).toBe(2_500);
+    expect(store.bookingModification.findFirst).toHaveBeenCalled();
+
+    delete (snapshotOf().ledger as Record<string, number>).appliedCreditBaseCents;
+    await expect(owed()).rejects.toMatchObject({ message: REVIEW_CANCELLATION_REFUND_UNREPRODUCIBLE_MESSAGE, status: 409 });
+  });
+
+  it("MUTATION: #3809 - applied credit above the cap the cancel left untiered is taken before the credit it tiered", async () => {
+    // $50 card + $200 applied, $150 of it tiered; 50% (no fee): $25 refunded, $75 restored.
+    const rule = { daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 0 };
+    cancelledAt(5_000, 15_000, rule);
+    (snapshotOf().ledger as Record<string, number>).appliedCreditBaseCents = 15_000;
+    (snapshotOf().ledger as Record<string, number>).appliedCreditCents = 20_000;
+    h.appliedNowCents = 20_000;
+
+    // A $100 share: $50 off the card, $50 off the untiered credit; the $150 tiered still returns $75.
+    expect(await split(10_000)).toEqual({ captureCents: 2_500, creditCents: 5_000 });
+  });
+
+  it("MUTATION: #3653 - a cancelled joiner's booking the organiser paid by card is refused, task OPEN, never netted", async () => {
+    cancelledAt(20_000, 0, TIERS[1]!.rule);
+    rows.owner = { organiserSettled: true, parentBookingId: "parent-1", payment: { source: "STRIPE" } };
+
+    await expect(owed()).rejects.toMatchObject({ message: REVIEW_CANCELLATION_ORGANISER_PAID_MESSAGE, status: 409 });
+    expect(store.bookingEvent.findFirst).not.toHaveBeenCalled();
   });
 
   it("MUTATION: counts siblings settled AFTER the cancel by the ids it froze, not by the clock", async () => {
