@@ -132,6 +132,12 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
 vi.mock("@/lib/booking-events", () => ({
   recordBookingEvent: mocks.recordBookingEvent,
 }));
+// #3854: the children's ledger lines are proved in booking-ledger-group-settlement-posting.test.ts and against
+// PostgreSQL (booking-ledger-group-settlement.realdb.test.ts); here only the call is observed.
+const groupLedger = vi.hoisted(() => ({
+  postGroupSettlementLedgerLines: vi.fn<(input: unknown) => Promise<number>>(async () => 0),
+}));
+vi.mock("@/lib/booking-ledger-group-settlement-sync", () => groupLedger);
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: mocks.enqueueXeroInvoice,
   kickQueuedXeroOutboxOperationsIfConnected: mocks.kickXero,
@@ -1736,6 +1742,13 @@ describe("applyGroupSettlementSucceeded", () => {
         data: expect.objectContaining({ status: PaymentStatus.SUCCEEDED }),
       })
     );
+    // #3854: the children's lines post in the same claim, for the settlement as it stands under the lock.
+    expect(groupLedger.postGroupSettlementLedgerLines).toHaveBeenCalledWith(
+      expect.objectContaining({
+        settlement: { id: "s1", source: PaymentSource.STRIPE, amountCents: 9000 },
+        children: [expect.objectContaining({ id: "child-1", finalPriceCents: 4500 }), expect.objectContaining({ id: "child-2", finalPriceCents: 4500 })],
+      }),
+    );
     // Side effects per settled child.
     expect(mocks.recordBookingEvent).toHaveBeenCalledTimes(2);
     expect(mocks.enqueueXeroInvoice).toHaveBeenCalledTimes(2);
@@ -2081,6 +2094,9 @@ describe("applyGroupSettlementSucceededFromInvoice", () => {
       expect.objectContaining({
         data: expect.objectContaining({ status: PaymentStatus.SUCCEEDED }),
       })
+    );
+    expect(groupLedger.postGroupSettlementLedgerLines).toHaveBeenCalledWith(
+      expect.objectContaining({ settlement: { id: "s1", source: PaymentSource.INTERNET_BANKING, amountCents: 9000 } }),
     );
     // The combined invoice already covers the group: no per-child Xero invoices.
     expect(mocks.enqueueXeroInvoice).not.toHaveBeenCalled();

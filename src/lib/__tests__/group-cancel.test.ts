@@ -61,6 +61,16 @@ const txClient = {
 // #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
 const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}) }));
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
+// #3854: the group settlement's own lines are proved in booking-ledger-group-settlement-posting.test.ts and
+// against PostgreSQL (booking-ledger-group-settlement.realdb.test.ts); here only the calls are observed.
+const groupLedger = vi.hoisted(() => ({
+  postGroupSettlementRefundLedgerLine: vi.fn<(input: unknown) => Promise<number>>(async () => 1),
+  groupSettledChildCancellationKeptCents: vi.fn(
+    async (_db: unknown, child: { status: string }, plan: { kind: string; plannedRefundCents?: number }) =>
+      child.status === "PAID" ? 4500 - (plan.plannedRefundCents ?? 0) : 0,
+  ),
+}));
+vi.mock("@/lib/booking-ledger-group-settlement-sync", () => groupLedger);
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -348,6 +358,14 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     expect(mocks.paymentUpdate).not.toHaveBeenCalled();
     expect(mocks.enqueueXeroRefund).not.toHaveBeenCalled();
     expect(mocks.settlementUpdate).not.toHaveBeenCalled();
+    // #3854: the per-child debts' refunds post from their own refund rows, so
+    // the loop posts none; the kept figure reads every refund made or owed.
+    expect(groupLedger.postGroupSettlementRefundLedgerLine).not.toHaveBeenCalled();
+    expect(groupLedger.groupSettledChildCancellationKeptCents).toHaveBeenCalledWith(
+      txClient,
+      expect.anything(),
+      { kind: "per-child", paymentIntentId: "pi_settle_1" },
+    );
     expect(mocks.bookingUpdate).toHaveBeenCalledTimes(2);
     // Joiners are told what their refund actually returned.
     expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledWith(
@@ -959,7 +977,7 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
     });
   });
 
-  it("#3611: each organiser-settled child posts its reversals with nothing kept, paid or not", async () => {
+  it("#3611/#3854: a paid child keeps its share less the plan's refund, which posts beside its mirror; an unpaid child keeps nothing", async () => {
     mocks.groupBookingFindUnique.mockResolvedValue({
       id: GROUP_ID,
       paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
@@ -978,11 +996,21 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
 
     await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
-    for (const bookingId of ["child-1", "late-child"]) {
-      expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
-        expect.objectContaining({ store: txClient, bookingId, keptCents: 0, site: "group-cancel:organiser-settled-child" }),
-      );
-    }
+    expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+      expect.objectContaining({ store: txClient, bookingId: "child-1", keptCents: 2500, site: "group-cancel:organiser-settled-child" }),
+    );
+    expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
+      expect.objectContaining({ store: txClient, bookingId: "late-child", keptCents: 0, site: "group-cancel:organiser-settled-child" }),
+    );
+    expect(groupLedger.groupSettledChildCancellationKeptCents).toHaveBeenCalledWith(
+      txClient,
+      expect.objectContaining({ id: "child-1" }),
+      { kind: "mirror", plannedRefundCents: 2000 },
+    );
+    expect(groupLedger.postGroupSettlementRefundLedgerLine).toHaveBeenCalledTimes(1);
+    expect(groupLedger.postGroupSettlementRefundLedgerLine).toHaveBeenCalledWith(
+      expect.objectContaining({ store: txClient, bookingId: "child-1", refundCents: 2000, settlement: expect.objectContaining({ id: "settle-1" }) }),
+    );
   });
 
   it("keeps the frozen plan and arms the durable retry when the refund fails (#1351)", async () => {
@@ -1051,6 +1079,14 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
     });
     expect(mocks.paymentUpdate).not.toHaveBeenCalled();
     expect(mocks.enqueueXeroRefund).not.toHaveBeenCalled();
+    // #3854: no refund line until the replay makes the refund, but the kept
+    // figure already counts the frozen plan's refund as owed.
+    expect(groupLedger.postGroupSettlementRefundLedgerLine).not.toHaveBeenCalled();
+    expect(groupLedger.groupSettledChildCancellationKeptCents).toHaveBeenCalledWith(
+      txClient,
+      expect.objectContaining({ id: "child-1" }),
+      { kind: "mirror", plannedRefundCents: 4500 },
+    );
     expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledWith(
       { bookingId: "child-1", recipientMemberId: "joiner-member-1" },
       "joiner@example.com",
@@ -1242,6 +1278,12 @@ describe("executeGroupSettlementRefundPlan (#1351)", () => {
     expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-2", 4500, {
       store: txClient,
     });
+    // #3854: the refund line the inline loop would have posted, beside each mirror.
+    for (const bookingId of ["child-1", "child-2"]) {
+      expect(groupLedger.postGroupSettlementRefundLedgerLine).toHaveBeenCalledWith(
+        expect.objectContaining({ store: txClient, bookingId, refundCents: 4500, settlement: expect.objectContaining({ id: "settle-1" }) }),
+      );
+    }
     expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         bookingId: "child-1",

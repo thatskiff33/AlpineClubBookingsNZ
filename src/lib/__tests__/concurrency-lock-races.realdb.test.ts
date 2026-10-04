@@ -206,6 +206,13 @@ import "./xero-token-credential-store.realdb.test";
 // the executor's seam. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
 // cleans its own `race-3653-` fixtures.
 import "./organiser-child-refund.realdb.test";
+// #3854 reuses it to prove a group organiser's settlement posts its children's
+// money to the booking ledger through the real card settle, the Internet Banking
+// invoice's inbound reconcile, the organiser cancel's refund plan and #3653's
+// per-child refunds, with each child's owed(b) zero and a replay posting nothing.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-3854-` fixtures.
+import "./booking-ledger-group-settlement.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

@@ -132,6 +132,28 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
     }
   });
 
+  it("carries #3854's group-settlement proof into the same harness", () => {
+    const harness = source(
+      resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
+    );
+    expect(harness).toContain('import "./booking-ledger-group-settlement.realdb.test";');
+    const suite = source(
+      resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-group-settlement.realdb.test.ts"),
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    for (const caseName of [
+      "CARD: the real settle confirms each child on the ledger and posts its share under the settlement; owed(b) is zero",
+      "CARD: a replayed webhook, and the poster run again in its own transaction, post nothing more",
+      "#3653: a refund out of the combined card payment posts its card refund from the child's refund row, once",
+      "#3653: a refund Stripe accepted as pending and then failed is reversed on the ledger with its row",
+      "CARD: the organiser's cancel keeps each share less every refund made or owed; once its debts are made, owed(b) is zero",
+      "INTERNET BANKING: the inbound reconcile of the paid combined invoice posts each child's bank receipt; a re-fetch posts nothing more",
+      "INTERNET BANKING: the organiser's cancel posts its frozen plan's bank refund beside each mirror and keeps the rest; owed(b) is zero, and a re-run posts nothing",
+    ]) {
+      expect(suite).toContain(caseName);
+    }
+  });
+
   it("still gates on the harness's variable and carries its three proofs", () => {
     const suite = source(
       resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-posting-key.realdb.test.ts"),
