@@ -643,6 +643,33 @@ async function lines(bookingId: string) {
       300_000,
     );
 
+    it("a pre-#3653 plan whose refund is still in flight: the back-post leaves its refund to the replay, which posts it under the same key", async () => {
+      const g = await strippedGroup("in-flight-plan", "STRIPE", 1);
+      const [id] = g.children;
+      await prisma.groupBookingSettlement.update({ where: { id: g.settlement }, data: { refundPlan: { [id!]: GROUP_CHILD_CENTS / 2 } } });
+      // The inline refund fails (no Stripe key) and the durable retry is queued: no mirror yet.
+      await cancelGroupHistory(NAMES, g);
+      expect((await prisma.payment.findUniqueOrThrow({ where: { bookingId: id! } })).refundedAmountCents).toBe(0);
+      expect(await lines(id!)).toEqual([]);
+
+      const outcome = await runOne(id!, true);
+      expect(outcome).toMatchObject({ kind: "POSTED", steps: ["confirmation (2)", "group share (4500)", "cancellation (kept 2250)"], classes: ["IN_FLIGHT_REFUND"] });
+      expect(about(await census(), id!)).toEqual({ ...NOTHING, classes: ["IN_FLIGHT_REFUND:PRICE"] });
+
+      // The provider's refund goes through on the retry; the real replay writes the mirror and its line.
+      await prisma.groupBookingSettlement.update({ where: { id: g.settlement }, data: { status: "PARTIALLY_REFUNDED" } });
+      const { executeGroupSettlementRefundPlan } = await import("@/lib/group-cancel");
+      const { CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture");
+      expect(await executeGroupSettlementRefundPlan(g.settlement, CLUB_FORMAT_TEST)).toMatchObject({ mirroredChildren: 1 });
+      const { markGroupSettlementRefundRecoverySucceeded } = await import("@/lib/payment-recovery");
+      await markGroupSettlementRefundRecoverySucceeded({ settlementId: g.settlement });
+      expect((await lines(id!)).filter((line) => line.kind === "CARD_REFUND").map((line) => [line.amountCents, line.postingKey])).toEqual([
+        [-GROUP_CHILD_CENTS / 2, `group-settlement:${g.settlement}:refund:${id}`],
+      ]);
+      expect(about(await census(), id!)).toEqual(NOTHING);
+      expect(await runOne(id!, true)).toMatchObject({ kind: "NOTHING_TO_POST" });
+    }, 300_000);
+
     it("shares that do not add up to the settlement are refused: the child stays GROUP_SETTLEMENT_OFF_LEDGER, listed with why", async () => {
       const g = await strippedGroup("corrupt-share", "STRIPE", 2);
       const [first, second] = g.children;
