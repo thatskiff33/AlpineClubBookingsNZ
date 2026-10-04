@@ -199,7 +199,7 @@ export async function POST(
       task: result,
       message: `${
         parsed.data.resolution === "completed"
-          ? completionMessage(result)
+          ? completionMessage(result, format)
           : dismissalMessage(result.kind, result.partPaymentReview)
       }${nightPricesRecordedMessage(result.recordedNightPriceCount)}`,
     });

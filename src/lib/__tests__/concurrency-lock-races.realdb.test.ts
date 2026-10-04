@@ -63,6 +63,11 @@ import "./bed-allocation-removal-races.realdb.test";
 // issue exactly one credit. Its own describe stays skipped unless the shared race
 // flag is set, and its uniquely-namespaced fixtures are cleaned independently.
 import "./edit-financial-review-races.realdb.test";
+// #3809 reuses it to prove a credit-paid booking's price reduction gives back
+// like a card refund through the REAL guest removal and cancel, and that the
+// removal takes the member's credit-ledger key before any Payment row lock.
+// Its describe stays skipped unless the shared race flag is set.
+import "./credit-paid-reduction.realdb.test";
 // #2595 reuses the same guarded disposable PostgreSQL to prove that a member
 // merge cannot leave two people sharing a double bed with no confirmed
 // partnership, driving the real `executeMemberMerge` and the real
@@ -198,6 +203,12 @@ import "./edit-financial-review-charge-raise-claim.realdb.test";
 // orphan heal add nothing, and a cash-only booking is unchanged. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3792-` fixtures.
 import "./ib-capacity-cancel-credit-restore.realdb.test";
+// #3835 reuses it to prove a review completed after the REAL cancel of a
+// captured payment gives back only what the cancellation's refund left owed,
+// by card and by credit plus card at three tiers, on both captured routes and
+// across sibling reviews. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns
+// and cleans its own `race-3835-` fixtures.
+import "./edit-financial-review-captured-cancel.realdb.test";
 // #3454 reuses it to prove the Xero token store's two fences against real row
 // locks: simultaneous refresh-lease claims (this code against itself, and
 // against an older colour's own claim statement) let exactly one through, and a
