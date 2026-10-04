@@ -339,7 +339,7 @@ describe("resolveModificationDocumentLineItems", () => {
     const codeB = { code: "GUESTFREE", xeroItemCode: "FREE-NIGHT", xeroAccountCode: "205" };
     async function codedLone(
       redemptions: Array<typeof codeA>,
-      line: { promoCode: string | null; amountCents: number },
+      line: { promoCode: string | null; amountCents: number; codesBefore?: string[] },
     ) {
       mocks.bookingFindUniqueOrThrow.mockResolvedValue({
         checkIn: day("2026-08-14"),
@@ -381,11 +381,27 @@ describe("resolveModificationDocumentLineItems", () => {
     });
 
     it("a one-code booking losing its code is coded generically, byte for byte as before", async () => {
+      // Its line carries no `codesBefore` — nor does any row stored before the
+      // field existed, which is therefore coded exactly as it always was.
+      mocks.promoCodeFindMany.mockResolvedValue([codeA]);
       expect(await codedLone([], { promoCode: "SUMMER25", amountCents: 5000 })).toEqual({
         itemCode: "HUT-NONMEMBER-ADULT",
         accountCode: undefined,
       });
       expect(mocks.promoCodeFindMany).not.toHaveBeenCalled();
+    });
+
+    it("a several-code booking losing every code, only one moving, is coded to that code's own account", async () => {
+      // Both redemptions were released and deleted; only the line's record of
+      // the codes the booking held before the edit tells this apart from a
+      // one-code booking losing its code.
+      mocks.promoCodeFindMany.mockResolvedValue([codeA]);
+      expect(
+        await codedLone([], { promoCode: "SUMMER25", amountCents: 5000, codesBefore: ["SUMMER25", "GUESTFREE"] }),
+      ).toEqual({ itemCode: "PROMO", accountCode: "260" });
+      expect(mocks.promoCodeFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { code: { in: ["SUMMER25"] } } }),
+      );
     });
 
     it("a several-code fallback line naming no code is coded generically, never to the remaining code", async () => {

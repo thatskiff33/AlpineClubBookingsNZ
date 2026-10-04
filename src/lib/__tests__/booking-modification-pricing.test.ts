@@ -58,7 +58,14 @@ describe("computeModificationPricing per-code promotion sides (#3828)", () => {
       expect.objectContaining({ where: { bookingId: "bk1" } }),
     );
     expect(priceLines).toEqual([
-      { v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: "GUESTFREE", amountCents: 1000 },
+      {
+        v: 1,
+        kind: "PROMO_DELTA",
+        sign: 1,
+        promoCode: "GUESTFREE",
+        amountCents: 1000,
+        codesBefore: ["SUMMER25", "GUESTFREE"],
+      },
     ]);
     expect(sides?.before.promoByCode).toEqual([
       { code: "SUMMER25", amountCents: -3000 },
@@ -89,8 +96,46 @@ describe("computeModificationPricing per-code promotion sides (#3828)", () => {
 
     expect(sides).toEqual({ before, after });
     expect(sides?.before).not.toHaveProperty("promoByCode");
+    // Byte for byte: no `codesBefore` key on a one-code edit's stored line.
+    expect(JSON.stringify(priceLines)).toBe(
+      '[{"v":1,"kind":"PROMO_DELTA","sign":1,"promoCode":"SUMMER25","amountCents":1000}]',
+    );
+  });
+
+  it("a several-code booking losing every code, only one carrying money, records the codes it held (X1)", async () => {
+    // Both codes stop applying: the edit's re-price released both redemptions,
+    // so the after-side re-read finds none — exactly what the document builder
+    // will find later. `codesBefore` is what tells this apart from a one-code
+    // booking losing its only code.
+    const store = storeReturning([]);
+    const { priceLines } = await computeModificationPricing(
+      {
+        bookingId: "bk1",
+        site: "test",
+        promoCodes: {
+          store: store as never,
+          before: {
+            promoRedemptions: [
+              { id: "r1", applicationOrder: 0, priceAdjustmentCents: -5000, promoCode: { code: "SUMMER25" } },
+              { id: "r2", applicationOrder: 1, priceAdjustmentCents: 0, promoCode: { code: "GUESTFREE" } },
+            ],
+          },
+        },
+      },
+      () => ({ before: side(-5000, "SUMMER25, GUESTFREE"), after: side(0, null) }),
+      5000,
+      log,
+    );
+
     expect(priceLines).toEqual([
-      { v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: "SUMMER25", amountCents: 1000 },
+      {
+        v: 1,
+        kind: "PROMO_DELTA",
+        sign: 1,
+        promoCode: "SUMMER25",
+        amountCents: 5000,
+        codesBefore: ["SUMMER25", "GUESTFREE"],
+      },
     ]);
   });
 

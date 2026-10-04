@@ -241,10 +241,13 @@ describe("diffBookingPricing", () => {
 
     const lines = linesOf(diffBookingPricing(before, after, -1500));
 
-    // The stored shape is unchanged, so an old reader takes both lines.
+    // The stored shape is unchanged but for the optional `codesBefore` (the
+    // codes held before the edit, as there were several), so an old reader
+    // takes both lines.
+    const codesBefore = ["SUMMER25", "GUESTFREE"];
     expect(lines).toEqual([
-      { v: 1, kind: "PROMO_DELTA", sign: -1, promoCode: "SUMMER25", amountCents: -1000 },
-      { v: 1, kind: "PROMO_DELTA", sign: -1, promoCode: "LATE", amountCents: -500 },
+      { v: 1, kind: "PROMO_DELTA", sign: -1, promoCode: "SUMMER25", amountCents: -1000, codesBefore },
+      { v: 1, kind: "PROMO_DELTA", sign: -1, promoCode: "LATE", amountCents: -500, codesBefore },
     ]);
     expect(parseModificationLines(lines)).toEqual(lines);
   });
@@ -265,8 +268,9 @@ describe("diffBookingPricing", () => {
         2000,
       ),
     );
+    const codesBefore = ["SUMMER25", "GUESTFREE"];
     expect(released).toEqual([
-      { v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: "GUESTFREE", amountCents: 2000 },
+      { v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: "GUESTFREE", amountCents: 2000, codesBefore },
     ]);
 
     const disagreeing = linesOf(
@@ -279,8 +283,16 @@ describe("diffBookingPricing", () => {
     // The fallback is not one code's change, so it names none and is coded
     // generically — never to SUMMER25 alone (E3 of the #3828 review).
     expect(disagreeing).toEqual([
-      { v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: null, amountCents: 2000 },
+      { v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: null, amountCents: 2000, codesBefore },
     ]);
+  });
+
+  it("a stored line's codesBefore must be a list of codes, or absent (#3828 X1)", () => {
+    const line = { v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: "SUMMER25", amountCents: 5000 };
+    expect(parseModificationLines([line])).toEqual([line]);
+    expect(parseModificationLines([{ ...line, codesBefore: ["SUMMER25", "GUESTFREE"] }])).not.toBeNull();
+    expect(parseModificationLines([{ ...line, codesBefore: "SUMMER25" }])).toBeNull();
+    expect(parseModificationLines([{ ...line, codesBefore: ["SUMMER25", 7] }])).toBeNull();
   });
 
   it("a one-code edit's single line still names its code, before and after (#3828)", () => {
@@ -288,10 +300,11 @@ describe("diffBookingPricing", () => {
     expect(
       linesOf(diffBookingPricing(side([guest("a")], -5000, "SUMMER25"), side(keep, -3000, "SUMMER25"), 2000)),
     ).toEqual([{ v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: "SUMMER25", amountCents: 2000 }]);
-    // Its code removed: the line names the code the booking had.
+    // Its code removed: the line names the code the booking had, and carries
+    // no `codesBefore` key at all — byte for byte as before #3828.
     expect(
-      linesOf(diffBookingPricing(side([guest("a")], -5000, "SUMMER25"), side(keep, 0, null), 5000)),
-    ).toEqual([{ v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: "SUMMER25", amountCents: 5000 }]);
+      JSON.stringify(linesOf(diffBookingPricing(side([guest("a")], -5000, "SUMMER25"), side(keep, 0, null), 5000))),
+    ).toBe('[{"v":1,"kind":"PROMO_DELTA","sign":1,"promoCode":"SUMMER25","amountCents":5000}]');
   });
 
   it("INV-MOD-028: any unpriced night on either side yields no lines", () => {

@@ -7,8 +7,8 @@
  * each naming its code, so the supplementary invoice or credit note the edit
  * raises codes each code's change to that code (`xero-modification-line-items.ts`).
  * The stored line's shape is unchanged — `v, kind, sign, promoCode,
- * amountCents` — so a reader that predates this accepts several lines as it
- * accepts one.
+ * amountCents`, plus an optional `codesBefore` a reader that predates it
+ * ignores — so such a reader accepts several lines as it accepts one.
  *
  * Split only when BOTH sides state their codes' figures and at least one side
  * carries more than one code, and only when the per-code changes add up to the
@@ -86,6 +86,20 @@ export function modificationPromoDeltaCents(
  * fallback line.
  */
 export function modificationPromoDeltas(
+  before: PromoSide,
+  after: PromoSide,
+): Array<{ promoCode: string | null; amountCents: number; codesBefore?: string[] }> {
+  const deltas = promoDeltasWithoutBeforeCodes(before, after);
+  // The codes the booking carried before the edit, recorded on each line ONLY
+  // where it carried several: by the time the document is built a released
+  // code's redemption is deleted, so without this a several-code booking that
+  // lost every code, with one of them moving, would read as a one-code booking
+  // losing its code. A one-code edit's lines carry no such field, byte for byte.
+  const codesBefore = before.promoByCode?.map((entry) => entry.code) ?? [];
+  return codesBefore.length > 1 ? deltas.map((delta) => ({ ...delta, codesBefore })) : deltas;
+}
+
+function promoDeltasWithoutBeforeCodes(
   before: PromoSide,
   after: PromoSide,
 ): Array<{ promoCode: string | null; amountCents: number }> {

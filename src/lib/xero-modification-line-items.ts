@@ -65,6 +65,8 @@ import {
 } from "@/lib/edit-financial-review-charge-shape";
 import type { ClubFormat } from "@/lib/club-format";
 
+type PromoDeltaLine = Extract<ModificationLine, { kind: "PROMO_DELTA" }>;
+
 export type ModificationDocumentKind = "SUPPLEMENTARY_INVOICE" | "MODIFICATION_CREDIT_NOTE";
 
 /** The change-fee line's words, on every document that carries one. */
@@ -108,9 +110,10 @@ export type ModificationDocumentCodingContext = {
  */
 export async function loadModificationDocumentCodingContext(
   bookingId: string,
-  /** The codes the document's `PROMO_DELTA` lines name, in line order. */
-  lineCodes: ReadonlyArray<string | null> = [],
+  /** The document's `PROMO_DELTA` lines, in line order. */
+  promoLines: ReadonlyArray<Pick<PromoDeltaLine, "promoCode" | "codesBefore">> = [],
 ): Promise<ModificationDocumentCodingContext> {
+  const lineCodes = promoLines.map((line) => line.promoCode);
   const booking = await prisma.booking.findUniqueOrThrow({
     where: { id: bookingId },
     select: {
@@ -142,18 +145,20 @@ export async function loadModificationDocumentCodingContext(
   // coding this document always had already says the same thing. Kept as it
   // was, byte for byte:
   //  - one line naming the booking's sole code: that code;
-  //  - one line and no code left on the booking: generic. A one-code booking
-  //    losing its code is coded generically as it always was, and from the
-  //    stored lines that case cannot be told from a several-code booking
-  //    losing every code with only one of them moving (the released rows are
-  //    deleted), so it stays generic too.
+  //  - one line and no code left on the booking, which held at most one code
+  //    before the edit: generic. A one-code booking losing its code is coded
+  //    generically as it always was.
   // Anything else — several codes or lines, a line naming a code the booking
-  // no longer carries beside the one it does, or a line naming none (the
-  // several-code fallback) — is coded per line.
+  // no longer carries beside the one it does, a line naming none (the
+  // several-code fallback), or a booking that held several codes before the
+  // edit (`codesBefore`, which tells it apart once the released redemptions
+  // are deleted) — is coded per line. A stored row written before
+  // `codesBefore` existed carries none and is coded as it always was.
   const perCode =
     redemptions.length > 1 ||
     lineCodes.length > 1 ||
-    (redemptions.length === 1 && lineCodes.some((code) => code !== sole));
+    (redemptions.length === 1 && lineCodes.some((code) => code !== sole)) ||
+    promoLines.some((line) => (line.codesBefore?.length ?? 0) > 1);
   let promosByCode: ModificationDocumentCodingContext["promosByCode"];
   if (perCode) {
     const byCode = new Map(
@@ -416,7 +421,7 @@ export async function resolveModificationDocumentLineItems(args: {
     }
     const context = await loadModificationDocumentCodingContext(
       args.bookingId,
-      selection.lines.flatMap((line) => (line.kind === "PROMO_DELTA" ? [line.promoCode] : [])),
+      selection.lines.filter((line): line is PromoDeltaLine => line.kind === "PROMO_DELTA"),
     );
     const lineItems = buildModificationDocumentLineItems({
       lines: selection.lines,

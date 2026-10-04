@@ -101,6 +101,8 @@ export type ModificationLine =
       promoCode: string | null;
       /** The signed change in `promoAdjustmentCents`. */
       amountCents: number;
+      /** #3828: the codes held before the edit, only where there were several. */
+      codesBefore?: string[];
     };
 
 /** One side of an edit: every guest and the nights they hold, gross-priced. */
@@ -332,6 +334,7 @@ export function diffBookingPricing(
       sign: delta.amountCents > 0 ? 1 : -1,
       promoCode: delta.promoCode,
       amountCents: delta.amountCents,
+      ...(delta.codesBefore ? { codesBefore: delta.codesBefore } : {}),
     });
   }
 
@@ -373,7 +376,11 @@ function isLine(value: unknown): value is ModificationLine {
   if (line.sign !== 1 && line.sign !== -1) return false;
   if (!Number.isInteger(line.amountCents)) return false;
   if (line.kind === "PROMO_DELTA") {
-    return line.promoCode === null || typeof line.promoCode === "string";
+    return (
+      (line.promoCode === null || typeof line.promoCode === "string") &&
+      (line.codesBefore === undefined ||
+        (Array.isArray(line.codesBefore) && line.codesBefore.every((code) => typeof code === "string")))
+    );
   }
   if (line.kind !== "GUEST_NIGHTS") return false;
   return (
