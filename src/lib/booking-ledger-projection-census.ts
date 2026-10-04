@@ -229,21 +229,52 @@ function hasMoneyColumns(row: BookingLedgerCensusRow): boolean {
 }
 
 /**
- * Edits a booking confirmed on the ledger made that posted no line (design
- * §5.1's sum-or-nothing refusals, "logged for C4 to count"), and change fees
- * no line records — including one charged before confirmation (#3611 V4).
+ * The edits made after a booking's confirmation on the ledger that no line is
+ * anchored on, in the order they were made, split in two by ONE rule the census
+ * and the back-post share (`INV-SSOT`; #3583's review, M1):
+ *
+ * - `awaiting`: no later edit has lines. Its movement is not on the ledger
+ *   until something posts it — design §5.1's sum-or-nothing refusal, "logged for
+ *   C4 to count" — so it is coverage.
+ * - `carriedByLater`: a later edit has lines. Either the back-post re-derived
+ *   every unposted edit's nights onto that later one (the night rows say only
+ *   where the nights ended, never which edit moved which), or a live edit
+ *   posted past it. In the first case the ledger carries it; in the second the
+ *   price identity shows the gap as a disagreement, which still holds the gate.
+ *   Never coverage: an edit cannot wait for a line once a later one has posted.
+ */
+export function postConfirmationEditsWithoutLines(
+  modifications: ReadonlyArray<{ id: string; createdAt: Date }>,
+  lines: ReadonlyArray<Pick<CensusLedgerLine, "anchorKind" | "anchorId" | "postedAt">>,
+): { awaiting: string[]; carriedByLater: string[] } {
+  const confirmations = lines.filter((line) => line.anchorKind === "CONFIRMATION");
+  if (confirmations.length === 0) return { awaiting: [], carriedByLater: [] };
+  const confirmedAt = Math.min(...confirmations.map((line) => line.postedAt.getTime()));
+  const withLines = new Set(lines.filter((line) => line.anchorKind === "MODIFICATION").map((line) => line.anchorId));
+  const ordered = [...modifications]
+    .filter((modification) => modification.createdAt.getTime() > confirmedAt)
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const lastWithLines = ordered.map((modification) => withLines.has(modification.id)).lastIndexOf(true);
+  const awaiting: string[] = [];
+  const carriedByLater: string[] = [];
+  ordered.forEach((modification, index) => {
+    if (withLines.has(modification.id)) return;
+    (index < lastWithLines ? carriedByLater : awaiting).push(modification.id);
+  });
+  return { awaiting, carriedByLater };
+}
+
+/**
+ * Edits awaiting a line (above), and change fees no line records — including
+ * one charged before confirmation (#3611 V4).
  */
 function unpostedEdits(row: BookingLedgerCensusRow): { priceCents: number; changeFeeCents: number } {
-  const confirmations = row.lines.filter((line) => line.anchorKind === "CONFIRMATION");
-  const confirmedAt = confirmations.length > 0 ? Math.min(...confirmations.map((line) => line.postedAt.getTime())) : null;
   const keys = new Set(row.lines.flatMap((line) => (line.postingKey ? [line.postingKey] : [])));
+  const awaiting = new Set(postConfirmationEditsWithoutLines(row.modifications, row.lines).awaiting);
   let priceCents = 0;
   let changeFeeCents = 0;
   for (const modification of row.modifications) {
-    const posted = row.lines.some((line) => line.anchorKind === "MODIFICATION" && line.anchorId === modification.id);
-    if (confirmedAt !== null && modification.createdAt.getTime() > confirmedAt && !posted) {
-      priceCents += modification.priceDiffCents;
-    }
+    if (awaiting.has(modification.id)) priceCents += modification.priceDiffCents;
     if (modification.changeFeeCents > 0 && !keys.has(modificationChangeFeeKey(modification.id))) {
       changeFeeCents += modification.changeFeeCents;
     }

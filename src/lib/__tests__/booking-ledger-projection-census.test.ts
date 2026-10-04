@@ -17,7 +17,7 @@ import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-p
 import { planCreditLines, planHandBackLine } from "@/lib/booking-ledger-credit-posting";
 import { planAgreedAdjustmentLine, planModificationChargeLines } from "@/lib/booking-ledger-modification-posting";
 import { agreedGiveBackKey } from "@/lib/booking-ledger-posting-keys";
-import { evaluateBookingLedgerIdentities, type BookingLedgerIdentity } from "@/lib/booking-ledger-projection-census";
+import { evaluateBookingLedgerIdentities, postConfirmationEditsWithoutLines, type BookingLedgerIdentity } from "@/lib/booking-ledger-projection-census";
 import {
   BOOKING_LEDGER_ACKNOWLEDGEMENT_FILE,
   draftBookingLedgerAcknowledgements,
@@ -1168,6 +1168,44 @@ describe("coverage: the gap before the back-post, named and holding the gate", (
     expect(evaluateBookingLedgerIdentities(subject).coverage).toEqual(["UNPOSTED_EDIT"]);
     for (const by of [1, -1]) expect(identity({ ...subject, booking: { ...subject.booking, finalPriceCents: 21_500 + by } }, "PRICE").status).toBe("DISAGREE");
     expect(identity({ ...subject, modifications: [{ ...subject.modifications[0]!, createdAt: EARLIER }] }, "PRICE").status).toBe("DISAGREE");
+  });
+
+  it("one rule with the back-post: an unposted edit a later edit with lines has passed is carried, never coverage; the latest stays coverage (review M1)", () => {
+    const at = (iso: string) => new Date(iso);
+    const confirmation = { anchorKind: "CONFIRMATION" as const, anchorId: B, postedAt: at("2026-06-01T00:00:00.000Z") };
+    const edits = [
+      { id: "e1", createdAt: at("2026-06-02T00:00:00.000Z") },
+      { id: "e2", createdAt: at("2026-06-03T00:00:00.000Z") },
+      { id: "e3", createdAt: at("2026-06-04T00:00:00.000Z") },
+      { id: "e0", createdAt: at("2026-05-01T00:00:00.000Z") },
+    ];
+    const onE2 = { anchorKind: "MODIFICATION" as const, anchorId: "e2", postedAt: at("2026-06-05T00:00:00.000Z") };
+    expect(postConfirmationEditsWithoutLines(edits, [confirmation])).toEqual({ awaiting: ["e1", "e2", "e3"], carriedByLater: [] });
+    expect(postConfirmationEditsWithoutLines(edits, [confirmation, onE2])).toEqual({ awaiting: ["e3"], carriedByLater: ["e1"] });
+    expect(postConfirmationEditsWithoutLines(edits, [])).toEqual({ awaiting: [], carriedByLater: [] });
+
+    // In the census: the carried edit's money is a disagreement where the ledger
+    // lacks it, never coverage; with no later posted edit it stays coverage.
+    const unposted = { id: "m9", modificationType: "BATCH_MODIFY", priceDiffCents: 2_500, changeFeeCents: 0, createdAt: LATER, reviewRebase: null };
+    const subject = { ...cardPaid(), booking: { id: B, status: "PAID" as const, deletedAt: null, organiserSettled: false, finalPriceCents: 21_500 }, modifications: [unposted] };
+    expect(identity(subject, "PRICE").status).toBe("COVERAGE");
+    const later = { id: "m10", modificationType: "BATCH_MODIFY", priceDiffCents: 0, changeFeeCents: 500, createdAt: new Date(LATER.getTime() + 60_000), reviewRebase: null };
+    // m10's change fee, as the edit planner posts it (the back-post's own change-fee-only plan).
+    const feePlan = planModificationChargeLines({
+      bookingId: B,
+      lodgeId: "lodge",
+      bookingModificationId: "m10",
+      before: { guests: [], promoAdjustmentCents: 0 },
+      after: { guests: [], promoAdjustmentCents: 0 },
+      changeFeeCents: 500,
+      expectedCents: 500,
+      postedLines: [],
+    });
+    const fee = new Ledger().post(feePlan.kind === "lines" ? feePlan.postings : [], later.createdAt).lines.map((line) => ({ ...line, id: `fee-${line.id}` }));
+    expect(fee).toHaveLength(1);
+    const passed = { ...subject, payment: payment({ ...subject.payment, changeFeeCents: 500 }), modifications: [unposted, later], lines: [...subject.lines, ...fee] };
+    expect(identity(passed, "PRICE").status).toBe("DISAGREE");
+    expect(evaluateBookingLedgerIdentities(passed).coverage).not.toContain("UNPOSTED_EDIT");
   });
 
   it("UNPOSTED_CHANGE_FEE: a fee charged before confirmation has no line (#3611 V4)", () => {
