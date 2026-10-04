@@ -12,7 +12,7 @@ format, which `INV-LOCK-004` forbids it to read under the locks), the figure
 carried out on the door's result, and the line that passes it on.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2645
+lines: 2656
 reason: passes the club's day and format into the shared settlement, carries
   the credit given back on its result and response, and passes it to this
   door's one Xero dispatch and one "Booking Modified" email.
@@ -20,18 +20,18 @@ reason: passes the club's day and format into the shared settlement, carries
   cancellation caps by (`creditGiveBackHistory`).
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2353
+lines: 2364
 reason: the same as the batch door: the settlement's two inputs, the figure on
   its result and response, its Xero dispatch and its two emails.
 
 file: src/lib/booking-guest-removal-service.ts
-lines: 1529
+lines: 1540
 reason: passes the club's day and format into the shared settlement and carries
   the credit given back out on the removal's result, for the route's and the
   consent doors' shared Xero leg.
 
 file: src/lib/member-guest-consent-service.ts
-lines: 1307
+lines: 1313
 reason: a decline or expiry is a guest removal and now reaches Xero like one;
   the Xero figures travel on the outcome to the one post-commit finaliser this
   file already owns, which queues the shared leg. Moving the finaliser out would
@@ -44,7 +44,7 @@ reason: the "Booking Modified" sender's flat body composes the credit-given-back
   `booking-credit-give-back-copy.ts`.
 
 file: src/lib/booking-cancel.ts
-lines: 2628
+lines: 2781
 reason: the paid path asks whether the booking was reduced through #3809's
   settlement before it caps the credit (owner decision of 4 Oct 2026) and
   freezes the base on its CANCELLED snapshot; the unpaid branch tiers a
@@ -58,7 +58,7 @@ reason: the quote states what saving would give back, from the same figure the
   save computes (`previewPaidReductionCreditGiveBackCents`).
 
 file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1717
+lines: 1723
 reason: one line: the guest-add email passes 0 for the credit given back, which
   the sender now requires of every caller.
 
@@ -71,7 +71,7 @@ reason: the missing-modification-credit-note finding sizes a credit-paid
   without it; the rules for that finding live only here.
 
 file: src/lib/xero-inbound/credit-note-repairs.ts
-lines: 1135
+lines: 1142
 reason: the fold of earlier modification notes into a payment's refunded total
   leaves out notes worded as account credit (no cash moved); the reader lives
   in `account-credit-modification-notes.ts`, the filter where the fold is.
