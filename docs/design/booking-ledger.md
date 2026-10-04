@@ -607,7 +607,12 @@ posts already holds its nights, or, on a booking C1 confirmed, the nights every
 unposted later edit moved, re-derived from the live lines and the night rows,
 anchored on the latest of them and checked against their `priceDiffCents` (a
 re-price's recorded movement), with `priceLines` read only to check that
-total; and the cancellation poster, with the kept figure the CANCELLED event
+total. Which edits still await lines is ONE rule the census shares
+(`postConfirmationEditsWithoutLines`): an edit with no line of its own that a
+later edit with lines has passed is carried, never coverage — the back-post
+folded its nights onto that later one, or a live edit posted past it and the
+price identity shows any gap as a disagreement — so a second run finds nothing
+left; and the cancellation poster, with the kept figure the CANCELLED event
 froze or, on a snapshot from before #3611, that figure replayed from its frozen
 retained figure and the booking's credit rows through `cancellationKeptCents`.
 It takes the live posters' locks in canonical order (`lock(1)`, the lodge key,
@@ -616,9 +621,11 @@ under them. **Never guessed:** the booking is then judged by this census's own
 evaluation inside the same transaction, and one left disagreeing, gapped or
 with an integrity finding is rolled back and listed with its reason and both
 figures; so is one it cannot plan (an unpriced night, nights that do not make
-the final price). A named class is not a refusal. A group-settled child with no
+the final price), and so is one whose transaction fails for any other reason
+(`UNEXPECTED_ERROR`) or waits past its lock timeout (`LOCK_TIMEOUT`), without
+stopping the run. A named class is not a refusal. A group-settled child with no
 money of its own is left to #3854. The dry run is the same transaction, rolled
-back. What it does not reconstruct, and so lists: a review give-back or stand-in
+back. Every run has an id and window, and names each line it inserted. What it does not reconstruct, and so lists: a review give-back or stand-in
 a closure before #3582 would have posted, an edit-review hand-back made by hand
 before #3599, and a legacy refund with no `PaymentRefund` row.
 

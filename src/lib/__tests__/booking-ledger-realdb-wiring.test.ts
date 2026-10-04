@@ -163,15 +163,16 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
     for (const command of [
       "src/lib/__tests__/booking-ledger-history-seed.realdb.test.ts",
       "booking-ledger:census --fail-on-gap",
-      "booking-ledger:back-post --apply",
       'grep -q "posted: 0 (0 line(s))"',
       "booking-ledger:census --write-acknowledgement-draft",
       "booking-ledger:census --acknowledged",
     ]) {
       expect(gate).toContain(command);
     }
-    // The draft may name only the classes the history is built to show.
-    expect(gate).toContain(`expected_classes='["REFUND_MIRROR_HAND_BACK"]'`);
+    // The draft must be exactly the class instances the history is built to show, to the cent.
+    expect(gate).toContain(`expected_acknowledgements='[{"bookingId":"seed-3583-cash-cancel-handback","class":"REFUND_MIRROR_HAND_BACK","cents":10000}]'`);
+    expect(gate).toContain('booking-ledger:back-post --apply --confirm-database "$database"');
+    expect(gate).toContain("trap cleanup EXIT");
   });
 
   it("carries #3792's late capacity-cancel credit-restore proof into the same harness", () => {

@@ -1779,15 +1779,25 @@ a line: it only appends, through the one write door.
   `posted: 0 (0 line(s))`.
 - **Safe on a live database**, but run it off-peak: each booking takes the global
   booking lock briefly, so a settle, cancel or edit on the same booking either
-  finishes first or waits for it. Exit status 2 means at least one booking was
-  listed `CANNOT POST`.
+  finishes first or waits for it; a booking whose rows another writer holds for
+  more than five seconds is rolled back and listed `LOCK_TIMEOUT`, for a re-run.
+  One booking's unexpected error rolls back only that booking and is listed
+  `UNEXPECTED_ERROR` with the message; the run goes on. Each booking is printed
+  as it finishes. Exit status 2 means at least one booking was listed
+  `CANNOT POST`.
+- **It names its target.** It prints the host and database first, and `--apply`
+  refuses unless `--confirm-database <name>` names the database `DATABASE_URL`
+  points at.
+- **Every run can be found again.** `--json` prints the run's id, its start and
+  finish, and per booking the id of every line it inserted. Keep that output
+  with the run.
 
 ```bash
 DATABASE_URL=<...> pnpm run booking-ledger:back-post                  # dry run, every booking
-DATABASE_URL=<...> pnpm run booking-ledger:back-post --apply          # post
-DATABASE_URL=<...> pnpm run booking-ledger:back-post --booking <id>   # one booking
+DATABASE_URL=<...> pnpm run booking-ledger:back-post --apply --confirm-database <name>   # post
+DATABASE_URL=<...> pnpm run booking-ledger:back-post --booking <id>   # one booking; repeat for several
 DATABASE_URL=<...> pnpm run booking-ledger:back-post --limit <n>      # the first n bookings by id
-DATABASE_URL=<...> pnpm run booking-ledger:back-post --json           # the report, then the whole result as JSON
+DATABASE_URL=<...> pnpm run booking-ledger:back-post --json           # the report, then the run id, window and line ids as JSON
 ```
 
 **Reading the report.** One summary line — bookings, how many it posted (or
@@ -1802,7 +1812,9 @@ booking that posts or cannot:
 - `CANNOT POST <id>  <reason>: …`. `UNPRICED_NIGHT` — a strand has a night with
   no price, which is an open review: close the review, then re-run.
   `CONFIRMATION_DOES_NOT_RECONCILE` — the night rows and promotion do not make
-  the booking's final price; an officer looks at the booking. `EDIT_NOT_DERIVABLE`,
+  the booking's final price; an officer looks at the booking. `LOCK_TIMEOUT` —
+  another writer held the booking; re-run. `UNEXPECTED_ERROR` — anything else
+  (a legacy negative night price, for one), with its message. `EDIT_NOT_DERIVABLE`,
   `PRICE_LINES_DISAGREE`, `REBASE_MOVEMENT_UNREADABLE`, `LIVE_LINE_NOT_ONE_NIGHT`
   — an old edit cannot be re-derived from what the rows hold. `CENSUS_WOULD_NOT_PASS`
   — the lines it could post would leave the census disagreeing, gapped or
@@ -1832,8 +1844,8 @@ rehearsal on a restored backup, then for real.
 
    pnpm run booking-ledger:census                         # expect GATE_CLOSED, on coverage
    pnpm run booking-ledger:back-post                      # dry run: read every CANNOT POST
-   pnpm run booking-ledger:back-post --apply
-   pnpm run booking-ledger:back-post --apply              # must say "posted: 0 (0 line(s))"
+   pnpm run booking-ledger:back-post --apply --confirm-database postgres --json > ~/ledger-backpost-rehearsal.txt
+   pnpm run booking-ledger:back-post --apply --confirm-database postgres   # must say "posted: 0 (0 line(s))"
    pnpm run booking-ledger:census
    pnpm run booking-ledger:census --write-acknowledgement-draft ~/ledger-ack-rehearsal.json
    #   review the draft line by line (the class-list workflow above)
@@ -1855,16 +1867,28 @@ rehearsal on a restored backup, then for real.
    GRANT CONNECT ON DATABASE <database> TO ledger_census;
    GRANT USAGE ON SCHEMA public TO ledger_census;
    GRANT SELECT ON ALL TABLES IN SCHEMA public TO ledger_census;
+   -- Every session it opens is read-only, whatever the client asks for.
+   ALTER ROLE ledger_census SET default_transaction_read_only = on;
    ```
 
+   Keep its password out of the shell history and the URL: put it in a
+   `PGPASSFILE` readable only by you (`host:port:database:ledger_census:password`,
+   `chmod 600`), which the database client reads when the URL carries no
+   password.
+
+   **Take a backup immediately before `--apply`** (Admin → Backups, or the
+   backup job run by hand), and keep the `--json` output of the run beside it.
+
    ```bash
-   CENSUS_URL=postgresql://ledger_census:<password>@<host>:5432/<database>
+   export PGPASSFILE=~/.ledger-census.pgpass         # chmod 600; written with an editor, not echo
+   CENSUS_URL=postgresql://ledger_census@<host>:5432/<database>
    APP_URL=<the application's DATABASE_URL>
 
    DATABASE_URL="$CENSUS_URL" pnpm run booking-ledger:census
    DATABASE_URL="$APP_URL"    pnpm run booking-ledger:back-post             # dry run; compare with the rehearsal
-   DATABASE_URL="$APP_URL"    pnpm run booking-ledger:back-post --apply
-   DATABASE_URL="$APP_URL"    pnpm run booking-ledger:back-post --apply     # must post nothing
+   #   take the backup now
+   DATABASE_URL="$APP_URL"    pnpm run booking-ledger:back-post --apply --confirm-database <database> --json > ~/ledger-backpost-run.txt
+   DATABASE_URL="$APP_URL"    pnpm run booking-ledger:back-post --apply --confirm-database <database>   # must post nothing
    DATABASE_URL="$CENSUS_URL" pnpm run booking-ledger:census --write-acknowledgement-draft ~/ledger-ack.json
    #   review it as in the rehearsal; carry over the reviewed rehearsal entries that still apply
    DATABASE_URL="$CENSUS_URL" pnpm run booking-ledger:census --acknowledged ~/ledger-ack.json --fail-on-gap
@@ -1873,6 +1897,21 @@ rehearsal on a restored backup, then for real.
    A booking that changed between the rehearsal and production is expected to
    differ; anything listed on production and not in the rehearsal is read the
    same way before going on.
+
+**If a run posted something wrong.** Nothing reads a line until #3584, so a
+wrong line costs nothing but holding the gate: the census names the booking.
+Lines are never edited or deleted (`INV-MONEY-032`); a correction is a reversal
+(`reversal:<lineId>`) through the one write door, anchored on the event that
+takes the line back. There is deliberately no command that reverses a whole
+back-post yet: the census accepts a reversal only on an edit, cancellation,
+review, transaction or refund anchor, so reversing a confirmation or a credit
+line would itself be an integrity finding, and a booking whose confirmation is
+reversed cannot be back-posted again under the same keys (its confirmation is
+fenced, design §4.1a). So report the booking on #3583 with the run's `--json`
+(its line ids) and the census figures, and it is corrected by a reviewed change.
+Undoing a whole run is the backup taken just before `--apply`, restored in a
+maintenance window — an owner's decision on #3583, because it also loses every
+write made since.
 
 **What holds the gate**, and so keeps every reader off the ledger (#3584): any
 unclassified disagreement, any coverage gap (a booking the back-post listed

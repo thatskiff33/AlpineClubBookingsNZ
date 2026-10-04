@@ -1582,8 +1582,12 @@ mispricing a booking.
   (`lockBookingForBackPost`, #3583): the operator back-post posts a historical
   booking's ledger lines on a live database, one booking per transaction. It
   takes `pg_advisory_xact_lock(1)` (the key every settle, cancel, edit and
-  closure posts under), the booking's lodge key, the member credit-ledger key of
-  every member its credit rows name (sorted), then `SELECT 1 FROM "Payment" …
+  closure posts under), then `SET LOCAL lock_timeout = '5s'` so no later wait
+  holds the global key for long (a booking that times out is rolled back and
+  listed `LOCK_TIMEOUT` for a re-run), the booking's lodge key, then reads the
+  owner — only now, because member merge re-points it holding the lodge key
+  (the settle's order since #3792) — the member credit-ledger key of every
+  member its credit rows name (sorted), then `SELECT 1 FROM "Payment" …
   FOR NO KEY UPDATE` and `SELECT 1 FROM "Booking" … FOR NO KEY UPDATE`, and
   re-reads everything under them. Payment before booking is the order of the
   one settlement writer that reaches the ledger without lock(1), the card-refund
