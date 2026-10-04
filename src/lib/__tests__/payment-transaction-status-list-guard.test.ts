@@ -260,9 +260,11 @@ function unregisteredAggregateCapturedStatusReaders(files: readonly SourceFile[]
  * BY NAME ONLY, and that is its whole reach: it reads the argument's spelling,
  * not its type. It catches a receiver whose last segment before `.status` is
  * named `payment` (handed to the transaction leaf) or whose chain names a
- * `transaction` (handed to the aggregate leaf). A transaction row held in a
- * variable called `row`, `entry` or `p`, or a status first copied into a local,
- * passes. The importer registry above is what bounds the aggregate side
+ * `transaction` (handed to the aggregate leaf). `hasCapturedPayment(…)` asks
+ * the aggregate question of a whole row and type-checks on any `{ status }`, so
+ * it is held the same way: handed a value whose chain names a `transaction`, it
+ * fails (#3630). A transaction row held in a variable called `row`, `entry` or
+ * `p`, or a status first copied into a local, passes. The importer registry above is what bounds the aggregate side
  * structurally; this is a cheap tripwire on top of it, not a type check.
  */
 function crossedStatusAuthorityCalls(files: readonly SourceFile[]): string[] {
@@ -270,10 +272,14 @@ function crossedStatusAuthorityCalls(files: readonly SourceFile[]): string[] {
     /\bisCapturedTransactionStatus\(\s*(?:[\w?.]+\.)?payment\??\.status\b/;
   const aggregateLeafOnTransaction =
     /\bisCapturedPaymentStatus\(\s*[\w?.]*(?:transaction|Transaction)[\w?.]*\.status\b/;
+  const aggregateRowPredicateOnTransaction =
+    /\bhasCapturedPayment\(\s*[\w?.!]*(?:transaction|Transaction)[\w?.!]*\s*[,)]/;
   return files
     .filter(({ source }) => {
       const code = stripComments(source);
-      return transactionLeafOnPayment.test(code) || aggregateLeafOnTransaction.test(code);
+      return transactionLeafOnPayment.test(code) ||
+        aggregateLeafOnTransaction.test(code) ||
+        aggregateRowPredicateOnTransaction.test(code);
     })
     .map(({ file }) => file);
 }
@@ -290,6 +296,11 @@ describe("INV-SSOT: captured Payment and PaymentTransaction status guard (#3606,
   it("rejects handwritten captured triples and unregistered aggregate authority readers", () => {
     const files = productionSourceFiles();
     expect(unexplainedCapturedStatusCopies(files)).toEqual([]);
+    // A named exception for a file the walk no longer finds is skipped by the
+    // drift count above, so it would sit ready to excuse a copy at a path that
+    // is later recreated. Every exception names a file that exists (#3630).
+    const scanned = new Set(files.map(({ file }) => file));
+    expect(NAMED_EXCEPTIONS.map(({ file }) => file).filter((file) => !scanned.has(file))).toEqual([]);
     expect(aggregateCapturedStatusAuthorityReaders(files)).toEqual(
       [...AGGREGATE_CAPTURED_STATUS_AUTHORITY_READERS.keys()].sort(),
     );
@@ -303,8 +314,10 @@ describe("INV-SSOT: captured Payment and PaymentTransaction status guard (#3606,
       { file: "src/lib/b.ts", source: "isCapturedTransactionStatus(booking.payment?.status ?? '')" },
       { file: "src/lib/c.ts", source: "isCapturedPaymentStatus(paymentTransaction.status)" },
       { file: "src/lib/d.ts", source: "isCapturedPaymentStatus(transaction.status)" },
-      { file: "src/lib/ok.ts", source: "isCapturedTransactionStatus(paymentTransaction.status); isCapturedPaymentStatus(payment.status)" },
-    ])).toEqual(["src/lib/a.ts", "src/lib/b.ts", "src/lib/c.ts", "src/lib/d.ts"]);
+      { file: "src/lib/e.ts", source: "hasCapturedPayment(paymentTransaction)" },
+      { file: "src/lib/f.ts", source: "hasCapturedPayment(capturedTransaction!, extra)" },
+      { file: "src/lib/ok.ts", source: "isCapturedTransactionStatus(paymentTransaction.status); isCapturedPaymentStatus(payment.status); hasCapturedPayment(child.payment)" },
+    ])).toEqual(["src/lib/a.ts", "src/lib/b.ts", "src/lib/c.ts", "src/lib/d.ts", "src/lib/e.ts", "src/lib/f.ts"]);
   });
 
   it("fails new hand-written captured readers, in every shape", () => {
@@ -322,6 +335,10 @@ describe("INV-SSOT: captured Payment and PaymentTransaction status guard (#3606,
       "backtick-array": "const captured = [`SUCCEEDED`, `PARTIALLY_REFUNDED`, `REFUNDED`];",
       "includes-member": "if (['REFUNDED', 'SUCCEEDED', 'PARTIALLY_REFUNDED'].includes(paymentTransaction.status)) {}",
       "includes-bare": "if ([PaymentStatus.REFUNDED, PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED].includes(status)) {}",
+      // The two cast spellings #3635's separate guard was written for; folded
+      // in here by #3630 once both guards reached `main` together.
+      "includes-as-const": "const hit = ([PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED, PaymentStatus.REFUNDED] as const).includes(status);",
+      "includes-as-array": "const hit = ([\"SUCCEEDED\", \"PARTIALLY_REFUNDED\", \"REFUNDED\"] as PaymentStatus[]).includes(status);",
       // The exact helper #3632 removed from stripe-webhook-service.ts.
       "bare-parameter-disjunction": "function isCapturedAdditionalPaymentTransaction(status: PaymentStatus) {\n  return (\n    status === PaymentStatus.SUCCEEDED ||\n    status === PaymentStatus.PARTIALLY_REFUNDED ||\n    status === PaymentStatus.REFUNDED\n  );\n}",
       "member-disjunction": "if (paymentTransaction.status === PaymentStatus.SUCCEEDED || paymentTransaction.status === PaymentStatus.PARTIALLY_REFUNDED || paymentTransaction.status === PaymentStatus.REFUNDED) {}",
@@ -359,6 +376,8 @@ describe("INV-SSOT: captured Payment and PaymentTransaction status guard (#3606,
       "switch-separate-bodies": "switch (status) {\n  case PaymentStatus.SUCCEEDED:\n    return 'a';\n  case PaymentStatus.PARTIALLY_REFUNDED:\n    return 'b';\n  case PaymentStatus.REFUNDED:\n    return 'c';\n}",
       "label-map": "const LABELS = { SUCCEEDED: 'Succeeded', PARTIALLY_REFUNDED: 'Part refunded', REFUNDED: 'Refunded' };",
       "status-assignment": "const data = { status: PaymentStatus.SUCCEEDED }; if (x) data.status = PaymentStatus.REFUNDED; else data.status = PaymentStatus.PARTIALLY_REFUNDED;",
+      // A comment recording a removed copy is history, not a copy (`INV-SSOT-004`).
+      "comment-only": "// was: [SUCCEEDED, REFUNDED, PARTIALLY_REFUNDED].includes(row.status)\n/* ([SUCCEEDED, REFUNDED, PARTIALLY_REFUNDED] as const).includes(s) */\nconst ok = true;",
     };
     expect(unexplainedCapturedStatusCopies(
       Object.entries(negatives).map(([name, source]) => ({ file: `src/lib/negative-${name}.ts`, source })),
@@ -412,6 +431,15 @@ describe("INV-SSOT: captured Payment and PaymentTransaction status guard (#3606,
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  it("the refunded-total shortfall audit reads the aggregate's one captured list (#3635 F3)", () => {
+    // Folded in from #3635's `captured-status-inline-list-guard.test.ts` (#3630).
+    const source = readFileSync(join(process.cwd(), "src/lib/refunded-total-shortfall-audit.ts"), "utf8");
+    expect(source).toMatch(
+      /import\s*\{\s*CAPTURED_PAYMENT_STATUS_LIST\s*\}\s*from\s*"@\/lib\/booking-payment-state"/,
+    );
+    expect(source).toMatch(/status:\s*\{\s*in:\s*\[\.\.\.CAPTURED_PAYMENT_STATUS_LIST\]\s*\}/);
   });
 
   it("permits an explicitly registered module that reads both authorities", () => {

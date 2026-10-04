@@ -9,7 +9,11 @@
  * holds that by TEXT over `src/`, `scripts/` and `prisma/` (not migrations): it
  * refuses a list, comparison chain, fall-through `switch`, `true`-keyed map or
  * SQL `IN (…)` naming exactly these three, outside its named exceptions, and
- * pins the set of modules that import this one. It cannot see a copy built
+ * pins the set of modules that read `isCapturedPaymentStatus` or
+ * `CAPTURED_PAYMENT_STATUS_LIST` directly. Readers of the derived
+ * `hasCapturedPayment` / `getRemainingRefundableCents` are not registered; the
+ * guard's by-name receiver tripwire refuses `hasCapturedPayment` handed a
+ * value named for a transaction, and nothing stronger. It cannot see a copy built
  * indirectly (a filter over the enum, a list assembled at runtime) or a superset
  * of these three. #3340 once routed
  * `additional-ledger-gap.ts` here, but that module reads `PaymentTransaction`
