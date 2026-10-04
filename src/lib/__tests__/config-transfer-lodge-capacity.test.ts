@@ -298,8 +298,16 @@ describe("an import never claims the unlinked legacy row (#3407 round 3, F1)", (
     const w = guidedSetupWorld();
     const db = makeDb(w);
     await lodgeConfigImporter.apply(applyCtx(db, bundleOf({ hut: { capacity: 12 } })));
+    // #3819: and the school hut-leader ticks it was served (here the defaults,
+    // since this legacy row predates them), so nothing the lodge read moves.
     expect(w.settingsCreates).toEqual([
-      { id: "lodge-hut", lodgeId: "lodge-hut", capacity: 12, updatedByMemberId: "admin-1", schoolGroupSoftCap: 8 },
+      {
+        id: "lodge-hut", lodgeId: "lodge-hut", capacity: 12, updatedByMemberId: "admin-1", schoolGroupSoftCap: 8,
+        schoolHutLeaderTeacherOnBooking: false,
+        schoolHutLeaderCustodian: true,
+        schoolHutLeaderMemberOnBooking: true,
+        schoolHutLeaderMemberStayingSeparately: true,
+      },
     ]);
     expect(await loadSchoolGroupSoftCap(db as never, "lodge-hut")).toBe(8);
   });

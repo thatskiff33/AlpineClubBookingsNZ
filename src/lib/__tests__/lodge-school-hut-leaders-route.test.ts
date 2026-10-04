@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
   lodgeFindUnique: vi.fn(),
   load: vi.fn(),
-  update: vi.fn(),
+  save: vi.fn(),
   audit: vi.fn(),
 }));
 
@@ -21,7 +21,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/lodge-settings", () => ({
   loadSchoolHutLeaderKinds: mocks.load,
-  updateSchoolHutLeaderKinds: mocks.update,
+  saveSchoolHutLeaderKinds: mocks.save,
 }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.audit }));
 
@@ -52,7 +52,7 @@ beforeEach(() => {
   mocks.requireAdmin.mockResolvedValue({ ok: true, session: { user: { id: "admin-1" } } });
   mocks.lodgeFindUnique.mockResolvedValue({ active: true });
   mocks.load.mockResolvedValue(STORED);
-  mocks.update.mockResolvedValue(NEXT);
+  mocks.save.mockResolvedValue({ previous: STORED, saved: NEXT });
 });
 
 describe("school hut-leader kinds route (#3819)", () => {
@@ -78,7 +78,7 @@ describe("school hut-leader kinds route (#3819)", () => {
     const res = await put({ lodgeId: "lodge-2", kinds: NEXT });
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "lodge", level: "edit" } });
     expect(res.status).toBe(403);
-    expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
     expect(mocks.audit).not.toHaveBeenCalled();
   });
 
@@ -86,7 +86,7 @@ describe("school hut-leader kinds route (#3819)", () => {
     const res = await put({ lodgeId: "lodge-2", kinds: NEXT });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ kinds: NEXT });
-    expect(mocks.update).toHaveBeenCalledWith({
+    expect(mocks.save).toHaveBeenCalledWith({
       lodgeId: "lodge-2",
       kinds: NEXT,
       updatedByMemberId: "admin-1",
@@ -111,12 +111,12 @@ describe("school hut-leader kinds route (#3819)", () => {
     ["no lodge", { kinds: NEXT }],
   ])("refuses %s", async (_label, body) => {
     expect((await put(body)).status).toBe(400);
-    expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
   });
 
   it("refuses a write to an inactive lodge", async () => {
     mocks.lodgeFindUnique.mockResolvedValue({ active: false });
     expect((await put({ lodgeId: "lodge-2", kinds: NEXT })).status).toBe(400);
-    expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
   });
 });

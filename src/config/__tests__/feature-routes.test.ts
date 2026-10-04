@@ -70,6 +70,12 @@ describe("feature route map", () => {
     expect(getRequiredFeaturesForPath("/admin/hut-leaders")).toEqual([
       "hutLeaders",
     ]);
+    // #3819: the lodge's school hut-leader setting goes off with the module,
+    // while the sibling lodge-settings route (capacity) does not.
+    expect(
+      getRequiredFeaturesForPath("/api/admin/lodge-settings/school-hut-leaders"),
+    ).toEqual(["hutLeaders"]);
+    expect(getRequiredFeaturesForPath("/api/admin/lodge-settings")).toEqual([]);
     expect(getRequiredFeaturesForPath("/admin/communications")).toEqual([
       "communications",
     ]);

@@ -4,14 +4,16 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import {
   loadSchoolHutLeaderKinds,
-  updateSchoolHutLeaderKinds,
+  saveSchoolHutLeaderKinds,
 } from "@/lib/lodge-settings";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
 // "Who can be hut leader for school bookings" (#3819): one lodge's four kinds.
 // Per lodge, so the lodge is always named (lodge-scoping contract) and must be
-// active, exactly as the sibling lodge-settings route requires.
+// active, exactly as the sibling lodge-settings route requires. Switched off
+// with the Hut Leaders module by the shared route gate
+// (`src/config/feature-routes.ts`), like the rest of hut-leader admin.
 async function findActiveLodge(lodgeId: string): Promise<boolean> {
   const lodge = await prisma.lodge.findUnique({
     where: { id: lodgeId },
@@ -70,8 +72,9 @@ export async function PUT(request: Request) {
   const { lodgeId, kinds } = body.data;
   if (!(await findActiveLodge(lodgeId))) return lodgeNotFound();
 
-  const previous = await loadSchoolHutLeaderKinds(prisma, lodgeId);
-  const saved = await updateSchoolHutLeaderKinds({
+  // "previous" is read inside the write's own transaction, so the audit row
+  // names the value this save replaced.
+  const { previous, saved } = await saveSchoolHutLeaderKinds({
     lodgeId,
     kinds,
     updatedByMemberId: guard.session.user.id,
