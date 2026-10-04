@@ -168,6 +168,10 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
       "CARD: the organiser's cancel keeps each share less every refund made or owed; once its debts are made, owed(b) is zero",
       "INTERNET BANKING: the inbound reconcile of the paid combined invoice posts each child's bank receipt; a re-fetch posts nothing more",
       "INTERNET BANKING: the organiser's cancel posts its frozen plan's bank refund beside each mirror and keeps the rest; owed(b) is zero, and a re-run posts nothing",
+      "FIX ROUND A: an Internet Banking group child cannot take a reduction as account credit; the real credit writer refuses it, so nothing commits",
+      "FIX ROUND F: the pre-#3653 plan's replay posts a mirrored child's refund line by the plan, once",
+      "FIX ROUND A: an ordinary card booking reduced with credit back, then the REAL paid cancel: the kept figure already nets the credit, and owed(b) is zero ($id)",
+      "FIX ROUND H: the census reads AGREE on every group history above, and a corrupted share or plan refund disagrees",
     ]) {
       expect(suite).toContain(caseName);
     }
