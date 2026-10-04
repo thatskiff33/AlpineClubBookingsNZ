@@ -577,7 +577,7 @@ describe("#25: Auto-Assign Hut Leaders", () => {
     // only booking read is the cover's own school-booking read (#3819), which
     // carries the school filter under AND.
     const candidateSearches = mockPrisma.booking.findMany.mock.calls.filter(
-      ([args]: [{ where?: { AND?: unknown } }]) => !args?.where?.AND,
+      (call: unknown[]) => !(call[0] as { where?: { AND?: unknown } } | undefined)?.where?.AND,
     );
     expect(candidateSearches).toHaveLength(0);
   });
