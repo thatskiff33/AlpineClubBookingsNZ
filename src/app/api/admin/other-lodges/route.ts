@@ -10,6 +10,7 @@ import {
   otherLodgeAmenityRows,
   otherLodgeDataColumns,
   otherLodgeDataShape,
+  otherLodgeNameSchema,
   otherLodgeOrderBy,
   otherLodgeSelect,
   serializeOtherLodge,
@@ -21,7 +22,7 @@ import { requireAdmin } from "@/lib/session-guards";
 // shared `otherLodgeDataShape` (the one field list) to be accepted here.
 const otherLodgeCreateSchema = z
   .object({
-    name: z.string().trim().min(1).max(120),
+    name: otherLodgeNameSchema,
     ...otherLodgeDataShape,
     amenities: amenitiesInputSchema.optional(),
   })

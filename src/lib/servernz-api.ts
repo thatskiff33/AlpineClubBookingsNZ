@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   amenitiesInputSchema,
   otherLodgeDataShape,
+  otherLodgeNameSchema,
   type OtherLodgeAmenity,
   type SerializedOtherLodgeData,
 } from "@/lib/other-lodges";
@@ -96,10 +97,15 @@ export type OtherLodgesUploadResult = z.infer<typeof uploadResultSchema>;
  * Every data field is OPTIONAL on the wire: a server that does not send one
  * (an older release, a field added later) leaves the local value alone, and is
  * never read as "set it to null/false". Absent is not the same as `null`.
+ *
+ * Every text field also refuses U+0000 (the shared bounded-text rule), because
+ * PostgreSQL rejects it on the write with 22021 — a throw that would land
+ * mid-merge, leave the cursor unmoved and re-fail on the same row every pull.
+ * Refused here it costs one row, counted in `dropped`, like every other bound.
  */
 const distributedLodgeSchema = z.object({
   id: z.string().max(64),
-  name: z.string().trim().min(1).max(120),
+  name: otherLodgeNameSchema,
   ...otherLodgeDataShape,
   /** When present, the lodge's WHOLE amenity set; absent leaves ours alone. */
   amenities: amenitiesInputSchema.optional(),

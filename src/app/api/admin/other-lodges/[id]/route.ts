@@ -10,6 +10,7 @@ import {
   otherLodgeAmenitiesDiffer,
   otherLodgeDataColumns,
   otherLodgeDataShape,
+  otherLodgeNameSchema,
   otherLodgeSelect,
   replaceOtherLodgeAmenities,
   serializeOtherLodge,
@@ -25,7 +26,7 @@ const paramsSchema = z.object({ id: z.string().min(1) });
 // lodge's whole set.
 const patchSchema = z
   .object({
-    name: z.string().trim().min(1).max(120).optional(),
+    name: otherLodgeNameSchema.optional(),
     ...otherLodgeDataShape,
     amenities: amenitiesInputSchema.optional(),
   })
@@ -92,12 +93,22 @@ export async function PATCH(
       // row, so `@updatedAt` would not fire — and the central-server upload
       // watermark is keyed on this column, so the edit would never be sent.
       data.updatedAt = new Date();
-      // One transaction so the lodge row and its amenities change together.
+      // One transaction so the lodge row and its amenities change together, and
+      // the LODGE ROW IS WRITTEN FIRST: that update holds the row's lock for the
+      // rest of the transaction, so a concurrent replacement of the same lodge's
+      // amenities (the nightly download, an admin's Download button) queues
+      // behind this one instead of interleaving its deletes and upserts with
+      // ours and leaving a stale row behind. The response is re-read after the
+      // amenities land, so it shows the set that was saved.
       updated = await prisma.$transaction(async (tx) => {
-        await replaceOtherLodgeAmenities(tx, existing.id, amenities);
-        return tx.otherLodge.update({
+        await tx.otherLodge.update({
           where: { id: existing.id },
           data,
+          select: { id: true },
+        });
+        await replaceOtherLodgeAmenities(tx, existing.id, amenities);
+        return tx.otherLodge.findUniqueOrThrow({
+          where: { id: existing.id },
           select: otherLodgeSelect,
         });
       });

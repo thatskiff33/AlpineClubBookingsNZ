@@ -1,6 +1,7 @@
 import type { OtherLodge, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { isHttpUrl } from "@/lib/http-url";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 
 // Helpers for the external / partner lodge registry (Admin -> Lodges). These
@@ -16,7 +17,8 @@ import { storedDateOnly } from "@/lib/stored-calendar-day";
 // added here is carried by every one of those, and a column added anywhere else
 // is carried by none. Before #50 the sync named the five original columns by
 // hand in four places and the admin panel kept a hand-copied type; this is the
-// fix for that drift, so do not add a second copy.
+// fix for that drift, so do not add a second copy. `OTHER_LODGE_BOUNDS` is the
+// same rule for the lengths: the zod shapes and the panel's inputs both read it.
 
 /** The free-text columns: trimmed, blank folds to null. */
 export const OTHER_LODGE_TEXT_FIELDS = [
@@ -56,10 +58,51 @@ export const OTHER_LODGE_DATA_FIELDS = [
   ...OTHER_LODGE_DATE_FIELDS,
 ] as const;
 
-type OtherLodgeTextField = (typeof OTHER_LODGE_TEXT_FIELDS)[number];
+export type OtherLodgeTextField = (typeof OTHER_LODGE_TEXT_FIELDS)[number];
 export type OtherLodgeBooleanField = (typeof OTHER_LODGE_BOOLEAN_FIELDS)[number];
-type OtherLodgeDateField = (typeof OTHER_LODGE_DATE_FIELDS)[number];
+export type OtherLodgeDateField = (typeof OTHER_LODGE_DATE_FIELDS)[number];
 export type OtherLodgeDataField = (typeof OTHER_LODGE_DATA_FIELDS)[number];
+
+/**
+ * COMPILE-TIME EXHAUSTIVENESS. `Pick<OtherLodge, OtherLodgeDataField>` below
+ * already fails when a listed name is not a column; this is the other
+ * direction — a column added to the Prisma model and NOT to the lists above
+ * would be stored and uploaded by nothing and editable nowhere, silently. The
+ * generated `OtherLodge` type is scalar-only (relations such as `amenities` are
+ * not on it), so the only columns excused are the identity and timestamp ones.
+ * When the check fails, the annotation names the unlisted column.
+ */
+type UnlistedOtherLodgeColumn = Exclude<
+  keyof OtherLodge,
+  "id" | "name" | "createdAt" | "updatedAt" | OtherLodgeDataField
+>;
+const EVERY_OTHER_LODGE_COLUMN_IS_LISTED: [UnlistedOtherLodgeColumn] extends [never]
+  ? true
+  : { unlistedColumn: UnlistedOtherLodgeColumn } = true;
+// Referenced so the compile-time check is not an unused binding; no runtime meaning.
+void EVERY_OTHER_LODGE_COLUMN_IS_LISTED;
+
+/**
+ * The length bounds, read by the zod shapes AND by the panel's `maxLength`
+ * attributes, so the editor cannot quietly hold a different limit from the API.
+ * They match the central server's columns, which is what the pull schema is
+ * held to as well (see `servernz-api.ts`).
+ */
+export const OTHER_LODGE_BOUNDS = {
+  name: 120,
+  location: 300,
+  bookingOfficerName: 200,
+  bookingOfficerEmail: 320,
+  bookingOfficerPhone: 50,
+  bedCapacityMax: 100_000,
+  siteUrl: 500,
+  bookingPath: 300,
+  cancellationPeriod: 200,
+  amenityName: 120,
+  amenityDescription: 1000,
+} as const;
+
+export const AMENITIES_PER_LODGE_MAX = 50;
 
 /** `{ column: true }` for every data column, for a Prisma `select`. */
 export const OTHER_LODGE_DATA_SELECT = Object.fromEntries(
@@ -170,23 +213,31 @@ export function normalizeOtherLodgeText(value: string | null | undefined) {
 const blankToNull = (value: unknown) =>
   typeof value === "string" && value.trim() === "" ? null : value;
 
+/**
+ * PostgreSQL text cannot hold U+0000 and raises 22021 on the write — AFTER zod
+ * accepted the value. In the download merge that throw lands mid-loop, leaves
+ * the cursor unmoved, and stalls every later pull on the same row; on an admin
+ * route it is a 500 for a 400. So every text schema here refuses it up front,
+ * which on the pull drops that one row (counted) and on the routes is a 400.
+ */
+const NO_NUL_MESSAGE = "Text cannot contain the NUL character";
+const hasNoNul = (value: string) => !value.includes("\u0000");
+
+/** A trimmed string of at most `max` characters, with no NUL. */
+function boundedText(max: number) {
+  return z.string().trim().max(max).refine(hasNoNul, NO_NUL_MESSAGE);
+}
+
+/** The lodge name: required, unique in the registry, bounded like every text. */
+export const otherLodgeNameSchema = boundedText(OTHER_LODGE_BOUNDS.name).min(1);
+
 // An optional email that treats blank input as "not set": the admin form sends
 // "" for a cleared field, and "" is not a valid email — fold it to null before
 // the format check so clearing the field is not a validation error.
 const optionalEmail = z.preprocess(
   blankToNull,
-  z.string().trim().max(320).email().nullable().optional(),
+  boundedText(OTHER_LODGE_BOUNDS.bookingOfficerEmail).email().nullable().optional(),
 );
-
-/** `http:` or `https:` only — the value is rendered as a link. */
-export function isHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
 
 // A real calendar date as `YYYY-MM-DD`: the kernel's check refuses `2026-02-30`,
 // which a bare pattern would pass and `Date.parse` would roll into March.
@@ -200,14 +251,12 @@ const dateOnlyField = z.preprocess(
     .optional(),
 );
 
-export const AMENITIES_PER_LODGE_MAX = 50;
-
 const amenityInputSchema = z
   .object({
-    name: z.string().trim().min(1).max(120),
+    name: boundedText(OTHER_LODGE_BOUNDS.amenityName).min(1),
     description: z.preprocess(
       blankToNull,
-      z.string().trim().max(1000).nullable().optional(),
+      boundedText(OTHER_LODGE_BOUNDS.amenityDescription).nullable().optional(),
     ),
   })
   .strict();
@@ -234,25 +283,34 @@ const booleanShape = Object.fromEntries(
  * yet send that field. It never means "set to null/false".
  */
 export const otherLodgeDataShape = {
-  location: z.string().trim().max(300).nullable().optional(),
-  bookingOfficerName: z.string().trim().max(200).nullable().optional(),
+  location: boundedText(OTHER_LODGE_BOUNDS.location).nullable().optional(),
+  bookingOfficerName: boundedText(OTHER_LODGE_BOUNDS.bookingOfficerName)
+    .nullable()
+    .optional(),
   bookingOfficerEmail: optionalEmail,
-  bookingOfficerPhone: z.string().trim().max(50).nullable().optional(),
+  bookingOfficerPhone: boundedText(OTHER_LODGE_BOUNDS.bookingOfficerPhone)
+    .nullable()
+    .optional(),
   // Informational bed count of the partner lodge; non-negative, capped well
   // above any real lodge so a fat-fingered value is caught but real ones pass.
-  bedCapacity: z.number().int().min(0).max(100000).nullable().optional(),
+  bedCapacity: z
+    .number()
+    .int()
+    .min(0)
+    .max(OTHER_LODGE_BOUNDS.bedCapacityMax)
+    .nullable()
+    .optional(),
   siteUrl: z.preprocess(
     blankToNull,
-    z
-      .string()
-      .trim()
-      .max(500)
+    boundedText(OTHER_LODGE_BOUNDS.siteUrl)
       .refine(isHttpUrl, "Site URL must start with http:// or https://")
       .nullable()
       .optional(),
   ),
-  bookingPath: z.string().trim().max(300).nullable().optional(),
-  cancellationPeriod: z.string().trim().max(200).nullable().optional(),
+  bookingPath: boundedText(OTHER_LODGE_BOUNDS.bookingPath).nullable().optional(),
+  cancellationPeriod: boundedText(OTHER_LODGE_BOUNDS.cancellationPeriod)
+    .nullable()
+    .optional(),
   ...booleanShape,
   winterSeasonStart: dateOnlyField,
   summerSeasonStart: dateOnlyField,
@@ -336,12 +394,17 @@ export function otherLodgeAmenitiesDiffer(
  * Make a lodge's stored amenities equal `incoming`, inside the caller's
  * transaction so the lodge row and its amenities change together or not at
  * all. Rows whose name is not in the new set are deleted; every other row is
- * upserted on the (otherLodgeId, name) unique key. That key is what makes two
- * overlapping replacements converge instead of racing — the admin Upload and
- * Download buttons and the nightly cron share no advisory lock.
+ * upserted on the (otherLodgeId, name) unique key.
  *
- * The CALLER moves the lodge's own `updatedAt`: an amenity-only change touches
- * no column on the lodge row, and the upload watermark is keyed on that column.
+ * ORDER MATTERS, AND THE CALLER OWNS IT: write the LODGE ROW FIRST, then call
+ * this. The admin Upload/Download buttons and the nightly cron share no advisory
+ * lock, so two writers can replace one lodge's amenities at once; at READ
+ * COMMITTED their deleteMany/upserts interleave and the loser can leave a stale
+ * row behind. The lodge-row update takes that row's lock for the rest of the
+ * transaction, so a second writer blocks on it until the first commits and then
+ * sees the finished set — the row write is the lock. The caller also owes the
+ * row's `updatedAt` move: an amenity-only change touches no column on the lodge
+ * row, and the upload watermark is keyed on that column.
  */
 export async function replaceOtherLodgeAmenities(
   tx: Prisma.TransactionClient,
