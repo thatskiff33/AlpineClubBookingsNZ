@@ -244,7 +244,8 @@ async function lines(bookingId: string) {
 
     // And the report says why, in words.
     const run = await backPost.runBookingLedgerBackPost({ client: prisma, apply: false, bookingIds: [id] });
-    const text = backPost.formatBookingLedgerBackPostReport(run, (cents) => `${cents}`);
+    const { formatBookingLedgerBackPostReport } = await import("@/lib/booking-ledger-back-post-report");
+    const text = formatBookingLedgerBackPostReport(run, (cents) => `${cents}`);
     expect(text).toContain(`CANNOT POST  ${id}  UNPRICED_NIGHT`);
   }, 120_000);
 

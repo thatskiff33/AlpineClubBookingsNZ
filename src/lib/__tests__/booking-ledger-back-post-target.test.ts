@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { describeBackPostTarget } from "@/lib/booking-ledger-back-post";
+import { describeBackPostTarget } from "@/lib/booking-ledger-back-post-report";
 
 const URL_ = "postgresql://app:secret@db.internal:5432/tacbookings";
 

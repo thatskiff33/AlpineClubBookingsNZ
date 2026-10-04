@@ -9,6 +9,7 @@ import {
 } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
+import { handsBackByHand } from "@/lib/manual-refund-hand-back-route";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { editReviewSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
 import {
@@ -286,25 +287,6 @@ export type EditReviewSettlementTask = {
  * no card charge to reverse, so there is no Stripe route to send them down and
  * no anchor to credit against.
  */
-/**
- * Does completing this task send its money back BY HAND — the `local-allocation`
- * route — on the rule `chooseEditReviewSettlementRoute` applies to every kind but
- * an edit review: not an approved late capture (that goes back to the card), and
- * on a payment. The one statement of that rule, read also by the booking-ledger
- * back-post (#3583) to post a completed hand-back's line from history.
- */
-export function handsBackByHand(task: {
-  kind: ManualRefundTaskKind | null;
-  lateCaptureApprovalIntentId: string | null;
-  paymentId: string | null;
-}): boolean {
-  return (
-    task.kind !== ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW &&
-    !task.lateCaptureApprovalIntentId &&
-    task.paymentId !== null
-  );
-}
-
 export async function chooseEditReviewSettlementRoute({
   task,
   amountCents,
@@ -358,11 +340,7 @@ export async function chooseEditReviewSettlementRoute({
       await assertLateCaptureHandBackStillOwed({ task, amountCents, store });
     }
     return handsBackByHand(task) && task.paymentId !== null
-      ? {
-          kind: "local-allocation",
-          paymentId: task.paymentId,
-          bookingModificationId: null,
-        }
+      ? { kind: "local-allocation", paymentId: task.paymentId, bookingModificationId: null }
       : null;
   }
 
