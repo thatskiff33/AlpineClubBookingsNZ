@@ -60,6 +60,19 @@ test.beforeAll(async ({ browser }) => {
   const patPage = await patContext.newPage();
   await loginPersona(patPage, PAT.email);
   await patPage.goto("/book");
+  // Pat is seeded without a phone number or region, which the shared details-gate
+  // helper does not fill (its usual personas have them). Fill them first if asked.
+  const patDialog = patPage.getByRole("dialog");
+  const countryCode = patDialog.getByLabel("Country code", { exact: true });
+  if (await countryCode.isVisible({ timeout: 5_000 }).catch(() => false)) {
+    if ((await countryCode.inputValue()) === "") await countryCode.fill("64");
+    const area = patDialog.getByLabel("Area code", { exact: true });
+    if ((await area.inputValue()) === "") await area.fill("27");
+    const number = patDialog.getByLabel("Phone number", { exact: true });
+    if ((await number.inputValue()) === "") await number.fill("1234567");
+    const region = patDialog.getByLabel("Region", { exact: true }).first();
+    if ((await region.inputValue()) === "") await region.fill("Waikato");
+  }
   await completeMemberDetailsGateIfShown(patPage);
   await patContext.close();
 
