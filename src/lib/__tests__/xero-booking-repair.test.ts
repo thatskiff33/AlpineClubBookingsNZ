@@ -2294,6 +2294,18 @@ describe("runBookingXeroRepair", () => {
     expect(deps.enqueueXeroSyncOperationRetry).not.toHaveBeenCalled();
   });
 
+  it.each(["408", "429", "500", null])("MUTATION (#3836 L-2): a failed allocation with code %s is transient, not a refusal - its retry stays auto-applied", async (lastErrorCode) => {
+    const deps = createDependencies({
+      bookings: [creditOnlyCardBooking()],
+      operations: [makePrimaryInvoiceCreateOperation(), appliedCreditAllocationOp({ status: "FAILED", lastErrorCode })],
+      ...unallocated,
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    expect(report.passes[0].bookings[0].actions.find((action) => action.key === "retry:op_applied_allocation")).toMatchObject({ safeToAutoApply: true });
+  });
+
   it.each([
     { shape: "a pending allocation", operation: appliedCreditAllocationOp({ status: "PENDING", completedAt: null }) },
     { shape: "a failed invoice operation", operation: makePrimaryInvoiceCreateOperation({ id: "op_invoice_failed", status: "FAILED", requestPayload: { queueType: "BOOKING_INVOICE", bookingId: "booking_1" } }) },
