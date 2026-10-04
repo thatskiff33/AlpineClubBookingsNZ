@@ -806,9 +806,24 @@ minted credit, and on a cancelled booking nothing but that minted note is sent:
 given-back credit there is a noteless row, as the cancellation's own restore is.
 A captured payment's share on a cancelled booking - card, bank-transfer
 hand-back or minted credit - is netted against what the cancellation returned
-first (#3835), and whatever its route raises follows the netted figure; a
-cancelled booking has no issued invoice for those routes, so today they raise
-nothing and the invoice stays closed.
+first (#3835), and whatever its route raises follows the netted figure. Since
+#3880 the card refund and the bank-transfer hand-back raise what the paid
+cancellation's own card refund raises (`INV-SSOT`): a `REFUND_CREDIT_NOTE` on
+the payment (`enqueueXeroRefundCreditNoteOperation`, from
+`dispatchEditReviewXeroSettlement` once `cancelledBookingRefundInvoiceId` finds
+the booking's invoice), unallocated and settled by its own refund payment from
+the card clearing or bank-transfer refund account, worded by the route
+(`INV-PAY-101`) - so the cancelled invoice is never reopened and the clearing or
+bank account has a document for every cent that left. It is sized to the netted
+capture part, capped by the payment's uncovered refunds as every refund note is,
+and keyed on the review task (`reviewTaskKeyParts`): sibling reviews' equal
+refunds are a note each, and a bank-transfer payment is noted per refund like a
+card rather than once per payment, while a replay finds the queued row or, once
+the note is raised, nothing uncovered. The applied-credit part given back beside
+it takes no document: like the cancellation's own restore it is a noteless
+credit row, minted a note when spent (#2717), so the member's Xero credit lags
+the app's by exactly those rows until then. A booking with no invoice (settled
+in cash) raises nothing, as a note against no invoice could never succeed.
 Each note's correlation and Xero idempotency keys carry the review task
 (`reviewTaskKeyParts`), so sibling reviews of one edit raise a note each, and a
 review's allocated note waits, returned to PENDING with the reason kept in

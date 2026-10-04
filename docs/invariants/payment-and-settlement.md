@@ -1474,8 +1474,8 @@ total at apply).
 ## INV-PAY-101
 
 - **A Xero refund or credit document names how the money went back, from the
-  settlement decision — never inferred from the payment's source** (#3529;
-  owner wording, 20 September 2026). Three refund wordings head the line
+  settlement decision — never inferred from the payment's source** (#3529,
+  owner wording). Three refund wordings head the line
   description and reference: *Refund against original credit card*, *Refund
   requested via internet banking*, *Account Credit*; a fourth, [INV-PAY-017]'s
   unpaid-invoice clearing, names no refund. Their one home is
@@ -1499,14 +1499,15 @@ total at apply).
   `resolveRefundSettlement` is the one reading, shared by the inline and
   repair legs; a note skipped by design (`refundPaymentSkipped`) is never
   re-repaired.
-- **A completed `CANCELLED_BOOKING_HAND_BACK` raises the bank-transfer note**
-  against the booking's invoice — gated on that invoice's id, not
-  `hasIssuedPrimaryXeroInvoice`, false for every cancelled booking. Only
-  #3369's late internet-banking payment has one; a cash settlement has no
-  invoice (#2262) and writes nothing. Cancellation policy is untouched
-  (D2, #3527). Pinned by
+- **On a cancelled booking a completed `CANCELLED_BOOKING_HAND_BACK`, and a
+  review's netted card refund or hand-back (#3880, keyed on its task), raise
+  the cancellation's refund note** against the invoice's id,
+  never `hasIssuedPrimaryXeroInvoice` (false here); a cash settlement
+  (#2262) has none. Cancellation policy is untouched (D2,
+  #3527). Pinned by
   `xero-refund-method-documents.test.ts`, `manual-refund-task.test.ts`,
-  `xero-operation-retry.test.ts`.
+  `xero-operation-retry.test.ts`,
+  `edit-financial-review-cancelled-refund-xero.realdb.test.ts`.
 
 ## INV-PAY-060
 
