@@ -4,8 +4,10 @@
 # order, as the owner's runbook (docs/MAINTENANCE.md, "Back-post the booking
 # ledger and open the cut-over gate"), against a throwaway database:
 #
-#   seed (real writers, lines stripped) -> census (must be SHUT, not crash) ->
-#   back-post dry run -> --apply -> --apply again (must post nothing) ->
+#   seed (real writers, lines stripped; #3854's group-settled children among
+#   them) -> census (must be SHUT, not crash) -> back-post dry run -> --apply
+#   (must leave no group child GROUP_SETTLEMENT_OFF_LEDGER) -> --apply again
+#   (must post nothing) ->
 #   acknowledgement draft (must be exactly the class instances the history is
 #   built to show; never KNOWN_DEFECT_HISTORY) -> census --acknowledged
 #   --fail-on-gap (must be OPEN). The database is dropped on exit.
@@ -81,6 +83,10 @@ pnpm run --silent booking-ledger:back-post | tee "$work/dry-run.txt"
 
 echo "==> Back-post, --apply"
 pnpm run --silent booking-ledger:back-post --apply --confirm-database "$database" | tee "$work/apply.txt"
+if ! grep -q "group children left GROUP_SETTLEMENT_OFF_LEDGER: 0" "$work/apply.txt"; then
+  echo "The back-post left a seeded group-settled child unposted (#3854): its history is one the live posters made." >&2
+  exit 1
+fi
 
 echo "==> Back-post, --apply again: must post nothing"
 pnpm run --silent booking-ledger:back-post --apply --confirm-database "$database" | tee "$work/apply-again.txt"

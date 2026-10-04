@@ -169,6 +169,8 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
       "src/lib/__tests__/booking-ledger-history-seed.realdb.test.ts",
       "booking-ledger:census --fail-on-gap",
       'grep -q "posted: 0 (0 line(s))"',
+      // #3854: every seeded group-settled child is posted, none left listed.
+      'grep -q "group children left GROUP_SETTLEMENT_OFF_LEDGER: 0"',
       "booking-ledger:census --write-acknowledgement-draft",
       "booking-ledger:census --acknowledged",
     ]) {
