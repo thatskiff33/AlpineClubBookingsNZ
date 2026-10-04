@@ -309,9 +309,9 @@ async function settleCardAppliedCreditAllocation(
   // the invoice, and skipping here would strand the applied slice outstanding.
   // A fully-refunded-out payment (net 0) still must not allocate; a credit-only one does (#3836).
   if (
-    payment.source === PaymentSource.INTERNET_BANKING || !(payment.creditAppliedCents > 0) ||
-    (!isCreditOnlyCardPayment(payment) && (!STRIPE_CAPTURED_PAYMENT_STATUSES.has(payment.status) ||
-      payment.amountCents - (payment.refundedAmountCents ?? 0) <= 0))
+    !isCreditOnlyCardPayment(payment) &&
+    (payment.source === PaymentSource.INTERNET_BANKING || !(payment.creditAppliedCents > 0) ||
+      !STRIPE_CAPTURED_PAYMENT_STATUSES.has(payment.status) || payment.amountCents - (payment.refundedAmountCents ?? 0) <= 0)
   ) {
     return;
   }

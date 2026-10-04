@@ -23,7 +23,7 @@ import {
   buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
 } from "./payment-recovery-keys";
-import { loadUnallocatedAppliedCreditCents } from "./xero-booking-repair-applied-credit";
+import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-allocation";
 import {
   editReviewChargeShareTaskSelect,
   editReviewChargeShareTaskWhere,
@@ -439,7 +439,7 @@ export async function loadAuditData(
           [] as Array<{ appliedToBookingId: string; _sum: { amountCents: number | null } }>
         ),
   ]);
-  const unallocatedAppliedCreditByBookingId = await loadUnallocatedAppliedCreditCents(deps.prisma, bookingIds);
+  const unallocatedAppliedCreditByBookingId = await unallocatedAppliedCreditCentsByBooking(bookingIds, deps.prisma);
   const allocatedAppliedCreditByBookingId = new Map(
     appliedCreditAllocations.map((row) => [
       row.appliedToBookingId,

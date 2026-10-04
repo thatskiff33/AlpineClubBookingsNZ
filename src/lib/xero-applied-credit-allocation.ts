@@ -20,7 +20,7 @@
  * outbox worker, outside the ledger transactions.
  */
 import { CreditNote, LineAmountTypes } from "xero-node";
-import { CreditType, Prisma } from "@prisma/client";
+import { BookingStatus, CreditType, Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { lockMemberCreditLedger } from "./member-credit";
 import { allocateCreditNoteToInvoice } from "./xero-credit-notes";
@@ -49,6 +49,7 @@ import logger from "@/lib/logger";
 import { getClubFormat } from "@/lib/club-format-settings";
 import type { ClubFormat } from "@/lib/club-format";
 import { formatCents } from "@/lib/utils";
+import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
 import {
   assertNoAppliedCreditDeallocationFence,
 } from "./xero-applied-credit-operation-serialization";
@@ -226,19 +227,74 @@ async function gatherAppliedCreditLots(
   return lots;
 }
 
+/**
+ * THE unallocated predicate (#1620, #3836 `INV-PAY-024`): per booking, the
+ * applied credit whose `BOOKING_APPLIED` rows carry no Xero note yet. The
+ * engine, its enqueue and the Xero booking repair pass all read this one form.
+ */
+export async function unallocatedAppliedCreditCentsByBooking(
+  bookingIds: string[],
+  db: { memberCredit: Pick<Prisma.TransactionClient["memberCredit"], "groupBy"> } = prisma,
+): Promise<Map<string, number>> {
+  if (bookingIds.length === 0) return new Map();
+  const rows = await db.memberCredit.groupBy({
+    by: ["appliedToBookingId"],
+    where: { appliedToBookingId: { in: bookingIds }, type: CreditType.BOOKING_APPLIED, xeroCreditNoteId: null },
+    _sum: { amountCents: true },
+  });
+  return new Map(
+    rows.flatMap((row) =>
+      row.appliedToBookingId ? [[row.appliedToBookingId, Math.max(0, -(row._sum.amountCents ?? 0))] as const] : [],
+    ),
+  );
+}
+
 async function unallocatedAppliedCents(
   bookingId: string,
   db: Prisma.TransactionClient | typeof prisma,
 ): Promise<number> {
-  const agg = await db.memberCredit.aggregate({
-    where: {
-      appliedToBookingId: bookingId,
-      type: CreditType.BOOKING_APPLIED,
-      xeroCreditNoteId: null,
-    },
-    _sum: { amountCents: true },
+  return (await unallocatedAppliedCreditCentsByBooking([bookingId], db)).get(bookingId) ?? 0;
+}
+
+/**
+ * #3836 (H1): whether the cancel has settled this booking's applied credit -
+ * the booking is CANCELLED, or a restore row names it, AND its payment holds no
+ * captured money (`paymentHasCaptureEvidence`). Such an invoice is answered by
+ * a clearing note sized net of the slices already committed (the unpaid
+ * cancel's, or the repair pass's `CANCELLED_BOOKING_OPEN_INVOICE`), so the
+ * engine then only finishes those slices: a new plan or mint would credit the
+ * invoice a second time beside that note. A captured booking's cancel clears
+ * nothing - its invoice stands as paid - so its allocation still runs, as
+ * before. Read under the member's credit-ledger key, which the cancel's
+ * restore takes too.
+ */
+async function appliedCreditSettledByCancel(
+  bookingId: string,
+  db: Prisma.TransactionClient | typeof prisma,
+): Promise<boolean> {
+  const [booking, restore] = await Promise.all([
+    db.booking.findUnique({
+      where: { id: bookingId },
+      select: {
+        status: true,
+        payment: {
+          select: { id: true, bookingId: true, source: true, status: true, amountCents: true, refundedAmountCents: true, transactions: { select: { status: true } } },
+        },
+      },
+    }),
+    db.memberCredit.findUnique({ where: { restoredFromBookingId: bookingId }, select: { id: true } }),
+  ]);
+  const cancelled = booking?.status === BookingStatus.CANCELLED || restore !== null;
+  return cancelled && !(booking?.payment && paymentHasCaptureEvidence(booking.payment));
+}
+
+/** The remainder note this payment already minted, if any. */
+async function existingRemainderNoteId(paymentId: string): Promise<string | null> {
+  const link = await prisma.xeroObjectLink.findFirst({
+    where: { localModel: "Payment", localId: paymentId, xeroObjectType: "CREDIT_NOTE", role: APPLIED_CREDIT_REMAINDER_NOTE_ROLE, active: true },
+    select: { xeroObjectId: true },
   });
-  return Math.max(0, -(agg._sum.amountCents ?? 0));
+  return link?.xeroObjectId ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -472,6 +528,15 @@ export async function allocateAppliedCreditForBooking(
     await completeSkip(syncOperationId, "No unallocated applied credit.");
     return;
   }
+  const settledSkipReason =
+    "The booking was cancelled with nothing captured: its invoice is cleared by a note sized net of the allocations already committed, so nothing new is allocated (#3836).";
+  if (
+    (await appliedCreditSettledByCancel(bookingId, prisma)) &&
+    (await prisma.memberCreditNoteAllocation.count({ where: { appliedToBookingId: bookingId } })) === 0
+  ) {
+    await completeSkip(syncOperationId, settledSkipReason);
+    return;
+  }
 
   if (!payment.xeroInvoiceId) {
     // Invoice not raised yet — retry (the booking-invoice op is enqueued first
@@ -503,6 +568,27 @@ export async function allocateAppliedCreditForBooking(
     if (lockedApplied === 0) {
       return null; // a concurrent run already stamped it
     }
+    if (await appliedCreditSettledByCancel(bookingId, tx)) {
+      // #3836 (H1): finish only the slices already committed - the ones the
+      // cancel's clearing sizing subtracted - and never plan or mint new ones.
+      const committed = await tx.memberCreditNoteAllocation.findMany({
+        where: { appliedToBookingId: bookingId },
+        select: { memberCreditId: true, xeroCreditNoteId: true, amountCents: true },
+      });
+      const remainderNoteId = await existingRemainderNoteId(payment.id);
+      const remainderCents = committed
+        .filter((row) => row.xeroCreditNoteId === remainderNoteId)
+        .reduce((sum, row) => sum + row.amountCents, 0);
+      return {
+        settled: true as const,
+        remainderNoteId: remainderCents > 0 ? remainderNoteId : null,
+        remainderCents,
+        noteAllocations: committed.filter((row) => row.xeroCreditNoteId !== remainderNoteId),
+        mintSlices: [],
+        mintTotalCents: 0,
+        coveredCents: 0,
+      };
+    }
     const lots = await gatherAppliedCreditLots(creditOwnerMemberId, bookingId, tx);
     const planned = planAppliedCreditAllocation(lots, lockedApplied, format);
     for (const na of planned.noteAllocations) {
@@ -522,11 +608,15 @@ export async function allocateAppliedCreditForBooking(
         update: {},
       });
     }
-    return planned;
+    return { ...planned, settled: false as const, remainderNoteId: null, remainderCents: 0 };
   });
 
   if (!plan) {
     await completeSkip(syncOperationId, "Applied credit already allocated.");
+    return;
+  }
+  if (plan.settled && plan.noteAllocations.length === 0 && !plan.remainderNoteId) {
+    await completeSkip(syncOperationId, settledSkipReason);
     return;
   }
 
@@ -572,8 +662,44 @@ export async function allocateAppliedCreditForBooking(
   }
 
   // 3) Mint + allocate the noteless (admin / restored) remainder, if any.
-  let remainderNoteId: string | null = null;
-  if (plan.mintTotalCents > 0) {
+  // The remainder note's one allocation, idempotent on its completion link.
+  const allocateRemainderOnce = async (noteId: string, cents: number) => {
+    const remainderAllocated = await prisma.xeroObjectLink.findFirst({
+      where: {
+        localModel: "Payment",
+        localId: payment.id,
+        xeroObjectType: "ALLOCATION",
+        role: APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE,
+        active: true,
+      },
+      select: { id: true },
+    });
+    if (remainderAllocated) return;
+    await allocateCreditNoteToInvoice(noteId, invoiceId, cents, {
+      localModel: "Payment",
+      localId: payment.id,
+      role: APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE,
+      createdByMemberId,
+      appliedCreditContext: {
+        parentOperationId: syncOperationId ?? null,
+        bookingId,
+        paymentId: payment.id,
+      },
+    });
+  };
+  let remainderNoteId: string | null = plan.remainderNoteId;
+  // #3836 (H1): re-asked just before the mint - a cancel that landed after the
+  // plan settled the credit, and a mint now would credit the invoice twice.
+  const mintStillDue =
+    plan.mintTotalCents > 0 &&
+    !(await prisma.$transaction(async (tx) => {
+      await lockMemberCreditLedger(creditOwnerMemberId, tx);
+      return appliedCreditSettledByCancel(bookingId, tx);
+    }));
+  if (plan.settled && plan.remainderNoteId) {
+    await allocateRemainderOnce(plan.remainderNoteId, plan.remainderCents);
+  }
+  if (mintStillDue) {
     remainderNoteId = await mintAppliedCreditRemainderNote({
       bookingId,
       memberId: creditOwnerMemberId,
@@ -615,29 +741,7 @@ export async function allocateAppliedCreditForBooking(
       }
     });
 
-    const remainderAllocated = await prisma.xeroObjectLink.findFirst({
-      where: {
-        localModel: "Payment",
-        localId: payment.id,
-        xeroObjectType: "ALLOCATION",
-        role: APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE,
-        active: true,
-      },
-      select: { id: true },
-    });
-    if (!remainderAllocated) {
-      await allocateCreditNoteToInvoice(mintedNoteId, invoiceId, plan.mintTotalCents, {
-        localModel: "Payment",
-        localId: payment.id,
-        role: APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE,
-        createdByMemberId,
-        appliedCreditContext: {
-          parentOperationId: syncOperationId ?? null,
-          bookingId,
-          paymentId: payment.id,
-        },
-      });
-    }
+    await allocateRemainderOnce(mintedNoteId, plan.mintTotalCents);
   }
 
   // 4) STAMP LAST — only now that the FULL applied amount is covered by allocated
@@ -651,9 +755,11 @@ export async function allocateAppliedCreditForBooking(
   // which Xero rejects LOUDLY (the #1597 loud-over-allocation class); this op's
   // retry finishes the remaining allocations and then stamps. The @@unique join
   // key + per-row completion links make that retry idempotent.
+  // A cancel-settled booking is never stamped (#3836): the cancel restored its
+  // credit, and only the slices it had already counted were finished.
   const representativeNoteId =
     plan.noteAllocations[0]?.xeroCreditNoteId ?? remainderNoteId;
-  if (representativeNoteId) {
+  if (representativeNoteId && !plan.settled && (plan.mintTotalCents === 0 || mintStillDue)) {
     await prisma.$transaction(async (tx) => {
       const creditLedgerMemberId = creditOwnerMemberId;
       // #3369: applied credit is a MEMBER ledger entry, so an organisation-owned
@@ -680,9 +786,10 @@ export async function allocateAppliedCreditForBooking(
       invoiceId,
       appliedCents,
       noteAllocations: plan.noteAllocations.length,
-      mintedRemainderCents: plan.mintTotalCents,
+      mintedRemainderCents: mintStillDue ? plan.mintTotalCents : 0,
+      settledByCancel: plan.settled,
     },
-    "Allocated existing applied credit against Internet-Banking invoice (#1620)",
+    "Allocated applied credit against the booking invoice (#1620, #1641, #3836)",
   );
 
   if (syncOperationId) {
@@ -692,7 +799,9 @@ export async function allocateAppliedCreditForBooking(
         invoiceId,
         appliedCents,
         allocatedNotes: plan.noteAllocations.length,
-        mintedRemainderCents: plan.mintTotalCents,
+        mintedRemainderCents: mintStillDue ? plan.mintTotalCents : 0,
+        // #3836: a cancel settled the credit; only committed slices were finished.
+        settledByCancel: plan.settled || (plan.mintTotalCents > 0 && !mintStillDue),
       },
     });
   }

@@ -1,5 +1,3 @@
-import type { Prisma } from "@prisma/client";
-
 import { isCreditOnlyCardPayment } from "@/lib/credit-only-card-payment";
 import {
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
@@ -14,22 +12,18 @@ import { getBlockingOperation, isStuckOperation } from "./xero-booking-repair-ob
 import { addAction, addFinding, addResolvedInXeroFinding, buildRetryAction } from "./xero-booking-repair-findings";
 
 /**
- * #3836: each booking's applied credit with no Xero note stamped - the
- * engine's own unallocated predicate (`unallocatedAppliedCents`).
+ * #3836 (M2): Xero REFUSED this operation (a 4xx: the invoice voided, or settled
+ * by hand). Re-running it changes nothing until someone fixes the cause in
+ * Xero, so its retry is offered but never auto-applied.
  */
-export async function loadUnallocatedAppliedCreditCents(
-  db: { memberCredit: Pick<Prisma.TransactionClient["memberCredit"], "groupBy"> },
-  bookingIds: string[],
-): Promise<Map<string, number>> {
-  if (bookingIds.length === 0) return new Map();
-  const rows = await db.memberCredit.groupBy({
-    by: ["appliedToBookingId"],
-    where: { appliedToBookingId: { in: bookingIds }, type: "BOOKING_APPLIED", xeroCreditNoteId: null },
-    _sum: { amountCents: true },
-  });
-  return new Map(
-    rows.flatMap((row) => (row.appliedToBookingId ? [[row.appliedToBookingId, Math.max(0, -(row._sum.amountCents ?? 0))] as const] : [])),
-  );
+function refusedByXero(operation: { status: string; lastErrorCode: string | null }): boolean {
+  return ["FAILED", "PARTIAL"].includes(operation.status) && /^4\d\d$/.test(operation.lastErrorCode ?? "");
+}
+
+/** A retry action, auto-applied only where Xero did not refuse the operation. */
+function retryUnlessRefused(bookingId: string, match: Parameters<typeof buildRetryAction>[1]) {
+  const action = buildRetryAction(bookingId, match);
+  return refusedByXero(match.operation) ? { ...action, safeToAutoApply: false } : action;
 }
 
 /**
@@ -77,12 +71,14 @@ export function addUnallocatedCardAppliedCreditFindings(
     return;
   }
   if (blocking?.kind === "retryable") {
-    const action = addAction(actionMap, buildRetryAction(booking.id, blocking));
+    const action = addAction(actionMap, retryUnlessRefused(booking.id, blocking));
     addFinding(findings, {
       code: "BLOCKED_BY_XERO_OPERATION",
       severity: "warning",
-      summary: "A failed or partial Xero operation is blocking the allocation of a credit-paid booking's applied credit.",
-      safeToAutoApply: true,
+      summary: action.safeToAutoApply
+        ? "A failed or partial Xero operation is blocking the allocation of a credit-paid booking's applied credit."
+        : "Xero refused the allocation of a credit-paid booking's applied credit (the invoice may be voided or settled by hand); fix the cause in Xero before retrying it.",
+      safeToAutoApply: action.safeToAutoApply,
       details: { ...details, operationId: blocking.operation.id, operationStatus: blocking.operation.status },
       actionKeys: [action.key],
     });
@@ -119,4 +115,38 @@ export function addUnallocatedCardAppliedCreditFindings(
     details,
     actionKeys: [action.key],
   });
+}
+
+/**
+ * #3836 (H1): the cancelled-open-invoice arm sizes its clearing note net of the
+ * allocations already committed. While the booking's invoice operation or an
+ * applied-credit allocation operation is unfinished, that figure can still
+ * move - the engine finishes committed slices on a cancelled booking - so the
+ * arm waits: it offers that operation's retry, or reports the wait, and queues
+ * no clearing note beside it. A failed or partial row that cannot be retried
+ * will not run again, so it is not waited for. Returns whether it is waiting.
+ */
+export function waitForAppliedCreditWorkBeforeClearing(
+  findings: MutableFinding[],
+  actionMap: Map<string, BookingXeroRepairAction>,
+  context: BookingClassificationContext,
+): boolean {
+  const blocking = [
+    getBlockingOperation(context.paymentOperations, "INVOICE", "CREATE", { payloadQueueType: XERO_OUTBOX_BOOKING_INVOICE_TYPE }),
+    getBlockingOperation(context.paymentOperations, "ALLOCATION", "ALLOCATE", { payloadQueueType: XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE }),
+  ].find((match) => match !== null && match.kind !== "resolved");
+  if (!blocking || blocking.kind === "resolved") return false;
+  // A failed or partial row nothing can retry will never run again: not waited for.
+  if (blocking.kind === "blocked" && ["FAILED", "PARTIAL"].includes(blocking.operation.status)) return false;
+  const retry = blocking.kind === "retryable" ? addAction(actionMap, retryUnlessRefused(context.booking.id, blocking)) : null;
+  addFinding(findings, {
+    code: "BLOCKED_BY_XERO_OPERATION",
+    severity: "warning",
+    summary:
+      "A cancelled booking's invoice-clearing note waits for its unfinished invoice or applied-credit allocation operation, which may still finish allocations the note must not repeat.",
+    safeToAutoApply: retry?.safeToAutoApply ?? false,
+    details: { operationId: blocking.operation.id, operationStatus: blocking.operation.status },
+    actionKeys: retry ? [retry.key] : [],
+  });
+  return true;
 }

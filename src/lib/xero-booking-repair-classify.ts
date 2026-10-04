@@ -67,7 +67,7 @@ import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { isCancellationRefundDecisionRecorded } from "@/lib/cancellation-settled-money";
 import { recordedCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
 import { scopedGiveBackNote, withoutGiveBackNote } from "@/lib/xero-booking-repair-give-back";
-import { addUnallocatedCardAppliedCreditFindings } from "./xero-booking-repair-applied-credit";
+import { addUnallocatedCardAppliedCreditFindings, waitForAppliedCreditWorkBeforeClearing } from "./xero-booking-repair-applied-credit";
 import { APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE } from "@/lib/xero-review-task-key";
 import { isRecordedBookingInvoicePayment } from "@/lib/xero-inbound/object-links";
 import { PART_PAYMENT_RECOGNISED_REASON } from "@/lib/part-payment-recognition-reason";
@@ -1477,7 +1477,7 @@ export function classifyBookingContext(
       booking,
       context.xeroAllocatedAppliedCreditCents
     );
-    if (clearingAmountCents > 0) {
+    if (clearingAmountCents > 0 && !waitForAppliedCreditWorkBeforeClearing(findings, actionMap, context)) {
       const cancellationCreditNote = resolveObjectFromCandidates({
         links: bookingLinks,
         operations: bookingOperations,

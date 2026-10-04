@@ -2279,6 +2279,42 @@ describe("runBookingXeroRepair", () => {
     expect(bookingReport.actions.some((action) => action.key === `retry:${operation.id}`)).toBe(retried);
   });
 
+  it("MUTATION (#3836 M2): a failed allocation Xero REFUSED (4xx) offers its retry as a manual action only", async () => {
+    const deps = createDependencies({
+      bookings: [creditOnlyCardBooking()],
+      operations: [makePrimaryInvoiceCreateOperation(), appliedCreditAllocationOp({ status: "FAILED", lastErrorCode: "400" })],
+      ...unallocated,
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const retry = report.passes[0].bookings[0].actions.find((action) => action.key === "retry:op_applied_allocation");
+    expect(retry).toMatchObject({ type: "REQUEUE_XERO_OPERATION", safeToAutoApply: false });
+    await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+    expect(deps.enqueueXeroSyncOperationRetry).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { shape: "a pending allocation", operation: appliedCreditAllocationOp({ status: "PENDING", completedAt: null }) },
+    { shape: "a failed invoice operation", operation: makePrimaryInvoiceCreateOperation({ id: "op_invoice_failed", status: "FAILED", requestPayload: { queueType: "BOOKING_INVOICE", bookingId: "booking_1" } }) },
+  ])("MUTATION (#3836 H1): a cancelled credit-only booking's clearing note waits beside $shape", async ({ operation }) => {
+    const deps = createDependencies({ bookings: [creditOnlyCardBooking({ status: "CANCELLED" })], operations: [makePrimaryInvoiceCreateOperation(), operation], ...unallocated });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.map((action) => action.key)).not.toContain("queue:cancelled-open-invoice:booking_1");
+    expect(bookingReport.findings.map((finding) => finding.code)).toContain("BLOCKED_BY_XERO_OPERATION");
+  });
+
+  it("MUTATION (#3836 H1): with nothing unfinished, the cancelled credit-only booking's invoice is cleared as before", async () => {
+    const deps = createDependencies({ bookings: [creditOnlyCardBooking({ status: "CANCELLED" })], operations: [makePrimaryInvoiceCreateOperation()], ...unallocated });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    expect(report.passes[0].bookings[0].actions.map((action) => action.key)).toContain("queue:cancelled-open-invoice:booking_1");
+  });
+
   // #3809: a credit-paid booking's reduction settled as applied credit given
   // back, as the edit's history row records. Its note is the give-back - none
   // where the tier gave nothing back - so a note whose post-commit queue failed
