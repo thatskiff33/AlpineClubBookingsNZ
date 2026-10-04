@@ -124,7 +124,8 @@ export async function runPaymentsCronCycle(): Promise<PaymentsCronCycleResult> {
     jobName: "payment-recovery",
     resultKey: "recovery",
     failureMessage: "Error in payment recovery cron",
-    work: () => processPaymentRecoveryOperations(),
+    // #3653: the cron's run also reads pending organiser child refunds back.
+    work: () => processPaymentRecoveryOperations({ reconcilePendingChildRefunds: true }),
   });
   await runRecordedTask(result, failures, {
     jobName: "internet-banking-hold-release",

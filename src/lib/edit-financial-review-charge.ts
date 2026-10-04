@@ -6,9 +6,11 @@ import {
 } from "@prisma/client";
 
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
 import {
   REVIEW_CHARGE_ANCHOR_MISSING_MESSAGE,
   REVIEW_CHARGE_NO_INSTRUMENT_MESSAGE,
+  REVIEW_CHARGE_ORGANISER_PAID_MESSAGE,
   REVIEW_CHARGE_REQUEST_ALREADY_PAID_MESSAGE,
   REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE,
 } from "@/lib/edit-financial-review-charge-refusals";
@@ -170,12 +172,15 @@ export type EditReviewChargeRoute =
  */
 export async function chooseEditReviewChargeRoute({
   bookingModificationId,
+  booking,
   bookingPayment,
   member,
   hasIssuedXeroInvoice,
   store,
 }: {
   bookingModificationId: string | null;
+  /** #3653: whether the group organiser paid for this booking (`paidByOrganiserCard`). */
+  booking: { organiserSettled: boolean; parentBookingId: string | null };
   bookingPayment: {
     id: string;
     status: string;
@@ -198,6 +203,13 @@ export async function chooseEditReviewChargeRoute({
       REVIEW_CHARGE_ANCHOR_MISSING_MESSAGE,
       409,
     );
+  }
+  // #3653 (`INV-PAY-114`): the organiser paid for this booking by card. Its
+  // payment mirror is a slice of the organiser's combined payment, so a card
+  // ask would charge the joiner's own card and an invoice would bill the joiner;
+  // the edit doors refuse the same increase (`organiserChildChargeRefusal`).
+  if (paidByOrganiserCard({ ...booking, payment: bookingPayment })) {
+    throw new ManualBookingPaymentError(REVIEW_CHARGE_ORGANISER_PAID_MESSAGE, 409);
   }
   // The same test `applyPaymentAdjustments` uses to decide whether an ordinary
   // price increase mints an intent: a CAPTURED payment whose source is the card.
