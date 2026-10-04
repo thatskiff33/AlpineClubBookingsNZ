@@ -139,7 +139,11 @@ export interface DownloadSummary {
   updated: number;
   /** Fetched rows already identical locally — left untouched (no `updatedAt` bump). */
   unchanged: number;
-  /** Rows where the LOCAL copy was newer, so the remote was not applied. */
+  /**
+   * Rows where the LOCAL copy was newer, so the remote was not applied — by the
+   * timestamp read before the write, or because a local edit landed between
+   * that read and the guarded write.
+   */
   keptLocal: number;
   /** Rows the server sent that failed validation and were discarded. */
   dropped: number;
@@ -259,18 +263,32 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     // `updatedAt` onto the row (rule 1) — an amenity-only change that left the
     // row's timestamp alone would be re-presented as a local edit and echoed
     // back on the next upload.
-    await prisma.$transaction(async (tx) => {
-      if (amenitiesChanged && amenities) {
-        await replaceOtherLodgeAmenities(tx, existing.id, amenities);
-      }
-      await tx.otherLodge.update({
-        where: { id: existing.id },
+    //
+    // The row write is GUARDED on the `updatedAt` we read above, and it comes
+    // FIRST. Rule 2 was decided on a read taken outside this transaction; an
+    // admin can save an edit between that read and this write, and an unguarded
+    // update would overwrite it and then stamp the row with the server's OLDER
+    // timestamp — below the upload watermark, so the admin's edit would never be
+    // sent. A guarded `updateMany` matches only the row as we read it: a miss is
+    // the local edit winning after all (keptLocal, nothing written, amenities
+    // untouched), exactly as if rule 2 had seen it. The same write also takes the
+    // row's lock for the rest of the transaction, so a concurrent amenity
+    // replacement on this lodge queues behind it rather than interleaving.
+    const applied = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.otherLodge.updateMany({
+        where: { id: existing.id, updatedAt: existing.updatedAt },
         // Rule 1: carry the server's timestamp rather than letting `@updatedAt`
         // stamp now(), so this row is not re-uploaded as though we had edited it.
         data: { ...data, ...stamp },
       });
+      if (claimed.count !== 1) return false;
+      if (amenitiesChanged && amenities) {
+        await replaceOtherLodgeAmenities(tx, existing.id, amenities);
+      }
+      return true;
     });
-    updated++;
+    if (applied) updated++;
+    else keptLocal++;
   }
 
   // The durable watermark is the SERVER's returned cursor, never the overlapped
