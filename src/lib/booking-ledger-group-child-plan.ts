@@ -67,7 +67,7 @@ export type GroupChildSibling = {
 type ChildPayment = { status: string; source: PaymentSource; amountCents: number; refundedAmountCents: number };
 
 /** Did the settlement pay this child — its captured payment, of the settlement's own source? */
-export function isPaidBySettlement(
+function isPaidBySettlement(
   payment: Pick<ChildPayment, "status" | "source"> | null,
   settlement: Pick<GroupChildSettlement, "source">,
 ): payment is NonNullable<typeof payment> {
@@ -75,7 +75,7 @@ export function isPaidBySettlement(
 }
 
 /** How the organiser cancel refunded the child: the frozen `{childId: cents}` mirror plan, or #3653's per-child debts. */
-export function groupCancelRefundPlanKind(settlement: Pick<GroupChildSettlement, "refundPlan" | "stripePaymentIntentId">): "mirror" | "per-child" {
+function groupCancelRefundPlanKind(settlement: Pick<GroupChildSettlement, "refundPlan" | "stripePaymentIntentId">): "mirror" | "per-child" {
   return isMirrorRefundPlan(settlement) || !settlement.stripePaymentIntentId ? "mirror" : "per-child";
 }
 

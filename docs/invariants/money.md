@@ -595,7 +595,7 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   the gate until the owner's `--acknowledged` file, kept outside the
   repository, names its instance to the cent — `KNOWN_DEFECT_HISTORY` too —
   except `GROUP_SETTLEMENT_OFF_LEDGER`, listed only (owner decisions,
-  #3583), named only where #3854's back-post lines would agree. A moved figure is stale and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
+  #3583) while #3854's lines agree. A moved figure is stale and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
   on bookings the real writers built.
 
 ## INV-MONEY-006
