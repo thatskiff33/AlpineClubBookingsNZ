@@ -1837,9 +1837,9 @@ rehearsal on a restored backup, then for real.
    up to the release you are about to cut over:
 
    ```bash
-   docker run -d --name ledger-rehearsal -e POSTGRES_PASSWORD=rehearsal -p 127.0.0.1:55443:5432 postgres:16
+   docker run -d --name ledger-rehearsal -e POSTGRES_PASSWORD=password -p 127.0.0.1:55443:5432 postgres:16
    gunzip -c /tmp/restore-check.sql.gz | docker exec -i ledger-rehearsal psql -U postgres -v ON_ERROR_STOP=1
-   export DATABASE_URL=postgresql://postgres:rehearsal@127.0.0.1:55443/postgres
+   export DATABASE_URL=postgresql://postgres:password@127.0.0.1:55443/postgres
    pnpm exec prisma migrate deploy
 
    pnpm run booking-ledger:census                         # expect GATE_CLOSED, on coverage
