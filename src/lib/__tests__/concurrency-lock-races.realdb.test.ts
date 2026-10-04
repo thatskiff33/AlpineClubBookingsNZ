@@ -199,6 +199,13 @@ import "./ib-capacity-cancel-credit-restore.realdb.test";
 // mirror back with it. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it clears
 // the singleton `XeroToken` table and its own `xero-oauth` row.
 import "./xero-token-credential-store.realdb.test";
+// #3653 reuses it to prove an organiser-settled child's refund out of the
+// group's combined card payment: recorded once, converged after an ambiguous
+// Stripe answer, capped under lock(1) against a racing reduction, and planned
+// for a cancellation from what remains. Stripe is an in-memory double handed to
+// the executor's seam. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
+// cleans its own `race-3653-` fixtures.
+import "./organiser-child-refund.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

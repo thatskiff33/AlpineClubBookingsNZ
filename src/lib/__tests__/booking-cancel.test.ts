@@ -96,6 +96,13 @@ const mocks = vi.hoisted(() => {
   // inside the unpaid claim.
   txManualRefundTaskFindFirst: vi.fn(),
   txManualRefundTaskCreate: vi.fn(),
+  // #3653: a joiner's own cancel of a booking the organiser paid for by card.
+  txSettlementFindFirst: vi.fn(),
+  txPaymentRefundAggregate: vi.fn(),
+  txRecoveryOperationFindUnique: vi.fn(),
+  txRecoveryOperationFindMany: vi.fn(),
+  txRecoveryOperationCreate: vi.fn(),
+  runPaymentRecoveryOperationNow: vi.fn(),
   };
 });
 
@@ -240,6 +247,7 @@ vi.mock("@/lib/payment-recovery", async () => {
       mocks.markBookingCancellationRefundRecoverySucceeded,
     recordBookingCancellationRefundRecoveryInlineError:
       mocks.recordBookingCancellationRefundRecoveryInlineError,
+    runPaymentRecoveryOperationNow: mocks.runPaymentRecoveryOperationNow,
   };
 });
 
@@ -372,6 +380,13 @@ describe("cancelBooking credit refunds", () => {
             manualRefundTask: {
               findFirst: mocks.txManualRefundTaskFindFirst,
               create: mocks.txManualRefundTaskCreate,
+            },
+            groupBookingSettlement: { findFirst: mocks.txSettlementFindFirst },
+            paymentRefund: { aggregate: mocks.txPaymentRefundAggregate },
+            paymentRecoveryOperation: {
+              findUnique: mocks.txRecoveryOperationFindUnique,
+              findMany: mocks.txRecoveryOperationFindMany,
+              create: mocks.txRecoveryOperationCreate,
             },
           };
           mocks.lastTx = mockTx;
@@ -1420,7 +1435,7 @@ describe("cancelBooking credit refunds", () => {
     expect(mocks.paymentTransactionFindFirst).toHaveBeenCalledWith({
       where: {
         paymentId: "payment_fold",
-        status: { in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"] },
+        status: { in: ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"] },
       },
       select: { id: true },
     });
@@ -1937,6 +1952,135 @@ describe("cancelBooking credit refunds", () => {
   // allocation plan) instead of a silently lost refund. The processor-side
   // replay of that operation is covered in payment-recovery.test.ts.
   // ---------------------------------------------------------------------------
+  // #3653 (`INV-PAY-114`), fix round: a joiner cancelling a booking the group
+  // organiser paid for by card. It used to plan zero Stripe slices (the child
+  // has no transaction of its own), so nobody was refunded - or hand the JOINER
+  // account credit - and it tiered off a mirror that ignored the refunds still
+  // OWED, so 13000 could go back on a 10000 payment. It now writes the same
+  // debt the organiser's cancel writes and runs it to the organiser's card.
+  describe("a joiner cancelling a booking the organiser paid for by card (#3653)", () => {
+    const CHILD = {
+      id: "booking_1",
+      memberId: "member_1",
+      lodgeId: "lodge_1",
+      status: "PAID",
+      finalPriceCents: 10000,
+      organiserSettled: true,
+      parentBookingId: "organiser_booking",
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: { id: "member_1", email: "member@example.com", firstName: "Alice" },
+      payment: {
+        id: "payment_1",
+        bookingId: "booking_1",
+        source: "STRIPE",
+        amountCents: 10000,
+        // A reconcile zeroed the mirror; the refund rows still hold 4000.
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: null,
+        manuallyMarkedPaidAt: null,
+      },
+    };
+
+    beforeEach(() => {
+      mocks.bookingFindUnique.mockResolvedValue(CHILD);
+      mocks.txBookingFindUnique.mockResolvedValue(CHILD);
+      mocks.txSettlementFindFirst.mockResolvedValue({
+        id: "settlement_1",
+        stripePaymentIntentId: "pi_combined",
+        amountCents: 30000,
+        status: "PARTIALLY_REFUNDED",
+        refundPlan: null,
+      });
+      // 4000 already refunded to the organiser for this child...
+      mocks.txPaymentRefundAggregate.mockResolvedValue({ _sum: { amountCents: 4000 } });
+      mocks.txRecoveryOperationFindUnique.mockResolvedValue(null);
+      // ...and 1000 more still owed by an edit's debt.
+      mocks.txRecoveryOperationFindMany.mockResolvedValue([{ paymentId: "payment_1", amountCents: 1000 }]);
+      mocks.txRecoveryOperationCreate.mockImplementation(async ({ data }: { data: { amountCents: number } }) => ({
+        id: "op_child_cancel",
+        amountCents: data.amountCents,
+      }));
+      mocks.runPaymentRecoveryOperationNow.mockResolvedValue("succeeded");
+      mocks.calculateRefundAmount.mockReturnValue({ refundAmountCents: 2500, refundPercentage: 50 });
+    });
+
+    it("tiers what remains after refunds made AND owed, and owes it to the organiser's card", async () => {
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        CLUB_FORMAT_TEST,
+        // The joiner asked for account credit; the organiser paid, so no.
+        "credit",
+      );
+
+      expect(result.status).toBe(200);
+      // 10000 paid, 4000 refunded (by its refund rows, not the zeroed mirror),
+      // 1000 owed: the policy tiers 5000, on the card tier.
+      expect(mocks.calculateRefundAmount).toHaveBeenCalledWith(5000, 30, expect.anything(), "card");
+      expect(mocks.txRecoveryOperationCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          idempotencyKey: "organiser_child_refund_cancel_settlement_1_booking_1",
+          paymentIntentId: "pi_combined",
+          paymentId: "payment_1",
+          amountCents: 2500,
+        }),
+      });
+      expect(mocks.runPaymentRecoveryOperationNow).toHaveBeenCalledWith("op_child_cancel", CLUB_FORMAT_TEST);
+      // Nothing else moves the money or claims it moved.
+      expect(mocks.createCancellationCredit).not.toHaveBeenCalled();
+      expect(mocks.planStripeRefundAllocation).not.toHaveBeenCalled();
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mocks.enqueueBookingCancellationRefundRecovery).not.toHaveBeenCalled();
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+      expect(mocks.enqueueXeroAccountCreditNoteOperation).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        data: { refundAmountCents: 2500, refundMethod: "card", message: expect.stringContaining("organiser's card") },
+      });
+    });
+
+    it("clamps to what the combined payment still holds", async () => {
+      // 30000 captured, 4000 refunded and 1000 owed across the group, and the
+      // child's own 5000 remaining - but another child's 24000 is owed too.
+      mocks.txRecoveryOperationFindMany.mockResolvedValue([
+        { paymentId: "payment_1", amountCents: 1000 },
+        { paymentId: "payment_other", amountCents: 24000 },
+      ]);
+
+      const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+      expect(result.status).toBe(200);
+      expect(mocks.txRecoveryOperationCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ amountCents: 1000 }),
+      });
+      expect(result).toMatchObject({ data: { refundAmountCents: 1000 } });
+    });
+
+    it("refunds nothing when the organiser's payment no longer holds money", async () => {
+      mocks.txSettlementFindFirst.mockResolvedValue({
+        id: "settlement_1",
+        stripePaymentIntentId: "pi_combined",
+        amountCents: 30000,
+        status: "REFUNDED",
+        refundPlan: null,
+      });
+
+      const result = await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+      expect(result.status).toBe(200);
+      expect(mocks.txRecoveryOperationCreate).not.toHaveBeenCalled();
+      expect(mocks.runPaymentRecoveryOperationNow).not.toHaveBeenCalled();
+      expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mocks.createCancellationCredit).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ data: { refundAmountCents: 0 } });
+    });
+  });
+
   describe("card refund debt persisted inside the claim transaction (#1349)", () => {
     it("enqueues the recovery operation with the frozen plan inside tx1, before the Stripe call", async () => {
       const result = await cancelBooking(

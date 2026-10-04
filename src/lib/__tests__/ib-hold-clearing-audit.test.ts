@@ -3,6 +3,7 @@ import {
   auditCardAppliedCreditDoublePays,
   deriveCardAppliedCreditDoublePayFinding,
   deriveIbAppliedCreditStrandFinding,
+  formatIbAppliedCreditStrandReport,
   type CardAppliedCreditDoublePayRow,
   type IbAppliedCreditStrandRow,
 } from "@/lib/ib-hold-clearing-audit";
@@ -461,6 +462,9 @@ function makeStrandRow(
     bookingId: "booking_1",
     bookingStatus: "PAYMENT_PENDING",
     paymentStatus: "PENDING",
+    xeroInvoiceId: "inv_1",
+    manuallyMarkedPaidAt: null,
+    transactions: [],
     amountCents: 10000,
     creditAppliedCents: 3000,
     finalPriceCents: 10000,
@@ -482,19 +486,88 @@ describe("deriveIbAppliedCreditStrandFinding (#1620 enumeration)", () => {
     ).toBeNull();
   });
 
-  it("flags a not-yet-paid IB booking as a PENDING (unrealized) strand", () => {
+  it("marks a row without current settlement evidence as unverified", () => {
     const finding = deriveIbAppliedCreditStrandFinding(makeStrandRow());
     expect(finding).not.toBeNull();
     expect(finding?.realized).toBe(false);
+    expect(finding?.settlementEvidence).toBe("unverified");
     expect(finding?.strandExposureCents).toBe(3000);
   });
 
-  it("flags a paid IB booking as a REALIZED double-pay", () => {
+  it("flags a current Xero-reconciled IB PRIMARY receipt as a REALIZED double-pay", () => {
     const finding = deriveIbAppliedCreditStrandFinding(
-      makeStrandRow({ paymentStatus: "SUCCEEDED", bookingStatus: "PAID" }),
+      makeStrandRow({
+        paymentStatus: "SUCCEEDED",
+        bookingStatus: "PAID",
+        transactions: [{
+          status: "SUCCEEDED",
+          source: "INTERNET_BANKING",
+          kind: "PRIMARY",
+          xeroInvoiceId: "inv_1",
+        }],
+      }),
     );
     expect(finding?.realized).toBe(true);
+    expect(finding?.settlementEvidence).toBe("xero-primary-receipt");
     expect(finding?.strandExposureCents).toBe(3000);
+  });
+
+  it("preserves a manually recorded settlement as realized without Xero linkage", () => {
+    const finding = deriveIbAppliedCreditStrandFinding(
+      makeStrandRow({
+        manuallyMarkedPaidAt: new Date("2026-08-01T00:00:00.000Z"),
+        xeroInvoiceId: null,
+      }),
+    );
+    expect(finding?.realized).toBe(true);
+    expect(finding?.settlementEvidence).toBe("manual-settlement");
+  });
+
+  it("does not treat a card-origin Stripe PRIMARY as the current IB receipt", () => {
+    // Same invoice, captured: only the source says this was not a bank receipt.
+    const finding = deriveIbAppliedCreditStrandFinding(makeStrandRow({
+      transactions: [{ status: "REFUNDED", source: "STRIPE", kind: "PRIMARY", xeroInvoiceId: "inv_1" }],
+    }));
+    expect(finding?.realized).toBe(false);
+    expect(finding?.settlementEvidence).toBe("unverified");
+  });
+
+  it("does not treat a captured ADDITIONAL transaction as the current IB PRIMARY receipt", () => {
+    const finding = deriveIbAppliedCreditStrandFinding(makeStrandRow({
+      transactions: [{ status: "SUCCEEDED", source: "INTERNET_BANKING", kind: "ADDITIONAL", xeroInvoiceId: "inv_1" }],
+    }));
+    expect(finding?.realized).toBe(false);
+    expect(finding?.settlementEvidence).toBe("unverified");
+  });
+
+  it("does not treat a captured receipt for a superseded invoice as the current one", () => {
+    const finding = deriveIbAppliedCreditStrandFinding(makeStrandRow({
+      paymentStatus: "SUCCEEDED",
+      transactions: [{ status: "SUCCEEDED", source: "INTERNET_BANKING", kind: "PRIMARY", xeroInvoiceId: "inv_old" }],
+    }));
+    expect(finding?.realized).toBe(false);
+    expect(finding?.settlementEvidence).toBe("unverified");
+  });
+
+  it("does not match an invoice-less receipt to a payment with no current invoice", () => {
+    // null === null would otherwise read this as a receipt for "the current
+    // invoice": a captured IB PRIMARY naming no invoice, no manual stamp, and
+    // no invoice on the payment proves nothing about any invoice.
+    const finding = deriveIbAppliedCreditStrandFinding(makeStrandRow({
+      xeroInvoiceId: null,
+      manuallyMarkedPaidAt: null,
+      transactions: [{ status: "SUCCEEDED", source: "INTERNET_BANKING", kind: "PRIMARY", xeroInvoiceId: null }],
+    }));
+    expect(finding?.realized).toBe(false);
+    expect(finding?.settlementEvidence).toBe("unverified");
+  });
+
+  it("keeps an IB row unverified when a credit-note repair changed only its mirror", () => {
+    const finding = deriveIbAppliedCreditStrandFinding(
+      makeStrandRow({ paymentStatus: "REFUNDED", bookingStatus: "PAID" }),
+    );
+
+    expect(finding?.realized).toBe(false);
   });
 
   it("surfaces the stale mirror on a switched (card-origin) payment", () => {
@@ -551,6 +624,24 @@ describe("deriveIbAppliedCreditStrandFinding (#1620 enumeration)", () => {
       }),
     );
     expect(finding?.uncollectedAdditionalCents).toBe(0);
+  });
+});
+
+describe("formatIbAppliedCreditStrandReport (#3632 evidence wording)", () => {
+  it("does not call an unverifiable row unpaid or direct an automatic repair", () => {
+    const finding = deriveIbAppliedCreditStrandFinding(makeStrandRow());
+    expect(finding).not.toBeNull();
+    const report = formatIbAppliedCreditStrandReport({
+      scannedInternetBankingPayments: 1,
+      realized: [],
+      unverified: [finding!],
+      realizedStrandedCents: 0,
+      unverifiedExposureCents: 3000,
+    }, CLUB_FORMAT_TEST);
+
+    expect(report).toContain("UNVERIFIED — no current IB PRIMARY receipt");
+    expect(report).toContain("do not call these rows definitely unpaid");
+    expect(report).not.toContain("PENDING — not yet captured");
   });
 });
 
