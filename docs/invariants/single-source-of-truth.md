@@ -16,7 +16,7 @@ with a one-line description of what it covers. ID scheme and allocation rules:
 
 The operational test an agent applies in the moment — search first, route to the
 existing one, and prefer making the wrong thing unrepresentable over policing it
-— is in [`AGENTS.md`](../../AGENTS.md) → "Change Discipline" → "Single source of
+— is in [`AGENTS.md`](../../AGENTS.md) → "Change discipline" → "Single source of
 truth". It is stated there rather than here because `AGENTS.md` is read on every
 task and this file is routed. This file holds the citable rules; that section
 holds the habit.

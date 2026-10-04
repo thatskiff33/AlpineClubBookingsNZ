@@ -65,6 +65,9 @@ import {
 } from "./xero-booking-repair-utils";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { isCancellationRefundDecisionRecorded } from "@/lib/cancellation-settled-money";
+import { recordedCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
+import { scopedGiveBackNote, withoutGiveBackNote } from "@/lib/xero-booking-repair-give-back";
+import { APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE } from "@/lib/xero-review-task-key";
 import { isRecordedBookingInvoicePayment } from "@/lib/xero-inbound/object-links";
 import { PART_PAYMENT_RECOGNISED_REASON } from "@/lib/part-payment-recognition-reason";
 import {
@@ -844,9 +847,51 @@ export function classifyBookingContext(
       // `hasCapturedRepairPayment` (#3639): this split routes card refunds.
       const paymentHasCapturedMoney =
         hasCapturedPayment(payment) || capturedPaymentTransactions.length > 0;
+      // #3809: applied credit given back always has an allocated note of its
+      // own, under its own scope, checked here; the edit's own note is read
+      // below without it, so neither hides the other or stands in for it.
+      const giveBackNote = scopedGiveBackNote({ newData: modification.newData, operations: modificationOperations });
+      if (giveBackNote) {
+        const blocking = getBlockingOperation(giveBackNote.operations, "CREDIT_NOTE", "CREATE");
+        if (blocking?.kind === "retryable") {
+          const action = addAction(actionMap, buildRetryAction(booking.id, blocking));
+          addFinding(findings, {
+            code: "BLOCKED_BY_XERO_OPERATION",
+            severity: "warning",
+            summary: `A failed or partial Xero give-back credit note operation is blocking modification ${modification.id}.`,
+            safeToAutoApply: true,
+            details: { modificationId: modification.id, operationId: blocking.operation.id, operationStatus: blocking.operation.status },
+            actionKeys: [action.key],
+          });
+        } else if (!blocking && !giveBackNote.operations.some(isSuccessfulXeroOperation)) {
+          const action = addAction(actionMap, {
+            key: `queue:give-back-note:${modification.id}`,
+            bookingId: booking.id,
+            type: "QUEUE_MODIFICATION_CREDIT_NOTE",
+            description: "Queue the missing Xero credit note for the applied credit a booking modification gave back.",
+            safeToAutoApply: true,
+            payload: {
+              bookingId: booking.id,
+              bookingModificationId: modification.id,
+              refundAmountCents: giveBackNote.givenBackCents,
+              refundMethod: "account-credit",
+              reviewTaskId: APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE,
+            },
+          });
+          addFinding(findings, {
+            code: "MISSING_MODIFICATION_CREDIT_NOTE",
+            severity: "critical",
+            summary: "A booking modification gave back applied credit, but no Xero credit note for it exists.",
+            safeToAutoApply: true,
+            details: { modificationId: modification.id, refundAmountCents: giveBackNote.givenBackCents, refundAmountSource: "recorded-give-back" },
+            actionKeys: [action.key],
+          });
+        }
+      }
+      const { links: noteLinks, operations: noteOperations } = withoutGiveBackNote(modificationLinks, modificationOperations);
       const modificationCreditNote = resolveObjectFromCandidates({
-        links: modificationLinks,
-        operations: modificationOperations,
+        links: noteLinks,
+        operations: noteOperations,
         xeroObjectType: "CREDIT_NOTE",
         role: "MODIFICATION_CREDIT_NOTE",
         entityType: "CREDIT_NOTE",
@@ -894,8 +939,8 @@ export function classifyBookingContext(
       // note totals. A stored amount outside (0, abs(net)] is inconsistent
       // and is ignored.
       const storedEvidence = recoverStoredXeroAmountCents({
-        links: modificationLinks,
-        operations: modificationOperations,
+        links: noteLinks,
+        operations: noteOperations,
         xeroObjectType: "CREDIT_NOTE",
         role: "MODIFICATION_CREDIT_NOTE",
         entityType: "CREDIT_NOTE",
@@ -912,13 +957,20 @@ export function classifyBookingContext(
         storedEvidence.amountCents <= refundDueCents
           ? storedEvidence
           : null;
-      const expectedCreditNoteCents =
-        storedSettlement?.amountCents ?? refundDueCents;
+      // #3809: with nothing captured, a paid booking's reduction settled as
+      // applied credit given back, as the edit's history row records
+      // (`recordedCreditGiveBack`), and the give-back's note is its own,
+      // scoped, checked above. The edit has no note of its own to repair: the
+      // whole reduction would credit the invoice for money the policy kept.
+      if (!modificationCreditNote && !paymentHasCapturedMoney && recordedCreditGiveBack(modification.newData)) {
+        continue;
+      }
+      const expectedCreditNoteCents = storedSettlement?.amountCents ?? refundDueCents;
       const expectedAmountSource = storedSettlement?.source ?? "net-amount";
 
       if (!modificationCreditNote) {
         const blockingOperation = getBlockingOperation(
-          modificationOperations,
+          noteOperations,
           "CREDIT_NOTE",
           "CREATE",
           // A pending ACCOUNT-credit-note op must not mask the genuinely
@@ -1038,8 +1090,8 @@ export function classifyBookingContext(
           bookingId: booking.id,
           expectedAmountCents: expectedCreditNoteCents,
           resolved: modificationCreditNote,
-          links: modificationLinks,
-          operations: modificationOperations,
+          links: noteLinks,
+          operations: noteOperations,
           xeroObjectType: "CREDIT_NOTE",
           role: "MODIFICATION_CREDIT_NOTE",
           entityType: "CREDIT_NOTE",
@@ -1087,8 +1139,8 @@ export function classifyBookingContext(
         }
 
         const allocation = resolveObjectFromCandidates({
-          links: modificationLinks,
-          operations: modificationOperations,
+          links: noteLinks,
+          operations: noteOperations,
           xeroObjectType: "ALLOCATION",
           role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
           entityType: "ALLOCATION",
@@ -1097,7 +1149,7 @@ export function classifyBookingContext(
 
         if (!allocation) {
           const blockingOperation = getBlockingOperation(
-            modificationOperations,
+            noteOperations,
             "ALLOCATION",
             "ALLOCATE"
           );

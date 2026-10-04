@@ -65,6 +65,7 @@ import {
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
+import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
 import {
   assertNoPendingEditFinancialReview,
@@ -140,6 +141,7 @@ export type RemoveBookingGuestResult = {
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   xeroRefundAmountCents: number;
+  appliedCreditGivenBackCents: number;
   /** #3653: see `BookingModificationPaymentContext`. */
   organiserChildRefund: { amountCents: number } | null;
   xeroAdditionalAmountCents: number;
@@ -1027,6 +1029,8 @@ export async function removeBookingGuestInTransaction({
     changeFeeCents: 0,
     settlementOptions,
     settlementMethod,
+    todayAtClub,
+    format,
   });
 
   // Run the same lifecycle transitions the batch path applies (#1041):
@@ -1184,6 +1188,7 @@ export async function removeBookingGuestInTransaction({
         settlementMethod: paymentImpact.settlementMethod,
         accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
         policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
+        ...creditGiveBackHistory(paymentImpact.appliedCreditGiveBack),
         // #2390: the same sentence the member saw when they made the edit,
         // kept on the booking's own history so "why was I charged that?" has
         // an answer months later. Absent unless a cap left somebody out.
@@ -1327,6 +1332,7 @@ export async function removeBookingGuestInTransaction({
     settlementMethod: paymentImpact.settlementMethod,
     policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,
+    appliedCreditGivenBackCents: paymentImpact.appliedCreditGivenBackCents,
     organiserChildRefund: paymentImpact.organiserChildRefund,
     xeroAdditionalAmountCents: paymentImpact.xeroAdditionalAmountCents,
     hasSucceededPayment: paymentImpact.hasSucceededPayment,
