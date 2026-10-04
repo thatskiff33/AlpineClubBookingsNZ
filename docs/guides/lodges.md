@@ -126,7 +126,12 @@ same **lodge edit** permission as the properties above.
 
 Every field in this table is shared with other clubs through the
 [Alpine Central Server](integrations.md#connect-to-the-alpine-central-server)
-when that connection is on; that page says what leaves the club.
+when that connection is on; that page says what leaves the club. If that
+connection is on, **the central server has to be upgraded before this site**:
+an older central server refuses an upload that names fields it does not know,
+so **Upload** (and the nightly sync, which also skips that night's download
+while its upload is failing) reports **Central server error: Invalid upload
+payload** until the server is upgraded. Nothing needs resetting afterwards.
 
 The names recorded here are what the public booking-request form offers under
 *"Are you a member of another lodge?"*, and what a booking officer picks from

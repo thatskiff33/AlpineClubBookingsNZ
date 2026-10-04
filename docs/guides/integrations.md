@@ -173,6 +173,19 @@ After that a nightly job at 3am syncs both directions on its own. It only sends
 entries that changed since last time and only writes entries that genuinely
 differ, so a quiet night costs almost nothing.
 
+**Upgrade the central server before this site.** The upload sends every field
+the Other lodges panel holds, and the central server refuses an upload that
+names a field it does not know. So if this site is upgraded to a release that
+carries the lodge details and amenities while the central server is still on an
+older release, every upload fails: pressing **Upload** shows **Central server
+error: Invalid upload payload**, and the nightly pass logs the same failure. In
+the nightly pass the upload runs first, so while the upload is failing that
+night's **download is skipped too** — the registry stops moving in both
+directions until the central server's operator upgrades it, after which the next
+upload and download go through unchanged with nothing to reset. Downloading from
+a central server that has not yet gained a field is harmless the other way
+round: a field the server does not send is left as you had it.
+
 Each download deliberately re-asks the server for a small window of time it has
 already covered — currently the last minute before where it got to. That looks
 like wasted work and is not: two changes made at the central server at almost
@@ -238,6 +251,7 @@ and [`DEPLOYMENT.md`](../../DEPLOYMENT.md)).
 | The card reads **Setup required** and no tag appears | No measurement id is saved. Analytics fails closed: no id, an invalid id, or a database read failure all mean no analytics | Enter and save the measurement id |
 | Analytics reports no page views for one page | Its address is not analytics-eligible — an unhyphenated identifier-shaped slug, or a word the policy treats as credential-flavoured | Rename the page to a hyphenated word slug; the exclusion is deliberate and not configurable |
 | The **Analytics preferences** link is missing from the website footer | The module is off, or no valid measurement id is saved | Complete the setup; the link appears in both banner modes once configured |
+| **Upload** fails with **Central server error: Invalid upload payload**, and the nightly sync reports the same | The central server is on an older release than this site and does not know the lodge details or amenities this site sends; while the upload fails, the nightly pass skips that night's download as well | Ask the central server's operator to upgrade it; the next upload and download then go through with nothing to reset |
 
 ## Related links
 
