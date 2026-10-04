@@ -138,9 +138,10 @@ refund-note create or credit-note requeue on the payment is RUNNING. Each run
 commits its claim and then reads, so of two concurrent runs at least one sees
 the other; both seeing each other is safe. The refusal is a busy error, and the
 outbox and the retry queue return the row to PENDING with the reason kept. It
-adds no advisory key and no row lock. Since #3880 a review's bank-transfer
-hand-back on a cancelled booking also queues its refund note INSIDE the
-completion transaction: an outbox row insert, after the completion's
+adds no advisory key and no row lock. Since #3880 a bank-transfer hand-back on
+a cancelled booking - a review's, and a `CANCELLED_BOOKING_HAND_BACK` - also
+queues its refund note INSIDE the completion transaction: an outbox row insert,
+after the completion's
 `lock(1)`, its member-ledger key and the `Payment` row
 (`lockPaymentForRefundedTotal`), with no provider call. Proven against real
 PostgreSQL by `edit-financial-review-cancelled-refund-xero.realdb.test.ts`.

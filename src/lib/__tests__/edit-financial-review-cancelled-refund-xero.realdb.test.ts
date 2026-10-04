@@ -668,6 +668,16 @@ let outbox: typeof import("@/lib/xero-operation-outbox");
         await inbound.reconcileXeroCreditNote(h!);
         expect((await refundNoteLinks()).map((link) => [link.xeroObjectId, link.active])).toEqual([[h, true], [d, true]]);
         expect(await coveredCents()).toBe(cashOut);
+
+        // The rollback note's list and repair (docs/xero/ARCHITECTURE.md, #3880),
+        // as written there: D is listed, and a D the old code switched off is
+        // counted again once set active by hand.
+        const listed: unknown = await prisma.$queryRaw`SELECT "localId", "xeroObjectId", active FROM "XeroObjectLink" WHERE role = 'REFUND_CREDIT_NOTE' AND metadata->>'perDelta' = 'true'`;
+        expect((listed as Array<Record<string, unknown>>).filter((row) => row.localId === PAYMENT_ID)).toEqual([{ localId: PAYMENT_ID, xeroObjectId: d, active: true }]);
+        await prisma.xeroObjectLink.updateMany({ where: { localId: PAYMENT_ID, xeroObjectId: d }, data: { active: false } });
+        expect(await coveredCents()).toBe(5_000);
+        await prisma.$executeRaw`UPDATE "XeroObjectLink" SET active = true WHERE role = 'REFUND_CREDIT_NOTE' AND "localId" = ${PAYMENT_ID} AND "xeroObjectId" = ${d}`;
+        expect(await coveredCents()).toBe(cashOut);
       });
 
       // Every cent has its document, so the next refund run on the payment raises nothing.

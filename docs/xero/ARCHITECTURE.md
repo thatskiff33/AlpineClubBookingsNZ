@@ -828,7 +828,14 @@ get one note: a run sizes only while no other live refund-note run on the
 payment is RUNNING (`assertNoRefundCreditNoteInFlight`) and otherwise waits in
 PENDING. A bank-transfer payment is noted per refund like a card: the task rides
 the row's payload, and the note's link is stamped `perDelta`, stays active
-beside its siblings and is never the payment's one canonical note. The
+beside its siblings and is never the payment's one canonical note: no writer
+records it in `Payment.xeroRefundCreditNoteId`, every reader of that field takes
+it through `canonicalRefundNoteFromField` (a field naming one counts as none),
+and the booking-repair pass ignores it. The row of a per-refund note records its
+watermark and `perDelta` mark too, so a retry of an inline row the operator's
+retry created is still a per-refund run. A `CANCELLED_BOOKING_HAND_BACK`'s own
+note is queued inside its completion transaction, as the review's hand-back is.
+The
 applied-credit part given back beside it takes no document: like the
 cancellation's own restore it is a noteless credit row, minted a note when spent
 (#2717), so the member's Xero credit lags the app's by exactly those rows until
@@ -878,6 +885,29 @@ notes; that was not added. Since #3809 an edit's own modification note (no
 review task) waits on the deallocation too, which the previous release does not
 do, and a give-back beside a refund raises a second, scoped note: the same
 drain or pause covers both.
+
+**Deploy and rollback note (#3880).** The release before this one keeps one
+active refund note per bank-transfer payment: a later write of a refund-note
+link on that payment leaves active only the note its `xeroRefundCreditNoteId`
+names (with the field empty, the note written); with the field empty it takes
+any active note as the payment's one note, so a later cancellation hand-back is
+skipped as "already linked"; and its worker raises a review's queued row as that
+one note (no `perDelta` mark, recorded in the field). So, as for #3791, stop the
+old colour's outbox workers before the new release completes a review's refund
+on a cancelled booking. Before rolling back: (1) let every `REFUND_CREDIT_NOTE`
+outbox row whose payload carries `reviewTaskId` finish (a failed one: mark it
+resolved in Xero), so none is PENDING, RUNNING, FAILED or PARTIAL; (2) list the
+per-refund notes,
+`SELECT "localId", "xeroObjectId", active FROM "XeroObjectLink" WHERE role = 'REFUND_CREDIT_NOTE' AND metadata->>'perDelta' = 'true'`.
+None: the rollback is safe. Any: the old code can switch those links off, so
+roll back only if needed and, after rolling forward again, list them once more.
+A listed link that is inactive while its note is still live in Xero (not VOIDED
+or DELETED) must be set active again by hand
+(`UPDATE "XeroObjectLink" SET active = true WHERE role = 'REFUND_CREDIT_NOTE' AND "localId" = '<payment>' AND "xeroObjectId" = '<note>'`):
+nothing in the app does it, as the inbound reconcile reaches only active links.
+Then check that each of those payments' `xeroRefundCreditNoteId` names its
+cancellation's note or is null, and that a hand-back completed meanwhile has its
+note.
 
 **Retry taxonomy** (each layer is distinct — do not conflate when changing):
 
