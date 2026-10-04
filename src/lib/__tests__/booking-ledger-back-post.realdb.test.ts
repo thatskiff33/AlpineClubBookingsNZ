@@ -677,12 +677,23 @@ async function lines(bookingId: string) {
       await cancelGroupHistory(NAMES, g);
       const owed = await prisma.paymentRecoveryOperation.findMany({ where: { bookingId: { in: g.children }, status: { not: "SUCCEEDED" } }, orderBy: { id: "asc" } });
       expect(owed.map((debt) => debt.amountCents)).toEqual([GROUP_CHILD_CENTS / 2, GROUP_CHILD_CENTS / 2]);
+      // The first child is back-posted while the recovery runner holds its refund (claimed, not yet
+      // made): the kept figure counts the debt still owed, as the live cancel's did.
+      const [early] = g.children;
+      const earlyDebt = owed.find((debt) => debt.bookingId === early)!;
+      const claimed = await prisma.paymentRecoveryOperation.update({ where: { id: earlyDebt.id }, data: { status: "PROCESSING", attempts: { increment: 1 }, nextRetryAt: new Date() } });
+      expect(await runOne(early!, true)).toMatchObject({ kind: "POSTED", steps: expect.arrayContaining([`cancellation (kept ${GROUP_CHILD_CENTS / 2})`]), classes: ["IN_FLIGHT_REFUND"] });
       const stripe = groupHistoryStripe();
-      for (const debt of owed) await runGroupChildRefund(prisma, debt.id, stripe);
-      for (const id of g.children) {
+      const { processOrganiserChildRefundOperation } = await import("@/lib/organiser-child-refund-executor");
+      const { CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture");
+      await processOrganiserChildRefundOperation(claimed, CLUB_FORMAT_TEST, stripe);
+      for (const debt of owed.filter((row) => row.id !== earlyDebt.id)) await runGroupChildRefund(prisma, debt.id, stripe);
+      expect(await runOne(early!, true)).toMatchObject({ kind: "NOTHING_TO_POST" });
+      for (const id of g.children.slice(1)) {
         expect(await runOne(id, true), id).toMatchObject({ kind: "POSTED", steps: expect.arrayContaining([`cancellation (kept ${GROUP_CHILD_CENTS / 2})`]) });
         expect((await lines(id)).filter((line) => line.kind === "CARD_REFUND").map((line) => [line.amountCents, line.anchorKind])).toEqual([[-GROUP_CHILD_CENTS / 2, "PAYMENT_REFUND"]]);
       }
+      expect((await lines(early!)).filter((line) => line.kind === "CARD_REFUND").map((line) => line.amountCents)).toEqual([-GROUP_CHILD_CENTS / 2]);
       const report = await census();
       for (const id of g.children) expect(about(report, id), id).toEqual(NOTHING);
     }, 300_000);
