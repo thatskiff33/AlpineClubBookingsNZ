@@ -4149,9 +4149,67 @@ describe("#3880 - a review's refund on a cancelled booking reaches Xero as the c
       createdByMemberId: "admin-1",
       refundMethod,
       reviewTaskId: "task-1",
+      // The hand-back's row is queued on the completion's own transaction (L2).
+      ...(source === PaymentSource.INTERNET_BANKING ? { store: tx } : {}),
     });
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
     invoiceLeftAsTheCancellationLeftIt();
+  });
+
+  it("MUTATION: the bank-transfer hand-back's note is queued INSIDE the completion, after its allocation - and the kick waits for the commit", async () => {
+    cancelledTask(PaymentSource.INTERNET_BANKING);
+    cancelledAt(8_000, "credit");
+    fiftyLessTwenty();
+    let insideTransaction = false;
+    let queuedInside: boolean | null = null;
+    const realTransaction = mocks.transaction.getMockImplementation()!;
+    mocks.transaction.mockImplementation(async (...a: unknown[]) => {
+      insideTransaction = true;
+      try {
+        return await realTransaction(...a);
+      } finally {
+        insideTransaction = false;
+      }
+    });
+    mocks.enqueueXeroRefundCreditNoteOperation.mockImplementation(async () => {
+      queuedInside = insideTransaction;
+      return { queueOperationId: "op-1", message: "queued" };
+    });
+
+    await completeAt();
+
+    expect(queuedInside).toBe(true);
+    expect(mocks.applyLocalRefundAllocation.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.enqueueXeroRefundCreditNoteOperation.mock.invocationCallOrder[0]!,
+    );
+    expect(mocks.enqueueXeroRefundCreditNoteOperation.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.kickQueuedXeroOutboxOperationsIfConnected.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("MUTATION: a hand-back note that cannot be queued fails the completion, so the hand-back is never recorded without its document", async () => {
+    cancelledTask(PaymentSource.INTERNET_BANKING);
+    cancelledAt(8_000, "credit");
+    fiftyLessTwenty();
+    mocks.enqueueXeroRefundCreditNoteOperation.mockRejectedValueOnce(new Error("outbox insert refused"));
+
+    await expect(completeAt()).rejects.toThrow("outbox insert refused");
+
+    expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).not.toHaveBeenCalled();
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+  });
+
+  it("the card refund's note is still queued after the commit, once Stripe has refunded: sized at enqueue against the cash that left", async () => {
+    cancelledTask(PaymentSource.STRIPE);
+    cancelledAt(8_000, "card");
+    fiftyLessTwenty();
+
+    await completeAt();
+
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("payment-1", 2_500, expect.not.objectContaining({ store: expect.anything() }));
+    expect(mocks.refundPaymentTransactions.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.enqueueXeroRefundCreditNoteOperation.mock.invocationCallOrder[0]!,
+    );
   });
 
   it.each([

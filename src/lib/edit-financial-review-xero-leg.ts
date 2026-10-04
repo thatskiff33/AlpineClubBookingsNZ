@@ -1,6 +1,6 @@
 import "server-only";
 
-import { BookingStatus, ManualRefundTaskKind } from "@prisma/client";
+import { BookingStatus, ManualRefundTaskKind, type Prisma } from "@prisma/client";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import {
   recordShortEditReviewChargeInvoice,
@@ -72,11 +72,70 @@ export function cancelledBookingRefundInvoiceId(task: {
  * refund payment from the card clearing or bank-transfer refund account
  * (`INV-PAY-101`), so the invoice stays exactly as the cancellation left it.
  * Sized to what this review actually sent back - the netted capture part
- * (#3835), never the typed share - and keyed on the task, so sibling reviews
- * are a note each and a replay is the same one. The applied-credit part given
- * back beside it takes no document: like the cancellation's own restore it is
- * a noteless credit row, minted a note when spent (#2717).
+ * (#3835), never the typed share - and its outbox row keyed on the task, so
+ * sibling reviews are a row each and a replay is the same one. The
+ * applied-credit part given back beside it takes no document: like the
+ * cancellation's own restore it is a noteless credit row, minted a note when
+ * spent (#2717).
+ *
+ * WHEN it is queued follows when the money is on the payment's refund ledger,
+ * which is what the enqueue sizes against. The bank-transfer hand-back is
+ * written inside the completion transaction (`applyLocalRefundAllocation`), so
+ * its row is queued there too, on that client
+ * (`queueCancelledBookingHandBackNoteInTransaction`): it commits or rolls back
+ * with the completion, and no crash or swallowed error after the commit can
+ * leave the hand-back with no document. The card refund moves only after the
+ * commit, and the enqueue caps a note at the cash Stripe has refunded, so its
+ * row is still queued after that call; a lost one there is the payment's
+ * uncovered cash, which the Stripe self-heal raises.
  */
+type CancelledReviewRefundRoute = Extract<EditReviewSettlementRoute, { kind: "stripe-refund" | "local-allocation" }>;
+
+function cancelledReviewRefundNoteRoute(
+  route: EditReviewSettlementRoute | null,
+  cancelledInvoiceId: string | null,
+): CancelledReviewRefundRoute | null {
+  return cancelledInvoiceId !== null &&
+    (route?.kind === "stripe-refund" || route?.kind === "local-allocation") &&
+    route.bookingModificationId !== null
+    ? route
+    : null;
+}
+
+function enqueueCancelledReviewRefundNote(
+  route: CancelledReviewRefundRoute,
+  taskId: string,
+  actingMemberId: string,
+  store?: Prisma.TransactionClient,
+) {
+  return enqueueXeroRefundCreditNoteOperation(route.paymentId, route.refundCents, {
+    createdByMemberId: actingMemberId,
+    refundMethod: refundMethodForEditReviewRoute(route) === "internet-banking" ? "internet-banking" : "card",
+    reviewTaskId: taskId,
+    ...(store ? { store } : {}),
+  });
+}
+
+/**
+ * #3880: the bank-transfer hand-back's note, queued on the completion's own
+ * transaction after its allocation. A throw rolls the completion back.
+ */
+export async function queueCancelledBookingHandBackNoteInTransaction({
+  task,
+  route,
+  actingMemberId,
+  store,
+}: {
+  task: Parameters<typeof cancelledBookingRefundInvoiceId>[0] & { id: string };
+  route: EditReviewSettlementRoute | null;
+  actingMemberId: string;
+  store: Prisma.TransactionClient;
+}): Promise<void> {
+  const noted = cancelledReviewRefundNoteRoute(route, cancelledBookingRefundInvoiceId(task));
+  if (noted?.kind !== "local-allocation" || noted.refundCents <= 0) return;
+  await enqueueCancelledReviewRefundNote(noted, task.id, actingMemberId, store);
+}
+
 async function queueCancelledBookingReviewRefundNote({
   bookingId,
   taskId,
@@ -86,23 +145,22 @@ async function queueCancelledBookingReviewRefundNote({
   bookingId: string;
   taskId: string;
   actingMemberId: string;
-  route: Extract<EditReviewSettlementRoute, { kind: "stripe-refund" | "local-allocation" }>;
+  route: CancelledReviewRefundRoute;
 }): Promise<void> {
   if (route.refundCents <= 0) return;
-  await enqueueXeroRefundCreditNoteOperation(route.paymentId, route.refundCents, {
-    createdByMemberId: actingMemberId,
-    refundMethod: refundMethodForEditReviewRoute(route) === "internet-banking" ? "internet-banking" : "card",
-    reviewTaskId: taskId,
-  })
-    .then(async (queued) => {
-      if (queued.queueOperationId) await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-    })
-    .catch((err) =>
-      logger.error(
-        { err, bookingId, taskId, refundCents: route.refundCents },
-        "Failed to queue the Xero refund note for a completed review's refund on a cancelled booking",
-      ),
+  try {
+    if (route.kind === "stripe-refund") {
+      const queued = await enqueueCancelledReviewRefundNote(route, taskId, actingMemberId);
+      if (!queued.queueOperationId) return;
+    }
+    // A hand-back's row committed with the completion: only the kick is left.
+    await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+  } catch (err) {
+    logger.error(
+      { err, bookingId, taskId, refundCents: route.refundCents },
+      "Failed to queue the Xero refund note for a completed review's refund on a cancelled booking",
     );
+  }
 }
 
 /**
@@ -226,12 +284,9 @@ export async function dispatchEditReviewXeroSettlement({
   // #3880: a review's refund on a CANCELLED booking. Its invoice is closed, so
   // the edit's own leg below would raise nothing (`hasIssuedXeroInvoice` is
   // false); the refund takes the cancellation's refund note instead.
-  if (
-    cancellationHandBackInvoiceId !== null &&
-    (route?.kind === "stripe-refund" || route?.kind === "local-allocation") &&
-    route.bookingModificationId !== null
-  ) {
-    await queueCancelledBookingReviewRefundNote({ bookingId, taskId, actingMemberId, route });
+  const cancelledReviewRefund = cancelledReviewRefundNoteRoute(route, cancellationHandBackInvoiceId);
+  if (cancelledReviewRefund) {
+    await queueCancelledBookingReviewRefundNote({ bookingId, taskId, actingMemberId, route: cancelledReviewRefund });
     return;
   }
 
