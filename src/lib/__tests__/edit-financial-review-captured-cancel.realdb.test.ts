@@ -27,6 +27,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { registerRaceStripeKeyOverride } from "@/lib/__tests__/support/race-stripe-key-override";
 import type { CalendarDate } from "@/lib/club-time";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -54,13 +55,10 @@ function deferred() {
 /** Unconfigured only while this file runs; a pass-through for the rest of the harness. */
 const stripeKey = vi.hoisted(() => ({ unconfigured: false }));
 vi.mock("@/lib/stripe-config", async (importOriginal) => {
-  const actual = (await importOriginal()) as typeof import("@/lib/stripe-config");
-  return {
-    ...actual,
-    getOperationalStripeSecretKey: () =>
-      stripeKey.unconfigured ? Promise.resolve(undefined) : actual.getOperationalStripeSecretKey(),
-  };
+  const { stripeConfigWithRaceOverrides } = await import("./support/race-stripe-key-override");
+  return stripeConfigWithRaceOverrides((await importOriginal()) as typeof import("@/lib/stripe-config"));
 });
+registerRaceStripeKeyOverride(() => (stripeKey.unconfigured ? { key: undefined } : null));
 
 /** Standalone fail-closed copy: importing this file must not register another suite. */
 export function assertSafeCapturedCancelRaceDbUrl(url: string): void {

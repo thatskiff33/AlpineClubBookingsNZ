@@ -22,6 +22,7 @@ import type Stripe from "stripe";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { registerRaceStripeKeyOverride } from "@/lib/__tests__/support/race-stripe-key-override";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -69,13 +70,10 @@ const fake = vi.hoisted(() => ({
  */
 const FAKE_STRIPE_KEY = "sk_test_race_3864_fake";
 vi.mock("@/lib/stripe-config", async (importOriginal) => {
-  const actual = (await importOriginal()) as typeof import("@/lib/stripe-config");
-  return {
-    ...actual,
-    getOperationalStripeSecretKey: () =>
-      fake.active ? Promise.resolve(FAKE_STRIPE_KEY) : actual.getOperationalStripeSecretKey(),
-  };
+  const { stripeConfigWithRaceOverrides } = await import("./support/race-stripe-key-override");
+  return stripeConfigWithRaceOverrides((await importOriginal()) as typeof import("@/lib/stripe-config"));
 });
+registerRaceStripeKeyOverride(() => (fake.active ? { key: FAKE_STRIPE_KEY } : null));
 vi.mock("stripe", async (importOriginal) => {
   const actual = (await importOriginal()) as { default: new (...args: unknown[]) => object };
   const read = async (id: string) => {
