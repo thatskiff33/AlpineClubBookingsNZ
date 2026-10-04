@@ -1020,11 +1020,13 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   mirror aggregates gross captures and the invariant is NET-based:
   `(amountCents − refundedAmountCents) + creditAppliedCents = finalPriceCents`
   at repay settlement. Every capture/reconciliation guard accepts EITHER the
-  effective price OR the full `finalPriceCents` (legacy in-flight intents) and
-  rejects any other amount (create-payment-intent reuse,
-  `stripe-webhook-service`, `payment-reconciliation`, `confirm-payment`) — full
-  price is always a legitimate settlement, and new bookings only mint effective
-  intents. Because a card invoice is raised-and-paid at capture
+  effective price OR the full `finalPriceCents` and rejects any other amount
+  (create-payment-intent reuse, `stripe-webhook-service`,
+  `payment-reconciliation`, `confirm-payment`). A full-price capture gives the
+  applied credit back (`giveBackAppliedCredit`) and mirrors
+  `creditAppliedCents = 0` (#3864). A stored election is spent only once the
+  booking's earlier intent is retired (`retireCardIntentBeforeElection`); a live
+  capture leaves it unspent. Because a card invoice is raised-and-paid at capture
   (`queueXeroInvoiceForPaidBooking` → `createXeroInvoiceForBooking`), the #1620
   fire-after-invoice outbox op is NOT used on card; `createXeroInvoiceForBooking`
   records the NET captured Stripe cash — gross captures − refunds, capped at the
