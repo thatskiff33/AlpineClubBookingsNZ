@@ -12,24 +12,17 @@
  */
 
 import type { PaymentStatus } from "@prisma/client";
+import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 
 /**
  * Local payment states under which the original (primary) Xero invoice must
  * never be mutated: money has moved against it, so edits settle through
  * supplementary invoices / credit notes instead.
  */
-export const UNSAFE_PRIMARY_INVOICE_PAYMENT_STATUSES = new Set<string>([
-  "SUCCEEDED",
-  "PARTIALLY_REFUNDED",
-  "REFUNDED",
-]);
-
 export function isPrimaryInvoiceUnsafe(
   paymentStatus?: PaymentStatus | string | null,
 ): boolean {
-  return paymentStatus
-    ? UNSAFE_PRIMARY_INVOICE_PAYMENT_STATUSES.has(paymentStatus)
-    : false;
+  return paymentStatus ? isCapturedPaymentStatus(paymentStatus) : false;
 }
 
 export interface CheckInDatedInvoiceUpdateConditionInput {

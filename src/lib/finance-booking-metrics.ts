@@ -30,6 +30,7 @@ import {
   summarizeBookingMoneyReconciliations,
   type BookingMoneyReconciliationSummary,
 } from "@/lib/booking-money-reconciliation";
+import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 
 export const MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS = 366;
 export { getFinanceBookingMetricsWindowDayCount };
@@ -46,12 +47,6 @@ export const FINANCE_FORWARD_AT_RISK_BOOKING_STATUSES = [
   BookingStatus.PENDING,
   ...PAYMENT_OWED_BOOKING_STATUSES,
 ] as const;
-
-const FINANCE_CAPTURED_PAYMENT_STATUSES = new Set<PaymentStatus>([
-  PaymentStatus.SUCCEEDED,
-  PaymentStatus.PARTIALLY_REFUNDED,
-  PaymentStatus.REFUNDED,
-]);
 
 const PAYMENT_STATUS_KEYS = [
   PaymentStatus.PENDING,
@@ -747,9 +742,7 @@ function summarizePayments(
     // ledger-derived total would report a booking that collected $121 as having
     // collected nothing, or (worse, once an addition exists) as having
     // collected only the $21.
-    const capturedGrossCents = FINANCE_CAPTURED_PAYMENT_STATUSES.has(
-      payment.status
-    )
+    const capturedGrossCents = isCapturedPaymentStatus(payment.status)
       ? payment.amountCents
       : 0;
     const claimsCollectedAdditional =

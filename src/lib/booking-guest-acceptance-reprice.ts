@@ -51,6 +51,7 @@ import {
   refundableCashNetOfOpenHandBacks,
 } from "@/lib/edit-refund-hand-back";
 import { getDefaultLodgeId } from "@/lib/lodges";
+import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import logger from "@/lib/logger";
 import {
   clampAppliedCreditToBookingPrice,
@@ -142,6 +143,12 @@ export type GuestAcceptanceReprice =
       refundAmountCents: number;
       /** The Stripe slice of `refundAmountCents`, refunded after commit. */
       pendingRefundAmountCents: number;
+      /**
+       * #3653 (composed by #3829): non-null when that slice goes back to the
+       * group organiser's card out of the combined payment; its debt is reserved
+       * in this transaction under the modification's key.
+       */
+      organiserChildRefund: { amountCents: number } | null;
       accountCreditAmountCents: number;
       xeroRefundAmountCents: number;
       xeroAdditionalAmountCents: number;
@@ -327,6 +334,7 @@ export async function repriceBookingAfterGuestAcceptance(
       priceDiffCents: 0,
       refundAmountCents: 0,
       pendingRefundAmountCents: 0,
+      organiserChildRefund: null,
       accountCreditAmountCents: 0,
       xeroRefundAmountCents: 0,
       xeroAdditionalAmountCents: 0,
@@ -351,6 +359,11 @@ export async function repriceBookingAfterGuestAcceptance(
     ...(returnRoute.kind === "money-back"
       ? { settlementOptions: returnRoute.settlementOptions, settlementMethod: "card" as const }
       : {}),
+    todayAtClub,
+    format,
+    // D-3813-5: the credit share goes back below, in full, by the clamp - so
+    // #3809's tiered give-back for an ordinary edit does not run as well.
+    appliedCreditReturnedByCaller: true,
   });
   // What the cash arm above could not return went on account credit, and goes
   // back the way an edit returns over-applied credit (INV-MOD-012): the applied
@@ -472,6 +485,14 @@ export async function repriceBookingAfterGuestAcceptance(
     adjusted: paymentImpact,
     editLabel: "guest's acceptance re-price",
   });
+  // #3653 (composed by #3829): an organiser-settled child's refund debt, before
+  // this re-price commits, as every edit door reserves it.
+  await reserveOrganiserChildModificationRefund(tx, {
+    plan: adjusted.organiserChildRefund,
+    bookingId,
+    payment: booking.payment,
+    bookingModificationId: bookingModification.id,
+  });
 
   return {
     repriced: true,
@@ -479,6 +500,9 @@ export async function repriceBookingAfterGuestAcceptance(
     priceDiffCents,
     refundAmountCents: paymentImpact.refundAmountCents,
     pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
+    organiserChildRefund: adjusted.organiserChildRefund
+      ? { amountCents: adjusted.organiserChildRefund.amountCents }
+      : null,
     accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,
     xeroAdditionalAmountCents: paymentImpact.xeroAdditionalAmountCents,
@@ -592,6 +616,7 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
     bookingId,
     result: {
       pendingRefundAmountCents: reprice.pendingRefundAmountCents,
+      organiserChildRefund: reprice.organiserChildRefund,
       paymentId: reprice.paymentId,
       additionalAsk: NO_ADDITIONAL_ASK,
       hasSucceededPayment: reprice.hasSucceededPayment,
@@ -629,6 +654,8 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       requiresAdditionalStripePayment: false,
       additionalPaymentIntentId: null,
       createPrimaryInvoiceWhenMissing: reprice.zeroDollarAutoPaid && !reprice.hasIssuedXeroInvoice,
+      // #3653: the organiser's refund raises its own note once Stripe has made it.
+      organiserChildRefundOwnsCreditNote: reprice.organiserChildRefund !== null,
     });
   } catch (err) {
     logger.error(
@@ -681,6 +708,9 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       changeFeeCents: 0,
       refundAmountCents: reprice.refundAmountCents,
       accountCreditAmountCents: reprice.accountCreditAmountCents,
+      // The credit share is returned in full by the clamp and reported as
+      // account credit above (D-3813-5); #3809's give-back never runs here.
+      appliedCreditGivenBackCents: 0,
       promoCoverageNote: reprice.promoCoverageNote,
       // The re-price is applied only where its money is decided in full, and
       // a booking under an open financial review is never re-priced.

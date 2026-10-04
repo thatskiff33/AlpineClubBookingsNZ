@@ -51,6 +51,7 @@ import {
 } from "@/lib/night-adjustment-write";
 import type { PromoCoverageNotice } from "@/lib/promo-cap-coverage";
 import { ApiError as SharedApiError } from "@/lib/api-error";
+import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard } from "@/lib/group-organiser-paid";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
@@ -1071,7 +1072,12 @@ export async function POST(
        * plus the per-lodge key, above), so the ask being superseded is read under
        * the same locks that serialise every counterpart writer in this route.
        */
-      if (hasSucceededPayment && priceDiffCents > 0) {
+      if (hasSucceededPayment && priceDiffCents > 0 && paidByOrganiserCard(booking)) {
+        // #3653: the organiser paid for this booking out of one combined card
+        // payment; an ask here would charge the joiner. Refused before commit,
+        // exactly as `applyPaymentAdjustments` refuses the other doors' asks.
+        throw new ApiError(ORGANISER_CHILD_CHARGE_REFUSAL, 409);
+      } else if (hasSucceededPayment && priceDiffCents > 0) {
         additionalAsk = sizeAdditionalAsk({
           priceDiffCents,
           // A guest add never charges one; the route passes 0 to the Xero
@@ -1380,7 +1386,7 @@ export async function POST(
         bookingId,
         // Guest adds never decrease the price, so the shared settlement
         // context's refund side is always zero here.
-        result: { ...result, pendingRefundAmountCents: 0 },
+        result: { ...result, pendingRefundAmountCents: 0, organiserChildRefund: null },
         reason: "guest_add_price_increase",
         idempotencyKey: `mod_guest_${bookingId}_${result.bookingModificationId}`,
         failureMessage:
@@ -1487,6 +1493,7 @@ export async function POST(
         refundAmountCents: 0,
         // Guest adds never decrease the price, so nothing is refunded.
         refundByBankTransfer: false,
+        appliedCreditGivenBackCents: 0,
         additionalAmountCents: result.additionalAmountCents,
         additionalPaymentMethod:
           result.additionalAmountCents > 0 &&

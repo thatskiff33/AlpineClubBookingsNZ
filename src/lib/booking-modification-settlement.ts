@@ -10,11 +10,14 @@ import {
   enqueueAdditionalPaymentIntentRecovery,
   enqueueBookingModificationRefundRecovery,
   processPaymentRecoveryOperations,
+  runPaymentRecoveryOperationNow,
 } from "@/lib/payment-recovery";
 import {
   buildAdditionalIntentRecoveryIdempotencyKey,
   buildBookingModificationRefundMetadata,
+  buildOrganiserChildModificationRefundKey,
 } from "@/lib/payment-recovery-keys";
+import { prisma } from "@/lib/prisma";
 import {
   PartialRefundError,
   refundPaymentTransactions,
@@ -29,6 +32,12 @@ import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
 
 export type BookingModificationPaymentContext = {
   pendingRefundAmountCents: number;
+  /**
+   * #3653: non-null when the refund comes out of a group organiser's combined
+   * card payment; its debt was written under the edit's
+   * `BookingModification` key (`reserveOrganiserChildModificationRefund`).
+   */
+  organiserChildRefund: { amountCents: number } | null;
   paymentId: string | null;
   /**
    * WHAT THIS EDIT ASKS FOR, AND WHAT ASKING FOR IT WILL ABSORB (#3371).
@@ -123,6 +132,21 @@ export async function executeBookingModificationRefund({
   recoveryFailureMessage: string;
 }): Promise<string | undefined> {
   if (result.pendingRefundAmountCents <= 0 || !result.paymentId) {
+    return undefined;
+  }
+
+  // #3653: an organiser-settled child's edit wrote its refund debt before it
+  // committed (`reserveOrganiserChildModificationRefund`). Run THAT row now; the
+  // child has no transaction of its own for the path below to refund. A row
+  // that is missing is logged, never replaced by the ordinary path, which would
+  // find nothing to refund and close its own recovery as done.
+  if (result.organiserChildRefund) {
+    const debt = await prisma.paymentRecoveryOperation.findUnique({
+      where: { idempotencyKey: buildOrganiserChildModificationRefundKey(result.bookingModificationId) },
+      select: { id: true },
+    });
+    if (debt) await runPaymentRecoveryOperationNow(debt.id, format);
+    else logger.error({ bookingId }, "Organiser child refund debt missing after the edit committed (#3653)");
     return undefined;
   }
 

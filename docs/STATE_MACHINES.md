@@ -465,6 +465,24 @@ written but no credit-note operation queued — durable for every source,
 including Internet-Banking children the #1354 self-heal cannot recover. Only the
 outbox worker kick stays best-effort and post-commit.
 
+Since #3653 (`INV-PAY-114`) that single-refund plan is the path for a plan frozen
+before #3653 and for an Internet Banking settlement only. A card settlement
+freezes `{ perChildRefunds }` instead, with one `organiser_child_refund_*`
+recovery operation per paid child (`PENDING -> PROCESSING -> SUCCEEDED`, or
+`FAILED` and retried, alerting on exhaustion). Each operation is one Stripe
+refund against the combined intent; its child's refund row, mirror, Xero note,
+the settlement's `SUCCEEDED -> PARTIALLY_REFUNDED -> REFUNDED` move and the
+operation's close commit together, after Stripe answered. A joiner's reduction
+and a joiner's own cancellation use the same operation, so a live group's
+settlement can now read `PARTIALLY_REFUNDED` - still paid
+(`organiserHasPaidSettlement`), and the organiser is not asked to pay again. A
+refund Stripe answered `pending` and later failed moves its operation
+`SUCCEEDED -> PENDING` (owed again with a fresh retry budget, first due once
+Stripe's 24-hour idempotency window on its key has passed, since a retry inside
+it is answered with the failed refund; alerting on exhaustion), its refund
+row to `failed`, and the settlement back to the status the remaining refunds
+imply (`REFUNDED`/`PARTIALLY_REFUNDED -> PARTIALLY_REFUNDED`/`SUCCEEDED`).
+
 Internet Banking settlement initiation writes `GroupBookingSettlement.PENDING`
 and its Xero invoice outbox operation in the same transaction. The worker checks
 the group fence under `lock(1)` before calling Xero. If cancellation is already
@@ -1702,7 +1720,8 @@ amountCents + creditAppliedCents + (uncollected addition) = finalPriceCents
 It is not asserted at runtime inside the settle — the settled figure is defined
 as the left-hand side, so any in-transaction check is a tautology. It is upheld
 by construction (the two rows are a split of one figure), by the fenced write's
-WHERE clauses, and after the fact by `auditIbAppliedCreditStrands`; see
+WHERE clauses, and after the fact by the booking-ledger census
+(`pnpm run booking-ledger:census`, `INV-MONEY-037`); see
 `docs/DOMAIN_INVARIANTS.md` for the full statement.
 
 Stripe-intent hygiene differs by answer. Both answers enqueue a durable

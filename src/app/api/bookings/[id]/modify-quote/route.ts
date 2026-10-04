@@ -142,7 +142,7 @@ import {
 import { clubTime } from "@/lib/club-time/server";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
-  calculateModificationSettlementOptions,
+  calculateModificationSettlementOptions, organiserChildChargeRefusal,
   GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE,
   editedGuestPricingLocks,
   resolveGuestMemberLinks,
@@ -170,6 +170,7 @@ import {
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
 import { getMemberCreditBalance } from "@/lib/member-credit";
+import { previewPaidReductionCreditGiveBackCents } from "@/lib/booking-modify-credit-give-back";
 import logger from "@/lib/logger";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -2479,6 +2480,16 @@ export async function POST(
     db: prisma, // advisory, unlocked; payment and open edit refunds read apart (#3827 stated limit: commit re-reads both under lock(1))
     todayAtClub,
   });
+  // #3809: what saving would give back of the booking's applied credit - all of
+  // a credit-paid booking's tiered reduction, or what the card basis leaves.
+  const appliedCreditGiveBackCents = await previewPaidReductionCreditGiveBackCents({
+    booking,
+    ownerMemberId: bookingOwner(booking).memberId,
+    reductionCents: Math.max(0, -netChargeCents),
+    cardBasisCents: settlementOptions?.basisAmountCents ?? 0,
+    todayAtClub,
+    db: prisma,
+  });
 
   return NextResponse.json({
     newTotalPriceCents,
@@ -2488,7 +2499,8 @@ export async function POST(
     priceDiffCents,
     changeFeeCents,
     netChargeCents,
-    settlementOptions,
+    settlementOptions, chargeRefusal: organiserChildChargeRefusal({ booking, netChargeCents }), // #3653: an increase the save refuses
+    appliedCreditGiveBackCents,
     // #2266: create-flow parity (api/bookings/quote/route.ts) — the member's
     // live balance so the edit panel can offer credit against the new price.
     availableCreditCents,

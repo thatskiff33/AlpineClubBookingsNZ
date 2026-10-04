@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  497
+row-producing sites:  499
 uncategorised:        0
-category values: admin 109, booking 106, xero 38, family 35, payment 52,
+category values: admin 109, booking 107, xero 39, family 35, payment 52,
                  lodge 66, account 19, security 25, privacy 21,
                  communication 21, system 4
 ```
@@ -759,11 +759,20 @@ club between automatic refunds and treasurer approval. #3462 then added one
 (`xero` 37 -> 38, 493 -> 494, RE-MEASURED): `xero.operation.marked_failed`,
 the per-row Mark failed on a stale RUNNING Xero operation. #3454 then added one
 (`security` 24 -> 25, 494 -> 495, RE-MEASURED): the two-factor enrolment and
-erasure-clear record in `two-factor-audit.ts`. #3827 then added one (`booking`
-105 -> 106, 495 -> 496, RE-MEASURED): `booking.modify.promo_reprice`, a guest's
-acceptance re-pricing the booking's promo codes. #3492 then added one
-(`privacy` 20 -> 21, 496 -> 497, RE-MEASURED): `promo_code.guest_lookup`, a
-booker looking up their guests' promo codes for the chips.
+erasure-clear record in `two-factor-audit.ts`.
+#3792 then added one
+(`xero` 38 -> 39, 495 -> 496, RE-MEASURED):
+`xero.allocation.restored-booking-change-refused`, a Xero allocation change the
+inbound credit-note sync refused to post to a cancelled booking whose applied
+credit was already restored. #3653 (epic #3503) then added one, disjoint from
+#3792's, so the composed figure is both (`booking` 105 -> 106, 496 -> 497,
+RE-MEASURED on the merged tree): the organiser child refund recovery record,
+`booking.payment.refund_recovered`. Epic #3813 then added two, disjoint from
+both (RE-MEASURED on the tree #3829 composed): #3827's
+`booking.modify.promo_reprice`, a guest's acceptance re-pricing the booking's
+promo codes (`booking` 106 -> 107, 497 -> 498), and #3492's
+`promo_code.guest_lookup`, a booker looking up their guests' promo codes for
+the chips (`privacy` 20 -> 21, 498 -> 499).
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):

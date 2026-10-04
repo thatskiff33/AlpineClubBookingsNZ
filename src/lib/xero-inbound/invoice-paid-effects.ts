@@ -46,6 +46,8 @@ import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sy
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
 import { sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
+import { lockMemberCreditLedger, restoreCreditFromBooking } from "@/lib/member-credit";
+import { findUnconvergedAppliedCreditDeallocation, XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import {
   hasInvoiceClearingNote,
   retirePendingClearingNote,
@@ -429,6 +431,19 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     const outcome = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
+      // Pre-lock read: only the lodge key, which is immutable. The booking's
+      // owner is NOT (member merge re-points it holding the lodge key, #3792),
+      // so every field below, the owner included, comes from the post-lodge-lock
+      // read that follows.
+      const lodgeTarget = await tx.payment.findUnique({
+        where: { id: payment.id },
+        select: { source: true, booking: { select: { lodgeId: true } } },
+      });
+      if (!lodgeTarget || lodgeTarget.source !== PaymentSource.INTERNET_BANKING) {
+        return { type: "missing" as const };
+      }
+      await acquireLodgeCapacityLock(tx, lodgeTarget.booking.lodgeId);
+
       const fresh = await tx.payment.findUnique({
         where: { id: payment.id },
         include: {
@@ -447,6 +462,14 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       if (!fresh || fresh.source !== PaymentSource.INTERNET_BANKING) {
         return { type: "missing" as const };
       }
+      // #3792 (INV-LOCK-002): lock(1), then the immutable lodge key, then the
+      // member credit-ledger key, all before the first Payment row write below:
+      // the order the inbound credit-note sync (member key, then Payment) and
+      // every cancel take them in, so no two can deadlock. The key comes from
+      // this post-lodge-lock read, and the late capacity cancel's restore reuses
+      // it. #3369: no member, no key.
+      const creditLedgerMemberId = bookingOwner(fresh.booking).memberId;
+      if (creditLedgerMemberId) await lockMemberCreditLedger(creditLedgerMemberId, tx);
 
       // B5 (#2262) — the RECIPROCAL fence, and the counterpart to the outbound
       // refusal. An admin recorded this booking's payment as cash / an off-Xero
@@ -940,9 +963,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       }
 
       // Reconciliation writes bed allocations even for an already-held
-      // CONFIRMED booking. Acquire the immutable lodge key for every branch
-      // that can reach PAID, then consume only this post-lock snapshot.
-      await acquireLodgeCapacityLock(tx, fresh.booking.lodgeId);
+      // CONFIRMED booking. The immutable lodge key is held from the top of this
+      // transaction (#3792); consume only this post-lock snapshot.
       const locked = await tx.payment.findUnique({
         where: { id: fresh.id },
         include: {
@@ -1057,6 +1079,20 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           );
         }
         if (!capacity.available && !lockedHasOverride) {
+          // #3792: this cancel restores the booking's applied credit below,
+          // under the member credit-ledger key taken at the top of this
+          // transaction (global -> lodge -> member, INV-LOCK-002). Before its
+          // first write it refuses to run while an applied-credit deallocation
+          // has not converged, exactly as the hold release and the
+          // never-captured cancel do. Throwing rolls the whole claim back; the
+          // inbound event retries after its backoff.
+          // #3369: an organisation-owned booking has no credit ledger.
+          const unconvergedDeallocation = await findUnconvergedAppliedCreditDeallocation(fresh.id, tx);
+          if (unconvergedDeallocation) {
+            throw new XeroAppliedCreditOperationBusyError(
+              `Applied-credit deallocation ${unconvergedDeallocation.id} is ${unconvergedDeallocation.status} for payment ${fresh.id}; the late capacity cancel waits for it to converge`,
+            );
+          }
           // #2265 (#2319 door 2). This booking is being cancelled and its cash
           // turned into account credit, so no consumer will ever read its
           // stored election again (both require PAYMENT_PENDING). Clear it here
@@ -1084,6 +1120,15 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             bookingId: fresh.bookingId,
             db: tx,
           });
+          // #3792: the account credit the booking had applied goes back too, in
+          // full — a capacity cancel is not the member's choice, so no policy
+          // tier applies. The same helper and the same place as the settle's
+          // capacity void (payment-reconciliation.ts), under the locks taken
+          // above. The helper posts the restore's ledger line, and its unique
+          // `restoredFromBookingId` makes a replay, or the orphan heal, a no-op.
+          const creditRestoredCents = creditLedgerMemberId
+            ? await restoreCreditFromBooking(creditLedgerMemberId, fresh.bookingId, tx)
+            : 0;
           // #3611: the cash goes back as credit, so nothing is kept; a booking
           // already confirmed on the ledger (a mark-paid since reversed) has its
           // stay taken back, under the lock(1) this transaction took first.
@@ -1171,6 +1216,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             creditedPartial: mintPartial,
             cashUnverified,
             aggregateCapped,
+            creditRestoredCents,
           };
         }
       }
@@ -1471,6 +1517,16 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             : "Paid Internet Banking amount held as account credit.",
         });
       }
+      // #3792: the applied credit restored in the cancel's claim, recorded the
+      // way the hold release records its own.
+      if (outcome.creditRestoredCents > 0) {
+        await recordBookingEvent({
+          bookingId: outcome.payment.bookingId,
+          type: BookingEventType.CREDITED,
+          amountCents: outcome.creditRestoredCents,
+          reason: "Applied account credit returned in full: the booking was cancelled for capacity.",
+        });
+      }
 
       // The Xero account-credit note is now enqueued inside the reconcile
       // transaction above (atomic with the local credit), so there is no
@@ -1480,7 +1536,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         checkIn: outcome.payment.booking.checkIn,
         checkOut: outcome.payment.booking.checkOut,
         amountCents: outcome.credited ? outcome.creditedCents : outcome.payment.amountCents,
-        errorMessage: `Internet Banking payment reconciled, but the lodge no longer had capacity. The booking was cancelled and member account credit was created.${outcome.creditedPartial && !outcome.aggregateCapped ? ` Only ${formatCents(outcome.creditedCents, format)} of the ${formatCents(outcome.payment.amountCents, format)} payment arrived as cash (mixed invoice) — the credit was sized at the cash portion; verify the allocation source on the invoice in Xero.` : ""}${outcome.aggregateCapped ? ` This invoice's cash was already partly credited to other Internet Banking payment(s) matched to the same invoice, so this booking's credit was capped at the invoice's remaining cash${outcome.credited ? ` (${formatCents(outcome.creditedCents, format)}, from a ${formatCents(outcome.payment.amountCents, format)} payment)` : " (nothing remained, so no credit was created)"}; the aggregate credit across all payments on one invoice can never exceed the invoice's cash. Verify the invoice's payments in Xero.` : ""}${outcome.cashUnverified ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero." : ""}`,
+        errorMessage: `Internet Banking payment reconciled, but the lodge no longer had capacity. The booking was cancelled and member account credit was created.${outcome.creditRestoredCents > 0 ? ` The ${formatCents(outcome.creditRestoredCents, format)} of account credit the booking had applied was restored to the member in full.` : ""}${outcome.creditedPartial && !outcome.aggregateCapped ? ` Only ${formatCents(outcome.creditedCents, format)} of the ${formatCents(outcome.payment.amountCents, format)} payment arrived as cash (mixed invoice) — the credit was sized at the cash portion; verify the allocation source on the invoice in Xero.` : ""}${outcome.aggregateCapped ? ` This invoice's cash was already partly credited to other Internet Banking payment(s) matched to the same invoice, so this booking's credit was capped at the invoice's remaining cash${outcome.credited ? ` (${formatCents(outcome.creditedCents, format)}, from a ${formatCents(outcome.payment.amountCents, format)} payment)` : " (nothing remained, so no credit was created)"}; the aggregate credit across all payments on one invoice can never exceed the invoice's cash. Verify the invoice's payments in Xero.` : ""}${outcome.cashUnverified ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero." : ""}`,
         paymentIntentId: invoiceId,
       }, format).catch((err) =>
         logger.error(
@@ -1500,8 +1556,11 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         outcome.credited ? outcome.creditedCents : outcome.payment.amountCents,
         format,
         "credit",
-        0,
+        // #3792: the applied credit the cancel restored, as the hold release passes it.
+        outcome.creditRestoredCents,
         outcome.payment.booking.lodgeId,
+        // A capacity cancel is not the member's choice: restored in full, not by policy.
+        "in-full",
       ).catch((err) =>
         logger.error(
           { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },

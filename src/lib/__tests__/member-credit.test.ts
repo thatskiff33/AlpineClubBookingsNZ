@@ -388,6 +388,37 @@ describe("member-credit helpers", () => {
   });
 
   describe("restoreCreditFromBooking", () => {
+    it("takes the member credit-ledger lock before reading the applied rows when it joins a transaction (#3792)", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([
+        { id: "c1", amountCents: -3000, type: "BOOKING_APPLIED" },
+      ] as any);
+      vi.mocked(prisma.memberCredit.createMany).mockResolvedValue({ count: 1 });
+      vi.mocked(prisma.$executeRaw).mockClear();
+
+      const { restoreCreditFromBooking } = await import("@/lib/member-credit");
+      await restoreCreditFromBooking("member-1", "booking-locked", prisma as any);
+
+      const lockCall = vi.mocked(prisma.$executeRaw).mock.calls.findIndex(
+        (call) => (call as unknown[]).includes("member-credit-ledger") && (call as unknown[]).includes("member-1"),
+      );
+      expect(lockCall).toBeGreaterThanOrEqual(0);
+      expect(vi.mocked(prisma.$executeRaw).mock.invocationCallOrder[lockCall]).toBeLessThan(
+        vi.mocked(prisma.memberCredit.findMany).mock.invocationCallOrder[0],
+      );
+    });
+
+    it("takes no lock outside a transaction: an advisory xact lock there would be released at once (#3792)", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.$executeRaw).mockClear();
+
+      const { restoreCreditFromBooking } = await import("@/lib/member-credit");
+      await restoreCreditFromBooking("member-1", "booking-no-tx");
+
+      expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    });
+
     it("restores the FULL applied total when no override is passed (guards the payment-reconciliation system void, #1164)", async () => {
       // The capacity_failed system void in payment-reconciliation.ts calls this
       // with no override and MUST still restore 100% — a system void never
@@ -822,6 +853,7 @@ describe("member-credit helpers", () => {
         booking: { findUnique: vi.fn().mockResolvedValue(payment ? { payment } : null) },
         memberCreditNoteAllocation: {
           aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: allocatedCents } }),
+          count: vi.fn().mockResolvedValue(allocatedCents ? 1 : 0),
         },
         memberCredit: {
           aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: appliedNetCents } }),
@@ -907,6 +939,26 @@ describe("member-credit helpers", () => {
 
       await giveBack(tx, () => 5000);
 
+      expect(mockStartXeroSyncOperation).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION (#3809): a card booking whose credit #1641 allocated has its slices checked against their provenance, then deallocated", async () => {
+      const tx = makeTx(-10000, { ...ibPayment, source: "STRIPE", creditAppliedCents: 10000 }, 10000);
+
+      await giveBack(tx, () => 5000);
+
+      expect(mockRepairLegacyAppliedCreditNoteAllocationsForBooking).toHaveBeenCalledWith("booking-1", "inv-1", tx, CLUB_FORMAT_TEST);
+      expect(mockStartXeroSyncOperation).toHaveBeenCalledWith(expect.objectContaining({
+        correlationKey: "booking:booking-1:applied-credit-deallocation:5000:v1",
+      }));
+    });
+
+    it("a card booking whose credit was never allocated (#3836) takes no Xero step", async () => {
+      const tx = makeTx(-10000, { ...ibPayment, source: "STRIPE", creditAppliedCents: 10000 }, null);
+
+      await giveBack(tx, () => 5000);
+
+      expect(mockRepairLegacyAppliedCreditNoteAllocationsForBooking).not.toHaveBeenCalled();
       expect(mockStartXeroSyncOperation).not.toHaveBeenCalled();
     });
 

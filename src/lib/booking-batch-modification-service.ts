@@ -43,6 +43,7 @@ import {
   requestChangesPromoCodes,
   requestedPromoCodeChange,
 } from "@/lib/booking-modify-promo-request";
+import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import {
   OtherLodgeRateAmountUnderReviewError,
   requestCarriesOtherLodgeElection,
@@ -102,6 +103,7 @@ import {
   editRefundGoesBackByHand,
   raiseEditRefundHandBackIfOwed,
 } from "@/lib/edit-refund-hand-back";
+import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import { prisma } from "@/lib/prisma";
 import {
   withOptionalTransaction,
@@ -236,6 +238,7 @@ type BatchModificationTransactionResult =
     supersededPrimaryPaymentIntents: { length: number };
     xeroAdditionalAmountCents: number;
     xeroRefundAmountCents: number;
+    appliedCreditGivenBackCents: number;
     settlementMethod: BookingModificationSettlementMethod | null;
     policyRetainedAmountCents: number;
     guestNameUpdates: ResolvedGuestNameUpdate[];
@@ -267,6 +270,8 @@ export type BatchModificationResponse = {
   changeFeeCents: number;
   refundAmountCents: number;
   accountCreditAmountCents: number;
+  /** #3809: applied credit the reduction gave back, as account credit. */
+  appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
   settlementMethod: BookingModificationSettlementMethod | null;
   /**
@@ -1672,6 +1677,8 @@ export async function modifyBookingBatch({
       changeFeeCents,
       settlementOptions,
       settlementMethod: input.settlementMethod,
+      todayAtClub,
+      format,
     });
 
     const lifecycle = await applyLifecycleTransitions(tx, {
@@ -1909,6 +1916,7 @@ export async function modifyBookingBatch({
           settlementMethod: payments.settlementMethod,
           accountCreditAmountCents: payments.accountCreditAmountCents,
           policyRetainedAmountCents: payments.policyRetainedAmountCents,
+          ...creditGiveBackHistory(payments.appliedCreditGiveBack),
           // #2266: what this edit did to the stored credit election (#2265),
           // recorded whenever the request carried a credit input — the
           // member's booking history reads it back.
@@ -2018,6 +2026,13 @@ export async function modifyBookingBatch({
         booking.payment?.id,
       );
     }
+    // #3653: an organiser-settled child's refund debt, before this edit commits.
+    await reserveOrganiserChildModificationRefund(tx, {
+      plan: payments.organiserChildRefund,
+      bookingId,
+      payment: booking.payment,
+      bookingModificationId: bookingModification.id,
+    });
 
     // Fire the deferred envelope constraint triggers here so a violation is
     // attributed to this service instead of the transaction's COMMIT.
@@ -2140,6 +2155,8 @@ export async function modifyBookingBatch({
       supersededPrimaryPaymentIntents: lifecycle.supersededPrimaryPaymentIntents,
       xeroAdditionalAmountCents: payments.xeroAdditionalAmountCents,
       xeroRefundAmountCents: payments.xeroRefundAmountCents,
+      appliedCreditGivenBackCents: payments.appliedCreditGivenBackCents,
+      organiserChildRefund: payments.organiserChildRefund,
       settlementMethod: payments.settlementMethod,
       policyRetainedAmountCents: payments.policyRetainedAmountCents,
       guestNameUpdates,
@@ -2346,6 +2363,7 @@ export async function modifyBookingBatch({
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
       accountCreditAmountCents: result.accountCreditAmountCents,
+      appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
       additionalAmountCents: result.additionalAmountCents,
       settlementMethod: result.settlementMethod,
       requiresSettlementMethod: result.requiresSettlementMethod,
@@ -2389,6 +2407,7 @@ export async function modifyBookingBatch({
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
       accountCreditAmountCents: result.accountCreditAmountCents,
+      appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
       additionalAmountCents: result.additionalAmountCents,
       settlementMethod: result.settlementMethod,
       requiresSettlementMethod: result.requiresSettlementMethod,
@@ -2522,6 +2541,9 @@ async function dispatchBatchPostTransactionSideEffects({
     guestIdentityChanged: result.guestIdentityChanged,
     settlementMethod: result.settlementMethod,
     refundedThroughStripe: result.hasSucceededPayment,
+    appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
+    // #3653: the organiser child refund raises the one note, after Stripe.
+    organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,
     settlementAmountCents: result.xeroRefundAmountCents,
     createPrimaryInvoiceWhenMissing:
       result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,
@@ -2621,6 +2643,7 @@ async function dispatchBatchPostTransactionSideEffects({
     changeFeeCents: result.changeFeeCents,
     refundAmountCents: result.refundAmountCents,
     accountCreditAmountCents: result.accountCreditAmountCents,
+    appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
     additionalAmountCents: result.additionalAmountCents,
     additionalPaymentMethod:
       result.additionalAmountCents > 0 &&

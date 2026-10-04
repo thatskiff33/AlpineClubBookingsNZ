@@ -528,6 +528,8 @@ async function applyQueuedAction(
         // #3535: the cancelled-open-invoice arm clears an unpaid invoice; an
         // edit's note keeps the default (method) wording.
         ...readModificationNoteWording(action.payload),
+        // #3809: a give-back note beside another keeps its own scope and keys.
+        ...(typeof action.payload.reviewTaskId === "string" ? { reviewTaskId: action.payload.reviewTaskId } : {}),
       });
       action.status = result.queueOperationId ? "queued" : "skipped";
       action.resultMessage = result.message;

@@ -701,6 +701,28 @@ describe("CancelBookingButton — internet banking refunds as credit only", () =
     expect(screen.getAllByRole("radio")).toHaveLength(2);
     expect(screen.queryByTestId("forced-credit-refund")).toBeNull();
   });
+
+  // #3653: a joiner's booking the group organiser paid for by card refunds to
+  // the ORGANISER's card - no account-credit choice for the joiner.
+  it("shows only the organiser's-card outcome for a booking the organiser paid for, and cancels as card", async () => {
+    const fetchMock = stubFetchByUrl({ ...previewBody, refundMethodForced: "organiser_card" });
+    render(<CancelBookingButton bookingId="bk_child" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Booking" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("organiser-card-refund")).toBeTruthy();
+    });
+    expect(screen.queryAllByRole("radio")).toHaveLength(0);
+    expect(screen.queryByTestId("forced-credit-refund")).toBeNull();
+    expect(screen.getByText(/paid for this booking, so any refund goes back to their card/)).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Confirm Cancellation" }));
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const [, init] = fetchMock.mock.calls[1] as unknown as [string, { body: string }];
+    expect(JSON.parse(init.body)).toMatchObject({ refundMethod: "card" });
+  });
 });
 
 // #3643 DECISION 2: a payment the app cannot credit is settled by hand.

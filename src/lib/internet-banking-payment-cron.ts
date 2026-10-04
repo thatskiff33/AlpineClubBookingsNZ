@@ -570,6 +570,8 @@ export async function releaseExpiredInternetBankingHolds(
       "credit",
       creditRestoredCents,
       payment.booking.lodgeId,
+      // #3792: a hold that expired is not the member's cancel: restored in full.
+      "in-full",
     ).catch((err) =>
       logger.error(
         { err, bookingId: payment.bookingId, paymentId: payment.id },

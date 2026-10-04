@@ -34,6 +34,8 @@ vi.mock("@/lib/prisma", () => ({
     clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique },
     // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
     manualRefundTask: { aggregate: mocks.manualRefundTaskAggregate },
+    // #3809: no edit of these bookings ran through the give-back, so no cap.
+    bookingModification: { findFirst: vi.fn().mockResolvedValue(null) },
   },
 }));
 vi.mock("@/lib/cancellation", () => ({
@@ -41,6 +43,8 @@ vi.mock("@/lib/cancellation", () => ({
 }));
 vi.mock("@/lib/booking-cancel", () => ({
   paymentEligibleForPaidCancelPath: mocks.paymentEligibleForPaidCancelPath,
+  // #3809 (F2): these payments never captured, so their credit comes back whole.
+  paymentHasCaptureEvidence: vi.fn().mockResolvedValue(false),
 }));
 vi.mock("@/lib/internet-banking-hold-payment-evidence", () => ({
   readHoldPaymentEvidence: mocks.readHoldPaymentEvidence,

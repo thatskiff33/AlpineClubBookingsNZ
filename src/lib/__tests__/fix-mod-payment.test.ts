@@ -1715,6 +1715,48 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
     expect(mockMarkPaymentIntentTransactionSucceeded).not.toHaveBeenCalled();
   });
 
+  // #3632: the replay guard asks the PaymentTransaction leaf. A replay of an
+  // ADDITIONAL capture that has since been part- or fully refunded must not be
+  // flipped back to SUCCEEDED, and must still re-release the supplementary
+  // invoice before acknowledging — the same order as the SUCCEEDED replay.
+  it.each(["PARTIALLY_REFUNDED", "REFUNDED"] as const)(
+    "treats a %s additional transaction as an already-recorded capture on replay",
+    async (status) => {
+      mockedConstructWebhookEvent.mockReturnValue({
+        id: `evt_replay_${status}`,
+        type: "payment_intent.succeeded",
+        data: {
+          object: {
+            id: "pi_additional",
+            amount: 3000,
+            metadata: { bookingId: "bk1", type: "modification_additional" },
+            payment_method: "pm_test",
+          },
+        },
+      } as any);
+
+      mockProcessedWebhookFindUnique.mockResolvedValue(null);
+      mockProcessedWebhookCreate.mockResolvedValue({});
+      mockProcessedWebhookDeleteMany.mockResolvedValue({ count: 0 });
+      mockFindPaymentTransactionByIntentId.mockResolvedValueOnce({
+        id: "ptx_1",
+        paymentId: "p1",
+        kind: "ADDITIONAL",
+        amountCents: 3000,
+        status,
+        createdAt: new Date(),
+      });
+
+      const res = await POST(makeWebhookRequest());
+
+      expect(res.status).toBe(200);
+      expect(mockMarkPaymentIntentTransactionSucceeded).not.toHaveBeenCalled();
+      expect(
+        mockReleaseXeroSupplementaryInvoiceForCapturedPaymentIntent
+      ).toHaveBeenCalledWith("pi_additional");
+    },
+  );
+
   it("does not update payment when additional PI amount mismatches", async () => {
     mockedConstructWebhookEvent.mockReturnValue({
       id: "evt_mismatch",

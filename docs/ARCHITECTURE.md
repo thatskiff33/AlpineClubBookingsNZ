@@ -1109,8 +1109,7 @@ action" beside a Retry: the sentence and the link label are read off the same
 decision.
 
 Admin settings sections follow one canonical edit model (developer rule, binding
-for new or modified sections; `AGENTS.md` → Change Discipline and its routing
-table both send you here for it, and this page is where it is stated in full).
+for new or modified sections; the `AGENTS.md` routing table sends you here for it, and this page is where it is stated in full).
 A section
 renders read-only on mount and stages every change behind a per-section Edit →
 Save/Cancel step: no individual control auto-persists on toggle, Cancel reverts

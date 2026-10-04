@@ -19,6 +19,7 @@ import {
   calculateModificationSettlementOptions,
 } from "@/lib/booking-modify-settlement";
 import { requireCalendarDate } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import {
   openNonCancellationHandBackCents,
   refundableCashNetOfOpenHandBacks,
@@ -119,6 +120,8 @@ describe("a later edit sizes its refund net of an open task (scenario B: $300 ->
       booking: paidBooking(25000) as never,
       priceDiffCents: -20000,
       changeFeeCents: 0,
+      todayAtClub: TODAY,
+      format: CLUB_FORMAT_TEST,
     });
     expect(result.refundAmountCents).toBe(10000);
     expect(result.hasSucceededPayment).toBe(false);
@@ -152,6 +155,7 @@ describe("a cancellation after an open task refunds or credits only the rest (sc
       days: 31,
       policy: FULL_REFUND,
       refundMethod: "credit",
+      capAppliedCredit: false,
     });
     expect(money.paidAmountCents).toBe(15000);
     expect(money.refundableBaseCents).toBe(15000);
@@ -167,7 +171,41 @@ describe("a cancellation after an open task refunds or credits only the rest (sc
       checkIn: new Date("2026-08-01T00:00:00.000Z"),
       policyRules: FULL_REFUND,
       todayAtClub: TODAY,
+      capAppliedCredit: false,
     });
     expect(preview).toMatchObject({ refundAmountCents: 15000, creditRefundAmountCents: 15000, totalPaidCents: 15000 });
+  });
+
+  // #3829 composed #3809's credit cap (`capAppliedCredit`, `cancelAppliedCreditBaseCents`)
+  // with this netting. The cap counts money paid first, so it must read the SAME
+  // net paid figure as the cash base: the $50 the task promises back is not
+  // money the club keeps, so all $100 of credit still fits under the $250 the
+  // booking is worth. Reading the gross $200 would cap the credit at $50 and
+  // leave the member $50 short of everything they paid ($150 + $50 + $50).
+  it("with #3809's cap on, the credit base nets the open task too (all $100 restored)", () => {
+    const money = paidCancellationMoney({
+      payment,
+      openNonCancellationHandBackCents: 5000,
+      finalPriceCents: 25000,
+      appliedCreditCents: 10000,
+      restoresToMemberLedger: true,
+      days: 31,
+      policy: FULL_REFUND,
+      refundMethod: "card",
+      capAppliedCredit: true,
+    });
+    expect(money.refundAmountCents).toBe(15000);
+    expect(money.appliedCreditBaseCents).toBe(10000);
+    expect(money.creditRestoredCents).toBe(10000);
+    const preview = calculateCancellationPreview({
+      payment,
+      openNonCancellationHandBackCents: 5000,
+      finalPriceCents: 25000,
+      checkIn: new Date("2026-08-01T00:00:00.000Z"),
+      policyRules: FULL_REFUND,
+      todayAtClub: TODAY,
+      capAppliedCredit: true,
+    });
+    expect(preview.creditRestoredCents).toBe(10000);
   });
 });

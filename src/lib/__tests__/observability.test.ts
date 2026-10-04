@@ -455,6 +455,11 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
     await paymentsCycle!.callback();
 
     expect(paymentsCycleTasks.processPaymentRecoveryOperations).toHaveBeenCalledOnce();
+    // #3653: the cron's run - and only the cron's - reads pending organiser
+    // child refunds back from Stripe.
+    expect(paymentsCycleTasks.processPaymentRecoveryOperations).toHaveBeenCalledWith({
+      reconcilePendingChildRefunds: true,
+    });
     expect(paymentsCycleTasks.releaseExpiredInternetBankingHolds).toHaveBeenCalledOnce();
     // One task failing does not stop the next.
     expect(paymentsCycleTasks.reapStaleWaitingPaymentXeroOutboxOperations).toHaveBeenCalledOnce();

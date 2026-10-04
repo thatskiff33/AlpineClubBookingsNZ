@@ -25,6 +25,7 @@ import {
 import type { PromoCodeAdjustment } from "@/lib/booking-promo-redemptions";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
 import { bookingModifiedRefundSentence } from "@/lib/booking-modified-email-copy";
+import { appliedCreditGiveBackNote } from "@/lib/booking-credit-give-back-copy";
 import { escapeHtml } from "./escape";
 import {
   type BookingCalendarLinks,
@@ -47,7 +48,9 @@ import { CLUB_LODGE_TRAVEL_NOTE } from "@/config/club-identity";
 import {
   bookingBumpedRebookAction,
   bookingPaymentDueNote,
+  creditRestoredSentenceTail,
   splitGuestPortionOwnBookingLine,
+  type CreditRestoredBasis,
 } from "@/lib/email-message-notes";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
@@ -368,6 +371,9 @@ export function bookingCancelledTemplate(
   // raised instead), so it gets its own honest copy.
   refundMethod: "card" | "credit" | "manual" = "card",
   creditRestoredCents: number = 0,
+  // #3792: a cancel the member did not choose (capacity, hold expiry) restores
+  // the applied credit in full, so no cancellation policy applies to it.
+  creditRestoredBasis: CreditRestoredBasis = "cancellation-policy",
 ): string {
   let refundInfo: string;
   if (refundCents > 0 && refundMethod === "manual") {
@@ -398,7 +404,7 @@ export function bookingCancelledTemplate(
     creditRestoredCents > 0
       ? alertBox(
           formatCents(creditRestoredCents, format) +
-            " of previously applied account credit has been restored to your account (per the cancellation policy).",
+            creditRestoredSentenceTail(creditRestoredBasis),
           "success"
         )
       : "";
@@ -449,6 +455,8 @@ export function bookingModifiedTemplate(params: {
   changeFeeCents: number;
   refundAmountCents: number;
   accountCreditAmountCents?: number;
+  /** #3809: applied credit this change gave back (0 if none). Required, as `financialReviewPending` is. */
+  appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
   additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING";
   paymentReference?: string | null;
@@ -498,6 +506,7 @@ export function bookingModifiedTemplate(params: {
     changeFeeCents,
     refundAmountCents,
     accountCreditAmountCents = 0,
+    appliedCreditGivenBackCents,
     additionalAmountCents,
     additionalPaymentMethod,
     paymentReference,
@@ -555,7 +564,7 @@ export function bookingModifiedTemplate(params: {
           // processed" in one email about one change. The additional-payment
           // arms are compatible and leave the sentence in place.
           moneyAlreadyMoved:
-            refundAmountCents > 0 || accountCreditAmountCents > 0,
+            refundAmountCents > 0 || accountCreditAmountCents > 0 || appliedCreditGivenBackCents > 0,
         }),
         "info",
       )
@@ -600,7 +609,10 @@ export function bookingModifiedTemplate(params: {
     }
   }
 
-  const paymentNote = `${reviewNote}${settlementNote}`;
+  // #3809: beside the settlement note (both apply to card plus credit).
+  const giveBackSentence = appliedCreditGiveBackNote(appliedCreditGivenBackCents, format);
+  const giveBackNote = giveBackSentence ? alertBox(giveBackSentence, "success") : "";
+  const paymentNote = `${reviewNote}${settlementNote}${giveBackNote}`;
 
   return layout(`
     ${heading("Booking Modified")}

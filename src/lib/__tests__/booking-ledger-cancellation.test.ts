@@ -135,6 +135,8 @@ function paidCancel(payment: {
     days: payment.days,
     policy: payment.policy ?? FIFTY,
     refundMethod: payment.refundMethod,
+    // #3809: no edit ran through the give-back, so main's uncapped credit (`INV-PAY-115`).
+    capAppliedCredit: false,
   });
   return {
     refundAmountCents: money.refundAmountCents,

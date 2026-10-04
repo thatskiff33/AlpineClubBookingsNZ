@@ -491,17 +491,17 @@ than an outstanding item.
 | Largest single domain file (`membership-lifecycle.md`) | ~24k |
 | Typical domain file | 1–9k |
 
-`AGENTS.md` → "Read First" holds the agent-neutral always-read core to two
-documents, of which the index is one; every other invariant file is **routed** —
-opened at the moment its row matches what you are changing. Agent-interface
-adapters import or point to that authority instead of joining the mandatory
-core. That budget is the reason the index's one-line descriptions are capped at
-**12 words** each. The cap is load-bearing: relax it and the index stops fitting
-the core.
+`AGENTS.md` is the only always-read file. Since 5 Oct 2026 the index is not
+read in full on every task: agents find an id's file with `grep`, and the
+`AGENTS.md` routing table names each family's file. Every other invariant file
+is **routed** — opened at the moment its row matches what you are changing. The
+index's one-line descriptions stay capped at **12 words** each so a grep hit
+reads as a complete, scannable line, and so the index stays cheap for anyone who
+does read it whole.
 
 If the index ever outgrows the budget, the cheapest lever is to move the full ID
 catalogue into a separate `docs/invariants/ID-INDEX.md`, leaving the routing
-table in `docs/DOMAIN_INVARIANTS.md` as the always-read part. Keeping both in one
+table in `docs/DOMAIN_INVARIANTS.md` as the part people read. Keeping both in one
 file is preferred while it fits, because it satisfies "find the right file
 without opening more than one other file".
 

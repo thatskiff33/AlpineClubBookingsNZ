@@ -103,6 +103,10 @@
 
 ## Residual Risks
 
+<!-- A ready PR carries no residuals: known, achievable fixes are made in this
+     PR (AGENTS.md → "Residual risks are resolved in the PR"). List here only
+     stated limits — what was not exercised, and why — or `None`. -->
+
 -
 
 ## Manual Checks Required

@@ -648,6 +648,27 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "planOrganiserCancelChildRefunds#1",
+    tier: "GLOBAL",
+    reason:
+      "#3653: an organiser cancel freezes one refund debt per paid child and the settlement's plan in one transaction. The headroom it reads - refunds recorded on the combined intent plus child-refund debts still owed - is written by edit doors (which already hold this key) and by the refund recorder below, so the read and the inserts must be one decision on the settlement cohort's key. Provider calls run after commit.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "processOrganiserChildRefundOperation#1",
+    tier: "GLOBAL",
+    reason:
+      "#3653: recording an organiser child's Stripe refund against the combined payment - the refund row, the child's mirror, its Xero note, the settlement status and the debt's close - commits as one unit on the settlement cohort's key, so a concurrent edit or cancel reading the combined headroom sees the debt either owed or recorded, never neither or both. Then the Payment row (`lockPaymentForRefundedTotal`), the order every refunded-total writer takes. The Stripe call has already returned.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "reconcilePendingOrganiserChildRefunds#1",
+    tier: "GLOBAL",
+    reason:
+      "#3653 fix round: taking a failed organiser child refund back out - its refund row, the child's mirror, the settlement status and reopening its debt - is the inverse of the recorder above and commits as one unit on the same key, so a concurrent edit or cancel reading the combined headroom sees the refund either recorded or owed again, never neither. Then the Payment row, the order every refunded-total writer takes. Stripe was read before the transaction opened.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "createGroupSettlementIntent#1",
     tier: "GLOBAL",
     reason:

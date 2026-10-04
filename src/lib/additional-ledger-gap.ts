@@ -1,10 +1,6 @@
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
-import { CAPTURED_PAYMENT_STATUS_LIST } from "@/lib/booking-payment-state";
-
-// #3340 (`INV-SSOT-001`): imported, not restated. The list lives once in
-// `booking-payment-state.ts`.
-const CAPTURED_PAYMENT_STATUSES = new Set<string>(CAPTURED_PAYMENT_STATUS_LIST);
+import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 
 interface AdditionalLedgerGapPaymentLike {
   additionalPaymentStatus: string | null;
@@ -59,7 +55,7 @@ export function summarizeAdditionalLedgerGap(
     ).reduce(
       (sum, row) =>
         row.kind === PaymentTransactionKind.ADDITIONAL &&
-        CAPTURED_PAYMENT_STATUSES.has(row.status)
+        isCapturedTransactionStatus(row.status)
           ? sum + row.amountCents
           : sum,
       0,
