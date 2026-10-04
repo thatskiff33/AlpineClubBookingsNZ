@@ -4135,9 +4135,9 @@ describe("#3880 - a review's refund on a cancelled booking reaches Xero as the c
   const invoiceLeftAsTheCancellationLeftIt = () => expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
 
   it.each([
-    ["card", PaymentSource.STRIPE, "card", "card"],
-    ["bank transfer", PaymentSource.INTERNET_BANKING, "credit", "internet-banking"],
-  ] as const)("MUTATION: %s, cancelled at 50%% less $20: one refund note for the $25 still owed, worded by its route and keyed on the task", async (_route, source, cancelMethod, refundMethod) => {
+    { route: "card", source: PaymentSource.STRIPE, cancelMethod: "card", refundMethod: "card" },
+    { route: "bank transfer", source: PaymentSource.INTERNET_BANKING, cancelMethod: "credit", refundMethod: "internet-banking" },
+  ] as const)("MUTATION: $route, cancelled at half less a twenty-dollar fee: one refund note for the 2500 cents still owed, worded by its route and keyed on the task", async ({ source, cancelMethod, refundMethod }) => {
     cancelledTask(source);
     cancelledAt(8_000, cancelMethod);
     fiftyLessTwenty();
@@ -4155,9 +4155,9 @@ describe("#3880 - a review's refund on a cancelled booking reaches Xero as the c
   });
 
   it.each([
-    ["card", PaymentSource.STRIPE, "card"],
-    ["bank transfer", PaymentSource.INTERNET_BANKING, "credit"],
-  ] as const)("MUTATION: %s, cancelled at 100%%: nothing left the club, so no document at all", async (_route, source, cancelMethod) => {
+    { route: "card", source: PaymentSource.STRIPE, cancelMethod: "card" },
+    { route: "bank transfer", source: PaymentSource.INTERNET_BANKING, cancelMethod: "credit" },
+  ] as const)("MUTATION: $route, cancelled in full: nothing left the club, so no document at all", async ({ source, cancelMethod }) => {
     cancelledTask(source);
     cancelledAt(20_000, cancelMethod);
 
