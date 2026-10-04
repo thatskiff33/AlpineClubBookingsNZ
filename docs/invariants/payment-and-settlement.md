@@ -1595,18 +1595,22 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     scoped to the review task and wait for the deallocation, failing for an
     operator retry when it FAILED. A captured payment's share keeps the
     document rule.
-  - **The ledger posts what was credited**, none at zero; on a covered booking
+  - **The ledger posts what was returned**, none at zero; on a covered booking
     the give-back beyond the re-price is an agreed reduction no re-price
     reverses (`agreedGiveBackKey`).
   - **Unpaid** - credit short of the price beyond earlier review give-backs:
     no more given back than the booking's review re-prices removed.
-  - **Cancelled first**: netted cumulatively against the restore from figures
-    frozen at the cancellation, the tier re-run and refused, task OPEN, where
-    it does not reproduce the restore. $200 credit-paid, $50 share: $200 back
-    at 100%, $105 at 50% less $20, either order.
+  - **Cancelled first**, every route (#3835): netted cumulatively against
+    what the cancellation returned, from what its CANCELLED event froze (tier
+    method, base, reviews already settled); refused, task OPEN, where the tier
+    does not reproduce it. The capture gets only its own part, never the
+    credit's, which is applied credit given back. $200, $50 share: $200 back at
+    100%, $105 at 50% less $20, $50 at 0%.
   - Home: `edit-financial-review-account-credit.ts`,
+    `edit-financial-review-cancel-netting.ts`,
     `dispatchEditReviewAccountCreditXero`; proven by
-    `edit-financial-review-races.realdb.test.ts`.
+    `edit-financial-review-races.realdb.test.ts` and
+    `edit-financial-review-captured-cancel.realdb.test.ts`.
 
 ## INV-PAY-069
 

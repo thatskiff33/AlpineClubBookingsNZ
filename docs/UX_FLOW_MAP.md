@@ -664,6 +664,23 @@ are live regions, and each is listed ahead of its box's worked example in
 `aria-describedby` - the confirm button is disabled behind both sentences, so a
 reader who cannot hear one is back at the bare refusal.
 
+**On a cancelled booking the dialog says what is still owed, before completing
+(#3835, `INV-PAY-113`).** Once a money-back direction and an amount are given, a
+review on a booking that was cancelled first asks the server what that share
+will actually give back - the completion's own route choice and netting, never
+a second calculation (`GET .../manual-refund-tasks/[id]/still-owed`) - and prints
+it under the amount box, for example "Only $25.00 of the $50.00 share is still
+owed after the booking's cancellation - hand back $25.00, not the full share".
+That matters most on a bank-transfer hand-back, where the officer moves the
+money themselves before completing; on the card and minted-credit routes it
+says what will be refunded or credited. Where part of what is owed came out of
+the member's applied credit, that part goes back as account credit and the line
+says so ("$25.00 to the card and $25.00 as account credit"). Nothing is printed when the whole share
+is still owed; when nothing is, it says so (and, on a hand-back, not to hand
+anything back); a share the completion would refuse shows that refusal. The
+line is a live region, mounted empty; the dialog's view-only gating is
+unchanged.
+
 **Two groups inside that one card, deleted first (#2760).** The record covers every
 auto-refunded late capture, and since #2760 that includes bookings which are
 cancelled but still on file — where the refund is usually the expected outcome of

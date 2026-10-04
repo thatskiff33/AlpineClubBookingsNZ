@@ -416,7 +416,11 @@ by `planReviewClosureShareLines` after the closure's re-price rows (§5.1):
   supersedes the stand-ins just the same — each is reversed, and nothing more
   posts.
 - **Otherwise** (the re-base declined, or the charges do not carry the price):
-  the share posts as the stand-in for money the headline has not moved yet.
+  the share posts as the stand-in for money the headline has not moved yet, at
+  what the closure actually returned: on a booking cancelled first that is the
+  share netted against the cancellation, and nothing posts where it netted to
+  nothing (#3791, #3835, `INV-PAY-113`). A bank-transfer hand-back's
+  `BANK_REFUND` line is sized the same way.
 - **An agreed give-back is not a stand-in** (#3791). A review that gives back
   applied credit on a booking its credit covered has agreed a lower price than
   the strands say, by the give-back beyond its re-price. That posts as its own
