@@ -670,6 +670,23 @@ async function lines(bookingId: string) {
       expect(await runOne(id!, true)).toMatchObject({ kind: "NOTHING_TO_POST" });
     }, 300_000);
 
+    it("a card organiser cancel since #3653 (per-child refunds): the back-post keeps each share less its child's refund", async () => {
+      const g = await strippedGroup("per-child-cancel", "STRIPE", 2);
+      // The cancel reserves each child's refund out of the combined payment; with no Stripe key
+      // inline they stay owed, and the recovery runner makes them through the executor.
+      await cancelGroupHistory(NAMES, g);
+      const owed = await prisma.paymentRecoveryOperation.findMany({ where: { bookingId: { in: g.children }, status: { not: "SUCCEEDED" } }, orderBy: { id: "asc" } });
+      expect(owed.map((debt) => debt.amountCents)).toEqual([GROUP_CHILD_CENTS / 2, GROUP_CHILD_CENTS / 2]);
+      const stripe = groupHistoryStripe();
+      for (const debt of owed) await runGroupChildRefund(prisma, debt.id, stripe);
+      for (const id of g.children) {
+        expect(await runOne(id, true), id).toMatchObject({ kind: "POSTED", steps: expect.arrayContaining([`cancellation (kept ${GROUP_CHILD_CENTS / 2})`]) });
+        expect((await lines(id)).filter((line) => line.kind === "CARD_REFUND").map((line) => [line.amountCents, line.anchorKind])).toEqual([[-GROUP_CHILD_CENTS / 2, "PAYMENT_REFUND"]]);
+      }
+      const report = await census();
+      for (const id of g.children) expect(about(report, id), id).toEqual(NOTHING);
+    }, 300_000);
+
     it("shares that do not add up to the settlement are refused: the child stays GROUP_SETTLEMENT_OFF_LEDGER, listed with why", async () => {
       const g = await strippedGroup("corrupt-share", "STRIPE", 2);
       const [first, second] = g.children;
