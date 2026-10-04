@@ -1038,6 +1038,9 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   capture (`creditAppliedCents = 0`) is settled in full by cash and does NOT
   allocate; its historical double-pay is repaired by an operator-reviewed LOCAL
   credit restore, enumerated read-only by `auditCardAppliedCreditDoublePays`.
+  A payment that captured nothing, credit covering it all (#3836), allocates
+  whatever its status; the repair pass (`UNALLOCATED_APPLIED_CREDIT`) queues
+  the allocation for invoices raised before it.
 
 ## INV-PAY-025
 

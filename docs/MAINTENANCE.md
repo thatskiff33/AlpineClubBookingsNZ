@@ -1433,6 +1433,25 @@ hand and resolved it in Xero, the app raises no refund note for it, so a refund
 of that capture raises the report-only
 `KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND`: record the refund by hand as well.
 
+**Credit-paid card bookings invoiced before #3836.** A card booking paid
+entirely with account credit was invoiced at its full price, but the credit was
+never allocated against the invoice, so Xero shows the whole booking owing and
+its reminders ask the member for money already paid. New bookings are allocated
+by the invoice operation itself. For bookings invoiced before the fix, the tool
+reports `UNALLOCATED_APPLIED_CREDIT` (critical) on a paid booking whose card
+payment captured nothing, whose invoice exists, and whose applied credit has no
+Xero note on record. Its `QUEUE_APPLIED_CREDIT_ALLOCATION` action is safe to
+auto-apply: it queues the same applied-credit allocation operation booking
+creation uses, which allocates the member's floating credit notes (minting one
+for credit that has none) up to what is still applied, and stamps it, so a
+re-run allocates nothing more. Where the booking's invoice or allocation
+operation is unfinished the tool offers that operation's retry instead, or
+waits, and never queues a second one. A cancelled booking is not reported here:
+the `CANCELLED_BOOKING_OPEN_INVOICE` finding clears its invoice with a note. If
+the treasurer already settled such an invoice by hand in Xero, Xero refuses the
+allocation and the operation fails loudly; resolve it in Xero rather than
+retrying it.
+
 ### Refund credit notes with no settlement on record (#3548)
 
 Before #3548, a refund credit note whose first attempt died between raising the
