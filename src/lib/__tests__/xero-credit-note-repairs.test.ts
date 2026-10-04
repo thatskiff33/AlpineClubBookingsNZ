@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   xeroObjectLinkFindMany: vi.fn(),
   memberCreditFindMany: vi.fn(),
   notifyXeroSyncError: vi.fn(),
+  paymentRefundAggregate: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -26,6 +27,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     memberCredit: {
       findMany: mocks.memberCreditFindMany,
+    },
+    paymentRefund: {
+      aggregate: mocks.paymentRefundAggregate,
     },
   },
 }));
@@ -47,6 +51,7 @@ function payment(overrides: Record<string, unknown> = {}) {
     refundedAmountCents: 0,
     status: PaymentStatus.SUCCEEDED,
     source: PaymentSource.STRIPE,
+    booking: { organiserSettled: false },
     ...overrides,
   };
 }
@@ -183,5 +188,45 @@ describe("repairRefundedPaymentBusinessState raise-only Stripe ledger floor (#13
     });
     expect(result).toEqual({ matchedPayments: 1, updatedPayments: 1 });
     expect(mocks.notifyXeroSyncError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("an organiser-settled child's mirror is raised only by Stripe evidence (#3653)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.paymentUpdate.mockResolvedValue({});
+    mocks.notifyXeroSyncError.mockResolvedValue(undefined);
+  });
+
+  it("does not raise the child's mirror past the refunds Stripe recorded", async () => {
+    mocks.paymentRefundAggregate.mockResolvedValue({ _sum: { amountCents: 1500 } });
+    await runRepair({
+      paymentRow: payment({
+        refundedAmountCents: 1000,
+        status: PaymentStatus.PARTIALLY_REFUNDED,
+        booking: { organiserSettled: true },
+      }),
+      creditNote: { status: "AUTHORISED", total: 30 },
+    });
+
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay-1" },
+      data: { refundedAmountCents: 1500 },
+    });
+  });
+
+  it("writes nothing when Stripe recorded no more than the mirror already holds", async () => {
+    mocks.paymentRefundAggregate.mockResolvedValue({ _sum: { amountCents: null } });
+    const result = await runRepair({
+      paymentRow: payment({
+        refundedAmountCents: 1000,
+        status: PaymentStatus.PARTIALLY_REFUNDED,
+        booking: { organiserSettled: true },
+      }),
+      creditNote: { status: "AUTHORISED", total: 30 },
+    });
+
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    expect(result).toEqual({ matchedPayments: 1, updatedPayments: 0 });
   });
 });

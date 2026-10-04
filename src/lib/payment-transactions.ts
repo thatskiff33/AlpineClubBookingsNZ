@@ -468,7 +468,9 @@ export async function findPaymentTransactionByIntentId({
   return transaction;
 }
 
-async function recordStripeRefundLedgerEntry({
+// #3653: exported for the organiser child's refund out of the COMBINED charge,
+// which has no transaction row to pass (`paymentTransactionId: null`).
+export async function recordStripeRefundLedgerEntry({
   paymentId,
   paymentTransactionId,
   refund,
@@ -477,7 +479,7 @@ async function recordStripeRefundLedgerEntry({
   store,
 }: {
   paymentId: string;
-  paymentTransactionId: string;
+  paymentTransactionId: string | null;
   refund: StripeRefundLedgerInput;
   fallbackChargeId?: string | null;
   fallbackPaymentIntentId?: string | null;

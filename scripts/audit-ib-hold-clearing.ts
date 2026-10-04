@@ -73,7 +73,8 @@ async function main() {
   console.log(formatIbHoldClearingAuditReport(result, format));
 
   // #1620 — enumerate every Internet-Banking payment carrying applied credit
-  // against a full invoice (realized double-pay vs pending exposure). Read-only.
+  // against a full invoice (realized double-pay vs unverified exposure, #3632).
+  // Read-only.
   const strandResult = await auditIbAppliedCreditStrands();
 
   console.log("");
