@@ -381,6 +381,8 @@ describe("cancelBooking credit refunds", () => {
               aggregate: mocks.txMemberCreditAggregate,
             },
             manualRefundTask: {
+              // #3835: the reviews settled before the cancel, frozen on its event.
+              findMany: vi.fn().mockResolvedValue([]),
               findFirst: mocks.txManualRefundTaskFindFirst,
               create: mocks.txManualRefundTaskCreate,
             },
@@ -2579,6 +2581,10 @@ describe("cancelBooking credit refunds", () => {
             changeFeeCents: 0,
             // #3611: what the ledger was told the club keeps, frozen with the decision.
             ledger: { keptCents: 10000, policyKeptCents: 10000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0, appliedCreditBaseCents: 0 },
+            // #3835: what the tier ran on, and the reviews settled before it.
+            tierRefundMethod: "card",
+            refundableBaseCents: 10000,
+            completedReviewTaskIds: [],
           },
         },
       });
@@ -2610,6 +2616,9 @@ describe("cancelBooking credit refunds", () => {
         retainedAmountCents: 5000,
         changeFeeCents: 0,
         ledger: { keptCents: 5000, policyKeptCents: 5000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0, appliedCreditBaseCents: 0 },
+        tierRefundMethod: "card",
+        refundableBaseCents: 10000,
+        completedReviewTaskIds: [],
       });
       expect(
         mocks.txBookingEventCreate.mock.invocationCallOrder[0]
@@ -2639,6 +2648,8 @@ describe("cancelBooking credit refunds", () => {
           refundMethod: "credit",
           settledAmountCents: 5000,
           retainedAmountCents: 5000,
+          // #3835: the CREDIT tier is what this cancel ran on.
+          tierRefundMethod: "credit",
         })
       );
       expectNoPostCommitCancelledEvent();
@@ -3913,6 +3924,8 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
           );
           const mockTx = {
             bookingEvent: { create: mocks.txBookingEventCreate },
+            // #3835: the reviews settled before the cancel, frozen on its event.
+            manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
             bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
@@ -4078,6 +4091,8 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
           );
           const mockTx = {
             bookingEvent: { create: mocks.txBookingEventCreate },
+            // #3835: the reviews settled before the cancel, frozen on its event.
+            manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
             bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
@@ -4370,6 +4385,8 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
           );
           const mockTx = {
             bookingEvent: { create: mocks.txBookingEventCreate },
+            // #3835: the reviews settled before the cancel, frozen on its event.
+            manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
             bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },

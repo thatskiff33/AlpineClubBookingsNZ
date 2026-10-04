@@ -1664,6 +1664,127 @@ the effect of the parking gate's grain (#3531 3a) and the rate-derived backfill
 DATABASE_URL=<non-prod copy or, read-only, production> pnpm run booking-money:census
 ```
 
+### Census the booking ledger against its money columns (#3583)
+
+`pnpm run booking-ledger:census` is the booking ledger's cut-over gate
+([`INV-MONEY-037`](invariants/money.md#inv-money-037), design
+[`booking-ledger.md`](design/booking-ledger.md) §6). It is READ-ONLY: one
+repeatable-read snapshot opened `READ ONLY`, so PostgreSQL itself refuses a
+write inside it; it repairs nothing and calls no provider. For every booking it
+checks seven identities — the price, the captured amount, applied credit, the
+refunded total, change fees, the uncollected ask, and a live booking's balance
+owed — against the ledger lines that project them, and prints:
+
+- per identity, how many bookings it applies to, agree, disagree, are
+  classified, or are a coverage gap;
+- **coverage**: bookings with money and no lines (`NO_LINES`), paid bookings not
+  confirmed on the ledger, edits, change fees or account-credit rows no line
+  records, captured transactions and recorded card refunds with no live line
+  of their own (`UNPOSTED_SETTLEMENT`), and money handed back before the
+  posters existed — a legacy seed's refund, a V3 hand-back — that the balance
+  owed cannot yet see (`UNPOSTED_LEGACY_REFUND`);
+- **integrity**: reversals that name no line or are not its exact opposite, a
+  second live line for one guest-night, an unknown posting-key namespace or one
+  on an anchor it never posts under, and a live line its source row (or a
+  cancellation's frozen kept figure) no longer bears out. PostgreSQL's update and delete
+  counts for the table are printed as information only;
+- **named classes** — expected differences, each matched to the cent from the
+  booking's own rows (in-flight refunds and hand-backs, a review share kept by
+  the club, the refunded total's credit and hand-back allocations, and so on).
+  Each instance holds the gate until the owner acknowledges it to the cent,
+  except `GROUP_SETTLEMENT_OFF_LEDGER`, which is listed only. One class is the
+  census failing closed rather than an expected difference:
+  `AMBIGUOUS_REVIEW_GIVE_BACK`, a live booking whose #3791 review give-back
+  rows it cannot attribute to their reviews (a sibling review's price drop, a
+  dismissed one's included, or two rows beside a give-back line). It prints
+  three figures — the give-back lines, the rows and the unmatched drops — so
+  check the booking's reviews by hand before signing off all three. The
+  summary prints how many are still unacknowledged, per class and beside the
+  verdict;
+- every unclassified disagreement: booking, identity, column figure, ledger
+  figure and delta;
+- under the credit identity, #1620's internet-banking applied credit no Xero
+  note allocates, realized (settlement evidence proves the invoice paid) and
+  unverified (never asserted unpaid, #3632), with example bookings (`--json`
+  lists every booking, its amount and its evidence);
+- what the owner's acknowledgement file released, and any entry in it that is
+  stale or matches nothing;
+- the verdict, `GATE_OPEN` or `GATE_CLOSED`, with every reason it is closed.
+
+```bash
+DATABASE_URL=<non-prod copy, or production under a SELECT-only role> pnpm run booking-ledger:census
+DATABASE_URL=<...> pnpm run booking-ledger:census --json          # every list in full
+DATABASE_URL=<...> pnpm run booking-ledger:census --fail-on-gap   # exit 2 unless GATE_OPEN
+DATABASE_URL=<...> pnpm run booking-ledger:census --acknowledged <owner-file.json>
+DATABASE_URL=<...> pnpm run booking-ledger:census --write-acknowledgement-draft <new-file.json>
+```
+
+**The owner's workflow for the class lists.** Every class instance needs its own
+entry, so on a real history the file is long; the census drafts it rather than
+anyone typing it:
+
+1. Run the census and read the summary.
+2. Write the draft: `--write-acknowledgement-draft <new-file.json>`. It writes
+   one entry, to the cent, per class instance not yet acknowledged, in exactly
+   the format `--acknowledged` reads, each with a reference beginning `DRAFT`.
+   It refuses to overwrite an existing file, and the database is only read —
+   the file is the one thing written, locally.
+3. Review the draft line by line: delete any entry that is not an expected
+   state, and replace each `DRAFT` reference with your own.
+4. Deal with each `KNOWN_DEFECT_HISTORY` booking on #3583. The draft never
+   contains them — it says how many it left out and why — because owner
+   decision 1 requires each to be corrected by an officer or written off
+   deliberately; a write-off is an entry you add by hand. Nor does it ever
+   contain a disagreement, a coverage gap or an integrity finding: those hold
+   the gate until fixed.
+5. Re-run with `--acknowledged <the reviewed file>`. A figure that moved since
+   the draft is reported stale and holds the gate again.
+
+**Releasing a finding: the acknowledgement file.** The owner keeps it, outside
+the repository (it names real bookings). It is a JSON array, one entry per
+finding, each naming exactly one of `identity` or `class`:
+
+```json
+[
+  { "bookingId": "<id>", "class": "KNOWN_DEFECT_HISTORY", "cents": -5000, "reference": "written off, decision on #3583" },
+  { "bookingId": "<id>", "identity": "CAPTURED", "cents": 1, "reference": "corrected by the treasurer, see the booking history" }
+]
+```
+
+`cents` is the figure the census prints for that finding: a disagreement's
+delta, or a class instance's cents. An entry that matches to the cent moves the
+finding to the acknowledged list, where it no longer holds the gate. A booking
+can carry one finding on two identities (a #1641 double pay shows on
+`CREDIT_APPLIED` and on `OWED`), and each needs its own entry. An entry whose
+booking and identity or class match but whose cents do not is **stale**: the
+figure moved after it was signed off, so it is listed, the finding still holds,
+and the gate stays closed until somebody looks again. An entry matching nothing
+is listed as unmatched. If the database predates the ledger table, the command
+says so and stops.
+
+**Before the back-post (#3583's second pull request) expect `GATE_CLOSED` on
+coverage alone**: bookings made before the ledger existed have no lines, and
+a booking confirmed before it can carry settlement lines with no confirmation.
+That is the gap the back-post fills; any other finding is a poster bug to
+report with the figures the census prints. The gate opens on zero
+unclassified disagreements, zero coverage gaps, zero integrity findings and no
+unacknowledged class instance (design §6: every class is acknowledged by the
+owner on #3583, save the one the owner decided is listed only). Two classes follow the owner's
+decisions on #3583 and are one-line switches in
+`BOOKING_LEDGER_CENSUS_GATE_POLICY`
+(`src/lib/booking-ledger-projection-census-classes.ts`):
+`KNOWN_DEFECT_HISTORY` (bookings #3791, #3792 or #1641's double-pay shape
+damaged — named by shape, since that path may still be live) holds the gate
+until each is corrected, or written off in the acknowledgement file, and
+`GROUP_SETTLEMENT_OFF_LEDGER` (children whose money moved only through the
+organiser's group settlement — no transaction, refund or credit row of their
+own, no credit, refund or change-fee figure — whose poster is #3854) is listed
+only. Every other class is an expected state, an in-flight refund among them:
+acknowledge each instance with its reference, and a figure that moves after
+sign-off goes stale and holds the gate again, so nothing stays "in flight"
+unseen. The census takes no lock, so run it off-peak against
+production; a whole history is read in one transaction, 500 bookings a page.
+
 ### Census the booking ledger identity (#3340)
 
 `scripts/audit-booking-ledger-residual.ts` is a READ-ONLY census of
@@ -1947,18 +2068,21 @@ expected to report zero on most tenants. A non-empty result means a hold-slots
 booking reached release with both an issued invoice and a credit-reduced
 `amountCents` (e.g. an operator-created invoice on a credit-carrying hold).
 
-The same script also prints a second, separate **#1620 applied-credit strand
-enumeration** (also read-only): every non-cancelled Internet-Banking payment
-whose booking still carries UN-allocated applied credit (a `BOOKING_APPLIED`
-ledger row not yet stamped with an allocated Xero note), split into REALIZED
-(a current IB receipt or manual settlement proves the member already double-paid)
-and UNVERIFIED (local history cannot prove whether the current invoice was paid).
-CANCELLED bookings are excluded (the #1547 restore domain). Each row prints its
-`settlement evidence` (`xero-primary-receipt`, `manual-settlement` or
-`unverified`). Since #3632 the `--json` output names the second list `unverified`
-and its total `unverifiedExposureCents`; they were `pending` and
-`pendingExposureCents`, so update anything that parses the old keys.
-Repair guidance under the #1620 allocate-existing mechanism:
+The **#1620 applied-credit strand count** this script used to print moved to
+the booking-ledger census (#3583; see "Census the booking ledger against its
+money columns" above), where it is an information line under the credit
+identity: every non-cancelled Internet-Banking payment whose booking still
+carries UN-allocated applied credit (a `BOOKING_APPLIED` row not yet stamped
+with an allocated Xero note), split into REALIZED (a current IB receipt or
+manual settlement proves the member already double-paid the full invoice) and
+UNVERIFIED (local history cannot prove whether the current invoice was paid).
+Since #3632 that split is read from settlement evidence
+(`internet-banking-settlement-evidence.ts`), never from the payment's status
+mirror, and an unverified row is never asserted unpaid; the census's JSON lists
+each booking with its evidence (`xero-primary-receipt`, `manual-settlement` or
+`unverified`) under `realized` and `unverified` (the audit's old `pending`
+keys are gone with it). Repair guidance under the #1620 allocate-existing
+mechanism, for what the census lists:
 
 - **UNVERIFIED** rows need an operator to check the current Xero invoice or the
   manual settlement record before choosing a remedy. Do not restore credit or
@@ -1968,7 +2092,7 @@ Repair guidance under the #1620 allocate-existing mechanism:
   the strand amount (a Xero credit note does not refund cash already sent);
   handle by hand per the reported per-row figures.
 
-The same script also prints a third, separate **#1641 card applied-credit
+The same script also prints a second, separate **#1641 card applied-credit
 double-pay enumeration** (read-only): every captured (SUCCEEDED) non-Internet-
 Banking card payment whose booking still carries UN-allocated applied credit AND
 whose mirror shows the pre-fix full-price shape — `creditAppliedCents = 0` and

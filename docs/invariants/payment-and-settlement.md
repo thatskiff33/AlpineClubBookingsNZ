@@ -240,16 +240,11 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   the fenced `payment.updateMany` re-asserts the outstanding delta (on BOTH
   answers), the settle-from status, the zero refund history and the absence of
   Xero evidence as WHERE clauses, so a concurrent writer yields count 0 → 409;
-  and (3) AFTER THE FACT, NARROWLY — `auditIbAppliedCreditStrands` recomputes
-  `amountCents + creditAppliedCents - finalPriceCents` over committed data and
-  reports the uncollected addition beside it.
-  **(3) is not a safety net for this settle.** It enumerates a payment only when
-  the booking still carries UN-ALLOCATED applied credit
-  (`deriveIbAppliedCreditStrandFinding` returns null on
-  `ledgerAppliedCents <= 0`), scans INTERNET_BANKING payments only, and is an
-  operator-run script (`scripts/audit-ib-hold-clearing.ts`), not a scheduled job
-  or an alert. Within that population a NEGATIVE `mirrorInvariantDeltaCents`
-  equal-and-opposite to the payment's uncollected addition is not drift.
+  and (3) AFTER THE FACT — the booking-ledger census (`INV-MONEY-037`) checks
+  every booking's `amountCents`, `creditAppliedCents` and uncollected
+  addition against its ledger lines over committed data. **(3) is not a safety
+  net for this settle**: it is an operator-run command, not a scheduled job or
+  an alert.
   Either answer is recorded on the mark-paid audit row BOTH ways — with the
   settled figure written, the amount owing, and what was deliberately left
   uncollected. A covered extra also writes
@@ -1645,19 +1640,19 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     scoped to the review task and wait for the deallocation, failing for an
     operator retry when it FAILED. A captured payment's share keeps the
     document rule.
-  - **The ledger posts what was credited**, none at zero; on a covered booking
+  - **The ledger posts what was returned**, none at zero; on a covered booking
     the give-back beyond the re-price is an agreed reduction no re-price
     reverses (`agreedGiveBackKey`).
   - **Unpaid** - credit short of the price beyond earlier review give-backs:
     no more given back than the booking's review re-prices removed.
-  - **Cancelled first**: netted cumulatively against the restore from figures
-    frozen at the cancellation, the tier re-run and refused, task OPEN, where
-    it does not reproduce the restore, on the cap the cancellation froze
-    (`appliedCreditBaseCents`, #3809). $200 credit-paid, $50 share: $200 back
-    at 100%, $105 at 50% less $20, either order.
+  - **Cancelled first**, every route (#3835): netted cumulatively against
+    the cancellation, by what its CANCELLED event froze (tier method, bases,
+    `INV-PAY-115`'s cap, earlier reviews); refused, task OPEN, where the tier
+    does not reproduce it. Untiered money goes first; the capture gets only
+    its part. $200, $50 share: $200, $105, $50 back at 100%, 50% less $20, 0%.
   - Home: `edit-financial-review-account-credit.ts`,
-    `dispatchEditReviewAccountCreditXero`; proven by
-    `edit-financial-review-races.realdb.test.ts`.
+    `edit-financial-review-cancel-netting.ts`; proven by
+    `edit-financial-review-{races,captured-cancel}.realdb.test.ts`.
 
 
 ## INV-PAY-115

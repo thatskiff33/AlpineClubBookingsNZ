@@ -4,7 +4,13 @@
  * one writer and the rule stays in one place. Both are read only from that
  * claim; nothing here opens a transaction or talks to a provider.
  */
-import { BookingEventType, type Prisma } from "@prisma/client";
+import {
+  BookingEventType,
+  ManualRefundTaskDirection,
+  ManualRefundTaskKind,
+  ManualRefundTaskStatus,
+  type Prisma,
+} from "@prisma/client";
 
 /**
  * Which paid-path branch a cancellation takes — decided ONCE, inside the claim,
@@ -92,6 +98,13 @@ export async function writePaidCancellationEvent(
      * rather than re-deriving them from a mirror that keeps moving (#3611).
      */
     ledger: CancellationLedgerSnapshot;
+    /**
+     * #3835: what the tier was actually computed with - the refund method
+     * (`forcedCancelRefundMethod` included) and `paidCancellationMoney`'s
+     * refundable base - so a financial review completed after this cancel
+     * re-tiers exactly what was tiered, rather than guessing from the branch.
+     */
+    tier: { refundMethod: "card" | "credit"; refundableBaseCents: number };
   }
 ): Promise<void> {
   const { days, refundPercentage } = params;
@@ -115,6 +128,18 @@ export async function writePaidCancellationEvent(
   }[params.branch];
   const settledAmountCents =
     params.branch === "none" ? 0 : params.refundAmountCents;
+  // #3835: the review shares settled to the member BEFORE this cancel, read
+  // under the claim's lock(1) - which every review completion holds too - so a
+  // later review nets only against the shares settled after it, by id.
+  const completedReviews = await tx.manualRefundTask.findMany({
+    where: {
+      bookingId: params.bookingId,
+      kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
+      status: ManualRefundTaskStatus.COMPLETED,
+      settlementDirection: ManualRefundTaskDirection.REFUND_TO_MEMBER,
+    },
+    select: { id: true },
+  });
   await tx.bookingEvent.create({
     data: {
       bookingId: params.bookingId,
@@ -131,6 +156,9 @@ export async function writePaidCancellationEvent(
         retainedAmountCents: params.retainedAmountCents,
         changeFeeCents: params.changeFeeCents,
         ledger: params.ledger,
+        tierRefundMethod: params.tier.refundMethod,
+        refundableBaseCents: params.tier.refundableBaseCents,
+        completedReviewTaskIds: completedReviews.map((task) => task.id),
       },
     },
   });

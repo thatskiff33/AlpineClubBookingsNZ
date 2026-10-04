@@ -1961,8 +1961,8 @@ async function performBookingCancellation(
       branch,
       days,
       refundPercentage,
-      refundAmountCents,
-      paidAmountCents,
+      refundAmountCents, paidAmountCents,
+      tier: { refundMethod, refundableBaseCents }, // #3835: what the tier ran on
       changeFeeCents: payment.changeFeeCents,
       retainedAmountCents,
       ledger: {
