@@ -219,7 +219,8 @@ export async function organiserChildCommittedRefundCents(
  * (#3653): the combined payment its refund comes out of - null when that
  * payment no longer holds money (so nothing can be returned) - and what the
  * policy must treat as already handed back. Read in the cancel's claim, under
- * its `lock(1)`, the lodge key and the payment row lock.
+ * its `lock(1)`, the lodge key, the joiner's member credit-ledger key (#3792)
+ * and the payment row lock.
  */
 export async function organiserChildCancelBasis(
   db: Db,

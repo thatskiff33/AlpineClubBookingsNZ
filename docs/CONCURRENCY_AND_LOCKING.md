@@ -2867,8 +2867,9 @@ two run whole-before-whole; it is not a veto on that transition.
 doors write a child's refund debt (`reserveOrganiserChildModificationRefund`)
 inside the transaction that already holds `lock(1)` and the per-lodge key; a
 joiner's own cancel writes its one debt (`reserveOrganiserChildRefund`) in the
-paid-cancel claim, after that claim's `lock(1)`, per-lodge key and `Payment` row
-lock - global, lodge, row, the claim's existing order; and the organiser cancel
+paid-cancel claim, after that claim's `lock(1)`, per-lodge key, the joiner's
+member credit-ledger key (#3792) and `Payment` row lock - global, lodge, member,
+row, the claim's existing order, adding no key of its own; and the organiser cancel
 freezes one debt per child plus the settlement's plan in a `lock(1)` transaction
 of its own (`planOrganiserCancelChildRefunds`). The payments cron's
 `reconcilePendingOrganiserChildRefunds` reads a pending refund back from Stripe
