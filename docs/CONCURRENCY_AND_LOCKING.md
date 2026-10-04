@@ -81,7 +81,7 @@ is what CI enforces and this page is the defect.
 
 Many writers do both tiers at once: a Stripe capture claims capacity **and**
 moves money; a date modification reprices/refunds **and** re-checks capacity; a
-quote-accept flips booking status **and** holds a bed. Every such writer:
+request approval converts a held booking **and** claims its beds. Every such writer:
 
 1. takes the **global `lock(1)` FIRST**, then
 2. takes the **per-lodge lock**.
@@ -3651,17 +3651,16 @@ writers in `src/lib/booking-request-quotes.ts`, and they are the ones this
 writer actually had to be reconciled against. A **decline** sets a TERMINAL
 status, so a guard reading "not declined, not cancelled" was a complete fence
 against it. A **correction sets a LIVE one** — `VERIFIED`, still quoteable,
-still acceptable, still correctable — so that same guard sees nothing. Three are
-reconciled at the writer, per the checklist in `AGENTS.md`; the fourth is
-deliberately left, and the row says so rather than the table quietly listing
-three:
+still correctable — so that same guard sees nothing. All four are reconciled at
+the writer, per the checklist in `AGENTS.md`; #3415 replaced the deliberately
+unfenced MODIFY/QUERY message writer with a global-lock response claim:
 
 | Writer | What a correction did to it | How it is fenced now |
 | --- | --- | --- |
 | `createBookingRequestQuote` | a plain update restored the retired price, option totals and stale positional member links over the corrected row | claims on `version: request.version`, and throws before any quote row is touched |
 | `sendBookingRequestQuote` | an unguarded quote flip turned a `SUPERSEDED` quote back into a live `SENT` one with a fresh response token — priced on the pre-correction party, against the post-correction dates, with no beds held, because the correction's release runs afterwards | claims the quote row while it is still `DRAFT`/`SENT`; count 0 rolls the whole transaction back, and the email is outside it |
 | `respondToBookingRequestQuote` (accept) | a split request/quote write could expose accepted request data while its token still named a live quote, and a correction could otherwise restore a retired price and snapshot | takes `lock(1)`, re-reads the quote and request-owned hold, then claims `QUOTE_SENT -> ACCEPTED` on the request and `SENT -> ACCEPTED` on the quote in request-then-quote order in one transaction; either lost claim rolls both back. A matching retry is read-only. |
-| `respondToBookingRequestQuote` (the MODIFY/QUERY branch) | it flips a freshly corrected request to `MODIFICATION_REQUESTED`/`QUERY_PENDING` from a quote link that was live a moment ago, and its bare quote update re-stamped a quote the correction had already `SUPERSEDED` | **deliberately NOT lock-fenced, and not in `GLOBAL_LOCK_SITE_REGISTRY`.** It writes a status and the requester's own message and nothing else — no price, no accepted snapshot, no hold, no conversion — and both states it can reach are correctable and swept exactly as `VERIFIED` is, so a fence would buy a cosmetic status by discarding a message from the person whose booking it is. Only the quote write was narrowed, to `DRAFT`/`SENT`, which is what every other supersede writer in the tree already claims on. A future version that writes a price or converts takes the key and joins the registry |
+| `respondToBookingRequestQuote` (the MODIFY/QUERY branch) | a stale message could re-status a corrected or accepted request and re-stamp a quote already `SUPERSEDED` | takes `lock(1)`, re-reads the request and quote, requires the loaded-version `QUOTE_SENT` request with no accepted pointer and the `SENT` quote, then claims the request before superseding only that `SENT` quote; stale responses return `409` before either write (#3415) |
 
 It joins no capacity tier because it creates no booking and claims no bed. The
 `AWAITING_REVIEW` hold a corrected request may still be carrying is released
@@ -3672,12 +3671,10 @@ is `declineBookingRequest`'s, deliberately: its worst case is a request still
 pointing at a hold covering more than it needs, visible on the officer's screen
 with its own Release button, rather than a request that has silently lost beds.
 
-**#3415 update.** The `MODIFY`/`QUERY` description in the table above is
-superseded. Those responses now take `lock(1)`, re-read the quote and request,
-and claim only the loaded-version `SENT`/`QUOTE_SENT` pair with no accepted
-pointer. A stale response after acceptance returns `409` before it changes the
-request, quote, or held booking. The stale-hold cron independently refuses any
-request with an accepted quote pointer.
+The stale-hold cron independently refuses any request with an accepted quote
+pointer (#3415). Acceptance retains its `AWAITING_REVIEW` hold for officer
+approval or decline; generic cancellation refuses an `ACCEPTED` linked request
+under the global lock. Officer decline claims `DECLINED` before releasing it.
 
 ### Writer doing both → `lock(1)` first, then per-lodge
 
@@ -3685,13 +3682,13 @@ The Stripe capture (`markBookingPaymentSucceeded`), the confirm-pending-guests
 zero-dollar and charge branches, the `charge-saved-method` claim and release
 (#3267), the waitlist-confirm $0 PAID claim, the admin
 return-to-waitlist repair (#2649), the
-switch-to-internet-banking hold, the quote-accept conversion
+switch-to-internet-banking hold, the officer's held-request conversion
 (`approveBookingRequest`), and every booking modification service
 (batch/date/guest-removal) take **`lock(1)` first, then the per-lodge lock**.
 `xero-inbound/invoice-paid-effects.ts` is the in-tree precedent for this
 composition.
 
-Generic quote acceptance pre-reads only the held booking's immutable concrete
+Officer approval of a held generic request pre-reads only the held booking's immutable concrete
 `lodgeId`, then takes global -> that lodge and fully re-reads both request and
 hold. It rejects an explicit request/hold lodge mismatch and carries the same
 concrete lodge into policy and email context. A null request lodge is never

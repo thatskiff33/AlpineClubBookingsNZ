@@ -4,7 +4,7 @@ import { relative } from "node:path";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 
-import { jsxSourceFiles } from "./support/money-number-input-scan";
+import { jsxSourceFiles, REQUIRED_SCANNED_SUBTREES } from "./support/money-number-input-scan";
 
 // The older number-input guard enforces INV-MONEY-003's text boundary. This
 // guard keeps the editing affordance in one component (INV-SSOT-001, #3414).
@@ -58,6 +58,14 @@ describe("one shared money box (INV-SSOT-001, #3414)", () => {
   it("has no raw decimal money box or legacy money-props spread in production JSX", () => {
     const root = process.cwd();
     const files = jsxSourceFiles(root);
+    // Bind the walk BY NAME, as money-number-input-guard does: a total stays
+    // true of a walk that silently stopped reading the admin or booking-request
+    // subtrees where the shared money boxes live. One list, imported (INV-SSOT).
+    const scanned = files.map((file) => file.split("\\").join("/"));
+    const unreached = REQUIRED_SCANNED_SUBTREES.filter(
+      (subtree) => !scanned.some((file) => file.includes(`/${subtree}/`)),
+    );
+    expect(unreached, "the money-box walk stopped reaching these subtrees").toEqual([]);
     expect(files.length).toBeGreaterThan(400);
     const hits = files.flatMap((absolute) =>
       unsharedMoneyInputs(
