@@ -243,7 +243,7 @@ describe("owner decision 2: the booking was cancelled before the review complete
 
   it("MUTATION (#3809): re-runs the tier on the cap the cancellation froze - $195 applied above a $150 price, $55 restored - instead of refusing", async () => {
     // A $50 reduction at 50% less $20 gave $5 back; the cancel at the same tier
-    // tiered the $150 the booking was worth (INV-PAY-114), not the $195 applied.
+    // tiered the $150 the booking was worth (INV-PAY-115), not the $195 applied.
     bookingIs("CANCELLED", 15_000);
     rows.frozenAppliedCents = 19_500;
     rows.frozenBaseCents = 15_000;

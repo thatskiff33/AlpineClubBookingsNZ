@@ -1309,6 +1309,37 @@ describe("expireMemberGuestConsent", () => {
     });
   });
 
+  it("elects nothing for a booking the group organiser paid for by card, so the removal goes ahead (#3653)", async () => {
+    // A joiner's booking the organiser paid for by card has ONE disposition, the
+    // organiser's card, and the shared path refuses a credit election for it.
+    // Electing credit here made every such lapse a refusal, leaving the guest
+    // on the booking for ever; the election is the OWNER's account, which is
+    // not where this money goes.
+    Object.assign(world().bookings.get(BOOKING)!, {
+      organiserSettled: true,
+      parentBookingId: "organiser-booking",
+      payment: { source: "STRIPE" },
+    });
+
+    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+
+    expect(result).toMatchObject({ outcome: "EXPIRED", removed: true });
+    expect(h.removeGuest).toHaveBeenCalledTimes(1);
+    expect(h.removeGuest.mock.calls[0][0]).not.toHaveProperty("settlementMethod");
+  });
+
+  it("still elects credit when the organiser settled by Internet Banking (#3653)", async () => {
+    Object.assign(world().bookings.get(BOOKING)!, {
+      organiserSettled: true,
+      parentBookingId: "organiser-booking",
+      payment: { source: "INTERNET_BANKING" },
+    });
+
+    await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+
+    expect(h.removeGuest.mock.calls[0][0]).toMatchObject({ settlementMethod: "credit" });
+  });
+
   it("attributes the removal to the booking OWNER, never to the target", async () => {
     // Nobody acted, so nobody is named as the actor: the booking owner is passed
     // because they are the party whose booking is repriced and who receives the

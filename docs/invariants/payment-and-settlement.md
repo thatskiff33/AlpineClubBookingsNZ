@@ -413,9 +413,11 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   retried: the writer above, #1491's fold and `applyLocalRefundAllocation`, which
   refuses only when headroom is gone. All take the `Payment` row first
   (`lockPaymentForRefundedTotal`), then refund rows, then transaction rows.
-- The exception is group settlement (`INV-PAY-031`–`037`): it refunds child
-  payments that have no transaction rows and writes their `Payment` mirror
-  directly.
+- Two writers set an organiser-settled child's mirror directly, because the
+  child has no transaction rows: the pre-#3653 group-settlement path
+  (`INV-PAY-031`–`037`) and the organiser child refund executor
+  (`organiser-child-refund-executor.ts`, [`INV-PAY-114`](#inv-pay-114)), which
+  records each Stripe refund's row first.
 - Pinned by `payment-transactions-refunds.test.ts` and
   `card-refund-mirror-races.realdb.test.ts`. Totals the old formula left short
   are listed by `pnpm run payments:audit-refunded-total`, never repaired by code.
@@ -1212,6 +1214,8 @@ one, check the other.
 
 ## INV-PAY-034
 
+**Related: `INV-PAY-114`**, which supersedes this for a card settlement cancelled after #3653.
+
 - An organiser-cancel group cleanup must be re-drivable after a crash (#1236).
   Cancelling the organiser booking is single-flight, so a re-invoked cancel
   409s and cannot re-enter the joiner cleanup; the `group-settlement-reaper`
@@ -1247,6 +1251,8 @@ one, check the other.
 
 ## INV-PAY-036
 
+**Related: `INV-PAY-114`**, which supersedes this for a card settlement cancelled after #3653.
+
 - The group-cancel refund credit-note enqueue is **durable** (#1257/#1377).
   Each child's Xero refund credit-note outbox row (integer cents) is enqueued
   **inside the same transaction** as that child's cancel + `refundedAmountCents`
@@ -1261,6 +1267,8 @@ one, check the other.
 
 ## INV-PAY-037
 
+**Related: `INV-PAY-114`**, which supersedes this for a card settlement cancelled after #3653.
+
 - A failed settlement refund must stay durably owed (#1351): the frozen plan
   is never nulled, a payment-recovery operation persisted before the inline
   Stripe call retries the refund under the same
@@ -1269,6 +1277,44 @@ one, check the other.
   refund mirror twice — the replay only ever writes a mirror to an
   already-CANCELLED plan child whose `refundedAmountCents` is still zero,
   via a conditional update. Alerts fire on retry exhaustion only.
+
+## INV-PAY-114
+
+**Related: `INV-PAY-034`, `INV-PAY-036`, `INV-PAY-037`** (the legacy and
+Internet Banking path) and **`INV-PAY-103`** (the one card-refund writer).
+
+- **A child the organiser paid for by card is refunded out of the group's
+  combined payment, one Stripe refund per child, and nothing is called
+  refunded until Stripe answered** (#3653). An Internet Banking child keeps
+  the ordinary options.
+  - **The debt is written first**, under `lock(1)`: one
+    `PaymentRecoveryOperation` per refund, keyed `organiser_child_refund_*`,
+    amount frozen, counted against the child's payment and the combined
+    capture. An edit over it is refused; a cancellation
+    clamps.
+  - **One disposition, the organiser's card**: no account credit for an edit,
+    a joiner's own cancel or a consent lapse. Every edit door, quote and
+    review charge refuses a price increase.
+  - **The record waits for Stripe.** The `PaymentRefund` (no transaction),
+    mirror, Xero refund note, settlement status and close commit in one
+    `lock(1)` transaction; the edit door raises no modification note. A replay
+    first finds Stripe's refund by key.
+  - **What has gone back** is the larger of the mirror and the child's
+    refund rows (`organiserChildRefundedCents`). A cancellation, organiser's or joiner's,
+    tiers what remains less refunds owed through `cancelRefundableBaseCents`
+    ([INV-PAY-018]); the organiser's freezes `{ perChildRefunds }`. A joiner's
+    cancel after a reduction takes the paid path; behind the group's it (and
+    its preview) refunds nothing more; its frozen figures follow the final amount. A
+    pre-#3653 `{childId: cents}` plan and an Internet Banking settlement keep
+    `INV-PAY-034`-`037`.
+  - **Only Stripe evidence raises a child's mirror**: the Xero
+    credit-note repair never takes it past the child's recorded refunds.
+  - **A pending refund that fails** is taken back out by the payments cron
+    and its debt reopened, marked for the recovery audit, due after Stripe's
+    key window.
+  - `pnpm run payments:audit-organiser-child-refunds` lists unbacked mirrors,
+    read-only. Home: `organiser-child-refund.ts` and its executor; proven by
+    `organiser-child-refund.realdb.test.ts`.
 
 ## INV-PAY-105
 
@@ -1611,7 +1657,7 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     `edit-financial-review-races.realdb.test.ts`.
 
 
-## INV-PAY-114
+## INV-PAY-115
 
 - **A cancellation tiers applied credit capped at what the booking is now worth,
   money paid first - for a booking reduced through #3809's settlement** (owner

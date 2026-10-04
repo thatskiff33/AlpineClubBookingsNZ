@@ -292,7 +292,7 @@ the credit the booking's applied rows actually hold, which the mirror can
 disagree with. Only the paid `cancelBooking` branch keeps anything - and, since
 #3809, the unpaid branch on a payment that captured money and was refunded
 whole, which keeps the applied credit its tier did not restore
-(`INV-PAY-114`); every other
+(`INV-PAY-115`); every other
 cancel keeps nothing. The CANCELLED snapshot freezes `ledger: { keptCents,
 policyKeptCents, keptBeyondPolicyCents, appliedCreditCents, creditRestoredCents, appliedCreditBaseCents }`
 in the same claim, so #3583's

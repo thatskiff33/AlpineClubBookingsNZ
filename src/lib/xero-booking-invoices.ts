@@ -90,17 +90,7 @@ import {
 } from "@/lib/booking-money-build-up";
 import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
 import { asRecord } from "@/lib/xero-json";
-
-// #1765 — the aggregate Payment statuses that prove cash was captured at some
-// point. Settlement gating must pair one of these with a positive NET capture
-// (amountCents − refundedAmountCents); `status === "SUCCEEDED"` alone
-// misclassifies a repay-after-refund payment, whose aggregate sits in
-// PARTIALLY_REFUNDED even though its repay capture settles the invoice.
-const STRIPE_CAPTURED_PAYMENT_STATUSES = new Set<string>([
-  "SUCCEEDED",
-  "PARTIALLY_REFUNDED",
-  "REFUNDED",
-]);
+import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 
 export interface CreateXeroBookingInvoiceOptions
   extends FindOrCreateXeroContactOptions {
@@ -309,7 +299,7 @@ async function settleCardAppliedCreditAllocation(
   // A fully-refunded-out payment (net 0) still must not allocate.
   if (
     payment.source === PaymentSource.INTERNET_BANKING ||
-    !STRIPE_CAPTURED_PAYMENT_STATUSES.has(payment.status) ||
+    !isCapturedPaymentStatus(payment.status) ||
     payment.amountCents - (payment.refundedAmountCents ?? 0) <= 0 ||
     !(payment.creditAppliedCents > 0)
   ) {
@@ -787,9 +777,7 @@ export async function createXeroInvoiceForBooking(
     let paymentResponseBody: XeroPayment | null = null;
     let paymentWriteError: unknown = null;
     const paymentSource = booking.payment.source ?? PaymentSource.STRIPE;
-    const paymentCaptured = STRIPE_CAPTURED_PAYMENT_STATUSES.has(
-      booking.payment.status
-    );
+    const paymentCaptured = isCapturedPaymentStatus(booking.payment.status);
     const netCapturedCents = Math.max(
       0,
       booking.payment.amountCents - (booking.payment.refundedAmountCents ?? 0)
