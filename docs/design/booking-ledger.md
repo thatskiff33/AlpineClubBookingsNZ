@@ -547,7 +547,7 @@ change fees and credit rows no line records; a captured transaction or a
 recorded refund with no live `capture:` / `refund:` line of its own,
 `UNPOSTED_SETTLEMENT`; on `owed(b)`, a legacy seed's refund or a V3
 hand-back no line can yet record, `UNPOSTED_LEGACY_REFUND`; and a group-settled
-child with no lines that the back-post could not post so the census agrees,
+child with no lines whose planned lines would not agree outright,
 `GROUP_SETTLEMENT_UNPOSTABLE`, below), **integrity** (a reversal naming
 no line or not its exact opposite, a second live night, an unknown key
 namespace or one on an anchor it never posts under, a live line its source row
@@ -587,7 +587,9 @@ planners) and judges the result. A child whose planned lines would leave a
 disagreement, a gap, an integrity finding or a class — shares that do not add
 up, a #3653 refund whose retry is exhausted or still in flight — is
 `GROUP_SETTLEMENT_UNPOSTABLE`, a coverage gap no acknowledgement signs (#3854
-F1). Since #3854 a newly settled child holds lines, so the class is history
+F1). The evaluation says which (`groupSettlementUnpostable`): `REFUSED` or
+`POSTS_NOT_AGREEING` — correct the history; `POSTS_WITH_CLASS` (an in-flight
+refund) — run the back-post, then acknowledge the class it shows. Since #3854 a newly settled child holds lines, so the class is history
 only: its `GROUP_SETTLEMENT` share is checked against the child's payment
 under a settlement that captured — `REFUNDED` included, since an organiser
 cancel at 100% leaves the share standing beside its refunds (K2) — and a plan

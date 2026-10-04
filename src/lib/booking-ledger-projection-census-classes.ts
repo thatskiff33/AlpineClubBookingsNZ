@@ -57,7 +57,7 @@ export const BOOKING_LEDGER_CENSUS_GATE_POLICY = {
    * a reader that shows one. Option B (the poster here) was declined. The class
    * is exempt BECAUSE that poster posts the child, so it names only a child
    * whose lines the poster's own planner would make the census agree on
-   * (#3854 F1); any other is `GROUP_SETTLEMENT_UNPOSTABLE`, a coverage gap.
+   * outright (#3854 F1); any other is `GROUP_SETTLEMENT_UNPOSTABLE`, a coverage gap.
    */
   groupSettlementOffLedgerHoldsGate: false,
 } as const;
@@ -93,8 +93,11 @@ export type BookingLedgerCensusClass = (typeof BOOKING_LEDGER_CENSUS_CLASSES)[nu
  * before the posters existed (a legacy seed's refund, a V3 hand-back) that
  * `owed(b)` cannot yet see. `GROUP_SETTLEMENT_UNPOSTABLE` is a group-settled
  * child with no lines whose lines, planned as the back-post would post them,
- * would NOT make the census agree (#3854 F1): money collected or owed back
- * that no poster will record — never acknowledgeable, like every gap here.
+ * would not make the census agree OUTRIGHT (#3854 F1): either the back-post
+ * refuses them (correct the history), or it posts them and the census then
+ * names a class to acknowledge (run the back-post, then acknowledge) — the
+ * evaluation's `groupSettlementUnpostable` says which. The gap itself is
+ * never acknowledgeable, like every gap here.
  */
 export const BOOKING_LEDGER_COVERAGE_KINDS = [
   "NO_LINES",

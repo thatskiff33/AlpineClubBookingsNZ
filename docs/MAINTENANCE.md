@@ -1652,7 +1652,7 @@ owed — against the ledger lines that project them, and prints:
   of their own (`UNPOSTED_SETTLEMENT`), and money handed back before the
   posters existed — a legacy seed's refund, a V3 hand-back — that the balance
   owed cannot yet see (`UNPOSTED_LEGACY_REFUND`), and a group-settled child
-  with no lines that the back-post could not post so the census agrees
+  with no lines whose planned lines would not agree outright
   (`GROUP_SETTLEMENT_UNPOSTABLE`, below);
 - **integrity**: reversals that name no line or are not its exact opposite, a
   second live line for one guest-night, an unknown posting-key namespace or one
@@ -1757,8 +1757,11 @@ through the back-post's own planners — would make it agree outright. Any
 other such child (shares that do not add up to what the settlement collected,
 a #3653 refund still owed whose retry is exhausted or still running, night
 rows that do not make the price) is the coverage gap
-`GROUP_SETTLEMENT_UNPOSTABLE`, which holds the gate and cannot be acknowledged
-(#3854). A refund counts as in flight while the recovery runner will still
+`GROUP_SETTLEMENT_UNPOSTABLE`, which holds the gate and cannot itself be
+acknowledged (#3854). The summary splits it by what to do: **refused** by the
+back-post, or posted but still not agreeing — correct the history, then re-run;
+**posts with a class** (a refund still in flight, say) — run the back-post,
+then acknowledge the class the census then shows. A refund counts as in flight while the recovery runner will still
 make it — pending, processing, or failed with a retry scheduled and attempts
 left; once its retries are exhausted it is not, and the money it owes back
 holds the gate. Every other class is an expected state, an in-flight refund among them:
@@ -1837,10 +1840,13 @@ post — then one line per booking that posts or cannot:
   — an old edit cannot be re-derived from what the rows hold.
   `GROUP_SHARES_DO_NOT_RECONCILE` — the payments of the children a group
   settlement paid do not add up to what it collected, so no share is guessed;
-  an officer looks at the group. A group-settled child (#3854) it cannot post,
+  an officer looks at the group. A group-settled child (#3854) it refuses,
   for this or any reason, holds the census's gate as
-  `GROUP_SETTLEMENT_UNPOSTABLE`, or `NO_LINES` if it holds money of its own:
-  correct the history, then re-run. `CENSUS_WOULD_NOT_PASS`
+  `GROUP_SETTLEMENT_UNPOSTABLE` (refused), or `NO_LINES` if it holds money of
+  its own: correct the history, then re-run. One it posts with a class — a
+  refund still in flight — also held as `GROUP_SETTLEMENT_UNPOSTABLE` (posts
+  with a class) until posted: run the back-post, then acknowledge the class
+  the census shows. `CENSUS_WOULD_NOT_PASS`
   — the lines it could post would leave the census disagreeing, gapped or
   finding a line wrong; the figures follow. What the back-post does not
   reconstruct, and so lists here: a review give-back or stand-in a closure made
@@ -1945,8 +1951,10 @@ unclassified disagreement, any coverage gap (a booking the back-post listed
 `KNOWN_DEFECT_HISTORY` booking until an officer corrects it or you write it off
 in the acknowledgement file on #3583 (owner decision 1), and every other class
 instance until you acknowledge it to the cent. `GROUP_SETTLEMENT_OFF_LEDGER` is
-listed only; a group-settled child the back-post could not post is never in
-it, but the gap `GROUP_SETTLEMENT_UNPOSTABLE`, which holds. The gate is open when `--fail-on-gap` exits 0 and the census prints
+listed only; a group-settled child whose planned lines would not agree
+outright — refused by the back-post (correct the history), or posted with a
+class to acknowledge (run the back-post, then acknowledge) — is never in it,
+but the gap `GROUP_SETTLEMENT_UNPOSTABLE`, which holds. The gate is open when `--fail-on-gap` exits 0 and the census prints
 `VERDICT: GATE_OPEN`. CI runs this same sequence on every pull request over a
 seeded history (`scripts/booking-ledger-seed-gate.sh`).
 

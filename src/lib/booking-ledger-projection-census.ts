@@ -156,8 +156,22 @@ export type BookingLedgerEvaluation = {
      * Xero note allocates, with whether its invoice is proven paid (#3632).
      */
     ibUnallocatedAppliedCredit: { evidence: InternetBankingSettlementEvidence; cents: number } | null;
+    /** Why a `GROUP_SETTLEMENT_UNPOSTABLE` child holds; null on every other booking. */
+    groupSettlementUnpostable: GroupSettlementUnpostableReason | null;
   };
 };
+
+/**
+ * Why a group-settled child's planned lines would not agree outright, which
+ * says what the operator does (#3854): `REFUSED`, the back-post refuses it or
+ * would post lines the census does not plan — correct the history;
+ * `POSTS_WITH_CLASS`, it posts and the census then names an acknowledgeable
+ * class (an in-flight refund, say) — run the back-post, then acknowledge;
+ * `POSTS_NOT_AGREEING`, it posts and the census then still finds a
+ * disagreement, gap or integrity finding — correct the history.
+ */
+export const GROUP_SETTLEMENT_UNPOSTABLE_REASONS = ["REFUSED", "POSTS_WITH_CLASS", "POSTS_NOT_AGREEING"] as const;
+export type GroupSettlementUnpostableReason = (typeof GROUP_SETTLEMENT_UNPOSTABLE_REASONS)[number];
 
 const CHARGE_PRICE_KINDS = ["GUEST_NIGHT", "PROMOTION", "GROUP_DISCOUNT"] as const;
 
@@ -311,7 +325,12 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
     bookingId: booking.id,
     lineCount: lines.length,
     integrity,
-    info: { unkeyedLines: lines.filter((line) => line.postingKey === null).length, retainedCollectedCents: 0, ibUnallocatedAppliedCredit },
+    info: {
+      unkeyedLines: lines.filter((line) => line.postingKey === null).length,
+      retainedCollectedCents: 0,
+      ibUnallocatedAppliedCredit,
+      groupSettlementUnpostable: null as GroupSettlementUnpostableReason | null,
+    },
   };
 
   if (lines.length === 0) {
@@ -319,9 +338,11 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
     const shape = money && isGroupSettlementOffLedger(row);
     // Owner decision 2A exempts the class because #3854's poster posts the
     // child; so it names only a child whose planned lines the census would
-    // agree on. One the back-post would refuse is a gap that holds (F1).
-    const offLedger = shape && groupSettledChildWouldAgree(row);
-    if (shape && !offLedger) coverage.add("GROUP_SETTLEMENT_UNPOSTABLE");
+    // agree on outright. Any other — refused by the back-post, or posted with
+    // a class to acknowledge — is a gap that holds, with the reason (F1).
+    const unpostable = shape ? groupSettledChildUnpostableReason(row) : null;
+    const offLedger = shape && unpostable === null;
+    if (unpostable !== null) coverage.add("GROUP_SETTLEMENT_UNPOSTABLE");
     if (money && !shape) coverage.add("NO_LINES");
     if (unpostedCredits(row).length > 0) coverage.add("UNPOSTED_CREDIT");
     return {
@@ -330,6 +351,7 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
       coverage: [...coverage],
       bookingClass: offLedger ? "GROUP_SETTLEMENT_OFF_LEDGER" : null,
       bookingInstances: [],
+      info: { ...base.info, groupSettlementUnpostable: unpostable },
     };
   }
 
@@ -477,20 +499,21 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
  * #3854 F1: would the lines the back-post posts on this group-settled child —
  * planned in memory by its own planners (`plannedGroupChildLines`) — leave the
  * census agreeing outright: every identity agreeing, no coverage, no integrity
- * finding, no class? Anything less (a class included, which would want the
- * owner's acknowledgement once posted) is not money the poster will simply
- * record, so the child is not exempt.
+ * finding, no class? Null if so; else why not (`GroupSettlementUnpostableReason`).
+ * Anything less — a class included, which wants the owner's acknowledgement
+ * once posted — is not exempt, so the child holds as a gap.
  */
-function groupSettledChildWouldAgree(row: BookingLedgerCensusRow): boolean {
+function groupSettledChildUnpostableReason(row: BookingLedgerCensusRow): GroupSettlementUnpostableReason | null {
   const planned = plannedGroupChildLines(row);
-  if (planned === null) return false;
+  if (planned === null) return "REFUSED";
   const evaluation = evaluateBookingLedgerIdentities({ ...row, lines: planned });
-  return (
-    evaluation.identities.every((identity) => identity.status === "AGREE" || identity.status === "NOT_APPLICABLE") &&
-    evaluation.coverage.length === 0 &&
-    evaluation.integrity.length === 0 &&
-    evaluation.bookingInstances.length === 0
-  );
+  const notAgreeing =
+    evaluation.coverage.length > 0 ||
+    evaluation.integrity.length > 0 ||
+    evaluation.identities.some((identity) => identity.status === "DISAGREE" || identity.status === "COVERAGE");
+  if (notAgreeing) return "POSTS_NOT_AGREEING";
+  const classed = evaluation.bookingInstances.length > 0 || evaluation.identities.some((identity) => identity.status === "CLASSIFIED");
+  return classed ? "POSTS_WITH_CLASS" : null;
 }
 
 /** One instance per figure, so the acknowledgement goes stale if any of them moves. */

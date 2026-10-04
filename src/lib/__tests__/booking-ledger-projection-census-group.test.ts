@@ -248,7 +248,7 @@ describe("F1: GROUP_SETTLEMENT_OFF_LEDGER only where the back-post's planned lin
   it("a settled child whose planned confirmation and share agree is in the class, and the gate stays open", () => {
     const { row } = settledChild("STRIPE");
     const subject = { ...row, lines: [], groupChild: { pricing: PRICING, siblings: [{ id: B, lodgeId: "l1", payment: { amountCents: 4_500, status: "SUCCEEDED", source: "STRIPE" as const } }], cancelledWithoutSnapshot: false, snapshotKept: null } };
-    expect(evaluateBookingLedgerIdentities(subject)).toMatchObject({ bookingClass: "GROUP_SETTLEMENT_OFF_LEDGER", coverage: [] });
+    expect(evaluateBookingLedgerIdentities(subject)).toMatchObject({ bookingClass: "GROUP_SETTLEMENT_OFF_LEDGER", coverage: [], info: { groupSettlementUnpostable: null } });
     expect(census([subject]).verdict).toBe("GATE_OPEN");
   });
 
@@ -260,8 +260,9 @@ describe("F1: GROUP_SETTLEMENT_OFF_LEDGER only where the back-post's planned lin
   it("the review's scenario: a 100% #3653 refund whose retry is exhausted, never paid, holds the gate (unsignable), live", () => {
     const subject = offLedgerCancelledChild(4_500, EXHAUSTED);
     const evaluation = evaluateBookingLedgerIdentities(subject);
-    expect(evaluation).toMatchObject({ bookingClass: null, coverage: ["GROUP_SETTLEMENT_UNPOSTABLE"] });
+    expect(evaluation).toMatchObject({ bookingClass: null, coverage: ["GROUP_SETTLEMENT_UNPOSTABLE"], info: { groupSettlementUnpostable: "POSTS_NOT_AGREEING" } });
     const report = census([subject]);
+    expect(report.info.groupSettlementUnpostable).toEqual({ REFUSED: [], POSTS_WITH_CLASS: [], POSTS_NOT_AGREEING: [B] });
     expect(report.classes.GROUP_SETTLEMENT_OFF_LEDGER.bookings).toBe(0);
     expect(report.verdict).toBe("GATE_CLOSED");
     expect(report.gateClosedBecause).toEqual(["1 booking(s) with coverage gap GROUP_SETTLEMENT_UNPOSTABLE"]);
@@ -269,8 +270,12 @@ describe("F1: GROUP_SETTLEMENT_OFF_LEDGER only where the back-post's planned lin
 
   it("a refund still in flight is not waved through either: once posted it is a class the owner acknowledges, so until then it holds", () => {
     for (const state of [PENDING, RETRYING]) {
-      expect(evaluateBookingLedgerIdentities(offLedgerCancelledChild(4_500, state)).coverage, state.status).toEqual(["GROUP_SETTLEMENT_UNPOSTABLE"]);
+      const evaluation = evaluateBookingLedgerIdentities(offLedgerCancelledChild(4_500, state));
+      expect(evaluation.coverage, state.status).toEqual(["GROUP_SETTLEMENT_UNPOSTABLE"]);
+      // Not refused: the back-post posts it, then the owner acknowledges the class.
+      expect(evaluation.info.groupSettlementUnpostable, state.status).toBe("POSTS_WITH_CLASS");
     }
+    expect(census([offLedgerCancelledChild(4_500, PENDING)]).info.groupSettlementUnpostable).toEqual({ REFUSED: [], POSTS_WITH_CLASS: [B], POSTS_NOT_AGREEING: [] });
   });
 
   it("shares that do not add up to what the settlement collected hold the gate", () => {
@@ -288,16 +293,16 @@ describe("F1: GROUP_SETTLEMENT_OFF_LEDGER only where the back-post's planned lin
         snapshotKept: null,
       },
     };
-    expect(evaluateBookingLedgerIdentities(subject)).toMatchObject({ bookingClass: null, coverage: ["GROUP_SETTLEMENT_UNPOSTABLE"] });
+    expect(evaluateBookingLedgerIdentities(subject)).toMatchObject({ bookingClass: null, coverage: ["GROUP_SETTLEMENT_UNPOSTABLE"], info: { groupSettlementUnpostable: "REFUSED" } });
   });
 
   it("night rows that do not make the price, or an unreadable snapshot on a cancelled child, hold the gate", () => {
     const { row } = settledChild("STRIPE");
     const evidence = { pricing: PRICING, siblings: [{ id: B, lodgeId: "l1", payment: { amountCents: 4_500, status: "SUCCEEDED", source: "STRIPE" as const } }], cancelledWithoutSnapshot: false, snapshotKept: null };
     const unpriced = { ...row, lines: [], groupChild: { ...evidence, pricing: { ...PRICING, guests: [{ ...PRICING.guests[0]!, nights: [{ stayDate: D1, priceCents: null }] }] } } };
-    expect(evaluateBookingLedgerIdentities(unpriced).coverage).toEqual(["GROUP_SETTLEMENT_UNPOSTABLE"]);
+    expect(evaluateBookingLedgerIdentities(unpriced)).toMatchObject({ coverage: ["GROUP_SETTLEMENT_UNPOSTABLE"], info: { groupSettlementUnpostable: "REFUSED" } });
     const unreadable = { ...offLedgerCancelledChild(0, null), groupChild: { ...evidence, cancelledWithoutSnapshot: false, snapshotKept: null } };
-    expect(evaluateBookingLedgerIdentities(unreadable).coverage).toEqual(["GROUP_SETTLEMENT_UNPOSTABLE"]);
+    expect(evaluateBookingLedgerIdentities(unreadable)).toMatchObject({ coverage: ["GROUP_SETTLEMENT_UNPOSTABLE"], info: { groupSettlementUnpostable: "REFUSED" } });
   });
 });
 
