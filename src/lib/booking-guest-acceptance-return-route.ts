@@ -15,6 +15,7 @@ import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 import type { CalendarDate } from "@/lib/club-time";
 import { refundableCashNetOfOpenHandBacks } from "@/lib/edit-refund-hand-back";
 import { deriveBookingAppliedCreditCents, lockMemberCreditLedger } from "@/lib/member-credit";
+import { organiserCardCanReturnInFull } from "@/lib/organiser-child-refund";
 
 export type CreditReturn = { amountCents: number; memberId: string };
 
@@ -70,6 +71,17 @@ export async function fullReductionReturnRoute(
         todayAtClub,
       })
     : null;
+  // #3653 (composed by #3829): an organiser-paid child's cash goes back to the
+  // organiser's card. Asked here, before anything is written, whether that card
+  // can return it in full - else the refund plan or its reservation would refuse
+  // after the codes moved and fail the guest's whole acceptance.
+  if (
+    settlementOptions?.returnsToOrganiser &&
+    booking.payment &&
+    !(await organiserCardCanReturnInFull(tx, loaded, booking.payment, settlementOptions.cardRefundAmountCents))
+  ) {
+    return null;
+  }
   const cashCents = settlementOptions?.basisAmountCents ?? 0;
   if (settlementOptions && cashCents === reductionCents) {
     return { kind: "money-back", settlementOptions, creditRemainder: null };

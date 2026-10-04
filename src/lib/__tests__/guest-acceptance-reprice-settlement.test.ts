@@ -23,6 +23,7 @@ const h = vi.hoisted(() => ({
   queueXeroBookingEditSettlement: vi.fn(),
   sendBookingModifiedEmail: vi.fn(),
   logAudit: vi.fn(),
+  giveBackPaidReductionCredit: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
@@ -68,6 +69,12 @@ vi.mock("@/lib/xero-booking-edit-settlement", () => ({
 }));
 vi.mock("@/lib/email/booking", () => ({ sendBookingModifiedEmail: h.sendBookingModifiedEmail }));
 vi.mock("@/lib/audit", () => ({ logAudit: h.logAudit }));
+// #3829: #3809's tiered give-back, observed but still real unless a test says otherwise.
+vi.mock("@/lib/booking-modify-credit-give-back", async (importOriginal) => {
+  const original = (await importOriginal()) as typeof import("@/lib/booking-modify-credit-give-back");
+  h.giveBackPaidReductionCredit.mockImplementation(original.giveBackPaidReductionCredit);
+  return { ...original, giveBackPaidReductionCredit: h.giveBackPaidReductionCredit };
+});
 vi.mock("@/lib/booking-modification-lines", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/booking-modification-lines")),
   loadModificationLinesAuditFields: vi.fn(async () => ({})),
@@ -77,6 +84,7 @@ import {
   repriceBookingAfterGuestAcceptance,
   settleGuestAcceptanceRepriceAfterCommit,
 } from "@/lib/booking-guest-acceptance-reprice";
+import { applyPaymentAdjustments } from "@/lib/booking-modify-settlement";
 import { requireCalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -545,5 +553,101 @@ describe("cash an earlier edit already promised back is not refunded again (#382
       data: [expect.objectContaining({ amountCents: 15000, occurrenceKey: "edit-refund-hand-back:mod-1" })],
       skipDuplicates: true,
     });
+  });
+});
+
+/*
+  #3829 composed the acceptance with main's #3809 (a paid booking's reduction
+  gives applied credit back, tiered) and #3653 (an organiser-paid child's refund
+  goes back to the organiser's card). These pin both seams.
+*/
+describe("the credit share comes back once, untiered, on the acceptance only (#3809 composed, D-3813-5)", () => {
+  it("card + credit acceptance: #3809's tiered give-back never runs; the clamp returns the $40 once", async () => {
+    h.deriveBookingAppliedCreditCents.mockResolvedValue(30000);
+    h.clampAppliedCreditToBookingPrice.mockResolvedValue({ appliedCreditCents: 26000, refundedExcessCents: 4000 });
+    const result = await accept(booking({ payment: { ...booking().payment, amountCents: 2000, creditAppliedCents: 30000 } }));
+    expect(result).toMatchObject({ repriced: true, refundAmountCents: 2000, accountCreditAmountCents: 4000 });
+    expect(h.giveBackPaidReductionCredit).not.toHaveBeenCalled();
+    expect(h.clampAppliedCreditToBookingPrice).toHaveBeenCalledTimes(1);
+    expect(h.loadCancellationPolicy).not.toHaveBeenCalled();
+  });
+
+  it("an ordinary edit's reduction still takes #3809's give-back; only the caller's flag skips it", async () => {
+    const creditPaid = booking({ payment: { ...booking().payment, amountCents: 0, creditAppliedCents: 32000 } });
+    const args = { booking: creditPaid as never, priceDiffCents: -6000, changeFeeCents: 0, todayAtClub: TODAY, format: CLUB_FORMAT_TEST };
+    h.giveBackPaidReductionCredit.mockResolvedValueOnce({ basisCents: 6000, givenBackCents: 3000 });
+    const ordinary = await applyPaymentAdjustments(tx(creditPaid) as never, args);
+    expect(h.giveBackPaidReductionCredit).toHaveBeenCalledTimes(1);
+    expect(ordinary.appliedCreditGivenBackCents).toBe(3000);
+
+    h.giveBackPaidReductionCredit.mockClear();
+    const acceptance = await applyPaymentAdjustments(tx(creditPaid) as never, { ...args, appliedCreditReturnedByCaller: true });
+    expect(h.giveBackPaidReductionCredit).not.toHaveBeenCalled();
+    expect(acceptance.appliedCreditGivenBackCents).toBe(0);
+  });
+});
+
+describe("an organiser-paid child's reduction goes back to the organiser's card, or moves no code (#3653 composed)", () => {
+  /** Cara's booking, a child of the organiser's group, paid out of one $50,000 combined card payment. */
+  function organiserChild(settlement: Record<string, unknown> | null) {
+    const loaded = booking({ organiserSettled: true, parentBookingId: "organiser-booking" });
+    const client = {
+      ...tx(loaded),
+      groupBookingSettlement: { findFirst: vi.fn(async () => settlement) },
+      paymentRefund: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
+      paymentRecoveryOperation: {
+        findMany: vi.fn(async () => []),
+        findUnique: vi.fn(async () => null),
+        create: vi.fn(async (args: { data: Record<string, unknown> }) => ({ id: "debt-1", ...args.data })),
+      },
+    };
+    return { loaded, client };
+  }
+  const SETTLEMENT = { id: "settlement-1", stripePaymentIntentId: "pi_combined", amountCents: 50000, status: "SUCCEEDED", refundPlan: null };
+
+  async function acceptChild(client: unknown) {
+    return repriceBookingAfterGuestAcceptance(client as never, {
+      bookingId: "booking-1",
+      acceptedGuestId: "g-cara",
+      actorMemberId: "cara",
+      todayAtClub: TODAY,
+      format: CLUB_FORMAT_TEST,
+    });
+  }
+
+  it("the whole $60 is reserved against the organiser's combined payment, and Xero leaves the note to that refund", async () => {
+    const { client } = organiserChild(SETTLEMENT);
+    const result = await acceptChild(client);
+    expect(result).toMatchObject({ repriced: true, refundAmountCents: 6000, organiserChildRefund: { amountCents: 6000 } });
+    expect(client.paymentRecoveryOperation.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ amountCents: 6000, paymentIntentId: "pi_combined", paymentId: "pay-1" }),
+    });
+    expect(h.persistRepricedPromotions).toHaveBeenCalled();
+
+    await settleGuestAcceptanceRepriceAfterCommit({
+      bookingId: "booking-1",
+      actorMemberId: "cara",
+      reprice: result as Extract<typeof result, { repriced: true }>,
+      format: CLUB_FORMAT_TEST,
+    });
+    expect(h.executeBookingModificationRefund).toHaveBeenCalledWith(
+      expect.objectContaining({ result: expect.objectContaining({ organiserChildRefund: { amountCents: 6000 } }) }),
+    );
+    expect(h.queueXeroBookingEditSettlement).toHaveBeenCalledWith(
+      expect.objectContaining({ organiserChildRefundOwnsCreditNote: true }),
+    );
+  });
+
+  it.each([
+    ["holds less than the reduction", { ...SETTLEMENT, amountCents: 3000 }],
+    ["is gone", null],
+    ["was refunded in full", { ...SETTLEMENT, status: "REFUNDED" }],
+  ])("when the organiser's payment %s, nothing moves and the acceptance is not refused", async (_label, settlement) => {
+    const { client } = organiserChild(settlement);
+    const result = await acceptChild(client);
+    expect(result).toEqual({ repriced: false, reason: "REDUCTION_NOT_FULLY_RETURNABLE" });
+    expect(h.persistRepricedPromotions).not.toHaveBeenCalled();
+    expect(client.paymentRecoveryOperation.create).not.toHaveBeenCalled();
+    expect(client.bookingModification.create).not.toHaveBeenCalled();
   });
 });
