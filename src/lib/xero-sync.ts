@@ -3,7 +3,7 @@ import { createHash } from "crypto";
 import { prisma } from "./prisma";
 import { getXeroErrorStatusCode } from "./xero-error-shape";
 import { asRecord, readString } from "./xero-json";
-import { isPerDeltaRefundNoteLink, isRefundCreditNoteLinkCancelledInXero } from "./xero-refund-note-status";
+import { isPerDeltaRefundNoteLink, isRefundCreditNoteLinkCancelledInXero, perDeltaRefundNoteIds } from "./xero-refund-note-status";
 import { buildXeroObjectUrl, stripXeroOrgShortCode } from "./xero-links";
 import {
   redactSensitiveRecord,
@@ -297,15 +297,6 @@ export async function sumCoveredRefundCreditNoteCents(
   return coveredCents;
 }
 
-/** #3880: the payment's per-refund notes (`isPerDeltaRefundNoteLink`), active or not. */
-async function perDeltaRefundNoteIds(paymentId: string, db: Prisma.TransactionClient): Promise<Set<string>> {
-  const links = await db.xeroObjectLink.findMany({
-    where: { localModel: "Payment", localId: paymentId, xeroObjectType: "CREDIT_NOTE", role: "REFUND_CREDIT_NOTE" },
-    select: { xeroObjectId: true, metadata: true },
-  });
-  return new Set((links ?? []).filter((link) => isPerDeltaRefundNoteLink(link.metadata)).map((link) => link.xeroObjectId));
-}
-
 export async function findCanonicalPaymentRefundCreditNote(
   paymentId: string,
   // Optional transaction client (#1357); defaults to the global client.
@@ -338,8 +329,7 @@ export async function findCanonicalPaymentRefundCreditNote(
       xeroObjectNumber: true,
     },
   });
-  // #3880: a non-Stripe payment's per-refund notes are never its canonical one,
-  // in any of the forms below (link, its refund payment, its create).
+  // #3880: a per-refund note is never the canonical one, in any form below.
   const perDeltaNoteIds = await perDeltaRefundNoteIds(paymentId, db);
   const refundCreditNoteLinks = allRefundCreditNoteLinks.filter((link) => !perDeltaNoteIds.has(link.xeroObjectId));
   const refundPaymentLinks = await db.xeroObjectLink.findMany({
@@ -545,29 +535,10 @@ async function normalizePaymentRefundLinkWithClient(
     // active so `sumCoveredRefundCreditNoteCents` totals them correctly, so skip
     // the single-active canonical enforcement that non-Stripe single-note
     // refunds still rely on below.
-    // #3880: a non-Stripe payment's per-refund note takes the Stripe rule too,
-    // whether this write says so or the stored link does (a covering write
-    // carries no metadata).
-    const perDelta =
-      payment?.source !== PaymentSource.STRIPE &&
-      (isPerDeltaRefundNoteLink(link.metadata) ||
-        isPerDeltaRefundNoteLink(
-          (
-            await client.xeroObjectLink.findUnique({
-              where: {
-                localModel_localId_xeroObjectType_xeroObjectId_role: {
-                  localModel: link.localModel,
-                  localId: link.localId,
-                  xeroObjectType: link.xeroObjectType,
-                  xeroObjectId: link.xeroObjectId,
-                  role: link.role,
-                },
-              },
-              select: { metadata: true },
-            })
-          )?.metadata,
-        ));
-    if (payment?.source === PaymentSource.STRIPE || perDelta) {
+    // #3880: a non-Stripe payment's per-refund note takes the Stripe rule, and
+    // the single-refund rule below never retires one.
+    const perDeltaNoteIds = payment?.source === PaymentSource.STRIPE ? new Set<string>() : await perDeltaRefundNoteIds(link.localId, client);
+    if (payment?.source === PaymentSource.STRIPE || isPerDeltaRefundNoteLink(link.metadata) || perDeltaNoteIds.has(link.xeroObjectId)) {
       // ... unless the incoming write itself says the note was VOIDED/DELETED
       // in Xero (inbound reconciliation and the operator status recorder carry
       // the live provider status). A cancelled note credits nothing, so its
@@ -591,8 +562,6 @@ async function normalizePaymentRefundLinkWithClient(
     const shouldBeActive = (link.active ?? true) && canonicalCreditNoteId === link.xeroObjectId;
 
     if (canonicalCreditNoteId === link.xeroObjectId) {
-      // #3880: the single-refund rule never retires a per-refund note.
-      const perDeltaNoteIds = await perDeltaRefundNoteIds(link.localId, client);
       await client.xeroObjectLink.updateMany({
         where: {
           localModel: "Payment",

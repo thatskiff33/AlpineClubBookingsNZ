@@ -22,11 +22,7 @@ import {
   writeEditReviewAccountCredit,
   type EditReviewAccountCreditOutcome,
 } from "@/lib/edit-financial-review-account-credit";
-import {
-  cancelledBookingRefundInvoiceId,
-  queueCancelledBookingHandBackNoteInTransaction,
-  refundMethodForEditReviewRoute,
-} from "@/lib/edit-financial-review-xero-leg";
+import { cancelledBookingRefundInvoiceId, queueCancelledBookingHandBackNoteInTransaction, refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero-leg";
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { requireMemberCreditRecipient, SchoolHasNoCreditAccountError } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -445,8 +441,7 @@ export async function resolveManualRefundTask(
           store: tx,
         });
       }
-      // #3880: that hand-back's Xero refund note, on a cancelled booking -
-      // queued here so it commits, or rolls back, with the money it records.
+      // #3880: its Xero note on a cancelled booking commits, or rolls back, with it.
       await queueCancelledBookingHandBackNoteInTransaction({ task, route: settlementRoute, actingMemberId, store: tx });
     }
 

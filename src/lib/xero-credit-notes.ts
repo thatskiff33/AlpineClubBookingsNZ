@@ -99,11 +99,7 @@ export interface CreateXeroRefundCreditNoteOptions
   paymentIntentId?: string;
   /** #3880: the operator's REQUEUE row this retry runs under - its own claim. */
   requeueOperationId?: string;
-  /**
-   * #3880: the review task whose refund this note answers. On a non-Stripe
-   * payment it makes the note one of several (`isPerDeltaRefundNoteLink`);
-   * recorded in the row's payload so a retry carries it.
-   */
+  /** #3880: the review task this note answers; kept in the payload for a retry. */
   reviewTaskId?: string;
   /** #3635 round-3 R3: the club day the refund left Stripe; omitted, today. */
   documentDate?: string;
@@ -201,9 +197,7 @@ export async function createXeroCreditNote(
   const watermarkCents = options?.watermarkCents;
   const isDeltaMode =
     typeof watermarkCents === "number" && Number.isFinite(watermarkCents);
-  // #3880: a review's delta note on a non-Stripe payment (its hand-back on a
-  // cancelled booking) is one of several (`isPerDeltaRefundNoteLink`): it is
-  // never the payment's one canonical note, so it is not written there.
+  // #3880: a review's non-Stripe delta note is one of several (`isPerDeltaRefundNoteLink`).
   const perRefundNote = isDeltaMode && payment.source !== PaymentSource.STRIPE && Boolean(options?.reviewTaskId);
   const { refundMethod, refundMethodRecorded } = resolveRefundNoteMethod(
     options?.refundMethod,

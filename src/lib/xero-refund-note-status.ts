@@ -5,6 +5,7 @@
 // the drift report, and the operator repair — answers "does this note still
 // count?" through these helpers, so no path can treat a VOIDED note as live
 // coverage while its siblings do not. A pure leaf: import it from anywhere.
+import type { Prisma } from "@prisma/client";
 import { asRecord, readString } from "@/lib/xero-json";
 
 /**
@@ -55,4 +56,13 @@ export function isRefundCreditNoteLinkCancelledInXero(metadata: unknown): boolea
  */
 export function isPerDeltaRefundNoteLink(metadata: unknown): boolean {
   return asRecord(metadata)?.perDelta === true;
+}
+
+/** #3880: the payment's per-refund notes, active or not, read on the caller's client. */
+export async function perDeltaRefundNoteIds(paymentId: string, db: Prisma.TransactionClient): Promise<Set<string>> {
+  const links = await db.xeroObjectLink.findMany({
+    where: { localModel: "Payment", localId: paymentId, xeroObjectType: "CREDIT_NOTE", role: "REFUND_CREDIT_NOTE" },
+    select: { xeroObjectId: true, metadata: true },
+  });
+  return new Set((links ?? []).filter((link) => isPerDeltaRefundNoteLink(link.metadata)).map((link) => link.xeroObjectId));
 }

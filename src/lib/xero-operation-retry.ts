@@ -1199,11 +1199,8 @@ async function getBookingModificationRetryData(bookingModificationId: string) {
 export async function retryXeroSyncOperation(
   operationId: string,
   format: ClubFormat,
-  options?: {
-    createdByMemberId?: string;
-    /** #3880: the REQUEUE row this retry runs under, so a refund note's in-flight check skips it. */
-    requeueOperationId?: string;
-  }
+  // #3880: `requeueOperationId` is the REQUEUE row it runs under (its own claim).
+  options?: { createdByMemberId?: string; requeueOperationId?: string }
 ): Promise<{ message: string }> {
   const operation = await prisma.xeroSyncOperation.findUnique({
     where: { id: operationId },

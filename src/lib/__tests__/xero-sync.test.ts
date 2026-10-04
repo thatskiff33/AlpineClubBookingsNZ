@@ -380,7 +380,7 @@ describe("upsertXeroObjectLink", () => {
 
     it("MUTATION: a covering write with no metadata keeps a stored per-refund note active", async () => {
       mocks.txPaymentFindUnique.mockResolvedValue({ source: "INTERNET_BANKING", xeroRefundCreditNoteId: null });
-      mocks.txLinkFindUnique.mockResolvedValue({ metadata: { amountCents: 1000, perDelta: true } });
+      mocks.txLinkFindMany.mockResolvedValue([{ xeroObjectId: "cn_first", metadata: { amountCents: 1000, perDelta: true } }]);
 
       await upsertXeroObjectLink({ localModel: "Payment", localId: "payment_1", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_first", role: "REFUND_CREDIT_NOTE" });
 
