@@ -7,6 +7,7 @@ import {
 } from "@/lib/stripe";
 import {
   enqueueXeroAccountCreditNoteOperation,
+  enqueueXeroAppliedCreditAllocationOperation,
   enqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroCreditNoteAllocationOperation,
@@ -43,6 +44,8 @@ export type RepairDependencies = {
   enqueueXeroAccountCreditNoteOperation: typeof enqueueXeroAccountCreditNoteOperation;
   enqueueXeroRefundCreditNoteOperation: typeof enqueueXeroRefundCreditNoteOperation;
   enqueueXeroCreditNoteAllocationOperation: typeof enqueueXeroCreditNoteAllocationOperation;
+  // #3836: an unallocated credit-only card invoice's allocation.
+  enqueueXeroAppliedCreditAllocationOperation: typeof enqueueXeroAppliedCreditAllocationOperation;
   enqueueXeroSyncOperationRetry: typeof enqueueXeroSyncOperationRetry;
   // #3187 fix round: the repair pass releases a supplementary invoice it has
   // just parked on a PaymentIntent that turns out to be captured already - the
@@ -77,6 +80,7 @@ const defaultDependencies: RepairDependencies = {
   enqueueXeroAccountCreditNoteOperation,
   enqueueXeroRefundCreditNoteOperation,
   enqueueXeroCreditNoteAllocationOperation,
+  enqueueXeroAppliedCreditAllocationOperation,
   enqueueXeroSyncOperationRetry,
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
   processQueuedXeroOutboxOperations,

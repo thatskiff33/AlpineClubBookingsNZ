@@ -298,6 +298,8 @@ function createDependencies(state: {
   // #3535: MemberCreditNoteAllocation totals per booking (INV-PAY-017's
   // allocation term). Empty for every pre-existing test.
   allocatedAppliedCreditByBookingId?: Record<string, number>;
+  // #3836: applied credit with no Xero note stamped, per booking.
+  unallocatedAppliedCreditByBookingId?: Record<string, number>;
 }) {
   const links = state.links ?? [];
   const operations = state.operations ?? [];
@@ -492,6 +494,16 @@ function createDependencies(state: {
             }))
         ),
       },
+      memberCredit: {
+        groupBy: vi.fn().mockImplementation(async ({ where }: any) =>
+          (where?.appliedToBookingId?.in ?? [])
+            .filter((bookingId: string) => bookingId in (state.unallocatedAppliedCreditByBookingId ?? {}))
+            .map((bookingId: string) => ({
+              appliedToBookingId: bookingId,
+              _sum: { amountCents: -state.unallocatedAppliedCreditByBookingId![bookingId]! },
+            })),
+        ),
+      },
       // #3187: the settled charge shares a parked booking edit's money lives on.
       manualRefundTask: {
         findMany: vi.fn().mockImplementation(async ({ where }: any) =>
@@ -572,6 +584,10 @@ function createDependencies(state: {
     }),
     enqueueXeroRefundCreditNoteOperation: vi.fn().mockResolvedValue({
       queueOperationId: "queue_refund_credit",
+      message: "queued",
+    }),
+    enqueueXeroAppliedCreditAllocationOperation: vi.fn().mockResolvedValue({
+      queueOperationId: "queue_applied_credit_allocation",
       message: "queued",
     }),
     enqueueXeroCreditNoteAllocationOperation: vi.fn().mockResolvedValue({
@@ -2195,6 +2211,72 @@ describe("runBookingXeroRepair", () => {
       safeToAutoApply: true,
       details: { refundAmountSource: "net-amount" },
     });
+  });
+
+  // #3836: a booking paid entirely by credit on the card path, invoiced before
+  // #3836 with its applied credit never allocated, so Xero shows it owing.
+  function creditOnlyCardBooking(overrides: Record<string, unknown> = {}) {
+    return makeBooking({
+      status: "PAID",
+      payment: { ...makeBooking().payment, amountCents: 0, creditAppliedCents: 10000, stripePaymentIntentId: null, stripePaymentMethodId: null, source: "STRIPE" },
+      ...overrides,
+    });
+  }
+  const unallocated = { unallocatedAppliedCreditByBookingId: { booking_1: 10000 } };
+  const appliedCreditAllocationOp = (overrides: Record<string, unknown>) =>
+    makeOperation({
+      id: "op_applied_allocation", localModel: "Payment", localId: "payment_1", entityType: "ALLOCATION", operationType: "ALLOCATE",
+      xeroObjectType: null, xeroObjectId: null, requestPayload: { queueType: "APPLIED_CREDIT_ALLOCATION", bookingId: "booking_1" }, ...overrides,
+    });
+
+  it("MUTATION (#3836): queues the applied-credit allocation for a credit-only card invoice, and --apply queues it once", async () => {
+    const deps = createDependencies({ bookings: [creditOnlyCardBooking()], operations: [makePrimaryInvoiceCreateOperation()], ...unallocated });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.find((finding) => finding.code === "UNALLOCATED_APPLIED_CREDIT")).toMatchObject({
+      severity: "critical",
+      safeToAutoApply: true,
+      details: { paymentId: "payment_1", xeroInvoiceId: "inv_primary", unallocatedAppliedCreditCents: 10000 },
+    });
+    expect(bookingReport.actions.find((action) => action.type === "QUEUE_APPLIED_CREDIT_ALLOCATION")).toMatchObject({
+      key: "queue:applied-credit-allocation:booking_1",
+      payload: { bookingId: "booking_1" },
+    });
+
+    await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+    expect(deps.enqueueXeroAppliedCreditAllocationOperation).toHaveBeenCalledWith("booking_1");
+  });
+
+  it.each([
+    { shape: "the credit is already allocated", state: {}, booking: {} },
+    { shape: "the booking is cancelled (its cancel cleared the invoice)", state: unallocated, booking: { status: "CANCELLED" } },
+    { shape: "the booking has no invoice yet", state: unallocated, booking: { payment: { ...creditOnlyCardBooking().payment, xeroInvoiceId: null } } },
+    { shape: "the card captured cash", state: unallocated, booking: { payment: { ...creditOnlyCardBooking().payment, amountCents: 5000 } } },
+    { shape: "it was a bank transfer (#1620 allocates those)", state: unallocated, booking: { payment: { ...creditOnlyCardBooking().payment, source: "INTERNET_BANKING" } } },
+  ])("MUTATION (#3836): no allocation is queued where $shape", async ({ state, booking }) => {
+    const deps = createDependencies({ bookings: [creditOnlyCardBooking(booking)], operations: [makePrimaryInvoiceCreateOperation()], ...state });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("UNALLOCATED_APPLIED_CREDIT");
+    expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_APPLIED_CREDIT_ALLOCATION");
+  });
+
+  it.each([
+    { shape: "a pending allocation", operation: appliedCreditAllocationOp({ status: "PENDING", completedAt: null }), retried: false },
+    { shape: "a failed allocation", operation: appliedCreditAllocationOp({ status: "FAILED" }), retried: true },
+    { shape: "the invoice operation, failed after its raise", operation: makePrimaryInvoiceCreateOperation({ id: "op_invoice_failed", status: "FAILED", requestPayload: { queueType: "BOOKING_INVOICE", bookingId: "booking_1" } }), retried: true },
+  ])("MUTATION (#3836): never queues a second allocation beside $shape", async ({ operation, retried }) => {
+    const deps = createDependencies({ bookings: [creditOnlyCardBooking()], operations: [makePrimaryInvoiceCreateOperation(), operation], ...unallocated });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_APPLIED_CREDIT_ALLOCATION");
+    expect(bookingReport.actions.some((action) => action.key === `retry:${operation.id}`)).toBe(retried);
   });
 
   // #3809: a credit-paid booking's reduction settled as applied credit given

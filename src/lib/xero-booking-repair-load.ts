@@ -283,6 +283,7 @@ export async function loadAuditData(
     handBackTasks,
     partPaymentReviewTasks,
     appliedCreditAllocations,
+    unallocatedAppliedCredits,
   ] = await Promise.all([
     linkScopes.length > 0
       ? deps.prisma.xeroObjectLink.findMany({
@@ -437,7 +438,18 @@ export async function loadAuditData(
       : Promise.resolve(
           [] as Array<{ appliedToBookingId: string; _sum: { amountCents: number | null } }>
         ),
+    // #3836: the engine's unallocated predicate, per booking.
+    bookingIds.length > 0
+      ? deps.prisma.memberCredit.groupBy({
+          by: ["appliedToBookingId"],
+          where: { appliedToBookingId: { in: bookingIds }, type: "BOOKING_APPLIED", xeroCreditNoteId: null },
+          _sum: { amountCents: true },
+        })
+      : Promise.resolve([] as Array<{ appliedToBookingId: string | null; _sum: { amountCents: number | null } }>),
   ]);
+  const unallocatedAppliedCreditByBookingId = new Map(
+    unallocatedAppliedCredits.map((row) => [row.appliedToBookingId, Math.max(0, -(row._sum.amountCents ?? 0))]),
+  );
   const allocatedAppliedCreditByBookingId = new Map(
     appliedCreditAllocations.map((row) => [
       row.appliedToBookingId,
@@ -685,6 +697,7 @@ export async function loadAuditData(
     ),
     xeroAllocatedAppliedCreditCents:
       allocatedAppliedCreditByBookingId.get(booking.id) ?? 0,
+    unallocatedAppliedCreditCents: unallocatedAppliedCreditByBookingId.get(booking.id) ?? 0,
     openEditReviewChargeIntentRecoveryModificationIds:
       editReviewChargeIntentRecoveriesByBookingId.get(booking.id) ??
       new Set<string>(),
