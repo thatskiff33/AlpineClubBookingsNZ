@@ -239,10 +239,11 @@ function hasMoneyColumns(row: BookingLedgerCensusRow): boolean {
  *   C4 to count" — so it is coverage.
  * - `carriedByLater`: a later edit has lines. Either the back-post re-derived
  *   every unposted edit's nights onto that later one (the night rows say only
- *   where the nights ended, never which edit moved which), or a live edit
- *   posted past it. In the first case the ledger carries it; in the second the
- *   price identity shows the gap as a disagreement, which still holds the gate.
- *   Never coverage: an edit cannot wait for a line once a later one has posted.
+ *   where the nights ended, never which edit moved which), and the ledger
+ *   carries it; or a live edit posted past it, which never absorbs a refused
+ *   edit's movement, and it is still missing. The identities try awaiting
+ *   alone first, then awaiting and carried (`unpostedEdits`), so the first
+ *   case agrees and the second is coverage — never a signable disagreement.
  */
 export function postConfirmationEditsWithoutLines(
   modifications: ReadonlyArray<{ id: string; createdAt: Date }>,
@@ -267,20 +268,29 @@ export function postConfirmationEditsWithoutLines(
 
 /**
  * Edits awaiting a line (above), and change fees no line records — including
- * one charged before confirmation (#3611 V4).
+ * one charged before confirmation (#3611 V4). `withCarriedCents` adds the edits
+ * a later edit passed: a live edit refuses unless the ledger already holds the
+ * nights it removes and not the ones it adds, so one posting after a refused
+ * edit never absorbs it — only the back-post or a closure's re-price folds it
+ * in. The identities try awaiting alone first, then awaiting and carried, so a
+ * gap either way is coverage, never a signable disagreement (#3583 delta, M-1).
  */
-function unpostedEdits(row: BookingLedgerCensusRow): { priceCents: number; changeFeeCents: number } {
+function unpostedEdits(row: BookingLedgerCensusRow): { priceCents: number; withCarriedCents: number; changeFeeCents: number } {
   const keys = new Set(row.lines.flatMap((line) => (line.postingKey ? [line.postingKey] : [])));
-  const awaiting = new Set(postConfirmationEditsWithoutLines(row.modifications, row.lines).awaiting);
+  const split = postConfirmationEditsWithoutLines(row.modifications, row.lines);
+  const awaiting = new Set(split.awaiting);
+  const carried = new Set(split.carriedByLater);
   let priceCents = 0;
+  let carriedCents = 0;
   let changeFeeCents = 0;
   for (const modification of row.modifications) {
     if (awaiting.has(modification.id)) priceCents += modification.priceDiffCents;
+    if (carried.has(modification.id)) carriedCents += modification.priceDiffCents;
     if (modification.changeFeeCents > 0 && !keys.has(modificationChangeFeeKey(modification.id))) {
       changeFeeCents += modification.changeFeeCents;
     }
   }
-  return { priceCents, changeFeeCents };
+  return { priceCents, withCarriedCents: priceCents + carriedCents, changeFeeCents };
 }
 
 /** Judge one booking. Pure: the snapshot row in, the seven results, coverage and integrity out. */
@@ -340,6 +350,7 @@ export function evaluateBookingLedgerIdentities(row: BookingLedgerCensusRow): Bo
     identities.push(
       result("PRICE", booking.finalPriceCents, sumKinds(lines, CHARGE_PRICE_KINDS) + balance.adjustedCents - reviewAdjustments.agreedGiveBackLineCents, [
         [{ name: "UNPOSTED_EDIT", cents: edits.priceCents }],
+        [{ name: "UNPOSTED_EDIT", cents: edits.withCarriedCents }],
       ]),
     );
   }

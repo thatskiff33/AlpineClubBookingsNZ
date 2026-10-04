@@ -19,11 +19,11 @@ url="${1:?usage: $0 <database-url>}"
 
 # The race-database guard (src/lib/__tests__/support/race-db-url.ts), BEFORE
 # anything is created, migrated or dropped.
-if [[ ! "$url" =~ ^postgresql://[^@/]+@(127\.0\.0\.1|localhost):([0-9]+)/([A-Za-z0-9_]+)$ ]]; then
+if [[ ! "$url" =~ ^postgresql://[^@/]+@(127\.0\.0\.1|localhost):([1-9][0-9]*)/([A-Za-z0-9_]+)$ ]]; then
   echo "Refusing that URL: a loopback postgresql://user:pass@127.0.0.1:<port>/<name> URL is required." >&2
   exit 1
 fi
-port="${BASH_REMATCH[2]}"
+port=$((10#${BASH_REMATCH[2]}))
 database="${BASH_REMATCH[3]}"
 if (( port == 5432 || port < 55442 )); then
   echo "Refusing port ${port}: use a throwaway PostgreSQL on 55442+ (never 5432)." >&2

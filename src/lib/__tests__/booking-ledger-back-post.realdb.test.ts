@@ -27,6 +27,7 @@ import {
   createHistoryBooking,
   historyNames,
   parkHistoryStrand,
+  postHistoryEdit,
   seedHistoryFixtures,
   settleHistoryByCard,
   stripAllLines,
@@ -201,6 +202,57 @@ async function lines(bookingId: string) {
     });
     expect(about(await census(), id).coverage).toContain("UNPOSTED_EDIT");
     expect(await runOne(id, true)).toMatchObject({ kind: "POSTED" });
+    expect(about(await census(), id)).toEqual(NOTHING);
+    expect(await runOne(id, true)).toMatchObject({ kind: "NOTHING_TO_POST" });
+  }, 120_000);
+
+  /** An edit the live poster refused: its rows and price written, its fee charged, no line. */
+  async function refusedEdit(bookingId: string, id: string, change: { guestId?: string; stayDate?: Date; priceCents?: number; priceDiffCents: number; changeFeeCents?: number }) {
+    vi.setSystemTime(new Date(Date.now() + 60_000));
+    if (change.guestId && change.stayDate && change.priceCents !== undefined) {
+      await prisma.bookingGuestNight.updateMany({ where: { bookingGuestId: change.guestId, stayDate: change.stayDate }, data: { priceCents: change.priceCents } });
+    }
+    await prisma.booking.update({ where: { id: bookingId }, data: { totalPriceCents: { increment: change.priceDiffCents }, finalPriceCents: { increment: change.priceDiffCents } } });
+    if (change.changeFeeCents) await prisma.payment.update({ where: { bookingId }, data: { changeFeeCents: { increment: change.changeFeeCents } } });
+    await prisma.bookingModification.create({
+      data: { id, bookingId, memberId: NAMES.officerId, modificationType: "GUEST_UPDATE", previousData: {}, newData: {}, priceDiffCents: change.priceDiffCents, changeFeeCents: change.changeFeeCents ?? 0 },
+    });
+  }
+
+  const N1 = new Date("2027-08-01T00:00:00.000Z");
+  const N2 = new Date("2027-08-02T00:00:00.000Z");
+
+  it("a refused edit, a posted one, and another refused: coverage before, posted with the carried one on the retry, and done after (delta M-1)", async () => {
+    const id = `${PREFIX}refused-posted-refused`;
+    await createHistoryBooking(prisma, NAMES, id, { payment: { amountCents: 20_000, source: "STRIPE", intent: `pi_${id}` } });
+    await settleHistoryByCard(id, 20_000);
+    await refusedEdit(id, `${id}-a`, { guestId: `${id}-g1`, stayDate: N1, priceCents: 6_000, priceDiffCents: 1_000 });
+    await postHistoryEdit(prisma, NAMES, id, `${id}-b`, { reprice: { guestId: `${id}-g2`, stayDate: N2, priceCents: 5_200 }, changeFeeCents: 0 });
+    expect((await lines(id)).some((line) => line.anchorId === `${id}-b`)).toBe(true);
+    await refusedEdit(id, `${id}-c`, { guestId: `${id}-g2`, stayDate: N1, priceCents: 5_500, priceDiffCents: 500 });
+
+    // Coverage, which the owner cannot sign off — never a signable disagreement.
+    const before = about(await census(), id);
+    expect(before.disagreements).toEqual([]);
+    expect(before.coverage).toContain("UNPOSTED_EDIT");
+
+    expect(await runOne(id, true)).toMatchObject({ kind: "POSTED" });
+    expect((await lines(id)).filter((line) => line.anchorId === `${id}-c`).length).toBeGreaterThan(0);
+    expect(about(await census(), id)).toEqual(NOTHING);
+    expect(await runOne(id, true)).toMatchObject({ kind: "NOTHING_TO_POST" });
+  }, 120_000);
+
+  it("a refused edit's change fee posts even when a later posted edit left the nights in step (delta M-2)", async () => {
+    const id = `${PREFIX}carried-fee`;
+    await createHistoryBooking(prisma, NAMES, id, { payment: { amountCents: 20_000, source: "STRIPE", intent: `pi_${id}` } });
+    await settleHistoryByCard(id, 20_000);
+    await refusedEdit(id, `${id}-a`, { priceDiffCents: 0, changeFeeCents: 700 });
+    await postHistoryEdit(prisma, NAMES, id, `${id}-b`, { reprice: { guestId: `${id}-g2`, stayDate: N2, priceCents: 5_200 }, changeFeeCents: 0 });
+
+    expect(await runOne(id, true)).toMatchObject({ kind: "POSTED" });
+    expect((await lines(id)).filter((line) => line.kind === "CHANGE_FEE").map((line) => [line.postingKey, line.amountCents])).toEqual([
+      [`modification:${id}-a:change-fee`, 700],
+    ]);
     expect(about(await census(), id)).toEqual(NOTHING);
     expect(await runOne(id, true)).toMatchObject({ kind: "NOTHING_TO_POST" });
   }, 120_000);

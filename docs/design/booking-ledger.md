@@ -609,10 +609,13 @@ anchored on the latest of them and checked against their `priceDiffCents` (a
 re-price's recorded movement), with `priceLines` read only to check that
 total. Which edits still await lines is ONE rule the census shares
 (`postConfirmationEditsWithoutLines`): an edit with no line of its own that a
-later edit with lines has passed is carried, never coverage — the back-post
-folded its nights onto that later one, or a live edit posted past it and the
-price identity shows any gap as a disagreement — so a second run finds nothing
-left; and the cancellation poster, with the kept figure the CANCELLED event
+later edit with lines has passed is carried. The back-post may have folded its
+nights onto that later one; a live edit posting past it never does (it refuses
+unless the ledger already holds the nights it moves), so its money may still be
+missing. The census therefore tries the awaiting edits alone and then the
+carried ones with them, both as coverage, never a signable disagreement; the
+back-post plans in the same order, and posts a carried edit's change fee
+whatever its nights' state. A second run finds nothing left; and the cancellation poster, with the kept figure the CANCELLED event
 froze or, on a snapshot from before #3611, that figure replayed from its frozen
 retained figure and the booking's credit rows through `cancellationKeptCents`.
 It takes the live posters' locks in canonical order (`lock(1)`, the lodge key,

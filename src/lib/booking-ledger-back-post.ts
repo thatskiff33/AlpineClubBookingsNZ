@@ -75,7 +75,7 @@ import {
   pricingSideFromLiveLedger,
   type ModificationPostingPlan,
 } from "@/lib/booking-ledger-modification-posting";
-import { handBackKey } from "@/lib/booking-ledger-posting-keys";
+import { handBackKey, modificationChangeFeeKey } from "@/lib/booking-ledger-posting-keys";
 import {
   evaluateBookingLedgerIdentities,
   postConfirmationEditsWithoutLines,
@@ -412,45 +412,62 @@ async function planHistoricChargeLines(
     nights.kind === "nights" &&
     nights.guests.every((change) => change.removed.length === 0 && change.added.length === 0) &&
     modificationPromoDeltaCents(beforeSide, afterSide) === 0;
-  // Edits a later posted edit passed are re-derived only where the ledger has
-  // not already got their nights; once it has (a second run), they are done.
-  const afterConfirmation = awaiting.length > 0 ? awaiting : ledgerInStep ? [] : carried;
-  if (afterConfirmation.length === 0) return { postings, steps };
-
-  let movementCents = 0;
-  for (const modification of afterConfirmation) {
-    const movement = editMovementCents(modification, census);
-    if ("refusal" in movement) return cannotPost(booking.id, movement.refusal, movement.detail);
-    movementCents += movement.cents;
-  }
-  // The latest of them carries the nights they all moved: the night rows hold
-  // only their end state, never which edit moved which night. The others post
-  // their change fees under their own anchors.
-  const latest = afterConfirmation[afterConfirmation.length - 1]!;
-  const plan = planModificationChargeLines({
-    bookingId: booking.id,
-    lodgeId: booking.lodgeId,
-    bookingModificationId: latest.id,
-    before: beforeSide,
-    after: afterSide,
-    changeFeeCents: latest.changeFeeCents,
-    expectedCents: movementCents + latest.changeFeeCents,
-    postedLines,
-  });
-  if (plan.kind === "none") {
+  // Which edits' nights to re-derive, tried in order, each sum-checked by the
+  // planner and then re-judged by the census (#3583 delta, M-1): the awaiting
+  // ones alone; then, where that does not sum, the carried ones too — a live
+  // edit that posted after a refused one never absorbed its movement. Carried
+  // edits alone are tried only while the ledger is out of step with the rows;
+  // once it is in step (a second run), their nights are done.
+  const candidates: Array<typeof awaiting> =
+    awaiting.length > 0 ? [awaiting, ...(carried.length > 0 ? [[...carried, ...awaiting]] : [])] : ledgerInStep ? [] : [carried];
+  let derived: { edits: typeof awaiting; postings: ChargePlan["postings"] } | null = null;
+  for (const [index, edits] of candidates.entries()) {
+    let movementCents = 0;
+    for (const modification of edits) {
+      const movement = editMovementCents(modification, census);
+      if ("refusal" in movement) return cannotPost(booking.id, movement.refusal, movement.detail);
+      movementCents += movement.cents;
+    }
+    // The latest of them carries the nights they all moved: the night rows hold
+    // only their end state, never which edit moved which night.
+    const latest = edits[edits.length - 1]!;
+    const plan = planModificationChargeLines({
+      bookingId: booking.id,
+      lodgeId: booking.lodgeId,
+      bookingModificationId: latest.id,
+      before: beforeSide,
+      after: afterSide,
+      changeFeeCents: latest.changeFeeCents,
+      expectedCents: movementCents + latest.changeFeeCents,
+      postedLines,
+    });
+    if (plan.kind === "lines") {
+      derived = { edits, postings: plan.postings };
+      break;
+    }
+    if (plan.reason === "SUM_MISMATCH" && index < candidates.length - 1) continue;
     // A parked edit's review still open: its closure posts the nights, as live.
     const openReview = booking.manualRefundTasks.some((task) => task.kind === "EDIT_FINANCIAL_REVIEW" && task.status === "OPEN");
-    if (plan.reason === "UNPRICED_NIGHT" && openReview) return { postings, steps };
+    if (plan.reason === "UNPRICED_NIGHT" && openReview) break;
     return cannotPost(
       booking.id,
       "EDIT_NOT_DERIVABLE",
-      `edit(s) ${afterConfirmation.map((modification) => modification.id).join(", ")}: ${plan.reason}${plan.plannedCents === undefined ? "" : ` (planned ${plan.plannedCents}, the edits moved ${movementCents + latest.changeFeeCents})`}`,
+      `edit(s) ${edits.map((modification) => modification.id).join(", ")}: ${plan.reason}${plan.plannedCents === undefined ? "" : ` (planned ${plan.plannedCents}, the edits moved ${movementCents + latest.changeFeeCents})`}`,
     );
   }
-  postings.push(...plan.postings);
-  if (plan.postings.length > 0) steps.push(`edit ${latest.id} (${plan.postings.length}, for ${afterConfirmation.length} unposted edit(s))`);
-  for (const modification of afterConfirmation.slice(0, -1)) {
-    if (modification.changeFeeCents <= 0) continue;
+  const anchor = derived ? derived.edits[derived.edits.length - 1]!.id : null;
+  if (derived && derived.postings.length > 0) {
+    postings.push(...derived.postings);
+    steps.push(`edit ${anchor} (${derived.postings.length}, for ${derived.edits.length} unposted edit(s))`);
+  }
+  // Every other edit without lines posts the fee it charged under its own key,
+  // whatever its nights' state — a carried edit's included (delta M-2).
+  const feeKeys = new Set(census.lines.flatMap((line) => (line.postingKey ? [line.postingKey] : [])));
+  for (const modification of [...carried, ...awaiting]) {
+    if (modification.id === anchor || modification.changeFeeCents <= 0) continue;
+    if (feeKeys.has(modificationChangeFeeKey(modification.id))) continue;
+    // An awaiting edit the plan did not take (an open review) waits with its nights.
+    if (!derived && awaiting.includes(modification)) continue;
     const fee = changeFeeOnlyPlan(booking.id, booking.lodgeId, modification.id, modification.changeFeeCents);
     if (fee.kind === "none") return cannotPost(booking.id, "EDIT_NOT_DERIVABLE", `edit ${modification.id}'s change fee: ${fee.reason}`);
     postings.push(...fee.postings);
@@ -570,9 +587,16 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** PostgreSQL's `lock_not_available` (55P03), however the client wraps it. */
-function isLockTimeout(error: unknown): boolean {
-  return /55P03|lock timeout|canceling statement due to lock timeout/i.test(errorMessage(error));
+/**
+ * PostgreSQL's `lock_not_available` (SQLSTATE 55P03), read from the error's code
+ * fields — through the driver adapter, Prisma reports it as P2010 with
+ * `meta.driverAdapterError.cause.originalCode` — never from its message text.
+ */
+function isLockTimeout(error: unknown, depth = 0): boolean {
+  if (typeof error !== "object" || error === null || depth > 4) return false;
+  const fields = error as { code?: unknown; originalCode?: unknown; meta?: unknown; driverAdapterError?: unknown; cause?: unknown };
+  if (fields.code === "55P03" || fields.originalCode === "55P03") return true;
+  return [fields.meta, fields.driverAdapterError, fields.cause].some((inner) => isLockTimeout(inner, depth + 1));
 }
 
 /**

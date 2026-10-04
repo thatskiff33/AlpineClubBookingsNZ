@@ -1170,7 +1170,7 @@ describe("coverage: the gap before the back-post, named and holding the gate", (
     expect(identity({ ...subject, modifications: [{ ...subject.modifications[0]!, createdAt: EARLIER }] }, "PRICE").status).toBe("DISAGREE");
   });
 
-  it("one rule with the back-post: an unposted edit a later edit with lines has passed is carried, never coverage; the latest stays coverage (review M1)", () => {
+  it("one rule with the back-post: an unposted edit a later edit with lines has passed is carried; the latest stays awaiting (review M1)", () => {
     const at = (iso: string) => new Date(iso);
     const confirmation = { anchorKind: "CONFIRMATION" as const, anchorId: B, postedAt: at("2026-06-01T00:00:00.000Z") };
     const edits = [
@@ -1184,8 +1184,7 @@ describe("coverage: the gap before the back-post, named and holding the gate", (
     expect(postConfirmationEditsWithoutLines(edits, [confirmation, onE2])).toEqual({ awaiting: ["e3"], carriedByLater: ["e1"] });
     expect(postConfirmationEditsWithoutLines(edits, [])).toEqual({ awaiting: [], carriedByLater: [] });
 
-    // In the census: the carried edit's money is a disagreement where the ledger
-    // lacks it, never coverage; with no later posted edit it stays coverage.
+    // In the census: with no later posted edit it is coverage; passed by one, too.
     const unposted = { id: "m9", modificationType: "BATCH_MODIFY", priceDiffCents: 2_500, changeFeeCents: 0, createdAt: LATER, reviewRebase: null };
     const subject = { ...cardPaid(), booking: { id: B, status: "PAID" as const, deletedAt: null, organiserSettled: false, finalPriceCents: 21_500 }, modifications: [unposted] };
     expect(identity(subject, "PRICE").status).toBe("COVERAGE");
@@ -1204,8 +1203,41 @@ describe("coverage: the gap before the back-post, named and holding the gate", (
     const fee = new Ledger().post(feePlan.kind === "lines" ? feePlan.postings : [], later.createdAt).lines.map((line) => ({ ...line, id: `fee-${line.id}` }));
     expect(fee).toHaveLength(1);
     const passed = { ...subject, payment: payment({ ...subject.payment, changeFeeCents: 500 }), modifications: [unposted, later], lines: [...subject.lines, ...fee] };
-    expect(identity(passed, "PRICE").status).toBe("DISAGREE");
-    expect(evaluateBookingLedgerIdentities(passed).coverage).not.toContain("UNPOSTED_EDIT");
+    // A live edit never absorbs a refused one, so the carried edit's money is coverage (delta M-1).
+    expect(identity(passed, "PRICE")).toMatchObject({ status: "COVERAGE", deltaCents: 2_500 });
+  });
+
+  it("a refused edit a later posted edit passed, beside one still awaiting, is coverage for both — never a signable disagreement (delta M-1)", () => {
+    const at = (offset: number) => new Date(LATER.getTime() + offset * 60_000);
+    const refusedA = { id: "ma", modificationType: "GUEST_UPDATE", priceDiffCents: 1_000, changeFeeCents: 0, createdAt: at(0), reviewRebase: null };
+    const postedB = { id: "mb", modificationType: "BATCH_MODIFY", priceDiffCents: 0, changeFeeCents: 500, createdAt: at(1), reviewRebase: null };
+    const refusedC = { id: "mc", modificationType: "GUEST_UPDATE", priceDiffCents: 500, changeFeeCents: 0, createdAt: at(2), reviewRebase: null };
+    const feePlan = planModificationChargeLines({
+      bookingId: B,
+      lodgeId: "lodge",
+      bookingModificationId: "mb",
+      before: { guests: [], promoAdjustmentCents: 0 },
+      after: { guests: [], promoAdjustmentCents: 0 },
+      changeFeeCents: 500,
+      expectedCents: 500,
+      postedLines: [],
+    });
+    const fee = new Ledger().post(feePlan.kind === "lines" ? feePlan.postings : [], postedB.createdAt).lines.map((line) => ({ ...line, id: `fee-${line.id}` }));
+    const base = cardPaid();
+    const subject = {
+      ...base,
+      booking: { ...base.booking, finalPriceCents: base.booking.finalPriceCents + 1_500 },
+      payment: payment({ ...base.payment, changeFeeCents: 500 }),
+      modifications: [refusedA, postedB, refusedC],
+      lines: [...base.lines, ...fee],
+    };
+    const evaluation = evaluateBookingLedgerIdentities(subject);
+    expect(identity(subject, "PRICE")).toMatchObject({ status: "COVERAGE", deltaCents: 1_500 });
+    expect(identity(subject, "OWED").status).toBe("COVERAGE");
+    expect(evaluation.coverage).toContain("UNPOSTED_EDIT");
+    // Awaiting alone still wins where it is exact: the carried edit is then on the ledger.
+    expect(identity({ ...subject, booking: { ...subject.booking, finalPriceCents: subject.booking.finalPriceCents - 1_000 } }, "PRICE")).toMatchObject({ status: "COVERAGE", deltaCents: 500 });
+    for (const by of [1, -1]) expect(identity({ ...subject, booking: { ...subject.booking, finalPriceCents: subject.booking.finalPriceCents + by } }, "PRICE").status).toBe("DISAGREE");
   });
 
   it("UNPOSTED_CHANGE_FEE: a fee charged before confirmation has no line (#3611 V4)", () => {
