@@ -1007,6 +1007,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
       ...(options?.refundMethod ? { refundMethod: options.refundMethod } : {}),
       ...(options?.paymentIntentId ? { paymentIntentId: options.paymentIntentId } : {}),
       ...(options?.documentDate ? { documentDate: options.documentDate } : {}),
+      ...(options?.reviewTaskId ? { reviewTaskId: options.reviewTaskId } : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
     store: db,
@@ -2995,6 +2996,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
               : {}),
             ...(payload.paymentIntentId ? { paymentIntentId: payload.paymentIntentId } : {}),
             ...(payload.documentDate ? { documentDate: payload.documentDate } : {}),
+            ...(queuedReviewTaskId(queuedOperation) ? { reviewTaskId: queuedReviewTaskId(queuedOperation) } : {}),
           }
         );
       } else if (

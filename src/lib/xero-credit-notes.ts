@@ -31,7 +31,7 @@ import {
   sumRefundCreditNoteCoverageCents,
 } from "@/lib/xero-resolved-in-xero-fences";
 import { CreditNote, LineAmountTypes, type LineItem } from "xero-node";
-import { CreditType } from "@prisma/client";
+import { CreditType, PaymentSource } from "@prisma/client";
 import { prisma } from "./prisma";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
@@ -99,6 +99,12 @@ export interface CreateXeroRefundCreditNoteOptions
   paymentIntentId?: string;
   /** #3880: the operator's REQUEUE row this retry runs under - its own claim. */
   requeueOperationId?: string;
+  /**
+   * #3880: the review task whose refund this note answers. On a non-Stripe
+   * payment it makes the note one of several (`isPerDeltaRefundNoteLink`);
+   * recorded in the row's payload so a retry carries it.
+   */
+  reviewTaskId?: string;
   /** #3635 round-3 R3: the club day the refund left Stripe; omitted, today. */
   documentDate?: string;
 }
@@ -195,6 +201,10 @@ export async function createXeroCreditNote(
   const watermarkCents = options?.watermarkCents;
   const isDeltaMode =
     typeof watermarkCents === "number" && Number.isFinite(watermarkCents);
+  // #3880: a review's delta note on a non-Stripe payment (its hand-back on a
+  // cancelled booking) is one of several (`isPerDeltaRefundNoteLink`): it is
+  // never the payment's one canonical note, so it is not written there.
+  const perRefundNote = isDeltaMode && payment.source !== PaymentSource.STRIPE && Boolean(options?.reviewTaskId);
   const { refundMethod, refundMethodRecorded } = resolveRefundNoteMethod(
     options?.refundMethod,
     payment.source,
@@ -387,13 +397,14 @@ export async function createXeroCreditNote(
   const lateCaptureFields = {
     ...(options?.paymentIntentId ? { paymentIntentId: options.paymentIntentId } : {}),
     ...(options?.documentDate ? { documentDate: options.documentDate } : {}),
+    ...(options?.reviewTaskId ? { reviewTaskId: options.reviewTaskId } : {}),
   };
 
   // Idempotency guard: skip if a credit note already covers this payment/delta.
   // This row raised nothing, so it is closed as covered by that note, which
   // carries its own payment outcome (`INV-PAY-111`).
   if (existingCreditNoteId) {
-    if (payment.xeroRefundCreditNoteId !== existingCreditNoteId) {
+    if (!perRefundNote && payment.xeroRefundCreditNoteId !== existingCreditNoteId) {
       await prisma.payment.update({
         where: { id: paymentId },
         data: {
@@ -589,14 +600,17 @@ export async function createXeroCreditNote(
         options?.watermarkCents ??
         effectiveRefundAmountCents,
       ...(options?.paymentIntentId ? { paymentIntentId: options.paymentIntentId } : {}),
+      ...(perRefundNote ? { perDelta: true } : {}),
     };
     const createdNoteId = createdNote.creditNoteID;
     const createdNoteNumber = createdNote.creditNoteNumber ?? null;
     await prisma.$transaction(async (tx) => {
-      await tx.payment.update({
-        where: { id: paymentId },
-        data: { xeroRefundCreditNoteId: createdNoteId },
-      });
+      if (!perRefundNote) {
+        await tx.payment.update({
+          where: { id: paymentId },
+          data: { xeroRefundCreditNoteId: createdNoteId },
+        });
+      }
       await upsertXeroObjectLink(
         {
           localModel: "Payment",

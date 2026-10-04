@@ -44,3 +44,15 @@ export function isRefundCreditNoteLinkCancelledInXero(metadata: unknown): boolea
   const status = readRefundCreditNoteLinkStatus(metadata);
   return status !== null && !isIncludedRefundCreditNoteStatus(status);
 }
+
+/**
+ * #3880: a refund note raised PER REFUND on a non-Stripe payment - a review's
+ * bank-transfer hand-back on a cancelled booking, sized as a delta
+ * (`createXeroCreditNote` stamps `perDelta` on its link). Like a Stripe delta
+ * (#1162) it stays active beside its siblings, so coverage totals all of them,
+ * and it is never the payment's ONE canonical note that its single-refund
+ * callers (hold expiry, group cancel, a cancellation hand-back) dedupe on.
+ */
+export function isPerDeltaRefundNoteLink(metadata: unknown): boolean {
+  return asRecord(metadata)?.perDelta === true;
+}

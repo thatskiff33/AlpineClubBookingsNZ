@@ -364,6 +364,125 @@ let outbox: typeof import("@/lib/xero-operation-outbox");
       await expectInvoiceUntouched();
     });
 
+    /**
+     * L1 of the #3880 review: two sibling hand-backs' rows, both queued at
+     * watermark $10 (nothing was recorded when either enqueued), raced through
+     * the REAL worker and `createXeroCreditNote` against a Xero that dedupes on
+     * the idempotency key as Xero does. The first row is held inside its Xero
+     * create; the second is claimed by another worker meanwhile.
+     */
+    it("two sibling bank hand-backs raced through the real worker: the second waits for the first's note, then sizes past it - two notes for the $20", async () => {
+      await paid(BANK);
+      const first = await raise("2026-08-01");
+      const second = await raise("2026-08-02");
+      await cancelAt(TIERS[1]!.rule);
+      await completeShare(first.taskId, 2_000);
+      await completeShare(second.taskId, 2_000);
+      const rows = await prisma.xeroSyncOperation.findMany({
+        where: { localId: PAYMENT_ID, queueType: "REFUND_CREDIT_NOTE" },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      });
+      expect(rows.map((row) => (row.requestPayload as { watermarkCents: number }).watermarkCents)).toEqual([1_000, 1_000]);
+
+      // The worker takes the oldest PENDING rows of every kind; anything not
+      // this race's (the cancel's account note, another suite's leftovers) is
+      // parked for the duration and put back.
+      const parked = await prisma.xeroSyncOperation.findMany({
+        where: { status: "PENDING", id: { notIn: rows.map((row) => row.id) } },
+        select: { id: true },
+      });
+      await prisma.xeroSyncOperation.updateMany({ where: { id: { in: parked.map((row) => row.id) } }, data: { status: "PARKED_RACE_3880" } });
+
+      const apiClient = await import("@/lib/xero-api-client");
+      const contacts = await import("@/lib/xero-contacts");
+      const invoicedParty = await import("@/lib/organisation-xero-contacts");
+      let release!: () => void;
+      let entered!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      const firstCreateEntered = new Promise<void>((resolve) => { entered = resolve; });
+      let holdNext = true;
+      const notesByKey = new Map<string, { creditNoteID: string; creditNoteNumber: string; total: number }>();
+      const xero = {
+        accountingApi: {
+          createCreditNotes: async (_tenant: string, body: { creditNotes: Array<{ lineItems: Array<{ unitAmount: number }> }> }, _s?: unknown, _u?: unknown, key?: string) => {
+            let note = notesByKey.get(key!);
+            if (!note) {
+              note = { creditNoteID: `cn-race-3880-${notesByKey.size + 1}`, creditNoteNumber: `CN-3880-${notesByKey.size + 1}`, total: body.creditNotes[0]!.lineItems[0]!.unitAmount };
+              notesByKey.set(key!, note);
+              if (holdNext) {
+                holdNext = false;
+                entered();
+                await held;
+              }
+            }
+            return { body: { creditNotes: [note] } };
+          },
+          createPayments: async (_tenant: string, body: { payments: Array<{ amount: number }> }) => ({
+            body: { payments: [{ paymentID: `pay-race-3880-${notesByKey.size}`, amount: body.payments[0]!.amount }] },
+          }),
+        },
+      };
+      const spies = [
+        vi.spyOn(apiClient, "getAuthenticatedXeroClient").mockResolvedValue({ xero, tenantId: "tenant-3880" } as never),
+        vi.spyOn(apiClient, "callXeroApi").mockImplementation(((call: () => unknown) => call()) as never),
+        vi.spyOn(invoicedParty, "findOrCreateXeroContactForInvoicedParty").mockResolvedValue("contact-3880"),
+        vi.spyOn(contacts, "retryXeroWriteWithContactRepair").mockImplementation((async (options: { run: (input: { contactId: string }) => unknown; currentContactId: string }) =>
+          options.run({ contactId: options.currentContactId })) as never),
+      ];
+      try {
+        const workerA = outbox.processQueuedXeroOutboxOperations({ limit: 1 });
+        await firstCreateEntered;
+        // Worker B, while A is inside Xero with its note unrecorded.
+        const workerB = await outbox.processQueuedXeroOutboxOperations({ limit: 5 });
+        expect(workerB).toMatchObject({ found: 1, succeeded: 0, failed: 0, skipped: 1 });
+        expect((await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: rows[1]!.id } })).status).toBe("PENDING");
+        release();
+        expect(await workerA).toMatchObject({ found: 1, succeeded: 1 });
+        // The next scan raises the waiting row past the recorded note.
+        expect(await outbox.processQueuedXeroOutboxOperations({ limit: 5 })).toMatchObject({ found: 1, succeeded: 1 });
+      } finally {
+        release();
+        for (const spy of spies) spy.mockRestore();
+        await prisma.xeroSyncOperation.updateMany({ where: { id: { in: parked.map((row) => row.id) } }, data: { status: "PENDING" } });
+      }
+
+      const done = await prisma.xeroSyncOperation.findMany({ where: { id: { in: rows.map((row) => row.id) } }, orderBy: { createdAt: "asc" } });
+      expect(done.map((row) => row.status)).toEqual(["SUCCEEDED", "SUCCEEDED"]);
+      expect(new Set(done.map((row) => row.xeroObjectId)).size).toBe(2);
+      const links = await prisma.xeroObjectLink.findMany({
+        where: { localModel: "Payment", localId: PAYMENT_ID, role: "REFUND_CREDIT_NOTE", active: true },
+        orderBy: { createdAt: "asc" },
+      });
+      expect(links.map((link) => (link.metadata as { amountCents: number; watermarkCents: number }))).toEqual([
+        expect.objectContaining({ amountCents: 1_000, watermarkCents: 1_000 }),
+        expect.objectContaining({ amountCents: 1_000, watermarkCents: 2_000 }),
+      ]);
+      expect([...notesByKey.values()].map((note) => note.total)).toEqual([10, 10]);
+      expect(links.reduce((sum, link) => sum + (link.metadata as { amountCents: number }).amountCents, 0)).toBe(await bankCashOutCents());
+    });
+
+    it("the hand-back's note is queued inside the completion: a completion that fails after it leaves no row, no hand-back and the task OPEN", async () => {
+      await paid(BANK);
+      const raised = await raise("2026-08-01");
+      await cancelAt(TIERS[1]!.rule);
+      const audit = await import("@/lib/manual-refund-task-audit");
+      const failing = vi.spyOn(audit, "recordManualRefundTaskClosureAudit").mockRejectedValueOnce(new Error("race 3880: the completion fails after the enqueue"));
+      try {
+        await expect(completeShare(raised.taskId)).rejects.toThrow("race 3880");
+      } finally {
+        failing.mockRestore();
+      }
+
+      expect(await refundNotes()).toEqual([]);
+      expect(await bankCashOutCents()).toBe(0);
+      expect((await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: raised.taskId } })).status).toBe("OPEN");
+
+      // And the completion that commits carries its row with it.
+      await completeShare(raised.taskId);
+      expect((await refundNotes()).map((note) => [note.cents, note.refundMethod])).toEqual([[2_500, "internet-banking"]]);
+      expect(await notedCents()).toBe(await bankCashOutCents());
+    });
+
     it("a replay of the review's note while queued, or after Xero raised it, raises nothing more", async () => {
       await paid(CARD);
       const raised = await raise("2026-08-01");

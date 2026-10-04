@@ -1365,7 +1365,7 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
         expect.objectContaining({
           correlationKey: "payment:payment_1:refund-credit-note:3500:v2:review-task:task_1",
           idempotencyKey: "payment:payment_1:refund-credit-note:3500:v2:review-task:task_1",
-          requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 2500, watermarkCents: 3500, refundMethod: "internet-banking" },
+          requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 2500, watermarkCents: 3500, refundMethod: "internet-banking", reviewTaskId: "task_1" },
         })
       );
     });

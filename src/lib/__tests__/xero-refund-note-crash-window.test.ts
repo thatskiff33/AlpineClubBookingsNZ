@@ -404,11 +404,12 @@ function dispatch(id: string) {
   // The worker's claim (`claimQueuedOutboxOperation`): RUNNING, stamped now.
   row.status = "RUNNING";
   row.startedAt = new Date();
-  const payload = row.requestPayload as { refundAmountCents: number; watermarkCents: number; refundMethod: "card" | "internet-banking" };
+  const payload = row.requestPayload as { refundAmountCents: number; watermarkCents: number; refundMethod: "card" | "internet-banking"; reviewTaskId?: string };
   return createXeroCreditNote(PAYMENT_ID, payload.refundAmountCents, {
     syncOperationId: id,
     watermarkCents: payload.watermarkCents,
     refundMethod: payload.refundMethod,
+    ...(payload.reviewTaskId ? { reviewTaskId: payload.reviewTaskId } : {}),
   });
 }
 
@@ -784,6 +785,9 @@ describe("#3880: one refund note in flight per payment, from coverage read to re
     state.eligibleCents = 2000;
     queueRefundNote("op_a", 1000, 1000, "internet-banking");
     queueRefundNote("op_b", 1000, 1000, "internet-banking");
+    for (const [id, task] of [["op_a", "task_a"], ["op_b", "task_b"]] as const) {
+      row(id).requestPayload = { ...(row(id).requestPayload as Row), reviewTaskId: task };
+    }
   }
   const claimedAgo = (id: string, minutes: number) => {
     row(id).status = "RUNNING";
@@ -808,6 +812,18 @@ describe("#3880: one refund note in flight per payment, from coverage read to re
     expect(coveredCents()).toBe(2000);
     expect(row("op_a")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_1" });
     expect(row("op_b")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_2" });
+  });
+
+  it("MUTATION: a review's note on a bank-transfer payment is one of several: its link says so, and it is never written as the payment's one note", async () => {
+    twoHandBacks();
+
+    await dispatch("op_a");
+    await dispatch("op_b");
+
+    expect(state.links.filter((link) => link.role === "REFUND_CREDIT_NOTE").map((link) => (link.metadata as Row).perDelta)).toEqual([true, true]);
+    expect(state.payment!.xeroRefundCreditNoteId).toBeNull();
+    // Its payload carries the task, so a retry of the row marks its note alike.
+    expect((row("op_a").requestPayload as Row).reviewTaskId).toBe("task_a");
   });
 
   it("MUTATION: a sibling RUNNING past the stale threshold is a dead worker and does not hold the payment", async () => {
