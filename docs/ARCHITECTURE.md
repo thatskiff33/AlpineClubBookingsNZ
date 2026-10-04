@@ -621,6 +621,24 @@ caught by a count contract in `field-hint.test.tsx`: `useFieldHint(`,
 `.fieldProps` and `.hintProps` must occur the same number of times across
 `src/`.
 
+**A person-entered money amount uses `MoneyInput`.**
+`src/components/ui/money-input.tsx` is the controlled text field for dollars
+and cents: it preserves invalid text for the caller's visible validation, refuses
+a third fractional digit, and supplies accessible controls that adjust one whole
+dollar. It delegates exact cents conversion to the canonical parsers in
+`src/lib/money-input.ts`; callers pass their draft through `value` and
+`onValueChange`, use `allowNegative` only for genuine signed adjustments, and
+retain existing `FieldHint` ids through `aria-describedby`. This keeps
+`INV-MONEY-001` and `INV-MONEY-003` at one input boundary rather than recreating
+editing rules in each admin form. Seed an existing cents amount with
+`formatCentsPlain`; the `money-input-component-guard` rejects a return to the
+older `MONEY_INPUT_PROPS` spread.
+
+A caller with an existing accepted prefix shares its draft normalizer with
+`normalizeDraft`; both precision filtering and stepping then use the same syntax
+as save, while the text remains visible. The Diagnostics budget's tolerated
+dollar prefix is one such case. A supplied `error` is announced before hints.
+
 **Placeholder ink is its own token.** `--placeholder-foreground` is declared in
 every scope that restates `--muted-foreground` — a `var()`-bearing custom
 property is substituted on the element that DECLARES it and then inherits as
@@ -1146,11 +1164,11 @@ tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
 figures rather than trusting a hand count: **98 components render a banner, and
- 314 of the 369 `ViewOnlyActionButton` call sites opt out** of the per-button
+ 316 of the 371 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 314 split by WHICH rule
-covers them: **280** pass the literal
+test currently pins, which is the only authority.) Those 316 split by WHICH rule
+covers them: **282** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **34**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 29 by a parent's own JSX render site (#2168), 5 by the

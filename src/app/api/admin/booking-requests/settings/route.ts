@@ -11,6 +11,7 @@ const settingsSchema = z
     showPricingToNonMembers: z.boolean(),
     quoteResponseTtlDays: z.number().int().min(1).max(60),
     quoteReminderLeadDays: z.number().int().min(0).max(30),
+    assignSchoolTeachersAsHutLeaders: z.boolean(),
     attendeeConfirmationLeadDays: z.number().int().min(0).max(90),
     attendeeConfirmationReminderDays: z.number().int().min(1).max(30),
   })
@@ -56,6 +57,8 @@ export async function PUT(req: NextRequest) {
     showPricingToNonMembers: parsed.data.showPricingToNonMembers,
     quoteResponseTtlDays: parsed.data.quoteResponseTtlDays,
     quoteReminderLeadDays: parsed.data.quoteReminderLeadDays,
+    assignSchoolTeachersAsHutLeaders:
+      parsed.data.assignSchoolTeachersAsHutLeaders,
     attendeeConfirmationLeadDays: parsed.data.attendeeConfirmationLeadDays,
     attendeeConfirmationReminderDays:
       parsed.data.attendeeConfirmationReminderDays,

@@ -2,8 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { MoneyInput } from "@/components/ui/money-input";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import {
   JoiningFeePreviewHint,
   useJoiningFeePrefill,
@@ -666,19 +667,18 @@ export default function ApprovalMappingPanel({
         </select>
         {effectiveFee.action === "CREATE" ? (
           <div className="grid gap-3 md:grid-cols-2">
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-muted-foreground">Amount override ($)</span>
-              <input
+            <div className="space-y-1">
+              <MoneyInput
+                label={<span className="text-xs font-medium text-muted-foreground">Amount override ($)</span>}
                 className="w-full rounded-md border border-warning-6 px-3 py-2 text-sm"
-                {...MONEY_INPUT_PROPS}
                 placeholder="Use configured amount"
                 value={effectiveFee.amount}
-                onChange={(event) => {
+                onValueChange={(value) => {
                   setFeeTouched(true);
-                  setFee({ ...effectiveFee, amount: event.target.value });
+                  setFee({ ...effectiveFee, amount: value });
                 }}
               />
-            </label>
+            </div>
             <label className="space-y-1">
               <span className="text-xs font-medium text-muted-foreground">Narration override</span>
               <input

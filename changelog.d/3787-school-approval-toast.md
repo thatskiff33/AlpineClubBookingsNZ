@@ -1,0 +1,1 @@
+- **School approval reports what was confirmed (#3785).** The success message confirms the booking and teacher hut-leader assignment result, then directs officers to invoice and notification status instead of claiming emails were delivered. When the Xero module is off, it says manual invoicing is required.

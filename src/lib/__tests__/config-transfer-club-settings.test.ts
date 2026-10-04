@@ -179,6 +179,89 @@ describe("config-transfer club-settings", () => {
     ]);
   });
 
+  it.each(["merge", "overwrite"] as const)(
+    "keeps the target teacher policy when an older bundle omits it (%s)",
+    async (mode) => {
+      const current = {
+        ...DEFAULT_BOOKING_REQUEST_SETTINGS,
+        assignSchoolTeachersAsHutLeaders: true,
+      };
+      const files = new Map([
+        [
+          "club-settings/booking-request-settings.json",
+          strToU8(JSON.stringify({
+            quoteResponseTtlDays: 30,
+          })),
+        ],
+      ]);
+      const plan = await clubSettingsImporter.plan({
+        format: CLUB_FORMAT_TEST,
+        db: stubDb({ bookingRequestSettings: current }),
+        files,
+        manifest: {} as never,
+        mode,
+        resolutions: new Map(),
+      });
+      expect(plan.errors).toEqual([]);
+      expect(plan.items).toEqual([{
+        entity: "booking-request-settings",
+        key: "default",
+        action: "update",
+        changedFields: ["quoteResponseTtlDays"],
+      }]);
+
+      const { tx, delegates } = stubTx({ bookingRequestSettings: current });
+      await clubSettingsImporter.apply(applyCtx(tx, files, mode));
+      expect(delegates.bookingRequestSettings.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: { quoteResponseTtlDays: 30 },
+        }),
+      );
+    },
+  );
+
+  it("exports and imports an enabled school teacher policy", async () => {
+    const { zip } = await buildConfigExport({
+      db: stubDb({
+        bookingRequestSettings: {
+          ...DEFAULT_BOOKING_REQUEST_SETTINGS,
+          assignSchoolTeachersAsHutLeaders: true,
+        },
+      }),
+      categories: ["club-settings"],
+      includeDoorCodes: false,
+      appVersion: "0.10.1",
+      prismaMigration: null,
+      generatedAt: "2026-07-08T00:00:00.000Z",
+    });
+    const { files } = readBundle(zip);
+    const settingsFile = "club-settings/booking-request-settings.json";
+    const sourceSettings = JSON.parse(strFromU8(files.get(settingsFile)!));
+    expect(sourceSettings.assignSchoolTeachersAsHutLeaders).toBe(true);
+
+    const settingsOnly = new Map([[settingsFile, files.get(settingsFile)!]]);
+    const plan = await clubSettingsImporter.plan({
+      format: CLUB_FORMAT_TEST,
+      db: stubDb({ bookingRequestSettings: DEFAULT_BOOKING_REQUEST_SETTINGS }),
+      files: settingsOnly,
+      manifest: {} as never,
+      mode: "merge",
+      resolutions: new Map(),
+    });
+    expect(plan.errors).toEqual([]);
+    expect(plan.items[0]?.changedFields).toEqual(["assignSchoolTeachersAsHutLeaders"]);
+
+    const { tx, delegates } = stubTx({
+      bookingRequestSettings: DEFAULT_BOOKING_REQUEST_SETTINGS,
+    });
+    await clubSettingsImporter.apply(applyCtx(tx, settingsOnly, "merge"));
+    expect(delegates.bookingRequestSettings.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ assignSchoolTeachersAsHutLeaders: true }),
+      }),
+    );
+  });
+
   it("rejects an invalid priority in the legacy singleton during the dry-run", async () => {
     const plan = await clubSettingsImporter.plan({
       format: CLUB_FORMAT_TEST,

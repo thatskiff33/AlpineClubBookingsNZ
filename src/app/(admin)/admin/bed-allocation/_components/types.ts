@@ -155,6 +155,7 @@ export interface DashboardPayload {
   // hatched, non-droppable band across those bed-nights. The server refuses any
   // drop regardless, so this is presentation, not the enforcement.
   custodianHolds: DashboardCustodianHold[];
+  pendingAdultReservations?: Array<{ bookingId: string; night: string; adultCount: number }>;
   suggestedAllocations: Array<{
     bookingId: string;
     bookingGuestId: string;
