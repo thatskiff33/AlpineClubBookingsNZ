@@ -192,6 +192,13 @@ import "./edit-financial-review-charge-raise-claim.realdb.test";
 // orphan heal add nothing, and a cash-only booking is unchanged. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3792-` fixtures.
 import "./ib-capacity-cancel-credit-restore.realdb.test";
+// #3864 reuses it to prove an edit's stored credit election is never spent on top
+// of an old full-price card intent: the REAL edit, pay-step route and webhook,
+// with the old intent captured and its webhook delivered at each point, end with
+// the price paid once. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
+// cleans its own `race-3864-` fixtures, and its Stripe and session doubles pass
+// through for every other suite.
+import "./election-double-pay-race.realdb.test";
 // #3454 reuses it to prove the Xero token store's two fences against real row
 // locks: simultaneous refresh-lease claims (this code against itself, and
 // against an older colour's own claim statement) let exactly one through, and a
