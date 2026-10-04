@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
-  sanitizeAuditMetadata,
+  buildStoredMetadata,
   type AuditMetadataOptions,
 } from "@/lib/audit";
 import {
@@ -28,6 +28,14 @@ import {
   sanitizePageContentHtml,
 } from "@/lib/page-content-html";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
+
+// The one answer for a page that does not exist, including the loser of two
+// simultaneous deletes (#3852).
+// Named once: the audit write and the "will the stored copy be whole?" check
+// below must hand `buildStoredMetadata` the same action.
+const PAGE_CONTENT_DELETED_ACTION = "PAGE_CONTENT_DELETED";
+
+const PAGE_NOT_FOUND = "Page not found";
 
 const createSchema = z
   .object({
@@ -268,7 +276,7 @@ export async function PUT(request: NextRequest) {
   });
 
   if (!existing) {
-    return NextResponse.json({ error: "Page not found" }, { status: 404 });
+    return NextResponse.json({ error: PAGE_NOT_FOUND }, { status: 404 });
   }
 
   // The reserved-slug rule gates admin-CREATED pages, so a BUILT-IN row keeping
@@ -421,7 +429,7 @@ export async function PATCH(request: NextRequest) {
   });
 
   if (!existing) {
-    return NextResponse.json({ error: "Page not found" }, { status: 404 });
+    return NextResponse.json({ error: PAGE_NOT_FOUND }, { status: 404 });
   }
 
   // System pages (home, 404) and built-in design pages are linked from code
@@ -614,7 +622,7 @@ export async function DELETE(request: NextRequest) {
   });
 
   if (!existing) {
-    return NextResponse.json({ error: "Page not found" }, { status: 404 });
+    return NextResponse.json({ error: PAGE_NOT_FOUND }, { status: 404 });
   }
 
   // Never wider than hiding: system pages (home, 404) and the built-in design
@@ -804,14 +812,18 @@ export async function DELETE(request: NextRequest) {
       // `/membership-cancellation/<token>` link, a provider key, a JWT) replaces
       // the whole field with `[REDACTED]` (first review, finding 4).
       metadata.snapshotComplete = isArchivedSnapshotComplete(
-        sanitizeAuditMetadata(metadata, archiveOptions),
+        buildStoredMetadata({
+          action: PAGE_CONTENT_DELETED_ACTION,
+          metadata,
+          options: archiveOptions,
+        }),
         before,
       );
 
       await tx.auditLog.create(
         buildStructuredAuditLogCreateArgs(
           {
-            action: "PAGE_CONTENT_DELETED",
+            action: PAGE_CONTENT_DELETED_ACTION,
             actor: { memberId: guard.session.user.id },
             entity: { type: "PageContent", id: removed.id },
             category: "admin",
@@ -841,7 +853,7 @@ export async function DELETE(request: NextRequest) {
     // back, so nothing moved and no audit row was written, and the honest answer
     // is the 404 the existence check would have given.
     if (err instanceof PageAlreadyDeletedError) {
-      return NextResponse.json({ error: "Page not found" }, { status: 404 });
+      return NextResponse.json({ error: PAGE_NOT_FOUND }, { status: 404 });
     }
     throw err;
   }

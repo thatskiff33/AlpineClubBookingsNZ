@@ -48,13 +48,15 @@ vi.mock("@/lib/session-guards", async () => ({
 
 // The REAL sanitiser: the DELETE measures what its archived snapshot will hold
 // with it, and a stub would make that measurement say whatever the stub says.
-vi.mock("@/lib/audit", async () => ({
-  buildStructuredAuditLogCreateArgs: mocks.buildStructuredAuditLogCreateArgs,
-  getAuditRequestContext: mocks.getAuditRequestContext,
-  sanitizeAuditMetadata: (
-    (await vi.importActual("@/lib/audit")) as typeof import("@/lib/audit")
-  ).sanitizeAuditMetadata,
-}));
+vi.mock("@/lib/audit", async () => {
+  const actual = (await vi.importActual("@/lib/audit")) as typeof import("@/lib/audit");
+  return {
+    buildStructuredAuditLogCreateArgs: mocks.buildStructuredAuditLogCreateArgs,
+    getAuditRequestContext: mocks.getAuditRequestContext,
+    sanitizeAuditMetadata: actual.sanitizeAuditMetadata,
+    buildStoredMetadata: actual.buildStoredMetadata,
+  };
+});
 vi.mock("@/lib/public-content-revalidation", () => ({
   revalidatePublicPageContent: mocks.revalidatePublicPageContent,
 }));

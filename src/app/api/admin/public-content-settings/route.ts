@@ -7,6 +7,10 @@ import { DEFAULT_PUBLIC_CONTENT_SETTINGS } from "@/config/club-settings-defaults
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
+// One message for both ways a chosen page can fail (checked up front, or gone by
+// the time the upsert's foreign key runs, #3852).
+const BOOK_NOW_PAGE_NOT_PUBLISHED = "The selected Book Now page is not published.";
+
 const settingsSchema = z.object({
   membershipTypes: z.boolean(),
   entranceFees: z.boolean(),
@@ -116,7 +120,7 @@ export async function PUT(request: Request) {
       select: { published: true },
     });
     if (!page?.published) {
-      return NextResponse.json({ error: "The selected Book Now page is not published." }, { status: 400 });
+      return NextResponse.json({ error: BOOK_NOW_PAGE_NOT_PUBLISHED }, { status: 400 });
     }
   }
   // Never persist a stray page id when the target is the booking flow.
@@ -158,7 +162,7 @@ export async function PUT(request: Request) {
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2003"
     ) {
-      return NextResponse.json({ error: "The selected Book Now page is not published." }, { status: 400 });
+      return NextResponse.json({ error: BOOK_NOW_PAGE_NOT_PUBLISHED }, { status: 400 });
     }
     throw error;
   }
