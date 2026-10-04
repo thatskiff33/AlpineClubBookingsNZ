@@ -38,11 +38,14 @@ import {
  * included) come back first, the cancellation would have tiered what was left
  * and the member would hold `C + returnOf(base - C)`. They hold what the
  * cancellation returned and what earlier reviews since returned; the
- * difference, floored at zero, is owed now. A share comes off the card base
- * first, as a review completed first would have refunded it, and then off the
- * applied credit. `returnOf` is the cancellation's own tier
- * (`cancellationReturnOf`); the credit-only route (#3791) is the case with no
- * card base.
+ * difference, floored at zero, is owed now. `returnOf` is the cancellation's
+ * own tier (`cancellationReturnOf`).
+ *
+ * THE CREDIT-ONLY ROUTE'S FORM (#3791), where nothing was captured and the
+ * pools are fixed. A captured payment's routes re-run the cancellation on the
+ * review-first payment instead (`capturedShareOwedAfterCancellation`): there
+ * #3809's money-first cap gives credit more headroom as the card is refunded,
+ * which no fixed pool can show (`INV-PAY-115`).
  */
 export function shareOwedAfterCancellationCents({
   sharesCents,
@@ -76,12 +79,11 @@ export function shareOwedAfterCancellationCents({
 }
 
 /**
- * Where the shares come from, had they come back first. Each side in the
- * order a review completed first would have taken it, its untiered part
- * before its tiered base, since a share there leaves the base the cancellation
- * tiered untouched: the capture above the price (#3835), the capture base, the
- * applied credit above #3809's cap (`INV-PAY-115`), the credit base. With no
- * cap the untiered credit is nothing and this is #3791's slicing.
+ * Where the shares come from, had they come back first, for
+ * `shareOwedAfterCancellationCents`: each pool in turn. On the credit-only
+ * route (no capture, no card base) the applied credit above #3809's cap goes
+ * before the credit the cap tiered, since with nothing captured nothing moves
+ * that cap (`INV-PAY-115`); with no cap it is #3791's slicing.
  */
 export function shareSlices({
   sharesCents,
@@ -206,23 +208,33 @@ export type CapturedShareOwed = {
  * cumulatively across the reviews settled after the cancel; never more than the
  * share typed.
  *
- * IT GOES BACK THE WAY IT CAME IN. Had the shares come back first they would
- * have come off the capture base first and then the applied credit, and the
- * cancellation would have tiered each remainder. So the capture part is what
- * that would have returned to the capture less what the capture has had back
- * (the cancellation's refund, earlier reviews' refunds, hand-backs and minted
+ * REVIEW FIRST, RE-RUN. Had the shares come back first, they would have come
+ * off the capture first (a review refunds the card, or hands back by bank
+ * transfer) and then the applied credit, and the cancellation would then have
+ * run `paidCancellationMoney` on that smaller payment - with #3809's
+ * money-first cap, so card refunded first moves credit headroom under the cap
+ * (`INV-PAY-115`). So that is what is re-run, through `cancellationTierOf`:
+ * the payment less the capture's slice, the credit less the credit's slice, at
+ * the price the frozen bases give (`frozenWorthCents`). Still owed is that
+ * review-first total less what the cancellation and earlier reviews returned,
+ * floored at nothing and never more than the share typed.
+ *
+ * IT GOES BACK THE WAY IT CAME IN. The capture part is what review-first would
+ * have returned to the capture less what the capture has had back (the
+ * cancellation's refund, earlier reviews' refunds, hand-backs and minted
  * credit), held to the total; the rest is applied credit given back. The
  * capture is never asked for the credit's part.
  *
  * Every figure is the cancellation's own, frozen on its CANCELLED event
- * (`writePaidCancellationEvent`): the refund and its method, the refundable
- * base, the applied credit tiered and restored, and the reviews already
- * settled when it ran. Events older than #3835 fall back to the paid money
- * less the change fee and the branch's method. The tier is re-run on the
- * cancellation's day by `cancellationTierOf` and must reproduce the refund and
- * the restore before it is trusted; where it does not, or nothing was frozen,
- * the completion is refused with the task OPEN. A cancellation that returned
- * nothing is not re-tiered; one that returned everything owes nothing.
+ * (`writePaidCancellationEvent`): the paid money and change fee, the refund
+ * and its method, the refundable base, the applied credit and the base #3809's
+ * cap tiered of it, the restore, and the reviews already settled when it ran.
+ * Events older than #3835 fall back to the paid money less the change fee and
+ * the branch's method. The tier must reproduce the cancellation's refund and
+ * restore before it is trusted; where it does not, or nothing was frozen, the
+ * completion is refused with the task OPEN. A cancellation that returned
+ * nothing re-runs at no tier, one that returned everything at a full one,
+ * neither needing the policy in force.
  *
  * Reads under the completion's `lock(1)`, which the cancel and every sibling
  * review hold too; on a cancelled booking only reviews write applied rows.
@@ -245,7 +257,9 @@ export async function capturedShareOwedAfterCancellation({
   const refuse = () => new ManualBookingPaymentError(REVIEW_CANCELLATION_REFUND_UNREPRODUCIBLE_MESSAGE, 409);
   // #3653 (`INV-PAY-114`): a joiner's booking the group organiser paid by card
   // was refunded to the ORGANISER, out of the combined payment, clamped to the
-  // group's debt - not a tier this can re-run. Refused, task OPEN.
+  // group's debt - not a tier this can re-run. Refused, task OPEN - even after
+  // a 0% cancel: a settled refund of nothing there can also mean the group's
+  // own cancellation carried the child's refund, which the event does not say.
   const owner = await store.booking.findUniqueOrThrow({
     where: { id: bookingId },
     select: { organiserSettled: true, parentBookingId: true, payment: { select: { source: true } } },
@@ -262,60 +276,82 @@ export async function capturedShareOwedAfterCancellation({
   const changeFeeCents = frozenCents(snapshot, "changeFeeCents");
   const refundedCents = frozenCents(snapshot, "settledAmountCents");
   const appliedRowsCents = frozenCents(ledger, "appliedCreditCents");
-  const appliedCents = frozenAppliedCreditBaseCents(snapshot);
+  const appliedBaseCents = frozenAppliedCreditBaseCents(snapshot);
   const restoredCents = frozenCents(ledger, "creditRestoredCents");
   if (
     !cancelled || paidCents === null || changeFeeCents === null || refundedCents === null ||
-    appliedRowsCents === null || appliedCents === null || restoredCents === null
+    appliedRowsCents === null || appliedBaseCents === null || restoredCents === null
   ) {
     throw refuse();
   }
   const baseCents = frozenCents(snapshot, "refundableBaseCents") ?? Math.max(0, paidCents - changeFeeCents);
-  // Capture above the price the cancel tiered: neither refunded nor tiered.
-  const untieredCaptureCents = Math.max(0, paidCents - changeFeeCents - baseCents);
   const refundMethod = (snapshot?.tierRefundMethod ?? snapshot?.refundMethod) === "credit" ? "credit" : "card";
+  const returnedByCancellationCents = refundedCents + restoredCents;
+
+  // No tier where nothing came back, a full one where everything tiered did;
+  // otherwise the policy in force, which must reproduce the cancellation.
+  let policy: CancellationRule[] = [];
+  let days = 0;
+  let capAppliedCredit = false;
+  if (returnedByCancellationCents >= baseCents + appliedBaseCents) {
+    policy = [{ daysBeforeStay: 0, refundPercentage: 100, fixedFeeCents: 0, creditRefundPercentage: 100, creditFixedFeeCents: 0 }];
+  } else if (returnedByCancellationCents > 0) {
+    days = daysUntilDate(booking.checkIn, clubCalendarDateOf(cancelled.occurredAt, clubZone));
+    policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, store);
+    capAppliedCredit = await capAppliedCreditForReTier({ bookingId, snapshot, refusal: refuse }, store);
+  }
+  const worthCents = frozenWorthCents({ baseCents, appliedBaseCents, capAppliedCredit });
+  const cancelOf = (captureSliceCents: number, creditSliceCents: number) =>
+    paidCancellationMoney({
+      payment: { amountCents: paidCents - captureSliceCents, refundedAmountCents: 0, changeFeeCents, creditAppliedCents: appliedRowsCents - creditSliceCents },
+      finalPriceCents: worthCents,
+      appliedCreditCents: appliedRowsCents - creditSliceCents,
+      restoresToMemberLedger: true,
+      days,
+      policy,
+      refundMethod,
+      capAppliedCredit,
+    });
+  if (returnedByCancellationCents > 0 && returnedByCancellationCents < baseCents + appliedBaseCents) {
+    const reproduced = cancelOf(0, 0);
+    if (reproduced.refundAmountCents !== refundedCents || reproduced.creditRestoredCents !== restoredCents) throw refuse();
+  }
 
   const since = await settledSinceCancellation({ bookingId, taskId, snapshot, since: cancelled.occurredAt, store });
   // The restore leaves the applied rows alone, so what reviews have given back
   // since is exactly how far the rows have fallen from the frozen figure.
   const creditBackSinceCents = Math.max(0, appliedRowsCents - (await deriveBookingAppliedCreditCents(bookingId, store)));
-  // Applied credit above #3809's cap: neither restored nor tiered (`INV-PAY-115`).
-  const untieredCreditCents = Math.max(0, appliedRowsCents - appliedCents);
   const sharesCents = since.sharesCents + shareCents;
-  const slices = shareSlices({ sharesCents, untieredCaptureCents, cardBaseCents: baseCents, untieredCreditCents, appliedCents });
-
-  // Nothing returned: the tier kept everything, and of less too. Everything
-  // tiered returned: it returns all of less too. Neither needs the policy.
-  let tierOf: ReturnType<typeof cancellationTierOf> = () => ({ captureCents: 0, creditCents: 0 });
-  if (refundedCents + restoredCents >= baseCents + appliedCents) {
-    tierOf = (base, applied) => ({ captureCents: base, creditCents: applied });
-  } else if (refundedCents + restoredCents > 0) {
-    const days = daysUntilDate(booking.checkIn, clubCalendarDateOf(cancelled.occurredAt, clubZone));
-    const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, store);
-    tierOf = cancellationTierOf(days, policy, refundMethod, await capAppliedCreditForReTier({ bookingId, snapshot, refusal: refuse }, store));
-    const reproduced = tierOf(baseCents, appliedCents);
-    if (reproduced.captureCents !== refundedCents || reproduced.creditCents !== restoredCents) throw refuse();
-  }
-  const totalCents = Math.min(
-    shareCents,
-    shareOwedAfterCancellationCents({
-      sharesCents,
-      untieredCaptureCents,
-      cardBaseCents: baseCents,
-      untieredCreditCents,
-      appliedCents,
-      returnedByCancellationCents: refundedCents + restoredCents,
-      returnedSinceCents: since.captureReturnedCents + creditBackSinceCents,
-      returnOf: (base, applied) => {
-        const tier = tierOf(base, applied);
-        return tier.captureCents + tier.creditCents;
-      },
-    }),
+  const captureSliceCents = Math.max(0, Math.min(sharesCents, paidCents - changeFeeCents));
+  const creditSliceCents = Math.max(0, Math.min(appliedRowsCents, sharesCents - captureSliceCents));
+  const reviewFirst = cancelOf(captureSliceCents, creditSliceCents);
+  const reviewFirstCents = captureSliceCents + creditSliceCents + reviewFirst.refundAmountCents + reviewFirst.creditRestoredCents;
+  const totalCents = Math.max(
+    0,
+    Math.min(shareCents, reviewFirstCents - returnedByCancellationCents - since.captureReturnedCents - creditBackSinceCents),
   );
-  const leftTier = tierOf(baseCents - slices.baseCents, appliedCents - slices.creditCents);
-  const captureOwedCents = slices.untieredCents + slices.baseCents + leftTier.captureCents - refundedCents - since.captureReturnedCents;
+  const captureOwedCents = captureSliceCents + reviewFirst.refundAmountCents - refundedCents - since.captureReturnedCents;
   const captureCents = Math.max(0, Math.min(totalCents, captureOwedCents));
   return { captureCents, creditCents: totalCents - captureCents };
+}
+
+/**
+ * The booking's price as the cancellation saw it, from the
+ * bases it froze. Where #3809's money-first cap ran, the worth is exactly the
+ * capture base and the credit base it left (the cap fills the worth, money
+ * first); where it did not, the price only ever held the capture down, and the
+ * capture base is a price that holds it to the same base.
+ */
+export function frozenWorthCents({
+  baseCents,
+  appliedBaseCents,
+  capAppliedCredit,
+}: {
+  baseCents: number;
+  appliedBaseCents: number;
+  capAppliedCredit: boolean;
+}): number {
+  return baseCents + (capAppliedCredit ? appliedBaseCents : 0);
 }
 
 /**
