@@ -150,6 +150,11 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
       "a back-post and a live admin date shift (run %i): one set of lines, census agrees",
       "a back-post and a live card refund (run %i): the refund posts once, census agrees",
       "waits for the global lock(1) a live poster holds",
+      // #3854: the group-settled children.
+      "--apply posts each child's confirmation, share, plan refund and kept figure under the live keys",
+      "a back-post and a live organiser cancel (%s): share, refund and kept post once each, census agrees",
+      "a back-post and a live #3653 refund (%s): the refund posts once, census agrees",
+      "shares that do not add up to the settlement are refused",
     ]) {
       expect(suite).toContain(caseName);
     }

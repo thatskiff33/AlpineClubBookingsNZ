@@ -429,9 +429,14 @@ export async function cleanHistories(prisma: PrismaClient, prefix: string): Prom
   const where = { bookingId: { in: ids } };
   const payments = await prisma.payment.findMany({ where, select: { id: true } });
   const paymentIds = payments.map((payment) => payment.id);
+  // #3854's group histories (`booking-ledger-group-history.ts`): their settlements and groups.
+  const settlements = await prisma.groupBookingSettlement.findMany({ where: { id: { startsWith: prefix } }, select: { id: true } });
+  const settlementIds = settlements.map((settlement) => settlement.id);
   await prisma.bookingLedgerLine.deleteMany({ where: { ...where, reversesLineId: { not: null } } });
   await prisma.bookingLedgerLine.deleteMany({ where });
-  await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [...ids, ...paymentIds] } } });
+  await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [...ids, ...paymentIds, ...settlementIds] } } });
+  await prisma.groupBookingSettlement.deleteMany({ where: { id: { in: settlementIds } } });
+  await prisma.groupBooking.deleteMany({ where: { id: { startsWith: prefix } } });
   await prisma.bedAllocation.deleteMany({ where });
   await prisma.memberCredit.deleteMany({ where: { memberId: { in: [names.memberId, names.officerId] } } });
   await prisma.manualRefundTask.deleteMany({ where });
@@ -443,6 +448,8 @@ export async function cleanHistories(prisma: PrismaClient, prefix: string): Prom
   await prisma.paymentTransaction.deleteMany({ where: { paymentId: { in: paymentIds } } });
   await prisma.payment.deleteMany({ where });
   await prisma.bookingGuest.deleteMany({ where });
+  // A group's children before its organiser.
+  await prisma.booking.deleteMany({ where: { id: { in: ids }, parentBookingId: { not: null } } });
   await prisma.booking.deleteMany({ where: { id: { in: ids } } });
   await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: names.lodgeId } });
   await prisma.lodgeBed.deleteMany({ where: { roomId: names.roomId } });

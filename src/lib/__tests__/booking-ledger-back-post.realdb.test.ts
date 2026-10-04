@@ -10,7 +10,12 @@
  * from before #3582 beside one from after it, a review closure and a change fee
  * — list the booking it cannot post with its reason and post nothing for it,
  * post nothing on a second run, and stay one set of lines when a live edit or
- * refund races it on the same booking.
+ * refund races it on the same booking. Since #3854 it also posts a group
+ * organiser's settled children — card and Internet Banking settles, organiser
+ * cancels under a frozen pre-#3653 card plan and an Internet Banking plan, and
+ * #3653 refunds — through the live group posters' keys, so a live cancel,
+ * replay or refund after (or racing) it posts nothing twice, and a child whose
+ * shares do not reconcile stays `GROUP_SETTLEMENT_OFF_LEDGER`, listed.
  *
  * Skipped unless `RUN_CONCURRENCY_RACE_TESTS=1`; it reuses the guarded,
  * disposable loopback PostgreSQL `concurrency-lock-races.realdb.test.ts`
@@ -33,6 +38,21 @@ import {
   stripAllLines,
   type HistoryName,
 } from "@/lib/__tests__/support/booking-ledger-history";
+import {
+  buildGroupLedgerHistories,
+  cancelGroupHistory,
+  createGroupHistory,
+  GROUP_CHILD_CENTS,
+  GROUP_NIGHT_CENTS,
+  groupHistory,
+  groupHistoryStripe,
+  reserveGroupChildReduction,
+  runGroupChildRefund,
+  settleGroupHistory,
+  stripGroupLines,
+  type GroupHistory,
+  type GroupHistoryName,
+} from "@/lib/__tests__/support/booking-ledger-group-history";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -457,5 +477,202 @@ async function lines(bookingId: string) {
       const confirmed = (await lines(id)).filter((line) => line.anchorKind === "CONFIRMATION" && line.kind === "GUEST_NIGHT");
       expect(confirmed.reduce((sum, line) => sum + line.amountCents, 0)).toBe(22_000);
     }, 120_000);
+  });
+  describe("group-settled children (#3854)", () => {
+    let groups: Record<GroupHistoryName, GroupHistory>;
+    const children = () => Object.values(groups).flatMap((g) => g.children);
+    const kinds = async (bookingId: string) =>
+      (await lines(bookingId)).filter((line) => line.reversesLineId === null).map((line) => [line.kind, line.amountCents, line.postingKey?.split(":").slice(0, 3).join(":")]);
+
+    beforeAll(async () => {
+      groups = await buildGroupLedgerHistories(prisma, NAMES, PREFIX);
+    }, 300_000);
+
+    it("before the back-post, a settled child with no money of its own is GROUP_SETTLEMENT_OFF_LEDGER, and every other one is a gap", async () => {
+      const report = await census();
+      for (const name of ["group-card", "group-bank"] as const) {
+        for (const id of groups[name].children) expect(about(report, id), `${name} ${id}`).toEqual({ ...NOTHING, classes: ["GROUP_SETTLEMENT_OFF_LEDGER:null"] });
+      }
+      // A refund mirror or a refund row is money of the child's own: coverage, which no acknowledgement signs.
+      for (const name of ["group-legacy-cancel", "group-bank-cancel", "group-refund"] as const) {
+        for (const id of groups[name].children) expect(about(report, id), `${name} ${id}`).toEqual({ ...NOTHING, coverage: ["NO_LINES"] });
+      }
+      const [pre] = groups["group-pre3854-refund"].children;
+      expect((await lines(pre!)).map((line) => [line.kind, line.amountCents, line.anchorKind])).toEqual([["CARD_REFUND", -1_500, "PAYMENT_REFUND"]]);
+      expect(about(report, pre!).coverage).toContain("NOT_CONFIRMED_ON_LEDGER");
+    });
+
+    it("the dry run would post every group child and commits nothing", async () => {
+      const before = await prisma.bookingLedgerLine.count({ where: { bookingId: { in: children() } } });
+      for (const id of children()) expect(await runOne(id, false), id).toMatchObject({ kind: "POSTED", lineIds: [] });
+      expect(await prisma.bookingLedgerLine.count({ where: { bookingId: { in: children() } } })).toBe(before);
+    }, 120_000);
+
+    it("--apply posts each child's confirmation, share, plan refund and kept figure under the live keys, and the census agrees", async () => {
+      for (const g of Object.values(groups)) {
+        expect(await runOne(g.organiser, true), g.organiser).toMatchObject({ kind: "NOTHING_TO_POST" });
+        for (const id of g.children) expect(await runOne(id, true), id).toMatchObject({ kind: "POSTED" });
+      }
+      const report = await census();
+      for (const id of children()) expect(about(report, id), id).toEqual(NOTHING);
+
+      const night = ["GUEST_NIGHT", GROUP_NIGHT_CENTS, "confirmation:"];
+      const share = (g: GroupHistory, kind: string) => [kind, GROUP_CHILD_CENTS, `group-settlement:${g.settlement}:child`];
+      const sorted = (rows: unknown[][]) => rows.map((row) => JSON.stringify(row)).sort();
+      const confirmation = (id: string) => night.map((value) => (value === "confirmation:" ? `confirmation:${id}:night` : value));
+      for (const name of ["group-card", "group-bank"] as const) {
+        const g = groups[name];
+        for (const id of g.children) {
+          expect(sorted(await kinds(id)), id).toEqual(sorted([confirmation(id), confirmation(id), share(g, g.pi ? "CARD_CAPTURE" : "BANK_RECEIPT")]));
+        }
+      }
+      // Cancelled at half: the plan's half back on the settlement's own rail, half kept.
+      for (const name of ["group-legacy-cancel", "group-bank-cancel"] as const) {
+        const g = groups[name];
+        for (const id of g.children) {
+          const card = g.pi !== null;
+          expect(sorted(await kinds(id)), id).toEqual(
+            sorted([
+              confirmation(id),
+              confirmation(id),
+              share(g, card ? "CARD_CAPTURE" : "BANK_RECEIPT"),
+              [card ? "CARD_REFUND" : "BANK_REFUND", -GROUP_CHILD_CENTS / 2, `group-settlement:${g.settlement}:refund`],
+              ["CANCELLATION_FEE", GROUP_CHILD_CENTS / 2, `cancellation:${id}:fee`],
+            ]),
+          );
+          // The stay is taken back night by night.
+          expect((await lines(id)).filter((line) => line.reversesLineId !== null).map((line) => line.amountCents)).toEqual([-GROUP_NIGHT_CENTS, -GROUP_NIGHT_CENTS]);
+        }
+      }
+      // #3653: the reduced night, the whole share, and the refund from its own row.
+      for (const name of ["group-refund", "group-pre3854-refund"] as const) {
+        const g = groups[name];
+        const [id] = g.children;
+        const rows = await kinds(id!);
+        expect(rows.filter((row) => row[0] === "GUEST_NIGHT").map((row) => row[1] as number).sort((a, b) => a - b)).toEqual([GROUP_NIGHT_CENTS - 1_500, GROUP_NIGHT_CENTS]);
+        expect(rows.filter((row) => row[0] !== "GUEST_NIGHT")).toEqual(
+          expect.arrayContaining([share(g, "CARD_CAPTURE"), ["CARD_REFUND", -1_500, expect.stringMatching(/^refund:/)]]),
+        );
+      }
+    }, 300_000);
+
+    it("a second and third --apply post nothing, and the live replays after it post nothing twice", async () => {
+      const count = () => prisma.bookingLedgerLine.count({ where: { bookingId: { in: children() } } });
+      const before = await count();
+      for (const run of [2, 3]) for (const id of children()) expect(await runOne(id, true), `run ${run} ${id}`).toMatchObject({ kind: "NOTHING_TO_POST" });
+      // The webhook replayed, the pre-#3653 plan's recovery replayed, the organiser cancel re-driven.
+      const { applyGroupSettlementSucceeded } = await import("@/lib/group-settlement");
+      const { CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture");
+      const card = groups["group-card"];
+      expect(await applyGroupSettlementSucceeded({ id: card.pi!, amount: 2 * GROUP_CHILD_CENTS }, CLUB_FORMAT_TEST)).toMatchObject({ outcome: "already_settled" });
+      const { executeGroupSettlementRefundPlan } = await import("@/lib/group-cancel");
+      expect(await executeGroupSettlementRefundPlan(groups["group-legacy-cancel"].settlement, CLUB_FORMAT_TEST)).toMatchObject({ outcome: "already_refunded" });
+      await cancelGroupHistory(NAMES, groups["group-bank-cancel"]);
+      expect(await count()).toBe(before);
+      const report = await census();
+      for (const id of children()) expect(about(report, id), id).toEqual(NOTHING);
+    }, 300_000);
+
+    async function strippedGroup(key: string, source: "STRIPE" | "INTERNET_BANKING", size: number): Promise<GroupHistory> {
+      const g = groupHistory(PREFIX, key, source, size);
+      await createGroupHistory(prisma, NAMES, g);
+      await settleGroupHistory(g);
+      await stripGroupLines(prisma, g);
+      return g;
+    }
+
+    it.each(["the back-post first", "the cancel first", "concurrently"] as const)(
+      "a back-post and a live organiser cancel (%s): share, refund and kept post once each, census agrees",
+      async (order) => {
+        const g = await strippedGroup(`race-group-cancel-${order.replace(/ /g, "-")}`, "INTERNET_BANKING", 2);
+        let outcomes: Awaited<ReturnType<typeof runOne>>[];
+        if (order === "the back-post first") {
+          outcomes = [await runOne(g.children[0]!, true), await runOne(g.children[1]!, true)];
+          await cancelGroupHistory(NAMES, g);
+        } else if (order === "the cancel first") {
+          await cancelGroupHistory(NAMES, g);
+          // The live cancel posts nothing on a child settled before #3854: no share for its refund to stand beside.
+          for (const id of g.children) expect(await lines(id), id).toEqual([]);
+          outcomes = [await runOne(g.children[0]!, true), await runOne(g.children[1]!, true)];
+          for (const outcome of outcomes) {
+            expect(outcome.kind === "POSTED" && outcome.steps).toEqual(expect.arrayContaining(["group share (4500)", "group plan refund (2250)", "cancellation (kept 2250)"]));
+          }
+        } else {
+          // Each back-post waits for, or is waited on by, the cancel's per-child claim (lock(1)).
+          const [first, , second] = await Promise.all([runOne(g.children[0]!, true), cancelGroupHistory(NAMES, g), runOne(g.children[1]!, true)]);
+          outcomes = [first, second];
+        }
+        expect(outcomes).toMatchObject([{ kind: "POSTED" }, { kind: "POSTED" }]);
+        for (const id of g.children) {
+          const rows = await lines(id);
+          const once = (kind: string) => rows.filter((line) => line.kind === kind && line.reversesLineId === null).length;
+          expect([once("BANK_RECEIPT"), once("BANK_REFUND"), once("CANCELLATION_FEE")], id).toEqual([1, 1, 1]);
+          expect(rows.filter((line) => line.kind === "GUEST_NIGHT" && line.anchorKind === "CONFIRMATION")).toHaveLength(2);
+          expect(await runOne(id, true)).toMatchObject({ kind: "NOTHING_TO_POST" });
+        }
+        const report = await census();
+        for (const id of g.children) expect(about(report, id), id).toEqual(NOTHING);
+      },
+      300_000,
+    );
+
+    it.each(["the back-post first", "the refund first", "concurrently"] as const)(
+      "a back-post and a live #3653 refund (%s): the refund posts once, census agrees",
+      async (order) => {
+        const g = await strippedGroup(`race-group-refund-${order.replace(/ /g, "-")}`, "STRIPE", 1);
+        const [id] = g.children;
+        const debt = await reserveGroupChildReduction(prisma, NAMES, g, id!, 1_500);
+        const refund = () => runGroupChildRefund(prisma, debt.id, groupHistoryStripe());
+        let outcome: Awaited<ReturnType<typeof runOne>>;
+        if (order === "the back-post first") {
+          outcome = await runOne(id!, true);
+          await refund();
+        } else if (order === "the refund first") {
+          await refund();
+          outcome = await runOne(id!, true);
+        } else {
+          [outcome] = await Promise.all([runOne(id!, true), refund()]);
+        }
+        expect(outcome).toMatchObject({ kind: "POSTED" });
+        const rows = await lines(id!);
+        expect(rows.filter((line) => line.kind === "CARD_REFUND").map((line) => line.amountCents)).toEqual([-1_500]);
+        expect(rows.filter((line) => line.kind === "CARD_CAPTURE").map((line) => line.amountCents)).toEqual([GROUP_CHILD_CENTS]);
+        expect(about(await census(), id!)).toEqual(NOTHING);
+        expect(await runOne(id!, true)).toMatchObject({ kind: "NOTHING_TO_POST" });
+      },
+      300_000,
+    );
+
+    it("shares that do not add up to the settlement are refused: the child stays GROUP_SETTLEMENT_OFF_LEDGER, listed with why", async () => {
+      const g = await strippedGroup("corrupt-share", "STRIPE", 2);
+      const [first, second] = g.children;
+      await prisma.payment.update({ where: { bookingId: second! }, data: { amountCents: GROUP_CHILD_CENTS - 1 } });
+      for (const apply of [false, true]) {
+        expect(await runOne(first!, apply)).toMatchObject({ kind: "LISTED_GROUP_SETTLEMENT_OFF_LEDGER", reason: "GROUP_SHARES_DO_NOT_RECONCILE" });
+      }
+      expect(await lines(first!)).toEqual([]);
+      expect(about(await census(), first!).classes).toEqual(["GROUP_SETTLEMENT_OFF_LEDGER:null"]);
+      const run = await backPost.runBookingLedgerBackPost({ client: prisma, apply: false, bookingIds: [first!] });
+      expect(run.totals).toMatchObject({ groupSettlementOffLedger: 1, cannotPost: 0, posted: 0 });
+      const { formatBookingLedgerBackPostReport } = await import("@/lib/booking-ledger-back-post-report");
+      expect(formatBookingLedgerBackPostReport(run, (cents) => `${cents}`)).toContain(
+        `LISTED  ${first}  GROUP_SETTLEMENT_OFF_LEDGER, not posted  GROUP_SHARES_DO_NOT_RECONCILE`,
+      );
+    }, 300_000);
+
+    it("a plan the mirror does not match is refused with both figures, never posted, and stays a gap", async () => {
+      const g = await strippedGroup("corrupt-plan", "INTERNET_BANKING", 1);
+      await cancelGroupHistory(NAMES, g);
+      await stripGroupLines(prisma, g);
+      const [id] = g.children;
+      await prisma.groupBookingSettlement.update({ where: { id: g.settlement }, data: { refundPlan: { [id!]: GROUP_CHILD_CENTS / 2 - 1 } } });
+      expect(await runOne(id!, true)).toMatchObject({
+        kind: "CANNOT_POST",
+        reason: "CENSUS_WOULD_NOT_PASS",
+        disagreements: expect.arrayContaining([{ identity: "REFUNDED", columnCents: GROUP_CHILD_CENTS / 2, ledgerCents: GROUP_CHILD_CENTS / 2 - 1, deltaCents: 1 }]),
+      });
+      expect(await lines(id!)).toEqual([]);
+      expect(about(await census(), id!).coverage).toEqual(["NO_LINES"]);
+    }, 300_000);
   });
 });
