@@ -1846,10 +1846,11 @@ export function PageContentPanel() {
           ? "the Book Now button has been set back to the booking flow"
           : null,
         // The after-the-delete repair (#3852): the button was not pointing here
-        // when the delete began, but the saved setting was left on a page that no
-        // longer exists, so it was corrected. Never silent.
+        // when the delete began, but the saved setting was "page" with no page
+        // (this delete or an earlier one: the repair matches any such row), so
+        // it was corrected. Never silent.
         body?.wasBookNowTarget !== true && body?.bookNowPairRepaired === true
-          ? "the Book Now setting was left pointing at a page that no longer exists, so it has been set back to the booking flow"
+          ? "the Book Now setting was left on a content page with none chosen (by this delete or an earlier one), so it has been set back to the booking flow"
           : null,
         // The audit copy is the only way back for a deleted page, and the audit
         // log's privacy and size protections can redact or drop it (#3852). Said
@@ -1861,7 +1862,7 @@ export function PageContentPanel() {
         // few minutes" (#3852): the stored copy is not on a timer that clears
         // itself, and every page save, hide or publish clears it.
         body?.publicCacheCleared === false
-          ? "the public site's stored copy could not be cleared, so that address may keep answering until it is; saving any page clears it"
+          ? "the public site's stored copy could not be cleared, so that address may keep answering until it is; saving any page clears it, and a visit after its stored copy is about five minutes old also starts a refresh"
           : null,
       ].filter((part): part is string => part !== null);
 

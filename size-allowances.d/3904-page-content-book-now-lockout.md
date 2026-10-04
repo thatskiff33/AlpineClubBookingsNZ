@@ -7,7 +7,7 @@ the reader of the DELETE handler or the delete dialog unable to see the whole
 sequence in one place.
 
 file: src/app/api/admin/page-content/route.ts
-lines: 898
+lines: 910
 reason: The DELETE transaction gains three steps the issue asks for — the audit
   copy built from the row the delete returned, a P2025 mapped to 404 for the
   loser of two simultaneous deletes, and a post-delete repair of a `PAGE` + null
@@ -19,7 +19,7 @@ reason: The DELETE transaction gains three steps the issue asks for — the audi
   delete safe across two files.
 
 file: src/components/admin/page-content-panel.tsx
-lines: 2608
+lines: 2609
 reason: The delete dialog and the post-delete message gain the sentences the
   issue asks for — a check that could not run, relative links not detected, the
   repaired Book Now setting, an incomplete audit copy, and cache wording that
