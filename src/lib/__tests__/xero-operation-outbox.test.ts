@@ -1339,6 +1339,70 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
     expect(mocks.findCanonicalPaymentRefundCreditNote).not.toHaveBeenCalled();
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
   });
+
+  // #3880: a review's refund on a CANCELLED booking - by card or handed back by
+  // bank transfer - is noted per refund and keyed on its review task.
+  describe("#3880 - a review's refund on a cancelled booking", () => {
+    const bankTransferPayment = (refundedAmountCents: number) =>
+      mocks.findUniquePayment.mockResolvedValue({
+        id: "payment_1",
+        source: "INTERNET_BANKING",
+        refundedAmountCents,
+        // The cancellation's or an earlier review's note is already linked.
+        xeroRefundCreditNoteId: "cn_existing",
+      });
+
+    it("MUTATION: a bank-transfer hand-back is noted beside the payment's existing note, capped by coverage and keyed on the task", async () => {
+      bankTransferPayment(3500);
+      mocks.findCanonicalPaymentRefundCreditNote.mockResolvedValue({ xeroObjectId: "cn_existing", xeroObjectNumber: "CN-1", source: "payment" });
+      mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(1000);
+
+      await expect(
+        enqueueXeroRefundCreditNoteOperation("payment_1", 2500, { refundMethod: "internet-banking", reviewTaskId: "task_1" })
+      ).resolves.toMatchObject({ queueOperationId: "op_credit_note_1" });
+
+      expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          correlationKey: "payment:payment_1:refund-credit-note:3500:v2:review-task:task_1",
+          idempotencyKey: "payment:payment_1:refund-credit-note:3500:v2:review-task:task_1",
+          requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 2500, watermarkCents: 3500, refundMethod: "internet-banking" },
+        })
+      );
+    });
+
+    it("MUTATION: two sibling reviews' equal $10 refunds are a note each, not one folded into the other", async () => {
+      bankTransferPayment(2000);
+      await enqueueXeroRefundCreditNoteOperation("payment_1", 1000, { reviewTaskId: "task_1" });
+      await enqueueXeroRefundCreditNoteOperation("payment_1", 1000, { reviewTaskId: "task_2" });
+
+      const keys = mocks.startXeroSyncOperation.mock.calls.map((call) => call[0].correlationKey);
+      expect(keys).toEqual([
+        "payment:payment_1:refund-credit-note:1000:v2:review-task:task_1",
+        "payment:payment_1:refund-credit-note:1000:v2:review-task:task_2",
+      ]);
+    });
+
+    it("a replay while the note is queued answers with the queued row; once it is raised, a replay raises nothing", async () => {
+      mocks.findUniquePayment.mockResolvedValue({ id: "payment_1", source: "STRIPE", refundedAmountCents: 10500, xeroRefundCreditNoteId: "cn_cancel" });
+      mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(8000);
+      mocks.findFirstOperation.mockResolvedValue({ id: "op_queued" });
+
+      await expect(enqueueXeroRefundCreditNoteOperation("payment_1", 2500, { reviewTaskId: "task_1" })).resolves.toMatchObject({
+        queueOperationId: "op_queued",
+      });
+      expect(mocks.findFirstOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ correlationKey: "payment:payment_1:refund-credit-note:10500:v2:review-task:task_1" }) })
+      );
+
+      // Raised: its link covers the cash, so the same request sizes to nothing.
+      mocks.findFirstOperation.mockResolvedValue(null);
+      mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(10500);
+      await expect(enqueueXeroRefundCreditNoteOperation("payment_1", 2500, { reviewTaskId: "task_1" })).resolves.toMatchObject({
+        queueOperationId: null,
+      });
+      expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("enqueueXeroAccountCreditNoteOperation", () => {
