@@ -35,9 +35,11 @@ reason: the one refund-ledger writer is exported for the combined-charge refund
   rather than copied, which is a two-line change to its signature.
 
 file: src/lib/xero-inbound/credit-note-repairs.ts
-lines: 1020
+lines: 1136
 reason: the repair's raise-only branch calls the Stripe-evidence cap at the
   point it computes the raise; the cap itself lives in organiser-child-refund.ts.
+  Re-measured at the #3630 compose: main's #3792 restored-booking refusal and
+  its audit row landed in the same file in parallel.
 
 file: src/app/api/bookings/[id]/guests/[guestId]/route.ts
 lines: 566

@@ -453,7 +453,7 @@ costed options live on those issues, not here.
   asserts all three strings name every subsystem in the set, so a copy-edit
   that drops one fails by name. The population here is three string literals in
   one file, which is why this half is pinned rather than reviewer-enforced like
-  the 368 unpinned write sites in `INV-OPS-012`.
+  the 369 unpinned write sites in `INV-OPS-012`.
 
 ## INV-PRIV-014
 
