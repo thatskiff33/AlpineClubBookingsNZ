@@ -375,7 +375,10 @@ describe("#2262 guard 1 — the manual settlement runs the ONE settlement body",
 
     await settle();
 
-    expect(order).toEqual(["global", "lodge", "member-credit", "derive-amount"]);
+    // #3792: the settle takes the member key itself (from its post-lock
+    // re-read, before the Payment upsert); the manual third tier re-enters it.
+    expect(order).toEqual(["global", "lodge", "member-credit", "member-credit", "derive-amount"]);
+    expect(new Set(mocks.lockMemberCreditLedger.mock.calls.map(([memberId]) => memberId)).size).toBe(1);
   });
 
   it("settles at the RE-DERIVED effective price, never a client-supplied amount, and the ledger mirror holds", async () => {

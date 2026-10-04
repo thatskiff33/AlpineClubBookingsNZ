@@ -168,7 +168,7 @@ are the literal `1`.
 | **Per-member night footprint** | `hashtext("booking-member-night"), hashtext(<memberId>)` | `lockBookingMemberNights(tx, guests)` (`booking-member-night-conflicts.ts`) | cross-lodge | Serialises the person-night guard ACROSS lodges (see below). |
 | **Per-trip hosting coverage** | `hashtext("hosting-coverage-group"), hashtext(<GroupBooking.id>)` | `lockHostingCoverageGroup` / `lockHostingCoverageGroups`, with `tryLockHostingCoverageGroup(s)` tried first (`adult-member-hosting-coverage-lock.ts`) | cross-account | Serialises `SAME_GROUP_TRIP` coverage (#3039, epic #2943). The owner key cannot do this job: it is `Booking.memberId`, the DEPENDENT's own account, while every Group Trip source belongs to somebody else — so two writers changing two bookings in one trip hold two DIFFERENT owner keys and are not serialised at all. Not the lodge key either: one lodge holds many unrelated trips. Taken immediately BEFORE the sorted owner keys, because the trip's membership is what decides which owners the reconciliation fan-out will name. Several trips are taken in sorted order, and EVERY acquisition is tried with `pg_try_advisory_xact_lock` before the blocking form — one transaction can discover two trip keys (a booking in one trip whose same-owner dependent sits in another), so sorting within a call cannot order keys discovered in two, and a conflict rolls the whole outer transaction back with the stable `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409 rather than waiting inside a booking transaction. Taken only where the lodge has `SAME_GROUP_TRIP` enabled AND the booking is in a trip. |
 | **Per-owner hosting coverage** | `hashtext("hosting-coverage-owner"), hashtext(<Booking.memberId>)` | `lockHostingCoverageOwner` / `lockHostingCoverageOwners` (`adult-member-hosting-coverage-lock.ts`) | cross-booking | Serialises `SAME_BOOKING_OWNER` coverage (#2576 §9): one booking's compliance depends on another booking of the SAME owner, so the key remains authoritative even though #2600 made allocation-participating confirmation and cancellation compose global → lodge. Taken LAST among the application lock families a caller composes, EXCEPT that since #3039 the per-TRIP hosting coverage key above sits immediately before it — so it is the second of the last two rather than the last. Roster-aware modification paths take global → lodge → roster-date → any applicable member keys → sorted queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-group → coverage-owner; queued incident reconciliation takes hosting policy-set → sorted claimed member-lifecycle keys → sorted claimed `Member FOR KEY SHARE` rows → coverage-group (only where the reconciled booking is in a Group Trip at a lodge with `SAME_GROUP_TRIP` on; the evaluator takes it fail-fast before it reads a sibling as cover) → coverage-owner. Paths that do not use roster or member keys omit those tiers. Ordinary producers try sorted owner keys before re-entering the blocking helper, while merge takes its sorted owner keys only after its one sorted participant `FOR UPDATE` statement. The key is taken only when the lodge actually has the scope enabled. |
-| **Per-member credit ledger** | `hashtext("member-credit-ledger"), hashtext(<memberId>)` | `lockMemberCreditLedger(memberId, tx)` (`member-credit.ts`) | — | A member's credit-ledger balance operations (spend, negative-adjustment validation, orphan-restore repair, the Xero inbound applied-credit repair, and the F20 pre-payment-reduction applied-credit clamp `clampAppliedCreditToBookingPrice`, taken inside the modification transaction only when the booking carries applied credit, through its give-back `giveBackAppliedCredit`, which a credit-paid booking's review share also goes through (#3791), taken inside an `EDIT_FINANCIAL_REVIEW` completion after its `lock(1)`, its claim and its re-price, only on the account-credit route with no captured payment, and the #2265 stored-election consumption `consumeStoredCreditElection`, taken inside the `create-payment-intent` pay transaction and the Internet Banking switch transaction only when the booking carries an outstanding election). |
+| **Per-member credit ledger** | `hashtext("member-credit-ledger"), hashtext(<memberId>)` | `lockMemberCreditLedger(memberId, tx)` (`member-credit.ts`) | — | A member's credit-ledger balance operations (spend, negative-adjustment validation, orphan-restore repair, every applied-credit restore (`restoreCreditFromBooking`, taken inside the caller's transaction after its `lock(1)` and lodge locks, #3792), the Xero inbound applied-credit repair, and the F20 pre-payment-reduction applied-credit clamp `clampAppliedCreditToBookingPrice`, taken inside the modification transaction only when the booking carries applied credit, through its give-back `giveBackAppliedCredit`, which a credit-paid booking's review share also goes through (#3791), taken inside an `EDIT_FINANCIAL_REVIEW` completion after its `lock(1)`, its claim and its re-price, only on the account-credit route with no captured payment, and the #2265 stored-election consumption `consumeStoredCreditElection`, taken inside the `create-payment-intent` pay transaction and the Internet Banking switch transaction only when the booking carries an outstanding election). |
 | **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`, `app/api/admin/deletion-requests/[id]/route.ts`, `nomination.ts` approval mapping, `admin-family-group-requests-service.ts`, `member-merge.ts`, `adult-member-hosting-coverage-drain.ts`) | — | Archive/delete of one member; account-deletion approval (the #1756 partner-share prefix — global cohort `lock(1)` + every affected lodge, sorted — and only then member lifecycle → shared standing-subject `Member FOR UPDATE NOWAIT` → exact queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-owner before deactivation and guest unlink); overwrite of one member by application-approval mapping (E10, #1936); linking/removing one member into/from a family group on admin request review; **member merge** (dual-lock on master + loser, E11 #1937, see below — merge takes the merge-only partner-share prefix, so every affected lodge key is held BEFORE this tier while the global cohort key is deliberately NOT taken at all, and the two `member-partner-link:` keys immediately AFTER it, #2595); and the queue-drain handshake that prevents a claimed hosting item from using identities while merge re-points them. |
 | **Membership application** | `hashtext(<application key>)` | `membershipApplicationLockKey` (`nomination.ts`) | — | State transitions of one membership application. |
 | **Membership applicant** | `hashtext(<applicant-email key>)` | `membershipApplicationApplicantLockKey` (`nomination.ts`) | — | Per-email applicant dedup at submit time. |
@@ -1413,7 +1413,12 @@ Never-captured cancellation and Internet-Banking hold expiry acquire global
 booking lock(1) first and the per-member credit-ledger lock second. While
 holding both, they query for any non-complete applied-credit deallocation
 before their first write. If one exists they defer the whole transition; a
-later retry computes the clearing amount from provider-converged slices. Hold
+later retry computes the clearing amount from provider-converged slices. The
+inbound reconcile's late capacity cancel (#3792) does the same: the reconcile
+takes its lodge key and then the member key at the top of its transaction
+(global → lodge → member), before its first `Payment` write, and the cancel
+throws the busy error, so the inbound event retries after its backoff, and
+restores the applied credit under the member lock. Hold
 expiry also re-reads the booking's invoice-payment links recorded since its
 live Xero read, under both locks before its first write, and keeps the hold if
 one exists (`INV-PAY-107`, #3643). The inbound link write takes no booking
@@ -3445,7 +3450,8 @@ then the transaction row's compare-and-set, then the `Payment` aggregate and its
 booking-ledger lines. No provider call runs inside it.
 
 **One order for the refunded total: `Payment` row, then refund rows, then
-transaction rows.** Every writer that holds more than one of them takes the
+transaction rows** — and, in a transaction that also takes the per-member
+credit-ledger key, that key before the `Payment` row (#3792, below). Every writer that holds more than one of them takes the
 `Payment` row first through `lockPaymentForRefundedTotal`: the card-refund
 writer, `applyLocalRefundAllocation` (joining the caller's transaction), and the
 paid-path cancel claim, right after its lodge capacity lock and before #3643's
@@ -4270,13 +4276,44 @@ second credit, and never aborts the caller's transaction. This removed the old
 cross-path dependence on all restore callers sharing `lock(1)`: moving a
 credit-restoring path to a different lock can no longer double a restore.
 
-Each restore caller still runs under `lock(1)` and its status-guarded claim
-remains the *primary* single-flight (the claim, not a description string,
-guarantees the surrounding side effects run once); the unique key is the
-structural backstop underneath it. The Xero inbound applied-credit repair
+Each cancel path's restore runs under `lock(1)` (and its lodge lock, where it
+takes one) and its status-guarded claim remains the *primary* single-flight (the
+claim, not a description string, guarantees the surrounding side effects run
+once); the unique key is the structural backstop underneath it. The orphan-heal
+restore is the exception: it holds the member key only. Inside a transaction
+`restoreCreditFromBooking` takes the **per-member credit ledger lock** itself,
+before it reads the applied rows (#3792), so the order is global → lodge →
+member at every caller, none takes `lock(1)` or a lodge lock after it, and a
+caller already holding the member key re-enters it. That is what lets the
+inbound repair below trust the restore row it reads: a restore in flight holds
+the member key until it commits. **The member key comes before the `Payment`
+row**, too: the inbound repair takes the member key and then updates
+`creditAppliedCents`, so a caller that locked or wrote the `Payment` row first
+and then waited for the key would deadlock against it (reproduced as `40P01`,
+#3792). The four restore callers that touch the row (the paid cancel before
+`lockPaymentForRefundedTotal`, the pending cancel before its `Payment` write,
+the settle before its `Payment` upsert, and the inbound reconcile before its
+receipt write) therefore take the member key explicitly, right after their
+lodge key. The settle and the inbound reconcile read the owner that key names
+**after** the lodge key, and their restore reuses that same id: member merge
+re-points `Booking.memberId` holding the lodge key but not `lock(1)`, so an owner
+read taken before the lodge key can name a member the booking no longer has,
+and the restore would then take a second member key after the `Payment` row.
+The caller set and both orders are pinned by
+`bed-allocation-lock-topology-contract.test.ts`, and the interleaving is proved
+against PostgreSQL in `ib-capacity-cancel-credit-restore.realdb.test.ts`. The Xero inbound applied-credit repair
 (`xero-inbound/credit-note-repairs.ts`) takes the **per-member credit ledger
 lock** (not `lock(1)`) so its `BOOKING_APPLIED` writes mutually exclude the
-credit spend engine, which takes the same key. The orphan-heal repair
+credit spend engine, which takes the same key. Under that lock it also reads the
+booking's restore row: for a booking whose applied credit was already restored,
+a provider allocation change in either direction (a de-allocation that would
+credit the member, or a raise that would debit them) writes no `BOOKING_APPLIED`
+row. After commit it is alerted (`notifyXeroSyncError`,
+`applied-credit-restored-booking-allocation-change`) and recorded as a critical
+`xero` audit row (`xero.allocation.restored-booking-change-refused`, one per
+booking, note, direction and amount), because the email alert is throttled to
+one an hour across every Xero error type. No cancel path's restore can be paid
+twice or charged back (#3792, `INV-PAY-019`). The orphan-heal repair
 (`orphaned-applied-credit-backfill.ts`) also takes the per-member credit ledger
 lock and re-derives an "already restored?" predicate.
 

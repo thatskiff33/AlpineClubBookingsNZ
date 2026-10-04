@@ -366,7 +366,10 @@ describe("card first, then bank (#3638)", () => {
       // PAID), credited or refunded.
       expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
       expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
-      expect(mocks.acquireLodgeCapacityLock).not.toHaveBeenCalled();
+      // #3792: the lodge key is taken once, at the top of the reconcile, before
+      // the member key and the receipt's Payment write (INV-LOCK-002); this arm
+      // still claims nothing (no booking update above).
+      expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledTimes(1);
 
       // The durable admin-only record, written in the settle transaction
       // (delta D1) so it commits with the receipt.
@@ -873,7 +876,8 @@ describe("a replay on a completed booking (#3638)", () => {
 
     expect(result.skippedAlreadyPaidBookings).toBe(1);
     expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
-    expect(mocks.acquireLodgeCapacityLock).not.toHaveBeenCalled();
+    // #3792: the lodge key once, at the reconcile's top; nothing is claimed.
+    expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledTimes(1);
     expect(mocks.sendBookingConfirmedEmail).not.toHaveBeenCalled();
     expect(mocks.txBookingEventCreate).not.toHaveBeenCalled();
   });
