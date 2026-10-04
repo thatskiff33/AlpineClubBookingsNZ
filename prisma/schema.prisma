@@ -5024,11 +5024,45 @@ model OtherLodge {
   bookingOfficerEmail String?  @db.VarChar(320)
   bookingOfficerPhone String?  @db.VarChar(50)
   bedCapacity         Int?
+  // Lodge details shared with the Alpine Central Server (#50). Text is capped to
+  // the server's lengths, yes/no fields default to no for every existing row, and
+  // the season starts are calendar dates (INV-DATE-026), never instants.
+  siteUrl                String?   @db.VarChar(500)
+  bookingPath            String?   @db.VarChar(300)
+  requiresLodgeCustodian Boolean   @default(false)
+  freeWifi               Boolean   @default(false)
+  quietRoom              Boolean   @default(false)
+  dryingRoom             Boolean   @default(false)
+  sharedKitchen          Boolean   @default(false)
+  wheelchairAccessible   Boolean   @default(false)
+  breakfastIncluded      Boolean   @default(false)
+  lunchIncluded          Boolean   @default(false)
+  dinnerIncluded         Boolean   @default(false)
+  cancellationPeriod     String?   @db.VarChar(200)
+  winterSeasonStart      DateTime? @db.Date
+  summerSeasonStart      DateTime? @db.Date
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
+  amenities           Amenity[]
   bookingRequests     BookingRequest[]
   bookings            Booking[]
+}
+
+// A free-form extra an other lodge offers (name plus optional description),
+// mirrored from the Alpine Central Server's Amenity table (#50). Many per lodge,
+// name unique within the lodge, deleted with the lodge. The sync and the admin
+// routes replace a lodge's whole set at once, keyed on (otherLodgeId, name).
+model Amenity {
+  id           String     @id @default(cuid())
+  otherLodgeId String
+  otherLodge   OtherLodge @relation(fields: [otherLodgeId], references: [id], onDelete: Cascade)
+  name         String     @db.VarChar(120)
+  description  String?    @db.VarChar(1000)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([otherLodgeId, name])
 }
 
 // Alpine Central Server (ServerNZ) connection — non-secret settings only. The
