@@ -3746,14 +3746,29 @@ describe("review finding source/schema contracts", () => {
   });
 
   it("keeps promo review-step text on directly gated semantic/solid pairs (F28)", () => {
+    // #3492: the review step's promo chips moved into ONE chips component,
+    // which the code list (wizard, edit panel, Book on Behalf) and the one-code
+    // edit card both draw — so the pair is checked where the markup lives, and
+    // each consumer must draw the chips through it.
     const reviewStep = readRepoFile(
       "src/app/(authenticated)/book/_components/review-step.tsx",
     );
-    expect(reviewStep).toContain('className="mb-2 text-sm font-medium text-foreground"');
-    expect(reviewStep).toContain(
+    const promoChips = readRepoFile("src/components/promo-code-chips.tsx");
+    expect(promoChips).toContain('className="mb-2 text-sm font-medium text-foreground"');
+    expect(promoChips).toContain(
       'className="font-sans font-normal text-brand-charcoal"',
     );
     expect(reviewStep).not.toContain("dark:text-brand-gold");
+    expect(promoChips).not.toContain("dark:text-brand-gold");
+    for (const consumer of [
+      "src/components/promo-code-list.tsx",
+      "src/components/edit-booking/promo-code-card.tsx",
+    ]) {
+      const source = readRepoFile(consumer);
+      expect(source).toContain("<PromoCodeChips");
+      expect(source).not.toContain("app-chip-brand");
+      expect(source).not.toContain("dark:text-brand-gold");
+    }
   });
 
   it("hard-reloads the waitlist confirm success path so the CTA can't stick on Confirming (F28)", () => {

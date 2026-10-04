@@ -1410,7 +1410,8 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // unpinned `security`. RE-MEASURED with `pnpm run audit:census`.
     // 367 -> 368 (#3827): the guest-acceptance re-price record, unpinned
     // `booking`. RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 128, unpinned: 368 });
+    // 368 -> 369 (#3492): the guest promo-code lookup, unpinned `privacy`.
+    ).toEqual({ pinned: 128, unpinned: 369 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

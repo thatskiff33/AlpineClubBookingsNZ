@@ -998,7 +998,7 @@ describe("consent columns have exactly one writer", () => {
     "src/lib/waitlist.ts":
       "the waitlist offer hands each guest's stored consent to the promo re-price",
     "src/app/api/promo-codes/validate/route.ts":
-      "the promo preview marks a guest the booker says awaits acceptance as pending",
+      "the promo preview marks a guest the booker says awaits acceptance as pending, and an edit preview reads an owned booking's stored consent (#3492)",
     // The override door. A READER, and the narrowest kind: one `where`/`select`
     // pair asking which of a live booking's member rows are operationally
     // present, so a party refused by a booking path reproduces the SAME violation

@@ -238,8 +238,8 @@ export async function buildBookingDetailEditorData({
     finalPriceCents: booking.finalPriceCents,
     // #3826: the editor shows and edits one code. #3828: a booking carrying
     // several shows one money row per code (`promoLines`) and offers no
-    // one-code edit (`promo: null`) until epic #3813's chips child (C4)
-    // widens the panel.
+    // one-code edit (`promo: null`); #3492's list editor edits them where the
+    // club's `multiPromoCodes` switch is on.
     ...bookingDetailPromoFields(booking),
     hasNonMembers: booking.hasNonMembers,
     nonMemberHoldUntil: booking.nonMemberHoldUntil?.toISOString() ?? null,

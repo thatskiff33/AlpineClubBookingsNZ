@@ -96,9 +96,10 @@ export interface BookingData {
   promo: PromoInfo | null;
   /**
    * #3828: set (with `promo: null`) when the booking carries several codes,
-   * each with its own adjustment. The panel's one-code controls are locked
-   * then — the legacy one-code request would release the other codes — until
-   * epic #3813's chips child edits the list.
+   * each with its own adjustment, in the booker's order. #3492's list editor
+   * starts from it where the club's `multiPromoCodes` switch is on; elsewhere
+   * the panel shows the codes read-only, because the legacy one-code request
+   * would release the other codes.
    */
   promoLines?: Array<PromoInfo & { amountCents: number }>;
   canEditNonMemberGuestNames: boolean;

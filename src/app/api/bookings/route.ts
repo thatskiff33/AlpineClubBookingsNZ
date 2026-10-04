@@ -142,6 +142,7 @@ import {
   hasAdminAccess,
 } from "@/lib/access-roles";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
+import { refuseOnBehalfUnlessBookingOfficer } from "@/lib/on-behalf-booking";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
@@ -264,9 +265,8 @@ export async function POST(request: NextRequest) {
   // books for itself through the member flow under full member rules (#1442).
   const isMember = hasAccessRole(session.user, "USER");
   // bookings:edit holders (Full Admin, Booking Officer, custom roles) may
-  // create on-behalf bookings — aligned with the modification path (#1313).
-  const canManageBookings =
-    bookingManagementAuthorizationRole(session.user) === "ADMIN";
+  // create on-behalf bookings — aligned with the modification path (#1313);
+  // `refuseOnBehalfUnlessBookingOfficer` below is the one check.
   const actorRole = bookingManagementAuthorizationRole(session.user);
 
   const json = await parseJsonRequestBody(request);
@@ -361,9 +361,8 @@ export async function POST(request: NextRequest) {
   }
 
   if (parsed.data.forMemberId) {
-    if (!canManageBookings) {
-      return NextResponse.json({ error: "Only admins can book on behalf of another member" }, { status: 403 });
-    }
+    const onBehalfRefusal = refuseOnBehalfUnlessBookingOfficer(session.user, parsed.data.forMemberId);
+    if (onBehalfRefusal) return onBehalfRefusal;
     // Separation of duties: no on-behalf actor may target themselves — their
     // own bookings go through the member flow and normal payment paths.
     if (parsed.data.forMemberId === session.user.id) {
