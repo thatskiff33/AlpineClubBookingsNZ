@@ -18,6 +18,7 @@ import {
   type EditReviewSettlementRoute,
 } from "@/lib/edit-financial-review-settlement";
 import {
+  giveBackCancelledShareCredit,
   writeEditReviewAccountCredit,
   type EditReviewAccountCreditOutcome,
 } from "@/lib/edit-financial-review-account-credit";
@@ -302,9 +303,12 @@ export async function resolveManualRefundTask(
           amountCents: settlement.amountCents,
           hasIssuedXeroInvoice,
           direction: settlementDirection,
+          club: { zone: clubZone, format },
           store: tx,
         })
       : null;
+    // #3835: what actually goes back - by card or by hand, netted against a cancellation.
+    const settledCents = settlementRoute && "refundCents" in settlementRoute ? settlementRoute.refundCents + settlementRoute.creditBackCents : (settlement?.amountCents ?? null);
 
     // #3191/#3219 D2: the night prices, checked BEFORE the claim so a refusal
     // leaves the task OPEN - one plan per repairable strand since #3498.
@@ -357,6 +361,11 @@ export async function resolveManualRefundTask(
     }
 
     if (settlement && settlementRoute) {
+      // #3835: the credit part goes back FIRST: member ledger lock before any Payment row (INV-LOCK-002).
+      if ("creditBackCents" in settlementRoute && settlementRoute.creditBackCents > 0) {
+        const memberId = requireMemberCreditRecipient(bookingOwner(task.booking).memberId);
+        await giveBackCancelledShareCredit({ memberId, bookingId: task.bookingId, cents: settlementRoute.creditBackCents, format, store: tx }).catch((error: unknown) => { throw settlementWriteRefusal(error); });
+      }
       // #2797 (owner decision D2) and #3032: the money moves only NOW, after the
       // claim, so a lost claim moves nothing at all. `applyLocalRefundAllocation`
       // INCREMENTS `refundedAmountCents` and is not idempotent - its only
@@ -368,10 +377,10 @@ export async function resolveManualRefundTask(
       // before the club handed anything back, which is the whole reason the task
       // exists.
       try {
-        if (settlementRoute.kind === "local-allocation") {
+        if (settlementRoute.kind === "local-allocation" && settlementRoute.refundCents > 0) {
           await applyLocalRefundAllocation({
             paymentId: settlementRoute.paymentId,
-            amountCents: settlement.amountCents,
+            amountCents: settlementRoute.refundCents,
             store: tx,
           });
         }
@@ -406,12 +415,12 @@ export async function resolveManualRefundTask(
             store: tx,
           });
         }
-        else if (settlementRoute.kind === "stripe-refund") {
+        else if (settlementRoute.kind === "stripe-refund" && settlementRoute.refundCents > 0) {
           await enqueueEditFinancialReviewRefundRecovery({
             bookingId: task.bookingId,
             paymentId: settlementRoute.paymentId,
             taskId: task.id,
-            amountCents: settlement.amountCents,
+            amountCents: settlementRoute.refundCents,
             allocationPlan: settlementRoute.allocation,
             store: tx,
           });
@@ -420,12 +429,12 @@ export async function resolveManualRefundTask(
         throw settlementWriteRefusal(error);
       }
       // #3599: the money the club handed back by hand, on the booking ledger.
-      if (settlementRoute.kind === "local-allocation") {
+      if (settlementRoute.kind === "local-allocation" && settlementRoute.refundCents > 0) {
         await postHandBackLedgerLine({
           bookingId: task.bookingId,
           lodgeId: task.booking.lodgeId,
           manualRefundTaskId: task.id,
-          amountCents: settlement.amountCents,
+          amountCents: settlementRoute.refundCents,
           refundMethod: refundMethodForEditReviewRoute(settlementRoute),
           paymentSource: task.payment?.source ?? null,
           officerMemberId: actingMemberId,
@@ -500,7 +509,7 @@ export async function resolveManualRefundTask(
         todayAtClub,
         hasIssuedXeroInvoice,
         settlementRoute,
-        settlementAmountCents: settlement?.amountCents ?? null,
+        settlementAmountCents: settledCents,
         settlementDirection: settlement ? settlementDirection : null,
         store: tx,
       });
@@ -563,8 +572,8 @@ export async function resolveManualRefundTask(
        * rather than `REFUNDED` - the member got credit, not their money back.
        */
       recordedRefund:
-        settlement && settlementRoute?.kind === "local-allocation"
-          ? { amountCents: settlement.amountCents }
+        settlement && settlementRoute?.kind === "local-allocation" && settlementRoute.refundCents > 0
+          ? { amountCents: settlementRoute.refundCents }
           : null,
       /**
        * #3032: the two routes whose money moves OUTSIDE this transaction, carried
@@ -572,7 +581,7 @@ export async function resolveManualRefundTask(
        * outcome, including a dismissal.
        */
       settlementRoute,
-      settlementAmountCents: settlement?.amountCents ?? null,
+      settlementAmountCents: settledCents,
       /** #3791: what the account-credit route gave back and minted, else null. */
       accountCredit: accountCredit as EditReviewAccountCreditOutcome | null,
       /** #3170: which way this completion sent the money, or null on a dismissal. */

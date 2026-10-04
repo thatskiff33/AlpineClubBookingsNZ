@@ -30,8 +30,14 @@ const OWNER = "@thatskiff33";
  * refund and settlement functions — measured 137 of 1132 (12.1%). 15% leaves
  * room for new money modules and still reds a glob that starts sweeping in
  * unrelated code; raise it only with the modules that justify it.
+ *
+ * 16% from #3583 PR 2 (5 Oct 2026, measured 188 of 1253 = 15.004%): the
+ * booking ledger's back-post (`booking-ledger-back-post.ts` and its
+ * `-report.ts`) writes money lines and is owned by `booking-ledger-*.ts`, as is
+ * #3854's group-settlement poster (`booking-ledger-group-settlement-*.ts` and
+ * the census's `-group.ts`), which follows it.
  */
-const MAX_OWNED_SRC_LIB_SHARE = 0.15;
+const MAX_OWNED_SRC_LIB_SHARE = 0.16;
 
 /**
  * Outside `src/lib`, a share of one directory bounds nothing, so every pattern

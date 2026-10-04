@@ -102,13 +102,13 @@ if (RETRY_BACKOFF_MINUTES.length !== MAX_PAYMENT_RECOVERY_ATTEMPTS) {
  * `payment-recovery-terminal-failure-census.test.ts` now pins that there are
  * exactly these two plus the one write.
  */
-const CLAIMABLE_PAYMENT_RECOVERY_STATUSES = [
+export const CLAIMABLE_PAYMENT_RECOVERY_STATUSES = [
   PaymentRecoveryOperationStatus.PENDING,
   PaymentRecoveryOperationStatus.FAILED,
 ] as const;
 
 /** Everything a live operation can be. Excludes only the terminal SUCCEEDED. */
-const NON_TERMINAL_PAYMENT_RECOVERY_STATUSES = [
+export const NON_TERMINAL_PAYMENT_RECOVERY_STATUSES = [
   PaymentRecoveryOperationStatus.PENDING,
   PaymentRecoveryOperationStatus.PROCESSING,
   PaymentRecoveryOperationStatus.FAILED,
