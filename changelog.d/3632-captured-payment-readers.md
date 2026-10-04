@@ -13,8 +13,3 @@
   an inbound credit-note repair can make an unpaid bank-transfer payment's
   mirror read refunded. The `--json` keys `pending` / `pendingExposureCents`
   are now `unverified` / `unverifiedExposureCents`.
-
-- **Group cancellation's `SUCCEEDED`-only child test is kept and now says why.**
-  Its refund plan sizes each child at the full price and is replayed verbatim
-  on recovery, so admitting a part-refunded child would refund it twice. #3653
-  owns the organiser-settled child correction before the #3503 wave merges.
