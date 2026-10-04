@@ -464,6 +464,8 @@ async function mintFullPriceIntent(): Promise<string> {
 
     const reload = await payStep();
     expect(reload.status).toBe(409);
+    // Told why, not sent to reload a booking that is still payable.
+    expect(reload.body.error).toMatch(/credit has not been applied yet/);
     expect(fake.intents.get(oldIntent)!.status).toBe("requires_payment_method");
     const state = await money();
     expect(state.appliedRows).toBe(0);
