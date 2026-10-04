@@ -482,8 +482,9 @@ export const SINGLETONS: SingletonSpec[] = [
         "reads today; a source lodge id is not portable across installs",
       assignSchoolTeachersAsHutLeaders:
         "retired by #3819: #3416's club-wide switch, replaced by the per-lodge " +
-        "LodgeSettings school hut-leader kinds; nothing reads it, and a later " +
-        "contract release drops the column. An older bundle's value is ignored",
+        "school hut-leader ticks that travel in each lodge.json; a later contract " +
+        "release drops the column. An older bundle's value is not written here: " +
+        "the lodge-config importer maps it onto every imported lodge's teacher tick",
     },
     defaults: () => DEFAULT_BOOKING_REQUEST_SETTINGS,
   },

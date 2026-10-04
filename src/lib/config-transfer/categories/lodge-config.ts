@@ -33,12 +33,22 @@ import {
   loadLodgeCapacities,
   validateBundleLodgeCapacity,
 } from "./lodge-capacity";
+import {
+  applyBundleSchoolHutLeaderKinds,
+  legacyTeacherSwitch,
+  loadLodgeSchoolHutLeaderKinds,
+  schoolHutLeaderKindsChange,
+  validateBundleSchoolHutLeaderKinds,
+} from "./lodge-school-hut-leaders";
+import type { SchoolHutLeaderKinds } from "@/lib/school-hut-leader-kinds";
 
 // lodge-config category (part 1): lodges + their rooms + beds + seasons + rates
 // — the structural "multi-lodge" core. Each lodge is a self-contained folder,
 //   lodge-config/lodges/<slug>/
 //     lodge.json          { slug, name, active, travelNote, isDefault, doorCode?,
-//                           capacity? }  (capacity: ./lodge-capacity.ts, #3407)
+//                           capacity?, schoolHutLeaderKinds? }
+//                           (capacity: ./lodge-capacity.ts, #3407;
+//                           schoolHutLeaderKinds: ./lodge-school-hut-leaders.ts, #3819)
 //     rooms.csv           name, sortOrder, active, notes
 //     beds.csv            roomName, name, sortOrder, active
 //     seasons.csv         name, type, startDate, endDate, active,
@@ -84,6 +94,8 @@ const LODGE_FIELDS = [
   "showGuestPhonesOnScreens",
   // Not a Lodge column: see ./lodge-capacity.ts (#3407).
   "capacity",
+  // Not a Lodge column either: see ./lodge-school-hut-leaders.ts (#3819).
+  "schoolHutLeaderKinds",
 ] as const;
 
 const DISPLAY_GRANULARITIES = [
@@ -271,6 +283,7 @@ interface LodgeCurrent {
   displayNotice: string | null;
   showGuestPhonesOnScreens: boolean;
   capacity: number | null; // resolved LodgeSettings.capacity (#3407)
+  schoolHutLeaderKinds: SchoolHutLeaderKinds; // resolved ticks (#3819)
 }
 interface SeasonCurrent {
   id: string;
@@ -314,8 +327,12 @@ async function loadLodgeBatch(db: ReadDb, slugs: string[]): Promise<LodgeBatch> 
     },
   });
   const capacities = await loadLodgeCapacities(db, lodgeRows.map((l) => l.id));
+  const kinds = await loadLodgeSchoolHutLeaderKinds(db, lodgeRows.map((l) => l.id));
   const lodges = new Map(
-    lodgeRows.map((l, i) => [l.slug, { ...l, capacity: capacities[i] ?? null }]),
+    lodgeRows.map((l, i) => [
+      l.slug,
+      { ...l, capacity: capacities[i] ?? null, schoolHutLeaderKinds: kinds[i]! },
+    ]),
   );
   const lodgeIds = lodgeRows.map((l) => l.id);
 
@@ -423,6 +440,7 @@ export const lodgeConfigExporter: CategoryExporter = {
       },
     });
     const capacities = await loadLodgeCapacities(ctx.db, lodges.map((l) => l.id));
+    const schoolKinds = await loadLodgeSchoolHutLeaderKinds(ctx.db, lodges.map((l) => l.id));
     const rooms = await ctx.db.lodgeRoom.findMany({
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
       select: { name: true, sortOrder: true, active: true, notes: true, lodge: { select: { slug: true } } },
@@ -477,6 +495,7 @@ export const lodgeConfigExporter: CategoryExporter = {
       if (ctx.includeDoorCodes) descriptor.doorCode = lodge.doorCode;
       const capacity = capacities[index];
       if (typeof capacity === "number") descriptor.capacity = capacity;
+      descriptor.schoolHutLeaderKinds = schoolKinds[index];
       entries.push({
         path: paths.lodge,
         category: "lodge-config",
@@ -585,6 +604,7 @@ function parseLodgeFolder(
     delete descriptor.showGuestPhonesOnScreens;
   }
   validateBundleLodgeCapacity(descriptor, paths.lodge, errors);
+  validateBundleSchoolHutLeaderKinds(descriptor, paths.lodge, errors);
 
   const out: ParsedLodgeRows = { slug, descriptor, rooms: [], beds: [], seasons: [], rates: [] };
 
@@ -728,6 +748,8 @@ async function planLodgeConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
   // The default-lodge designation is applied by a dedicated pass; fingerprint
   // the CURRENT default so a concurrent default change trips the drift guard.
   fingerprintParts.push(`default-lodge:${batch.currentDefaultSlug ?? "none"}`);
+  // An older bundle's club-wide teacher switch, mapped per lodge (#3819).
+  const legacySwitch = legacyTeacherSwitch(ctx.files);
 
   for (const segment of segments) {
     const parsed = parseLodgeFolder(ctx.files, segment, ctx.mode, batch, errors);
@@ -758,6 +780,9 @@ async function planLodgeConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
         capacity === undefined ? write : { ...write, capacity },
         currentLodge,
       );
+      if (schoolHutLeaderKindsChange(descriptor, currentLodge?.schoolHutLeaderKinds, legacySwitch)) {
+        changed.push("schoolHutLeaderKinds");
+      }
       items.push({ entity: "lodge", key: slug, action: planActionFor(currentLodge, changed), changedFields: changed.length ? changed : undefined });
       // Door-code disclosure: creating with a code, or changing one.
       const writesCode =
@@ -866,6 +891,7 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
     .map((seg) => folderLodgeSlug(ctx.files, seg))
     .filter((s): s is string => s !== null);
   const batch = await loadLodgeBatch(ctx.tx, slugs);
+  const legacySwitch = legacyTeacherSwitch(ctx.files);
 
   for (const segment of segments) {
     const parsed = parseLodgeFolder(ctx.files, segment, ctx.mode, batch, errors);
@@ -899,7 +925,11 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
       const capacityChanged = await applyBundleLodgeCapacity(ctx.tx, {
         descriptor, lodgeId: currentLodge.id, current: currentLodge.capacity, actorMemberId: ctx.actorMemberId,
       });
-      if (changed.length > 0 || capacityChanged) result.updated += 1;
+      const kindsChanged = await applyBundleSchoolHutLeaderKinds(ctx.tx, {
+        descriptor, lodgeId: currentLodge.id, current: currentLodge.schoolHutLeaderKinds,
+        legacySwitch, actorMemberId: ctx.actorMemberId,
+      });
+      if (changed.length > 0 || capacityChanged || kindsChanged) result.updated += 1;
       else result.unchanged += 1;
       lodgeId = currentLodge.id;
     } else {
@@ -913,6 +943,9 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
       // #3407: born with its settings row, as Add lodge does.
       await applyBundleLodgeCapacity(ctx.tx, {
         descriptor, lodgeId, current: undefined, actorMemberId: ctx.actorMemberId,
+      });
+      await applyBundleSchoolHutLeaderKinds(ctx.tx, {
+        descriptor, lodgeId, current: undefined, legacySwitch, actorMemberId: ctx.actorMemberId,
       });
     }
 

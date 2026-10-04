@@ -77,9 +77,9 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
   LodgeSettings:
     "per-lodge physical/operational settings (bed capacity, school-group soft cap) " +
     "keyed to a specific lodge via lodgeId; lodge identity travels through the " +
-    "lodge-config category's Lodge rows, and capacity rides in each lodge.json " +
-    "and is written by that importer (#3407), not through this singleton — " +
-    "instance-local",
+    "lodge-config category's Lodge rows, and capacity (#3407) and the school " +
+    "hut-leader ticks (#3819) ride in each lodge.json and are written by that " +
+    "importer, not through this singleton — instance-local",
   SetupProgress:
     "deployment-local setup-wizard progress (which steps THIS install has " +
     "completed/skipped, and by whom); operational install state, not portable " +

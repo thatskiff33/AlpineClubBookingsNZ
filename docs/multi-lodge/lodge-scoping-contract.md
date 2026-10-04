@@ -648,8 +648,12 @@ record the outcome here when decided:
   import that carries a lodge's `capacity` (#3407) writes the lodge's own row,
   or the legacy row only when that row is already linked to this lodge; it
   never claims an unlinked legacy row, because that row serves every lodge
-  without an own row. A new own row carries across the soft cap an unlinked
-  legacy row was serving the lodge.
+  without an own row. A new own row carries across everything an unlinked
+  legacy row was serving the lodge — capacity, soft cap and the school
+  hut-leader ticks (#3819) — and so does every other path that creates or
+  claims a lodge's row: the school hut-leader save, and an admin capacity edit
+  that claims an unlinked legacy row, which first gives each other lodge it
+  served its own row with those values.
   `BedAllocationSettings` reads the same compatibility chain, but its admin
   API always requires one active lodge: a write updates `default` only when no
   lodge-id row exists and that legacy row is already linked to this lodge;

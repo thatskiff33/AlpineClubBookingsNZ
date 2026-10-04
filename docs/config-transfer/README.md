@@ -175,8 +175,9 @@ deeper reference for what each category contains and the import safety model.
     - `LodgeSettings` — per-lodge physical/operational settings (bed capacity,
       school-group soft cap) keyed to a specific lodge via `lodgeId`; lodge
       identity travels through the **lodge-config** category's Lodge rows, and
-      each lodge's capacity rides in its `lodge.json` (#3407), not through this
-      singleton. The soft cap and the hut-leader lookahead stay instance-local.
+      each lodge's capacity (#3407) and its school hut-leader ticks (#3819)
+      ride in its `lodge.json`, not through this singleton. The soft cap and
+      the hut-leader lookahead stay instance-local.
     - `SetupProgress` — deployment-local setup-wizard progress (which steps THIS
       install completed/skipped); operational install state, not club policy.
     - `AiAssistantSettings` — the deployment-specific AI monthly spend cap; an
@@ -335,7 +336,11 @@ deeper reference for what each category contains and the import safety model.
   lodge's bed-allocation settings. Each
   lodge is a **self-contained folder**, `lodge-config/lodges/<slug>/` with a
   `lodge.json` descriptor (slug, name, active, travel note, `isDefault`, door
-  code if opted in, and `capacity` when the lodge has one) plus `rooms.csv` / `beds.csv` / `seasons.csv` /
+  code if opted in, `capacity` when the lodge has one, and
+  `schoolHutLeaderKinds` — the four "Who can be hut leader for school bookings"
+  ticks the lodge resolves to, #3819; an older bundle without them has its
+  club-wide `assignSchoolTeachersAsHutLeaders` mapped onto each imported
+  lodge's teacher tick) plus `rooms.csv` / `beds.csv` / `seasons.csv` /
   `season-rates.csv` / `instructions.csv` / `chore-templates.csv` /
   `bed-allocation-settings.json`. The lodge a row belongs to is
   **implied by its folder**, not a CSV column, so a whole lodge is easy to add,
