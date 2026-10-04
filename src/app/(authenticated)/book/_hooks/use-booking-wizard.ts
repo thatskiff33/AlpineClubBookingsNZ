@@ -19,9 +19,8 @@ import { type PromoResult } from "@/components/promo-code-input";
 import {
   appliedPromosFinalPriceCents,
   createRequestPromoFields,
-  promoCodeListEntries,
-  validatePromoCodeList,
 } from "@/components/promo-code-list-client";
+import { useWorkingBeeDiscount } from "./use-working-bee-discount";
 import {
   getBookingErrorPaymentTargets,
   type BookingErrorPaymentTarget,
@@ -2172,98 +2171,20 @@ export function useBookingWizard() {
   ]);
 
   // Apply or refresh the working bee discount preview when a work party
-  // event is selected (or the booking changes while one is selected).
-  useEffect(() => {
-    if (!scopedLodgeId || !checkIn || !checkOut || !priceQuote) {
-      return;
-    }
-
-    // #3492 / D-3813-3: with the club's `multiPromoCodes` switch on, a working
-    // bee COMBINES with codes the booker already applied — it claims its
-    // in-window nights first and the codes are re-priced after it (or without
-    // it, once it is unticked or cleared), in one several-code preview.
-    const codes = appliedPromosRef.current.filter((promo) => promo.code && !promo.workPartyEvent);
-    if (combineWorkPartyWithCodes && codes.length > 0) {
-      const hadWorkParty = appliedPromosRef.current.some((promo) => promo.workPartyEvent);
-      if (!selectedWorkPartyEventId && !hadWorkParty) return;
-      let cancelled = false;
-      setWorkPartyError("");
-      void validatePromoCodeList({
-        entries: promoCodeListEntries(codes),
-        appliesTo: new Map(codes.flatMap((promo) => (promo.appliesTo ? [[promo.code!, promo.appliesTo]] : []))),
-        checkIn,
-        checkOut,
-        guests: reviewGuestPayload,
-        lodgeId: scopedLodgeId,
-        ...(selectedWorkPartyEventId ? { workPartyEventId: selectedWorkPartyEventId } : {}),
-      }).then((outcome) => {
-        if (cancelled) return;
-        if (outcome.ok) {
-          setAppliedPromos(outcome.applied);
-          return;
-        }
-        // Keep the booker's codes; say why the working bee did not join them.
-        setAppliedPromos(codes);
-        setWorkPartyError(outcome.error);
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-    if (!selectedWorkPartyEventId) return;
-
-    let cancelled = false;
-    const requestedLodgeId = scopedLodgeId;
-    setWorkPartyError("");
-
-    fetch("/api/promo-codes/validate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        lodgeId: requestedLodgeId,
-        workPartyEventId: selectedWorkPartyEventId,
-        checkIn,
-        checkOut,
-        guests: reviewGuestPayload.map((g) => ({
-          ageTier: g.ageTier,
-          isMember: g.isMember,
-          ...(g.memberId ? { memberId: g.memberId } : {}),
-          ...(g.stayStart ? { stayStart: g.stayStart } : {}),
-          ...(g.stayEnd ? { stayEnd: g.stayEnd } : {}),
-        })),
-      }),
-    })
-      .then(async (res) => {
-        const data = await res.json();
-        if (cancelled) return;
-        if (!res.ok || data.valid === false) {
-          setAppliedPromos([]);
-          setWorkPartyError(data.error || "This working bee event could not be applied");
-          return;
-        }
-        setAppliedPromos([{
-          code: data.code,
-          description: data.description,
-          type: data.type,
-          discountCents: data.discountCents,
-          promoAdjustmentCents: data.promoAdjustmentCents,
-          totalPriceCents: data.totalPriceCents,
-          finalPriceCents: data.finalPriceCents,
-          workPartyEvent: data.workPartyEvent,
-        }]);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setAppliedPromos([]);
-          setWorkPartyError("Failed to apply the working bee discount");
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopedLodgeId, selectedWorkPartyEventId, checkIn, checkOut, priceQuote, JSON.stringify(reviewGuestPayload), combineWorkPartyWithCodes]);
+  // event is selected (or the booking changes while one is selected); with the
+  // club's `multiPromoCodes` switch on it combines with the codes (D-3813-3).
+  useWorkingBeeDiscount({
+    scopedLodgeId,
+    selectedWorkPartyEventId,
+    checkIn,
+    checkOut,
+    priceQuote,
+    reviewGuestPayload,
+    combineWorkPartyWithCodes,
+    appliedPromosRef,
+    setAppliedPromos,
+    setWorkPartyError,
+  });
 
   const wizardSteps: Array<{ id: BookingWizardStep; label: string }> = [
     { id: "dates", label: "Select Dates" },
