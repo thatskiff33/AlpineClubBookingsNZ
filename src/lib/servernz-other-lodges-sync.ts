@@ -1,4 +1,14 @@
 import "server-only";
+import {
+  OTHER_LODGE_DATA_SELECT,
+  otherLodgeAmenitiesDiffer,
+  otherLodgeAmenitiesSelect,
+  otherLodgeDataColumns,
+  otherLodgeDataDiffers,
+  replaceOtherLodgeAmenities,
+  serializeOtherLodgeAmenities,
+  serializeOtherLodgeData,
+} from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
 import {
   uploadOtherLodges,
@@ -27,14 +37,13 @@ export interface UploadSummary extends OtherLodgesUploadResult {
   sent: number;
 }
 
-// The contact/capacity columns that carry a lodge's data. Kept in one place so
-// the upload projection and the download diff stay in step.
+// The columns that carry a lodge's data, plus its amenity list. The list itself
+// lives in `@/lib/other-lodges` (`OTHER_LODGE_DATA_FIELDS`), shared with the
+// admin routes and the serializer, so the upload projection, the download
+// merge and the "differs" check below cannot drift from what the admin can edit.
 const LODGE_DATA_SELECT = {
-  location: true,
-  bookingOfficerName: true,
-  bookingOfficerEmail: true,
-  bookingOfficerPhone: true,
-  bedCapacity: true,
+  ...OTHER_LODGE_DATA_SELECT,
+  amenities: otherLodgeAmenitiesSelect,
 } as const;
 
 /**
@@ -62,14 +71,14 @@ export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
     return { created: 0, updated: 0, unchanged: 0, skipped: 0, results: [], sent: 0 };
   }
 
+  // Every data column (dates as `YYYY-MM-DD`) and the WHOLE amenity list: the
+  // server replaces its set for the lodge with what is sent, so a partial list
+  // would delete the rest.
   const result = await uploadOtherLodges(
     lodges.map((l) => ({
       name: l.name,
-      location: l.location,
-      bookingOfficerName: l.bookingOfficerName,
-      bookingOfficerEmail: l.bookingOfficerEmail,
-      bookingOfficerPhone: l.bookingOfficerPhone,
-      bedCapacity: l.bedCapacity,
+      ...serializeOtherLodgeData(l),
+      amenities: serializeOtherLodgeAmenities(l.amenities),
     })),
   );
 
@@ -142,8 +151,11 @@ export interface DownloadSummary {
  * changed since last time are fetched — deliberately overlapped backwards by
  * `PULL_CURSOR_OVERLAP_MS` WHEN that cursor is an ISO instant (see
  * `@/lib/servernz-cursor-overlap`) — and a fetched row is only written when
- * its data actually differs from the local copy, so an unchanged row keeps
- * its `updatedAt` and is never needlessly re-uploaded. Keyed by unique lodge name.
+ * its data — any data column, or its amenity list — actually differs from the
+ * local copy, so an unchanged row keeps its `updatedAt` and is never needlessly
+ * re-uploaded. Keyed by unique lodge name. A field the server did not send is
+ * left alone rather than cleared. A lodge's amenity set is replaced whole, in
+ * one transaction with the lodge row, after the pull has finished.
  *
  * TWO rules keep `updatedAt` honest as a sync signal, because the upload
  * watermark is derived from it:
@@ -177,18 +189,19 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   let updated = 0;
   let unchanged = 0;
   let keptLocal = 0;
+  // The pull has COMPLETED before this loop starts, so no transaction below is
+  // ever held open across the central server's HTTP call.
   for (const lodge of pull.lodges) {
     const existing = await prisma.otherLodge.findUnique({
       where: { name: lodge.name },
       select: { id: true, updatedAt: true, ...LODGE_DATA_SELECT },
     });
-    const data = {
-      location: lodge.location,
-      bookingOfficerName: lodge.bookingOfficerName,
-      bookingOfficerEmail: lodge.bookingOfficerEmail,
-      bookingOfficerPhone: lodge.bookingOfficerPhone,
-      bedCapacity: lodge.bedCapacity,
-    };
+    // Only the fields the server SENT: a field it omitted is absent here, so a
+    // server that does not yet carry it leaves the local value alone.
+    const data = otherLodgeDataColumns(lodge);
+    // `undefined` when the server sent no amenity list at all — also "leave
+    // ours alone", never "the lodge has none".
+    const amenities = lodge.amenities;
 
     // The server's own timestamp for this row. An unparseable value falls back to
     // `null`, which means "let Prisma stamp it" — worse than the server's answer
@@ -196,6 +209,7 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     const remoteUpdatedAt = Number.isNaN(Date.parse(lodge.updatedAt))
       ? null
       : new Date(lodge.updatedAt);
+    const stamp = remoteUpdatedAt ? { updatedAt: remoteUpdatedAt } : {};
 
     if (!existing) {
       // Upsert, not create: `name` is unique and this read-then-write is not
@@ -205,28 +219,28 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
       // that aborts the whole merge part-way — after some rows were written and
       // before the cursor advanced, so the next run re-fetches from the old
       // cursor. The upsert lets the loser of that race fall through to the same
-      // update it would have made, and stays correct when it wins.
-      await prisma.otherLodge.upsert({
-        where: { name: lodge.name },
-        create: {
-          name: lodge.name,
-          ...data,
-          ...(remoteUpdatedAt ? { updatedAt: remoteUpdatedAt } : {}),
-        },
-        update: { ...data, ...(remoteUpdatedAt ? { updatedAt: remoteUpdatedAt } : {}) },
+      // update it would have made, and stays correct when it wins. The amenity
+      // replacement rides in the same transaction and is keyed on the unique
+      // (lodge, name), so the loser converges on the same set too.
+      await prisma.$transaction(async (tx) => {
+        const row = await tx.otherLodge.upsert({
+          where: { name: lodge.name },
+          create: { name: lodge.name, ...data, ...stamp },
+          update: { ...data, ...stamp },
+          select: { id: true },
+        });
+        if (amenities) await replaceOtherLodgeAmenities(tx, row.id, amenities);
       });
       created++;
       continue;
     }
 
-    const differs =
-      existing.location !== data.location ||
-      existing.bookingOfficerName !== data.bookingOfficerName ||
-      existing.bookingOfficerEmail !== data.bookingOfficerEmail ||
-      existing.bookingOfficerPhone !== data.bookingOfficerPhone ||
-      existing.bedCapacity !== data.bedCapacity;
-
-    if (!differs) {
+    // Amenities are part of "differs": a lodge whose only change is its amenity
+    // list is still a changed lodge, and still carries the server's timestamp.
+    const amenitiesChanged =
+      amenities !== undefined &&
+      otherLodgeAmenitiesDiffer(existing.amenities, amenities);
+    if (!otherLodgeDataDiffers(data, existing) && !amenitiesChanged) {
       unchanged++;
       continue;
     }
@@ -239,11 +253,22 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
       continue;
     }
 
-    await prisma.otherLodge.update({
-      where: { id: existing.id },
-      // Rule 1: carry the server's timestamp rather than letting `@updatedAt`
-      // stamp now(), so this row is not re-uploaded as though we had edited it.
-      data: { ...data, ...(remoteUpdatedAt ? { updatedAt: remoteUpdatedAt } : {}) },
+    // One transaction for the lodge row and its amenities, so they change
+    // together or not at all. The lodge row is ALWAYS written, even when only
+    // the amenities changed: that write is what carries the server's
+    // `updatedAt` onto the row (rule 1) — an amenity-only change that left the
+    // row's timestamp alone would be re-presented as a local edit and echoed
+    // back on the next upload.
+    await prisma.$transaction(async (tx) => {
+      if (amenitiesChanged && amenities) {
+        await replaceOtherLodgeAmenities(tx, existing.id, amenities);
+      }
+      await tx.otherLodge.update({
+        where: { id: existing.id },
+        // Rule 1: carry the server's timestamp rather than letting `@updatedAt`
+        // stamp now(), so this row is not re-uploaded as though we had edited it.
+        data: { ...data, ...stamp },
+      });
     });
     updated++;
   }

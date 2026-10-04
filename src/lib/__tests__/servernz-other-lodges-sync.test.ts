@@ -6,17 +6,27 @@ const mockFindMany = vi.fn();
 const mockFindUnique = vi.fn();
 const mockUpsert = vi.fn();
 const mockUpdate = vi.fn();
+const mockAmenityDeleteMany = vi.fn();
+const mockAmenityUpsert = vi.fn();
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+vi.mock("@/lib/prisma", () => {
+  // The interactive transaction hands the same fake back as `tx`, so a write
+  // made inside one is observable through the same mocks as one made outside.
+  const prisma = {
     otherLodge: {
       findMany: (...args: unknown[]) => mockFindMany(...args),
       findUnique: (...args: unknown[]) => mockFindUnique(...args),
       upsert: (...args: unknown[]) => mockUpsert(...args),
       update: (...args: unknown[]) => mockUpdate(...args),
     },
-  },
-}));
+    amenity: {
+      deleteMany: (...args: unknown[]) => mockAmenityDeleteMany(...args),
+      upsert: (...args: unknown[]) => mockAmenityUpsert(...args),
+    },
+    $transaction: (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
+  };
+  return { prisma };
+});
 
 const mockUploadOtherLodges = vi.fn();
 const mockPullOtherLodges = vi.fn();
@@ -65,6 +75,51 @@ const SETTINGS = {
 /** A row as the central server sends it. */
 const REMOTE_UPDATED_AT = "2026-08-14T00:00:00.000Z";
 
+/** The #50 detail fields as they travel: dates as `YYYY-MM-DD`, no amenities. */
+const WIRE_DETAILS = {
+  siteUrl: "https://club.test",
+  bookingPath: "Email the booking officer",
+  requiresLodgeCustodian: true,
+  freeWifi: false,
+  quietRoom: true,
+  dryingRoom: true,
+  sharedKitchen: true,
+  wheelchairAccessible: false,
+  breakfastIncluded: false,
+  lunchIncluded: false,
+  dinnerIncluded: true,
+  cancellationPeriod: "14 days",
+  winterSeasonStart: "2026-06-01",
+  summerSeasonStart: "2026-11-15",
+};
+
+/** The same details as Prisma reads them: `@db.Date` columns as UTC midnight. */
+const LOCAL_DETAILS = {
+  ...WIRE_DETAILS,
+  winterSeasonStart: new Date("2026-06-01T00:00:00.000Z"),
+  summerSeasonStart: new Date("2026-11-15T00:00:00.000Z"),
+};
+
+const AMENITIES = [
+  { name: "Drying room", description: "Heated, ground floor" },
+  { name: "Sauna", description: null },
+];
+
+/** A local row identical to `remoteLodge()`, as Prisma reads it back. */
+function localCopyOf(id: string, updatedAt: string) {
+  return {
+    id,
+    updatedAt: new Date(updatedAt),
+    location: "Whakapapa",
+    bookingOfficerName: "Ann Officer",
+    bookingOfficerEmail: "bookings@club.test",
+    bookingOfficerPhone: "+64 27 422 4115",
+    bedCapacity: 24,
+    ...LOCAL_DETAILS,
+    amenities: AMENITIES,
+  };
+}
+
 function remoteLodge(name: string, over: Record<string, unknown> = {}) {
   return {
     name,
@@ -74,6 +129,8 @@ function remoteLodge(name: string, over: Record<string, unknown> = {}) {
     bookingOfficerEmail: "bookings@club.test",
     bookingOfficerPhone: "+64 27 422 4115",
     bedCapacity: 24,
+    ...WIRE_DETAILS,
+    amenities: AMENITIES,
     ...over,
   };
 }
@@ -81,8 +138,10 @@ function remoteLodge(name: string, over: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockLoadSettings.mockResolvedValue({ ...SETTINGS });
-  mockUpsert.mockResolvedValue({});
+  mockUpsert.mockResolvedValue({ id: "ol_new" });
   mockUpdate.mockResolvedValue({});
+  mockAmenityDeleteMany.mockResolvedValue({ count: 0 });
+  mockAmenityUpsert.mockResolvedValue({});
   mockRecordUpload.mockResolvedValue(undefined);
   mockRecordDownload.mockResolvedValue(undefined);
 });
@@ -110,8 +169,8 @@ describe("uploadOtherClubsToServer", () => {
       otherLodgesLastUploadAt: "2026-07-01T00:00:00.000Z",
     });
     mockFindMany.mockResolvedValue([
-      { ...remoteLodge("Aorangi Ski Club"), updatedAt: older },
-      { ...remoteLodge("Arlberg Ski Club"), updatedAt: newer },
+      { ...localCopyOf("ol_1", older.toISOString()), name: "Aorangi Ski Club" },
+      { ...localCopyOf("ol_2", newer.toISOString()), name: "Arlberg Ski Club" },
     ]);
     mockUploadOtherLodges.mockResolvedValue({
       created: 1,
@@ -171,11 +230,21 @@ describe("downloadOtherClubsFromServer", () => {
 
     const result = await downloadOtherClubsFromServer();
 
-    expect(mockUpsert).toHaveBeenCalledWith({
-      where: { name: "Ngauruhoe Ski Club" },
-      create: expect.objectContaining({ name: "Ngauruhoe Ski Club", bedCapacity: 24 }),
-      update: expect.objectContaining({ bedCapacity: 24 }),
-    });
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { name: "Ngauruhoe Ski Club" },
+        create: expect.objectContaining({ name: "Ngauruhoe Ski Club", bedCapacity: 24 }),
+        update: expect.objectContaining({ bedCapacity: 24 }),
+      }),
+    );
+    // The amenity set rides in the same transaction, keyed on the upserted id —
+    // so the loser of the name race converges on the same set as the winner.
+    expect(mockAmenityUpsert).toHaveBeenCalledTimes(AMENITIES.length);
+    expect(mockAmenityUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { otherLodgeId_name: { otherLodgeId: "ol_new", name: "Sauna" } },
+      }),
+    );
     expect(result.created).toBe(1);
   });
 
@@ -186,15 +255,7 @@ describe("downloadOtherClubsFromServer", () => {
       cursor: "c-202",
       dropped: 0,
     });
-    mockFindUnique.mockResolvedValue({
-      id: "ol_1",
-      updatedAt: new Date("2026-08-01T00:00:00.000Z"),
-      location: "Whakapapa",
-      bookingOfficerName: "Ann Officer",
-      bookingOfficerEmail: "bookings@club.test",
-      bookingOfficerPhone: "+64 27 422 4115",
-      bedCapacity: 24,
-    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-08-01T00:00:00.000Z"));
 
     const result = await downloadOtherClubsFromServer();
 
@@ -212,21 +273,217 @@ describe("downloadOtherClubsFromServer", () => {
       cursor: "c-203",
       dropped: 0,
     });
-    mockFindUnique.mockResolvedValue({
-      id: "ol_2",
-      updatedAt: new Date("2026-08-01T00:00:00.000Z"),
-      location: "Whakapapa",
-      bookingOfficerName: "Ann Officer",
-      bookingOfficerEmail: "bookings@club.test",
-      bookingOfficerPhone: "+64 27 422 4115",
-      bedCapacity: 24,
-    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_2", "2026-08-01T00:00:00.000Z"));
 
     const result = await downloadOtherClubsFromServer();
 
     expect(mockUpdate).not.toHaveBeenCalled();
     expect(mockUpsert).not.toHaveBeenCalled();
+    expect(mockAmenityDeleteMany).not.toHaveBeenCalled();
+    expect(mockAmenityUpsert).not.toHaveBeenCalled();
     expect(result).toMatchObject({ created: 0, updated: 0, unchanged: 1 });
+  });
+});
+
+// ── Lodge details and amenities (#50) ──────────────────────────────────────
+
+describe("lodge details and amenities round trip", () => {
+  it("uploads every data column, dates as YYYY-MM-DD, and the whole amenity list — and nothing else", async () => {
+    // The server's upload item schema is `.strict()`: one key it does not know
+    // rejects the whole payload, so the projection is pinned exactly.
+    mockFindMany.mockResolvedValue([
+      {
+        ...localCopyOf("ol_1", "2026-08-14T00:00:00.000Z"),
+        name: "Aorangi Ski Club",
+      },
+    ]);
+    mockUploadOtherLodges.mockResolvedValue({
+      created: 0,
+      updated: 1,
+      unchanged: 0,
+      skipped: 0,
+      results: [],
+    });
+
+    await uploadOtherClubsToServer();
+
+    expect(mockUploadOtherLodges).toHaveBeenCalledWith([
+      {
+        name: "Aorangi Ski Club",
+        location: "Whakapapa",
+        bookingOfficerName: "Ann Officer",
+        bookingOfficerEmail: "bookings@club.test",
+        bookingOfficerPhone: "+64 27 422 4115",
+        bedCapacity: 24,
+        ...WIRE_DETAILS,
+        amenities: AMENITIES,
+      },
+    ]);
+    // The read asked for the amenities alongside the columns — the one list.
+    expect(mockFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          siteUrl: true,
+          winterSeasonStart: true,
+          amenities: expect.objectContaining({ select: { name: true, description: true } }),
+        }),
+      }),
+    );
+  });
+
+  it("applies a downloaded row's details and amenities, storing dates as the calendar day without a shift", async () => {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [remoteLodge("Aorangi Ski Club")],
+      count: 1,
+      cursor: "c-400",
+      dropped: 0,
+    });
+    // A legacy row: defaults everywhere and no amenities yet.
+    mockFindUnique.mockResolvedValue({
+      ...localCopyOf("ol_1", "2026-08-01T00:00:00.000Z"),
+      siteUrl: null,
+      bookingPath: null,
+      requiresLodgeCustodian: false,
+      quietRoom: false,
+      dryingRoom: false,
+      sharedKitchen: false,
+      dinnerIncluded: false,
+      cancellationPeriod: null,
+      winterSeasonStart: null,
+      summerSeasonStart: null,
+      amenities: [],
+    });
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(mockUpdate).toHaveBeenCalledWith({
+      where: { id: "ol_1" },
+      data: expect.objectContaining({
+        ...LOCAL_DETAILS,
+        updatedAt: new Date(REMOTE_UPDATED_AT),
+      }),
+    });
+    // Nothing left to delete, two to create, keyed on the unique (lodge, name).
+    expect(mockAmenityDeleteMany).toHaveBeenCalledWith({
+      where: { otherLodgeId: "ol_1", name: { notIn: ["Drying room", "Sauna"] } },
+    });
+    expect(mockAmenityUpsert).toHaveBeenCalledWith({
+      where: { otherLodgeId_name: { otherLodgeId: "ol_1", name: "Drying room" } },
+      create: { otherLodgeId: "ol_1", name: "Drying room", description: "Heated, ground floor" },
+      update: { description: "Heated, ground floor" },
+    });
+    expect(result).toMatchObject({ updated: 1, unchanged: 0 });
+  });
+
+  it("treats an amenity-only server change as a change, and stamps the row with the server's updatedAt", async () => {
+    // Otherwise the new amenities land, the lodge row keeps its old timestamp,
+    // and the next upload re-presents the row as this club's edit (an echo).
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [
+        remoteLodge("Aorangi Ski Club", {
+          amenities: [...AMENITIES, { name: "Boot room", description: null }],
+        }),
+      ],
+      count: 1,
+      cursor: "c-401",
+      dropped: 0,
+    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-08-01T00:00:00.000Z"));
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(mockAmenityUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { otherLodgeId_name: { otherLodgeId: "ol_1", name: "Boot room" } },
+      }),
+    );
+    expect(mockUpdate).toHaveBeenCalledWith({
+      where: { id: "ol_1" },
+      data: expect.objectContaining({ updatedAt: new Date(REMOTE_UPDATED_AT) }),
+    });
+    expect(result).toMatchObject({ updated: 1, unchanged: 0, keptLocal: 0 });
+  });
+
+  it("removes amenities the server no longer lists, by name", async () => {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [remoteLodge("Aorangi Ski Club", { amenities: [AMENITIES[0]] })],
+      count: 1,
+      cursor: "c-402",
+      dropped: 0,
+    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-08-01T00:00:00.000Z"));
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockAmenityDeleteMany).toHaveBeenCalledWith({
+      where: { otherLodgeId: "ol_1", name: { notIn: ["Drying room"] } },
+    });
+    expect(mockAmenityUpsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a newer local copy even when only the amenities differ", async () => {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [remoteLodge("Aorangi Ski Club", { amenities: [] })],
+      count: 1,
+      cursor: "c-403",
+      dropped: 0,
+    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-08-20T00:00:00.000Z"));
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockAmenityDeleteMany).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ updated: 0, keptLocal: 1 });
+  });
+
+  it("leaves the local details and amenities alone when the server does not send them", async () => {
+    // A server that has not yet gained these fields omits them. Absent must
+    // mean "no opinion" — never "set every flag to no and clear the text" —
+    // or every pull from such a server would wipe what the club recorded.
+    const sentOnlyTheOldFields = {
+      name: "Aorangi Ski Club",
+      updatedAt: REMOTE_UPDATED_AT,
+      location: "Whakapapa",
+      bookingOfficerName: "Ann Officer",
+      bookingOfficerEmail: "bookings@club.test",
+      bookingOfficerPhone: "+64 27 422 4115",
+      bedCapacity: 30,
+    };
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [sentOnlyTheOldFields],
+      count: 1,
+      cursor: "c-404",
+      dropped: 0,
+    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-08-01T00:00:00.000Z"));
+
+    const result = await downloadOtherClubsFromServer();
+
+    const [{ data }] = mockUpdate.mock.calls[0];
+    expect(data).toMatchObject({ bedCapacity: 30 });
+    for (const key of Object.keys(WIRE_DETAILS)) expect(data).not.toHaveProperty(key);
+    expect(mockAmenityDeleteMany).not.toHaveBeenCalled();
+    expect(mockAmenityUpsert).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ updated: 1 });
+  });
+
+  it("does not count an identical date as a change because it arrived as a string", async () => {
+    // A `@db.Date` reads back as a UTC-midnight Date; the wire carries the same
+    // day as text. The comparison must be between calendar days, or every
+    // pull would rewrite every dated row and bump nothing but churn.
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [remoteLodge("Aorangi Ski Club")],
+      count: 1,
+      cursor: "c-405",
+      dropped: 0,
+    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-08-01T00:00:00.000Z"));
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ unchanged: 1 });
   });
 });
 
@@ -245,15 +502,7 @@ describe("sync loop hygiene", () => {
       cursor: "c-300",
       dropped: 0,
     });
-    mockFindUnique.mockResolvedValue({
-      id: "ol_1",
-      updatedAt: new Date("2026-08-01T00:00:00.000Z"),
-      location: "Whakapapa",
-      bookingOfficerName: "Ann Officer",
-      bookingOfficerEmail: "bookings@club.test",
-      bookingOfficerPhone: "+64 27 422 4115",
-      bedCapacity: 24,
-    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-08-01T00:00:00.000Z"));
 
     await downloadOtherClubsFromServer();
 
@@ -276,16 +525,8 @@ describe("sync loop hygiene", () => {
       cursor: "c-301",
       dropped: 0,
     });
-    mockFindUnique.mockResolvedValue({
-      id: "ol_1",
-      // Edited locally AFTER the timestamp the server is reporting.
-      updatedAt: new Date("2026-08-20T00:00:00.000Z"),
-      location: "Whakapapa",
-      bookingOfficerName: "Ann Officer",
-      bookingOfficerEmail: "bookings@club.test",
-      bookingOfficerPhone: "+64 27 422 4115",
-      bedCapacity: 24,
-    });
+    // Edited locally AFTER the timestamp the server is reporting.
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-08-20T00:00:00.000Z"));
 
     const result = await downloadOtherClubsFromServer();
 
@@ -299,8 +540,8 @@ describe("sync loop hygiene", () => {
     const rejected = new Date("2026-08-10T00:00:00.000Z");
     const accepted = new Date("2026-08-14T00:00:00.000Z");
     mockFindMany.mockResolvedValue([
-      { ...remoteLodge("Rejected Club"), updatedAt: rejected },
-      { ...remoteLodge("Accepted Club"), updatedAt: accepted },
+      { ...localCopyOf("ol_1", rejected.toISOString()), name: "Rejected Club" },
+      { ...localCopyOf("ol_2", accepted.toISOString()), name: "Accepted Club" },
     ]);
     mockUploadOtherLodges.mockResolvedValue({
       created: 1,
@@ -323,7 +564,9 @@ describe("sync loop hygiene", () => {
 
   it("does not advance the watermark when every row was rejected", async () => {
     const only = new Date("2026-08-10T00:00:00.000Z");
-    mockFindMany.mockResolvedValue([{ ...remoteLodge("Rejected Club"), updatedAt: only }]);
+    mockFindMany.mockResolvedValue([
+      { ...localCopyOf("ol_1", only.toISOString()), name: "Rejected Club" },
+    ]);
     mockUploadOtherLodges.mockResolvedValue({
       created: 0,
       updated: 0,
@@ -346,19 +589,6 @@ describe("sync loop hygiene", () => {
 // FOREVER while sync keeps reporting success. Every pull after the first
 // therefore re-asks one bounded overlap before the stored cursor. The repeats
 // must stay harmless, and the DURABLE cursor must still be the server's answer.
-
-/** A local row identical to `remoteLodge()`, as the overlap re-delivers it. */
-function localCopyOf(id: string, updatedAt: string) {
-  return {
-    id,
-    updatedAt: new Date(updatedAt),
-    location: "Whakapapa",
-    bookingOfficerName: "Ann Officer",
-    bookingOfficerEmail: "bookings@club.test",
-    bookingOfficerPhone: "+64 27 422 4115",
-    bedCapacity: 24,
-  };
-}
 
 describe("download cursor overlap", () => {
   it("requests exactly one overlap before the stored cursor, across minute and day boundaries", async () => {

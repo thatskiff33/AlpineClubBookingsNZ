@@ -1,5 +1,11 @@
 import "server-only";
 import { z } from "zod";
+import {
+  amenitiesInputSchema,
+  otherLodgeDataShape,
+  type OtherLodgeAmenity,
+  type SerializedOtherLodgeData,
+} from "@/lib/other-lodges";
 import { getOperationalServerNzApiKey } from "@/lib/servernz-config";
 import {
   loadServerNzSettings,
@@ -33,15 +39,17 @@ export class ServerNzApiError extends Error {
   }
 }
 
-/** A lodge entry pushed up to the server. `distribute` is never sent by clients. */
-export interface OtherLodgeUploadItem {
+/**
+ * A lodge entry pushed up to the server: every data column (dates as
+ * `YYYY-MM-DD`) and the lodge's WHOLE amenity list, which replaces the server's
+ * set for that lodge. The server's item schema is `.strict()`, so this must
+ * carry exactly the keys it knows — `serializeOtherLodgeData` is the one list.
+ * `distribute` and provenance are never sent by clients.
+ */
+export type OtherLodgeUploadItem = SerializedOtherLodgeData & {
   name: string;
-  location?: string | null;
-  bookingOfficerName?: string | null;
-  bookingOfficerEmail?: string | null;
-  bookingOfficerPhone?: string | null;
-  bedCapacity?: number | null;
-}
+  amenities: OtherLodgeAmenity[];
+};
 
 const uploadResultSchema = z.object({
   created: z.number(),
@@ -64,30 +72,37 @@ export type OtherLodgesUploadResult = z.infer<typeof uploadResultSchema>;
 
 /**
  * A lodge as the central server sends it, held to the SAME bounds the club's own
- * officer is held to in `POST /api/admin/other-lodges` (name 120, location 300,
- * officer name 200, email 320, phone 50, capacity 0..100000).
+ * officer is held to in `POST /api/admin/other-lodges` — literally the same
+ * `otherLodgeDataShape` (name 120, location 300, officer name 200, email 320,
+ * phone 50, capacity 0..100000, site URL 500 and `http(s)` only, booking path
+ * 300, cancellation period 200, season starts a real `YYYY-MM-DD` calendar
+ * date, at most 50 amenities of name 120 / description 1000 with names unique
+ * ignoring case).
  *
  * Matching those bounds is the point. `getPublicOtherLodges()` serves `id + name`
  * on the UNAUTHENTICATED booking-request settings endpoint, which renders on the
  * public form — so without a cap the central server controls unbounded text on
  * every connected club's public page, while the local admin typing the same row
  * is validated. Trusting the remote MORE than the local admin is the inversion.
+ * The site URL is rendered as a link in the admin panel, so a scheme other than
+ * `http(s)` is refused here exactly as it is from the local admin.
  *
- * It also removes a partial-merge failure mode: `location`, `bookingOfficerName`,
- * `bookingOfficerEmail` and `bookingOfficerPhone` are VarChar-capped columns, so
- * an over-long value would raise a 22001 mid-loop — after earlier rows were
- * written, with no transaction around the loop and before the cursor advanced.
- * A row that fails these bounds is dropped by `pullOtherLodges` instead, which
- * costs one row rather than the rest of the batch.
+ * It also removes a partial-merge failure mode: the text columns are
+ * VarChar-capped, so an over-long value would raise a 22001 mid-loop — after
+ * earlier rows were written, with no transaction around the loop and before the
+ * cursor advanced. A row that fails these bounds is dropped by `pullOtherLodges`
+ * instead, which costs one row rather than the rest of the batch.
+ *
+ * Every data field is OPTIONAL on the wire: a server that does not send one
+ * (an older release, a field added later) leaves the local value alone, and is
+ * never read as "set it to null/false". Absent is not the same as `null`.
  */
 const distributedLodgeSchema = z.object({
   id: z.string().max(64),
   name: z.string().trim().min(1).max(120),
-  location: z.string().trim().max(300).nullable(),
-  bookingOfficerName: z.string().trim().max(200).nullable(),
-  bookingOfficerEmail: z.string().trim().max(320).nullable(),
-  bookingOfficerPhone: z.string().trim().max(50).nullable(),
-  bedCapacity: z.number().int().min(0).max(100000).nullable(),
+  ...otherLodgeDataShape,
+  /** When present, the lodge's WHOLE amenity set; absent leaves ours alone. */
+  amenities: amenitiesInputSchema.optional(),
   updatedAt: z.string().max(64),
 });
 
