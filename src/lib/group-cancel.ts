@@ -106,7 +106,7 @@ import {
   enqueueGroupSettlementRefundRecovery,
   markGroupSettlementRefundRecoverySucceeded,
 } from "@/lib/payment-recovery";
-import { deserializeRefundPlan, mirrorPlanRefundedCents, readPerChildRefundPlan } from "@/lib/organiser-child-refund";
+import { deserializeRefundPlan, mirrorPlanRefundedCents, readPerChildRefundPlan } from "@/lib/group-settlement-refund-plan";
 import { refundOrganiserCancelChildren } from "@/lib/organiser-child-refund-executor";
 import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 import logger from "@/lib/logger";

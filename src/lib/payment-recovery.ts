@@ -528,6 +528,8 @@ export async function enqueueRefundRequestRefundRecovery({
 }
 
 import {
+  buildGroupSettlementRefundRecoveryIdempotencyKey,
+  GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX,
   buildBookingCancellationRefundIdempotencyKey,
   buildBookingCancellationRefundMetadata,
   buildBookingModificationRefundMetadata,
@@ -1016,15 +1018,6 @@ export async function recordDuplicateCaptureRefundRecoveryInlineError({
       lastError: message,
     },
   });
-}
-
-const GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX =
-  "group_settlement_refund_recovery_";
-
-function buildGroupSettlementRefundRecoveryIdempotencyKey(
-  settlementId: string,
-) {
-  return `${GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX}${settlementId}`;
 }
 
 /**
