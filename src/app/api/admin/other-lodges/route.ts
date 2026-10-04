@@ -6,7 +6,10 @@ import {
   getAuditRequestContext,
 } from "@/lib/audit";
 import {
-  normalizeOtherLodgeText,
+  amenitiesInputSchema,
+  otherLodgeAmenityRows,
+  otherLodgeDataColumns,
+  otherLodgeDataShape,
   otherLodgeOrderBy,
   otherLodgeSelect,
   serializeOtherLodge,
@@ -14,26 +17,13 @@ import {
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
-// An optional email that treats blank input as "not set": the admin form sends
-// "" for a cleared field, and "" is not a valid email — fold it to null before
-// the format check so clearing the field is not a validation error.
-const optionalEmail = z
-  .preprocess(
-    (value) =>
-      typeof value === "string" && value.trim() === "" ? null : value,
-    z.string().trim().max(320).email().nullable().optional(),
-  );
-
+// Strict: an unknown key is a 400, so every data column has to be named in the
+// shared `otherLodgeDataShape` (the one field list) to be accepted here.
 const otherLodgeCreateSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
-    location: z.string().trim().max(300).nullable().optional(),
-    bookingOfficerName: z.string().trim().max(200).nullable().optional(),
-    bookingOfficerEmail: optionalEmail,
-    bookingOfficerPhone: z.string().trim().max(50).nullable().optional(),
-    // Informational bed count of the partner lodge; non-negative, capped well
-    // above any real lodge so a fat-fingered value is caught but real ones pass.
-    bedCapacity: z.number().int().min(0).max(100000).nullable().optional(),
+    ...otherLodgeDataShape,
+    amenities: amenitiesInputSchema.optional(),
   })
   .strict();
 
@@ -77,20 +67,15 @@ export async function POST(request: Request) {
 
   let created;
   try {
+    // The nested amenity create is part of the same statement, so the lodge and
+    // its amenities land together or not at all.
     created = await prisma.otherLodge.create({
       data: {
         name: parsed.data.name.trim(),
-        location: normalizeOtherLodgeText(parsed.data.location),
-        bookingOfficerName: normalizeOtherLodgeText(
-          parsed.data.bookingOfficerName,
-        ),
-        bookingOfficerEmail: normalizeOtherLodgeText(
-          parsed.data.bookingOfficerEmail,
-        ),
-        bookingOfficerPhone: normalizeOtherLodgeText(
-          parsed.data.bookingOfficerPhone,
-        ),
-        bedCapacity: parsed.data.bedCapacity ?? null,
+        ...otherLodgeDataColumns(parsed.data),
+        ...(parsed.data.amenities
+          ? { amenities: { create: otherLodgeAmenityRows(parsed.data.amenities) } }
+          : {}),
       },
       select: otherLodgeSelect,
     });

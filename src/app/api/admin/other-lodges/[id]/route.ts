@@ -6,8 +6,12 @@ import {
   getAuditRequestContext,
 } from "@/lib/audit";
 import {
-  normalizeOtherLodgeText,
+  amenitiesInputSchema,
+  otherLodgeAmenitiesDiffer,
+  otherLodgeDataColumns,
+  otherLodgeDataShape,
   otherLodgeSelect,
+  replaceOtherLodgeAmenities,
   serializeOtherLodge,
 } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
@@ -15,19 +19,15 @@ import { requireAdmin } from "@/lib/session-guards";
 
 const paramsSchema = z.object({ id: z.string().min(1) });
 
-const optionalEmail = z.preprocess(
-  (value) => (typeof value === "string" && value.trim() === "" ? null : value),
-  z.string().trim().max(320).email().nullable().optional(),
-);
-
+// Strict: an unknown key is a 400, so every data column has to be named in the
+// shared `otherLodgeDataShape` (the one field list) to be accepted here. A key
+// left out leaves that column alone; `amenities`, when present, replaces the
+// lodge's whole set.
 const patchSchema = z
   .object({
     name: z.string().trim().min(1).max(120).optional(),
-    location: z.string().trim().max(300).nullable().optional(),
-    bookingOfficerName: z.string().trim().max(200).nullable().optional(),
-    bookingOfficerEmail: optionalEmail,
-    bookingOfficerPhone: z.string().trim().max(50).nullable().optional(),
-    bedCapacity: z.number().int().min(0).max(100000).nullable().optional(),
+    ...otherLodgeDataShape,
+    amenities: amenitiesInputSchema.optional(),
   })
   .strict();
 
@@ -69,41 +69,45 @@ export async function PATCH(
     return NextResponse.json({ error: "Lodge not found" }, { status: 404 });
   }
 
-  const data: Prisma.OtherLodgeUpdateInput = {};
+  const data: Prisma.OtherLodgeUpdateInput = {
+    ...otherLodgeDataColumns(parsed.data),
+  };
   if (parsed.data.name !== undefined) data.name = parsed.data.name.trim();
-  if (parsed.data.location !== undefined) {
-    data.location = normalizeOtherLodgeText(parsed.data.location);
-  }
-  if (parsed.data.bookingOfficerName !== undefined) {
-    data.bookingOfficerName = normalizeOtherLodgeText(
-      parsed.data.bookingOfficerName,
-    );
-  }
-  if (parsed.data.bookingOfficerEmail !== undefined) {
-    data.bookingOfficerEmail = normalizeOtherLodgeText(
-      parsed.data.bookingOfficerEmail,
-    );
-  }
-  if (parsed.data.bookingOfficerPhone !== undefined) {
-    data.bookingOfficerPhone = normalizeOtherLodgeText(
-      parsed.data.bookingOfficerPhone,
-    );
-  }
-  if (parsed.data.bedCapacity !== undefined) {
-    data.bedCapacity = parsed.data.bedCapacity;
-  }
+  const changedFields = Object.keys(data);
 
-  if (Object.keys(data).length === 0) {
+  const amenities = parsed.data.amenities;
+  const amenitiesChanged =
+    amenities !== undefined &&
+    otherLodgeAmenitiesDiffer(existing.amenities, amenities);
+  if (amenitiesChanged) changedFields.push("amenities");
+
+  if (changedFields.length === 0) {
     return NextResponse.json({ otherLodge: serializeOtherLodge(existing) });
   }
 
   let updated;
   try {
-    updated = await prisma.otherLodge.update({
-      where: { id: existing.id },
-      data,
-      select: otherLodgeSelect,
-    });
+    if (amenitiesChanged && amenities) {
+      // Moved explicitly: an amenity-only edit changes no column on the lodge
+      // row, so `@updatedAt` would not fire — and the central-server upload
+      // watermark is keyed on this column, so the edit would never be sent.
+      data.updatedAt = new Date();
+      // One transaction so the lodge row and its amenities change together.
+      updated = await prisma.$transaction(async (tx) => {
+        await replaceOtherLodgeAmenities(tx, existing.id, amenities);
+        return tx.otherLodge.update({
+          where: { id: existing.id },
+          data,
+          select: otherLodgeSelect,
+        });
+      });
+    } else {
+      updated = await prisma.otherLodge.update({
+        where: { id: existing.id },
+        data,
+        select: otherLodgeSelect,
+      });
+    }
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -127,7 +131,7 @@ export async function PATCH(
       outcome: "success",
       summary: "Other lodge updated",
       metadata: {
-        changedFields: Object.keys(data),
+        changedFields,
         previousOtherLodge: serializeOtherLodge(existing),
         newOtherLodge: serializeOtherLodge(updated),
       },
