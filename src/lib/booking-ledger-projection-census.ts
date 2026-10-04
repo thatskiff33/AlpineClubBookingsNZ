@@ -43,6 +43,7 @@ import { bookingLedgerResidualCents, outstandingAdditionalAskCents } from "@/lib
 import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
+import { compareOrdinal } from "@/lib/ordinal-order";
 import type { InternetBankingSettlementEvidence } from "@/lib/internet-banking-settlement-evidence";
 import {
   isCapturedTransactionStatus,
@@ -253,7 +254,7 @@ export function postConfirmationEditsWithoutLines(
   const withLines = new Set(lines.filter((line) => line.anchorKind === "MODIFICATION").map((line) => line.anchorId));
   const ordered = [...modifications]
     .filter((modification) => modification.createdAt.getTime() > confirmedAt)
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || compareOrdinal(a.id, b.id));
   const lastWithLines = ordered.map((modification) => withLines.has(modification.id)).lastIndexOf(true);
   const awaiting: string[] = [];
   const carriedByLater: string[] = [];
