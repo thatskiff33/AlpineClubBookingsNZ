@@ -1754,6 +1754,136 @@ sign-off goes stale and holds the gate again, so nothing stays "in flight"
 unseen. The census takes no lock, so run it off-peak against
 production; a whole history is read in one transaction, 500 bookings a page.
 
+### Back-post the booking ledger and open the cut-over gate (#3583)
+
+`pnpm run booking-ledger:back-post` (`scripts/backfill-booking-ledger.ts`) posts
+the ledger lines every booking made before #3580–#3582 is missing, so the census
+above can be run over the club's whole history — the cut-over gate (design
+[`booking-ledger.md`](design/booking-ledger.md) §6, §7; owner decision
+D-3532-1). It runs the live posters over each booking, never a second copy of
+how a line is shaped, one transaction per booking, under the locks those posters
+take. It calls no provider (no Stripe, Xero or email) and never edits or deletes
+a line: it only appends, through the one write door.
+
+- **Dry run by default.** Each booking is posted and judged inside a transaction
+  that is then rolled back, so the report is exactly what `--apply` would post
+  and nothing is committed. `--apply` commits each booking on its own.
+- **Never guessed.** After posting, each booking is judged by the census's own
+  evaluation in the same transaction. One that would disagree, keep a coverage
+  gap or show an integrity finding is rolled back — nothing at all is posted
+  for it, not even its payments — and listed `CANNOT POST` with the reason and,
+  for a disagreement, the identity with the column figure, the ledger figure and
+  the delta. A named class (an in-flight hand-back, `KNOWN_DEFECT_HISTORY`, …)
+  is not a refusal: the booking posts and the census lists the class.
+- **Idempotent.** A second `--apply` posts nothing; the summary says
+  `posted: 0 (0 line(s))`.
+- **Safe on a live database**, but run it off-peak: each booking takes the global
+  booking lock briefly, so a settle, cancel or edit on the same booking either
+  finishes first or waits for it. Exit status 2 means at least one booking was
+  listed `CANNOT POST`.
+
+```bash
+DATABASE_URL=<...> pnpm run booking-ledger:back-post                  # dry run, every booking
+DATABASE_URL=<...> pnpm run booking-ledger:back-post --apply          # post
+DATABASE_URL=<...> pnpm run booking-ledger:back-post --booking <id>   # one booking
+DATABASE_URL=<...> pnpm run booking-ledger:back-post --limit <n>      # the first n bookings by id
+DATABASE_URL=<...> pnpm run booking-ledger:back-post --json           # the report, then the whole result as JSON
+```
+
+**Reading the report.** One summary line — bookings, how many it posted (or
+would) and how many lines, how many had nothing to post, how many it cannot
+post, and how many group-settled children it left alone — then one line per
+booking that posts or cannot:
+
+- `POSTED` / `WOULD POST <id>  <n> line(s): …` names the steps: the
+  confirmation (one line per guest-night, an evenly split strand included), an
+  old edit's change fee or the nights it moved, the cancellation with the kept
+  figure, and in brackets any census class the booking now shows.
+- `CANNOT POST <id>  <reason>: …`. `UNPRICED_NIGHT` — a strand has a night with
+  no price, which is an open review: close the review, then re-run.
+  `CONFIRMATION_DOES_NOT_RECONCILE` — the night rows and promotion do not make
+  the booking's final price; an officer looks at the booking. `EDIT_NOT_DERIVABLE`,
+  `PRICE_LINES_DISAGREE`, `REBASE_MOVEMENT_UNREADABLE`, `LIVE_LINE_NOT_ONE_NIGHT`
+  — an old edit cannot be re-derived from what the rows hold. `CENSUS_WOULD_NOT_PASS`
+  — the lines it could post would leave the census disagreeing, gapped or
+  finding a line wrong; the figures follow. What the back-post does not
+  reconstruct, and so lists here: a review give-back or stand-in a closure made
+  before #3582, a review refund an officer handed back by hand before #3599,
+  and a legacy refund with no refund row. Each is for an officer to look at;
+  report it on #3583 with the figures printed.
+- `LISTED <id>  GROUP_SETTLEMENT_OFF_LEDGER` — a group-settled child whose money
+  moved only through its organiser; its poster is #3854 (owner decision 2).
+
+**The owner's run.** Agents never touch production. Run it twice: first as a
+rehearsal on a restored backup, then for real.
+
+1. **Rehearse on a restored backup**, never on the live installation (restoring
+   a dump into a live site carries its environment override with it — see the
+   warning under [Quarterly Backup Restore Drill](#quarterly-backup-restore-drill)).
+   Fetch a backup as that section describes, then restore it into a throwaway
+   PostgreSQL bound to loopback, on a port that is not 5432, and bring its schema
+   up to the release you are about to cut over:
+
+   ```bash
+   docker run -d --name ledger-rehearsal -e POSTGRES_PASSWORD=rehearsal -p 127.0.0.1:55443:5432 postgres:16
+   gunzip -c /tmp/restore-check.sql.gz | docker exec -i ledger-rehearsal psql -U postgres -v ON_ERROR_STOP=1
+   export DATABASE_URL=postgresql://postgres:rehearsal@127.0.0.1:55443/postgres
+   pnpm exec prisma migrate deploy
+
+   pnpm run booking-ledger:census                         # expect GATE_CLOSED, on coverage
+   pnpm run booking-ledger:back-post                      # dry run: read every CANNOT POST
+   pnpm run booking-ledger:back-post --apply
+   pnpm run booking-ledger:back-post --apply              # must say "posted: 0 (0 line(s))"
+   pnpm run booking-ledger:census
+   pnpm run booking-ledger:census --write-acknowledgement-draft ~/ledger-ack-rehearsal.json
+   #   review the draft line by line (the class-list workflow above)
+   pnpm run booking-ledger:census --acknowledged ~/ledger-ack-rehearsal.json --fail-on-gap
+   ```
+
+   Every `CANNOT POST`, disagreement, coverage gap and integrity finding is a
+   question for #3583, answered before production. Remove the container when
+   done (`docker rm -f ledger-rehearsal`) and delete the dump.
+
+2. **Then production, off-peak**, from the release being cut over. The back-post
+   needs a role that may insert ledger lines (the application's own); the census
+   runs under a SELECT-only role, so the gate's evidence comes from a session
+   that cannot have written anything. Create that role once, as the database
+   owner:
+
+   ```sql
+   CREATE ROLE ledger_census LOGIN PASSWORD '<a strong password from your secret store>';
+   GRANT CONNECT ON DATABASE <database> TO ledger_census;
+   GRANT USAGE ON SCHEMA public TO ledger_census;
+   GRANT SELECT ON ALL TABLES IN SCHEMA public TO ledger_census;
+   ```
+
+   ```bash
+   CENSUS_URL=postgresql://ledger_census:<password>@<host>:5432/<database>
+   APP_URL=<the application's DATABASE_URL>
+
+   DATABASE_URL="$CENSUS_URL" pnpm run booking-ledger:census
+   DATABASE_URL="$APP_URL"    pnpm run booking-ledger:back-post             # dry run; compare with the rehearsal
+   DATABASE_URL="$APP_URL"    pnpm run booking-ledger:back-post --apply
+   DATABASE_URL="$APP_URL"    pnpm run booking-ledger:back-post --apply     # must post nothing
+   DATABASE_URL="$CENSUS_URL" pnpm run booking-ledger:census --write-acknowledgement-draft ~/ledger-ack.json
+   #   review it as in the rehearsal; carry over the reviewed rehearsal entries that still apply
+   DATABASE_URL="$CENSUS_URL" pnpm run booking-ledger:census --acknowledged ~/ledger-ack.json --fail-on-gap
+   ```
+
+   A booking that changed between the rehearsal and production is expected to
+   differ; anything listed on production and not in the rehearsal is read the
+   same way before going on.
+
+**What holds the gate**, and so keeps every reader off the ledger (#3584): any
+unclassified disagreement, any coverage gap (a booking the back-post listed
+`CANNOT POST` still has one), any integrity finding, every
+`KNOWN_DEFECT_HISTORY` booking until an officer corrects it or you write it off
+in the acknowledgement file on #3583 (owner decision 1), and every other class
+instance until you acknowledge it to the cent. `GROUP_SETTLEMENT_OFF_LEDGER` is
+listed only. The gate is open when `--fail-on-gap` exits 0 and the census prints
+`VERDICT: GATE_OPEN`. CI runs this same sequence on every pull request over a
+seeded history (`scripts/booking-ledger-seed-gate.sh`).
+
 ### Census the booking ledger identity (#3340)
 
 `scripts/audit-booking-ledger-residual.ts` is a READ-ONLY census of
