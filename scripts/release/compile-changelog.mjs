@@ -4,7 +4,7 @@
  *
  * Every branch used to write its entry straight into the top of
  * `## Unreleased` in `CHANGELOG.md`, so concurrent lanes conflicted on that one
- * file daily (AGENTS.md §5, "Housekeeping that bites parallel lanes"). Each PR
+ * file daily (AGENTS.md "Change discipline", the fragment-directory rule). Each PR
  * now drops a self-contained fragment into `changelog.d/` instead — one new
  * file per PR, which git merges without a conflict — and this script folds the
  * collected fragments into a real release section when a release is cut.

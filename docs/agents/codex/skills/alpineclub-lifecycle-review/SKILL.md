@@ -7,15 +7,15 @@ description: Lifecycle planning and review workflow for AlpineClubBookingsNZ. Us
 
 ## Read First
 
-- `AGENTS.md`
-- `docs/agents/CODEX_WORKFLOW.md`
-- `docs/DOMAIN_INVARIANTS.md` — the invariant index; then the domain files this
+- `AGENTS.md`, and the rows of its routing table that match the surfaces you
+  touch.
+- For a routed reference doc (`docs/STATE_MACHINES.md`,
+  `docs/END_TO_END_TEST_MATRIX.md`, `docs/ARCHITECTURE.md`), read its headings
+  first, then only the section that matches; never the whole file.
+- The invariant domain files this
   review actually needs: `docs/invariants/membership-lifecycle.md` (`INV-LIFE`),
   `docs/invariants/booking-modifications.md` (`INV-MOD`), and
   `docs/invariants/booking-dates-and-capacity.md` (`INV-DATE`, `INV-CAP`)
-- `docs/STATE_MACHINES.md`
-- `docs/END_TO_END_TEST_MATRIX.md`
-- `docs/ARCHITECTURE.md`
 
 ## Allowed Actions
 
@@ -30,6 +30,8 @@ description: Lifecycle planning and review workflow for AlpineClubBookingsNZ. Us
 - Do not widen scope into payment/provider/schema work unless the issue allows
   it.
 - Do not use production data or live providers.
+- Do not merge or close anything; merges follow `AGENTS.md` "Completion and
+  Merge".
 
 ## Expected Output
 

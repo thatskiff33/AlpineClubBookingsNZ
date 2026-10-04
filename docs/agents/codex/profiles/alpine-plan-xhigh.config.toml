@@ -1,9 +1,0 @@
-# Example only. Copy to ~/.codex/alpine-plan-xhigh.config.toml before use.
-# Planning and issue-splitting profile. Read-only.
-
-model_reasoning_effort = "xhigh"
-approval_policy = "on-request"
-sandbox_mode = "read-only"
-
-[sandbox_workspace_write]
-network_access = false

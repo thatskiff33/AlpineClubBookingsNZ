@@ -20,7 +20,7 @@ on:
   #
   # This widens WHEN the existing jobs run and adds no new status context, so
   # `main`'s branch protection is untouched. See
-  # docs/agents/ISSUE_WORKFLOW.md -> "An epic reaches `main` as ONE merge".
+  # docs/agents/EPIC_PLAYBOOK.md -> "An epic reaches `main` as ONE merge".
   pull_request:
     branches:
       - main
