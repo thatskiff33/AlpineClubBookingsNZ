@@ -137,6 +137,9 @@ vi.mock("@/lib/payment-transactions", () => ({
     ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"].includes(status),
 }));
 vi.mock("@/lib/payment-recovery", () => ({
+  // #3835: the status sets the card cap's debt read routes through - the real ones.
+  CLAIMABLE_PAYMENT_RECOVERY_STATUSES: ["PENDING", "FAILED"],
+  NON_TERMINAL_PAYMENT_RECOVERY_STATUSES: ["PENDING", "PROCESSING", "FAILED"],
   // Pure and shared with the recovery replay (#1507), so it is reproduced rather
   // than stubbed - a test that let the metadata drift would pass while a real
   // replay hit `idempotency_error`.
@@ -4080,9 +4083,9 @@ describe("#3835 - a review completed after a card-paid booking was cancelled", (
     expect(mocks.paymentRecoveryOperationAggregate).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         paymentId: "payment-1",
-        status: { not: "SUCCEEDED" },
-        // A refund that FAILED for good is a person's; a hand refund lowers the headroom instead.
-        NOT: { status: "FAILED", nextRetryAt: null },
+        status: { in: ["PENDING", "PROCESSING", "FAILED"] },
+        // A dead refund is a person's; a hand refund lowers the headroom instead.
+        NOT: { status: { in: ["PENDING", "FAILED"] }, OR: [{ nextRetryAt: null }, { attempts: { gte: 5 } }] },
       }),
     }));
   });

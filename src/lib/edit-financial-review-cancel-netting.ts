@@ -6,7 +6,6 @@ import {
   ManualRefundTaskDirection,
   ManualRefundTaskKind,
   ManualRefundTaskStatus,
-  PaymentRecoveryOperationStatus,
   type Prisma,
 } from "@prisma/client";
 
@@ -14,6 +13,8 @@ import { daysUntilDate, loadCancellationPolicy, type CancellationRule } from "@/
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 import { paidCancellationMoney } from "@/lib/paid-cancellation-money";
+import { CLAIMABLE_PAYMENT_RECOVERY_STATUSES, NON_TERMINAL_PAYMENT_RECOVERY_STATUSES } from "@/lib/payment-recovery";
+import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
 import {
   REVIEW_CANCELLATION_REFUND_UNREPRODUCIBLE_MESSAGE,
@@ -346,8 +347,8 @@ export function reviewsSettledAfterCancelWhere({
 /**
  * #3835: card refunds already promised out of this payment and not yet made -
  * the cancellation's and earlier reviews' frozen Stripe debts that have not
- * SUCCEEDED and are still being retried. A debt that FAILED for good (no next
- * retry) is a person's to settle, and once they refund by hand the payment's
+ * SUCCEEDED and are still being retried. A debt that is dead (no next retry, or
+ * its attempts spent - the recovery module's rule) is a person's to settle, and once they refund by hand the payment's
  * refunded total already says so, so it is not counted twice. A debt partly
  * made counts whole: the cap errs towards refusing, with the task OPEN.
  */
@@ -358,8 +359,12 @@ async function unfinishedCardRefundDebts(
   const debts = await store.paymentRecoveryOperation.aggregate({
     where: {
       paymentId,
-      status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
-      NOT: { status: PaymentRecoveryOperationStatus.FAILED, nextRetryAt: null },
+      status: { in: [...NON_TERMINAL_PAYMENT_RECOVERY_STATUSES] },
+      // Not dead: the recovery module's own rule (`isEditFinancialReviewChargeRecoveryDead`).
+      NOT: {
+        status: { in: [...CLAIMABLE_PAYMENT_RECOVERY_STATUSES] },
+        OR: [{ nextRetryAt: null }, { attempts: { gte: MAX_PAYMENT_RECOVERY_ATTEMPTS } }],
+      },
       OR: [
         { idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId) },
         { idempotencyKey: { startsWith: buildEditFinancialReviewRefundRecoveryIdempotencyKey("") } },

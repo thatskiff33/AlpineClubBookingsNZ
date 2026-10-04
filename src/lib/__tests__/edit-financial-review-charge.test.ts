@@ -159,6 +159,9 @@ vi.mock("@/lib/stripe", () => ({
   listRefundsForCharge: vi.fn(),
 }));
 vi.mock("@/lib/payment-recovery", () => ({
+  // #3835: the status sets the card cap's debt read routes through - the real ones.
+  CLAIMABLE_PAYMENT_RECOVERY_STATUSES: ["PENDING", "FAILED"],
+  NON_TERMINAL_PAYMENT_RECOVERY_STATUSES: ["PENDING", "PROCESSING", "FAILED"],
   buildBookingModificationRefundMetadata: (
     bookingId: string,
     reason: string,
