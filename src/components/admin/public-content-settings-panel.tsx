@@ -95,14 +95,22 @@ export function PublicContentSettingsPanel() {
   );
   if (loadFailed) return <div className="space-y-3"><p className="text-sm text-danger">Could not load public content settings.</p><Button variant="outline" onClick={load}>Retry</Button></div>;
   if (!settings) return <div>{viewOnlyBanner}<p className="text-sm text-muted-foreground">Loading visibility settings…</p></div>;
+  /*
+    #3852: show the SERVER'S reason. The route answers 400 with the specific
+    problem ("The selected Book Now page is not published.", "Select a published
+    page for the Book Now target.") and discarding the body turned each into a
+    generic failure that named no control to fix. The generic line stays for a
+    transport failure or a body with no message.
+  */
   async function save() {
     setSaving(true);
     try {
       const response = await fetch("/api/admin/public-content-settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings) });
-      if (!response.ok) throw new Error();
-      setSettings((await response.json()).settings);
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body?.settings) throw new Error(typeof body?.error === "string" ? body.error : "Could not update public content visibility.");
+      setSettings(body.settings);
       toast.success("Public content visibility updated.");
-    } catch { toast.error("Could not update public content visibility."); }
+    } catch (error) { toast.error(error instanceof Error && error.message ? error.message : "Could not update public content visibility."); }
     finally { setSaving(false); }
   }
   return <div>{viewOnlyBanner}<div className="space-y-4"><p className="text-sm text-muted-foreground">A token renders no authoritative fee or policy data until its family is enabled here. Membership types must also be individually marked for public listing.</p><div className="grid gap-3 sm:grid-cols-2">{labels.map(([key, label]) => <label key={key} className="flex items-center gap-3 rounded-md border p-3"><input type="checkbox" checked={settings[key] as boolean} disabled={!canEdit} aria-describedby={!canEdit ? viewOnlyReasonId : undefined} onChange={(event) => setSettings({ ...settings, [key]: event.target.checked })} /><span>{label}</span></label>)}</div>
@@ -112,7 +120,15 @@ export function PublicContentSettingsPanel() {
         <p className="text-sm text-muted-foreground">Controls the public website header&apos;s Book Now button; a visitor who is not signed in sees it labelled &ldquo;Member booking&rdquo;. A page target that is unpublished falls back to the booking flow while it stays hidden; deleting that page switches this setting back to the booking flow.</p>
       </div>
       <label className="flex items-center gap-3"><input type="checkbox" checked={settings.showBookNow} disabled={!canEdit} aria-describedby={!canEdit ? viewOnlyReasonId : undefined} onChange={(event) => setSettings({ ...settings, showBookNow: event.target.checked })} /><span>Show the Book Now button</span></label>
-      {settings.showBookNow ? <div className="space-y-2 pl-1">
+      {/*
+        #3852: shown whenever the button is on OR a page target is saved. `save()`
+        posts `bookNowTarget` whether or not these controls are rendered, and the
+        route checks it without consulting `showBookNow` — so with the button
+        hidden and a saved page target that was later hidden, every save failed
+        and nothing on screen could fix it.
+      */}
+      {settings.showBookNow || settings.bookNowTarget === "PAGE" ? <div className="space-y-2 pl-1">
+        {!settings.showBookNow ? <p className="text-sm text-muted-foreground">The button is hidden, but a page target is still saved for when you show it again. If that page has since been hidden, choose another page or the booking flow here.</p> : null}
         <label className="flex items-center gap-3"><input type="radio" name="bookNowTarget" checked={settings.bookNowTarget === "BOOKING_FLOW"} disabled={!canEdit} onChange={() => setSettings({ ...settings, bookNowTarget: "BOOKING_FLOW" })} /><span>Go to the booking flow</span></label>
         <label className="flex items-center gap-3"><input type="radio" name="bookNowTarget" checked={settings.bookNowTarget === "PAGE"} disabled={!canEdit} onChange={() => setSettings({ ...settings, bookNowTarget: "PAGE" })} /><span>Go to a content page</span></label>
         {settings.bookNowTarget === "PAGE" ? <select className="w-full rounded-md border p-2 text-sm" value={settings.bookNowPageId ?? ""} disabled={!canEdit} onChange={(event) => setSettings({ ...settings, bookNowPageId: event.target.value || null })}><option value="">Select a published page…</option>{pages.map((page) => <option key={page.id} value={page.id}>{page.title} ({page.path})</option>)}</select> : null}
