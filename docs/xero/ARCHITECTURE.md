@@ -645,7 +645,8 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-entrance-fee-invoices` | One-off entrance-fee invoices per age tier. |
 | `xero-group-settlement-invoices` | Combined ORGANISER_PAYS internet-banking invoice across joiner bookings. |
 | `xero-group-settlement-invoice-outbox` | The combined invoice's outbox identity (#3642): the per-attempt CREATE key (attempt 0 keeps the pre-#3642 key), the VOID keys, the object-link shape, and the CREATE enqueue (`newAttempt` asks for a new invoice; otherwise the current attempt is returned or re-driven under its key). |
-| `xero-group-settlement-invoice-lines` | The combined invoice's lines, built from the settlement's committed CONFIRMED children with each joiner's promotion line, and their total; the create worker raises nothing unless it equals the settlement's (#3642). |
+| `xero-group-settlement-invoice-lines` | The combined invoice's lines, built from the settlement's committed CONFIRMED children with each joiner's promotion lines (one per code, #3828), and their total; the create worker raises nothing unless it equals the settlement's (#3642). |
+| `xero-promo-adjustment-lines` | The promotion lines of a booking invoice: one coded line per promo code, or one recorded aggregate fallback (#3828, `INV-MONEY-039`). |
 | `xero-group-settlement-invoice-voids` | The combined invoice's replayable VOIDs — after the group is cancelled (`INV-PAY-035`) and after the settlement abandons it (`INV-PAY-105`, #3642) — and the one read of that invoice's state in Xero: both VOIDs read it first, so an already-void invoice completes and one carrying money alerts instead of failing for ever. Pre-#3642 code reads an abandon VOID row as a cancellation VOID and leaves it FAILED (fails closed; retry after roll-forward). |
 | `xero-invoice-helpers` | Shared date/allocation helpers for the six modules above. |
 | `xero-account-class` | Leaf, pure: the ONE reading of a Xero account's CLASS (#2717), shared by the admin account pickers and the finance reports so they cannot come to disagree about what an expense account is. |
@@ -1433,9 +1434,34 @@ transaction.
 
 This verification is deliberately booking-wide. Inexact provenance on one
 night does not prevent a reconciling aggregate promotion line from being
-verified. It also does not change group-settlement invoice totals or introduce
-the child promotion line that path already omits; those are separate accounting
-shape decisions, not compatibility fallbacks.
+verified. It does not change group-settlement invoice totals; the combined
+group invoice carries each child's promotion line since #3642.
+
+### One promotion line per promo code (#3828, `INV-MONEY-039`)
+
+A booking may carry several promo codes (#3492), and the treasurer reconciles
+each on its own line. `xero-promo-adjustment-lines.ts` plans the promotion
+lines of a per-booking invoice and of each group-settlement child:
+
+- **One code, or none:** the single line, unchanged in description, `taxType`,
+  quantity, signed amount, coding and operation payload.
+- **Several codes:** one `Promo adjustment - CODE` line per code with a
+  non-zero adjustment, in the booker's order, each coded by
+  `resolvePromoLineCodes` for its own code, at that redemption's recorded
+  build-up. The operation's `requestPayload.promoLines` records the split.
+- **Fallback:** when a code's rows do not reconcile to its redemption
+  (`CODE_BUILDUP_NOT_KNOWN`) or the codes do not sum to the verified aggregate
+  (`CODE_LINES_DO_NOT_SUM`), one aggregate `Promo adjustment - A, B` line at the
+  generic promotion coding, with the reason in `promoLines`. The invoice total
+  never depends on the split.
+
+The invoice-update path passes every line whose description starts
+`Promo adjustment` through untouched, so a several-code invoice keeps all its
+promotion lines. Edit documents code each stored `PROMO_DELTA` by the code it
+names (`INV-MOD-058`); a code the edit released is looked up by code. A
+several-code edit whose per-code changes do not add up stores one line naming
+no code, coded generically. A lone line on a booking with no code left is coded
+generically, as a one-code booking's removal always was (`INV-MONEY-039`).
 
 Stage 4 (#3278, `INV-MONEY-031`) also derives the complete booking-money
 reconciliation state from that same coherent booking snapshot before provider

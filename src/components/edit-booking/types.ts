@@ -94,6 +94,13 @@ export interface BookingData {
   discountCents: number;
   promoAdjustmentCents: number;
   promo: PromoInfo | null;
+  /**
+   * #3828: set (with `promo: null`) when the booking carries several codes,
+   * each with its own adjustment. The panel's one-code controls are locked
+   * then — the legacy one-code request would release the other codes — until
+   * epic #3813's chips child edits the list.
+   */
+  promoLines?: Array<PromoInfo & { amountCents: number }>;
   canEditNonMemberGuestNames: boolean;
   // Fully paid: only an identity-preserving spelling correction is allowed on a
   // free-text non-member guest (#1386). The server enforces the similarity guard.

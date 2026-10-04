@@ -4,9 +4,9 @@
  * A booking may carry several promo codes — one `PromoRedemption` per code,
  * owner decision on #3492 — so `Booking.promoRedemptions` is a list. Every
  * reader goes through this module rather than indexing the relation itself, so
- * the order the codes apply in (the booker's order, D-3813-2) and the answer to
- * "what does a reader that can only handle one code do with two" each live in
- * exactly one place (INV-SSOT-001).
+ * the order the codes apply in (the booker's order, D-3813-2) lives in exactly
+ * one place (INV-SSOT-001). Since #3828 every reader states every code, so the
+ * former one-code-only reader and its refusal are gone.
  *
  * Pure and dependency-free on purpose: it is imported by route handlers, email
  * composition and test doubles alike, and must not drag Prisma onto any of
@@ -60,35 +60,6 @@ export function bookingPromoRedemptions<T>(
 }
 
 /**
- * Raised when a reader that can state only ONE promotion meets a booking that
- * carries several. Such a reader is a pricing, edit or invoice path that a
- * later child of epic #3813 widens (C2 pricing, C3 Xero and edit lines); until
- * then it refuses rather than silently pricing or invoicing the first code
- * alone. Unreachable while the `multiPromoCodes` switch is off.
- */
-export class MultiplePromoRedemptionsError extends Error {
-  constructor(readonly count: number) {
-    super(
-      `This booking carries ${count} promo codes, and this step can only handle one (epic #3813).`,
-    );
-    this.name = "MultiplePromoRedemptionsError";
-  }
-}
-
-/**
- * The booking's one redemption, or null — for the readers that can state only
- * one. Refuses (`MultiplePromoRedemptionsError`) when the booking carries
- * several, because answering with the first would under-state the discount.
- */
-export function soleBookingPromoRedemption<T>(
-  booking: PromoRedemptionCarrier<T> | null | undefined,
-): T | null {
-  const rows = bookingPromoRedemptions(booking);
-  if (rows.length > 1) throw new MultiplePromoRedemptionsError(rows.length);
-  return rows[0] ?? null;
-}
-
-/**
  * The codes a booking carries, in application order, joined for display —
  * `null` when it carries none. With one code this is that code, byte for byte,
  * which is what every email and audit field held before #3826.
@@ -103,4 +74,46 @@ export function bookingPromoCodeLabel(
     .map((redemption) => redemption.promoCode?.code)
     .filter((code): code is string => Boolean(code));
   return codes.length > 0 ? codes.join(", ") : null;
+}
+
+/** One promo code's own signed adjustment on a booking (#3828). */
+export type PromoCodeAdjustment = { code: string; amountCents: number };
+
+/**
+ * Each code the booking carries with its own signed adjustment, in application
+ * order (#3828) — THE ONE projection the confirmation email, an edit's per-code
+ * promotion sides and the booking page all read, so they cannot list the codes
+ * in different orders or with different figures. A redemption whose code was
+ * not loaded is left out.
+ */
+export function bookingPromoCodeAdjustments(
+  booking:
+    | PromoRedemptionCarrier<
+        OrderableRedemption & { priceAdjustmentCents: number; promoCode?: { code: string } | null }
+      >
+    | null
+    | undefined,
+): PromoCodeAdjustment[] {
+  return bookingPromoRedemptions(booking).flatMap((redemption) =>
+    redemption.promoCode
+      ? [{ code: redemption.promoCode.code, amountCents: redemption.priceAdjustmentCents }]
+      : [],
+  );
+}
+
+/**
+ * THE ONE ANSWER to "one money row per code, or the one combined row?"
+ * (#3828), read by the confirmation email (`promoAdjustmentSummaryRows`) and
+ * the booking page alike, so the two fall back together. Per-code only when
+ * there are several codes AND they add up to the booking's
+ * `promoAdjustmentCents`; then the codes that took something (non-zero), in
+ * order. Otherwise `null`: render the one combined row, as always.
+ */
+export function perCodePromoAdjustmentRows<T extends PromoCodeAdjustment>(
+  promoLines: ReadonlyArray<T> | null | undefined,
+  promoAdjustmentCents: number,
+): T[] | null {
+  if (!promoLines || promoLines.length <= 1) return null;
+  const sum = promoLines.reduce((total, line) => total + line.amountCents, 0);
+  return sum === promoAdjustmentCents ? promoLines.filter((line) => line.amountCents !== 0) : null;
 }

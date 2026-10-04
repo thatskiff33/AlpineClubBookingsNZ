@@ -77,6 +77,7 @@ import {
   requestedPromoCodeChange,
   keptStoredPromoRedemption,
   promoRequestReadsMultiPromoSwitch,
+  oneCodeFieldsOnSeveralCodesRefusal,
   requestedPromoCodeListFor,
   splitRequestedPromoCodes,
 } from "@/lib/booking-modify-promo-request";
@@ -2308,10 +2309,11 @@ export async function POST(
       }));
     // The save's own refusal (`promoCodeListRefusal`), read the same way.
     let refusal: string | null = requested
-      ? promoCodeListRefusal({
+      ? (oneCodeFieldsOnSeveralCodesRefusal(promoRequest, storedCodes) ??
+        promoCodeListRefusal({
           ...splitRequestedPromoCodes(requested, promoRedemptions),
           multiPromoCodes,
-        })
+        }))
       : null;
     const applications: Array<PromotionApplicationInput & { kept: boolean }> = [];
     for (const entry of refusal ? [] : entries) {
@@ -2414,15 +2416,17 @@ export async function POST(
       }
     }
 
-    if (requested && requested.length === 0) {
+    if (requested && refusal) {
+      // Invalid new code — the save refuses the whole edit, so the discount
+      // stays 0 here; don't fall back to the old codes. Checked before the
+      // removal below: a one-code removal on a several-code booking is
+      // refused too (#3828), not previewed as removing every code.
+      promoValidation = { valid: false, error: refusal };
+    } else if (requested && requested.length === 0) {
       // User wants to remove every code (for reuse later).
       newDiscountCents = 0;
       newPromoAdjustmentCents = 0;
       promoValidation = null;
-    } else if (requested && refusal) {
-      // Invalid new code — the save refuses the whole edit, so the discount
-      // stays 0 here; don't fall back to the old codes.
-      promoValidation = { valid: false, error: refusal };
     } else if (priced) {
       newDiscountCents = priced.discountCents;
       newPromoAdjustmentCents = priced.priceAdjustmentCents;

@@ -65,7 +65,9 @@ const NAMED_READERS: Record<string, ReaderSite> = {
     resolutions: 1,
     operation: "XERO_PROMO_LINE",
     historySink: /moneyBuildUp:\s*promoMoneyBuildUpSelection\.historyMetadata/,
-    amountSink: /const xeroPromoAdjustmentCents = d3CompatibleBookingMoneyBuildUpCents\([\s\S]{0,100}promoMoneyBuildUpSelection[\s\S]{0,5000}unitAmount: xeroPromoAdjustmentCents \/ 100/,
+    // #3828: the resolved figure is the aggregate the per-code promotion lines
+    // must add up to (`xero-promo-adjustment-lines.ts`), or the one line.
+    amountSink: /const xeroPromoAdjustmentCents = d3CompatibleBookingMoneyBuildUpCents\([\s\S]{0,100}promoMoneyBuildUpSelection[\s\S]{0,5000}planPromoAdjustmentLines\(\{\s*aggregateCents: xeroPromoAdjustmentCents,/,
   },
 };
 

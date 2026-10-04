@@ -1,5 +1,8 @@
 import type { BatchModifyInput } from "@/lib/booking-modify-validation";
-import { normalizePromoCodeInput } from "@/lib/promo-code-list-rules";
+import {
+  normalizePromoCodeInput,
+  SEVERAL_PROMO_CODES_ONE_CODE_EDIT_MESSAGE,
+} from "@/lib/promo-code-list-rules";
 
 // #3827: how an edit's request names the promo codes the booking should carry
 // — one reader of the plural `promoCodes` and the legacy `promoCode` /
@@ -83,6 +86,26 @@ export function requestedPromoCodeListFor(
     .filter((code) => code.internal && !listed.has(code.code))
     .map((code) => ({ code: code.code, reapply: false }));
   return [...carried, ...requested];
+}
+
+/**
+ * The refusal an edit earns for naming codes through the legacy ONE-code
+ * fields (`promoCode`, `removePromoCode`) on a booking that carries more than
+ * one of the booker's own codes, or null (#3828). Those fields have always
+ * meant "the booking's code is now this one" and "the booking has no code", so
+ * on such a booking either would silently release every other member's code. A
+ * working-bee discount is not the booker's code and is not counted. The plural
+ * `promoCodes` names the whole list and is never refused here. Read by the save
+ * (`applyPromoCodeChanges`) and the preview alike, from the redemptions each
+ * already holds.
+ */
+export function oneCodeFieldsOnSeveralCodesRefusal(
+  input: PromoCodeRequestFields,
+  stored: ReadonlyArray<{ internal: boolean }>,
+): string | null {
+  if (input.promoCodes || (!input.promoCode && !input.removePromoCode)) return null;
+  const bookerCodes = stored.filter((code) => !code.internal).length;
+  return bookerCodes > 1 ? SEVERAL_PROMO_CODES_ONE_CODE_EDIT_MESSAGE : null;
 }
 
 /**

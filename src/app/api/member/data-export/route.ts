@@ -148,8 +148,11 @@ export async function GET() {
         },
         promoRedemptions: {
           select: {
+            id: true,
+            applicationOrder: true,
             discountCents: true,
             createdAt: true,
+            promoCode: { select: { code: true } },
           },
         },
       },
@@ -378,11 +381,20 @@ export async function GET() {
 /**
  * A booking's promo discount in the member's export (#3826). One code reads
  * exactly as it always did; several (one per code) are summed, applied when the
- * first of them was.
+ * first of them was, and (#3828) listed one entry per code, naming it, in the
+ * booker's order.
  */
 function memberExportPromoDiscount(
-  redemptions: ReadonlyArray<{ discountCents: number; createdAt: Date }>,
-): { discountCents: number; appliedAt: string } | null {
+  redemptions: ReadonlyArray<{
+    discountCents: number;
+    createdAt: Date;
+    promoCode: { code: string } | null;
+  }>,
+): {
+  discountCents: number;
+  appliedAt: string;
+  codes?: Array<{ code: string | null; discountCents: number; appliedAt: string }>;
+} | null {
   if (redemptions.length === 0) return null;
   const appliedAt = redemptions.reduce(
     (earliest, redemption) =>
@@ -392,5 +404,14 @@ function memberExportPromoDiscount(
   return {
     discountCents: redemptions.reduce((sum, redemption) => sum + redemption.discountCents, 0),
     appliedAt: appliedAt.toISOString(),
+    ...(redemptions.length > 1
+      ? {
+          codes: redemptions.map((redemption) => ({
+            code: redemption.promoCode?.code ?? null,
+            discountCents: redemption.discountCents,
+            appliedAt: redemption.createdAt.toISOString(),
+          })),
+        }
+      : {}),
   };
 }
