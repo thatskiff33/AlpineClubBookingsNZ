@@ -18,7 +18,6 @@ interface BookingRequestSettings {
   showPricingToNonMembers: boolean
   quoteResponseTtlDays: number
   quoteReminderLeadDays: number
-  assignSchoolTeachersAsHutLeaders: boolean
   attendeeConfirmationLeadDays: number
   attendeeConfirmationReminderDays: number
 }
@@ -54,10 +53,6 @@ interface PricingDraft {
   showPricingToNonMembers: boolean
 }
 
-interface SchoolTeacherHutLeaderDraft {
-  assignSchoolTeachersAsHutLeaders: boolean
-}
-
 type QuoteTimingDraft = {
   quoteResponseTtlDays: string
   quoteReminderLeadDays: string
@@ -76,7 +71,6 @@ const SETTINGS_FALLBACK: BookingRequestSettings = {
   showPricingToNonMembers: false,
   quoteResponseTtlDays: 14,
   quoteReminderLeadDays: 3,
-  assignSchoolTeachersAsHutLeaders: false,
   attendeeConfirmationLeadDays: 14,
   attendeeConfirmationReminderDays: 3,
 }
@@ -398,30 +392,6 @@ export function PublicBookingRequestsSection() {
     isDirty: isTimingDirty,
   })
 
-  const schoolTeacherHutLeader = useSectionEditState<SchoolTeacherHutLeaderDraft>({
-    initial: {
-      assignSchoolTeachersAsHutLeaders:
-        SETTINGS_FALLBACK.assignSchoolTeachersAsHutLeaders,
-    },
-    load: async () => ({
-      assignSchoolTeachersAsHutLeaders:
-        (await loadSettings()).assignSchoolTeachersAsHutLeaders,
-    }),
-    save: async (draft) => {
-      const fresh = await fetchSettings({ asSaveStep: true })
-      const next = await putSettings({
-        ...fresh,
-        assignSchoolTeachersAsHutLeaders:
-          draft.assignSchoolTeachersAsHutLeaders,
-      })
-      return {
-        assignSchoolTeachersAsHutLeaders:
-          next.assignSchoolTeachersAsHutLeaders,
-      }
-    },
-    successMessage: SAVE_SUCCESS,
-  })
-
   /*
     #2166: `beginSaveDraftSync` is GONE, and nothing replaces it.
 
@@ -457,8 +427,8 @@ export function PublicBookingRequestsSection() {
     state: that is the coupling this removed.
   */
 
-  const busy = pricing.saving || quoteTiming.saving || attendeeTiming.saving || schoolTeacherHutLeader.saving
-  const loading = pricing.loading || quoteTiming.loading || attendeeTiming.loading || schoolTeacherHutLeader.loading
+  const busy = pricing.saving || quoteTiming.saving || attendeeTiming.saving
+  const loading = pricing.loading || quoteTiming.loading || attendeeTiming.loading
 
   // `initial` is always supplied, so these are never actually null once loading
   // clears; the checks below exist only to narrow the hook's `T | null`, which
@@ -466,10 +436,9 @@ export function PublicBookingRequestsSection() {
   const pricingDraft = pricing.draft
   const quoteDraft = quoteTiming.draft
   const attendeeDraft = attendeeTiming.draft
-  const schoolTeacherHutLeaderDraft = schoolTeacherHutLeader.draft
 
   function handleSavePricing() {
-    clearOtherFeedback(quoteTiming, attendeeTiming, schoolTeacherHutLeader)
+    clearOtherFeedback(quoteTiming, attendeeTiming)
     void pricing.save()
   }
 
@@ -481,7 +450,7 @@ export function PublicBookingRequestsSection() {
     enabled for a dirty-but-invalid draft and the click explains the problem.
   */
   function handleSaveQuoteTiming(draft: QuoteTimingDraft) {
-    clearOtherFeedback(pricing, attendeeTiming, schoolTeacherHutLeader)
+    clearOtherFeedback(pricing, attendeeTiming)
     // The hook clears this card's own pair when `save()` starts, but a
     // validation failure returns BEFORE `save()` — leaving a green "settings
     // saved" from an earlier save sitting above the red error below.
@@ -510,7 +479,7 @@ export function PublicBookingRequestsSection() {
   }
 
   function handleSaveAttendeeTiming(draft: AttendeeTimingDraft) {
-    clearOtherFeedback(pricing, quoteTiming, schoolTeacherHutLeader)
+    clearOtherFeedback(pricing, quoteTiming)
     // Same reason as the quote handler above.
     attendeeTiming.setSuccess("")
     const lead = Number(draft.attendeeConfirmationLeadDays)
@@ -528,11 +497,6 @@ export function PublicBookingRequestsSection() {
       return
     }
     void attendeeTiming.save()
-  }
-
-  function handleSaveSchoolTeacherHutLeader() {
-    clearOtherFeedback(pricing, quoteTiming, attendeeTiming)
-    void schoolTeacherHutLeader.save()
   }
 
   /*
@@ -557,26 +521,23 @@ export function PublicBookingRequestsSection() {
     <div>
       {viewOnlyBanner}
       <PolicyFeedback
-        error={pricing.error || quoteTiming.error || attendeeTiming.error || schoolTeacherHutLeader.error}
-        success={pricing.success || quoteTiming.success || attendeeTiming.success || schoolTeacherHutLeader.success}
+        error={pricing.error || quoteTiming.error || attendeeTiming.error}
+        success={pricing.success || quoteTiming.success || attendeeTiming.success}
         onClearError={() => {
           pricing.setError("")
           quoteTiming.setError("")
           attendeeTiming.setError("")
-          schoolTeacherHutLeader.setError("")
         }}
         onClearSuccess={() => {
           pricing.setSuccess("")
           quoteTiming.setSuccess("")
           attendeeTiming.setSuccess("")
-          schoolTeacherHutLeader.setSuccess("")
         }}
       />
       {loading ||
       pricingDraft === null ||
       quoteDraft === null ||
-      attendeeDraft === null ||
-      schoolTeacherHutLeaderDraft === null ? (
+      attendeeDraft === null ? (
         <div className="text-center py-8">Loading...</div>
       ) : (
       <div className="space-y-6">
@@ -860,71 +821,6 @@ export function PublicBookingRequestsSection() {
                   variant="outline"
                   aria-label="Cancel attendee prompts"
                   onClick={attendeeTiming.cancelEditing}
-                  disabled={busy}
-                >
-                  Cancel
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle>School Teacher Hut-Leader Assignments</CardTitle>
-              <CardDescription>
-                Decide whether approving a school booking automatically gives its named teachers hut-leader duties and PINs.
-              </CardDescription>
-            </div>
-            {!schoolTeacherHutLeader.editing && (
-              <ViewOnlyActionButton
-                type="button"
-                canEdit={canEdit}
-                describeReason={false}
-                variant="outline"
-                size="sm"
-                aria-label="Edit school teacher hut-leader assignments"
-                onClick={schoolTeacherHutLeader.startEditing}
-                disabled={busy}
-              >
-                Edit
-              </ViewOnlyActionButton>
-            )}
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                id="assignSchoolTeachersAsHutLeaders"
-                checked={schoolTeacherHutLeaderDraft.assignSchoolTeachersAsHutLeaders}
-                onChange={(e) => schoolTeacherHutLeader.setDraft({
-                  assignSchoolTeachersAsHutLeaders: e.target.checked,
-                })}
-                className="rounded border-input"
-                disabled={!schoolTeacherHutLeader.editing || busy}
-              />
-              <Label htmlFor="assignSchoolTeachersAsHutLeaders">Assign school teachers as hut leaders</Label>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Off is the default. Teachers stay recorded as named school contacts, but officers assign hut leaders through the usual booking tools. When on, future school approvals also create teacher hut-leader assignments and send their PIN emails.
-            </p>
-            {schoolTeacherHutLeader.editing && (
-              <div className="flex space-x-3">
-                <ViewOnlyActionButton
-                  type="button"
-                  canEdit={canEdit}
-                  describeReason={false}
-                  onClick={handleSaveSchoolTeacherHutLeader}
-                  disabled={busy || !schoolTeacherHutLeader.dirty || !canEdit}
-                >
-                  {schoolTeacherHutLeader.saving ? "Saving..." : "Save school teacher policy"}
-                </ViewOnlyActionButton>
-                <Button
-                  type="button"
-                  variant="outline"
-                  aria-label="Cancel school teacher hut-leader assignments"
-                  onClick={schoolTeacherHutLeader.cancelEditing}
                   disabled={busy}
                 >
                   Cancel

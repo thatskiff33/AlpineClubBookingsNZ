@@ -375,7 +375,6 @@ describe("booking request settings", () => {
       showPricingToNonMembers: false,
       quoteResponseTtlDays: 14,
       quoteReminderLeadDays: 3,
-      assignSchoolTeachersAsHutLeaders: false,
       attendeeConfirmationLeadDays: 14,
       attendeeConfirmationReminderDays: 3,
     });
@@ -387,7 +386,6 @@ describe("booking request settings", () => {
       showPricingToNonMembers: true,
       quoteResponseTtlDays: 10,
       quoteReminderLeadDays: 2,
-      assignSchoolTeachersAsHutLeaders: true,
       attendeeConfirmationLeadDays: 21,
       attendeeConfirmationReminderDays: 4,
     } as never);
@@ -396,7 +394,6 @@ describe("booking request settings", () => {
       showPricingToNonMembers: true,
       quoteResponseTtlDays: 10,
       quoteReminderLeadDays: 2,
-      assignSchoolTeachersAsHutLeaders: true,
       attendeeConfirmationLeadDays: 14,
       attendeeConfirmationReminderDays: 3,
       adminMemberId: "admin-1",
@@ -409,7 +406,6 @@ describe("booking request settings", () => {
       showPricingToNonMembers: true,
       quoteResponseTtlDays: 10,
       quoteReminderLeadDays: 2,
-      assignSchoolTeachersAsHutLeaders: true,
       attendeeConfirmationLeadDays: 21,
       attendeeConfirmationReminderDays: 4,
     });
