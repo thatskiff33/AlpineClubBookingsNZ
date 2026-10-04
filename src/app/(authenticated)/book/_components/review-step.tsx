@@ -73,6 +73,8 @@ export function ReviewStep({
   perGuestDatesEnabled,
   appliedPromos,
   setAppliedPromos,
+  combineWorkPartyWithCodes,
+  setMultiPromoCodes,
   availableCreditCents,
   appliedCreditCents,
   remainingToPay,
@@ -143,6 +145,9 @@ export function ReviewStep({
   perGuestDatesEnabled: boolean;
   appliedPromos: PromoResult[];
   setAppliedPromos: Dispatch<SetStateAction<PromoResult[]>>;
+  /** #3492 / D-3813-3: the club lets a working bee and promo codes combine. */
+  combineWorkPartyWithCodes: boolean;
+  setMultiPromoCodes: (value: boolean | null) => void;
   availableCreditCents: number;
   appliedCreditCents: number;
   remainingToPay: number;
@@ -758,9 +763,13 @@ export function ReviewStep({
                     setWorkPartyClearedNotice(null);
                     if (!checked) {
                       setSelectedWorkPartyEventId(null);
-                      setAppliedPromos((current) =>
-                        current.some((promo) => promo.workPartyEvent) ? [] : current
-                      );
+                      // Combined (D-3813-3), the codes stay and are re-priced
+                      // without the working bee; alone, the discount just goes.
+                      if (!combineWorkPartyWithCodes) {
+                        setAppliedPromos((current) =>
+                          current.some((promo) => promo.workPartyEvent) ? [] : current
+                        );
+                      }
                     } else {
                       // "Exactly one event to attend" said as a first with
                       // nothing after it, so the event that gets selected is
@@ -773,14 +782,24 @@ export function ReviewStep({
                     }
                   }}
                   className="rounded border-input"
-                  disabled={appliedPromos.some((promo) => !promo.workPartyEvent)}
+                  disabled={
+                    !combineWorkPartyWithCodes &&
+                    appliedPromos.some((promo) => !promo.workPartyEvent)
+                  }
                 />
                 I am attending a working bee
               </label>
-              {appliedPromos.some((promo) => !promo.workPartyEvent) && (
+              {!combineWorkPartyWithCodes &&
+                appliedPromos.some((promo) => !promo.workPartyEvent) && (
                 <p className="text-sm text-muted-foreground">
                   Remove your promo code to select a working bee event — a
                   booking can only use one discount.
+                </p>
+              )}
+              {combineWorkPartyWithCodes && attendingWorkParty && (
+                <p className="text-sm text-muted-foreground">
+                  The working bee discount covers its own nights first; any
+                  promo codes you add cover the nights it does not.
                 </p>
               )}
               {attendingWorkParty && (
@@ -838,12 +857,25 @@ export function ReviewStep({
               checkIn={checkIn!}
               checkOut={checkOut!}
               guests={reviewGuestPayload}
-              applied={appliedPromos.filter((promo) => !promo.workPartyEvent)}
+              // Combined (the club's `multiPromoCodes` switch on, D-3813-3) the
+              // working bee rides along with the codes and each code is priced
+              // after it; otherwise the two stay exclusive, exactly as before.
+              applied={
+                combineWorkPartyWithCodes
+                  ? appliedPromos
+                  : appliedPromos.filter((promo) => !promo.workPartyEvent)
+              }
               onChange={setAppliedPromos}
               lodgeId={lodgeId}
               ownCodes={availablePromoCodes}
-              disabled={attendingWorkParty}
+              disabled={!combineWorkPartyWithCodes && attendingWorkParty}
               disabledReason="A promo code cannot be combined with a working bee discount. Untick 'I am attending a working bee' to enter a code instead."
+              workPartyEventId={
+                combineWorkPartyWithCodes
+                  ? appliedPromos.find((promo) => promo.workPartyEvent)?.workPartyEvent?.id
+                  : undefined
+              }
+              onMultiPromoCodesChange={setMultiPromoCodes}
             />
           )}
         </CardContent>

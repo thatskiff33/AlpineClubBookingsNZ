@@ -19,6 +19,8 @@ import { type PromoResult } from "@/components/promo-code-input";
 import {
   appliedPromosFinalPriceCents,
   createRequestPromoFields,
+  promoCodeListEntries,
+  validatePromoCodeList,
 } from "@/components/promo-code-list-client";
 import {
   getBookingErrorPaymentTargets,
@@ -403,6 +405,19 @@ export function useBookingWizard() {
   // #3492: every code on the booking, in the booker's order (D-3813-2); a
   // working-bee discount, while it stands alone, is the list's one entry.
   const [appliedPromos, setAppliedPromos] = useState<PromoResult[]>([]);
+  // The club's `multiPromoCodes` switch, as the review step's guest-code
+  // lookup reports it (null until it answers). On, a working bee and promo codes
+  // combine (D-3813-3); off or unknown, they stay exclusive exactly as before.
+  const [multiPromoCodes, setMultiPromoCodes] = useState<boolean | null>(null);
+  const combineWorkPartyWithCodes = multiPromoCodes === true;
+  // Read by the working-bee effect and the event-list refresh, which must see
+  // the latest list and switch without re-running on every change to them.
+  const combineWorkPartyWithCodesRef = useRef(combineWorkPartyWithCodes);
+  const appliedPromosRef = useRef(appliedPromos);
+  useLayoutEffect(() => {
+    combineWorkPartyWithCodesRef.current = combineWorkPartyWithCodes;
+    appliedPromosRef.current = appliedPromos;
+  });
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [requestedRoomId, setRequestedRoomId] = useState<string | null>(null);
   // "Only book if my guests can come" — opt into whole-booking cancellation
@@ -1559,8 +1574,12 @@ export function useBookingWizard() {
             if (previous) {
               setWorkPartyClearedNotice(previous.name);
             }
+            // Combined, the codes stay and the working-bee effect re-prices
+            // them without it; alone, the discount just goes.
             setAppliedPromos((current) =>
-              current.some((promo) => promo.workPartyEvent) ? [] : current
+              current.some((promo) => promo.workPartyEvent) && !combineWorkPartyWithCodesRef.current
+                ? []
+                : current
             );
           }
         })
@@ -2155,15 +2174,43 @@ export function useBookingWizard() {
   // Apply or refresh the working bee discount preview when a work party
   // event is selected (or the booking changes while one is selected).
   useEffect(() => {
-    if (
-      !scopedLodgeId ||
-      !selectedWorkPartyEventId ||
-      !checkIn ||
-      !checkOut ||
-      !priceQuote
-    ) {
+    if (!scopedLodgeId || !checkIn || !checkOut || !priceQuote) {
       return;
     }
+
+    // #3492 / D-3813-3: with the club's `multiPromoCodes` switch on, a working
+    // bee COMBINES with codes the booker already applied — it claims its
+    // in-window nights first and the codes are re-priced after it (or without
+    // it, once it is unticked or cleared), in one several-code preview.
+    const codes = appliedPromosRef.current.filter((promo) => promo.code && !promo.workPartyEvent);
+    if (combineWorkPartyWithCodes && codes.length > 0) {
+      const hadWorkParty = appliedPromosRef.current.some((promo) => promo.workPartyEvent);
+      if (!selectedWorkPartyEventId && !hadWorkParty) return;
+      let cancelled = false;
+      setWorkPartyError("");
+      void validatePromoCodeList({
+        entries: promoCodeListEntries(codes),
+        appliesTo: new Map(codes.flatMap((promo) => (promo.appliesTo ? [[promo.code!, promo.appliesTo]] : []))),
+        checkIn,
+        checkOut,
+        guests: reviewGuestPayload,
+        lodgeId: scopedLodgeId,
+        ...(selectedWorkPartyEventId ? { workPartyEventId: selectedWorkPartyEventId } : {}),
+      }).then((outcome) => {
+        if (cancelled) return;
+        if (outcome.ok) {
+          setAppliedPromos(outcome.applied);
+          return;
+        }
+        // Keep the booker's codes; say why the working bee did not join them.
+        setAppliedPromos(codes);
+        setWorkPartyError(outcome.error);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (!selectedWorkPartyEventId) return;
 
     let cancelled = false;
     const requestedLodgeId = scopedLodgeId;
@@ -2216,7 +2263,7 @@ export function useBookingWizard() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopedLodgeId, selectedWorkPartyEventId, checkIn, checkOut, priceQuote, JSON.stringify(reviewGuestPayload)]);
+  }, [scopedLodgeId, selectedWorkPartyEventId, checkIn, checkOut, priceQuote, JSON.stringify(reviewGuestPayload), combineWorkPartyWithCodes]);
 
   const wizardSteps: Array<{ id: BookingWizardStep; label: string }> = [
     { id: "dates", label: "Select Dates" },
@@ -2258,6 +2305,8 @@ export function useBookingWizard() {
     handleMultiDateRangesEnabledChange,
     appliedPromos,
     setAppliedPromos,
+    combineWorkPartyWithCodes,
+    setMultiPromoCodes,
     expectedArrivalTime,
     setExpectedArrivalTime,
     requestedRoomId,

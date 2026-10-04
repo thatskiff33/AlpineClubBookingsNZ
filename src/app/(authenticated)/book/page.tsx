@@ -58,6 +58,8 @@ export default function BookPage() {
     handleMultiDateRangesEnabledChange,
     appliedPromos,
     setAppliedPromos,
+    combineWorkPartyWithCodes,
+    setMultiPromoCodes,
     expectedArrivalTime,
     setExpectedArrivalTime,
     requestedRoomId,
@@ -631,6 +633,8 @@ export default function BookPage() {
           perGuestDatesEnabled={perGuestDatesEnabled}
           appliedPromos={appliedPromos}
           setAppliedPromos={setAppliedPromos}
+          combineWorkPartyWithCodes={combineWorkPartyWithCodes}
+          setMultiPromoCodes={setMultiPromoCodes}
           availableCreditCents={availableCreditCents}
           appliedCreditCents={appliedCreditCents}
           remainingToPay={remainingToPay}
