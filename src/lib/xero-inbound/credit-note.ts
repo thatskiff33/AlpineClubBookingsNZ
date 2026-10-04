@@ -9,6 +9,7 @@ import { dedupeResolvedXeroObjectLinks, dedupeXeroObjectLinks, findActiveXeroObj
 import { writeXeroInboundAuditLogs } from "./audit";
 import { repairAccountCreditAllocationBusinessState, repairRefundedPaymentBusinessState, resolveAccountCreditPaymentsFromMemberCredits, resolveAppliedCreditPaymentsFromLocalProvenance, resolvePaymentIdsByInvoiceTargets } from "./credit-note-repairs";
 import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
+import { accountCreditModificationNoteIds } from "./account-credit-modification-notes";
 
 export async function reconcileXeroCreditNote(creditNoteId: string) {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
@@ -307,9 +308,10 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     await upsertXeroObjectLink(link);
   }
 
+  // #3809 (review M2): a modification note that gave credit back moved no cash.
   const modificationRefundPaymentIdsByInvoiceId = resolvedCreditNoteLinks.some(
     (link) => link.role === "MODIFICATION_CREDIT_NOTE"
-  )
+  ) && !(await accountCreditModificationNoteIds([creditNote.creditNoteID])).has(creditNote.creditNoteID)
     ? await resolvePaymentIdsByInvoiceTargets(
         creditNote.creditNoteID,
         allocationTargets

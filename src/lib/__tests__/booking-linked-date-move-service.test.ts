@@ -247,6 +247,8 @@ function batchResult(
     additionalAmountCents: Math.max(0, money.additionalAmountCents - waived),
     refundAmountCents: money.refundAmountCents + waived,
     accountCreditAmountCents: money.accountCreditAmountCents,
+    // #3809: none of these bookings was paid with account credit.
+    appliedCreditGivenBackCents: 0,
     requiresSettlementMethod: money.requiresSettlementMethod === true,
     settlementMethod: null,
     additionalPaymentClientSecret: null,
