@@ -1,3 +1,5 @@
+import { isHttpUrl } from "@/lib/http-url";
+
 function readEnv(name: string): string | undefined {
   const value = process.env[name]?.trim();
   return value ? value : undefined;
@@ -12,15 +14,6 @@ export function getAuthTrustHost(): boolean {
   return raw === "true";
 }
 
-function isValidHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 // test seam
 export function getRuntimeConfigIssues(): string[] {
   const issues: string[] = [];
@@ -32,7 +25,7 @@ export function getRuntimeConfigIssues(): string[] {
   const nextAuthUrl = readEnv("NEXTAUTH_URL");
   if (!nextAuthUrl) {
     issues.push("NEXTAUTH_URL is required");
-  } else if (!isValidHttpUrl(nextAuthUrl)) {
+  } else if (!isHttpUrl(nextAuthUrl)) {
     issues.push("NEXTAUTH_URL must be a valid http(s) URL");
   }
 

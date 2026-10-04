@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
+import { isHttpUrl } from "@/lib/http-url";
 import {
   CLUB_TIME_ZONE_FALLBACK,
   CLUB_TIME_ZONE_MAX_LENGTH,
@@ -319,16 +320,6 @@ function readEnv(env: Env, name: string): string | undefined {
 
 function hasEnv(env: Env, name: string): boolean {
   return Boolean(readEnv(env, name));
-}
-
-function isHttpUrl(value: string | undefined): boolean {
-  if (!value) return false;
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
 }
 
 function toStatusScore(status: SetupStatus): number {
