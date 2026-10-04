@@ -71,6 +71,7 @@ import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import type { ClubFormat } from "@/lib/club-format";
 import { useClubFormat } from "@/components/club-format-provider";
 import { PartPaymentReviewXeroPaidLine } from "@/components/admin/part-payment-review-xero-paid-line";
+import { ManualRefundTaskStillOwedNotice } from "@/components/admin/manual-refund-task-still-owed-notice";
 
 const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 
@@ -1907,6 +1908,7 @@ export function ManualRefundTaskQueue() {
                         >
                           {zeroAmountRefusal ?? ""}
                         </p>
+                        <ManualRefundTaskStillOwedNotice taskId={target.task.id} shareCents={direction === "REFUND_TO_MEMBER" ? pricedAmountCents : null} />
                       </div>
                     </div>
                   ) : null}

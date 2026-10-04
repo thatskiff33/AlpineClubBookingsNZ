@@ -14,13 +14,6 @@ reason: #3414's shared money fields, #3415's accepted request action and
   controls; extracting those states would duplicate its fetch and permission
   state.
 
-file: src/lib/booking-cancel.ts
-lines: 2770
-reason: the accepted-hold guard and #3413 anonymous-reservation release belong
-  with the existing cancellation lock and hold-release branch they fence.
-  Re-measured on the composed tree after `main`'s #3653 organiser-child refund
-  work (its own allowance, 3653-organiser-child-refund.md) joined it.
-
 file: src/lib/booking-request-quotes.ts
 lines: 2228
 reason: the accepted-quote claim, hold retention and response state share the

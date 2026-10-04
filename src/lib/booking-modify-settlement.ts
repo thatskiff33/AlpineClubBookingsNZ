@@ -19,6 +19,8 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { BookingModificationSettlementMethodRequiredError } from "@/lib/booking-modify-settlement-required";
 import type { CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
+import { giveBackPaidReductionCredit } from "@/lib/booking-modify-credit-give-back";
+import type { PaidReductionCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
 import {
   calculateDualRefundAmounts,
   daysUntilDate,
@@ -93,6 +95,15 @@ export type PaymentAdjustmentResult = {
   xeroAdditionalAmountCents: number;
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
+  /**
+   * #3809: applied credit a paid booking's reduction gave back - what the card
+   * basis could not return, tiered like a card refund (`giveBackPaidReductionCredit`);
+   * neither a refund nor minted credit, so in neither figure above. The Xero leg
+   * takes it as an allocated note worded as account credit (`appliedCreditGiveBackCents`).
+   */
+  appliedCreditGivenBackCents: number;
+  /** #3809: the settlement of applied credit (null where not reached), on the edit's history row (`creditGiveBackHistory`); a later cancel caps by it (`INV-PAY-115`). */
+  appliedCreditGiveBack: PaidReductionCreditGiveBack | null;
   /**
    * #3653: the refund an organiser-settled child's reduction returns from the
    * group's combined card payment, decided under this transaction's locks. The
@@ -282,12 +293,18 @@ export async function applyPaymentAdjustments(
     changeFeeCents,
     settlementOptions,
     settlementMethod,
+    todayAtClub,
+    format,
   }: {
     booking: LoadedBookingForModify;
     priceDiffCents: number;
     changeFeeCents: number;
     settlementOptions?: BookingModificationSettlementOptions | null;
     settlementMethod?: BookingModificationSettlementMethod;
+    /** #3809: the club's day, the tier boundary of a credit-paid booking's give-back. */
+    todayAtClub: CalendarDate;
+    /** #3809: resolved before the transaction, for the give-back's ledger lock. */
+    format: ClubFormat;
   },
 ): Promise<PaymentAdjustmentResult> {
   const inSettledStatus = isSettledBookingStatus(booking.status);
@@ -309,11 +326,29 @@ export async function applyPaymentAdjustments(
   // policy tier applies — nothing was paid — so the invoice must be corrected
   // for the full net delta, otherwise a `settlementOptions` of null leaves
   // xeroRefund at 0 and the outstanding invoice keeps the removed guests.
+  //
+  // #3809: a PAID booking gives back, as applied credit, the part of the
+  // reduction the captured money's basis cannot return - all of it where
+  // nothing was captured - tiered like a card refund, before any Payment row
+  // write here. Its Xero note is that give-back, as a card refund's is the
+  // refund; with nothing captured there is then no other note to raise.
+  const creditGiveBack =
+    netAmountCents < 0
+      ? await giveBackPaidReductionCredit(tx, {
+          booking,
+          reductionCents: -netAmountCents,
+          cardBasisCents: hasSettledPayment ? Math.min(-netAmountCents, remainingRefundableCents) : 0,
+          todayAtClub,
+          format,
+        })
+      : null;
   const xeroRefundAmountCents =
     hasIssuedXeroInvoice && netAmountCents < 0
       ? hasSettledPayment
         ? selectedSettlement.amountCents
-        : Math.abs(netAmountCents)
+        : creditGiveBack
+          ? 0
+          : Math.abs(netAmountCents)
       : 0;
   const xeroAdditionalAmountCents =
     hasIssuedXeroInvoice && netAmountCents > 0 ? netAmountCents : 0;
@@ -422,7 +457,11 @@ export async function applyPaymentAdjustments(
     xeroRefundAmountCents,
     xeroAdditionalAmountCents,
     settlementMethod: selectedSettlement.settlementMethod,
-    policyRetainedAmountCents: selectedSettlement.policyRetainedAmountCents,
+    policyRetainedAmountCents:
+      selectedSettlement.policyRetainedAmountCents +
+      (creditGiveBack ? creditGiveBack.basisCents - creditGiveBack.givenBackCents : 0),
+    appliedCreditGivenBackCents: creditGiveBack?.givenBackCents ?? 0,
+    appliedCreditGiveBack: creditGiveBack,
     organiserChildRefund,
   };
 }

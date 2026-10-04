@@ -103,6 +103,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-034` | Settlement lines converge from payment rows where the mirror is derived |
 | `INV-MONEY-035` | Every booking credit row and hand-back posts one line, in its writer |
 | `INV-MONEY-036` | Edits post per-night lines or none; closures record a share once |
+| `INV-MONEY-037` | Ledger projections proved per booking; the gate opens on exact agreement |
 | `INV-MONEY-006` | Refunds, credits, Stripe and Xero amounts reconcile back to cent-based ledger records |
 | `INV-MONEY-007` | Admin adjustments need audit, approval, and a visible business reason |
 | `INV-MONEY-008` | A confirmed subscription charge is immutable; only delivery, status, Xero metadata advance |
@@ -265,6 +266,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-097` | One withheld share is one item; a credit-only completion records no refund |
 | `INV-PAY-061` | Confirmed amounts settle through an existing path, chosen at completion |
 | `INV-PAY-113` | A credit-paid share is applied credit given back, once |
+| `INV-PAY-115` | A cancellation tiers applied credit capped at what the booking is worth |
 | `INV-PAY-069` | Completions record their direction; charging re-enters the additional-payment path |
 | `INV-PAY-062` | One booking edit raises one charge request, derived from settled shares |
 | `INV-PAY-098` | A replacement ask carries the unpaid balance it retires, and records it |
@@ -391,7 +393,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-008` | An unpaid member repriced under `NON_MEMBER_PRICING` is `NON_MEMBER_DEFAULT`, not forced |
 | `INV-MOD-009` | Membership, not the subscription, gates member-only promotions; a repriced member stays eligible |
 | `INV-MOD-010` | Priced guests store a rate-type snapshot; kept locked nights stay stale |
-| `INV-MOD-011` | Reductions refund within the cancellation tier; captured payments need settlement elections |
+| `INV-MOD-011` | Reductions settle within the cancellation tier, credit-paid ones as applied credit |
 | `INV-MOD-012` | Pre-payment reduction below applied credit refunds the over-consumed slice under lock |
 | `INV-MOD-013` | A modification parked to AWAITING_REVIEW refunds no credit, auto-pays nothing until released |
 | `INV-MOD-014` | Xero deallocation commits the clamp offset and outbox op together, member-credit-locked |
