@@ -1460,8 +1460,11 @@ The invoice-update path passes every line whose description starts
 promotion lines. Edit documents code each stored `PROMO_DELTA` by the code it
 names (`INV-MOD-058`); a code the edit released is looked up by code. A
 several-code edit whose per-code changes do not add up stores one line naming
-no code, coded generically. A lone line on a booking with no code left is coded
-generically, as a one-code booking's removal always was (`INV-MONEY-039`).
+no code, coded generically. Where the booking held several codes before the
+edit, each line also records them (`codesBefore`), so a booking that lost every
+code is still coded per line once the released redemptions are deleted; a lone
+line without it on a booking with no code left is coded generically, as a
+one-code booking's removal always was (`INV-MONEY-039`).
 
 Stage 4 (#3278, `INV-MONEY-031`) also derives the complete booking-money
 reconciliation state from that same coherent booking snapshot before provider

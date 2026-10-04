@@ -422,11 +422,11 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   operation records `promoLines` with the reason (`CODE_BUILDUP_NOT_KNOWN`,
   `CODE_LINES_DO_NOT_SUM`); the total never depends on the split.
 
-  An edit stores one `PROMO_DELTA` per code that moved, in the unchanged
-  stored shape; where the per-code changes do not sum to the aggregate change,
-  one line naming no code. Its document codes each line by the code it names,
-  generically for none; a lone line naming the booking's sole code, or with no
-  code left, keeps its one-code coding. The one-code edit fields (`promoCode`,
+  An edit stores one `PROMO_DELTA` per code that moved, plus `codesBefore`
+  where it held several; where the per-code changes do not sum to the aggregate
+  change, one line naming no code. Its document codes each line by the code it
+  names, generically for none; a lone line naming the booking's sole code, or
+  with no code left and no `codesBefore`, keeps its one-code coding. The one-code edit fields (`promoCode`,
   `removePromoCode`) are refused on a booking holding several of the booker's
   codes, since they would replace or release them all. Confirmation emails,
   the booking page and the data export name each code with its amount, falling
