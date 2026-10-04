@@ -135,7 +135,7 @@ export function waitForAppliedCreditWorkBeforeClearing(
     getBlockingOperation(context.paymentOperations, "INVOICE", "CREATE", { payloadQueueType: XERO_OUTBOX_BOOKING_INVOICE_TYPE }),
     getBlockingOperation(context.paymentOperations, "ALLOCATION", "ALLOCATE", { payloadQueueType: XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE }),
   ].find((match) => match !== null && match.kind !== "resolved");
-  if (!blocking || blocking.kind === "resolved") return false;
+  if (!blocking) return false;
   // A failed or partial row nothing can retry will never run again: not waited for.
   if (blocking.kind === "blocked" && ["FAILED", "PARTIAL"].includes(blocking.operation.status)) return false;
   const retry = blocking.kind === "retryable" ? addAction(actionMap, retryUnlessRefused(context.booking.id, blocking)) : null;

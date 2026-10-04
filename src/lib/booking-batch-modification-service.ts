@@ -92,6 +92,7 @@ import {
   type PromoChangeNotAppliedNotice,
 } from "@/lib/promo-change-not-applied";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import { prisma } from "@/lib/prisma";
 import {
   withOptionalTransaction,
@@ -2009,6 +2010,13 @@ export async function modifyBookingBatch({
         booking.payment?.id,
       );
     }
+    // #3653: an organiser-settled child's refund debt, before this edit commits.
+    await reserveOrganiserChildModificationRefund(tx, {
+      plan: payments.organiserChildRefund,
+      bookingId,
+      payment: booking.payment,
+      bookingModificationId: bookingModification.id,
+    });
 
     // Fire the deferred envelope constraint triggers here so a violation is
     // attributed to this service instead of the transaction's COMMIT.
@@ -2132,6 +2140,7 @@ export async function modifyBookingBatch({
       xeroAdditionalAmountCents: payments.xeroAdditionalAmountCents,
       xeroRefundAmountCents: payments.xeroRefundAmountCents,
       appliedCreditGivenBackCents: payments.appliedCreditGivenBackCents,
+      organiserChildRefund: payments.organiserChildRefund,
       settlementMethod: payments.settlementMethod,
       policyRetainedAmountCents: payments.policyRetainedAmountCents,
       guestNameUpdates,
@@ -2517,6 +2526,8 @@ async function dispatchBatchPostTransactionSideEffects({
     settlementMethod: result.settlementMethod,
     refundedThroughStripe: result.hasSucceededPayment,
     appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
+    // #3653: the organiser child refund raises the one note, after Stripe.
+    organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,
     settlementAmountCents: result.xeroRefundAmountCents,
     createPrimaryInvoiceWhenMissing:
       result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,

@@ -17,12 +17,14 @@
  *     their beds, and — for a group that was already settled — refunds the
  *     organiser.
  *
- * The settlement is a single Stripe PaymentIntent for the combined total, so the
- * refund is one Stripe refund. The refund amount follows the *same* date-based
- * cancellation policy as the organiser's own booking and every normal booking
- * (calculateRefundAmount), applied per paid child so each child's Xero refund
- * credit note (allocated against that child's own settlement invoice) sums
- * exactly to the single Stripe refund.
+ * The settlement is a single Stripe PaymentIntent for the combined total. Since
+ * #3653 (`INV-PAY-114`) each paid child is refunded by its OWN Stripe refund
+ * against that intent, sized by the same date-based cancellation policy as every
+ * normal booking applied to what remains of the child's payment after any
+ * edit's refund, and recorded against the child before its mirror or Xero note
+ * moves (`organiser-child-refund.ts`). A plan frozen before #3653 - one refund
+ * for the whole group - is still finished the old way; the paragraphs below
+ * describe that legacy path.
  *
  * Conventions match group-booking.ts: integer cents, NZ date-only booking dates,
  * Stripe/Xero calls run outside the database transaction. Everything here is
@@ -78,6 +80,7 @@ import {
 } from "./cancellation";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "./bed-allocation-lifecycle";
 import { bookingOwner } from "@/lib/booking-owner";
+import { cancelRefundableBaseCents, hasCapturedPayment } from "@/lib/booking-payment-state";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { formatCents } from "@/lib/utils";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
@@ -103,6 +106,8 @@ import {
   enqueueGroupSettlementRefundRecovery,
   markGroupSettlementRefundRecoverySucceeded,
 } from "@/lib/payment-recovery";
+import { deserializeRefundPlan, readPerChildRefundPlan } from "@/lib/organiser-child-refund";
+import { refundOrganiserCancelChildren } from "@/lib/organiser-child-refund-executor";
 import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 import logger from "@/lib/logger";
 import { clubToday } from "@/lib/club-time";
@@ -135,28 +140,6 @@ async function resolveSettlementRecoveryAnchorPaymentId(
     children.find((candidate) => candidate.payment)?.payment?.id ??
     null
   );
-}
-
-/**
- * Deserialize a persisted refund plan ({childId: cents}) into a Map, defensively.
- * Only finite non-negative integer cent values survive; malformed entries are
- * skipped and a non-object never throws. The plan is applied verbatim on a
- * re-drive, so a corrupt entry must degrade to "no refund for that child" rather
- * than crash the cleanup.
- */
-function deserializeRefundPlan(value: unknown): Map<string, number> {
-  const plan = new Map<string, number>();
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return plan;
-  }
-  for (const [childId, cents] of Object.entries(
-    value as Record<string, unknown>
-  )) {
-    if (typeof cents === "number" && Number.isInteger(cents) && cents >= 0) {
-      plan.set(childId, cents);
-    }
-  }
-  return plan;
 }
 
 async function markGroupCancelled(groupBookingId: string): Promise<void> {
@@ -329,70 +312,67 @@ export async function settleGroupBookingOnOrganiserCancel(
     }
   }
 
-  // Refund the organiser when the group was already settled. Only genuinely PAID
-  // children were charged (a member could have joined after settlement and still
-  // be unpaid), so the policy refund is computed per paid child and summed.
-  //
-  // The plan is reconstructed UNCONDITIONALLY from any persisted refundPlan: a
-  // previous (crash-interrupted) run flips the settlement to REFUNDED before the
-  // child-loop finishes, so gating the reconstruct on `settled` would lose the
-  // plan and cancel the remaining paid children WITHOUT their refund mirror.
-  // Reconstruct never recomputes — see the header (tier drift on a >24h re-drive).
+  // Refund the organiser when the group was already settled (#3653). A CARD
+  // settlement refunds each paid child with its OWN refund out of the combined
+  // intent, sized from what remains of its payment after any edit's refund - one
+  // debt per child, frozen with the settlement's plan under lock(1) before any
+  // provider call; a re-drive replays the frozen debts rather than re-tiering
+  // them (`organiser-child-refund.ts`). Two cases keep the `{childId: cents}`
+  // plan whose mirrors and notes this function writes itself (`mirrorPlan`): a
+  // plan frozen before #3653 (one Stripe refund for the whole group, finished
+  // the way it started), and an Internet Banking settlement, whose refund the
+  // club pays by hand and which no Stripe refund can back.
   const settled = settlement?.status === PaymentStatus.SUCCEEDED;
   let refundByChildId = new Map<string, number>();
+  // #3653: a per-child refund this run could not complete. Still owed - the
+  // recovery runner completes it and audits the recovery - so the child's own
+  // row must not say no payment was taken.
+  let owedByChildId = new Map<string, number>();
   let totalRefundCents = 0;
+  const mirrorPlan =
+    settlement != null &&
+    readPerChildRefundPlan(settlement.refundPlan) === null &&
+    (settlement.refundPlan != null || !settlement.stripePaymentIntentId);
 
-  if (settlement?.refundPlan != null) {
+  if (settlement && mirrorPlan && settlement.refundPlan != null) {
     // A previous (crash-interrupted) run already computed + persisted the plan.
     // Reuse it verbatim; NEVER recompute.
     refundByChildId = deserializeRefundPlan(settlement.refundPlan);
-    for (const cents of refundByChildId.values()) {
-      totalRefundCents += cents;
-    }
-  } else if (settled && children.length > 0) {
-    // `children.length > 0` is checked in this same condition; a missing
-    // first child here would be a real bug in that count, so this fails
-    // loudly rather than silently computing zero refunds for paid children.
+  } else if (settlement && mirrorPlan && settled && children[0]) {
     const [firstChild] = children;
-    if (!firstChild) {
-      throw new Error("Group booking settlement has children but the first child could not be read");
-    }
-    const checkIn = firstChild.checkIn;
-    const days = daysUntilDate(checkIn, todayAtClub);
-    // All children of a group booking share the organiser's lodge (one
-    // booking = one lodge, ADR-001), so the first child's lodge is the group's.
-    const policy = await loadCancellationPolicy(checkIn, firstChild.lodgeId);
+    const days = daysUntilDate(firstChild.checkIn, todayAtClub);
+    const policy = await loadCancellationPolicy(firstChild.checkIn, firstChild.lodgeId);
     for (const child of children) {
-      const isPaid =
-        child.status === BookingStatus.PAID &&
-        child.payment?.status === PaymentStatus.SUCCEEDED;
-      if (!isPaid) {
-        continue;
-      }
+      // What remains of the child's payment, less its change fee (`INV-PAY-018`).
+      if (child.status !== BookingStatus.PAID || !child.payment || !hasCapturedPayment(child.payment)) continue;
       const { refundAmountCents } = calculateRefundAmount(
-        child.finalPriceCents,
+        cancelRefundableBaseCents({ ...child.payment, finalPriceCents: child.finalPriceCents }),
         days,
         policy,
         "card"
       );
-      if (refundAmountCents > 0) {
-        refundByChildId.set(child.id, refundAmountCents);
-        totalRefundCents += refundAmountCents;
-      }
+      if (refundAmountCents > 0) refundByChildId.set(child.id, refundAmountCents);
     }
-
-    // Persist the plan BEFORE the refund + flip so a crash anywhere downstream
-    // re-drives with the RECORDED per-child amounts instead of recomputing.
-    if (totalRefundCents > 0) {
+    // Persist the plan BEFORE the flip so a crash anywhere downstream re-drives
+    // with the RECORDED per-child amounts instead of recomputing.
+    if (refundByChildId.size > 0) {
       await prisma.groupBookingSettlement.update({
-        where: { id: settlement!.id },
-        data: {
-          refundPlan: Object.fromEntries(
-            refundByChildId
-          ) as unknown as Prisma.InputJsonValue,
-        },
+        where: { id: settlement.id },
+        data: { refundPlan: Object.fromEntries(refundByChildId) as unknown as Prisma.InputJsonValue },
       });
     }
+  } else if (settlement?.stripePaymentIntentId) {
+    ({ refunded: refundByChildId, owed: owedByChildId } = await refundOrganiserCancelChildren({
+      settlementId: settlement.id,
+      organiserBookingId,
+      firstChild: children[0] ?? null,
+      activeChildStatuses: ACTIVE_CHILD_STATUSES,
+      todayAtClub,
+      format,
+    }));
+  }
+  for (const cents of refundByChildId.values()) {
+    totalRefundCents += cents;
   }
 
   // Refund + settlement flip, guarded on SUCCEEDED so it fires exactly once
@@ -400,6 +380,7 @@ export async function settleGroupBookingOnOrganiserCancel(
   // skips this block and only applies the reconstructed mirror below (crash after
   // flip). The Stripe idempotency key dedups a crash between refund and flip.
   if (
+    mirrorPlan &&
     totalRefundCents > 0 &&
     settlement?.stripePaymentIntentId &&
     // #1881 — the SAME fresh-status value the plan was computed from, so the
@@ -525,6 +506,7 @@ export async function settleGroupBookingOnOrganiserCancel(
 
   for (const child of children) {
     const refundForChild = refundByChildId.get(child.id) ?? 0;
+    const owedForChild = owedByChildId.get(child.id) ?? 0;
     // Captured from inside the per-child tx so the best-effort outbox worker
     // kick can run POST-commit (the enqueue itself is now durable — below).
     let queuedCreditNoteOperationId: string | null = null;
@@ -552,7 +534,8 @@ export async function settleGroupBookingOnOrganiserCancel(
           previousRange: { checkIn: child.checkIn, checkOut: child.checkOut },
         });
         await revokePaymentLinksForBooking(child.id, tx);
-        if (refundForChild > 0 && child.payment) {
+        // #3653: a per-child refund's mirror and note are its executor's.
+        if (mirrorPlan && refundForChild > 0 && child.payment) {
           // Ledger bypass is acceptable here: these organiser-settled child
           // payments have no PaymentTransaction rows (they were paid via the
           // combined settlement PI, not per-child intents), so there is no
@@ -666,26 +649,33 @@ export async function settleGroupBookingOnOrganiserCancel(
       details:
         refundForChild > 0
           ? `Group organiser cancelled; refunded ${formatCents(refundForChild, format)} of the settled beds to the organiser`
-          : "Group organiser cancelled; released the held spot (no payment taken)",
+          : owedForChild > 0
+            ? `Group organiser cancelled; a refund of ${formatCents(owedForChild, format)} to the organiser's card is owed and will be retried`
+            : "Group organiser cancelled; released the held spot (no payment taken)",
       metadata: {
         groupBookingId: group.id,
         organiserBookingId,
         statusBefore: child.status,
         refundForChild,
+        owedRefundForChild: owedForChild,
         paymentId: child.payment?.id ?? null,
       },
       ipAddress,
     });
 
+    // #3653: a per-child refund recorded its own REFUNDED event.
+    const refundEvent = mirrorPlan && refundForChild > 0;
     await recordBookingEvent({
       bookingId: child.id,
-      type: refundForChild > 0 ? BookingEventType.REFUNDED : BookingEventType.CANCELLED,
+      type: refundEvent ? BookingEventType.REFUNDED : BookingEventType.CANCELLED,
       actorMemberId: sessionUserId,
-      amountCents: refundForChild > 0 ? refundForChild : undefined,
+      amountCents: refundEvent ? refundForChild : undefined,
       reason:
         refundForChild > 0
           ? "Group organiser cancelled the booking; the settled beds were refunded to the organiser."
-          : "Group organiser cancelled the booking, releasing this held spot.",
+          : owedForChild > 0
+            ? "Group organiser cancelled the booking; the refund to the organiser is owed and will be retried."
+            : "Group organiser cancelled the booking, releasing this held spot.",
     }).catch((err) =>
       logger.error(
         { err, bookingId: child.id },
@@ -756,7 +746,8 @@ export type GroupSettlementRefundReplayResult = {
 
 /**
  * Replay an organiser-cancel settlement refund from the settlement's
- * PERSISTED refund plan (F3, #1351). Invoked by the payment-recovery cron for
+ * PERSISTED refund plan (F3, #1351). Only a plan frozen before #3653 reaches
+ * here; a per-child plan reads as empty and moves nothing. Invoked by the payment-recovery cron for
  * `group_settlement_refund_recovery_<settlementId>` operations after the
  * inline refund failed or the process died mid-cancel.
  *

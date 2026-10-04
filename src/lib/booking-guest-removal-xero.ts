@@ -17,6 +17,7 @@ export type GuestRemovalXeroSettlement = Pick<
   | "appliedCreditGivenBackCents"
   | "xeroAdditionalAmountCents"
   | "zeroDollarAutoPaid"
+  | "organiserChildRefund"
 > & { bookingId: string };
 
 export function guestRemovalXeroSettlement(result: RemoveBookingGuestResult): GuestRemovalXeroSettlement {
@@ -32,6 +33,7 @@ export function guestRemovalXeroSettlement(result: RemoveBookingGuestResult): Gu
     appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
     xeroAdditionalAmountCents: result.xeroAdditionalAmountCents,
     zeroDollarAutoPaid: result.zeroDollarAutoPaid,
+    organiserChildRefund: result.organiserChildRefund,
   };
 }
 
@@ -71,6 +73,8 @@ export function queueGuestRemovalXeroSettlement(
     settlementMethod: settlement.settlementMethod,
     refundedThroughStripe: settlement.hasSucceededPayment,
     appliedCreditGiveBackCents: settlement.appliedCreditGivenBackCents,
+    // #3653: the organiser child refund raises the one note, after Stripe.
+    organiserChildRefundOwnsCreditNote: settlement.organiserChildRefund !== null,
     // A Stripe-collected increase must not double-bill through Xero: hold
     // the supplementary invoice's payment recording on the Stripe intent,
     // exactly as the batch flow does.

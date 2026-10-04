@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   memberCreditFindMany: vi.fn(),
   notifyXeroSyncError: vi.fn(),
   xeroSyncOperationFindMany: vi.fn(),
+  paymentRefundAggregate: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -30,6 +31,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     xeroSyncOperation: {
       findMany: mocks.xeroSyncOperationFindMany,
+    paymentRefund: {
+      aggregate: mocks.paymentRefundAggregate,
     },
   },
 }));
@@ -51,6 +54,7 @@ function payment(overrides: Record<string, unknown> = {}) {
     refundedAmountCents: 0,
     status: PaymentStatus.SUCCEEDED,
     source: PaymentSource.STRIPE,
+    booking: { organiserSettled: false },
     ...overrides,
   };
 }
@@ -238,5 +242,45 @@ describe("#3809: a give-back's account-credit note is not a cash refund", () => 
     expect(mocks.paymentUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ refundedAmountCents: 5500 }) }));
     const writes = mocks.paymentUpdate.mock.calls.map((call) => call[0].data.refundedAmountCents).filter((cents) => cents !== undefined);
     expect(writes.every((cents) => cents === 3000)).toBe(true);
+  });
+});
+
+describe("an organiser-settled child's mirror is raised only by Stripe evidence (#3653)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.paymentUpdate.mockResolvedValue({});
+    mocks.notifyXeroSyncError.mockResolvedValue(undefined);
+  });
+
+  it("does not raise the child's mirror past the refunds Stripe recorded", async () => {
+    mocks.paymentRefundAggregate.mockResolvedValue({ _sum: { amountCents: 1500 } });
+    await runRepair({
+      paymentRow: payment({
+        refundedAmountCents: 1000,
+        status: PaymentStatus.PARTIALLY_REFUNDED,
+        booking: { organiserSettled: true },
+      }),
+      creditNote: { status: "AUTHORISED", total: 30 },
+    });
+
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay-1" },
+      data: { refundedAmountCents: 1500 },
+    });
+  });
+
+  it("writes nothing when Stripe recorded no more than the mirror already holds", async () => {
+    mocks.paymentRefundAggregate.mockResolvedValue({ _sum: { amountCents: null } });
+    const result = await runRepair({
+      paymentRow: payment({
+        refundedAmountCents: 1000,
+        status: PaymentStatus.PARTIALLY_REFUNDED,
+        booking: { organiserSettled: true },
+      }),
+      creditNote: { status: "AUTHORISED", total: 30 },
+    });
+
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    expect(result).toEqual({ matchedPayments: 1, updatedPayments: 0 });
   });
 });

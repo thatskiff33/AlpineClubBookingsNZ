@@ -290,7 +290,7 @@ describe("calculateCancellationPreview properties", () => {
             checkIn,
             policyRules: rules,
             todayAtClub,
-            // #3809: main's uncapped credit (`INV-PAY-114`).
+            // #3809: main's uncapped credit (`INV-PAY-115`).
             capAppliedCredit: false,
           });
 

@@ -105,6 +105,7 @@ import { SELF_REMOVABLE_GUEST_BOOKING_STATUSES } from "@/lib/booking-guest-self-
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
+import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import logger from "@/lib/logger";
 import {
   pricingSideFromPriceBreakdown,
@@ -141,6 +142,8 @@ export type RemoveBookingGuestResult = {
   policyRetainedAmountCents: number;
   xeroRefundAmountCents: number;
   appliedCreditGivenBackCents: number;
+  /** #3653: see `BookingModificationPaymentContext`. */
+  organiserChildRefund: { amountCents: number } | null;
   xeroAdditionalAmountCents: number;
   hasSucceededPayment: boolean;
   hasIssuedXeroInvoice: boolean;
@@ -1290,6 +1293,13 @@ export async function removeBookingGuestInTransaction({
       booking.payment?.id,
     );
   }
+  // #3653: an organiser-settled child's refund debt, before this edit commits.
+  await reserveOrganiserChildModificationRefund(tx, {
+    plan: paymentImpact.organiserChildRefund,
+    bookingId,
+    payment: booking.payment,
+    bookingModificationId: bookingModification.id,
+  });
 
   // #2364. Removing a guest cuts both ways: taking out the only adult member
   // opens a hosting review, and taking out the last non-member guest closes one.
@@ -1323,6 +1333,7 @@ export async function removeBookingGuestInTransaction({
     policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,
     appliedCreditGivenBackCents: paymentImpact.appliedCreditGivenBackCents,
+    organiserChildRefund: paymentImpact.organiserChildRefund,
     xeroAdditionalAmountCents: paymentImpact.xeroAdditionalAmountCents,
     hasSucceededPayment: paymentImpact.hasSucceededPayment,
     hasIssuedXeroInvoice: paymentImpact.hasIssuedXeroInvoice,

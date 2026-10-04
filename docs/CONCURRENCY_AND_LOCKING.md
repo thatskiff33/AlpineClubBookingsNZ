@@ -2862,6 +2862,30 @@ captured (`payment_intent.succeeded` → settle) must still become `SUCCEEDED`, 
 settle legitimately overwrites `FAILED` → `SUCCEEDED`. `lock(1)` guarantees the
 two run whole-before-whole; it is not a veto on that transition.
 
+**#3653 adds the organiser child's refund out of the combined card payment
+(`INV-PAY-114`).** Three writers join this cohort and mint no keyspace. The edit
+doors write a child's refund debt (`reserveOrganiserChildModificationRefund`)
+inside the transaction that already holds `lock(1)` and the per-lodge key; a
+joiner's own cancel writes its one debt (`reserveOrganiserChildRefund`) in the
+paid-cancel claim, after that claim's `lock(1)`, per-lodge key, the joiner's
+member credit-ledger key (#3792) and `Payment` row lock - global, lodge, member,
+row, the claim's existing order, adding no key of its own; and the organiser cancel
+freezes one debt per child plus the settlement's plan in a `lock(1)` transaction
+of its own (`planOrganiserCancelChildRefunds`). The payments cron's
+`reconcilePendingOrganiserChildRefunds` reads a pending refund back from Stripe
+with no transaction open, then takes `lock(1)` and the `Payment` row, in that
+order, to take a failed refund back out and reopen its debt with a
+status-guarded update. Both read
+the combined headroom - refunds recorded on the intent plus debts still owed -
+and insert in the same transaction, so two reductions cannot both spend the same
+captured cents (proven by `organiser-child-refund.realdb.test.ts`). The recorder
+(`processOrganiserChildRefundOperation`) runs the Stripe call with no
+transaction open, then takes `lock(1)` and the child's `Payment` row
+(`lockPaymentForRefundedTotal`) - global, then row - and commits the refund row,
+mirror, Xero note, settlement status and the debt's close together, so a
+concurrent headroom read sees the debt either owed or recorded. The status-
+guarded recovery claim is the guarded claim before the provider effect.
+
 **#2700 adds one more, and it is the smallest participant in this cohort.**
 `raiseDeletedBookingModificationRefundTask`
 (`src/lib/deleted-booking-modification-payment.ts`) creates the OPEN

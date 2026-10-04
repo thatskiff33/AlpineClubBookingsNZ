@@ -9,7 +9,7 @@ export type PaidReductionCreditGiveBack = {
 
 /**
  * #3809 (owner decision of 4 Oct 2026, "Cap new reductions only"): WHICH
- * BOOKINGS A CANCELLATION CAPS. The card rule `INV-PAY-114` caps the applied
+ * BOOKINGS A CANCELLATION CAPS. The card rule `INV-PAY-115` caps the applied
  * credit a cancellation tiers at what the booking is now worth - but only where
  * the booking's price was lowered through #3809's settlement of applied credit.
  * A credit-paid booking reduced before that release keeps `main`'s
@@ -46,7 +46,7 @@ export function recordedCreditGiveBack(newData: unknown): PaidReductionCreditGiv
     : null;
 }
 
-/** Whether a cancellation of this booking caps the applied credit it tiers (`INV-PAY-114`). */
+/** Whether a cancellation of this booking caps the applied credit it tiers (`INV-PAY-115`). */
 export async function bookingReducedThroughCreditGiveBack(
   bookingId: string,
   db: Pick<Prisma.TransactionClient, "bookingModification">,

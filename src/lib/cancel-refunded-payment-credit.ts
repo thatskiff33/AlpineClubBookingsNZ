@@ -24,7 +24,7 @@ export type RefundedPaymentCreditRestore = {
  * Where money WAS captured (`paymentHasCaptureEvidence`, the caller's test) the
  * credit is tiered as the paid path tiers it: the card tier, no card slice,
  * on `cancelAppliedCreditBaseCents`, capped at what the booking is worth - but
- * ONLY where the booking was reduced through #3809's settlement (`INV-PAY-114`,
+ * ONLY where the booking was reduced through #3809's settlement (`INV-PAY-115`,
  * owner decision of 4 Oct 2026, "Cap new reductions only"). A booking reduced
  * before that release keeps main's full restore: tiering it could leave the
  * member short (its earlier reduction gave no credit back), and the decision

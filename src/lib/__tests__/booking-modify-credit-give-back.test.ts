@@ -267,7 +267,7 @@ describe("#3809: every other booking settles exactly as before", () => {
     expect(credit.giveBack).not.toHaveBeenCalled();
     expect(result.appliedCreditGivenBackCents).toBe(0);
     // Owner decision of 4 Oct 2026: a later cancellation caps this booking's
-    // credit, as it caps an all-card booking's paid money (INV-PAY-114).
+    // credit, as it caps an all-card booking's paid money (INV-PAY-115).
     expect(result.appliedCreditGiveBack).toEqual({ basisCents: 0, givenBackCents: 0 });
   });
 

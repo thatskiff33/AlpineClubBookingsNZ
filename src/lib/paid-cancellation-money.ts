@@ -100,7 +100,7 @@ export function paidCancellationMoney({
   days: number;
   policy: CancellationRule[];
   refundMethod: "card" | "credit";
-  /** `bookingReducedThroughCreditGiveBack`: whether the credit base is capped (`INV-PAY-114`). */
+  /** `bookingReducedThroughCreditGiveBack`: whether the credit base is capped (`INV-PAY-115`). */
   capAppliedCredit: boolean;
 }): PaidCancellationMoney {
   const paidAmountCents = payment.amountCents - payment.refundedAmountCents;

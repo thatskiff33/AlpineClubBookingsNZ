@@ -67,7 +67,7 @@ type ReductionInput = {
  * booking with none never takes the member's key (the clamp's F1 gate,
  * `INV-MOD-012`). Where the card basis returns the whole reduction it gives
  * back nothing and takes no key, but still answers - the edit's history row
- * records it, and a cancellation caps that booking's credit (`INV-PAY-114`).
+ * records it, and a cancellation caps that booking's credit (`INV-PAY-115`).
  */
 export async function giveBackPaidReductionCredit(
   tx: Prisma.TransactionClient,

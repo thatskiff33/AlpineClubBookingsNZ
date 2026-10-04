@@ -107,6 +107,8 @@ vi.mock("@/lib/booking-modify", () => ({
   // answers is exactly what the reader stub above answers.
   editedGuestPricingLocks: vi.fn().mockReturnValue({ lockedNightPrices: null }),
   calculateModificationSettlementOptions: vi.fn().mockResolvedValue(null),
+  // #3653: the organiser-card increase refusal; none of these is one.
+  organiserChildChargeRefusal: vi.fn().mockReturnValue(null),
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE: "quote-priced",
 }));
 vi.mock("@/lib/booking-guests", () => ({

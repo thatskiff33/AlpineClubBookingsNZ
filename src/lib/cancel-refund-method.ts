@@ -9,10 +9,17 @@
  */
 import { PaymentSource } from "@prisma/client";
 
-export type ForcedCancelRefundMethod = "credit" | null;
+export type ForcedCancelRefundMethod = "credit" | "organiser_card" | null;
 
+/**
+ * #3653: `paidByOrganiserCard` is the joiner's booking the group organiser paid
+ * for by card (`group-organiser-paid.ts`). Its refund goes back to the
+ * ORGANISER's card, so there is no account-credit choice to offer the joiner.
+ */
 export function forcedCancelRefundMethod(
   paymentSource: string | null | undefined,
+  paidByOrganiserCard = false,
 ): ForcedCancelRefundMethod {
+  if (paidByOrganiserCard) return "organiser_card";
   return paymentSource === PaymentSource.INTERNET_BANKING ? "credit" : null;
 }
