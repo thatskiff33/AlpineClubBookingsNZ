@@ -823,6 +823,47 @@ describe("#3791's review closures: a line is judged by what the member was credi
     expect(refunded).toMatchObject({ status: "DISAGREE", deltaCents: 12_500, explainedBy: [] });
   });
 
+  it("#3913 G1: a task that refunded the capture never mints, so an edit's unrelated share credit does not stand in for its missing give-back", () => {
+    const debt = (cents: number) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(TASK) });
+    const editCredit = (cents: number) => credit("c-edit", "BOOKING_MODIFICATION_REFUND", cents);
+    const cancelledBooking = { id: B, status: "CANCELLED" as const, deletedAt: null, organiserSettled: false, finalPriceCents: 19_000 };
+    // Card: a $25 stand-in, $15 to the card, the $10 give-back missing, a $10 edit credit beside it.
+    const card = (rows: BookingLedgerCensusRow["credits"]) =>
+      row({ lines: new Ledger().post([share(2_500)], LATER).lines, credits: rows, tasks: [task], recoveryOperations: [debt(1_500)], booking: cancelledBooking });
+    expect(findings(card([giveBack(1_000)]))).toEqual([]);
+    expect(findings(card([editCredit(1_000)]))).toEqual(["SOURCE_DRIFT:line-1"]);
+    // Bank transfer: the $50 share whole, $25 handed back, the give-back missing, a $25 edit credit beside it.
+    const bank = (rows: BookingLedgerCensusRow["credits"]) =>
+      row({
+        lines: new Ledger().post([share(5_000), planHandBackLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: TASK, amountCents: 2_500, settlementMethod: "INTERNET_BANKING", officerMemberId: "officer" })], LATER).lines,
+        credits: rows,
+        tasks: [task],
+        booking: cancelledBooking,
+      });
+    expect(findings(bank([giveBack(2_500)]))).toEqual([]);
+    expect(findings(bank([editCredit(2_500)]))).toEqual(["SOURCE_DRIFT:line-1", "SOURCE_DRIFT:line-2"]);
+  });
+
+  it("#3913 G2: where siblings are each made alone but not together, a line made without the contested rows is not named", () => {
+    const tasksOf = [{ ...task, id: "task-a", amountCents: 5_000 }, { ...task, id: "task-b", amountCents: 2_000 }, { ...task, id: "task-c", amountCents: 2_000 }];
+    const standIn = (taskId: string, cents: number) =>
+      planAgreedAdjustmentLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: taskId, direction: "REFUND_TO_MEMBER", amountCents: cents, note: "agreed", officerMemberId: "officer" });
+    // A: $50, $20 handed back and $30 given back. B and C: $10 each, and only one $10 give-back left for them.
+    const subject = row({
+      lines: new Ledger().post([
+        standIn("task-a", 5_000),
+        planHandBackLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: "task-a", amountCents: 2_000, settlementMethod: "INTERNET_BANKING", officerMemberId: "officer" }),
+        standIn("task-b", 1_000),
+        standIn("task-c", 1_000),
+      ], LATER).lines,
+      credits: [giveBack(3_000, "c-a"), giveBack(1_000, "c-bc")],
+      tasks: tasksOf,
+      booking: { id: B, status: "CANCELLED", deletedAt: null, organiserSettled: false, finalPriceCents: 19_000 },
+    });
+    // line-1 A's stand-in, line-2 its hand-back: both borne out; B's and C's lines are named.
+    expect(findings(subject)).toEqual(["SOURCE_DRIFT:line-3", "SOURCE_DRIFT:line-4"]);
+  });
+
   it("#3913 F2: two tasks' stand-ins drawing on one pool of rows fail closed as AMBIGUOUS_REVIEW_GIVE_BACK, swapped or not; one task's stays exact", () => {
     const debt = (cents: number, taskId: string) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId) });
     const sibling = { ...task, id: "task-sibling", amountCents: 2_500 };

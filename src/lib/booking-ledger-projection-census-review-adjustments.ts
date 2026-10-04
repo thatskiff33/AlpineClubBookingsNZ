@@ -87,6 +87,9 @@ type CreditedShare = { creditedCents: number; ownRefundCents: number };
  * Can every credited figure be made of its task's own refund plus one
  * give-back row, one share credit, or one of each, no row used twice? A
  * figure the refund makes alone needs no row; nothing makes a figure of zero.
+ * A task that refunded the capture (#3835's card and bank routes) never
+ * mints: what it credited beyond its refund is a give-back row alone, so an
+ * edit's unrelated share credit cannot stand in for a missing one (#3913 G1).
  * A small exact search: a booking carries a handful of reviews at most.
  */
 function creditedFromRows(credited: readonly CreditedShare[], giveBacks: readonly number[], minted: readonly number[]): boolean {
@@ -96,7 +99,7 @@ function creditedFromRows(credited: readonly CreditedShare[], giveBacks: readonl
   if (fromRowsCents < 0) return false;
   if (fromRowsCents === 0) return first.ownRefundCents > 0 && creditedFromRows(rest, giveBacks, minted);
   for (const givenBack of [0, ...new Set(giveBacks)]) {
-    for (const mint of [0, ...new Set(minted)]) {
+    for (const mint of first.ownRefundCents > 0 ? [0] : [0, ...new Set(minted)]) {
       if (givenBack + mint !== fromRowsCents) continue;
       const giveBacksLeft = [...giveBacks];
       const mintedLeft = [...minted];
@@ -211,10 +214,14 @@ export function reviewAdjustmentEvidence(row: BookingLedgerCensusRow): ReviewAdj
     : [];
   const nettedShares = credited.filter(({ line }) => -line.amountCents < (tasks.get(line.anchorId)?.amountCents ?? 0)).map(({ line }) => line);
   if (!creditedFromRows(credited, giveBacks, minted)) {
-    // Name the lines the rows cannot make on their own; where each can, but
-    // not all together, every one of them.
+    // Name the lines the rows cannot make on their own. Where each can, but
+    // not all together, those without which the rest are made; failing that,
+    // every one that draws on a row. A line its own refund makes alone takes
+    // no row from anyone, so it is never named for another's (#3913 G2).
     const alone = credited.filter((share) => !creditedFromRows([share], giveBacks, minted));
-    for (const { line } of alone.length > 0 ? alone : credited) {
+    const drawsOnRows = credited.filter((share) => share.creditedCents !== share.ownRefundCents);
+    const withoutWhich = drawsOnRows.filter((share) => creditedFromRows(credited.filter((other) => other !== share), giveBacks, minted));
+    for (const { line } of alone.length > 0 ? alone : withoutWhich.length > 0 ? withoutWhich : drawsOnRows) {
       drift.set(line.id, `a share credited at ${-line.amountCents} after the cancellation, which no refund of its own, review give-back and share credit on this booking make`);
     }
   }

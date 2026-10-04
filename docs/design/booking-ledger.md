@@ -511,7 +511,10 @@ of, each row used once: a give-back line plus its closure's re-price (the
 `PRICE_REBASE` row's `newData`) must equal one review give-back row
 (`BOOKING_APPLIED` naming the booking as source and target), and a stand-in
 posted after a cancellation for less than the share must be its task's own
-refund to the capture plus one give-back row, one share credit, or both. That
+refund to the capture plus, where that is less, one give-back row, one share
+credit, or both — a task that refunded the capture never mints, so a
+give-back row alone (#3913). Where siblings are each made alone but not
+together, the lines named are those without which the rest are made. That
 refund (#3835, #3907) is the card debt the task froze (its review recovery
 key) or its `BANK_REFUND` line, the facts #3835's netting reads; it makes only
 its own task's line, and a hand-back smaller than the share is borne out only
