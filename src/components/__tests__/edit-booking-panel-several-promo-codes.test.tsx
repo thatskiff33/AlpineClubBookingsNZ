@@ -79,6 +79,18 @@ function installFetch(
     if (url.includes("/api/promo-codes/validate")) {
       const body = JSON.parse(String(init?.body));
       validateBodies.push({ url, body });
+      if (!body.codes) {
+        return jsonResponse({
+          valid: true,
+          code: body.code,
+          description: null,
+          type: "FREE_NIGHTS",
+          discountCents: 2000,
+          promoAdjustmentCents: -2000,
+          totalPriceCents: 12000,
+          finalPriceCents: 10000,
+        });
+      }
       return jsonResponse({
         valid: true,
         codes: (body.codes as Array<{ code: string }>).map((entry) => ({
@@ -309,5 +321,56 @@ describe("EditBookingPanel guest chips with the switch on (#3492)", () => {
       "g2",
     ]);
     await waitFor(() => expect(quoteBodies.at(-1)?.body.promoCodes).toEqual([{ code: "BENFREE" }]));
+  });
+});
+
+// Coordinator follow-up to C4 review correctness 1: with the switch OFF the
+// one-code card offers guest chips too, so its preview must also be judged
+// against the booking's stored consent — while the modify-quote and modify
+// bodies keep their legacy one-code shape exactly.
+describe("EditBookingPanel guest chips with the switch off (#3492)", () => {
+  function bookingWithBen() {
+    const booking = makeBooking({ promo: null });
+    booking.guests.push({ ...booking.guests[0]!, id: "g2", firstName: "Ben", lastName: "Outside", memberId: "member-ben" });
+    return booking;
+  }
+
+  it("previews a confirmed cross-family guest's chip against this booking and its guest rows", async () => {
+    installFetch(false, [{ guestRef: "g2", codes: [{ code: "BENFREE", benefit: "3 free nights per booking" }] }]);
+    render(<EditBookingPanel booking={bookingWithBen()} onDone={vi.fn()} />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Apply BENFREE — 3 free nights per booking, applies to Ben Outside only",
+      }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(validateBodies).toHaveLength(1));
+    expect(validateBodies[0]!.body).toMatchObject({ code: "BENFREE", bookingId: "bk-3828", forBookingEdit: true });
+    expect((validateBodies[0]!.body.guests as Array<Record<string, unknown>>).map((guest) => guest.bookingGuestId)).toEqual([
+      "g1",
+      "g2",
+    ]);
+    expect(await screen.findByText("(-$20.00)")).toBeInTheDocument();
+  });
+
+  it("keeps the modify-quote and modify bodies in their legacy one-code shape", async () => {
+    installFetch(false, [{ guestRef: "g2", codes: [{ code: "BENFREE", benefit: "3 free nights per booking" }] }]);
+    render(<EditBookingPanel booking={bookingWithBen()} onDone={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Apply BENFREE/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(quoteBodies.at(-1)?.body.promoCode).toBe("BENFREE"));
+    const save = await screen.findByRole("button", { name: /save changes/i });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(saveBodies).toHaveLength(1));
+    for (const { body } of [quoteBodies.at(-1)!, saveBodies[0]!]) {
+      expect(body.promoCode).toBe("BENFREE");
+      expect(body).not.toHaveProperty("promoCodes");
+      expect(body).not.toHaveProperty("bookingId");
+      expect(body).not.toHaveProperty("promoGuestIds");
+      expect(JSON.stringify(body)).not.toContain("bookingGuestId");
+    }
   });
 });

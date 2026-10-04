@@ -327,6 +327,9 @@ export function PromoCodeCard({
               // group-discounted per-night rates that the quote above and the
               // save below refuse to give at a switch-off club.
               forBookingEdit
+              // #3492 (D-3492-4): against this booking's stored guest consent,
+              // so a confirmed guest's chip previews as the save will price it.
+              bookingId={bookingId}
               checkIn={checkIn}
               checkOut={checkOut}
               guests={partyGuests}

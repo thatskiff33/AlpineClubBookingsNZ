@@ -59,6 +59,8 @@ interface PromoCodeInputProps {
     memberId?: string;
     stayStart?: string;
     stayEnd?: string;
+    /** On an edit: the row this guest already is (sent only with `bookingId`). */
+    bookingGuestId?: string;
   }[];
   onPromoApplied: (result: PromoResult | null) => void;
   appliedPromo: PromoResult | null;
@@ -77,6 +79,13 @@ interface PromoCodeInputProps {
   // only — so a switch-off club's promo preview stops sizing its adjustment on
   // discounted rates the quote beside it will not give.
   forBookingEdit?: boolean;
+  /**
+   * #3492: the booking an edit preview is for. The server reads its guests'
+   * stored consent (owner-checked, one 404 for unowned and missing), so a
+   * confirmed guest already on the booking is priced as the save prices them
+   * (D-3492-4). Each guest's `bookingGuestId` travels only with it.
+   */
+  bookingId?: string;
 }
 
 export function PromoCodeInput({
@@ -91,6 +100,7 @@ export function PromoCodeInput({
   disabled = false,
   disabledReason,
   forBookingEdit = false,
+  bookingId,
 }: PromoCodeInputProps) {
   const format = useClubFormat();
   const [code, setCode] = useState(appliedPromo?.code || "");
@@ -133,6 +143,7 @@ export function PromoCodeInput({
             ...(g.memberId ? { memberId: g.memberId } : {}),
             ...(g.stayStart ? { stayStart: g.stayStart } : {}),
             ...(g.stayEnd ? { stayEnd: g.stayEnd } : {}),
+            ...(bookingId && g.bookingGuestId ? { bookingGuestId: g.bookingGuestId } : {}),
           })),
           ...(selectionRequired ? { promoGuestIndexes: selectedGuestIndexes } : {}),
           ...(forMemberId ? { forMemberId } : {}),
@@ -140,6 +151,7 @@ export function PromoCodeInput({
           // #2770: sent only when it is true, so the create flows' request
           // bodies are byte-identical to what they send today.
           ...(forBookingEdit ? { forBookingEdit: true } : {}),
+          ...(bookingId ? { bookingId } : {}),
         }),
       });
 
