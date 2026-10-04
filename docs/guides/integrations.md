@@ -135,13 +135,26 @@ club's booking officer by hand, each club maintains its own entry and the hub
 distributes it.
 
 **Read this before you turn it on.** This is the one integration that sends data
-*out* of your club. When you enable a shared item, your lodges' names, locations,
-bed counts and booking-officer contact details are uploaded to the central server
-and redistributed to every other connected club, where they appear on those
-clubs' pages. The booking-officer email is the committee **role's** shared
-address (for example `bookings@yourclub.nz`), never a member's personal one, and
-a member's phone number is shared **only** if your club already publishes it on
-your own committee page. No other member data is sent.
+*out* of your club. When you enable a shared item, everything recorded on each
+entry in your **Other lodges** panel is uploaded to the central server and
+redistributed to every other connected club, where it appears on those clubs'
+pages. That is the lodge's name, location and bed count; its **booking officer's
+name, email and phone**; and the lodge details added alongside them — website,
+how to book, cancellation period, the winter and summer season start dates, the
+nine yes/no facilities (requires a lodge custodian, free wifi, quiet room, drying
+room, shared kitchen, wheelchair accessible, breakfast / lunch / dinner included)
+and the list of amenities with their descriptions. The booking-officer email is
+the committee **role's** shared address (for example `bookings@yourclub.nz`),
+never a member's personal one, and a member's phone number is shared **only** if
+your club already publishes it on your own committee page. No other member data
+is sent. Everything in the panel is plain lodge description except the booking
+officer's contact details, so those are what to check before you enable the item.
+
+Downloading works the other way round: the central server's copy of every
+club's entry replaces yours, field by field and amenity list as a whole, unless
+your own copy was edited more recently — then yours is kept and sent up on the
+next upload. A field the server does not send is left exactly as you had it.
+Season start dates travel as calendar dates and are never shifted by time zone.
 
 1. Enable the **Alpine Central Server** module on [Modules](modules.md). With the
    module off the setup page is not reachable and the nightly sync does not run,

@@ -17,8 +17,11 @@ lodge** exists — a single-lodge club sees no lodge pickers.
 
 The same page also carries an **Other lodges** panel — a separate registry of
 *other clubs'* lodges the club recognises (name, location, booking officer
-contact, and bed capacity). These are **not** the club's own lodges: they take no
-bookings and have no configuration hub. Their names populate an **"Are you a
+contact, bed capacity, website and booking details, season start dates, a
+facilities checklist and a list of amenities). These are **not** the club's own
+lodges: they take no bookings and have no configuration hub. When the
+[Alpine Central Server](integrations.md#connect-to-the-alpine-central-server)
+connection is on, the whole entry is shared with every other connected club. Their names populate an **"Are you a
 member of another lodge?"** drop-down on the public
 [booking request form](booking-requests.md) (it defaults to **No**); the chosen
 lodge is saved with the request for use when it is reviewed. The panel uses the
@@ -79,9 +82,15 @@ same **lodge edit** permission as the properties above.
 
 1. Scroll to the **Other lodges** panel below the lodge properties. Click **Add
    other lodge**, enter at least a **Name** (the only required field), optionally
-   fill in **Location**, the **booking officer's** name/email/phone, and a
-   **Bed capacity**, then **Save**.
-2. Use **Edit** to change a lodge, or **Delete** to remove it from the list.
+   fill in **Location**, the **booking officer's** name/email/phone, a
+   **Bed capacity**, the lodge's **Website** and **How to book**, its
+   **Cancellation period** and the dates its **winter** and **summer seasons
+   start**, then **Save**.
+2. Tick whatever applies under **Facilities** (an unticked box means *no*, not
+   *unknown*), and add anything else the lodge offers under **Amenities** — one
+   row per amenity, a name plus an optional description, up to fifty per lodge
+   with no two names the same.
+3. Use **Edit** to change a lodge, or **Delete** to remove it from the list.
    Names must be unique — a duplicate is rejected with a clear message.
 
 ## Settings reference
@@ -108,6 +117,16 @@ same **lodge edit** permission as the properties above.
 | Booking officer's email | Contact email | — | Optional; must be a valid email; up to 320 characters |
 | Booking officer's phone | Contact phone | — | Optional; up to 50 characters |
 | Bed capacity | Informational bed count of the other lodge | — | Optional; whole number ≥ 0. Not this system's booking capacity |
+| Website | The other lodge's site | — | Optional; up to 500 characters; must start with `http://` or `https://` because it is shown as a link (anything else is refused) |
+| How to book | Free text on how a booking is made | — | Optional; up to 300 characters |
+| Cancellation period | Free text, e.g. "14 days" | — | Optional; up to 200 characters |
+| Winter season starts / Summer season starts | The calendar date each season opens | — | Optional; a real date, stored and shared as a date with no time, so it is never shifted by time zone |
+| Facilities | Requires a lodge custodian, free wifi, quiet room, drying room, shared kitchen, wheelchair accessible, breakfast / lunch / dinner included | all off | Yes/no each; *off* means **no**, and existing lodges start with every box off |
+| Amenities | Anything else the lodge offers | none | Up to 50 per lodge; each has a name (up to 120 characters, unique within the lodge ignoring case) and an optional description (up to 1000 characters). Saving replaces the whole list |
+
+Every field in this table is shared with other clubs through the
+[Alpine Central Server](integrations.md#connect-to-the-alpine-central-server)
+when that connection is on; that page says what leaves the club.
 
 The names recorded here are what the public booking-request form offers under
 *"Are you a member of another lodge?"*, and what a booking officer picks from

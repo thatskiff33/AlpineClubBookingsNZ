@@ -378,7 +378,17 @@ providers, and fell four behind as the rest landed. Anything that turns on
   to this club. Stranding it stops the nightly Other Clubs sync (upload and
   download) until an admin re-enters it under Admin → Integrations → Alpine
   Central Server; the non-secret connection settings (base URL, opt-in flag,
-  sync cursor) live in `ServerNzSettings` and survive rotation untouched.
+  sync cursor) live in `ServerNzSettings` and survive rotation untouched. What
+  the key authorises leaving the club is every column of the `OtherLodge`
+  registry plus each lodge's amenity list (#50): since the fourteen detail
+  columns were added, that includes a site URL, a booking path, a cancellation
+  period, two season dates and nine yes/no facilities alongside the booking
+  officer's contact details, and nothing about members. In the other direction
+  the pull is held to the same `otherLodgeDataShape` the local admin is
+  validated with (`src/lib/other-lodges.ts`), so the remote cannot place an
+  over-long value, a non-`http(s)` site URL or an unbounded amenity list into
+  the registry; a row that fails is dropped on its own and counted, and the
+  admin panel renders the site URL as a link only after re-checking the scheme.
 
 The authority is `WRITABLE_CREDENTIALS` in
 `src/app/api/admin/integrations/credentials/route.ts`, which is the allowlist
