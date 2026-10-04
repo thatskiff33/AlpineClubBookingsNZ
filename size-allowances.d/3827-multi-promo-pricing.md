@@ -38,14 +38,14 @@ reason: the removal's Booking Modified email says whether its refund is a bank
   beside the refund amount it qualifies.
 
 file: src/lib/email/booking.ts
-lines: 1770
+lines: 1771
 reason: the Booking Modified sender takes the required bank-transfer flag and
   composes a split payment's cash and credit halves (D-3813-5/6); the sentence
   itself lives in booking-modified-email-copy.ts. Re-measured when epic #3813's
   C3 (#3828) merged in, which adds its own reason: the booking-confirmed
   sender's options gain each code's own adjustment (promoLines) and hand it to
   the one shared promo-rows builder; the option belongs beside promoCode on the
-  sender it configures.
+  sender it configures, typed by the one PromoCodeAdjustment import.
 
 file: src/app/(admin)/admin/refund-requests/page.tsx
 lines: 885

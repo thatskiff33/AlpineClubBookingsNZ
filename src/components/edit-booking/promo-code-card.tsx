@@ -211,17 +211,27 @@ export function PromoCodeCard({
 }
 
 /**
+ * #3828: does the booking carry several promo codes? Then the panel locks the
+ * one-code card (its `promoLocked` gate) and shows `SeveralPromoCodesCard`.
+ */
+export function hasSeveralPromoCodes(booking: { promoLines?: ReadonlyArray<unknown> }): boolean {
+  return (booking.promoLines?.length ?? 0) > 1;
+}
+
+/**
  * #3828: a booking carrying several promo codes. The one-code controls above
  * would send the legacy one-code request, which replaces or releases EVERY
  * code (and the server refuses it), so the panel shows the codes read-only
- * instead. Epic #3813's chips child (#3492) edits the list.
+ * instead. Epic #3813's chips child (#3492) edits the list. Renders nothing
+ * for a booking with one code or none.
  */
 export function SeveralPromoCodesCard({
   promoLines,
 }: {
-  promoLines: ReadonlyArray<PromoInfo & { amountCents: number }>;
+  promoLines: ReadonlyArray<PromoInfo & { amountCents: number }> | undefined;
 }) {
   const format = useClubFormat();
+  if (!promoLines || !hasSeveralPromoCodes({ promoLines })) return null;
   return (
     <Card>
       <CardHeader>

@@ -56,7 +56,7 @@ import {
   renamedGuestsForDependantCheck,
 } from "@/lib/booking-dependant-identity-doors";
 import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
-import { PromoCodeCard, SeveralPromoCodesCard } from "@/components/edit-booking/promo-code-card";
+import { hasSeveralPromoCodes, PromoCodeCard, SeveralPromoCodesCard } from "@/components/edit-booking/promo-code-card";
 import { ReviewJustificationField } from "@/components/edit-booking/review-justification-field";
 import {
   exceptionProposalSignature,
@@ -369,9 +369,7 @@ export function EditBookingPanel({
     : !booking.editPolicy.checkInEditable;
   const isInProgressEdit =
     !overrideEnabled && booking.editPolicy.mode === "in-progress";
-  // #3828: several codes lock the one-code controls too (`SeveralPromoCodesCard`).
-  const severalPromoCodes = (booking.promoLines?.length ?? 0) > 1;
-  const promoLocked = isInProgressEdit || overrideEnabled || severalPromoCodes;
+  const promoLocked = isInProgressEdit || overrideEnabled || hasSeveralPromoCodes(booking);
 
   function handleCheckInChange(value: string) {
     setCheckIn(value);
@@ -1813,10 +1811,7 @@ export function EditBookingPanel({
         }
       />
 
-      {/* Promo Code */}
-      {severalPromoCodes && !isInProgressEdit && !overrideEnabled && (
-        <SeveralPromoCodesCard promoLines={booking.promoLines ?? []} />
-      )}
+      {!isInProgressEdit && !overrideEnabled && <SeveralPromoCodesCard promoLines={booking.promoLines} />}
       {!promoLocked && (
         <PromoCodeCard
           promo={booking.promo}
