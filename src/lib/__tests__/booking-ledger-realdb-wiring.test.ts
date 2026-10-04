@@ -134,6 +134,46 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
     }
   });
 
+  it("carries #3583's back-post proof into the same harness", () => {
+    const harness = source(
+      resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
+    );
+    expect(harness).toContain('import "./booking-ledger-back-post.realdb.test";');
+    const suite = source(
+      resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-back-post.realdb.test.ts"),
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    for (const caseName of [
+      "--apply posts every history so the census finds nothing to say, each through the live posters' own keys",
+      "a second --apply posts nothing new",
+      "a booking it cannot post is listed with its reason, and nothing is posted for it",
+      "a back-post and a live admin date shift (run %i): one set of lines, census agrees",
+      "a back-post and a live card refund (run %i): the refund posts once, census agrees",
+      "waits for the global lock(1) a live poster holds",
+    ]) {
+      expect(suite).toContain(caseName);
+    }
+  });
+
+  it("runs #3583's seeded-history gate as a step of the migration-drift job, never on its own", () => {
+    const workflow = readFileSync(resolve(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
+    expect(workflow).toContain("- name: Back-post a seeded booking history and require the census gate");
+    expect(workflow).toMatch(/run: bash scripts\/booking-ledger-seed-gate\.sh postgresql:\/\/[^\n]*concurrency_race_1881_ledger_history/);
+    const gate = readFileSync(resolve(REPO_ROOT, "scripts/booking-ledger-seed-gate.sh"), "utf8");
+    for (const command of [
+      "src/lib/__tests__/booking-ledger-history-seed.realdb.test.ts",
+      "booking-ledger:census --fail-on-gap",
+      "booking-ledger:back-post --apply",
+      'grep -q "posted: 0 (0 line(s))"',
+      "booking-ledger:census --write-acknowledgement-draft",
+      "booking-ledger:census --acknowledged",
+    ]) {
+      expect(gate).toContain(command);
+    }
+    // The draft may name only the classes the history is built to show.
+    expect(gate).toContain(`expected_classes='["REFUND_MIRROR_HAND_BACK"]'`);
+  });
+
   it("carries #3792's late capacity-cancel credit-restore proof into the same harness", () => {
     const harness = source(
       resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
