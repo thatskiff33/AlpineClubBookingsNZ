@@ -1224,6 +1224,7 @@ async function settleConfirmedChildrenAndNotify(
           stripeCustomerId: options.stripeCustomerId ?? null,
         },
         update: {
+          amountCents: child.finalPriceCents, // #3854: the share the ledger posts
           status: PaymentStatus.SUCCEEDED,
           source: options.source,
           reference: options.reference,

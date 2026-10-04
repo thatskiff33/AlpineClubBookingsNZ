@@ -42,13 +42,14 @@ import {
 } from "@/lib/booking-ledger-group-settlement-posting";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { bookingHasConfirmationLines } from "@/lib/booking-ledger-read";
+import { groupSettlementShareKey } from "@/lib/booking-ledger-posting-keys";
 import {
   buildBookingLedgerRows,
   writeBookingLedgerRows,
   type BookingLedgerPosting,
 } from "@/lib/booking-ledger-write";
 import logger from "@/lib/logger";
-import { organiserChildCommittedRefundCents } from "@/lib/organiser-child-refund";
+import { mirrorPlanRefundedCents, organiserChildCommittedRefundCents } from "@/lib/organiser-child-refund";
 import { cancellationKeptCents } from "@/lib/paid-cancellation-money";
 
 type SettleStore = Pick<Prisma.TransactionClient, "booking" | "bookingLedgerLine">;
@@ -94,47 +95,61 @@ export async function postGroupSettlementLedgerLines({
     if (!(await bookingHasConfirmationLines(store, booking.id))) unconfirmed.add(booking.id);
   }
 
-  let rows: ReturnType<typeof buildBookingLedgerRows> = [];
+  // The shares are planned for the whole settlement at once (sum or nothing).
+  let shares: BookingLedgerPosting[] = [];
   try {
-    const postings: BookingLedgerPosting[] = [];
-    for (const booking of bookings) {
-      if (!unconfirmed.has(booking.id)) continue;
-      const plan = planConfirmationChargeLines(booking);
-      if (!plan.reconciles) {
-        logger.warn(
-          { bookingId: booking.id, settlementId: settlement.id, unpricedStrandIds: plan.unpricedStrandIds },
-          "Booking ledger: a group-settled child's charge lines do not add up to its final price (#3854)",
-        );
-      }
-      postings.push(...plan.postings);
-    }
-    const shares = planGroupSettlementShareLines({
+    const plan = planGroupSettlementShareLines({
       settlement,
-      children: children.map((child) => ({
-        bookingId: child.id,
-        lodgeId: child.lodgeId,
-        shareCents: child.finalPriceCents,
-      })),
+      children: children.map((child) => ({ bookingId: child.id, lodgeId: child.lodgeId, shareCents: child.finalPriceCents })),
     });
-    if (!shares.reconciles) {
+    if (!plan.reconciles) {
       logger.error(
-        { settlementId: settlement.id, settlementCents: settlement.amountCents, totalShareCents: shares.totalShareCents },
+        { settlementId: settlement.id, settlementCents: settlement.amountCents, totalShareCents: plan.totalShareCents },
         "Booking ledger: a group settlement's children do not add up to what it collected; no share was posted (#3854)",
       );
     }
-    postings.push(...shares.postings);
-    rows = buildBookingLedgerRows(postings);
+    shares = plan.postings;
   } catch (error) {
     logger.error(
       { err: error, settlementId: settlement.id },
-      "Booking ledger: could not build a group settlement's lines; the settle stands and the gap is the census's to report (#3854)",
+      "Booking ledger: could not plan a group settlement's shares; the settle stands and the gap is the census's to report (#3854)",
     );
-    return 0;
+  }
+
+  // Then each child is built on its own, so one child that cannot be built
+  // (an unpriced or malformed strand) never drops the others' lines.
+  const rows: ReturnType<typeof buildBookingLedgerRows> = [];
+  const failedBookingIds: string[] = [];
+  for (const booking of bookings) {
+    try {
+      const postings: BookingLedgerPosting[] = [];
+      if (unconfirmed.has(booking.id)) {
+        const plan = planConfirmationChargeLines(booking);
+        if (!plan.reconciles) {
+          logger.warn(
+            { bookingId: booking.id, settlementId: settlement.id, unpricedStrandIds: plan.unpricedStrandIds },
+            "Booking ledger: a group-settled child's charge lines do not add up to its final price (#3854)",
+          );
+        }
+        postings.push(...plan.postings);
+      }
+      postings.push(...shares.filter((share) => share.bookingId === booking.id));
+      rows.push(...buildBookingLedgerRows(postings));
+    } catch (error) {
+      logger.error({ err: error, settlementId: settlement.id, bookingId: booking.id }, "Booking ledger: could not build a group-settled child's lines (#3854)");
+      failedBookingIds.push(booking.id);
+    }
+  }
+  if (failedBookingIds.length > 0) {
+    logger.error(
+      { settlementId: settlement.id, failedBookingIds },
+      "Booking ledger: a group settlement posted no lines for these children; the settle stands and the gap is the census's to report (#3854)",
+    );
   }
   return writeBookingLedgerRows(store, rows);
 }
 
-/** The refund a frozen organiser-cancel plan hands back on one child. */
+/** The refund a frozen organiser-cancel plan hands back on one child, once its share is on the ledger. */
 export async function postGroupSettlementRefundLedgerLine({
   store,
   settlement,
@@ -148,6 +163,15 @@ export async function postGroupSettlementRefundLedgerLine({
   lodgeId: string;
   refundCents: number;
 }): Promise<number> {
+  // Only beside the share this settlement posted on the child, as the
+  // cancellation lines post only for a child confirmed on the ledger: a child
+  // settled before #3854 holds neither, and the back-post (#3583) posts its
+  // share, refund and kept figure together.
+  const share = await store.bookingLedgerLine.findFirst({
+    where: { bookingId, postingKey: groupSettlementShareKey(settlement.id, bookingId) },
+    select: { id: true },
+  });
+  if (!share) return 0;
   let rows: ReturnType<typeof buildBookingLedgerRows> = [];
   try {
     const posting = planGroupSettlementRefundLine({ settlement, bookingId, lodgeId, refundCents });
@@ -188,7 +212,7 @@ async function groupSettledChildCancellationKeptCents(
   const committedRefundCents =
     plan.kind === "per-child"
       ? await organiserChildCommittedRefundCents(db, payment, plan.paymentIntentId)
-      : payment.refundedAmountCents + plan.plannedRefundCents;
+      : mirrorPlanRefundedCents(payment, plan.plannedRefundCents);
   return cancellationKeptCents({
     retainedAmountCents: Math.max(0, payment.amountCents - committedRefundCents),
     appliedCreditCents: 0,

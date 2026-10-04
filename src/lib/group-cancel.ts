@@ -106,7 +106,7 @@ import {
   enqueueGroupSettlementRefundRecovery,
   markGroupSettlementRefundRecoverySucceeded,
 } from "@/lib/payment-recovery";
-import { deserializeRefundPlan, readPerChildRefundPlan } from "@/lib/organiser-child-refund";
+import { deserializeRefundPlan, mirrorPlanRefundedCents, readPerChildRefundPlan } from "@/lib/organiser-child-refund";
 import { refundOrganiserCancelChildren } from "@/lib/organiser-child-refund-executor";
 import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 import logger from "@/lib/logger";
@@ -543,10 +543,7 @@ export async function settleGroupBookingOnOrganiserCancel(
           // combined settlement PI, not per-child intents), so there is no
           // ledger to post against — the per-child refundedAmountCents is the
           // record of record for these refunds.
-          const nextRefunded = Math.min(
-            child.payment.amountCents,
-            child.payment.refundedAmountCents + refundForChild
-          );
+          const nextRefunded = mirrorPlanRefundedCents(child.payment, refundForChild);
           await tx.payment.update({
             where: { id: child.payment.id },
             data: {
@@ -848,10 +845,14 @@ export async function executeGroupSettlementRefundPlan(
     });
     // ACTIVE children still belong to the inline loop / reaper resume path,
     // which cancel + mirror atomically; touching them here could double-apply.
-    if (!child || child.status !== BookingStatus.CANCELLED) continue;
-    if (!child.payment || child.payment.refundedAmountCents > 0) continue;
+    if (!child || child.status !== BookingStatus.CANCELLED || !child.payment) continue;
+    if (child.payment.refundedAmountCents > 0) {
+      // #3854: mirrored already, its line by the plan regardless (keyed, so a no-op when posted).
+      await prisma.$transaction((tx) => postGroupSettlementRefundLedgerLine({ store: tx, settlement, bookingId: child.id, lodgeId: child.lodgeId, refundCents: refundForChild }));
+      continue;
+    }
 
-    const nextRefunded = Math.min(child.payment.amountCents, refundForChild);
+    const nextRefunded = mirrorPlanRefundedCents(child.payment, refundForChild);
     // Conditional write: organiser-settled child payments receive refunds
     // ONLY from this module, so refundedAmountCents === 0 means unmirrored.
     // Mirror and durable Xero outbox insertion are one atomic unit.  Previously
@@ -878,7 +879,7 @@ export async function executeGroupSettlementRefundPlan(
         { store: tx }
       );
       // #3854: as the inline loop posts it, under the same key.
-      await postGroupSettlementRefundLedgerLine({ store: tx, settlement, bookingId: child.id, lodgeId: child.lodgeId, refundCents: nextRefunded });
+      await postGroupSettlementRefundLedgerLine({ store: tx, settlement, bookingId: child.id, lodgeId: child.lodgeId, refundCents: refundForChild });
       return { applied: true, queuedOperationId: queued.queueOperationId };
     });
     if (!mirrorResult.applied) continue;

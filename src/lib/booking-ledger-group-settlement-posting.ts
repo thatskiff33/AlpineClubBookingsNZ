@@ -26,6 +26,7 @@ import type { PaymentSource } from "@prisma/client";
 
 import type { BookingLedgerPosting } from "@/lib/booking-ledger-write";
 import { groupSettlementRefundKey, groupSettlementShareKey } from "@/lib/booking-ledger-posting-keys";
+import { groupSettlementTotalCents } from "@/lib/group-settlement-invoice-binding";
 
 export type GroupSettlementForPosting = {
   id: string;
@@ -85,7 +86,8 @@ export function planGroupSettlementShareLines(input: {
   settlement: GroupSettlementForPosting;
   children: readonly GroupSettlementChildShare[];
 }): GroupSettlementSharePlan {
-  const totalShareCents = input.children.reduce((sum, child) => sum + child.shareCents, 0);
+  // The settle's own total, never a second spelling of it (`INV-SSOT`).
+  const totalShareCents = groupSettlementTotalCents(input.children.map((child) => ({ finalPriceCents: child.shareCents })));
   if (totalShareCents !== input.settlement.amountCents) {
     return { postings: [], reconciles: false, totalShareCents };
   }

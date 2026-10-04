@@ -1728,6 +1728,8 @@ describe("applyGroupSettlementSucceeded", () => {
           status: PaymentStatus.SUCCEEDED,
           reference: "pi_1",
         }),
+        // #3854: a payment row that already existed takes the share too.
+        update: expect.objectContaining({ amountCents: 4500 }),
       })
     );
     // #1881 — status-guarded child PAID flip + settlement SUCCEEDED flip.

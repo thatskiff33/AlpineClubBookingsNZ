@@ -10,14 +10,19 @@ const mocks = vi.hoisted(() => ({
   postCancellationLedgerLines: vi.fn(async () => {}),
   organiserChildCommittedRefundCents: vi.fn(async () => 0),
   createMany: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
+  findFirst: vi.fn(async (): Promise<{ id: string } | null> => ({ id: "share-line" })),
 }));
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => ({ postCancellationLedgerLines: mocks.postCancellationLedgerLines }));
-vi.mock("@/lib/organiser-child-refund", () => ({ organiserChildCommittedRefundCents: mocks.organiserChildCommittedRefundCents }));
-vi.mock("@/lib/logger", () => ({ default: { warn: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock("@/lib/organiser-child-refund", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/organiser-child-refund")>()),
+  organiserChildCommittedRefundCents: mocks.organiserChildCommittedRefundCents,
+}));
+const logger = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }));
+vi.mock("@/lib/logger", () => ({ default: logger }));
 
-import { postGroupCancelChildLedgerLines } from "@/lib/booking-ledger-group-settlement-sync";
+import { postGroupCancelChildLedgerLines, postGroupSettlementLedgerLines } from "@/lib/booking-ledger-group-settlement-sync";
 
-const tx = { bookingLedgerLine: { createMany: mocks.createMany } } as never;
+const tx = { bookingLedgerLine: { createMany: mocks.createMany, findFirst: mocks.findFirst } } as never;
 const paidChild = {
   id: "c1",
   lodgeId: "l1",
@@ -38,6 +43,13 @@ describe("postGroupCancelChildLedgerLines", () => {
       skipDuplicates: true,
     });
     expect(kept()).toBe(2_250);
+  });
+
+  it("posts no refund for a child whose share this settlement never posted (settled before #3854), as the cancellation posts nothing for it", async () => {
+    mocks.findFirst.mockResolvedValueOnce(null);
+    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: bank, mirrorPlan: true, refundForChild: 2_250, plannedRefundCents: 2_250 });
+    expect(mocks.findFirst).toHaveBeenCalledWith({ where: { bookingId: "c1", postingKey: "group-settlement:gs2:child:c1" }, select: { id: true } });
+    expect(mocks.createMany).not.toHaveBeenCalled();
   });
 
   it("a card mirror plan whose refund failed: no refund line yet, but the frozen plan already counts as owed", async () => {
@@ -67,6 +79,48 @@ describe("postGroupCancelChildLedgerLines", () => {
     expect(kept()).toBe(0);
     expect(mocks.postCancellationLedgerLines).toHaveBeenLastCalledWith(
       expect.objectContaining({ bookingId: "c1", site: "group-cancel:organiser-settled-child" }),
+    );
+  });
+});
+
+describe("postGroupSettlementLedgerLines", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const guest = (bookingId: string, nightCents: number) => ({
+    id: `${bookingId}-g`,
+    firstName: "Joiner",
+    lastName: bookingId,
+    ageTier: "ADULT" as const,
+    rateMembershipTypeId: null,
+    nights: [{ stayDate: new Date("2027-09-01T00:00:00.000Z"), priceCents: nightCents }],
+  });
+
+  it("builds each child on its own: one that cannot be built drops only its own lines, and is listed", async () => {
+    const store = {
+      booking: {
+        findMany: vi.fn(async () => [
+          { id: "good", lodgeId: "l1", totalPriceCents: 4_500, promoAdjustmentCents: 0, guests: [guest("good", 4_500)] },
+          // A negative night price: the write door refuses to build it.
+          { id: "bad", lodgeId: "l1", totalPriceCents: -1, promoAdjustmentCents: 0, guests: [guest("bad", -1)] },
+        ]),
+      },
+      bookingLedgerLine: { findFirst: vi.fn(async () => null), createMany: mocks.createMany },
+    } as never;
+
+    await postGroupSettlementLedgerLines({
+      store,
+      settlement: { id: "gs1", source: "STRIPE", amountCents: 4_500 },
+      children: [
+        { id: "good", lodgeId: "l1", finalPriceCents: 4_500 },
+        { id: "bad", lodgeId: "l1", finalPriceCents: 0 },
+      ],
+    });
+
+    const written = (mocks.createMany.mock.calls[0] as unknown as [{ data: Array<{ bookingId: string; kind: string }> }])[0].data;
+    expect(written.map((row) => `${row.bookingId}:${row.kind}`)).toEqual(["good:GUEST_NIGHT", "good:CARD_CAPTURE"]);
+    expect(logger.error).toHaveBeenCalledWith(
+      { settlementId: "gs1", failedBookingIds: ["bad"] },
+      expect.stringContaining("posted no lines for these children"),
     );
   });
 });

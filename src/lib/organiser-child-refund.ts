@@ -486,6 +486,19 @@ export function deserializeRefundPlan(value: unknown): Map<string, number> {
   return plan;
 }
 
+/**
+ * A child's refunded total once a `{childId: cents}` mirror plan's share is
+ * counted, capped at what it paid (#3854, `INV-SSOT`): the one spelling the
+ * organiser cancel's mirror, its recovery replay and the ledger's kept figure
+ * share, so the three cannot disagree on what the plan handed back.
+ */
+export function mirrorPlanRefundedCents(
+  payment: { amountCents: number; refundedAmountCents: number },
+  plannedRefundCents: number,
+): number {
+  return Math.min(payment.amountCents, payment.refundedAmountCents + plannedRefundCents);
+}
+
 function serializePerChildRefundPlan(plan: Map<string, number>): Prisma.InputJsonValue {
   return { perChildRefunds: Object.fromEntries(plan) };
 }

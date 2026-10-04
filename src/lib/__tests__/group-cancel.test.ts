@@ -1296,7 +1296,12 @@ describe("executeGroupSettlementRefundPlan (#1351)", () => {
 
     expect(result).toEqual({ outcome: "already_refunded", mirroredChildren: 1 });
     expect(mocks.processRefund).not.toHaveBeenCalled();
-    // child-2 was already mirrored (refunded > 0): skipped entirely.
+    // child-2 was already mirrored (refunded > 0): no second mirror or note,
+    // but its ledger line still posts by the plan (#3854; keyed, so a no-op
+    // where the inline loop already posted it).
+    expect(groupLedger.postGroupSettlementRefundLedgerLine).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "child-2", refundCents: 4500 }),
+    );
     expect(mocks.paymentUpdateMany).toHaveBeenCalledTimes(1);
     expect(mocks.paymentUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "pay-1", refundedAmountCents: 0 } })
