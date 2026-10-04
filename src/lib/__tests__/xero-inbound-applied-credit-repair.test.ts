@@ -100,9 +100,9 @@ describe("provider-aware inbound applied-credit repair", () => {
     h.prisma.payment.findMany.mockResolvedValue([{
       id: "payment-1",
       bookingId: "booking-1",
-      amountCents: 10000,
       creditAppliedCents: 3000,
-      booking: { memberId: "member-1" },
+      changeFeeCents: 0,
+      booking: { memberId: "member-1", finalPriceCents: 10000 },
     }]);
     h.memberCreditFindMany.mockResolvedValue([{
       id: "historical-negative",

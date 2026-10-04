@@ -810,11 +810,12 @@ export async function repairAccountCreditAllocationBusinessState(
       select: {
         id: true,
         bookingId: true,
-        amountCents: true,
         creditAppliedCents: true,
+        changeFeeCents: true,
         booking: {
           select: {
             memberId: true,
+            finalPriceCents: true,
           },
         },
       },
@@ -852,8 +853,8 @@ export async function repairAccountCreditAllocationBusinessState(
     // interleave with a concurrent spend/restore of the same member's ledger.
     // Without serialization two concurrent credit-note events for one payment can
     // also interleave and transiently under-set creditAppliedCents; the clamp
-    // keeps the applied total within the payment amount (invariant (b),(d),
-    // #1234). DB-only work: no external Xero call runs inside this transaction.
+    // keeps the applied total within the booking's price and change fee
+    // (invariant (b),(d), #1234; #3836). DB-only work: no external Xero call runs inside this transaction.
     await prisma.$transaction(async (tx) => {
       const creditLedgerMemberId = bookingOwner(payment.booking).memberId;
       // #3369: this whole repair is about a MEMBER's applied credit — the
@@ -1075,9 +1076,13 @@ export async function repairAccountCreditAllocationBusinessState(
           amountCents: true,
         },
       });
+      // #3836: capped at what the booking is worth, never at the card amount,
+      // which is $0 for a booking paid entirely by credit and less than the
+      // credit on a card-and-credit one: that cap zeroed or clipped the mirror
+      // the cancel tiers from.
       const appliedCreditTotalCents = Math.min(
         Math.max(-(aggregate._sum.amountCents ?? 0), 0),
-        payment.amountCents
+        payment.booking.finalPriceCents + payment.changeFeeCents
       );
 
       // Compare against the payment's current creditAppliedCents read under the

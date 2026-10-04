@@ -9,6 +9,8 @@ import { calculateCancellationPreview } from "@/lib/policies/booking-route-decis
 import { clubTime } from "@/lib/club-time/server";
 import { paymentEligibleForPaidCancelPath, paymentHasCaptureEvidence } from "@/lib/booking-cancel";
 import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
+import { cancelTieredAppliedCreditCents } from "@/lib/booking-payment-state";
+import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 import { refundedPaymentCreditRestore } from "@/lib/cancel-refunded-payment-credit";
 import { memberCancelRefusal } from "@/lib/booking-cancel-eligibility";
 import logger from "@/lib/logger";
@@ -151,7 +153,11 @@ export async function GET(
       // #3643: the cash the cancel will record, not the invoice's face value.
       payment: partPayment
         ? { ...booking.payment, amountCents: partPayment.paidCents, refundedAmountCents: 0 }
-        : booking.payment,
+        : {
+            ...booking.payment,
+            // #3836: as the cancel tiers it - a mirror clamped to the card amount reads the ledger.
+            creditAppliedCents: cancelTieredAppliedCreditCents(booking.payment, await deriveBookingAppliedCreditCents(booking.id)),
+          },
       finalPriceCents: booking.finalPriceCents,
       checkIn: booking.checkIn,
       policyRules: policy,

@@ -5208,7 +5208,8 @@ describe("processStoredXeroInboundEvents", () => {
               bookingId: "bk_admin_1",
               amountCents: 12000,
               creditAppliedCents: 3000,
-              booking: { memberId: "mem_admin_1" },
+              changeFeeCents: 0,
+              booking: { memberId: "mem_admin_1", finalPriceCents: 12000 },
             },
           ];
         }
@@ -5770,8 +5771,10 @@ describe("processStoredXeroInboundEvents", () => {
           bookingId: "bk234567890",
           amountCents: 12000,
           creditAppliedCents: 0,
+          changeFeeCents: 0,
           booking: {
             memberId: "mem_credit_1",
+            finalPriceCents: 12000,
           },
         },
       ]);
@@ -5914,7 +5917,8 @@ describe("processStoredXeroInboundEvents", () => {
         xeroInvoiceId: "inv_booking_1",
         amountCents: 12000,
         creditAppliedCents: 2500,
-        booking: { memberId: "mem_credit_1" },
+        changeFeeCents: 0,
+        booking: { memberId: "mem_credit_1", finalPriceCents: 12000 },
       }]);
     mocks.memberCreditFindMany.mockResolvedValue([{
       id: "historical_applied_1",
@@ -5984,7 +5988,7 @@ describe("processStoredXeroInboundEvents", () => {
     });
   });
 
-  it("repairs applied-credit ledger state atomically under the advisory lock and clamps to the payment amount", async () => {
+  it("repairs applied-credit ledger state atomically under the advisory lock and clamps to the booking's price", async () => {
     mocks.inboundFindMany.mockResolvedValue([
       {
         id: "evt_clamp",
@@ -6049,12 +6053,15 @@ describe("processStoredXeroInboundEvents", () => {
         {
           id: "pay_booking_1",
           bookingId: "bk234567890",
-          // The applied-credit aggregate below (5000) exceeds this payment amount,
-          // so the write must clamp to amountCents (2000), never over-credit.
+          // The applied-credit aggregate below (5000) exceeds what the booking
+          // is worth (3000 + a 500 change fee), so the write clamps to 3500,
+          // never over-credits. Not to the card amount (#3836): 2000 here.
           amountCents: 2000,
           creditAppliedCents: 0,
+          changeFeeCents: 500,
           booking: {
             memberId: "mem_credit_1",
+            finalPriceCents: 3000,
           },
         },
       ]);
@@ -6120,11 +6127,11 @@ describe("processStoredXeroInboundEvents", () => {
         },
       },
     );
-    // Clamped to the payment amount, not the raw 5000 aggregate.
+    // Clamped to the booking's price and change fee, not the raw 5000 aggregate.
     expect(mocks.paymentUpdate).toHaveBeenCalledWith({
       where: { id: "pay_booking_1" },
       data: {
-        creditAppliedCents: 2000,
+        creditAppliedCents: 3500,
       },
     });
   });
