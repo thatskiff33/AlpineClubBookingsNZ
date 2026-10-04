@@ -94,18 +94,21 @@ describe("computeModificationPricing per-code promotion sides (#3828)", () => {
     ]);
   });
 
-  it("stores the single aggregate line when the after side cannot be read", async () => {
+  it("does not pretend to recover from a failed after-side read: the narration guard stores no lines", async () => {
+    // On Postgres a failed statement aborts the interactive transaction, so a
+    // catch that went on to write the aggregate line would only hide the abort.
     const store = { promoRedemption: { findMany: vi.fn().mockRejectedValue(new Error("gone")) } };
+    const errorLog = { info: vi.fn(), error: vi.fn() };
 
-    const { priceLines } = await computeModificationPricing(
+    const { priceLines, sides } = await computeModificationPricing(
       { bookingId: "bk1", site: "test", promoCodes: { store: store as never, before: twoCodes } },
       () => ({ before: side(-5000, "SUMMER25, GUESTFREE"), after: side(-4000, "SUMMER25, GUESTFREE") }),
       1000,
-      log,
+      errorLog,
     );
 
-    expect(priceLines).toEqual([
-      { v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: "SUMMER25, GUESTFREE", amountCents: 1000 },
-    ]);
+    expect(priceLines).toBeNull();
+    expect(sides).toBeNull();
+    expect(errorLog.error).toHaveBeenCalledTimes(1);
   });
 });
