@@ -1469,8 +1469,8 @@ total at apply).
 ## INV-PAY-101
 
 - **A Xero refund or credit document names how the money went back, from the
-  settlement decision — never inferred from the payment's source** (#3529,
-  owner wording). Three refund wordings head the line
+  settlement decision — never inferred from the payment's source** (#3529;
+  owner wording, 20 September 2026). Three refund wordings head the line
   description and reference: *Refund against original credit card*, *Refund
   requested via internet banking*, *Account Credit*; a fourth, [INV-PAY-017]'s
   unpaid-invoice clearing, names no refund. Their one home is
@@ -1495,7 +1495,7 @@ total at apply).
   repair legs; a note skipped by design (`refundPaymentSkipped`) is never
   re-repaired.
 - **On a cancelled booking a completed `CANCELLED_BOOKING_HAND_BACK`, and a
-  review's netted card refund or hand-back (#3880, keyed on its task), raise
+  review's netted card refund or hand-back (#3880), raise
   the cancellation's refund note** against the invoice's id,
   never `hasIssuedPrimaryXeroInvoice` (false here); a cash settlement
   (#2262) has none. Cancellation policy is untouched (D2,

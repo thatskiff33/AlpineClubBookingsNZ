@@ -124,6 +124,27 @@ transaction participant; provider delivery remains outside a database
 transaction. New booking rows keep `htmlBody` null and retain retry HTML only in
 `bookingRetryHtmlBody`, which the old worker cannot select after rollback.
 
+### One refund credit note in flight per payment, by claim order (#3880)
+
+A delta refund note sizes itself off the notes already recorded on its payment
+and keys its Xero create on the resulting watermark, so two runs that read
+before either records get Xero's one deduped note for two refunds. No lock is
+held across that Xero call. Instead every run already holds a RUNNING row on
+the payment before it reads - the outbox row its worker claimed, or the
+operator's `REQUEUE` row - and `assertNoRefundCreditNoteInFlight`
+(`xero-refund-note-in-flight.ts`, called by `createXeroCreditNote` in delta
+mode) refuses while any other live (younger than the stale threshold)
+refund-note create or credit-note requeue on the payment is RUNNING. Each run
+commits its claim and then reads, so of two concurrent runs at least one sees
+the other; both seeing each other is safe. The refusal is a busy error, and the
+outbox and the retry queue return the row to PENDING with the reason kept. It
+adds no advisory key and no row lock. Since #3880 a review's bank-transfer
+hand-back on a cancelled booking also queues its refund note INSIDE the
+completion transaction: an outbox row insert, after the completion's
+`lock(1)`, its member-ledger key and the `Payment` row
+(`lockPaymentForRefundedTotal`), with no provider call. Proven against real
+PostgreSQL by `edit-financial-review-cancelled-refund-xero.realdb.test.ts`.
+
 ### The Xero token refresh uses a row lease, shared across colours (#3454)
 
 `xero-token-store.ts` composes no booking, capacity, membership or money
