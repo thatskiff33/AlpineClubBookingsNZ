@@ -12,7 +12,7 @@ reason: the children's ledger lines must post inside the settle's own claim
   growth is one import and a two-line call into the ledger module.
 
 file: src/lib/group-cancel.ts
-lines: 939
+lines: 936
 reason: the organiser cancel's per-child ledger lines must post inside its
   per-child claim transaction, and the plan's refund line inside the replay's
   mirror transaction; the growth is the frozen-plan copy the kept figure needs
