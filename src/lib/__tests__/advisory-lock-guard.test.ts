@@ -497,6 +497,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "lockBookingForBackPost#1",
+    tier: "GLOBAL",
+    reason:
+      "#3583: the operator back-post posts a historical booking's ledger lines on a live database, and asks the same questions the live posters ask under this key — is the booking confirmed on the ledger, which line is live — so a settle, cancel, edit or closure on the same booking either commits before it reads or waits until it commits; without it both could see 'not yet confirmed' and both post. First lock of each booking's transaction, then a 5s lock_timeout bounding every later wait while it is held, the lodge key, the owner read under it (member merge re-points it holding the lodge key), the member credit-ledger keys and the payment and booking rows; no provider is called.",
+    invariant: "INV-LOCK-002",
+  },
+  {
     site: "respondToBookingRequestQuote#1",
     tier: "GLOBAL",
     reason:
@@ -1259,6 +1266,12 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // docs/CONCURRENCY_AND_LOCKING.md -> "Held-party guest rows before a dietary
   // rebuild".
   "src/lib/booking-guest-row-lock.ts": 1,
+  // #3583: the booking-ledger back-post locks the booking's payment row and then
+  // the booking row (`SELECT 1 … FOR NO KEY UPDATE`, both), after lock(1), the
+  // lodge key and the member credit-ledger keys. Payment first, as the card-
+  // refund writer takes it. See docs/CONCURRENCY_AND_LOCKING.md ->
+  // "Booking-ledger back-post".
+  "src/lib/booking-ledger-back-post.ts": 2,
   // #3635 (review outbox F1/F4): the kept-late-capture enqueue and the
   // worker's send-time decision lock the #3639 approval task's row
   // (`SELECT 1 … FOR UPDATE`), the row the dismissal, reopen and approval

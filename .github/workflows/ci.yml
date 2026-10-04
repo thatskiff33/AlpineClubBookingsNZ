@@ -1011,6 +1011,19 @@ jobs:
           CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
         run: pnpm exec vitest run src/lib/__tests__/member-merge-shared-double-races.realdb.test.ts
 
+      # #3583: the booking ledger's cut-over gate, run the way the owner runs it
+      # (docs/MAINTENANCE.md) over a seeded history: booking histories made by
+      # the REAL writers with their lines stripped, in a database of their own on
+      # the race service; then census (must be shut), back-post dry run,
+      # --apply, --apply again (must post nothing), an acknowledgement draft that
+      # may name only the classes the history is built to show (never
+      # KNOWN_DEFECT_HISTORY), and census --acknowledged --fail-on-gap (must be
+      # open). The demo seed is not used: it writes money rows no writer can
+      # reach, which the census rightly disagrees with.
+      # `booking-ledger-realdb-wiring.test.ts` fails if this step goes missing.
+      - name: Back-post a seeded booking history and require the census gate
+        run: bash scripts/booking-ledger-seed-gate.sh postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881_ledger_history
+
       # #2374 (AID-5): PROVE the dedicated SELECT-only AI Diagnostics database
       # role cannot write, cannot run DDL, cannot create a TEMP table, cannot read
       # the encrypted credential store, and is cancelled at its statement timeout.

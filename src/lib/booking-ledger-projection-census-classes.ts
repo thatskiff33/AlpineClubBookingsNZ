@@ -514,7 +514,7 @@ export function additionalComponents(row: BookingLedgerCensusRow, owedCents: num
  */
 export function liveOwedComponents(
   row: BookingLedgerCensusRow,
-  unposted: { priceCents: number; changeFeeCents: number },
+  unposted: { priceCents: number; withCarriedCents: number; changeFeeCents: number },
 ): ResidualComponent[][] {
   const cap = xeroCapEvidence(row);
   const settlements = unpostedSettlements(row);
@@ -531,7 +531,11 @@ export function liveOwedComponents(
     { name: "UNPOSTED_CHANGE_FEE", cents: unposted.changeFeeCents },
     { name: "UNPOSTED_CREDIT", cents: unpostedCredits(row).reduce((sum, credit) => sum + credit.amountCents, 0) },
   ];
-  return [base, [...base, { name: "REFUND_MIRROR_FAILED_REFUND", cents: failedRefundCents(row) }]];
+  const failed: ResidualComponent = { name: "REFUND_MIRROR_FAILED_REFUND", cents: failedRefundCents(row) };
+  // Then with the carried edits too: a refused edit a later live edit passed
+  // is still missing from the ledger (see `unpostedEdits`).
+  const carried = base.map((component) => (component.name === "UNPOSTED_EDIT" ? { ...component, cents: unposted.withCarriedCents } : component));
+  return [base, [...base, failed], carried, [...carried, failed]];
 }
 
 /**

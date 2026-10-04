@@ -611,6 +611,44 @@ edit posted), and a back-post from them would mint different keys that
 `ON CONFLICT` cannot catch — a night charged twice. The back-post posts only
 through the key functions in `booking-ledger-posting-keys.ts`.
 
+**How the back-post posts history (#3583 PR 2, `booking-ledger-back-post.ts`,
+`pnpm run booking-ledger:back-post`).** It runs the live posters over each
+booking, one transaction per booking, never a second statement of a line's
+shape: the settlement and credit syncs; the hand-back poster for a completed
+task the resolver's route rule sends by hand; the confirmation planner over the
+night rows as they stand — every strand night by night, an inexact one
+included (orchestrator decision A: a strand-sized line fails
+`isSingleNightLine`, so no later closure on the booking could post); the edit
+planner for an old edit — its change fee alone where the confirmation it now
+posts already holds its nights, or, on a booking C1 confirmed, the nights every
+unposted later edit moved, re-derived from the live lines and the night rows,
+anchored on the latest of them and checked against their `priceDiffCents` (a
+re-price's recorded movement), with `priceLines` read only to check that
+total. Which edits still await lines is ONE rule the census shares
+(`postConfirmationEditsWithoutLines`): an edit with no line of its own that a
+later edit with lines has passed is carried. The back-post may have folded its
+nights onto that later one; a live edit posting past it never does (it refuses
+unless the ledger already holds the nights it moves), so its money may still be
+missing. The census therefore tries the awaiting edits alone and then the
+carried ones with them, both as coverage, never a signable disagreement; the
+back-post plans in the same order, and posts a carried edit's change fee
+whatever its nights' state. A second run finds nothing left; and the cancellation poster, with the kept figure the CANCELLED event
+froze or, on a snapshot from before #3611, that figure replayed from its frozen
+retained figure and the booking's credit rows through `cancellationKeptCents`.
+It takes the live posters' locks in canonical order (`lock(1)`, the lodge key,
+the member credit-ledger keys, then the payment and booking rows) and re-reads
+under them. **Never guessed:** the booking is then judged by this census's own
+evaluation inside the same transaction, and one left disagreeing, gapped or
+with an integrity finding is rolled back and listed with its reason and both
+figures; so is one it cannot plan (an unpriced night, nights that do not make
+the final price), and so is one whose transaction fails for any other reason
+(`UNEXPECTED_ERROR`) or waits past its lock timeout (`LOCK_TIMEOUT`), without
+stopping the run. A named class is not a refusal. A group-settled child with no
+money of its own is left to #3854. The dry run is the same transaction, rolled
+back. Every run has an id and window, and names each line it inserted. What it does not reconstruct, and so lists: a review give-back or stand-in
+a closure before #3582 would have posted, an edit-review hand-back made by hand
+before #3599, and a legacy refund with no `PaymentRefund` row.
+
 **A cancelled booking leaves the price identity (#3611).** A cancellation does
 not touch `finalPriceCents`, while its charge side becomes what the club kept
 (§5.1). So the price identity above holds only for a booking that is not
@@ -710,7 +748,7 @@ No row is "unknown". Codes:
 | 005, 023–027 | U | promo caps count `PromoRedemption`/allocation rows, which stay the promo authority; the `PROMOTION` line is their posting |
 | 006 | L | "reconcile back to cent-based ledger records" becomes literal: every Stripe/Xero amount is a line's `amountCents` |
 | 007 | L | an `ADJUSTMENT` line requires `postedByMemberId` and a narration; approval stays on `AdminCreditAdjustmentRequest` |
-| 028 | L | a `GUEST_NIGHT` line posts only from an exact night row; inexact strands post at whole-guest grain (§7 C1) |
+| 028 | L | a `GUEST_NIGHT` line posts one per priced night row, an inexact strand's included (#3583 decision A: a strand-sized line fails `isSingleNightLine`, so no later closure could post); provenance stays on the night row, and an edit still refuses to price an inexact night (`INV-MOD-028`) |
 | 029 | L | `PROMOTION` line = the promo build-up; unknown posts nothing and the census reports the gap, never zero |
 | 030 | U | reader discipline; the ledger readers follow it |
 | 031 | L | the verdict becomes the census's per-booking result (§6, §8) |

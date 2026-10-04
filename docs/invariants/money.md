@@ -291,7 +291,10 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   guest total, timestamp, or any other present-day data (#3275, programme
   #3272). Migration verification must mutation-prove both the historical
   writer classifiers (including zero and null amounts) and every predicate that
-  admits a draining-colour officer-repair audit.
+  admits a draining-colour officer-repair audit. Provenance decides what a
+  night may be read as, not whether the booking ledger posts it: every priced
+  night posts one `GUEST_NIGHT` line, an inexact strand's included (#3583,
+  decision A), while an edit still refuses to price an inexact night.
 
 ## INV-MONEY-029
 
