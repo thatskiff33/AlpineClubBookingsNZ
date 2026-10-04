@@ -290,6 +290,8 @@ describe("calculateCancellationPreview properties", () => {
             checkIn,
             policyRules: rules,
             todayAtClub,
+            // #3809: main's uncapped credit (`INV-PAY-114`).
+            capAppliedCredit: false,
           });
 
           const paid = payment.amountCents - payment.refundedAmountCents;

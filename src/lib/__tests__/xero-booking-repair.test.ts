@@ -2228,7 +2228,7 @@ describe("runBookingXeroRepair", () => {
     const bookingReport = report.passes[0].bookings[0];
     expect(bookingReport.actions.find((candidate) => candidate.type === "QUEUE_MODIFICATION_CREDIT_NOTE")).toMatchObject({
       safeToAutoApply: true,
-      payload: { bookingModificationId: "mod_give_back", refundAmountCents: 500, refundMethod: "account-credit" },
+      payload: { bookingModificationId: "mod_give_back", refundAmountCents: 500, refundMethod: "account-credit", reviewTaskId: "applied-credit-give-back" },
     });
     expect(bookingReport.findings.find((candidate) => candidate.code === "MISSING_MODIFICATION_CREDIT_NOTE")).toMatchObject({
       details: { refundAmountSource: "recorded-give-back" },
@@ -2306,6 +2306,34 @@ describe("runBookingXeroRepair", () => {
     expect(deps.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
       expect.objectContaining({ bookingModificationId: "mod_mixed", refundAmountCents: 5000, refundMethod: "account-credit", ...giveBackScoped }),
     );
+  });
+
+  it("MUTATION (#3809 delta H1): where the fee absorbed the card's share, the one $40 give-back note already raised is found under its scope - no second is queued", async () => {
+    const booking = makeBooking({
+      modifications: [
+        {
+          id: "mod_fee",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -5000,
+          changeFeeCents: 0,
+          newData: { appliedCreditGiveBack: { basisCents: 4500, givenBackCents: 4000 } },
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      operations: [
+        makeOperation({ id: "op_give_back", entityType: "CREDIT_NOTE", operationType: "CREATE", localId: "mod_fee", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_give_back", requestPayload: { queueType: "MODIFICATION_CREDIT_NOTE", bookingModificationId: "mod_fee", refundAmountCents: 4000, refundMethod: "account-credit", ...giveBackScoped } }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.map((action) => action.key)).not.toContain("queue:give-back-note:mod_fee");
+    expect(deps.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalledWith(expect.objectContaining({ refundAmountCents: 4000 }));
   });
 
   it("MUTATION (#3809 M1): retries a FAILED give-back note rather than queueing a second", async () => {

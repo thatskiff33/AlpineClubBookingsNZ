@@ -495,15 +495,23 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
     expect(scopes).toEqual(["task-9", "task-9:applied-credit-give-back"]);
   });
 
-  it("(#3809) applied credit given back with nothing else returned is one allocated note worded as account credit", () => {
-    expect(
-      classifyXeroBookingEditSettlement({
-        hasIssuedXeroInvoice: true,
-        originalPaymentStatus: "SUCCEEDED",
-        priceDiffCents: -5000,
-        settlementAmountCents: 0,
-        appliedCreditGiveBackCents: 500,
-      }).financialAction,
-    ).toMatchObject({ type: "modification-credit-note", refundAmountCents: 500, refundMethod: "account-credit" });
+  it("MUTATION (#3809 delta H1): applied credit given back with nothing else returned is ONE note, under the give-back's own scope - never the edit's own", async () => {
+    await queueXeroBookingEditSettlement({
+      bookingId: "booking_7",
+      bookingModificationId: "mod_7",
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -5000,
+      settlementMethod: "card",
+      settlementAmountCents: 0,
+      refundedThroughStripe: true,
+      appliedCreditGiveBackCents: 4000,
+      datesChanged: false,
+    });
+
+    const calls = mocks.enqueueXeroModificationCreditNoteOperation.mock.calls.map((call) => call[0]);
+    expect(calls).toEqual([
+      expect.objectContaining({ refundAmountCents: 4000, refundMethod: "account-credit", reviewTaskId: "applied-credit-give-back" }),
+    ]);
   });
 });

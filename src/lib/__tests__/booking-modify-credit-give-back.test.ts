@@ -174,10 +174,12 @@ describe("#3809: a credit-paid booking's $50 reduction, tiered like a card refun
       appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     });
 
+    // No refund, so no note of the edit's own: the give-back is its own
+    // allocated note, always under its own scope (review of #3809).
     expect(decision.financialAction).toEqual(expect.objectContaining({
       type: "modification-credit-note",
-      refundAmountCents: 5_000,
-      refundMethod: "account-credit",
+      refundAmountCents: 0,
+      allocatedGiveBackCents: 5_000,
     }));
   });
 
@@ -346,6 +348,29 @@ describe("#3809: a booking paid by card AND credit gets back what an all-card on
       refundMethod: "card",
       allocatedGiveBackCents: 5_000,
     }));
+  });
+
+  it("MUTATION (#3809 delta H1): the fee absorbs the card's share - one $40 give-back note, scoped, and nothing else", async () => {
+    // $5 by card, $45 by credit left on a $50 reduction: 100% less a $10 fee.
+    credit.policy = [{ daysBeforeStay: 0, refundPercentage: 100, fixedFeeCents: 1_000 }];
+    credit.applied = 4_500;
+    const booking = creditPaidBooking({ payment: { amountCents: 500, source: PaymentSource.STRIPE, creditAppliedCents: 4_500 } });
+    const settlementOptions = await calculateModificationSettlementOptions({ booking, netChargeCents: -5_000, db: {} as never, todayAtClub: TODAY });
+    const result = await applyPaymentAdjustments(tx, {
+      booking, priceDiffCents: -5_000, changeFeeCents: 0, settlementOptions, settlementMethod: "card", todayAtClub: TODAY, format: CLUB_FORMAT_TEST,
+    });
+    expect(result.refundAmountCents).toBe(0);
+    expect(result.appliedCreditGivenBackCents).toBe(4_000);
+
+    const decision = classifyXeroBookingEditSettlement({
+      hasIssuedXeroInvoice: true,
+      priceDiffCents: -5_000,
+      settlementMethod: result.settlementMethod,
+      settlementAmountCents: result.xeroRefundAmountCents,
+      refundedThroughStripe: result.hasSucceededPayment,
+      appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
+    });
+    expect(decision.financialAction).toEqual(expect.objectContaining({ type: "modification-credit-note", refundAmountCents: 0, allocatedGiveBackCents: 4_000 }));
   });
 
   it("MUTATION: Xero, credit election: the minted credit's unallocated note AND an invoice-allocated note for the give-back", async () => {
