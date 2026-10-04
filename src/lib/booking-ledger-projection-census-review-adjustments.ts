@@ -212,15 +212,18 @@ export function reviewAdjustmentEvidence(row: BookingLedgerCensusRow): ReviewAdj
       drift.set(line.id, `a share credited at ${-line.amountCents} after the cancellation, which no refund of its own, review give-back and share credit on this booking make`);
     }
   }
-  const nettedHandBackLineIds = new Set(
-    credited.filter(({ line }) => !drift.has(line.id)).flatMap((share) => share.handBackLineIds),
-  );
   for (const line of standIns) {
     const task = tasks.get(line.anchorId);
     if (!task || task.settlementDirection === null || nettedShares.includes(line)) continue;
     const expected = editReviewSettlementSign(task.settlementDirection) * (task.amountCents ?? 0);
     if (line.amountCents !== expected) drift.set(line.id, `task share is ${expected}, line ${line.amountCents}`);
   }
+  // Only after every check on the stand-ins: a hand-back is borne out only by
+  // a stand-in accepted whole, and so within its share - one its refund made
+  // above the share is drift above, and its hand-back with it (#3913 F1).
+  const nettedHandBackLineIds = new Set(
+    credited.filter(({ line }) => !drift.has(line.id)).flatMap((share) => share.handBackLineIds),
+  );
 
   return {
     drift,

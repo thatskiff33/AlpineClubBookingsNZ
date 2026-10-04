@@ -766,6 +766,46 @@ describe("#3791's review closures: a line is judged by what the member was credi
     expect(findings(row({ ...both, lines: new Ledger().post([share(2_500), { ...share(2_500), postingKey: `${share(2_500).postingKey}-again` }], LATER).lines, tasks: [task] }))).toEqual(["SOURCE_DRIFT:line-2"]);
   });
 
+  /**
+   * #3913 F1/F3: an internet-banking booking cancelled at 50% (its own hand-back
+   * of $95 made), then a review handed back by bank transfer: its stand-in and
+   * hand-back posted, and the refunded column raised by the hand-back.
+   */
+  function bankReviewed(shareCents: number, lineCents: number, handBackCents: number): BookingLedgerCensusRow {
+    const base = cashCancelled("COMPLETED");
+    const ledger = new Ledger();
+    ledger.lines = [...base.lines];
+    ledger.post([share(lineCents), planHandBackLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: TASK, amountCents: handBackCents, settlementMethod: "INTERNET_BANKING", officerMemberId: "officer" })], LATER);
+    return {
+      ...base,
+      lines: ledger.lines,
+      tasks: [...base.tasks, { ...task, amountCents: shareCents }],
+      payment: { ...base.payment!, refundedAmountCents: base.payment!.refundedAmountCents + handBackCents },
+    };
+  }
+  const reviewLines = (subject: BookingLedgerCensusRow) => ({
+    standIn: subject.lines.find((line) => line.kind === "AGREED_ADJUSTMENT")!.id,
+    handBack: subject.lines.find((line) => line.kind === "BANK_REFUND" && line.anchorId === TASK)!.id,
+  });
+
+  it("#3913 F3: a netted hand-back its stand-in bears out explains the refunded column as REFUND_MIRROR_HAND_BACK", () => {
+    const netted = bankReviewed(5_000, 2_500, 2_500);
+    expect(findings(netted)).toEqual([]);
+    const refunded = identity(netted, "REFUNDED");
+    expect(refunded.status).toBe("CLASSIFIED");
+    // The cancellation's $95 hand-back and the review's $25, the share it is smaller than notwithstanding.
+    expect(refunded.explainedBy).toEqual([{ name: "REFUND_MIRROR_HAND_BACK", cents: 12_000 }]);
+  });
+
+  it("#3913 F1: a hand-back above the share, with the stand-in it makes, is drift - neither is netted, and the refunded column is not classified", () => {
+    const over = bankReviewed(2_500, 3_000, 3_000);
+    const { standIn, handBack } = reviewLines(over);
+    expect(findings(over).sort()).toEqual([`SOURCE_DRIFT:${handBack}`, `SOURCE_DRIFT:${standIn}`].sort());
+    const refunded = identity(over, "REFUNDED");
+    // The cancellation's $95 hand-back explains its part; the review's $30 nothing does.
+    expect(refunded).toMatchObject({ status: "DISAGREE", deltaCents: 12_500, explainedBy: [] });
+  });
+
   it("before a cancellation the stand-in is the typed share, whatever rows the booking holds", () => {
     const live = row({ lines: new Ledger().post([share(2_500)], LATER).lines, credits: [giveBack(2_500)], tasks: [task] });
     expect(findings(live)).toEqual(["SOURCE_DRIFT:line-1"]);
