@@ -334,6 +334,68 @@ describe("resolveModificationDocumentLineItems", () => {
     });
   });
 
+  describe("which code codes a lone promotion delta (#3828 review X1, INV-MONEY-039)", () => {
+    const codeA = { code: "SUMMER25", xeroItemCode: "PROMO", xeroAccountCode: "260" };
+    const codeB = { code: "GUESTFREE", xeroItemCode: "FREE-NIGHT", xeroAccountCode: "205" };
+    async function codedLone(
+      redemptions: Array<typeof codeA>,
+      line: { promoCode: string | null; amountCents: number },
+    ) {
+      mocks.bookingFindUniqueOrThrow.mockResolvedValue({
+        checkIn: day("2026-08-14"),
+        lodgeId: "lodge-1",
+        promoRedemptions: redemptions.map((promoCode, index) => ({ id: `r${index}`, applicationOrder: index, promoCode })),
+        guests: [{ ageTier: "ADULT", isMember: false, rateMembershipTypeId: NON_MEMBER }],
+      });
+      const priceLines: ModificationLine[] = [
+        { v: 1, kind: "PROMO_DELTA", sign: line.amountCents > 0 ? 1 : -1, ...line },
+      ];
+      const result = await resolveModificationDocumentLineItems({
+        bookingId: "bk1",
+        row: { priceLines, priceDiffCents: line.amountCents, changeFeeCents: 0 },
+        document: "SUPPLEMENTARY_INVOICE",
+        billedCents: line.amountCents,
+        billedFigures: { priceDiffCents: line.amountCents, changeFeeCents: 0 },
+      }, CLUB_FORMAT_TEST);
+      const item = result.lineItems?.[0];
+      return { itemCode: item?.itemCode, accountCode: item?.accountCode };
+    }
+
+    it("a code dropped beside one that remains is coded to the dropped code's own account, not the remaining one's", async () => {
+      mocks.promoCodeFindMany.mockResolvedValue([codeB]);
+      expect(await codedLone([codeA], { promoCode: "GUESTFREE", amountCents: 2000 })).toEqual({
+        itemCode: "FREE-NIGHT",
+        accountCode: "205",
+      });
+      expect(mocks.promoCodeFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { code: { in: ["GUESTFREE"] } } }),
+      );
+    });
+
+    it("a line naming the booking's sole code is coded to it, as always", async () => {
+      expect(await codedLone([codeA], { promoCode: "SUMMER25", amountCents: 1000 })).toEqual({
+        itemCode: "PROMO",
+        accountCode: "260",
+      });
+      expect(mocks.promoCodeFindMany).not.toHaveBeenCalled();
+    });
+
+    it("a one-code booking losing its code is coded generically, byte for byte as before", async () => {
+      expect(await codedLone([], { promoCode: "SUMMER25", amountCents: 5000 })).toEqual({
+        itemCode: "HUT-NONMEMBER-ADULT",
+        accountCode: undefined,
+      });
+      expect(mocks.promoCodeFindMany).not.toHaveBeenCalled();
+    });
+
+    it("a several-code fallback line naming no code is coded generically, never to the remaining code", async () => {
+      expect(await codedLone([codeA], { promoCode: null, amountCents: 2000 })).toEqual({
+        itemCode: "HUT-NONMEMBER-ADULT",
+        accountCode: undefined,
+      });
+    });
+  });
+
   it("falls back with the reason and reads nothing else when the lines do not explain the document", async () => {
     const result = await resolveModificationDocumentLineItems({
       bookingId: "bk1",

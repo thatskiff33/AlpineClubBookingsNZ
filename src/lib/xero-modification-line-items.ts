@@ -91,10 +91,11 @@ export type ModificationDocumentCodingContext = {
   seasonType: string | null;
   promo: { xeroItemCode: string | null; xeroAccountCode: string | null } | null;
   /**
-   * #3828: each named code's own Xero codes — set only for a booking carrying
-   * several codes, or a document with several promotion lines. Then every
-   * `PROMO_DELTA` is coded by the code it names (generic coding for a code
-   * that is not found), and `promo` above is unused.
+   * #3828: each named code's own Xero codes — set whenever a line's coding
+   * differs from "the booking's one code" (`loadModificationDocumentCodingContext`
+   * says when). Then every `PROMO_DELTA` is coded by the code it names (generic
+   * coding for a line naming none, or a code that is not found), and `promo`
+   * above is unused.
    */
   promosByCode?: ReadonlyMap<string, { xeroItemCode: string | null; xeroAccountCode: string | null }>;
   firstGuest: { ageTier: string; isMember: boolean; rateMembershipTypeId: string | null } | null;
@@ -135,11 +136,24 @@ export async function loadModificationDocumentCodingContext(
     getHutFeeSeasonType(new Date(booking.checkIn), booking.lodgeId),
   ]);
   const redemptions = bookingPromoRedemptions(booking);
-  // #3828: one code and one promotion line is the coding this document always
-  // had — the booking's code, whatever the line names. Several of either, and
-  // each line is coded by its own code: the booking's, or for a code this edit
-  // released, the code's own row.
-  const perCode = redemptions.length > 1 || lineCodes.length > 1;
+  const sole = redemptions.length === 1 ? (redemptions[0]!.promoCode?.code ?? null) : null;
+  // #3828 (INV-MONEY-039): a line is coded by the code it names — the
+  // booking's, or for a code an edit released, the code's own row — unless the
+  // coding this document always had already says the same thing. Kept as it
+  // was, byte for byte:
+  //  - one line naming the booking's sole code: that code;
+  //  - one line and no code left on the booking: generic. A one-code booking
+  //    losing its code is coded generically as it always was, and from the
+  //    stored lines that case cannot be told from a several-code booking
+  //    losing every code with only one of them moving (the released rows are
+  //    deleted), so it stays generic too.
+  // Anything else — several codes or lines, a line naming a code the booking
+  // no longer carries beside the one it does, or a line naming none (the
+  // several-code fallback) — is coded per line.
+  const perCode =
+    redemptions.length > 1 ||
+    lineCodes.length > 1 ||
+    (redemptions.length === 1 && lineCodes.some((code) => code !== sole));
   let promosByCode: ModificationDocumentCodingContext["promosByCode"];
   if (perCode) {
     const byCode = new Map(

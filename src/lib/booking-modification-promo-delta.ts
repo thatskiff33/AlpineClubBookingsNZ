@@ -76,18 +76,29 @@ export function modificationPromoDeltaCents(
 
 /**
  * The promotion deltas an edit stores: one per code that moved where the split
- * holds, else the one aggregate delta naming the after side's codes (the
- * before side's when none remain) — or none when nothing moved.
+ * holds, else the one aggregate delta — or none when nothing moved.
+ *
+ * The aggregate delta names the after side's code (the before side's when none
+ * remain) on a one-code edit, byte for byte as always. Where either side
+ * carried several codes the split failed for, it names NO code: the change is
+ * not one code's, and a line naming one would be coded to that code's account
+ * (`INV-MONEY-039`) — the edit-document counterpart of the invoice's aggregate
+ * fallback line.
  */
 export function modificationPromoDeltas(
   before: PromoSide,
   after: PromoSide,
 ): Array<{ promoCode: string | null; amountCents: number }> {
   const deltaCents = modificationPromoDeltaCents(before, after);
-  return (
-    splitPromoDeltaByCode(before, after, deltaCents) ??
-    (deltaCents !== 0
-      ? [{ promoCode: after.promoCode ?? before.promoCode ?? null, amountCents: deltaCents }]
-      : [])
-  );
+  const split = splitPromoDeltaByCode(before, after, deltaCents);
+  if (split) return split;
+  if (deltaCents === 0) return [];
+  const severalCodes =
+    (before.promoByCode?.length ?? 0) > 1 || (after.promoByCode?.length ?? 0) > 1;
+  return [
+    {
+      promoCode: severalCodes ? null : (after.promoCode ?? before.promoCode ?? null),
+      amountCents: deltaCents,
+    },
+  ];
 }

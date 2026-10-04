@@ -276,9 +276,22 @@ describe("diffBookingPricing", () => {
         2000,
       ),
     );
+    // The fallback is not one code's change, so it names none and is coded
+    // generically — never to SUMMER25 alone (E3 of the #3828 review).
     expect(disagreeing).toEqual([
-      { v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: "SUMMER25", amountCents: 2000 },
+      { v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: null, amountCents: 2000 },
     ]);
+  });
+
+  it("a one-code edit's single line still names its code, before and after (#3828)", () => {
+    const keep = [{ ...guest("a"), nights: afterNights("2026-08-14", [8000, 8000]) }];
+    expect(
+      linesOf(diffBookingPricing(side([guest("a")], -5000, "SUMMER25"), side(keep, -3000, "SUMMER25"), 2000)),
+    ).toEqual([{ v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: "SUMMER25", amountCents: 2000 }]);
+    // Its code removed: the line names the code the booking had.
+    expect(
+      linesOf(diffBookingPricing(side([guest("a")], -5000, "SUMMER25"), side(keep, 0, null), 5000)),
+    ).toEqual([{ v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: "SUMMER25", amountCents: 5000 }]);
   });
 
   it("INV-MOD-028: any unpriced night on either side yields no lines", () => {
