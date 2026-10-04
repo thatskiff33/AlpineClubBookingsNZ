@@ -14,6 +14,9 @@
 
   Where the credit given back on one cancelled booking could be shared
   between its reviews in more than one way, nothing records which review
-  each part belongs to, so lines swapped between them would still add up. The check now reports such a
-  booking for the owner to check by hand and sign off to the cent, as it
-  already did for a booking that is not cancelled, rather than passing it.
+  each part belongs to, so lines swapped between them would still add up.
+  The check now reports such a booking for the owner to check by hand and
+  sign off to the cent, as it already did for a booking that is not
+  cancelled, rather than passing it. A booking with so many reviews and
+  credits that this cannot be worked out quickly is reported the same way,
+  so the check never stalls on it.

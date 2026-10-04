@@ -969,8 +969,11 @@ const FULL = { refundPercentage: 100, fixedFeeCents: 0 };
     await setLine((await reviewLine(id, tasks[1]!, "AGREED_ADJUSTMENT")).id, -500);
     expect(await says(id)).toEqual({ ...NOTHING_TO_SAY, classes: AMBIGUOUS });
     const report = await census.censusBookingLedgerProjection(db);
-    expect(report.classes.AMBIGUOUS_REVIEW_GIVE_BACK.instances.filter((instance) => instance.bookingId === id && !instance.acknowledged)).toHaveLength(3);
-    expect(report.verdict).toBe("GATE_CLOSED");
+    // This booking's own three, unacknowledged, of a class whose unacknowledged
+    // instance closes the gate - whatever else the shared database holds.
+    const mineUnsigned = report.classes.AMBIGUOUS_REVIEW_GIVE_BACK.instances.filter((instance) => instance.bookingId === id && !instance.acknowledged);
+    expect(mineUnsigned.map((instance) => instance.cents)).toEqual([5_000, 2_500, 2_500]);
+    expect(report.classes.AMBIGUOUS_REVIEW_GIVE_BACK).toMatchObject({ gateRule: "ACKNOWLEDGE", holdsGate: true });
   });
 
   it("a corrupted line, card refund or hand-back still disagrees", async () => {

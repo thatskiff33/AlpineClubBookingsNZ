@@ -93,7 +93,9 @@ export function editReviewSettlementSign(direction: ManualRefundTaskDirection): 
  * with it (`settledSinceCancellation`, spread beside a `bookingId`), and the
  * cut-over census matches its snapshot's lines against the same object
  * (`isEditReviewHandBackLine`). The census also drops a line a later reversal
- * undid (`liveLines`); being the stricter, it can only flag, never excuse.
+ * undid (`liveLines`) from what a hand-back makes, yet still counts its task
+ * as one that refunded the capture, and so never mints (#3913): being the
+ * stricter both ways, it can only flag, never excuse.
  */
 export function editReviewHandBackLinesWhere(taskIds: string[]) {
   return {

@@ -512,9 +512,11 @@ of, each row used once: a give-back line plus its closure's re-price (the
 (`BOOKING_APPLIED` naming the booking as source and target), and a stand-in
 posted after a cancellation for less than the share must be its task's own
 refund to the capture plus, where that is less, one give-back row, one share
-credit, or both — a task that refunded the capture never mints, so a
-give-back row alone (#3913). Where siblings are each made alone but not
-together, the lines named are those without which the rest are made. That
+credit, or both — a task that ever refunded the capture, by a hand-back
+since reversed too, never mints, so a give-back row alone (#3913). A line
+nothing makes is named; where the rest are each made alone but not together,
+the one line without which they are made is named, and where more than one
+could be (two may be wrong together), every line drawing on a row. That
 refund (#3835, #3907) is the card debt the task froze (its review recovery
 key) or its `BANK_REFUND` line, the facts #3835's netting reads; it makes only
 its own task's line, and a hand-back smaller than the share is borne out only
@@ -536,9 +538,14 @@ booking's `owed(b) == 0` checks only the total, so where its give-back and
 share-credit rows could make its stand-ins another way at the same total,
 lines swapped between siblings still agree; that booking fails closed too
 (#3913), its figures the stand-ins, their own refunds and the rows. One
-task's, or stand-ins the rows make only one way, stay exact.
-No field of the give-back row can name its task: stamping it needs a column,
-so it is left to a later change.
+task's, or stand-ins the rows make only one way, stay exact. The search for
+makings is bounded per booking, so many reviews and share credits cannot hold
+the census's snapshot: where the bound stops it, the booking fails closed the
+same way, its first figure saying so — never exact. Two limits remain.
+Sibling bank hand-backs swapped together with their stand-ins also agree,
+since nothing else records which task's hand-back a transfer was. And no
+field of the give-back row can name its task: stamping it needs a column, so
+it is left to a later change.
 
 `pnpm run booking-ledger:census` (#3583, `INV-MONEY-037`; read-only, one
 `RepeatableRead`, `READ ONLY` snapshot — the `censusBookingMoneyReconciliation`
