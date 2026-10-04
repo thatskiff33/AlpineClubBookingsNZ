@@ -360,9 +360,9 @@ export default function LodgeConfigurationHubPage() {
   */
   const viewOnlyBanner = (
     <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6">
-      Your admin role can view this lodge&apos;s capacity and who can be hut
-      leader for its school bookings, but cannot change them. Lodge edit
-      access is required.
+      {modules.hutLeaders === true
+        ? "Your admin role can view this lodge's capacity and who can be hut leader for its school bookings, but cannot change them. Lodge edit access is required."
+        : "Your admin role can view this lodge's capacity but cannot change it. Lodge edit access is required."}
     </AdminViewOnlySectionBanner>
   );
 

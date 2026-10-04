@@ -153,4 +153,20 @@ describe("SchoolHutLeaderKindsCard (#3819)", () => {
     }
     expect(screen.getByText(/no hut leader can cover a school group/)).toBeTruthy();
   });
+
+  it("shows no ticks and offers no Edit after a failed load, then recovers on Try again", async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockImplementationOnce(async () => new Response("{}", { status: 500 }));
+    render(<SchoolHutLeaderKindsCard lodgeId="lodge-2" canEdit={true} />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/Couldn.t load who can be hut leader/),
+    );
+    expect(screen.queryByLabelText("A teacher on the booking")).toBeNull();
+    expect(editButton().disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.getByLabelText("The lodge custodian")).toBeTruthy());
+    expect(editButton().disabled).toBe(false);
+  });
 });

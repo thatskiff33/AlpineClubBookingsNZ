@@ -16,7 +16,6 @@ import {
 } from "@/hooks/use-section-edit-state";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import {
-  DEFAULT_SCHOOL_HUT_LEADER_KINDS,
   SCHOOL_HUT_LEADER_KINDS,
   type SchoolHutLeaderKind,
   type SchoolHutLeaderKinds,
@@ -80,7 +79,8 @@ export function SchoolHutLeaderKindsCard({
   ancestorRendersViewOnlyBanner?: boolean;
 }) {
   const section = useSectionEditState<SchoolHutLeaderKinds>({
-    initial: { ...DEFAULT_SCHOOL_HUT_LEADER_KINDS },
+    // No `initial`: the card shows no ticks until the lodge's own are loaded,
+    // so a failed load can never present the defaults as this lodge's setting.
     load: () => readKinds(lodgeId),
     save: async (draft) => {
       const res = await fetch(ENDPOINT, {
@@ -98,9 +98,9 @@ export function SchoolHutLeaderKindsCard({
     successMessage: "Saved who can be hut leader for school bookings",
   });
 
-  const draft = section.draft ?? DEFAULT_SCHOOL_HUT_LEADER_KINDS;
+  const draft = section.draft;
   const busy = section.loading || section.saving;
-  const noneTicked = SCHOOL_HUT_LEADER_KINDS.every((kind) => !draft[kind]);
+  const noneTicked = draft !== null && SCHOOL_HUT_LEADER_KINDS.every((kind) => !draft[kind]);
 
   return (
     <Card>
@@ -124,13 +124,28 @@ export function SchoolHutLeaderKindsCard({
             size="sm"
             aria-label="Edit who can be hut leader for school bookings"
             onClick={section.startEditing}
-            disabled={busy}
+            disabled={busy || draft === null}
           >
             Edit
           </ViewOnlyActionButton>
         )}
       </CardHeader>
       <CardContent className="space-y-4">
+        {draft === null ? (
+          section.loading ? (
+            <p className="text-sm text-muted-foreground">Loading...</p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm text-danger-11" role="alert">
+                Couldn&apos;t load who can be hut leader for this lodge&apos;s
+                school bookings. Nothing is shown rather than a guess.
+              </p>
+              <Button type="button" variant="outline" size="sm" onClick={() => void section.reload()}>
+                Try again
+              </Button>
+            </div>
+          )
+        ) : (
         <fieldset className="space-y-3">
           <legend className="sr-only">Who can be hut leader for school bookings</legend>
           {SCHOOL_HUT_LEADER_KINDS.map((kind) => {
@@ -156,6 +171,7 @@ export function SchoolHutLeaderKindsCard({
             );
           })}
         </fieldset>
+        )}
         {noneTicked && (
           <p className="text-sm text-warning-11" role="status">
             With nothing ticked, no hut leader can cover a school group&apos;s
@@ -184,7 +200,7 @@ export function SchoolHutLeaderKindsCard({
             </Button>
           </div>
         )}
-        {section.error && (
+        {section.error && draft !== null && (
           <p className="text-sm text-danger-11" role="alert">
             {section.error}
           </p>
