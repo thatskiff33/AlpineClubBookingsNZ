@@ -101,8 +101,7 @@ describe("provider-aware inbound applied-credit repair", () => {
       id: "payment-1",
       bookingId: "booking-1",
       creditAppliedCents: 3000,
-      changeFeeCents: 0,
-      booking: { memberId: "member-1", finalPriceCents: 10000 },
+      booking: { memberId: "member-1" },
     }]);
     h.memberCreditFindMany.mockResolvedValue([{
       id: "historical-negative",

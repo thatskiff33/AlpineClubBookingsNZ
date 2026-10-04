@@ -798,10 +798,13 @@ committed - which the cancel's clearing note was sized net of - and never plans
 or mints new ones, so the invoice is never credited both by a clearing note and
 by an allocation. The repair pass's cancelled-open-invoice arm waits while the
 booking's invoice or applied-credit allocation operation is unfinished. The
-inbound credit-note repair caps the payment's `creditAppliedCents` at the
-booking's price and change fee, never at the card amount, which is $0 here; and
-a cancel tiers a mirror that the old cap clipped to the card amount from the
-ledger (`cancelTieredAppliedCreditCents`). An invoice raised
+inbound credit-note repair writes the ledger's applied credit to the payment's
+`creditAppliedCents` uncapped: the old cap at the card amount ($0 here) zeroed
+it, and a cap at the booking's worth would cut a booking reduced before #3809,
+which keeps all its credit at a cancel (owner decision, 4 Oct 2026); the worth
+cap belongs to the cancel alone, for #3809's bookings. A mirror the old cap
+already clipped to the card amount is read from the ledger by the cancel, its
+preview and the refunded-card restore (`cancelTieredAppliedCreditCents`). An invoice raised
 before #3836 is left owing until the booking repair pass's
 `UNALLOCATED_APPLIED_CREDIT` finding queues the applied-credit allocation
 operation (`docs/MAINTENANCE.md`); a cancelled one is never queued, since the

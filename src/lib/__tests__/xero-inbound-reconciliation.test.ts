@@ -5208,8 +5208,7 @@ describe("processStoredXeroInboundEvents", () => {
               bookingId: "bk_admin_1",
               amountCents: 12000,
               creditAppliedCents: 3000,
-              changeFeeCents: 0,
-              booking: { memberId: "mem_admin_1", finalPriceCents: 12000 },
+              booking: { memberId: "mem_admin_1" },
             },
           ];
         }
@@ -5771,10 +5770,8 @@ describe("processStoredXeroInboundEvents", () => {
           bookingId: "bk234567890",
           amountCents: 12000,
           creditAppliedCents: 0,
-          changeFeeCents: 0,
           booking: {
             memberId: "mem_credit_1",
-            finalPriceCents: 12000,
           },
         },
       ]);
@@ -5917,8 +5914,7 @@ describe("processStoredXeroInboundEvents", () => {
         xeroInvoiceId: "inv_booking_1",
         amountCents: 12000,
         creditAppliedCents: 2500,
-        changeFeeCents: 0,
-        booking: { memberId: "mem_credit_1", finalPriceCents: 12000 },
+        booking: { memberId: "mem_credit_1" },
       }]);
     mocks.memberCreditFindMany.mockResolvedValue([{
       id: "historical_applied_1",
@@ -5988,7 +5984,7 @@ describe("processStoredXeroInboundEvents", () => {
     });
   });
 
-  it("repairs applied-credit ledger state atomically under the advisory lock and clamps to the booking's price", async () => {
+  it("repairs applied-credit ledger state atomically under the advisory lock and writes the ledger's applied total", async () => {
     mocks.inboundFindMany.mockResolvedValue([
       {
         id: "evt_clamp",
@@ -6053,15 +6049,14 @@ describe("processStoredXeroInboundEvents", () => {
         {
           id: "pay_booking_1",
           bookingId: "bk234567890",
-          // The applied-credit aggregate below (5000) exceeds what the booking
-          // is worth (3000 + a 500 change fee), so the write clamps to 3500,
-          // never over-credits. Not to the card amount (#3836): 2000 here.
+          // The applied-credit aggregate below (5000) exceeds this payment's
+          // card amount (2000); the mirror is the ledger's 5000 (#3836), never
+          // clipped to the card, nor to the booking's worth - a booking reduced
+          // before #3809 keeps all its credit at a cancel.
           amountCents: 2000,
           creditAppliedCents: 0,
-          changeFeeCents: 500,
           booking: {
             memberId: "mem_credit_1",
-            finalPriceCents: 3000,
           },
         },
       ]);
@@ -6127,11 +6122,11 @@ describe("processStoredXeroInboundEvents", () => {
         },
       },
     );
-    // Clamped to the booking's price and change fee, not the raw 5000 aggregate.
+    // The ledger's figure, not clipped to the card amount.
     expect(mocks.paymentUpdate).toHaveBeenCalledWith({
       where: { id: "pay_booking_1" },
       data: {
-        creditAppliedCents: 3500,
+        creditAppliedCents: 5000,
       },
     });
   });

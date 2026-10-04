@@ -227,7 +227,9 @@ export function cancelAppliedCreditBaseCents(input: {
  * booking's $0, a card-and-credit booking's card share). There the ledger's
  * figure stands, so the cancel restores the credit actually applied. A legacy
  * full-price capture (mirror 0 under a card amount) keeps its mirror: its
- * double-pay is restored by hand (`INV-PAY-024`), never by the cancel.
+ * double-pay is restored by hand (`INV-PAY-024`), never by the cancel. Still
+ * needed once the sync writes the ledger's figure: mirrors the old cap clipped
+ * stay clipped until a later sync of the same note rewrites them.
  */
 export function cancelTieredAppliedCreditCents(
   payment: { amountCents: number; creditAppliedCents: number },

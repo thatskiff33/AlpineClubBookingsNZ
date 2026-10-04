@@ -818,11 +818,9 @@ export async function repairAccountCreditAllocationBusinessState(
         id: true,
         bookingId: true,
         creditAppliedCents: true,
-        changeFeeCents: true,
         booking: {
           select: {
             memberId: true,
-            finalPriceCents: true,
           },
         },
       },
@@ -859,9 +857,9 @@ export async function repairAccountCreditAllocationBusinessState(
     // exclude those per-member writers, so a BOOKING_APPLIED repair could
     // interleave with a concurrent spend/restore of the same member's ledger.
     // Without serialization two concurrent credit-note events for one payment can
-    // also interleave and transiently under-set creditAppliedCents; the clamp
-    // keeps the applied total within the booking's price and change fee
-    // (invariant (b),(d), #1234; #3836). DB-only work: no external Xero call runs inside this transaction.
+    // also interleave and transiently under-set creditAppliedCents; the write
+    // is the ledger's applied total, read under the lock (invariant (b),(d),
+    // #1234; #3836). DB-only work: no external Xero call runs inside this transaction.
     await prisma.$transaction(async (tx) => {
       const creditLedgerMemberId = bookingOwner(payment.booking).memberId;
       // #3369: this whole repair is about a MEMBER's applied credit — the
@@ -1083,14 +1081,13 @@ export async function repairAccountCreditAllocationBusinessState(
           amountCents: true,
         },
       });
-      // #3836: capped at what the booking is worth, never at the card amount,
-      // which is $0 for a booking paid entirely by credit and less than the
-      // credit on a card-and-credit one: that cap zeroed or clipped the mirror
-      // the cancel tiers from.
-      const appliedCreditTotalCents = Math.min(
-        Math.max(-(aggregate._sum.amountCents ?? 0), 0),
-        payment.booking.finalPriceCents + payment.changeFeeCents
-      );
+      // #3836: the ledger's figure, uncapped. A cap at the card amount zeroed a
+      // credit-only booking's mirror and clipped a card-and-credit one's; a cap
+      // at the booking's worth cut a booking reduced before #3809, which keeps
+      // all its credit at a cancel (owner decision, 4 Oct 2026). The worth cap
+      // belongs to the cancel alone, for #3809's bookings
+      // (`cancelAppliedCreditBaseCents`).
+      const appliedCreditTotalCents = Math.max(-(aggregate._sum.amountCents ?? 0), 0);
 
       // Compare against the payment's current creditAppliedCents read under the
       // lock; the pre-loop snapshot can be stale, so the write only fires on a

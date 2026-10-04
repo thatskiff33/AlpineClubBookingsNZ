@@ -74,11 +74,11 @@ reason: the missing-modification-credit-note finding sizes a credit-paid
   rules live in `xero-booking-repair-applied-credit.ts`.
 
 file: src/lib/xero-inbound/credit-note-repairs.ts
-lines: 1147
+lines: 1144
 reason: the fold of earlier modification notes into a payment's refunded total
   leaves out notes worded as account credit (no cash moved); the reader lives
   in `account-credit-modification-notes.ts`, the filter where the fold is.
-  Stacked #3836 caps the mirror at the booking's price and change fee rather than the card amount, where the cap already was.
+  Stacked #3836 writes the mirror as the ledger's figure, uncapped, where the card-amount cap was.
 
 file: src/lib/xero-applied-credit-deallocation.ts
 lines: 1026
