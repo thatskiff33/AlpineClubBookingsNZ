@@ -6,7 +6,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isPromoAdjustmentLineDescription,
   planPromoAdjustmentLines,
+  promoAdjustmentLineDescription,
   promoAdjustmentLineItems,
   promoAdjustmentLineRecord,
 } from "@/lib/xero-promo-adjustment-lines";
@@ -89,5 +91,21 @@ describe("planPromoAdjustmentLines (#3828)", () => {
     });
     // The two rows still add to the aggregate; each code's own does not.
     expect(plan).toMatchObject({ kind: "AGGREGATE_FALLBACK", reason: "CODE_BUILDUP_NOT_KNOWN" });
+  });
+});
+
+describe("isPromoAdjustmentLineDescription (#3828)", () => {
+  it("recognises every description the writer produces, any case and trimmed", () => {
+    for (const code of [null, "SUMMER25", "SUMMER25, GUESTFREE"]) {
+      expect(isPromoAdjustmentLineDescription(promoAdjustmentLineDescription(code))).toBe(true);
+    }
+    expect(isPromoAdjustmentLineDescription("  PROMO ADJUSTMENT - x ")).toBe(true);
+  });
+
+  it("does not take a guest or discount line for a promo line", () => {
+    expect(isPromoAdjustmentLineDescription("Adult member - 2 nights")).toBe(false);
+    expect(isPromoAdjustmentLineDescription("Promo adjustments are listed below")).toBe(false);
+    expect(isPromoAdjustmentLineDescription("Discount - SUMMER25")).toBe(false);
+    expect(isPromoAdjustmentLineDescription(undefined)).toBe(false);
   });
 });

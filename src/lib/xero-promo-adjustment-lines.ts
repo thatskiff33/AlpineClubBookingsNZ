@@ -155,9 +155,22 @@ export function planPromoAdjustmentLines(args: {
   };
 }
 
+const PROMO_ADJUSTMENT_LINE_PHRASE = "Promo adjustment";
+
 /** The line's words: `Promo adjustment - CODE`, or the bare phrase with no code. */
 export function promoAdjustmentLineDescription(code: string | null | undefined): string {
-  return code ? `Promo adjustment - ${code}` : "Promo adjustment";
+  return code ? `${PROMO_ADJUSTMENT_LINE_PHRASE} - ${code}` : PROMO_ADJUSTMENT_LINE_PHRASE;
+}
+
+/**
+ * Is this an invoice line `promoAdjustmentLineDescription` wrote — the bare
+ * phrase or `Promo adjustment - CODE`, any case, trimmed? The reader of the
+ * words, beside their one writer.
+ */
+export function isPromoAdjustmentLineDescription(description: string | null | undefined): boolean {
+  const normalized = (description ?? "").trim().toLowerCase();
+  const phrase = PROMO_ADJUSTMENT_LINE_PHRASE.toLowerCase();
+  return normalized === phrase || normalized.startsWith(`${phrase} -`);
 }
 
 /**
