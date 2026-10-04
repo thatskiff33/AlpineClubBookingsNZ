@@ -22,6 +22,7 @@ import {
   type LedgerTableStatistics,
 } from "@/lib/booking-ledger-projection-census-report";
 import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-row";
+import { INTERNET_BANKING_SETTLEMENT_EVIDENCE_SELECT } from "@/lib/internet-banking-settlement-evidence";
 import { bookingIdOfCreditRow, bookingsCreditRowsWhere } from "@/lib/member-credit-booking-rows";
 import { decodeRawRows } from "@/lib/raw-sql-rows";
 
@@ -44,9 +45,12 @@ const CENSUS_SELECT = {
       changeFeeCents: true,
       additionalAmountCents: true,
       additionalPaymentStatus: true,
+      // #3632: whether an internet-banking payment is proven paid.
+      ...INTERNET_BANKING_SETTLEMENT_EVIDENCE_SELECT,
       transactions: {
         orderBy: ASC,
         select: {
+          ...INTERNET_BANKING_SETTLEMENT_EVIDENCE_SELECT.transactions.select,
           id: true,
           kind: true,
           status: true,
@@ -181,6 +185,8 @@ export function toCensusRow(
           changeFeeCents: payment.changeFeeCents,
           additionalAmountCents: payment.additionalAmountCents,
           additionalPaymentStatus: payment.additionalPaymentStatus,
+          xeroInvoiceId: payment.xeroInvoiceId,
+          manuallyMarkedPaidAt: payment.manuallyMarkedPaidAt,
         }
       : null,
     transactions: payment?.transactions ?? [],

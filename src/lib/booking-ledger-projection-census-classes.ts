@@ -21,9 +21,11 @@ import type { LedgerLineKind, ManualRefundTaskStatus } from "@prisma/client";
 import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
 import { captureKey, creditKey, refundKey } from "@/lib/booking-ledger-posting-keys";
 import { settlementChainWalker } from "@/lib/booking-ledger-settlement-posting";
+import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 import { deriveCardAppliedCreditDoublePayFinding } from "@/lib/card-applied-credit-double-pay";
 import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
+import { internetBankingSettlementEvidence, type InternetBankingSettlementEvidence } from "@/lib/internet-banking-settlement-evidence";
 import { isCreditAppliedToBooking, isCreditIssuedFromBooking } from "@/lib/member-credit-booking-rows";
 import { buildBookingCancellationRefundIdempotencyKey } from "@/lib/payment-recovery-keys";
 import {
@@ -240,6 +242,16 @@ export function unpostedSettlements(row: BookingLedgerCensusRow): { capturedCent
 }
 
 /**
+ * Whether an internet-banking payment's current invoice is proven paid, from
+ * settlement evidence and never the status mirror (#3632,
+ * `internet-banking-settlement-evidence.ts`); null on any other payment.
+ */
+export function ibSettlementEvidence(row: BookingLedgerCensusRow): InternetBankingSettlementEvidence | null {
+  if (row.payment?.source !== "INTERNET_BANKING") return null;
+  return internetBankingSettlementEvidence({ ...row.payment, transactions: row.transactions });
+}
+
+/**
  * `amountCents` with nothing captured is the latest primary's face amount
  * (`reconcilePaymentAggregates`). The evidence: a booking that is not paid, a
  * payment whose own status is not a captured one, no captured transaction, no
@@ -248,7 +260,10 @@ export function unpostedSettlements(row: BookingLedgerCensusRow): { capturedCent
  * its capture is missing, which is a disagreement.
  */
 function nothingCapturedFaceCents(row: BookingLedgerCensusRow): number {
-  if (isPaidLikeBookingStatus(row.booking.status) || (row.payment !== null && isCapturedTransactionStatus(row.payment.status))) return 0;
+  if (isPaidLikeBookingStatus(row.booking.status) || (row.payment !== null && isCapturedPaymentStatus(row.payment.status))) return 0;
+  // A bank transfer proven paid (#3632) is never "nothing captured".
+  const evidence = ibSettlementEvidence(row);
+  if (evidence !== null && evidence !== "unverified") return 0;
   if (sumKinds(row.lines, CAPTURE_KINDS) !== 0 || capturedTransactions(row).length > 0) return 0;
   return latestTransactionOfKind(row.transactions, "PRIMARY")?.amountCents ?? 0;
 }

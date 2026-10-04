@@ -62,11 +62,16 @@ export type BookingLedgerCensusRow = {
     changeFeeCents: number;
     additionalAmountCents: number;
     additionalPaymentStatus: string | null;
+    /** #3632's settlement evidence (`INTERNET_BANKING_SETTLEMENT_EVIDENCE_SELECT`). */
+    xeroInvoiceId: string | null;
+    manuallyMarkedPaidAt: Date | null;
   } | null;
   transactions: ReadonlyArray<{
     id: string;
     kind: PaymentTransactionKind;
     status: PaymentStatus;
+    source: PaymentSource;
+    xeroInvoiceId: string | null;
     amountCents: number;
     refundedAmountCents: number;
     reason: string | null;

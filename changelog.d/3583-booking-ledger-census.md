@@ -13,4 +13,6 @@
   listed in a file the census reads, to the cent, so they stop holding it up;
   if a figure changes afterwards it is flagged again. The older
   internet-banking applied-credit report it replaces is now a section of its
-  output, listing each booking.
+  output, listing each booking; as that report did since #3632, it counts a
+  booking as already paid twice only where a bank receipt or manual settlement
+  proves it, and otherwise as unverified for an officer to check.

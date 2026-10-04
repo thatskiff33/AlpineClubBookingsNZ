@@ -113,7 +113,7 @@ function summary(report: BookingLedgerCensusReport, format: ClubFormat): string 
   }
   const strands = report.info.ibUnallocatedAppliedCredit;
   out.push(
-    `  CREDIT_APPLIED, information (#1620): internet-banking applied credit no Xero note allocates — realized ${strands.realized.bookings} (${money(strands.realized.cents)})${examples(strands.realized.items.map((item) => item.bookingId))}, pending ${strands.pending.bookings} (${money(strands.pending.cents)})${examples(strands.pending.items.map((item) => item.bookingId))}`,
+    `  CREDIT_APPLIED, information (#1620): internet-banking applied credit no Xero note allocates — realized ${strands.realized.bookings} (${money(strands.realized.cents)})${examples(strands.realized.items.map((item) => item.bookingId))}, unverified (no current receipt or manual settlement proves the invoice paid; not asserted unpaid, #3632) ${strands.unverified.bookings} (${money(strands.unverified.cents)})${examples(strands.unverified.items.map((item) => item.bookingId))}`,
   );
   out.push("");
   out.push("Coverage (holds the gate):");

@@ -32,6 +32,7 @@ import {
   type BookingLedgerClassGateRule,
   type BookingLedgerCoverageKind,
 } from "@/lib/booking-ledger-projection-census-classes";
+import type { InternetBankingSettlementEvidence } from "@/lib/internet-banking-settlement-evidence";
 
 /** `pg_stat_user_tables` for the ledger table: information only, never the gate. */
 export type LedgerTableStatistics = { inserts: number; updates: number; deletes: number } | null;
@@ -47,7 +48,11 @@ export type BookingLedgerAcknowledgement = {
 
 /** One class instance; `acknowledged` once an entry in the owner's file matched it to the cent. */
 type Instance = { bookingId: string; identity: BookingLedgerIdentity | null; cents: number; detail?: string; acknowledged: boolean };
-type Strand = { bookings: number; cents: number; items: Array<{ bookingId: string; cents: number }> };
+type Strand = {
+  bookings: number;
+  cents: number;
+  items: Array<{ bookingId: string; cents: number; evidence: InternetBankingSettlementEvidence }>;
+};
 
 export type BookingLedgerCensusReport = {
   population: { bookings: number; bookingsWithLines: number; lines: number };
@@ -73,8 +78,12 @@ export type BookingLedgerCensusReport = {
   };
   info: {
     retainedCollected: { bookings: number; cents: number };
-    /** Shown under CREDIT_APPLIED; #1620's realized and pending strands, each booking listed. */
-    ibUnallocatedAppliedCredit: { realized: Strand; pending: Strand };
+    /**
+     * Shown under CREDIT_APPLIED; #1620's strands, each booking listed with its
+     * settlement evidence (#3632): realized where a current receipt or manual
+     * settlement proves the invoice paid, else unverified — never "unpaid".
+     */
+    ibUnallocatedAppliedCredit: { realized: Strand; unverified: Strand };
   };
   disagreements: Array<{ bookingId: string; identity: BookingLedgerIdentity; columnCents: number; ledgerCents: number; deltaCents: number }>;
   verdict: "GATE_OPEN" | "GATE_CLOSED";
@@ -119,7 +128,7 @@ export function summarizeBookingLedgerCensus(
   const strand = (): Strand => ({ bookings: 0, cents: 0, items: [] });
   const info: BookingLedgerCensusReport["info"] = {
     retainedCollected: { bookings: 0, cents: 0 },
-    ibUnallocatedAppliedCredit: { realized: strand(), pending: strand() },
+    ibUnallocatedAppliedCredit: { realized: strand(), unverified: strand() },
   };
   let lines = 0;
   let bookingsWithLines = 0;
@@ -179,10 +188,10 @@ export function summarizeBookingLedgerCensus(
     }
     const strandInfo = evaluation.info.ibUnallocatedAppliedCredit;
     if (strandInfo) {
-      const bucket = strandInfo.realized ? info.ibUnallocatedAppliedCredit.realized : info.ibUnallocatedAppliedCredit.pending;
+      const bucket = strandInfo.evidence === "unverified" ? info.ibUnallocatedAppliedCredit.unverified : info.ibUnallocatedAppliedCredit.realized;
       bucket.bookings += 1;
       bucket.cents += strandInfo.cents;
-      bucket.items.push({ bookingId: evaluation.bookingId, cents: strandInfo.cents });
+      bucket.items.push({ bookingId: evaluation.bookingId, cents: strandInfo.cents, evidence: strandInfo.evidence });
     }
   }
 

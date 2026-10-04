@@ -577,7 +577,10 @@ The census retired `auditIbAppliedCreditStrands` (`INV-PAY-047` (3)): that
 script's identity is one of the seven, and its #1620 count — applied credit on a
 live internet-banking payment that no Xero note allocates — is reported beside
 the credit identity as information, since it is a Xero exposure figure rather
-than a ledger identity. #1641's card double-pay audit stays where it is.
+than a ledger identity. Each booking on it is realized only where settlement
+evidence proves its current invoice paid, and otherwise unverified, never
+unpaid (#3632, `internet-banking-settlement-evidence.ts`). #1641's card
+double-pay audit stays where it is.
 
 **The back-post skips an edit that has already posted (#3582).** Any
 `BookingModification` with a line anchored `MODIFICATION`/`<its id>` has posted,

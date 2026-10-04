@@ -40,8 +40,10 @@ import {
   reversalKey,
 } from "@/lib/booking-ledger-posting-keys";
 import { bookingLedgerResidualCents, outstandingAdditionalAskCents } from "@/lib/additional-payment-ask";
+import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
+import type { InternetBankingSettlementEvidence } from "@/lib/internet-banking-settlement-evidence";
 import {
   isCapturedTransactionStatus,
   isRecordedRefundStatus,
@@ -55,6 +57,7 @@ import {
   changeFeeComponents,
   creditAppliedComponents,
   explainResidual,
+  ibSettlementEvidence,
   isCoverageName,
   isGroupSettlementOffLedger,
   liveOwedComponents,
@@ -141,8 +144,11 @@ export type BookingLedgerEvaluation = {
     unkeyedLines: number;
     /** `RETAINED_COLLECTED`: a retained CHARGE share since collected, `owed(b) = −share`. */
     retainedCollectedCents: number;
-    /** #1620 (decision C): applied credit on a live internet-banking payment no Xero note allocates. */
-    ibUnallocatedAppliedCredit: { realized: boolean; cents: number } | null;
+    /**
+     * #1620 (decision C): applied credit on a live internet-banking payment no
+     * Xero note allocates, with whether its invoice is proven paid (#3632).
+     */
+    ibUnallocatedAppliedCredit: { evidence: InternetBankingSettlementEvidence; cents: number } | null;
   };
 };
 
@@ -211,7 +217,7 @@ function hasMoneyColumns(row: BookingLedgerCensusRow): boolean {
   return (
     (isPaidLikeBookingStatus(row.booking.status) && row.booking.finalPriceCents !== 0) ||
     (payment !== null &&
-      ((isCapturedTransactionStatus(payment.status) && payment.amountCents > 0) ||
+      ((isCapturedPaymentStatus(payment.status) && payment.amountCents > 0) ||
         payment.creditAppliedCents !== 0 ||
         payment.refundedAmountCents !== 0 ||
         payment.changeFeeCents !== 0 ||
@@ -420,9 +426,10 @@ function ambiguousReviewGiveBack({ ambiguous }: ReviewAdjustmentEvidence): Resid
 
 /** #1620's figure, kept as information under the credit identity (orchestrator decision C). */
 function ibUnallocatedApplied(row: BookingLedgerCensusRow): BookingLedgerEvaluation["info"]["ibUnallocatedAppliedCredit"] {
-  if (row.payment?.source !== "INTERNET_BANKING" || row.booking.status === "CANCELLED") return null;
+  const evidence = ibSettlementEvidence(row);
+  if (evidence === null || row.booking.status === "CANCELLED") return null;
   const cents = unallocatedAppliedCreditCents(row);
-  return cents > 0 ? { realized: isCapturedTransactionStatus(row.payment.status), cents } : null;
+  return cents > 0 ? { evidence, cents } : null;
 }
 
 // ---------------------------------------------------------------------------

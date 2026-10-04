@@ -110,7 +110,7 @@ function confirmedLedger(promoAdjustmentCents = -1_000): Ledger {
 
 type Txn = BookingLedgerCensusRow["transactions"][number];
 function txn(id: string, amountCents: number, overrides: Partial<Txn> = {}): Txn {
-  return { id, kind: "PRIMARY", status: "SUCCEEDED", amountCents, refundedAmountCents: 0, reason: null, withdrawnAt: null, createdAt: CONFIRMED_AT, ...overrides };
+  return { id, kind: "PRIMARY", status: "SUCCEEDED", source: "STRIPE", xeroInvoiceId: null, amountCents, refundedAmountCents: 0, reason: null, withdrawnAt: null, createdAt: CONFIRMED_AT, ...overrides };
 }
 
 /** Post what the settlement sync would, from these rows, onto the ledger. */
@@ -162,6 +162,8 @@ function payment(overrides: Partial<NonNullable<BookingLedgerCensusRow["payment"
     changeFeeCents: 0,
     additionalAmountCents: 0,
     additionalPaymentStatus: null,
+    xeroInvoiceId: null,
+    manuallyMarkedPaidAt: null,
     ...overrides,
   };
 }
@@ -1317,8 +1319,53 @@ describe("the verdict", () => {
     expect(summary.identities.CAPTURED).toEqual({ applicable: 4, agree: 2, disagree: 1, classified: 1, coverage: 0 });
     expect(summary.info.ibUnallocatedAppliedCredit).toEqual({
       realized: { bookings: 0, cents: 0, items: [] },
-      pending: { bookings: 1, cents: 4_000, items: [{ bookingId: B, cents: 4_000 }] },
+      unverified: { bookings: 1, cents: 4_000, items: [{ bookingId: B, cents: 4_000, evidence: "unverified" }] },
     });
+  });
+});
+
+describe("#1620's line reads settlement evidence, never the payment mirror (#3632, ported from the retired audit)", () => {
+  type Txn = BookingLedgerCensusRow["transactions"][number];
+  /** A live internet-banking booking carrying $40 of applied credit no Xero note allocates, on invoice inv_1. */
+  const strand = (paymentOverrides: Partial<NonNullable<BookingLedgerCensusRow["payment"]>> = {}, transactions: Txn[] = []) => {
+    const base = creditAndCard();
+    return {
+      ...base,
+      transactions,
+      payment: payment({ source: "INTERNET_BANKING", amountCents: 15_000, creditAppliedCents: 4_000, status: "PENDING", xeroInvoiceId: "inv_1", ...paymentOverrides }),
+    };
+  };
+  const ibReceipt = (overrides: Partial<Txn> = {}) => txn("t-ib", 15_000, { source: "INTERNET_BANKING", xeroInvoiceId: "inv_1", ...overrides });
+  const line = (subject: BookingLedgerCensusRow) => evaluateBookingLedgerIdentities(subject).info.ibUnallocatedAppliedCredit;
+
+  it("a row without current settlement evidence is unverified, not unpaid", () => {
+    expect(line(strand())).toEqual({ evidence: "unverified", cents: 4_000 });
+  });
+
+  it("a current Xero-reconciled IB PRIMARY receipt makes it realized", () => {
+    expect(line(strand({ status: "SUCCEEDED" }, [ibReceipt()]))).toEqual({ evidence: "xero-primary-receipt", cents: 4_000 });
+    expect(report([strand({ status: "SUCCEEDED" }, [ibReceipt()])]).info.ibUnallocatedAppliedCredit.realized).toMatchObject({ bookings: 1, cents: 4_000 });
+  });
+
+  it("a manually recorded settlement is realized without Xero linkage", () => {
+    expect(line(strand({ manuallyMarkedPaidAt: new Date("2026-08-01T00:00:00.000Z"), xeroInvoiceId: null }))?.evidence).toBe("manual-settlement");
+  });
+
+  it.each([
+    ["a card-origin Stripe PRIMARY on the same invoice", {}, [ibReceipt({ source: "STRIPE", status: "REFUNDED" })]],
+    ["a captured ADDITIONAL transaction", {}, [ibReceipt({ kind: "ADDITIONAL" })]],
+    ["a captured receipt for a superseded invoice", { status: "SUCCEEDED" as const }, [ibReceipt({ xeroInvoiceId: "inv_old" })]],
+    ["an invoice-less receipt on a payment with no current invoice", { xeroInvoiceId: null }, [ibReceipt({ xeroInvoiceId: null })]],
+    ["a credit-note repair that changed only the mirror", { status: "REFUNDED" as const }, []],
+  ] as const)("%s stays unverified", (_name, paymentOverrides, transactions) => {
+    expect(line(strand(paymentOverrides, [...transactions]))?.evidence).toBe("unverified");
+  });
+
+  it("a bank transfer proven paid is never NOTHING_CAPTURED, whatever its mirror says", () => {
+    const unpaid = nothingCaptured();
+    expect(identity(unpaid, "CAPTURED").status).toBe("CLASSIFIED");
+    const settled = { ...unpaid, payment: { ...unpaid.payment!, manuallyMarkedPaidAt: new Date("2026-08-01T00:00:00.000Z") } };
+    expect(identity(settled, "CAPTURED").status).toBe("DISAGREE");
   });
 });
 

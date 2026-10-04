@@ -1673,8 +1673,9 @@ owed — against the ledger lines that project them, and prints:
 - every unclassified disagreement: booking, identity, column figure, ledger
   figure and delta;
 - under the credit identity, #1620's internet-banking applied credit no Xero
-  note allocates, realized and pending, with example bookings (`--json` lists
-  every booking and its amount);
+  note allocates, realized (settlement evidence proves the invoice paid) and
+  unverified (never asserted unpaid, #3632), with example bookings (`--json`
+  lists every booking, its amount and its evidence);
 - what the owner's acknowledgement file released, and any entry in it that is
   stale or matches nothing;
 - the verdict, `GATE_OPEN` or `GATE_CLOSED`, with every reason it is closed.
