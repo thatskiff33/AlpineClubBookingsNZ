@@ -267,6 +267,28 @@ export function buildInvoiceLineItems(
 }
 
 /**
+ * #3836 (`INV-PAY-024`): a card-path payment that captured NOTHING because
+ * account credit covered the booking - the $0 row every credit-covered settle
+ * writes. Its invoice is raised at the full price, so the applied credit is all
+ * that pays it. `amountCents` is the gross captured, so neither a legacy
+ * full-price capture nor a refunded-whole card can match; the status is not
+ * read, because the never-captured cancel flips this row to FAILED while its
+ * credit is still applied against the invoice, and the engine allocates from
+ * the ledger, not the status.
+ */
+export function isCreditOnlyCardPayment(payment: {
+  source: PaymentSource | null;
+  amountCents: number;
+  creditAppliedCents: number;
+}): boolean {
+  return (
+    payment.source !== PaymentSource.INTERNET_BANKING &&
+    payment.amountCents === 0 &&
+    payment.creditAppliedCents > 0
+  );
+}
+
+/**
  * #1641 — after a CARD booking's invoice is raised with its effective Stripe
  * payment, allocate the member's applied account credit against the invoice so it
  * reaches PAID via (effective cash + credit-note allocation) rather than being left
@@ -307,11 +329,15 @@ async function settleCardAppliedCreditAllocation(
   // PARTIALLY_REFUNDED at invoice time even though its repay capture settles
   // the invoice, and skipping here would strand the applied slice outstanding.
   // A fully-refunded-out payment (net 0) still must not allocate.
+  // #3836: a booking paid ENTIRELY by credit captured nothing, yet its invoice
+  // is raised at full price; it allocates on the same engine, whatever the
+  // status (`isCreditOnlyCardPayment`).
   if (
     payment.source === PaymentSource.INTERNET_BANKING ||
-    !STRIPE_CAPTURED_PAYMENT_STATUSES.has(payment.status) ||
-    payment.amountCents - (payment.refundedAmountCents ?? 0) <= 0 ||
-    !(payment.creditAppliedCents > 0)
+    !(payment.creditAppliedCents > 0) ||
+    (!isCreditOnlyCardPayment(payment) &&
+      (!STRIPE_CAPTURED_PAYMENT_STATUSES.has(payment.status) ||
+        payment.amountCents - (payment.refundedAmountCents ?? 0) <= 0))
   ) {
     return;
   }
