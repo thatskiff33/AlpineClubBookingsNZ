@@ -868,6 +868,10 @@ async function performBookingCancellation(
         return { claimed: false as const };
       }
       if (fresh.lodgeId) await acquireLodgeCapacityLock(tx, fresh.lodgeId);
+      // #3792 (INV-LOCK-002): the member credit-ledger key before the Payment row
+      // write, the order the inbound credit-note sync takes them in. #3369: no member, no key.
+      const pendingCreditLedgerMemberId = bookingOwner(fresh).memberId;
+      if (pendingCreditLedgerMemberId) await lockMemberCreditLedger(pendingCreditLedgerMemberId, tx);
       if (fresh.payment) {
         await tx.payment.update({
           where: { id: fresh.payment.id },
@@ -1471,6 +1475,10 @@ async function performBookingCancellation(
       return { claimed: false as const };
     }
     if (fresh.lodgeId) await acquireLodgeCapacityLock(tx, fresh.lodgeId);
+    // #3792 (INV-LOCK-002): the member credit-ledger key third, before the Payment
+    // row, the order the inbound credit-note sync takes them in. #3369: no member, no key.
+    const paidCreditLedgerMemberId = bookingOwner(fresh).memberId;
+    if (paidCreditLedgerMemberId) await lockMemberCreditLedger(paidCreditLedgerMemberId, tx);
     // #3793: #3640's Payment row lock, then the re-read the money comes from: a refund
     // writer takes no advisory lock, so only the id is taken from the read above.
     await lockPaymentForRefundedTotal(tx, fresh.payment.id);
