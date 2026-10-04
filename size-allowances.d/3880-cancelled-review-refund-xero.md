@@ -43,3 +43,17 @@ reason: the operator retry passes its REQUEUE row and the row's task into the
   same builder call; two spread lines and one option. The second fix round adds
   the review task to the delta-mode test and a guard on the repair leg's one
   write of the payment's canonical note.
+
+file: src/lib/xero-booking-repair-classify.ts
+lines: 2302
+reason: the missing-refund-note arm must stop where notes already answer every
+  cent a note may - a bank payment's per-refund notes are never its canonical
+  note - and that condition belongs on the arm's own gate, beside the gap cap it
+  already reads; one condition and its comment.
+
+file: src/lib/xero-hardening-report.ts
+lines: 1166
+reason: the drift report's mismatch class and its item text must leave out a
+  per-refund sibling through the same predicate the cleanup uses, at the two
+  places that read a scope's active links; a filter and a comment each, and the
+  scope map typed to carry the link's metadata the predicate reads.
