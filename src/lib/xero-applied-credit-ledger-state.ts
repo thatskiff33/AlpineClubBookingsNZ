@@ -15,7 +15,7 @@ import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfi
  */
 export async function unallocatedAppliedCreditCentsByBooking(
   bookingIds: string[],
-  db: { memberCredit: Pick<Prisma.TransactionClient["memberCredit"], "groupBy"> } = prisma,
+  db: Pick<Prisma.TransactionClient, "memberCredit"> = prisma,
 ): Promise<Map<string, number>> {
   if (bookingIds.length === 0) return new Map();
   const rows = await db.memberCredit.groupBy({
