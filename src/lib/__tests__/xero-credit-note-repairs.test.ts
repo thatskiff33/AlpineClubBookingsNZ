@@ -31,6 +31,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     xeroSyncOperation: {
       findMany: mocks.xeroSyncOperationFindMany,
+    },
     paymentRefund: {
       aggregate: mocks.paymentRefundAggregate,
     },
