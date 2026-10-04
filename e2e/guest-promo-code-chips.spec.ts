@@ -158,7 +158,7 @@ test("the review step offers the guest's code as an opt-in chip that covers that
   await expect(page.getByText("Booking Summary")).toBeVisible();
 
   // Opt-in: offered under Pat's name, nothing applied yet.
-  const chips = page.getByRole("group", { name: `${PAT.firstName} ${PAT.lastName}'s promo codes` });
+  const chips = page.getByRole("group", { name: `Promo codes held by ${PAT.firstName} ${PAT.lastName}` });
   const chip = chips.getByRole("button", {
     name: new RegExp(`^Apply ${GUEST_CODE} .*applies to ${PAT.firstName} ${PAT.lastName} only$`),
   });
@@ -173,6 +173,8 @@ test("the review step offers the guest's code as an opt-in chip that covers that
   await expect(applied).toContainText(GUEST_CODE);
   await expect(applied).toContainText(`applies to ${PAT.firstName} ${PAT.lastName} only`);
   await expect(page.getByRole("status").filter({ hasText: `${GUEST_CODE} applied.` })).toHaveCount(1);
+  // The chip is gone once applied; focus lands on the applied code's Remove.
+  await expect(page.getByRole("button", { name: `Remove ${GUEST_CODE}` })).toBeFocused();
   await expect(page.getByText(`Promo adjustment (${GUEST_CODE})`)).toBeVisible();
   await page.close();
 });

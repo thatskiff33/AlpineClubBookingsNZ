@@ -280,7 +280,8 @@ These family rules are enforced by automated tests (issue #1132):
 - `src/app/api/profile/route.ts`
 - `src/app/api/promo-codes/**/route.ts` — `guest-codes` (#3492) reads OTHER
   members' assigned promo codes for the booker's chips: only the booking's
-  staying guests (family, or an outside guest who accepted) or, before the
+  staying guests (family, or an outside guest in any confirmed state —
+  accepted, notify-only, officer-added or pre-consent; D-3492-4) or, before the
   booking exists, the booker's family; answered by guest reference, never member
   id, with only code and benefit; a booking the caller does not own answers as
   a missing one; per-member rate limit and a `privacy` audit row per lookup.

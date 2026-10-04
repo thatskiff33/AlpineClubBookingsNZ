@@ -223,26 +223,37 @@ On the booking's review step, on its edit panel, and on Admin → Book on
 Behalf, the booker sees each code they could use as a **chip** (#3492):
 
 - **Their own codes**, as before.
-- **Their guests' codes**, grouped under each guest's name and marked
-  "applies to *name* only". Only a guest member's codes that are assigned to
-  them, active, and allowed at this lodge are offered.
+- **Their guests' codes**, grouped under the guest who holds them and marked
+  "applies to *name* only". A code two staying guests both hold is offered
+  once, marked with both names; a code the booker holds too is offered as the
+  booker's own. Only a guest member's codes that are assigned to them, active,
+  and allowed at this lodge are offered — and only codes in the **own nights**
+  assignment mode (the default). A code in the "booker picks guests" mode, or a
+  group fixed-nightly code, can only be booked with by its own member, so it is
+  never offered as somebody else's guest chip.
 
 Nothing is applied until the booker presses a chip or types a code. With the
 module on they can add several and change their order with **Move earlier**
 and **Move later** beside each code; every amount on the review step is the
-amount in that order. Editing a booking saves the whole list, in its new
-order. With the module **off**, the chips are still offered but a booking takes
-one code, exactly as before — and a booking that already carries several codes
+amount in that order. A working-bee discount combines with them on the review
+step: it covers its own nights first and each code is priced after it. Editing
+a booking saves the whole list, in its new order. With the module **off**, the
+chips are still offered but a booking takes one code and a working bee stands
+alone, exactly as before — and a booking that already carries several codes
 (the module was on when they were added) shows them read-only on its edit
 panel: they cannot be added, removed or swapped until the module is back on,
-because a one-code change would release every other member's code.
+because a one-code change would release every other member's code. The edit
+panel shows "Checking promo codes…" until it knows whether the module is on.
 
 **Whose codes are shown is a privacy decision.** A guest's codes appear only
 when the guest is in the booker's family, or is a member from outside the
-family who has already **accepted** their place on the booking. A guest who is
-still pending, or who declined, never shows a chip. So on a new booking only
-family guests' codes appear; a friend's appear on the booking's edit panel once
-they have accepted. The booker sees only each code and what it gives — not the
+family whom the booking treats as **confirmed** — they (or someone answering
+for them) accepted their place, the club does not ask guests to accept and only
+notifies them, an officer added them, or the booking was made before guest
+consent existed. A guest who is still pending, or who declined, never shows a
+chip. So on a new booking only family guests' codes appear; a friend's appear
+on the booking's edit panel once they are confirmed, and the edit panel prices
+them as the save will. The booker sees only each code and what it gives — not the
 description you wrote for it, not how much of it is used. Every lookup is
 written to the audit log as `promo_code.guest_lookup` (see the
 [audit log guide](audit-log.md#guest-promo-code-lookups-3492)).
@@ -298,10 +309,11 @@ That is the intended correction, not a fault.
 | A code gave a guest's nights nothing | The guest is still pending acceptance; no code discounts their nights until they accept | Nothing to do — the codes are applied again when they accept |
 | A guest accepted but the price did not drop | The booking's lower price could not all go back the way it was paid, or the booking was under review, waitlisted or already under way | Edit the booking: the ordinary edit re-prices its codes |
 | "Only one promo code can be used on a booking" | The **Several promo codes on one booking** module is off | Turn it on (Admin → Modules) once the upgrade that added it has fully cut over |
-| A guest's code does not appear as a chip | The guest is from outside the booker's family and has not accepted yet (on a new booking, no outside guest's codes appear at all), or the code is inactive, expired, used up, or not allowed at this lodge | Ask the guest to accept their place; the chip then appears on the booking's edit panel. Check the code's settings otherwise |
+| A guest's code does not appear as a chip | The guest is from outside the booker's family and is not confirmed yet (on a new booking, no outside guest's codes appear at all); or the code is in the "booker picks guests" mode or is a group fixed-nightly code, which only its own member can book with; or it is inactive, expired, used up, or not allowed at this lodge | Ask the guest to accept their place; the chip then appears on the booking's edit panel. Otherwise check the code's assignment mode and settings |
 | The booker cannot add a second chip | The **Several promo codes on one booking** module is off, so a booking takes one code | Turn it on (Admin → Modules) once the upgrade that added it has fully cut over |
 | A booking's edit panel lists its codes but offers no way to change them | The booking carries several codes and the **Several promo codes on one booking** module is off | Turn it on (Admin → Modules); other changes to the booking still re-price its codes meanwhile |
-| "Too many requests" while choosing codes | The guest-code lookup is limited to 30 a quarter-hour per member | Wait a few minutes; an ordinary booking uses a handful |
+| "Too many requests. Your guests' promo codes can't be checked just now" under the promo codes | The guest-code lookup is limited to 30 a quarter-hour per member; until it answers, no guest chip is offered and the edit panel shows a several-code booking's codes without changes | Wait a few minutes and reload; an ordinary booking uses a handful |
+| "We couldn't check your guests' promo codes just now" | The guest-code lookup failed | Reload the page; if it keeps happening, check the server log |
 
 ## Related links
 

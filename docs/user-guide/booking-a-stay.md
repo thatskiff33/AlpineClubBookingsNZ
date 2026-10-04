@@ -148,9 +148,12 @@ guest's nights. Nothing is applied until you press a chip or type a code. If
 your club allows several codes on one booking you can add more than one and
 use **Move earlier** / **Move later** to choose their order — where two codes
 could cover the same night, the earlier one does — and the summary shows one
-line per code. A guest from outside your family only gets their codes offered
-after the booking exists and they have accepted their place; you will then see
-them when you edit the booking. You only ever see a code and what it gives.
+line per code. Such a club also lets a working-bee discount sit beside your
+codes: it covers its own nights first. A guest from outside your family only
+gets their codes offered after the booking exists and they are confirmed (they
+accepted their place, your club only tells them, or an officer added them); you
+will then see them when you edit the booking. You only ever see a code and what
+it gives.
 
 ### 4. Pay (or wait for review)
 

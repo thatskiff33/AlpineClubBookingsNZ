@@ -799,16 +799,18 @@ them apart. Treat it as a conversation to have if it keeps happening.
 
 ### Guest promo-code lookups (#3492)
 
-When a booker reaches the review step with member guests on the booking, the
-app looks up which of those guests' assigned promo codes it may offer as chips.
+When a booker reaches the review step or the booking's edit panel with member
+guests on the booking, the app looks up which of those guests' assigned promo codes it may offer as chips.
 Each lookup writes one `promo_code.guest_lookup` entry, category `privacy`.
 
 | Action | Written when | What it contains |
 | --- | --- | --- |
-| `promo_code.guest_lookup` | Each lookup that reads a booking's guests or names at least one member guest, from the booking wizard, the booking edit panel or Book on Behalf | Who asked, the booking (when it exists), how many guests were looked at, **which members' codes were shown**, and how many codes. An officer booking on behalf is recorded as the member they booked for. Kept for two years (`sensitive_access`) |
+| `promo_code.guest_lookup` | Each lookup that reads a booking's guests or names at least one member guest, from the booking wizard, the booking edit panel or Book on Behalf | Who asked, the booking (when it exists), how many guests were looked at, **which members' codes were shown**, and how many codes. When an officer books on a member's behalf, the officer is recorded as the one who asked, and the member they booked for is in the entry's details (`onBehalfOfMemberId`). Kept for two years (`sensitive_access`) |
 
-Only family guests, or guests who have already accepted the guest link, are
-ever looked up, and the booker sees only each code and its benefit. The
+Only the codes of family guests, or of guests the booking treats as confirmed
+(they accepted, the club only notifies, an officer added them, or the booking
+predates guest consent), are ever read, and the booker sees only each code and
+its benefit. The
 booker's own activity history shows the entry's title and nothing else.
 
 ### Issue-report screenshot entries (#2703)
