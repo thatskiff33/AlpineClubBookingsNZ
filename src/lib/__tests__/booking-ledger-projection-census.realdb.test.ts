@@ -44,7 +44,8 @@ const ROOM_ID = "race-3583-room";
 const CARD = "race-3583-card";
 const CREDIT = "race-3583-credit";
 const CASH = "race-3583-cash";
-const BOOKINGS = [CARD, CREDIT, CASH];
+const LEGACY = "race-3583-legacy";
+const BOOKINGS = [CARD, CREDIT, CASH, LEGACY];
 // A stay well after today, in the policy's one tier.
 const D1 = new Date("2027-08-01T00:00:00.000Z");
 const D2 = new Date("2027-08-02T00:00:00.000Z");
@@ -296,5 +297,42 @@ const NOTHING = { disagreements: [], coverage: [], integrity: [], classes: [] };
       expect.objectContaining({ lineId: rogue.id, kind: "SOURCE_DRIFT" }),
     ]);
     expect(report.verdict).toBe("GATE_CLOSED");
+  }, 120_000);
+  it("a legacy card payment backfilled by the real writer, then cancelled to account credit: the refund is counted once", async () => {
+    // The pre-transaction shape the legacy backfill exists for: a captured
+    // payment with no transaction row, confirmed on the ledger by the settle's
+    // own planner. The real cancel's credit branch backfills the transaction
+    // (`ensurePaymentTransactionsBackfilled`) and allocates the credit onto it.
+    await createBooking(LEGACY, { amountCents: 20_000, source: "STRIPE", intent: "pi_race_3583_legacy" });
+    await prisma.booking.update({ where: { id: LEGACY }, data: { status: "PAID" } });
+    await prisma.payment.update({ where: { bookingId: LEGACY }, data: { status: "SUCCEEDED" } });
+    const { planConfirmationChargeLines } = await import("@/lib/booking-ledger-confirmation-posting");
+    const { postBookingLedgerLines } = await import("@/lib/booking-ledger-write");
+    await prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.findUniqueOrThrow({
+        where: { id: LEGACY },
+        select: {
+          id: true,
+          lodgeId: true,
+          totalPriceCents: true,
+          promoAdjustmentCents: true,
+          guests: { select: { id: true, firstName: true, lastName: true, ageTier: true, rateMembershipTypeId: true, nights: { select: { stayDate: true, priceCents: true } } } },
+        },
+      });
+      await postBookingLedgerLines(tx, planConfirmationChargeLines(booking).postings);
+    });
+
+    const { cancelBooking } = await import("@/lib/booking-cancel");
+    const cancelled = await cancelBooking(LEGACY, OFFICER_ID, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "credit");
+    expect(cancelled.status).toBe(200);
+    const transactions = await prisma.paymentTransaction.findMany({ where: { paymentId: `${LEGACY}-payment` }, select: { reason: true, refundedAmountCents: true } });
+    expect(transactions).toEqual([{ reason: "legacy_primary_backfill", refundedAmountCents: 10_000 }]);
+    // The credit row explains the whole $100; none of it is the legacy seed too.
+    expect(about(await census(), LEGACY)).toEqual({ ...NOTHING, classes: ["REFUND_MIRROR_CREDIT_ALLOCATION:REFUNDED"] });
+
+    // A cent more on the refunded column than the credit explains still disagrees.
+    await prisma.payment.update({ where: { bookingId: LEGACY }, data: { refundedAmountCents: 10_001 } });
+    const corrupted = about(await census(), LEGACY);
+    expect(corrupted.disagreements.map((row) => [row.identity, row.deltaCents])).toEqual([["REFUNDED", 10_001]]);
   }, 120_000);
 });

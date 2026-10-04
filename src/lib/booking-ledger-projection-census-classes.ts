@@ -355,14 +355,39 @@ function creditAllocationCents(row: BookingLedgerCensusRow): number {
     .reduce((sum, credit) => sum - (creditLineFor(row, credit)?.amountCents ?? 0), 0);
 }
 
+/**
+ * What a transaction's refunded total holds beyond its own recorded refunds:
+ * the local allocations (`applyLocalRefundAllocation`) that wrote no refund row.
+ */
+function unrecordedRefundedCents(row: BookingLedgerCensusRow, txn: BookingLedgerCensusRow["transactions"][number]): number {
+  const recorded = row.refunds
+    .filter((refund) => refund.paymentTransactionId === txn.id && isRecordedRefundStatus(refund.status))
+    .reduce((sum, refund) => sum + refund.amountCents, 0);
+  return txn.refundedAmountCents - recorded;
+}
+
+/**
+ * A refund the legacy backfill seeded onto a transaction with no refund row.
+ * Each cent of the column is explained once: a credit allocation or hand-back
+ * raises the same per-transaction totals, and its own row explains it first
+ * (`REFUND_MIRROR_CREDIT_ALLOCATION`, `REFUND_MIRROR_HAND_BACK`, an unposted
+ * allocating row), so the seed is only what no row explains, and never more
+ * than the legacy transactions hold.
+ */
 function legacySeedCents(row: BookingLedgerCensusRow): number {
-  const legacyIds = new Set(row.transactions.filter((txn) => LEGACY_BACKFILL_REASONS.includes(txn.reason ?? "")).map((txn) => txn.id));
-  return (
-    row.transactions.filter((txn) => legacyIds.has(txn.id)).reduce((sum, txn) => sum + txn.refundedAmountCents, 0) -
-    row.refunds
-      .filter((refund) => refund.paymentTransactionId !== null && legacyIds.has(refund.paymentTransactionId) && isRecordedRefundStatus(refund.status))
-      .reduce((sum, refund) => sum + refund.amountCents, 0)
-  );
+  const isLegacy = (txn: BookingLedgerCensusRow["transactions"][number]) => LEGACY_BACKFILL_REASONS.includes(txn.reason ?? "");
+  const onLegacy = row.transactions.filter(isLegacy).reduce((sum, txn) => sum + unrecordedRefundedCents(row, txn), 0);
+  if (onLegacy <= 0) return onLegacy;
+  const unrecorded = row.transactions.reduce((sum, txn) => sum + unrecordedRefundedCents(row, txn), 0);
+  const explainedByRows = creditAllocationCents(row) + unpostedAllocationCents(row) + handBackCents(row);
+  return Math.min(onLegacy, Math.max(0, unrecorded - explainedByRows));
+}
+
+/** Allocating credit rows no line records yet (`UNPOSTED_CREDIT` on the refunded column). */
+function unpostedAllocationCents(row: BookingLedgerCensusRow): number {
+  return unpostedCredits(row)
+    .filter((credit) => isAllocatingCredit(row, credit))
+    .reduce((sum, credit) => sum + credit.amountCents, 0);
 }
 
 /**
@@ -444,9 +469,7 @@ export function creditAppliedComponents(row: BookingLedgerCensusRow): ResidualCo
 
 /** What raised `refundedAmountCents` that is not a `CARD_REFUND` line (design §5.2, `INV-MONEY-034`). */
 export function refundedComponents(row: BookingLedgerCensusRow): ResidualComponent[][] {
-  const unpostedAllocations = unpostedCredits(row)
-    .filter((credit) => isAllocatingCredit(row, credit))
-    .reduce((sum, credit) => sum + credit.amountCents, 0);
+  const unpostedAllocations = unpostedAllocationCents(row);
   const base: ResidualComponent[] = [
     { name: "REFUND_MIRROR_HAND_BACK", cents: handBackCents(row) },
     { name: "V3_LEGACY_HAND_BACK", cents: v3Cents(row) },
