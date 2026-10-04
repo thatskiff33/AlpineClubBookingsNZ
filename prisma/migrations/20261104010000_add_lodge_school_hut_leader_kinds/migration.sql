@@ -21,11 +21,31 @@ ALTER TABLE "LodgeSettings"
 --    A lodge's setting resolves from its own row (id = lodge id), else from the
 --    legacy "default" row when that row is unlinked or linked to the same lodge,
 --    else from the code defaults (src/lib/lodge-settings.ts). When the switch is
---    ON, a lodge that no row serves gets its own row first: capacity and the
---    soft cap stay NULL, which is exactly what that lodge resolved before, so
---    nothing but the new tick changes for it. When the switch is OFF (or the
---    lazy singleton row was never written) nothing is inserted, because the
---    code default already reads OFF.
+--    OFF (or the lazy singleton row was never written) nothing is inserted,
+--    because the code default already reads OFF. When it is ON:
+--
+--    2a. With no legacy row at all, create it LINKED TO THE DEFAULT LODGE, the
+--        row the boot-time capacity self-heal and the seed would create. It
+--        holds NULL capacity and soft cap, which is what that lodge resolved
+--        with no row, and the self-heal keeps writing the capacity it heals
+--        onto the row that lodge reads. (An own row here would shadow the
+--        legacy row the self-heal writes, and lose that capacity.)
+INSERT INTO "LodgeSettings" ("id", "lodgeId")
+SELECT 'default', default_lodge_id()
+WHERE COALESCE(
+        (SELECT brs."assignSchoolTeachersAsHutLeaders"
+         FROM "BookingRequestSettings" brs
+         WHERE brs."id" = 'default'),
+        false
+      ) IS TRUE
+  AND default_lodge_id() IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM "LodgeSettings" existing WHERE existing."id" = 'default');
+
+--    2b. Every other lodge that no row serves (no own row, and the legacy row
+--        is linked to another lodge) gets its own row: NULL capacity and soft
+--        cap, which is exactly what it resolved before, so nothing but the new
+--        tick changes for it. A lodge an unlinked legacy row serves is never
+--        given one, because that row would then shadow the capacity it serves.
 INSERT INTO "LodgeSettings" ("id", "lodgeId")
 SELECT l."id", l."id"
 FROM "Lodge" l

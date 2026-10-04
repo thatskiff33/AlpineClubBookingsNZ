@@ -111,6 +111,28 @@ const verification: DataMigrationVerification = {
       ],
     },
     {
+      name: "switch ON with no legacy row: the legacy row is created for the default lodge, not an own row",
+      // The default lodge is pinned to one of this case's lodges, so which lodge
+      // `default_lodge_id()` names is the case's decision.
+      seed: `${LODGES}
+        UPDATE "Lodge" SET "isDefault" = false WHERE "isDefault";
+        UPDATE "Lodge" SET "isDefault" = true WHERE "id" = 'dmv-3819-legacy';
+        DELETE FROM "LodgeSettings" WHERE "id" = 'default';
+        ${switchRow(true)}`,
+      expectations: [
+        {
+          claim:
+            "the default lodge reads a new legacy row linked to it (which the capacity self-heal writes), with NULL capacity as before; the lodge no row served gets its own; the own row is ticked in place",
+          sql: ROWS_SQL,
+          rows: [
+            { id: "default", lodgeId: "dmv-3819-legacy", capacity: null, schoolGroupSoftCap: null, teacher: true, ...OTHER_KINDS },
+            { id: "dmv-3819-none", lodgeId: "dmv-3819-none", capacity: null, schoolGroupSoftCap: null, teacher: true, ...OTHER_KINDS },
+            { id: "dmv-3819-own", lodgeId: "dmv-3819-own", capacity: 30, schoolGroupSoftCap: 12, teacher: true, ...OTHER_KINDS },
+          ],
+        },
+      ],
+    },
+    {
       name: "the lazy booking-request singleton was never written: the switch reads OFF",
       seed: `${LODGES}${legacyRow("dmv-3819-legacy")}
         DELETE FROM "BookingRequestSettings" WHERE "id" = 'default';`,
@@ -128,6 +150,20 @@ const verification: DataMigrationVerification = {
   ],
   mutants: [
     {
+      name: "give the lodge the legacy row is linked to an own row as well",
+      harm:
+        "That lodge's new own row, with NULL capacity, is read before the legacy row that held its capacity: its capacity silently drops to the bed count or zero.",
+      find: ` OR legacy."lodgeId" = l."id"`,
+      replace: "",
+    },
+    {
+      name: "create the missing legacy row unlinked",
+      harm:
+        "An unlinked legacy row serves every lodge, so the lodges that should have got their own ticked row read it instead, and the self-heal later links it to the default lodge alone: the other lodges silently lose the teacher tick.",
+      find: `SELECT 'default', default_lodge_id()`,
+      replace: `SELECT 'default', NULL`,
+    },
+    {
       name: "insert own rows even while the unlinked legacy row serves the lodge",
       harm:
         "A lodge served by the unlinked legacy row gets an own row with NULL capacity, which the resolver reads first: its capacity silently drops to the bed count or zero.",
@@ -138,8 +174,10 @@ const verification: DataMigrationVerification = {
       name: "insert own rows when the switch is OFF",
       harm:
         "Lodges gain settings rows nobody asked for; harmless to the tick but a data rewrite the switch's value did not call for.",
-      find: "WHERE COALESCE(",
-      replace: "WHERE NOT COALESCE(",
+      find: `FROM "Lodge" l
+WHERE COALESCE(`,
+      replace: `FROM "Lodge" l
+WHERE NOT COALESCE(`,
     },
     {
       name: "ignore the switch and leave every lodge unticked",
