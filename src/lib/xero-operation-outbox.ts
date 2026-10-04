@@ -807,13 +807,8 @@ export async function enqueueXeroRefundCreditNoteOperation(
      * for a note raised after the fact. Omitted, the note is dated today.
      */
     documentDate?: string;
-    /**
-     * #3880: the edit financial review whose refund on a CANCELLED booking this
-     * note records. Its key carries the task (`reviewTaskKeyParts`), so sibling
-     * reviews' equal refunds are a note each and a replay of one is the same
-     * note; and a bank-transfer payment is noted per refund and capped by its
-     * coverage, as a card is, rather than once per payment.
-     */
+    /** #3880: a review's refund on a CANCELLED booking - keyed on the task, and
+     * noted per refund, capped by coverage, on a bank transfer as on a card. */
     reviewTaskId?: string;
   }
 ) {
