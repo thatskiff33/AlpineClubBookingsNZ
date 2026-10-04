@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => ({ postCancellationLedgerLines: mocks.postCancellationLedgerLines }));
 vi.mock("@/lib/organiser-child-refund", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/organiser-child-refund")>()),
+  ...((await importOriginal()) as typeof import("@/lib/organiser-child-refund")),
   organiserChildCommittedRefundCents: mocks.organiserChildCommittedRefundCents,
 }));
 const logger = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }));
