@@ -438,7 +438,9 @@ let observerClient: PrismaClient;
       fakeXero.state.onProviderWrite = async () => {
         const rows = await observerClient.$queryRaw<Array<{ count: number }>>`
           SELECT COUNT(*)::int AS "count" FROM pg_locks l JOIN pg_database d ON d.oid = l.database
-          WHERE l.locktype = 'advisory' AND l.granted AND d.datname = current_database()
+          WHERE l.locktype = 'advisory' AND l.granted AND d.datname = current_database() AND l.objsubid = 2
+            AND l.classid = ((hashtext('member-credit-ledger')::bigint + 4294967296) % 4294967296)::oid
+            AND l.objid = ((hashtext(${MEMBER_ID})::bigint + 4294967296) % 4294967296)::oid
         `;
         heldDuringWrites.push(rows[0]?.count ?? -1);
       };
