@@ -25,6 +25,9 @@ import {
   expectedRefundedFloorCents,
   isCapturedTransactionStatus,
   isRecordedRefundStatus,
+  LEGACY_ADDITIONAL_BACKFILL_REASON,
+  LEGACY_PRIMARY_BACKFILL_REASON,
+  latestTransactionOfKind,
 } from "@/lib/payment-transaction-status";
 
 export { isCapturedTransactionStatus };
@@ -116,27 +119,6 @@ async function loadPaymentWithTransactions(store: PaymentStore, paymentId: strin
   });
 }
 
-function getLatestTransaction<
-  T extends {
-    kind: PaymentTransactionKind;
-    createdAt: Date;
-  },
->(transactions: T[], kind: PaymentTransactionKind) {
-  let latest: T | null = null;
-
-  for (const transaction of transactions) {
-    if (transaction.kind !== kind) {
-      continue;
-    }
-
-    if (!latest || transaction.createdAt.getTime() > latest.createdAt.getTime()) {
-      latest = transaction;
-    }
-  }
-
-  return latest;
-}
-
 function isStripeTransaction<
   T extends {
     source: PaymentSource;
@@ -200,7 +182,7 @@ async function ensurePaymentTransactionsBackfilled(
             primaryRefundedAmountCents
           ),
           paymentMethodId: payment.stripePaymentMethodId ?? undefined,
-          reason: "legacy_primary_backfill",
+          reason: LEGACY_PRIMARY_BACKFILL_REASON,
         },
       })
     );
@@ -242,7 +224,7 @@ async function ensurePaymentTransactionsBackfilled(
             payment.additionalAmountCents,
             additionalRefundedAmountCents
           ),
-          reason: "legacy_additional_backfill",
+          reason: LEGACY_ADDITIONAL_BACKFILL_REASON,
         },
       })
     );
@@ -289,7 +271,7 @@ export async function reconcilePaymentAggregates({
     return null;
   }
 
-  const latestPrimary = getLatestTransaction(
+  const latestPrimary = latestTransactionOfKind(
     payment.transactions,
     PaymentTransactionKind.PRIMARY
   );
@@ -299,7 +281,7 @@ export async function reconcilePaymentAggregates({
   // zero rather than the FAILED-but-still-owed shape a declined card keeps.
   // Excluded here, at the one place the columns are derived, so the webhook
   // that follows the cancel cannot resurrect what the withdrawal retired.
-  const latestAdditional = getLatestTransaction(
+  const latestAdditional = latestTransactionOfKind(
     payment.transactions.filter((transaction) => transaction.withdrawnAt === null),
     PaymentTransactionKind.ADDITIONAL
   );

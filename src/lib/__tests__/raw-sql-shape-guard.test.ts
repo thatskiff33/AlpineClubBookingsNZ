@@ -75,6 +75,11 @@ const RAW_READ_INVENTORY: Record<string, number> = {
   // or the read-modify-write race it exists to close reopens. Its result goes
   // through `decodeRawRows`.
   "src/lib/rate-limit.ts": 1,
+  // The booking-ledger census's one figure no Prisma model exposes:
+  // `pg_stat_user_tables`' insert/update/delete counts for the ledger table,
+  // reported as information beside the gate (#3583). Its row is schema-decoded
+  // through `decodeRawRows`.
+  "src/lib/booking-ledger-projection-census-store.ts": 1,
   // The non-blocking adult-hosting policy-set lock reads the one boolean
   // returned by `pg_try_advisory_xact_lock`; the row is schema-decoded before
   // the worker decides whether it may proceed.

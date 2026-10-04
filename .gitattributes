@@ -19,7 +19,7 @@ prisma/migrations/**/*.sql text eol=lf -whitespace
 # the module, so these always materialise with LF.
 scripts/*.mjs text eol=lf
 
-# The schema is hand-edited (AGENTS.md "Change Discipline") and is the file most
+# The schema is hand-edited (AGENTS.md "Change discipline") and is the file most
 # likely to be ported between the public repo and its forks. A Windows editor
 # silently rewriting it to CRLF turns a 14-line change into a ~9,400-line diff
 # that conflicts on every line at the next port (#2129), so pin it to LF.

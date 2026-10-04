@@ -785,9 +785,12 @@ membership subscription invoice, and kept late-capture invoice (#3635).
 
 **An applied-credit deallocation has one producer**: `giveBackAppliedCredit`
 (`member-credit.ts`), the give-back of applied credit that the pre-payment
-clamp and a credit-paid booking's financial-review share both go through
-(#3791, `INV-PAY-113`). Where an internet-banking booking's credit is allocated
-against its invoice beyond the new applied figure, it queues the deallocation in
+clamp, a credit-paid booking's financial-review share (#3791, `INV-PAY-113`)
+and a credit-paid booking's ordinary price reduction (#3809, `INV-MOD-011`) all
+go through. Where a booking's credit is allocated against its invoice beyond
+the new applied figure - a bank transfer's (#1620) or, since #3809, a card
+booking's (#1641), decided by the allocation slices and not the payment's
+source - it queues the deallocation in
 the same transaction as the ledger row, and the PENDING row fences the inbound
 applied-credit repair until it converges, so an inbound sync cannot pull the
 given-back credit back up to Xero's figure. It never deallocates on a CANCELLED
@@ -801,12 +804,43 @@ invoice-allocated modification credit note takes off the whole reduction
 agreed share on a covered one), the unallocated account note is raised only for
 minted credit, and on a cancelled booking nothing but that minted note is sent:
 given-back credit there is a noteless row, as the cancellation's own restore is.
+A captured payment's share on a cancelled booking - card, bank-transfer
+hand-back or minted credit - is netted against what the cancellation returned
+first (#3835), and whatever its route raises follows the netted figure; a
+cancelled booking has no issued invoice for those routes, so today they raise
+nothing and the invoice stays closed.
 Each note's correlation and Xero idempotency keys carry the review task
 (`reviewTaskKeyParts`), so sibling reviews of one edit raise a note each, and a
 review's allocated note waits, returned to PENDING with the reason kept in
 `lastErrorMessage`, while the payment's deallocation is PENDING or RUNNING. A
 FAILED or PARTIAL deallocation only moves on an operator retry, so the note
-fails instead, naming it: retry the deallocation, then the note.
+fails instead, naming it: retry the deallocation, then the note. Since #3809 an
+edit's own modification note waits the same way: a paid booking's price
+reduction gives back applied credit through the same deallocation - all of a
+credit-paid booking's tiered reduction, or what a card-and-credit booking's
+card basis could not return - and `queueXeroBookingEditSettlement` takes it as
+`appliedCreditGiveBackCents`: always an allocated note of its own, worded as
+account credit - alone where nothing else was refunded, or beside the card or
+bank refund's note or a credit election's unallocated one, since one note names
+one method (`INV-PAY-101`). It rides the per-share key slot
+(`reviewTaskKeyParts`) under the scope `applied-credit-give-back` (nested under
+a review task's where there is one), so one key identifies it everywhere: the
+edit's own note never answers for it, and the repair pass reads it only there,
+so it can never mint a second. A card booking's deallocation that meets a slice
+whose #1641 allocation is still in its invoice operation waits rather than
+failing. So the invoice reopened by the deallocation
+is closed again and no unallocated note is raised for it. The note is queued
+after the commit, as every edit's is; if that queue fails, the repair pass
+(`MISSING_MODIFICATION_CREDIT_NOTE`) re-queues it at the give-back the edit's
+history row records - none where the tier gave nothing back - never at the
+whole reduction. A card-path booking paid by credit has no allocation to release
+(#3836); there the note alone takes the give-back off the invoice. Every
+guest-removal door queues this leg through `queueGuestRemovalXeroSettlement`,
+the consent decline and expiry included, which before #3809 queued nothing.
+A note worded as account credit moved no cash, so the inbound credit-note sync
+leaves it out of the fold of modification notes into a payment's refunded total
+(`accountCreditModificationNoteIds`). The repair pass reads the scoped
+give-back note apart from the edit's own, so neither hides the other.
 
 **Deploy note (blue/green, #3791).** A review's note carries `reviewTaskId` in
 its outbox payload, which the previous release ignores: it would raise the note
@@ -815,7 +849,10 @@ Before the old colour's workers stop, drain or pause the outbox's modification
 credit-note rows written by the new release (or stop the old workers before the
 new release completes its first financial review). The outbox claim filters on
 known queue types only, so the alternative is a queue type of its own for review
-notes; that was not added.
+notes; that was not added. Since #3809 an edit's own modification note (no
+review task) waits on the deallocation too, which the previous release does not
+do, and a give-back beside a refund raises a second, scoped note: the same
+drain or pause covers both.
 
 **Retry taxonomy** (each layer is distinct — do not conflate when changing):
 

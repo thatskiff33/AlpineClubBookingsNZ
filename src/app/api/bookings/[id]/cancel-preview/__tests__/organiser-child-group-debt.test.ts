@@ -31,6 +31,9 @@ vi.mock("@/lib/prisma", () => ({
     booking: { findUnique: mocks.bookingFindUnique },
     paymentRecoveryOperation: { findUnique: mocks.recoveryFindUnique },
     clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique },
+    // #3809/#3836: the ledger's applied credit (none) and the give-back history (none).
+    memberCredit: { aggregate: async () => ({ _sum: { amountCents: null } }) },
+    bookingModification: { findMany: async () => [], findFirst: async () => null },
   },
 }));
 vi.mock("@/lib/cancellation", () => ({

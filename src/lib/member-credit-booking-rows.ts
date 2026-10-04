@@ -117,6 +117,20 @@ export function cancellationCreditRestoreWhere(bookingId: string) {
   } satisfies Prisma.MemberCreditWhereInput;
 }
 
+/**
+ * Both questions for a page of bookings at once — what the booking-ledger
+ * census reads (#3583) — so a row is fetched by whichever of its two links
+ * names a booking on the page.
+ */
+export function bookingsCreditRowsWhere(bookingIds: readonly string[]) {
+  return {
+    OR: [
+      { type: BOOKING_APPLIED_CREDIT_TYPE, appliedToBookingId: { in: [...bookingIds] } },
+      { type: { in: [...BOOKING_ISSUED_CREDIT_TYPES] }, sourceBookingId: { in: [...bookingIds] } },
+    ],
+  } satisfies Prisma.MemberCreditWhereInput;
+}
+
 /** The `MemberCredit` fields `cancelledBookingKeptCreditCents` reads. */
 export type BookingCreditAmountRow = {
   type: CreditType | string;
@@ -158,4 +172,23 @@ export function cancelledBookingKeptCreditCents(booking: {
     .filter(isCancellationCreditRestoreRow)
     .reduce((sum, row) => sum + row.amountCents, 0);
   return Math.max(0, appliedCents - restoredCents);
+
+}
+
+type CreditRowLinks = { type: CreditType; appliedToBookingId: string | null; sourceBookingId: string | null };
+
+/** The row-level form of `bookingAppliedCreditWhere`: credit applied TO `bookingId`. */
+export function isCreditAppliedToBooking(credit: CreditRowLinks, bookingId: string): boolean {
+  return credit.type === BOOKING_APPLIED_CREDIT_TYPE && credit.appliedToBookingId === bookingId;
+}
+
+/** The row-level form of `bookingIssuedCreditWhere`: credit minted FROM `bookingId`. */
+export function isCreditIssuedFromBooking(credit: CreditRowLinks, bookingId: string): boolean {
+  return (BOOKING_ISSUED_CREDIT_TYPES as readonly CreditType[]).includes(credit.type) && credit.sourceBookingId === bookingId;
+}
+
+/** The one booking a row belongs to under the two questions above, or null (an `ADMIN_ADJUSTMENT`). */
+export function bookingIdOfCreditRow(credit: CreditRowLinks): string | null {
+  if (credit.type === BOOKING_APPLIED_CREDIT_TYPE) return credit.appliedToBookingId;
+  return (BOOKING_ISSUED_CREDIT_TYPES as readonly CreditType[]).includes(credit.type) ? credit.sourceBookingId : null;
 }
