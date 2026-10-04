@@ -51,7 +51,7 @@ export function refundMethodForEditReviewRoute(
  * null and keeps its leg.
  */
 export function cancelledBookingRefundInvoiceId(task: {
-  kind: ManualRefundTaskKind;
+  kind: ManualRefundTaskKind | null;
   reviewContext: unknown;
   booking: { status: BookingStatus; payment: { xeroInvoiceId: string | null } | null };
 }): string | null {
