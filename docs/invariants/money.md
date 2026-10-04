@@ -508,9 +508,9 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   `Payment.amountCents` whenever anything is captured. Its refunds do NOT
   always equal `refundedAmountCents`: that column only rises, is seeded
   without rows on legacy payments, and is moved by credit and hand-back
-  refunds (#3599) — `INV-PAY-050` already says it is not cash evidence. C4
-  (#3583) classifies those as known divergences. A line whose source amount
-  later changes is reported, not corrected.
+  refunds (#3599) — `INV-PAY-050` already says it is not cash evidence. C4's
+  census names those as `REFUND_MIRROR_*` classes (`INV-MONEY-037`). A line
+  whose source amount later changes is reported, not corrected.
 
   **A group organiser's settlement posts on its children** (#3854). The group
   settle confirms each child on the ledger and posts its share, its own price,
@@ -559,6 +559,39 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   `booking-ledger-modification-posting.test.ts`,
   `booking-ledger-modification-sync.test.ts` (two-sibling fixtures per
   direction), `booking-ledger-modification.realdb.test.ts`.
+
+## INV-MONEY-037
+
+- **Until the reads move, every booking's ledger is proved against its money
+  columns, and the cut-over waits on that proof** (#3583, design
+  `booking-ledger.md` §6, §7). `pnpm run booking-ledger:census` reads one
+  `RepeatableRead`, `READ ONLY` snapshot, writes nothing, and checks seven
+  identities per booking: `finalPriceCents` is Σ `GUEST_NIGHT`, `PROMOTION`
+  and `GROUP_DISCOUNT` plus `adjusted(b)` less agreed give-backs, or, once
+  cancelled, `owed(b)` is zero; `amountCents` is Σ captures; `creditAppliedCents` is
+  Σ `CREDIT_APPLIED`; `refundedAmountCents` is −Σ `CARD_REFUND`;
+  `changeFeeCents` is Σ `CHANGE_FEE`; the uncollected ask is `max(0, owed(b))`
+  while an ask is live; and a live booking's `owed(b)` is what its columns say
+  is owed (`INV-PAY-047`'s residual plus the ask, less evidenced give-backs),
+  so no line can be wrong while every column agrees. A review line must match
+  what its closure credited, read from credit rows; rows it cannot attribute
+  fail closed (`AMBIGUOUS_REVIEW_GIVE_BACK`, §6). A disagreement names the
+  booking, both figures and the delta.
+
+  **A class explains an exact amount, from evidence the delta does not
+  hold.** It is classified only where components computed from the booking's
+  own rows sum to the delta to the cent; a cent either way, or the evidence
+  removed, is a disagreement (`booking-ledger-projection-census.test.ts`).
+
+  **The gate opens only on zero unclassified disagreements, coverage gaps and
+  integrity findings, and every class instance acknowledged.** Coverage is
+  money with no lines, a paid booking unconfirmed on the ledger, or an edit,
+  fee, credit row, capture or refund no live line records. Every class holds
+  the gate until the owner's `--acknowledged` file, kept outside the
+  repository, names its instance to the cent — `KNOWN_DEFECT_HISTORY` too —
+  except `GROUP_SETTLEMENT_OFF_LEDGER`, listed only (owner decisions,
+  #3583; poster #3854). A moved figure is stale and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
+  on bookings the real writers built.
 
 ## INV-MONEY-006
 

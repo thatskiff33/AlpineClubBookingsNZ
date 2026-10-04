@@ -115,6 +115,25 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
     }
   });
 
+  it("carries #3583's projection-census proof into the same harness", () => {
+    const harness = source(
+      resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
+    );
+    expect(harness).toContain('import "./booking-ledger-projection-census.realdb.test";');
+    const suite = source(
+      resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-projection-census.realdb.test.ts"),
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    for (const caseName of [
+      "a card booking settled, re-dated and part-refunded by the real writers agrees on every identity",
+      "account credit applied by the real writer, the rest by card: the credit identity agrees too",
+      "cash marked paid, cancelled at 50% by the real cancelBooking: an in-flight hand-back until the real resolver completes it",
+      "names one rogue line posted through the write door: a disagreement with both figures, and source drift",
+    ]) {
+      expect(suite).toContain(caseName);
+    }
+  });
+
   it("carries #3792's late capacity-cancel credit-restore proof into the same harness", () => {
     const harness = source(
       resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
