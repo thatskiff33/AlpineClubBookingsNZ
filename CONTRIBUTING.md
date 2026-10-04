@@ -239,7 +239,13 @@ node scripts/release/compile-changelog.mjs 0.14.0             # write it
 
 ## Validation
 
-Run the relevant focused tests first, then the full gate before opening a PR:
+**Automated agents** follow `AGENTS.md` → "Per-issue pipeline": focused local
+checks (Prisma generation, lint, typecheck, related and named tests, mutation
+checks), then a draft PR whose CI runs the full suite and build. They run the
+full gate below only to diagnose a CI failure or when CI is unavailable.
+
+**Human contributors** may run the focused checks and rely on PR CI in the same
+way, or run the full gate before opening a PR:
 
 ```bash
 pnpm run audit:deps            # the same gate CI runs, with the same threshold
@@ -344,26 +350,105 @@ Keep unrelated refactors out of feature and bugfix PRs.
 
 ## Merging
 
-Automated agents follow the `AGENTS.md` "Completion and Merge" risk gate: at the
-successful end of a meaningful piece of work they push the branch, open a PR,
-monitor CI to green (fixing failures), and then merge with a merge commit.
-Eligible Low/Medium-risk PRs merge autonomously once CI passes; Critical and
-High-risk changes — security, payments, booking, membership, Xero/Stripe/SES/
-Sentry, schema/migrations, deployment, or data integrity — wait for explicit
-owner approval. Always merge with a merge commit; never squash or force-push.
+Automated agents follow the `AGENTS.md` "Completion and Merge" risk gate, the
+one statement of who may merge what. Always merge with a merge commit; never
+squash or force-push.
 
 ### Branch protection
 
-This is the owner's checklist for the one change still to make to `main`, so
-the configuration can be rebuilt from the repository. Two things are stated
-once, elsewhere, and only linked from here:
+`main` is branch-protected; force-pushes and branch deletions are blocked. The
+code-owner rule itself — what needs an Approve and how agents treat it — is
+`AGENTS.md` → "Pre-authorisation and attributability". What is applied today
+is below, followed by the owner's checklist for rebuilding it.
 
-- **what is applied today** — the required checks, the approval count, the
-  push block and `enforce_admins` — is `AGENTS.md` → "Completion and Merge",
-  with the `gh api` command that reads the live settings (an agent login cannot
-  run it: it sees only the required checks);
-- **the code-owner rule itself** — what needs an Approve and how agents treat
-  it — is `AGENTS.md` → "Pre-authorisation and attributability".
+#### Required checks applied today
+
+| Required check | Status | Job | What it gates |
+| --- | --- | --- | --- |
+| `verify` | applied | `ci.yml` → `verify` | lint, typecheck, knip, build, PR-body gates, and a fail-closed same-attempt poll of four independent full-suite test shards (#3431). It no longer runs the dependency audit (#2946) |
+| `Migration drift check` | applied | `ci.yml` → `migration-drift` | migrations reproduce `schema.prisma`; real-Postgres lock harnesses |
+| `Data migration verification` | applied | `ci.yml` → `data-migration-verification` | data-rewriting migrations against realistic pre-state |
+| `Static analysis gate` | applied | `ci.yml` → `static-analysis` | Semgrep: four registry packs **plus** `.semgrep/rules/**` and their fixtures |
+| `Playwright E2E` | applied | `e2e.yml` → `playwright` | the browser suite |
+| `E2E multi-lodge` | applied | `e2e.yml` → `multi-lodge` | the multi-lodge browser suite |
+| `Secret scan (gitleaks)` | applied | `ci.yml` → `secret-scan` | the PR's own commits, `main`'s history including merge commits, and the checked-out tree (#2686) |
+| `Image security gate (Trivy CRITICAL)` | applied | `ci.yml` → `docker-image-security` | CRITICAL image vulnerabilities. HIGH stays advisory (#2686) |
+| `Dependency audit` | applied | `ci.yml` → `dependency-audit` | `pnpm audit --audit-level=high`. Split out of `verify` (#2946), where a failing audit skipped lint, the ratchet, `prisma generate`, typecheck, knip, `pnpm test` and the build on every branch (#2945) |
+
+**Adding a required context is a three-step sequence, and doing it out of
+order breaks every open pull request** — whenever a job producing a required
+context is added or renamed. A branch predating the merge produces none of the
+new names, and a required check that has never reported sits on
+"Expected — waiting for status" forever:
+
+1. merge the change that adds or renames the job;
+2. then add that job's context to branch protection;
+3. then rebase every open pull request onto the new `main`, oldest first.
+
+**Between step 1 and step 2 the new context is a red check, not a merge
+block.** Splitting out `Dependency audit` (#2946) opened exactly such a gap:
+`verify` had stopped running the audit, so a high advisory reddened a check
+nothing enforced. Close such a window promptly.
+
+**Read the applied list rather than trusting this table** — but an agent
+session cannot: the machine account holds `push`, not `admin`, so the endpoint
+404s for it. **That 404 means "not permitted", never "not protected"**; check
+`gh api user -q .login` first. Ask the owner to run:
+
+```bash
+gh api repos/thatskiff33/AlpineClubBookingsNZ/branches/main/protection \
+  --jq '{checks: .required_status_checks.contexts,
+         strict: .required_status_checks.strict,
+         approvals: .required_pull_request_reviews.required_approving_review_count,
+         code_owners: .required_pull_request_reviews.require_code_owner_reviews,
+         dismiss_stale: .required_pull_request_reviews.dismiss_stale_reviews,
+         enforce_admins: .enforce_admins.enabled}'
+```
+
+A second trap: this repository also carries a *ruleset*, "Protect Main
+Branch", whose enforcement is `disabled`. Rulesets never appear at the
+endpoint above, so editing one changes nothing while appearing to work;
+`gh api repos/<owner>/<repo>/rules/branches/main` lists what a ruleset really
+applies — currently `[]`.
+
+Measured 19 Aug 2026: the nine contexts above, `strict: false` (requiring
+up-to-date branches serialises the queue behind full re-runs),
+`required_approving_review_count: 0` (a pull request is required, a human
+approval is not — #2713/#2948), `enforce_admins: false`. Code-owner review
+and stale-approval dismissal are applied (2 Oct 2026, #3341): see "Rebuilding
+the code-owner configuration" below.
+
+**Advisory, and deliberately NOT required** — a finding is investigated, but
+it cannot block a merge: `CodeQL`, `Analyze (javascript-typescript)` and
+`Analyze (actions)` (GitHub code scanning **default setup**, configured in
+repository settings, not a workflow file — there is no `codeql.yml`
+and adding one would require disabling default setup); `Semgrep OSS`
+(the code-scanning check GitHub raises from `Static analysis gate`'s
+SARIF — not a second scan);
+`semgrep-cloud-platform/scan` (a Semgrep AppSec Platform App
+configured outside this repository); `dependency-review`;
+`Markdown relative-link check (offline)`; `Scheduled secret sweep` (#2852),
+weekly and unrequirable; and the clock-rollover canary, which
+its own workflow comment says must never become a pull-request check.
+Measured on fork PRs #2782/#2813, the CodeQL contexts do not appear at
+all — a second reason they can never be required.
+
+**Never put a job-level `if:` or `needs:` on a required check.** A skipped job
+DOES report a status — measured on push `66448740c`, where `dependency-review`
+and `gitleaks-pr-diff` both skipped via a job-level `if:` and both reported
+one; only a workflow-level `on:` filter produces none. The hazard is that
+GitHub counts a `skipped` required check as **satisfying** branch protection,
+so an `if:` on a security gate makes it vacuously green and the merge button
+turns on. `needs:` does the same when an upstream job fails. Put the condition
+on the STEP instead, where a skip leaves the job a real pass or failure.
+
+Because `enforce_admins` is off, an admin merge can land `main` red; compare
+against `main`'s own latest CI before calling a failure pre-existing. Require
+each required check present on the **exact current head SHA**: a conflicted
+PR gets no `pull_request` runs, so `gh pr checks` can read green off an older
+head, and an empty failure list is not a passing run (#2641).
+
+#### Rebuilding the code-owner configuration
 
 What is owned is `.github/CODEOWNERS` itself: the money surface (#3341) and,
 since the owner's
@@ -394,8 +479,8 @@ must not make this change; it is a repository setting.
      which is the repo-wide review step 5 forbids.
 
    Change nothing else, and save.
-3. Read the settings back with the `gh api` command in `AGENTS.md` →
-   "Completion and Merge". Expect `approvals: 0`, `code_owners: true` and
+3. Read the settings back with the `gh api` command under "Required checks
+   applied today" above. Expect `approvals: 0`, `code_owners: true` and
    `dismiss_stale: true`, with the nine checks unchanged.
 4. Test it on two throwaway branches off `main`, each opened as a pull request
    by `thatskiff33-agents` (GitHub never counts a code owner's approval of

@@ -1,0 +1,9 @@
+# Example only. Copy to ~/.codex/alpine-review.config.toml before use.
+# Deep review profile. Read-only.
+# Model and effort are chosen at launch (AGENTS.md → Model selection); e.g. -c model_reasoning_effort=high
+
+approval_policy = "on-request"
+sandbox_mode = "read-only"
+
+[sandbox_workspace_write]
+network_access = false
