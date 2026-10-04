@@ -71,6 +71,8 @@ function txWithSettlement(settlement: Record<string, unknown> | null) {
   return {
     payment: { update: vi.fn().mockResolvedValue({}) },
     groupBookingSettlement: { findFirst: vi.fn().mockResolvedValue(settlement) },
+    // #3809: no applied credit, so a reduction gives none back.
+    memberCredit: { aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }) },
   } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
 }
 
