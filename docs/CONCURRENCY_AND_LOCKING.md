@@ -1578,6 +1578,21 @@ mispricing a booking.
   re-points existing rows' `memberId` — and it serialises with the approval on
   the lodge capacity key.
 
+- **Booking-ledger back-post** — `src/lib/booking-ledger-back-post.ts`
+  (`lockBookingForBackPost`, #3583): the operator back-post posts a historical
+  booking's ledger lines on a live database, one booking per transaction. It
+  takes `pg_advisory_xact_lock(1)` (the key every settle, cancel, edit and
+  closure posts under), the booking's lodge key, the member credit-ledger key of
+  every member its credit rows name (sorted), then `SELECT 1 FROM "Payment" …
+  FOR NO KEY UPDATE` and `SELECT 1 FROM "Booking" … FOR NO KEY UPDATE`, and
+  re-reads everything under them. Payment before booking is the order of the
+  one settlement writer that reaches the ledger without lock(1), the card-refund
+  writer (`lockPaymentForRefundedTotal`); `NO KEY UPDATE`, not `UPDATE`, so the
+  foreign-key share lock a concurrent writer's ledger line takes on the booking
+  is never refused (with `FOR UPDATE` the two deadlocked on real PostgreSQL).
+  Both statements may match nothing (no payment), which reads as nothing to
+  lock. Raced against a live date shift and a live card refund in
+  `booking-ledger-back-post.realdb.test.ts`.
 - **Kept late-capture task row** — `src/lib/xero-kept-late-capture-invoice.ts`
   (`lockKeptLateCaptureTask`, #3635): `SELECT 1 FROM "ManualRefundTask" WHERE
   "id" = … FOR UPDATE` on the #3639 approval task. Taken by the kept-capture

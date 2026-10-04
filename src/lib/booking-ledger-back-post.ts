@@ -88,6 +88,7 @@ import {
   sumModificationLines,
   type ModificationPricingSide,
 } from "@/lib/booking-modification-lines";
+import { bookingOwner } from "@/lib/booking-owner";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
 import { acquireLodgeCapacityLock } from "@/lib/lodge-capacity-lock";
 import { deriveBookingAppliedCreditCents, lockMemberCreditLedger } from "@/lib/member-credit";
@@ -181,7 +182,8 @@ async function lockBookingForBackPost(tx: Tx, bookingId: string): Promise<boolea
     select: { memberId: true },
     distinct: ["memberId"],
   });
-  const members = [...new Set([...(booking.memberId ? [booking.memberId] : []), ...creditMembers.map((row) => row.memberId)])].sort();
+  const owner = bookingOwner(booking).memberId;
+  const members = [...new Set([...(owner ? [owner] : []), ...creditMembers.map((row) => row.memberId)])].sort();
   for (const memberId of members) await lockMemberCreditLedger(memberId, tx);
   // The payment row before the booking row, as the card-refund writer takes it
   // (`lockPaymentForRefundedTotal`) — the one settlement writer that reaches the
