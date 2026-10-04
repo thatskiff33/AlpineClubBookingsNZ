@@ -38,7 +38,6 @@ export const MANUAL_REFUND_TASK_RESOLUTION_SELECT = Prisma.validator<Prisma.Manu
     select: {
       memberId: true,
       lodgeId: true,
-      checkIn: true, // #3835: a cancelled booking's netting re-tiers by it
       // #3170: the CHARGE direction mints an additional PaymentIntent
       // through the same helper every ordinary price increase uses, and
       // that helper needs a Stripe customer. Read here, under the same
@@ -53,6 +52,7 @@ export const MANUAL_REFUND_TASK_RESOLUTION_SELECT = Prisma.validator<Prisma.Manu
         },
       },
       organisation: { select: { name: true, email: true } },
+      checkIn: true, // #3835: a cancelled booking's netting re-tiers by it
       // #3032: the booking's own status and its primary Xero invoice id,
       // for `hasIssuedPrimaryXeroInvoice`. A completion that moves money on
       // a booking whose invoice was issued has to correct that invoice, or
