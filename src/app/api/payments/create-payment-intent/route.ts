@@ -204,38 +204,30 @@ export async function POST(request: NextRequest) {
       return switchedToInternetBankingResponse();
     }
 
-    // #3864 (`INV-PAY-102`): the transaction below spends a stored credit
-    // election, and an intent this booking already holds was minted at the
-    // pre-election price. Spend the election only once that intent is dead:
-    // if it captured after the credit was spent, the member would pay the
-    // whole price by card AND lose the credit (#1641's double pay). A live
-    // capture leaves the election unspent; the recovery below settles that
-    // capture, and the settle door clears the election it cannot honour.
-    const electionToSpend =
-      booking.creditElectionCents != null &&
-      (booking.status === "DRAFT" || booking.status === "PAYMENT_PENDING");
+    // #3864 (`INV-PAY-024`): an intent this booking holds was minted at the
+    // pre-election price, so the election below is spent only once that intent
+    // is dead. A live capture leaves it unspent; the settle door clears it.
     const priorIntentId = booking.payment?.stripePaymentIntentId ?? null;
-    let retiredIntentId: string | null = null;
-    let liveCaptureHoldsElection = false;
-    if (electionToSpend && priorIntentId && booking.payment) {
-      const retired = await retireCardIntentBeforeElection({
-        paymentIntentId: priorIntentId,
-        paymentStatus: booking.payment.status,
-        bookingId: booking.id,
-        door: "card-pay-step",
-      });
-      if (retired === "unconfirmed") {
-        return NextResponse.json(
-          {
-            error:
-              "We couldn't confirm your earlier card payment was cancelled, so your account credit has not been applied yet. Please try again in a few minutes.",
-          },
-          { status: 409 }
-        );
-      }
-      if (retired === "retired") retiredIntentId = priorIntentId;
-      liveCaptureHoldsElection = retired === "notCancellable";
+    const retired =
+      booking.creditElectionCents != null && booking.payment && priorIntentId &&
+      (booking.status === "DRAFT" || booking.status === "PAYMENT_PENDING")
+        ? await retireCardIntentBeforeElection({
+            paymentIntentId: priorIntentId,
+            paymentStatus: booking.payment.status,
+            bookingId: booking.id,
+            door: "card-pay-step",
+          })
+        : null;
+    if (retired === "unconfirmed") {
+      return NextResponse.json(
+        {
+          error:
+            "We couldn't confirm your earlier card payment was cancelled, so your account credit has not been applied yet. Please try again in a few minutes.",
+        },
+        { status: 409 }
+      );
     }
+    const retiredIntentId = retired === "retired" ? priorIntentId : null;
 
     // This is the point at which a draft becomes a real, capacity-holding,
     // payable booking — so it is also the point at which the member's stored
@@ -262,7 +254,7 @@ export async function POST(request: NextRequest) {
       (booking.status === "DRAFT" ||
         (booking.status === "PAYMENT_PENDING" &&
           booking.creditElectionCents != null)) &&
-      !liveCaptureHoldsElection
+      retired !== "notCancellable"
         ? await prisma.$transaction(async (tx) => {
             // Two-tier lock protocol (#1881): global booking/money lock first,
             // then the per-lodge capacity lock. The booking's lodge cannot
@@ -378,20 +370,18 @@ export async function POST(request: NextRequest) {
               }
             }
 
-            // #3864: re-checked under the locks. Any intent other than the one
-            // retired above (minted since, in another tab) is live at the
-            // pre-election price, so this request must not spend under it.
-            if (freshBooking.creditElectionCents != null) {
-              const lockedPayment = await tx.payment.findUnique({
-                where: { bookingId },
-                select: { stripePaymentIntentId: true },
-              });
-              if (
-                lockedPayment?.stripePaymentIntentId &&
-                lockedPayment.stripePaymentIntentId !== retiredIntentId
-              ) {
-                throw new PaymentIntentConflictError();
-              }
+            // #3864: under the locks, no intent but the one retired above (say,
+            // one a stale tab minted since) may be live beside the spend.
+            const lockedPayment =
+              freshBooking.creditElectionCents == null
+                ? null
+                : await tx.payment.findUnique({
+                    where: { bookingId },
+                    select: { stripePaymentIntentId: true },
+                  });
+            const lockedIntentId = lockedPayment?.stripePaymentIntentId;
+            if (lockedIntentId && lockedIntentId !== retiredIntentId) {
+              throw new PaymentIntentConflictError();
             }
 
             // #2265 — honour the election the member made when they saved the

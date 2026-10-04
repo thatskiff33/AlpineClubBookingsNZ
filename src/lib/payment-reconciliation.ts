@@ -1290,9 +1290,8 @@ async function settleBookingPaymentInTransaction(
     // settlement of a full-price booking's invoice, so admitting it can never
     // under-charge the member; new bookings never mint a full-price intent, so the
     // leniency does not re-open the double-charge. The ledger read is skipped
-    // entirely for a full-price capture. #3864: a full-price intent minted BEFORE
-    // credit was applied can still capture after it, so the leniency is safe only
-    // because the give-back below returns the credit such a capture leaves unspent.
+    // entirely for a full-price capture; the #3864 give-back below returns any
+    // credit such a capture leaves unspent.
     //
     // The manual path has no arriving amount to validate: it DERIVED the
     // effective price under the MEMBER-CREDIT lock in prepareManualSettlement,
@@ -1705,14 +1704,10 @@ async function settleBookingPaymentInTransaction(
     // writer is never clobbered; see clearStaleCreditElection.
     const staleCreditElectionCents = await clearStaleCreditElection(tx, booking);
 
-    // #3864 (`INV-PAY-102`), the same rule for credit already SPENT: the card
-    // capture is what the member paid, so credit stays spent only for what it
-    // did not cover (`finalPriceCents - amountCents`, the mirror's figure). A
-    // full-price intent minted before an election was spent leaves that credit
-    // unspent once it captures; it goes back to the member's balance through
-    // the one give-back, and the mirror is written to match, so the member never
-    // pays by card AND by credit (#1641's double pay). Zero on every ordinary
-    // effective-price capture. Under the member key taken above (INV-LOCK-002).
+    // #3864 (`INV-PAY-024`), the same rule for credit already SPENT: it stays
+    // spent only for what the capture did not cover (the mirror's figure); the
+    // rest goes back through the one give-back, under the member key taken above
+    // (INV-LOCK-002), so a member never pays by card AND by credit (#1641).
     let givenBackCreditCents = 0;
     if (settlement.kind === "stripe") {
       if (settleCreditLedgerMemberId) {
@@ -1945,8 +1940,7 @@ export async function markBookingPaymentSucceeded({
     throw new Error("Unexpected manual settlement outcome on the Stripe path");
   }
 
-  // #3864: credit the capture gave back is reported the same way as an
-  // election it cleared — both are credit the member asked to spend and kept.
+  // #3864: credit given back is reported like an election cleared.
   const unspentCreditCents =
     reconciliation.outcome === "paid"
       ? (reconciliation.staleCreditElectionCents ?? 0) +

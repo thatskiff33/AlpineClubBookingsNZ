@@ -99,8 +99,9 @@ export async function isCardIntentRetired({
 
 /**
  * A STORED CREDIT ELECTION IS SPENT ONLY ONCE THE CARD INTENT MINTED BEFORE IT
- * IS DEAD (#3638, #3864; `INV-PAY-102`). Both doors that spend an election —
- * the switch to Internet Banking and the card pay step — call this first,
+ * IS DEAD (#3638, #3864; `INV-PAY-024`, `INV-PAY-102`). Both doors that spend
+ * an election — the switch to Internet Banking and the card pay step — call
+ * this first,
  * outside any transaction, because that intent was minted at the pre-election
  * price: if it captures after the credit is spent, the member pays the whole
  * price by card AND loses the credit (#1641's double pay).
