@@ -894,10 +894,12 @@ any active note as the payment's one note, so a later cancellation hand-back is
 skipped as "already linked"; and its worker raises a review's queued row as that
 one note (no `perDelta` mark, recorded in the field). So, as for #3791, stop the
 old colour's outbox workers before the new release completes a review's refund
-on a cancelled booking. Before rolling back: (1) let every `REFUND_CREDIT_NOTE`
-outbox row whose payload carries `reviewTaskId` finish (a failed one: mark it
-resolved in Xero), so none is PENDING, RUNNING, FAILED or PARTIAL; (2) list the
-per-refund notes,
+on a cancelled booking. Before rolling back: (1) let every `CREDIT_NOTE` row on
+a `Payment` whose payload carries `reviewTaskId` finish, whatever its queue type
+(an operator's retry runs inline under a row with none), and mark a failed one
+resolved in Xero, until this read-only list is empty:
+`SELECT id, "queueType", status FROM "XeroSyncOperation" WHERE "localModel" = 'Payment' AND "entityType" = 'CREDIT_NOTE' AND "requestPayload"->>'reviewTaskId' IS NOT NULL AND status IN ('PENDING', 'RUNNING', 'FAILED', 'PARTIAL')`;
+(2) list the per-refund notes,
 `SELECT "localId", "xeroObjectId", active FROM "XeroObjectLink" WHERE role = 'REFUND_CREDIT_NOTE' AND metadata->>'perDelta' = 'true'`.
 None: the rollback is safe. Any: the old code can switch those links off, so
 roll back only if needed and, after rolling forward again, list them once more.

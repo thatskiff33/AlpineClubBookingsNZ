@@ -14,8 +14,8 @@
   credit does not: Xero records it when the member spends it.
 - **Rolling back past #3880 needs a check first.** The release before it treats
   a bank-transfer payment's refund notes as one note, so it can switch off the
-  per-refund notes a review raised. Before rolling back, let any queued review
-  refund note finish, and list refund-note links marked `perDelta`
+  per-refund notes a review raised. Before rolling back, let every review
+  refund note finish, queued or an operator's retry, and list refund-note links marked `perDelta`
   (`docs/xero/ARCHITECTURE.md`, "Deploy and rollback note (#3880)"): with none
   the rollback is safe; with any, after rolling forward set active again by hand
   each listed link the old code switched off whose note is still live in Xero. A
