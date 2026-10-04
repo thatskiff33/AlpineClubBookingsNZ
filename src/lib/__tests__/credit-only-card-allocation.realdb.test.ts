@@ -51,6 +51,7 @@ const GUESTS = [
 ];
 const PRICE_CENTS = 20_000;
 const FULL_REFUND = { refundPercentage: 100, fixedFeeCents: 0 };
+const FIFTY_LESS_TWENTY = { refundPercentage: 50, fixedFeeCents: 2_000 };
 const LOCK_POLL_TIMEOUT_MS = 2_000;
 
 /** The fake Xero: notes and their allocations, the invoice, and what each provider call saw. */
@@ -266,11 +267,12 @@ let observerClient: PrismaClient;
       await expect(createXeroInvoiceForBooking(BOOKING_ID)).resolves.toBe(XERO_INVOICE_ID);
     }
 
-    async function removeLeavingGuest() {
+    async function removeLeavingGuest(settlementMethod?: "card" | "credit") {
       const { removeBookingGuestInTransaction } = await import("@/lib/booking-guest-removal-service");
       const result = await prisma.$transaction(
         (tx) => removeBookingGuestInTransaction({
           tx, bookingId: BOOKING_ID, guestId: LEAVING_GUEST_ID, actorMemberId: MEMBER_ID, actorRole: "ADMIN", today: TODAY, format: CLUB_FORMAT_TEST,
+          ...(settlementMethod ? { settlementMethod } : {}),
         }),
         { maxWait: 10_000, timeout: 20_000 },
       );
@@ -495,6 +497,53 @@ let observerClient: PrismaClient;
 
       await cancel("credit");
       expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(PRICE_CENTS);
+    });
+
+    /**
+     * M-1: a booking reduced BEFORE #3809 (price lowered, no give-back
+     * recorded) keeps all its credit at a cancel (owner decision, 4 Oct 2026).
+     * The inbound sync must not change that: the cancel after a sync returns
+     * exactly what the same cancel returns with no sync.
+     */
+    async function preReleaseReducedCancel({ cardCents, reducedToCents, rule, sync }: { cardCents: number; reducedToCents: number; rule: typeof FULL_REFUND; sync: boolean }) {
+      await creditOnlyCardBooking({ cardCents });
+      await raiseReplay();
+      await prisma.booking.update({ where: { id: BOOKING_ID }, data: { totalPriceCents: reducedToCents, finalPriceCents: reducedToCents } });
+      if (sync) await inboundSync(PRICE_CENTS - cardCents);
+      await prisma.cancellationPolicy.updateMany({ where: { lodgeId: LODGE_ID }, data: rule });
+      await cancel("credit");
+      return credit.getMemberCreditBalance(MEMBER_ID);
+    }
+
+    it.each([
+      { shape: "credit-only reduced to $150, 100%", cardCents: 0, reducedToCents: 15_000, rule: FULL_REFUND, expectedCents: 20_000 },
+      { shape: "credit-only reduced to $150, 50% less $20", cardCents: 0, reducedToCents: 15_000, rule: FIFTY_LESS_TWENTY, expectedCents: 8_000 },
+      { shape: "$50 card + $150 credit reduced to $100, 100%", cardCents: 5_000, reducedToCents: 10_000, rule: FULL_REFUND, expectedCents: 20_000 },
+      { shape: "$50 card + $150 credit reduced to $100, 50% less $20", cardCents: 5_000, reducedToCents: 10_000, rule: FIFTY_LESS_TWENTY, expectedCents: null },
+    ])("M-1: a booking reduced before #3809 ($shape) is never short after the inbound sync - the cancel returns what it returns unsynced", async ({ cardCents, reducedToCents, rule, expectedCents }) => {
+      const unsynced = await preReleaseReducedCancel({ cardCents, reducedToCents, rule, sync: false });
+      const synced = await preReleaseReducedCancel({ cardCents, reducedToCents, rule, sync: true });
+      expect(synced).toBe(unsynced);
+      if (expectedCents !== null) expect(synced).toBe(expectedCents);
+      expect(await mirror()).toBe(PRICE_CENTS - cardCents);
+    });
+
+    it("L-1: $50 card + $150 credit with a mirror the old sync clipped to $50, a #3809 reduction that refunds the card whole, then the cancel at 100%: the $150 of credit comes back, not $50 - and the preview says so", async () => {
+      await creditOnlyCardBooking({ cardCents: 5_000 });
+      await raiseReplay();
+      await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { creditAppliedCents: 5_000 } });
+      const removed = await removeLeavingGuest("card");
+      expect(removed.refundAmountCents).toBe(5_000);
+      // The route's Stripe refund, landed: the card is refunded whole.
+      await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: 5_000, status: "REFUNDED" } });
+      await prisma.paymentTransaction.updateMany({ where: { paymentId: PAYMENT_ID }, data: { refundedAmountCents: 5_000, status: "REFUNDED" } });
+      const { refundedPaymentCreditRestore } = await import("@/lib/cancel-refunded-payment-credit");
+      const booking = await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
+      const previewed = await refundedPaymentCreditRestore(prisma, { bookingId: BOOKING_ID, booking: { ...booking, payment: booking.payment! }, todayAtClub: "2026-07-01" as never });
+      expect(previewed?.creditToRestoreCents).toBe(15_000);
+
+      await cancel();
+      expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(15_000);
     });
 
     it.each([
