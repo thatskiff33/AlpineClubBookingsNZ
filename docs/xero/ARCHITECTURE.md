@@ -789,9 +789,19 @@ credit is all that pays the invoice. The invoice operation allocates it with
 the same engine a card-and-credit booking uses (#1641,
 `allocateAppliedCreditForBooking`), on the raise and on every replay: a payment
 that captured nothing (`isCreditOnlyCardPayment`) passes the cash-captured gate
-whatever its status, because the never-captured cancel flips it to `FAILED`
-while the credit is still applied. The engine's stamps, unique slices and
-per-slice links make every re-run allocate nothing more. An invoice raised
+without its status being read: every credit-covered settle writes it
+`SUCCEEDED` and a cancel leaves it so, on the paid path. The engine's stamps,
+unique slices and per-slice links make every re-run allocate nothing more. The
+engine is also the one gate for a cancel (#3836, bank transfers included): on a
+`CANCELLED` booking, or one with a restore row, it only finishes slices already
+committed - which the cancel's clearing note was sized net of - and never plans
+or mints new ones, so the invoice is never credited both by a clearing note and
+by an allocation. The repair pass's cancelled-open-invoice arm waits while the
+booking's invoice or applied-credit allocation operation is unfinished. The
+inbound credit-note repair caps the payment's `creditAppliedCents` at the
+booking's price and change fee, never at the card amount, which is $0 here; and
+a cancel tiers a mirror that the old cap clipped to the card amount from the
+ledger (`cancelTieredAppliedCreditCents`). An invoice raised
 before #3836 is left owing until the booking repair pass's
 `UNALLOCATED_APPLIED_CREDIT` finding queues the applied-credit allocation
 operation (`docs/MAINTENANCE.md`); a cancelled one is never queued, since the

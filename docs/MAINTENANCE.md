@@ -1447,10 +1447,22 @@ for credit that has none) up to what is still applied, and stamps it, so a
 re-run allocates nothing more. Where the booking's invoice or allocation
 operation is unfinished the tool offers that operation's retry instead, or
 waits, and never queues a second one. A cancelled booking is not reported here:
-the `CANCELLED_BOOKING_OPEN_INVOICE` finding clears its invoice with a note. If
-the treasurer already settled such an invoice by hand in Xero, Xero refuses the
-allocation and the operation fails loudly; resolve it in Xero rather than
-retrying it.
+the `CANCELLED_BOOKING_OPEN_INVOICE` finding clears its invoice with a note, and
+waits while the booking's invoice or allocation operation is unfinished, since
+that operation may still finish allocations the note must not repeat.
+
+If Xero refuses the allocation (a 4xx: typically the invoice was voided, or
+already settled by hand), the operation stays `FAILED` and the report offers its
+retry as a manual action only, never auto-applied, so a sweep does not re-run a
+refusal. An applied-credit operation cannot be marked "resolved in Xero": the
+local credit ledger's fences read only its status, so it is closed by a
+successful run. Read the operation's error, put the cause right in Xero (for
+example, remove a hand-made payment or allocation that already settles the
+invoice, so the member's credit note pays it as the app records), then apply the
+retry by its key: `--apply --apply-action <actionKey>`. Where the invoice was
+voided and must stay voided, leave the operation failed and take the booking to
+a developer: the member's credit note stays unallocated in Xero, and no tool
+here re-raises the invoice.
 
 ### Refund credit notes with no settlement on record (#3548)
 
