@@ -1,5 +1,6 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { buildStructuredAuditLogCreateArgs, getAuditRequestContext } from "@/lib/audit";
 import { DEFAULT_PUBLIC_CONTENT_SETTINGS } from "@/config/club-settings-defaults";
@@ -122,27 +123,45 @@ export async function PUT(request: Request) {
   const bookNowPageId = parsed.data.bookNowTarget === "PAGE" ? parsed.data.bookNowPageId : null;
   const writeData = { ...parsed.data, bookNowPageId };
 
-  const settings = await prisma.$transaction(async (tx) => {
-    const before = await tx.publicContentSettings.findUnique({ where: { id: "default" }, select: settingsSelect });
-    const saved = await tx.publicContentSettings.upsert({
-      where: { id: "default" },
-      update: { ...writeData, updatedByMemberId: guard.session.user.id },
-      create: { id: "default", ...writeData, updatedByMemberId: guard.session.user.id },
-      select: settingsSelect,
+  // The published-page check above runs OUTSIDE this transaction, and the
+  // supported page delete (#2352) can remove that page before the upsert below
+  // runs. The upsert's foreign key then fails with P2003, which used to escape as
+  // a 500 for the same "that page is not available" answer the check gives
+  // (#3852). Not retried: the chosen page really is gone, so the same body would
+  // fail the same way. `bookNowPageId` is this row's only foreign key, so a
+  // P2003 here can only be that page.
+  let settings: Settings;
+  try {
+    settings = await prisma.$transaction(async (tx) => {
+      const before = await tx.publicContentSettings.findUnique({ where: { id: "default" }, select: settingsSelect });
+      const saved = await tx.publicContentSettings.upsert({
+        where: { id: "default" },
+        update: { ...writeData, updatedByMemberId: guard.session.user.id },
+        create: { id: "default", ...writeData, updatedByMemberId: guard.session.user.id },
+        select: settingsSelect,
+      });
+      await tx.auditLog.create(buildStructuredAuditLogCreateArgs({
+        action: "PUBLIC_CONTENT_SETTINGS_UPDATED",
+        actor: { memberId: guard.session.user.id },
+        entity: { type: "PublicContentSettings", id: "default" },
+        category: "admin",
+        severity: "important",
+        outcome: "success",
+        summary: "Public fee and policy content visibility updated",
+        metadata: { before: before ? serializeSettings(before) : defaults, after: writeData },
+        request: getAuditRequestContext(request),
+      }));
+      return saved;
     });
-    await tx.auditLog.create(buildStructuredAuditLogCreateArgs({
-      action: "PUBLIC_CONTENT_SETTINGS_UPDATED",
-      actor: { memberId: guard.session.user.id },
-      entity: { type: "PublicContentSettings", id: "default" },
-      category: "admin",
-      severity: "important",
-      outcome: "success",
-      summary: "Public fee and policy content visibility updated",
-      metadata: { before: before ? serializeSettings(before) : defaults, after: writeData },
-      request: getAuditRequestContext(request),
-    }));
-    return saved;
-  });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2003"
+    ) {
+      return NextResponse.json({ error: "The selected Book Now page is not published." }, { status: 400 });
+    }
+    throw error;
+  }
   revalidatePath("/", "layout");
   return NextResponse.json({ settings: serializeSettings(settings) });
 }
