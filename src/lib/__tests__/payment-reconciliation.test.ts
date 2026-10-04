@@ -15,8 +15,8 @@ const CLUB_ZONE = "Pacific/Auckland";
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   // #3864: nothing to give back unless a case says so.
-  giveBackAppliedCredit: vi.fn(async () => ({ appliedCreditCents: 0, givenBackCents: 0, payment: null })),
-  findAppliedCreditDeallocationFence: vi.fn(async (): Promise<{ id: string; status: string } | null> => null),
+  giveBackAppliedCredit: vi.fn(async (..._args: unknown[]) => ({ appliedCreditCents: 0, givenBackCents: 0, payment: null })),
+  findAppliedCreditDeallocationFence: vi.fn(async (..._args: unknown[]): Promise<{ id: string; status: string } | null> => null),
   paymentUpdate: vi.fn(),
   // #3792: the settle's member credit-ledger key.
   lockMemberCreditLedger: vi.fn(),

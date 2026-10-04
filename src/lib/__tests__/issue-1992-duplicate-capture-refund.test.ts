@@ -29,7 +29,7 @@ import { parseDateOnly } from "@/lib/date-only";
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   // #3864: nothing to give back unless a case says so.
-  giveBackAppliedCredit: vi.fn(async () => ({ appliedCreditCents: 0, givenBackCents: 0, payment: null })),
+  giveBackAppliedCredit: vi.fn(async (..._args: unknown[]) => ({ appliedCreditCents: 0, givenBackCents: 0, payment: null })),
   paymentUpdate: vi.fn(),
   executeRaw: vi.fn(),
   bookingFindUnique: vi.fn(),
