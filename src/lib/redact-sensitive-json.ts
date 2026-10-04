@@ -218,7 +218,7 @@ const SENSITIVE_JSON_KEY_FRAGMENTS = new Set([
   // The COMPOSED spellings (`memberName`, `guestName`, …) are the ones a server
   // route invents when it joins a first and last name together for a message.
   // They were documented as a known gap once; a gap in a redactor is work, not
-  // a note (AGENTS.md §6), so they are on the list. `memberName` in particular
+  // a note (AGENTS.md "Residual risks are resolved in the PR"), so they are on the list. `memberName` in particular
   // is first-party, composed in at least six server routes, and was filed as
   // "Xero's own" — it is not.
   "firstname",
