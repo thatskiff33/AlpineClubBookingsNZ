@@ -1111,7 +1111,12 @@ describe("createGroupSettlementIntent", () => {
     );
   });
 
-  it("never reuses a partially refunded settlement's intent (#1883)", async () => {
+  // #3653: a live group's settlement reads PARTIALLY_REFUNDED once a joiner's
+  // reduction is refunded out of it. The group is still paid for
+  // (`organiserHasPaidSettlement`), so nothing is minted over the combined
+  // payment every child's refund comes out of. Before #3653 this state only
+  // followed an organiser cancel, which `requireOrganiserPaysGroup` refuses.
+  it("treats a partially refunded settlement as paid and mints nothing over it (#3653)", async () => {
     mocks.groupBookingFindUnique.mockResolvedValue(
       organiserPaysGroup({
         settlement: {
@@ -1125,8 +1130,9 @@ describe("createGroupSettlementIntent", () => {
 
     const result = await createGroupSettlementIntent("ABCD2345", ORGANISER);
 
+    expect(result).toEqual({ outcome: "already_settled", amountCents: 9000, childCount: 0 });
     expect(mocks.getPaymentIntent).not.toHaveBeenCalled();
-    expect(result.outcome).toBe("ready");
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.paymentUpsert).not.toHaveBeenCalled();
   });
 

@@ -319,6 +319,8 @@ export async function DELETE(
       settlementAmountCents: result.xeroRefundAmountCents,
       settlementMethod: result.settlementMethod,
       refundedThroughStripe: result.hasSucceededPayment,
+      // #3653: the organiser child refund raises the one note, after Stripe.
+      organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,
       // A Stripe-collected increase must not double-bill through Xero: hold
       // the supplementary invoice's payment recording on the Stripe intent,
       // exactly as the batch flow does.
