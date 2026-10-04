@@ -16,8 +16,10 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import {
+  bookingPromoCodeAdjustments,
   bookingPromoCodeLabel,
   bookingPromoRedemptions,
+  perCodePromoAdjustmentRows,
 } from "../booking-promo-redemptions";
 import { bookingPromoEmailOptions } from "../booking-promo-email-options";
 import { redeemPromoCode, releaseBookingPromoRedemptions } from "../promo";
@@ -444,5 +446,37 @@ describe("member merge (#3826)", () => {
     expect(
       MEMBER_MERGE_RELATION_SPECS.find((spec) => spec.key === "PromoRedemption.member"),
     ).toMatchObject({ column: "memberId", bucket: "move" });
+  });
+});
+
+describe("the one per-code projection and the one per-code-rows rule (#3828)", () => {
+  it("projects each code with its own adjustment, in application order", () => {
+    expect(
+      bookingPromoCodeAdjustments({
+        promoRedemptions: [
+          { id: "r2", applicationOrder: 1, priceAdjustmentCents: -2000, promoCode: { code: "B" } },
+          { id: "r0", applicationOrder: 0, priceAdjustmentCents: 0, promoCode: null },
+          { id: "r1", applicationOrder: 0, priceAdjustmentCents: -3000, promoCode: { code: "A" } },
+        ],
+      }),
+    ).toEqual([
+      { code: "A", amountCents: -3000 },
+      { code: "B", amountCents: -2000 },
+    ]);
+    expect(bookingPromoCodeAdjustments(null)).toEqual([]);
+  });
+
+  it("gives per-code rows only for several codes that add up, dropping zero rows", () => {
+    const lines = [
+      { code: "A", amountCents: -3000 },
+      { code: "Z", amountCents: 0 },
+      { code: "B", amountCents: -2000 },
+    ];
+    expect(perCodePromoAdjustmentRows(lines, -5000)).toEqual([lines[0], lines[2]]);
+    // Drifted: the codes no longer add up to the booking's adjustment.
+    expect(perCodePromoAdjustmentRows(lines, -6000)).toBeNull();
+    // One code is the one combined row, as always.
+    expect(perCodePromoAdjustmentRows([lines[0]!], -3000)).toBeNull();
+    expect(perCodePromoAdjustmentRows(undefined, -3000)).toBeNull();
   });
 });

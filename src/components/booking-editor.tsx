@@ -15,6 +15,7 @@ import {
   requireCalendarDate,
 } from "@/lib/club-time";
 import { useClubFormat } from "@/components/club-format-provider";
+import { perCodePromoAdjustmentRows } from "@/lib/booking-promo-redemptions";
 
 /**
  * The two headline stay dates, spelled out in full — long weekday, long month —
@@ -225,6 +226,11 @@ export function BookingEditor({
   canAdminOverride?: boolean;
 }) {
   const format = useClubFormat();
+  // #3828: one row per code, or the one combined row — the email's own answer.
+  const perCodePromoRows = perCodePromoAdjustmentRows(
+    booking.promoLines,
+    booking.promoAdjustmentCents,
+  );
   const searchParams = useSearchParams();
   /**
    * #2562: the open policy-exception request this visit is here to REPLACE, from
@@ -416,17 +422,15 @@ export function BookingEditor({
             <span>Subtotal</span>
             <span>{formatCents(booking.totalPriceCents, format)}</span>
           </div>
-          {booking.promoLines && booking.promoLines.length > 1
-            ? booking.promoLines
-                .filter((line) => line.amountCents !== 0)
-                .map((line) => (
-                  <PromoAdjustmentRow
-                    key={line.code}
-                    promo={line}
-                    amountCents={line.amountCents}
-                    format={format}
-                  />
-                ))
+          {perCodePromoRows
+            ? perCodePromoRows.map((line) => (
+                <PromoAdjustmentRow
+                  key={line.code}
+                  promo={line}
+                  amountCents={line.amountCents}
+                  format={format}
+                />
+              ))
             : booking.promoAdjustmentCents !== 0 && (
                 <PromoAdjustmentRow
                   promo={booking.promo}

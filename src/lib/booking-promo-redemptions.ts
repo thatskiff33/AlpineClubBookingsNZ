@@ -75,3 +75,45 @@ export function bookingPromoCodeLabel(
     .filter((code): code is string => Boolean(code));
   return codes.length > 0 ? codes.join(", ") : null;
 }
+
+/** One promo code's own signed adjustment on a booking (#3828). */
+export type PromoCodeAdjustment = { code: string; amountCents: number };
+
+/**
+ * Each code the booking carries with its own signed adjustment, in application
+ * order (#3828) — THE ONE projection the confirmation email, an edit's per-code
+ * promotion sides and the booking page all read, so they cannot list the codes
+ * in different orders or with different figures. A redemption whose code was
+ * not loaded is left out.
+ */
+export function bookingPromoCodeAdjustments(
+  booking:
+    | PromoRedemptionCarrier<
+        OrderableRedemption & { priceAdjustmentCents: number; promoCode?: { code: string } | null }
+      >
+    | null
+    | undefined,
+): PromoCodeAdjustment[] {
+  return bookingPromoRedemptions(booking).flatMap((redemption) =>
+    redemption.promoCode
+      ? [{ code: redemption.promoCode.code, amountCents: redemption.priceAdjustmentCents }]
+      : [],
+  );
+}
+
+/**
+ * THE ONE ANSWER to "one money row per code, or the one combined row?"
+ * (#3828), read by the confirmation email (`promoAdjustmentSummaryRows`) and
+ * the booking page alike, so the two fall back together. Per-code only when
+ * there are several codes AND they add up to the booking's
+ * `promoAdjustmentCents`; then the codes that took something (non-zero), in
+ * order. Otherwise `null`: render the one combined row, as always.
+ */
+export function perCodePromoAdjustmentRows<T extends PromoCodeAdjustment>(
+  promoLines: ReadonlyArray<T> | null | undefined,
+  promoAdjustmentCents: number,
+): T[] | null {
+  if (!promoLines || promoLines.length <= 1) return null;
+  const sum = promoLines.reduce((total, line) => total + line.amountCents, 0);
+  return sum === promoAdjustmentCents ? promoLines.filter((line) => line.amountCents !== 0) : null;
+}

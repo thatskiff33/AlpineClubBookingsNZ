@@ -32,6 +32,10 @@ import { type BookingPaymentDueCredit } from "@/lib/email-message-notes";
 import { PROMO_CHANGE_NOT_APPLIED_LABEL } from "@/lib/promo-change-not-applied";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
+import {
+  perCodePromoAdjustmentRows,
+  type PromoCodeAdjustment,
+} from "@/lib/booking-promo-redemptions";
 
 /**
  * #2267: the single source of truth for the signed promo adjustment behind a
@@ -73,18 +77,12 @@ export function promoAdjustmentSummaryRows(
   promoCode?: string,
   /**
    * #3828: each code's own adjustment, in application order, for a booking
-   * carrying several codes. Used — one row per code that took something off,
-   * naming it — only when there are several and they add up to
-   * `promoAdjustmentCents`; otherwise the one row above, as always.
+   * carrying several codes — one row per code, or the one row above, as
+   * `perCodePromoAdjustmentRows` decides (the booking page asks it too).
    */
   promoLines?: ReadonlyArray<PromoCodeAdjustment>,
 ): Array<{ label: string; value: string }> {
-  const perCode = promoLines && promoLines.length > 1 ? promoLines : null;
-  const perCodeRows =
-    perCode &&
-    perCode.reduce((sum, line) => sum + line.amountCents, 0) === promoAdjustmentCents
-      ? perCode.filter((line) => line.amountCents !== 0)
-      : null;
+  const perCodeRows = perCodePromoAdjustmentRows(promoLines, promoAdjustmentCents);
   if (promoAdjustmentCents === 0 && !perCodeRows?.length) return [];
   const subtotalCents = totalCents - promoAdjustmentCents;
   const adjustmentRow = (code: string | undefined, cents: number) => ({
@@ -98,9 +96,6 @@ export function promoAdjustmentSummaryRows(
       : [adjustmentRow(promoCode, promoAdjustmentCents)]),
   ];
 }
-
-/** One promo code's own signed adjustment on a booking (#3828). */
-export type PromoCodeAdjustment = { code: string; amountCents: number };
 
 /**
  * #2328: how the money that was NOT taken from the member's card was settled.

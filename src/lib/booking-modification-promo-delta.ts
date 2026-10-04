@@ -21,12 +21,11 @@
  * `booking-modification-lines.ts` is at its size budget.
  */
 
-/** A side's codes, in application order, each with its own signed adjustment. */
-export type PromoSideCodes = ReadonlyArray<{ code: string; amountCents: number }>;
+import type { PromoCodeAdjustment } from "@/lib/booking-promo-redemptions";
 
 export function splitPromoDeltaByCode(
-  before: { promoByCode?: PromoSideCodes | null },
-  after: { promoByCode?: PromoSideCodes | null },
+  before: { promoByCode?: ReadonlyArray<PromoCodeAdjustment> | null },
+  after: { promoByCode?: ReadonlyArray<PromoCodeAdjustment> | null },
   aggregateDeltaCents: number,
 ): Array<{ promoCode: string; amountCents: number }> | null {
   const beforeCodes = before.promoByCode;
@@ -56,7 +55,7 @@ export function splitPromoDeltaByCode(
 type PromoSide = {
   promoAdjustmentCents: number;
   promoCode?: string | null;
-  promoByCode?: PromoSideCodes | null;
+  promoByCode?: ReadonlyArray<PromoCodeAdjustment> | null;
 };
 
 /**

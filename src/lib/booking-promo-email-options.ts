@@ -1,7 +1,7 @@
-import type { PromoCodeAdjustment } from "@/lib/booking-money-lines";
 import {
+  bookingPromoCodeAdjustments,
   bookingPromoCodeLabel,
-  bookingPromoRedemptions,
+  type PromoCodeAdjustment,
 } from "@/lib/booking-promo-redemptions";
 
 /**
@@ -47,11 +47,7 @@ export function bookingPromoEmailFields(booking: BookingPromoEmailSource): {
   promoLines?: PromoCodeAdjustment[];
 } {
   const promoCode = bookingPromoCodeLabel(booking);
-  const promoLines = bookingPromoRedemptions(booking).flatMap((redemption) =>
-    redemption.promoCode
-      ? [{ code: redemption.promoCode.code, amountCents: redemption.priceAdjustmentCents }]
-      : [],
-  );
+  const promoLines = bookingPromoCodeAdjustments(booking);
   return promoCode
     ? {
         discountCents: booking.discountCents,

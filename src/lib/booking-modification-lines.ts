@@ -57,7 +57,8 @@ import type { AgeTier, BookingGuestNightPriceSource } from "@prisma/client";
 import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
 import { splitNightsIntoPriceRuns } from "@/lib/night-price-runs";
-import { modificationPromoDeltas, type PromoSideCodes } from "@/lib/booking-modification-promo-delta";
+import { modificationPromoDeltas } from "@/lib/booking-modification-promo-delta";
+import type { PromoCodeAdjustment } from "@/lib/booking-promo-redemptions";
 import { storedNightPriceSourceIsInexact } from "@/lib/stored-sold-price-evidence";
 import {
   describeGuestRateMembershipLabel,
@@ -124,7 +125,7 @@ export interface ModificationPricingSide {
   promoAdjustmentCents: number;
   promoCode?: string | null;
   /** #3828: each code's own adjustment, where either side carries several codes. */
-  promoByCode?: PromoSideCodes | null;
+  promoByCode?: ReadonlyArray<PromoCodeAdjustment> | null;
 }
 
 export type DiffBookingPricingResult =

@@ -16,13 +16,13 @@ import {
   bookingModificationSummaryRows,
   bookingModificationTypeLabel,
   promoAdjustmentSummaryRows,
-  type PromoCodeAdjustment,
   resolvePromoAdjustmentCents,
   resolveUnpaidCreditNetting,
   settledByPaymentCents,
   unpaidCreditNoteInput,
   unpaidMoneySummaryRows,
 } from "@/lib/booking-money-lines";
+import type { PromoCodeAdjustment } from "@/lib/booking-promo-redemptions";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
 import { bookingModifiedRefundSentence } from "@/lib/booking-modified-email-copy";
 import { escapeHtml } from "./escape";

@@ -1,4 +1,7 @@
-import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
+import {
+  bookingPromoCodeAdjustments,
+  bookingPromoRedemptions,
+} from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import type { auth } from "@/lib/auth";
@@ -364,12 +367,17 @@ function bookingDetailPromoFields(booking: {
     const promoCode = redemptions[0]?.promoCode;
     return { promo: promoCode ? describe(promoCode) : null };
   }
+  const byCode = new Map(
+    redemptions.flatMap((redemption) =>
+      redemption.promoCode ? [[redemption.promoCode.code, redemption.promoCode] as const] : [],
+    ),
+  );
   return {
     promo: null,
-    promoLines: redemptions.flatMap((redemption) =>
-      redemption.promoCode
-        ? [{ ...describe(redemption.promoCode), amountCents: redemption.priceAdjustmentCents }]
-        : [],
-    ),
+    // The one projection (`bookingPromoCodeAdjustments`), each row described.
+    promoLines: bookingPromoCodeAdjustments(booking).flatMap((line) => {
+      const promoCode = byCode.get(line.code);
+      return promoCode ? [{ ...describe(promoCode), amountCents: line.amountCents }] : [];
+    }),
   };
 }

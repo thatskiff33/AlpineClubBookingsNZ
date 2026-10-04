@@ -55,6 +55,27 @@ describe("BookingEditor payment card promo rows (#3828)", () => {
     expect(screen.getAllByText("Promo adjustment")).toHaveLength(2);
   });
 
+  it("falls back to the one combined row when the codes do not add up, as the email does", () => {
+    // -$30 + -$10 = -$40, but the booking's adjustment is -$50: the per-code
+    // figures have drifted, so neither surface shows them.
+    render(
+      <BookingEditor
+        booking={booking({
+          promoLines: [
+            { code: "SPRING10", type: "PERCENT", description: null, amountCents: -3_000 },
+            { code: "GUESTFREE", type: "FREE_NIGHTS", description: null, amountCents: -1_000 },
+          ],
+        })}
+        canModify={false}
+      />,
+    );
+
+    expect(screen.getAllByText("Promo adjustment")).toHaveLength(1);
+    expect(screen.getByText("-$50.00")).toBeInTheDocument();
+    expect(screen.queryByText("(SPRING10)")).not.toBeInTheDocument();
+    expect(screen.queryByText("-$30.00")).not.toBeInTheDocument();
+  });
+
   it("keeps a one-code booking's single row", () => {
     render(
       <BookingEditor
