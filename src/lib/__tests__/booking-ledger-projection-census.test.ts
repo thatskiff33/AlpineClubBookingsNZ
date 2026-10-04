@@ -31,6 +31,7 @@ import { buildBookingLedgerRows, type BookingLedgerPosting } from "@/lib/booking
 import type { ModificationPricingSide } from "@/lib/booking-modification-lines";
 import type { ReversibleChargeLine } from "@/lib/booking-ledger-charge-line";
 import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
+import { editReviewHandBackLinesWhere, isEditReviewHandBackLine } from "@/lib/edit-financial-review-charge-shape";
 import { buildBookingCancellationRefundIdempotencyKey, buildEditFinancialReviewRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
 
 const B = "bk-3583";
@@ -795,6 +796,22 @@ describe("#3791's review closures: a line is judged by what the member was credi
     expect(refunded.status).toBe("CLASSIFIED");
     // The cancellation's $95 hand-back and the review's $25, the share it is smaller than notwithstanding.
     expect(refunded.explainedBy).toEqual([{ name: "REFUND_MIRROR_HAND_BACK", cents: 12_000 }]);
+  });
+
+  it("#3913 F4: a task's hand-back is #3835's own query, read on the live lines - a reversed one bears nothing out, another task's or kind's is not it", () => {
+    const where = editReviewHandBackLinesWhere([TASK]);
+    const handBack = bankReviewed(5_000, 2_500, 2_500).lines.find((line) => line.kind === "BANK_REFUND" && line.anchorId === TASK)!;
+    expect(isEditReviewHandBackLine(handBack, TASK)).toBe(true);
+    for (const [key, value] of [["kind", "CARD_REFUND"], ["anchorKind", "CANCELLATION"], ["anchorId", "task-other"], ["reversesLineId", "line-1"]] as const) {
+      expect(isEditReviewHandBackLine({ ...handBack, [key]: value }, TASK), key).toBe(false);
+      expect(where[key] === value || (key === "anchorId" && where.anchorId.in.includes(value)), key).toBe(false);
+    }
+    // #3835 counts a hand-back a later reversal undid (`reversesLineId: null` keeps the original);
+    // the census does not, so such a stand-in is drift - the stricter reading, never an excuse.
+    const netted = bankReviewed(5_000, 2_500, 2_500);
+    const original = netted.lines.find((line) => line.id === handBack.id)!;
+    const reversed = { ...netted, lines: [...netted.lines, { ...original, id: "line-reversal", sign: -original.sign, amountCents: -original.amountCents, reversesLineId: original.id, postingKey: `${original.postingKey}:reversal` }] };
+    expect(findings(reversed)).toContain(`SOURCE_DRIFT:${reviewLines(netted).standIn}`);
   });
 
   it("#3913 F1: a hand-back above the share, with the stand-in it makes, is drift - neither is netted, and the refunded column is not classified", () => {

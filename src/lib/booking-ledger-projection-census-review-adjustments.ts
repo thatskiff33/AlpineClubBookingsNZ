@@ -35,7 +35,7 @@
 import { liveLines } from "@/lib/booking-ledger-modification-posting";
 import { isAgreedGiveBackKey } from "@/lib/booking-ledger-posting-keys";
 import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
-import { editReviewSettlementSign } from "@/lib/edit-financial-review-charge-shape";
+import { editReviewSettlementSign, isEditReviewHandBackLine } from "@/lib/edit-financial-review-charge-shape";
 import { buildEditFinancialReviewRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
 
 export type ReviewAdjustmentEvidence = {
@@ -115,7 +115,8 @@ function creditedFromRows(credited: readonly CreditedShare[], giveBacks: readonl
 function ownRefundOf(row: BookingLedgerCensusRow, taskId: string): { cents: number; handBackLineIds: string[] } {
   const key = buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId);
   const cardCents = row.recoveryOperations.filter((operation) => operation.idempotencyKey === key).reduce((sum, operation) => sum + operation.amountCents, 0);
-  const handBacks = liveLines(row.lines).filter((line) => line.kind === "BANK_REFUND" && line.anchorKind === "REVIEW_TASK" && line.anchorId === taskId);
+  // #3835's own fragment, on the live lines only (`editReviewHandBackLinesWhere`).
+  const handBacks = liveLines(row.lines).filter((line) => isEditReviewHandBackLine(line, taskId));
   return { cents: cardCents - handBacks.reduce((sum, line) => sum + line.amountCents, 0), handBackLineIds: handBacks.map((line) => line.id) };
 }
 
