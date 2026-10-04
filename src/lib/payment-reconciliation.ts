@@ -878,6 +878,15 @@ async function settleBookingPaymentInTransaction(
       throw new Error("Booking not found");
     }
 
+    // #3792 (INV-LOCK-002): the member credit-ledger key third, before the Payment
+    // upsert, the order the inbound credit-note sync takes them in; the capacity
+    // void's restore and the manual settle's ledger read re-enter it. The owner is
+    // NOT immutable: member merge re-points it holding the lodge key, so it is read
+    // from this post-lodge-lock snapshot, and the restore below reuses this id.
+    // #3369: an organisation-owned booking has no member, so no key.
+    const settleCreditLedgerMemberId = bookingOwner(booking).memberId;
+    if (settleCreditLedgerMemberId) await lockMemberCreditLedger(settleCreditLedgerMemberId, tx);
+
     // B5 (#2262): the manual path's third lock tier, every guard-2 refusal and
     // the amount law, all decided from this same post-lock snapshot and all
     // BEFORE the first write below.
@@ -1391,13 +1400,13 @@ async function settleBookingPaymentInTransaction(
         },
       });
 
-      const restoreMemberId = bookingOwner(booking).memberId;
       // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
       // booking has none, so there is no key to take. Passing a null key would
       // either throw inside the helper or degenerate to a shared advisory key,
       // which is an `INV-LOCK` hazard that shows up only under concurrency.
-      if (restoreMemberId) {
-        await restoreCreditFromBooking(restoreMemberId, booking.id, tx);
+      // #3792: the same id the member key above was taken on, never a re-read.
+      if (settleCreditLedgerMemberId) {
+        await restoreCreditFromBooking(settleCreditLedgerMemberId, booking.id, tx);
       }
       // #3611: the whole charge goes back, so nothing is kept; a booking already
       // confirmed on the ledger (a mark-paid since reversed) has its stay taken

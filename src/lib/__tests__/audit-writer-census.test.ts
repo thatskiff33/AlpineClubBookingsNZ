@@ -1408,9 +1408,11 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // `xero`. RE-MEASURED with `pnpm run audit:census`.
     // 366 -> 367 (#3454): the two-factor enrolment / erasure-clear record,
     // unpinned `security`. RE-MEASURED with `pnpm run audit:census`.
-    // 367 -> 368 (#3653 fix round): the organiser child refund recovery
+    // 367 -> 368 (#3792): the refused restored-booking allocation change
+    // record, unpinned `xero`. RE-MEASURED with `pnpm run audit:census`.
+    // 368 -> 369 (#3653 fix round, composed onto #3792 by #3630): the organiser child refund recovery
     // record, unpinned `booking`. RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 128, unpinned: 368 });
+    ).toEqual({ pinned: 128, unpinned: 369 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

@@ -16,6 +16,7 @@ import { PaymentSource, PaymentStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { applyLegacyRefundStatus } from "@/lib/xero-booking-repair-payments";
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
+import { stripeRefundMirrorShowsCapture } from "@/lib/booking-payment-state";
 
 // The full client, not a nested TransactionClient: the apply path opens its own
 // $transaction, so it must not run inside another one.
@@ -45,17 +46,13 @@ export interface FlattenedPaymentRestoration {
 }
 
 /**
- * Reproduces booking-cancel.ts `paymentHasCaptureEvidence` (#1473/#1491,
- * ~line 1528) exactly: ledger truth first — any PaymentTransaction row holding
- * a captured status — else the STRIPE-only refund mirror for pre-ledger rows.
- * The aggregate mirror alone is NOT trusted for non-STRIPE payments: the
- * inbound reconcile folds invoice-applied modification credit notes into
- * `refundedAmountCents`/PARTIALLY_REFUNDED on never-captured IB payments (pure
- * bookkeeping, zero cash), so those must stay FAILED after cancel.
- *
- * Duplicated here (not imported) only because the source lives in
- * booking-cancel.ts as a private helper that is off-limits to edit; the two
- * MUST stay in lockstep.
+ * The same capture evidence booking-cancel.ts `paymentHasCaptureEvidence`
+ * (#1473/#1491) asks: ledger truth first — any PaymentTransaction row holding a
+ * captured status — else the STRIPE-only refund mirror for pre-ledger rows, so
+ * a never-captured IB payment whose mirror the inbound reconcile folded stays
+ * FAILED after cancel. Both halves are read from their one homes
+ * (`isCapturedTransactionStatus`, `stripeRefundMirrorShowsCapture`, #3630);
+ * this one reads the ledger rows already loaded rather than querying for them.
  */
 export function paymentHasCaptureEvidence(
   payment: FlattenedCandidatePayment
@@ -63,13 +60,7 @@ export function paymentHasCaptureEvidence(
   const hasCapturedLedgerRow = payment.transactions.some((transaction) =>
     isCapturedTransactionStatus(transaction.status)
   );
-  return (
-    hasCapturedLedgerRow ||
-    (payment.source === PaymentSource.STRIPE &&
-      (payment.status === PaymentStatus.REFUNDED ||
-        payment.status === PaymentStatus.PARTIALLY_REFUNDED ||
-        payment.refundedAmountCents > 0))
-  );
+  return hasCapturedLedgerRow || stripeRefundMirrorShowsCapture(payment);
 }
 
 /**

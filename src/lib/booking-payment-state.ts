@@ -9,7 +9,11 @@
  * holds that by TEXT over `src/`, `scripts/` and `prisma/` (not migrations): it
  * refuses a list, comparison chain, fall-through `switch`, `true`-keyed map or
  * SQL `IN (…)` naming exactly these three, outside its named exceptions, and
- * pins the set of modules that import this one. It cannot see a copy built
+ * pins the set of modules that read `isCapturedPaymentStatus` or
+ * `CAPTURED_PAYMENT_STATUS_LIST` directly. Readers of the derived
+ * `hasCapturedPayment` / `getRemainingRefundableCents` are not registered; the
+ * guard's by-name receiver tripwire refuses `hasCapturedPayment` handed a
+ * value named for a transaction, and nothing stronger. It cannot see a copy built
  * indirectly (a filter over the enum, a list assembled at runtime) or a superset
  * of these three. #3340 once routed
  * `additional-ledger-gap.ts` here, but that module reads `PaymentTransaction`
@@ -186,6 +190,31 @@ export function cancelRefundableBaseCents(input: {
   return (
     Math.min(paidAmountCents, input.finalPriceCents + input.changeFeeCents) -
     input.changeFeeCents
+  );
+}
+
+/**
+ * #1473/#1491: the pre-ledger half of a cancel's capture evidence, for a payment
+ * with no captured `PaymentTransaction` row to read. A STRIPE payment's refund
+ * mirror is trustworthy there: a Stripe refund needs a captured charge, and the
+ * invoice-side fold cannot reach an uncaptured Stripe booking (its Xero invoice
+ * is issued only at or after capture). Any other source's mirror is NOT: the
+ * inbound reconcile folds invoice-applied modification credit notes into
+ * `refundedAmountCents` / `PARTIALLY_REFUNDED` on never-captured Internet
+ * Banking payments, which is bookkeeping, not cash. The one home for that rule
+ * (`INV-SSOT-001`, #3630): `booking-cancel.ts` asks it after a ledger query,
+ * `cancel-flattened-payment-backfill.ts` after an in-memory ledger read.
+ */
+export function stripeRefundMirrorShowsCapture(payment: {
+  source: string;
+  status: string;
+  refundedAmountCents: number;
+}): boolean {
+  return (
+    payment.source === "STRIPE" &&
+    (payment.status === "REFUNDED" ||
+      payment.status === "PARTIALLY_REFUNDED" ||
+      payment.refundedAmountCents > 0)
   );
 }
 
