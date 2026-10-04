@@ -229,6 +229,25 @@ async function readLedgerTableStatistics(tx: Prisma.TransactionClient): Promise<
   return row ?? null;
 }
 
+/**
+ * One booking's snapshot row, read through the caller's client: the back-post
+ * (#3583 PR 2, `booking-ledger-back-post.ts`) judges the lines it has just
+ * written, inside its own transaction and under its locks, by the same row and
+ * the same evaluation the census uses. Null where the booking does not exist.
+ */
+export async function readBookingLedgerCensusRow(
+  tx: CensusReadStore,
+  bookingId: string,
+): Promise<BookingLedgerCensusRow | null> {
+  const booking = await tx.booking.findUnique({ where: { id: bookingId }, select: CENSUS_SELECT });
+  if (!booking) return null;
+  const credits = await tx.memberCredit.findMany({ where: bookingsCreditRowsWhere([bookingId]), orderBy: ASC, select: CREDIT_SELECT });
+  return toCensusRow(
+    booking,
+    credits.filter((credit) => bookingIdOfCreditRow(credit) === bookingId),
+  );
+}
+
 /** Bookings read per page inside the snapshot: bounds memory on a whole history. */
 export const CENSUS_PAGE_SIZE = 500;
 
