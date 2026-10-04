@@ -117,8 +117,11 @@ function enqueueCancelledReviewRefundNote(
 }
 
 /**
- * #3880: the bank-transfer hand-back's note, queued on the completion's own
- * transaction after its allocation. A throw rolls the completion back.
+ * #3880: a bank-transfer hand-back's note on a cancelled booking, queued on the
+ * completion's own transaction after its allocation: a review's hand-back
+ * (noted per refund, keyed on the task) and a `CANCELLED_BOOKING_HAND_BACK`
+ * (`INV-PAY-101`, #3529: the payment's one refund note). An outbox row insert
+ * and no provider call; a throw rolls the completion back.
  */
 export async function queueCancelledBookingHandBackNoteInTransaction({
   task,
@@ -131,9 +134,25 @@ export async function queueCancelledBookingHandBackNoteInTransaction({
   actingMemberId: string;
   store: Prisma.TransactionClient;
 }): Promise<void> {
-  const noted = cancelledReviewRefundNoteRoute(route, cancelledBookingRefundInvoiceId(task));
-  if (noted?.kind !== "local-allocation" || noted.refundCents <= 0) return;
-  await enqueueCancelledReviewRefundNote(noted, task.id, actingMemberId, store);
+  const invoiceId = cancelledBookingRefundInvoiceId(task);
+  const noted = cancelledReviewRefundNoteRoute(route, invoiceId);
+  if (noted) {
+    if (noted.kind !== "local-allocation" || noted.refundCents <= 0) return;
+    await enqueueCancelledReviewRefundNote(noted, task.id, actingMemberId, store);
+    return;
+  }
+  if (
+    task.kind === ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK &&
+    invoiceId !== null &&
+    route?.kind === "local-allocation" &&
+    route.refundCents > 0
+  ) {
+    await enqueueXeroRefundCreditNoteOperation(route.paymentId, route.refundCents, {
+      createdByMemberId: actingMemberId,
+      refundMethod: "internet-banking",
+      store,
+    });
+  }
 }
 
 async function queueCancelledBookingReviewRefundNote({
@@ -334,21 +353,15 @@ export async function dispatchEditReviewXeroSettlement({
       // invoice is a permanently failing outbox row. Keyed on the payment and
       // the amount by the enqueue, which is one note per hand-back because a
       // cancelled booking raises one task per payment.
-      await enqueueXeroRefundCreditNoteOperation(route.paymentId, amountCents, {
-        createdByMemberId: actingMemberId,
-        refundMethod: "internet-banking",
-      })
-        .then(async (queued) => {
-          if (queued.queueOperationId) {
-            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-          }
-        })
-        .catch((err) =>
-          logger.error(
-            { err, bookingId, taskId },
-            "Failed to queue the Xero bank-transfer refund note for a completed cancellation hand-back",
-          ),
-        );
+      // #3880 F4: the row itself was queued inside the completion transaction
+      // (`queueCancelledBookingHandBackNoteInTransaction`), so it commits or
+      // rolls back with the money; only the best-effort kick is left here.
+      await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((err) =>
+        logger.error(
+          { err, bookingId, taskId },
+          "Failed to kick the Xero outbox after a completed cancellation hand-back",
+        ),
+      );
       return;
     }
     if (route && hasIssuedXeroInvoice) {

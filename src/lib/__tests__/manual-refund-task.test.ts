@@ -2083,13 +2083,91 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       recordedNightPrices: null,
     }, CLUB_FORMAT_TEST);
 
+    // #3880 F4: queued on the completion's own transaction, as a review's hand-back is.
     expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
       "payment-1",
       9000,
-      { createdByMemberId: "admin-1", refundMethod: "internet-banking" }
+      { createdByMemberId: "admin-1", refundMethod: "internet-banking", store: tx }
     );
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
+  });
+
+  describe("#3880 F4 - the cancellation hand-back's note commits or rolls back with the hand-back", () => {
+    const handBackTask = (xeroInvoiceId: string | null = "inv-1") =>
+      mocks.manualRefundTaskFindUnique.mockResolvedValue({
+        id: "task-1",
+        bookingId: "booking-1",
+        paymentId: "payment-1",
+        amountCents: 9000,
+        raisedAmountCents: 9000,
+        kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+        status: ManualRefundTaskStatus.OPEN,
+        booking: {
+          memberId: "member-1",
+          status: "CANCELLED",
+          payment: { id: "payment-1", status: "SUCCEEDED", xeroInvoiceId },
+        },
+      });
+    const complete = () =>
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: null,
+        actingMemberId: "admin-1",
+        confirmedAmountCents: null,
+        direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: null,
+      }, CLUB_FORMAT_TEST);
+
+    it("MUTATION: queued INSIDE the completion, after the allocation, and the kick waits for the commit", async () => {
+      handBackTask();
+      let insideTransaction = false;
+      let queuedInside: boolean | null = null;
+      const realTransaction = mocks.transaction.getMockImplementation()!;
+      mocks.transaction.mockImplementation(async (...a: unknown[]) => {
+        insideTransaction = true;
+        try {
+          return await realTransaction(...a);
+        } finally {
+          insideTransaction = false;
+        }
+      });
+      mocks.enqueueXeroRefundCreditNoteOperation.mockImplementation(async () => {
+        queuedInside = insideTransaction;
+        return { queueOperationId: "op-1", message: "queued" };
+      });
+
+      await complete();
+
+      expect(queuedInside).toBe(true);
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledTimes(1);
+      expect(mocks.applyLocalRefundAllocation.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.enqueueXeroRefundCreditNoteOperation.mock.invocationCallOrder[0]!,
+      );
+      expect(mocks.enqueueXeroRefundCreditNoteOperation.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.kickQueuedXeroOutboxOperationsIfConnected.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("MUTATION: a note that cannot be queued fails the completion, so the hand-back is never recorded without its document", async () => {
+      handBackTask();
+      mocks.enqueueXeroRefundCreditNoteOperation.mockRejectedValueOnce(new Error("outbox insert refused"));
+
+      await expect(complete()).rejects.toThrow("outbox insert refused");
+
+      expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).not.toHaveBeenCalled();
+      expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    });
+
+    it("a hand-back with no invoice (settled in cash) queues nothing, inside or after the commit", async () => {
+      handBackTask(null);
+
+      await complete();
+
+      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalled();
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    });
   });
 
   it("MUTATION: a DISMISSED hand-back raises no refund note even with an issued invoice", async () => {

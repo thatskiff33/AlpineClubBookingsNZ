@@ -451,7 +451,8 @@ let outbox: typeof import("@/lib/xero-operation-outbox");
       expect(new Set(done.map((row) => row.xeroObjectId)).size).toBe(2);
       const links = await prisma.xeroObjectLink.findMany({
         where: { localModel: "Payment", localId: PAYMENT_ID, role: "REFUND_CREDIT_NOTE", active: true },
-        orderBy: { createdAt: "asc" },
+        // Frozen clock: the note ids, numbered as Xero raised them, order the links.
+        orderBy: { xeroObjectId: "asc" },
       });
       expect(links.map((link) => (link.metadata as { amountCents: number; watermarkCents: number }))).toEqual([
         expect.objectContaining({ amountCents: 1_000, watermarkCents: 1_000 }),
@@ -481,6 +482,240 @@ let outbox: typeof import("@/lib/xero-operation-outbox");
       await completeShare(raised.taskId);
       expect((await refundNotes()).map((note) => [note.cents, note.refundMethod])).toEqual([[2_500, "internet-banking"]]);
       expect(await notedCents()).toBe(await bankCashOutCents());
+    });
+
+    /**
+     * A Xero that answers as Xero does for the duration of `run`: one note per
+     * idempotency key, read back by id, and a refund payment that settles it.
+     * `failCreate` / `failPayment` refuse a call while they answer true. Every
+     * PENDING row not this booking's is parked for the duration and put back.
+     */
+    async function withFakeXero<T>(
+      behaviour: { failCreate?: () => boolean; failPayment?: (creditNoteId: string) => boolean },
+      run: (fake: { keys: string[]; noteIds: () => string[] }) => Promise<T>,
+    ): Promise<T> {
+      type Note = { creditNoteID: string; creditNoteNumber: string; total: number; remainingCredit: number; status: string; payments: Array<{ paymentID: string; amount: number; status: string }> };
+      const byKey = new Map<string, Note>();
+      const byId = new Map<string, Note>();
+      const keys: string[] = [];
+      const xero = {
+        accountingApi: {
+          createCreditNotes: async (_t: string, body: { creditNotes: Array<{ lineItems: Array<{ unitAmount: number }> }> }, _s?: unknown, _u?: unknown, key?: string) => {
+            if (behaviour.failCreate?.()) throw new Error("race 3880: Xero refused the credit note");
+            keys.push(key!);
+            let note = byKey.get(key!);
+            if (!note) {
+              const total = body.creditNotes[0]!.lineItems[0]!.unitAmount;
+              note = { creditNoteID: `cn-race-3880-${byKey.size + 1}`, creditNoteNumber: `CN-3880-${byKey.size + 1}`, total, remainingCredit: total, status: "AUTHORISED", payments: [] };
+              byKey.set(key!, note);
+              byId.set(note.creditNoteID, note);
+            }
+            return { body: { creditNotes: [note] } };
+          },
+          getCreditNote: async (_t: string, id: string) => ({ body: { creditNotes: byId.has(id) ? [byId.get(id)!] : [] } }),
+          createPayments: async (_t: string, body: { payments: Array<{ amount: number; creditNote: { creditNoteID: string } }> }) => {
+            const { amount, creditNote } = body.payments[0]!;
+            if (behaviour.failPayment?.(creditNote.creditNoteID)) throw new Error("race 3880: Xero refused the refund payment");
+            const note = byId.get(creditNote.creditNoteID)!;
+            const payment = { paymentID: `pay-${creditNote.creditNoteID}`, amount, status: "AUTHORISED" };
+            note.payments = [payment];
+            note.remainingCredit = 0;
+            note.status = "PAID";
+            return { body: { payments: [payment] } };
+          },
+        },
+      };
+      const apiClient = await import("@/lib/xero-api-client");
+      const contacts = await import("@/lib/xero-contacts");
+      const invoicedParty = await import("@/lib/organisation-xero-contacts");
+      const invoicePayments = await import("@/lib/xero-invoice-payments");
+      const spies = [
+        vi.spyOn(apiClient, "getAuthenticatedXeroClient").mockResolvedValue({ xero, tenantId: "tenant-3880" } as never),
+        vi.spyOn(apiClient, "callXeroApi").mockImplementation(((call: () => unknown) => call()) as never),
+        vi.spyOn(invoicedParty, "findOrCreateXeroContactForInvoicedParty").mockResolvedValue("contact-3880"),
+        vi.spyOn(contacts, "retryXeroWriteWithContactRepair").mockImplementation((async (options: { run: (input: { contactId: string }) => unknown; currentContactId: string }) =>
+          options.run({ contactId: options.currentContactId })) as never),
+        // The club's bank-transfer refund account is mapped, so a hand-back's note is paid from it.
+        vi.spyOn(invoicePayments, "resolveRefundSettlement").mockResolvedValue({ kind: "record", bankCode: "090" }),
+      ];
+      try {
+        return await run({ keys, noteIds: () => [...byId.keys()] });
+      } finally {
+        for (const spy of spies) spy.mockRestore();
+      }
+    }
+
+    /** The real worker, on this one row: every other PENDING row is parked meanwhile and put back. */
+    async function processOnly(rowId: string) {
+      const parked = await prisma.xeroSyncOperation.findMany({ where: { status: "PENDING", id: { not: rowId } }, select: { id: true } });
+      await prisma.xeroSyncOperation.updateMany({ where: { id: { in: parked.map((row) => row.id) } }, data: { status: "PARKED_RACE_3880" } });
+      try {
+        return await outbox.processQueuedXeroOutboxOperations({ limit: 1 });
+      } finally {
+        await prisma.xeroSyncOperation.updateMany({ where: { id: { in: parked.map((row) => row.id) } }, data: { status: "PENDING" } });
+      }
+    }
+    /** The payment's one queued refund-note row: the review's (`reviewTaskId`) or the cancellation's. */
+    async function refundNoteRow(review: boolean) {
+      const rows = await prisma.xeroSyncOperation.findMany({ where: { localId: PAYMENT_ID, queueType: "REFUND_CREDIT_NOTE" } });
+      const matching = rows.filter((row) => Boolean((row.requestPayload as { reviewTaskId?: string }).reviewTaskId) === review);
+      expect(matching).toHaveLength(1);
+      return matching[0]!;
+    }
+
+    /** A `CANCELLED_BOOKING_HAND_BACK` (#3529) of `cents`, completed through the REAL resolver. */
+    async function completeCancellationHandBack(cents: number) {
+      const task = await prisma.manualRefundTask.create({
+        data: { bookingId: BOOKING_ID, paymentId: PAYMENT_ID, kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: cents, raisedAmountCents: cents, reason: "race 3880 cancellation hand-back" },
+      });
+      await resolveManualRefundTask({
+        taskId: task.id, resolution: "completed", note: null, actingMemberId: MEMBER_ID,
+        confirmedAmountCents: null, direction: "REFUND_TO_MEMBER", recordedNightPrices: null,
+      }, CLUB_FORMAT_TEST);
+      return task.id;
+    }
+
+    const coveredCents = async () => {
+      const fences = await import("@/lib/xero-resolved-in-xero-fences");
+      return fences.sumRefundCreditNoteCoverageCents(PAYMENT_ID, await fences.readResolvedRefundCreditNoteCoverage(PAYMENT_ID));
+    };
+    const refundNoteLinks = () =>
+      prisma.xeroObjectLink.findMany({
+        where: { localModel: "Payment", localId: PAYMENT_ID, role: "REFUND_CREDIT_NOTE" },
+        // The test clock is frozen, so the notes' ids, numbered as Xero raised them, order them.
+        orderBy: { xeroObjectId: "asc" },
+        select: { xeroObjectId: true, active: true, metadata: true },
+      });
+    const refundNoteField = async () => (await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).xeroRefundCreditNoteId;
+
+    it("F4: a cancellation hand-back's note is queued inside its completion - a completion that fails after it leaves no row and the task OPEN", async () => {
+      await paid(BANK);
+      await cancelAt(TIERS[1]!.rule);
+      const refundedBefore = (await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).refundedAmountCents;
+      const audit = await import("@/lib/manual-refund-task-audit");
+      const failing = vi.spyOn(audit, "recordManualRefundTaskClosureAudit").mockRejectedValueOnce(new Error("race 3880: the completion fails after the enqueue"));
+      try {
+        await expect(completeCancellationHandBack(5_000)).rejects.toThrow("race 3880");
+      } finally {
+        failing.mockRestore();
+      }
+      expect(await refundNotes()).toEqual([]);
+      expect((await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: BOOKING_ID, kind: "CANCELLED_BOOKING_HAND_BACK" } })).status).toBe("OPEN");
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID } })).refundedAmountCents).toBe(refundedBefore);
+
+      // And the completion that commits carries its row with it.
+      await resolveManualRefundTask({
+        taskId: (await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: BOOKING_ID, kind: "CANCELLED_BOOKING_HAND_BACK" } })).id,
+        resolution: "completed", note: null, actingMemberId: MEMBER_ID,
+        confirmedAmountCents: null, direction: "REFUND_TO_MEMBER", recordedNightPrices: null,
+      }, CLUB_FORMAT_TEST);
+      expect((await refundNotes()).map((note) => [note.cents, note.refundMethod])).toEqual([[5_000, "internet-banking"]]);
+    });
+
+    /**
+     * F1 of the #3880 concurrency review. A bank payment carries the
+     * cancellation hand-back's note H ($50, canonical) and a review's per-refund
+     * note D ($25) whose refund payment failed. The operator's retry repairs D;
+     * Xero's inbound reconcile then re-reads H. Before the fix the retry pointed
+     * `xeroRefundCreditNoteId` at D, the reconcile wrote H's link inactive, the
+     * coverage read $25 for $75 of cash, and the next refund run raised another
+     * $50 - $125 of notes for $75 of cash.
+     */
+    it("F1: a repaired per-refund note never becomes the payment's canonical one, and the cancellation's note stays counted", async () => {
+      await paid(BANK);
+      const raised = await raise("2026-08-01");
+      await cancelAt(TIERS[1]!.rule);
+      const retry = await import("@/lib/xero-operation-retry");
+      const inbound = await import("@/lib/xero-inbound/credit-note");
+      let refusePaymentFor: string | null = null;
+      await withFakeXero({ failPayment: (id) => id === refusePaymentFor }, async ({ noteIds }) => {
+        // The cancellation's hand-back: its note H raised and paid, the canonical one.
+        await completeCancellationHandBack(5_000);
+        expect(await processOnly((await refundNoteRow(false)).id)).toMatchObject({ succeeded: 1 });
+        const [h] = noteIds();
+        expect(await refundNoteField()).toBe(h);
+
+        // The review's hand-back: D raised, its refund payment refused - PARTIAL.
+        await completeShare(raised.taskId);
+        const reviewRow = await refundNoteRow(true);
+        expect(reviewRow.requestPayload).toMatchObject({ refundAmountCents: 2_500, watermarkCents: 7_500, refundMethod: "internet-banking" });
+        expect(reviewRow.correlationKey).toBe(`payment:${PAYMENT_ID}:refund-credit-note:7500:v2:review-task:${raised.taskId}`);
+        refusePaymentFor = "cn-race-3880-2";
+        await processOnly(reviewRow.id);
+        const d = noteIds()[1]!;
+        expect(d).toBe("cn-race-3880-2");
+        expect(await refundNoteField()).toBe(h);
+        const dRow = await prisma.xeroSyncOperation.findFirstOrThrow({ where: { localId: PAYMENT_ID, xeroObjectId: d } });
+        expect(dRow.status).toBe("PARTIAL");
+        expect(dRow.requestPayload).toMatchObject({ perDelta: true, reviewTaskId: raised.taskId });
+        const cashOut = await bankCashOutCents();
+        expect(cashOut).toBe(7_500);
+
+        // The operator's retry repairs D's refund payment - and leaves the field on H.
+        refusePaymentFor = null;
+        await retry.retryXeroSyncOperation(dRow.id, CLUB_FORMAT_TEST);
+        expect((await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: dRow.id } })).status).toBe("SUCCEEDED");
+        expect(await refundNoteField()).toBe(h);
+
+        // Inbound re-reads H: still active, still counted.
+        await inbound.reconcileXeroCreditNote(h!);
+        expect((await refundNoteLinks()).map((link) => [link.xeroObjectId, link.active])).toEqual([[h, true], [d, true]]);
+        expect(await coveredCents()).toBe(cashOut);
+
+        // A field an older writer pointed at D (this deploy rolled back and
+        // forward) is read as no canonical note: H's re-read keeps H counted.
+        await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { xeroRefundCreditNoteId: d } });
+        await inbound.reconcileXeroCreditNote(h!);
+        expect((await refundNoteLinks()).map((link) => [link.xeroObjectId, link.active])).toEqual([[h, true], [d, true]]);
+        expect(await coveredCents()).toBe(cashOut);
+      });
+
+      // Every cent has its document, so the next refund run on the payment raises nothing.
+      const next = await outbox.enqueueXeroRefundCreditNoteOperation(PAYMENT_ID, 5_000, { refundMethod: "internet-banking", reviewTaskId: "race-3880-next-review" });
+      expect(next.queueOperationId).toBeNull();
+    });
+
+    /**
+     * F2 of the #3880 concurrency review. A review's row fails before Xero
+     * raises anything; the operator's retry runs inline under a row it creates
+     * itself (no outbox queue type), and that fails too. Retrying THAT row must
+     * still raise the review's own $25 note - not call the cancellation's $50
+     * note its cover, and not raise a single-note `v1` note.
+     */
+    it("F2: a retry of the retry's own failed row stays in delta mode and raises the review's per-refund note", async () => {
+      await paid(BANK);
+      const raised = await raise("2026-08-01");
+      await cancelAt(TIERS[1]!.rule);
+      const retry = await import("@/lib/xero-operation-retry");
+      let refuseCreate = false;
+      await withFakeXero({ failCreate: () => refuseCreate }, async ({ keys, noteIds }) => {
+        await completeCancellationHandBack(5_000);
+        expect(await processOnly((await refundNoteRow(false)).id)).toMatchObject({ succeeded: 1 });
+        const [h] = noteIds();
+        await completeShare(raised.taskId);
+        refuseCreate = true;
+        const reviewRow = await refundNoteRow(true);
+        await processOnly(reviewRow.id);
+        expect((await prisma.xeroSyncOperation.findUniqueOrThrow({ where: { id: reviewRow.id } })).status).toBe("FAILED");
+
+        // The operator's retry runs inline, under a row of its own, and fails.
+        await expect(retry.retryXeroSyncOperation(reviewRow.id, CLUB_FORMAT_TEST)).rejects.toThrow("race 3880");
+        const inline = await prisma.xeroSyncOperation.findFirstOrThrow({
+          where: { localId: PAYMENT_ID, entityType: "CREDIT_NOTE", operationType: "CREATE", queueType: null, status: "FAILED" },
+        });
+        expect(inline.requestPayload).toMatchObject({ watermarkCents: 7_500, perDelta: true, reviewTaskId: raised.taskId });
+
+        // Retrying the inline row raises the review's own note.
+        refuseCreate = false;
+        await retry.retryXeroSyncOperation(inline.id, CLUB_FORMAT_TEST);
+        expect(noteIds()).toHaveLength(2);
+        expect(keys.at(-1)).toMatch(/:v2$/);
+        expect(await refundNoteField()).toBe(h);
+        const links = await refundNoteLinks();
+        expect(links.map((link) => [link.active, (link.metadata as { amountCents: number; perDelta?: boolean }).amountCents, (link.metadata as { perDelta?: boolean }).perDelta ?? false]))
+          .toEqual([[true, 5_000, false], [true, 2_500, true]]);
+      });
+      expect(await coveredCents()).toBe(await bankCashOutCents());
     });
 
     it("a replay of the review's note while queued, or after Xero raised it, raises nothing more", async () => {

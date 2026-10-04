@@ -17,6 +17,7 @@
 
 import { reviewTaskKeyParts } from "@/lib/xero-review-task-key";
 import { assertNoRefundCreditNoteInFlight } from "@/lib/xero-refund-note-in-flight";
+import { mayRecordAsCanonicalRefundNote, readCanonicalRefundNoteField } from "@/lib/xero-refund-note-status";
 import {
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
@@ -351,7 +352,7 @@ export async function createXeroCreditNote(
             },
           });
         }
-        return payment.xeroRefundCreditNoteId ?? "";
+        return (await readCanonicalRefundNoteField(payment, prisma)) ?? "";
       }
     } else {
       // Bill exactly what the ledger still shows uncovered (never more than
@@ -364,8 +365,9 @@ export async function createXeroCreditNote(
   } else {
     const canonicalRefundCreditNote =
       await findCanonicalPaymentRefundCreditNote(paymentId);
+    // #3880 F1: never a per-refund note, even one an older writer left in the field.
     existingCreditNoteId =
-      payment.xeroRefundCreditNoteId ?? canonicalRefundCreditNote?.xeroObjectId ?? null;
+      (await readCanonicalRefundNoteField(payment, prisma)) ?? canonicalRefundCreditNote?.xeroObjectId ?? null;
     existingCreditNoteNumber =
       canonicalRefundCreditNote?.xeroObjectNumber ?? null;
   }
@@ -388,17 +390,28 @@ export async function createXeroCreditNote(
   // #3635 round-3 R4/R3: which capture this note answers, and its date, ride
   // in the recorded payload and the link so a retry keeps both and the
   // capture's notes can be counted.
-  const lateCaptureFields = {
+  const recordedPayloadFields = {
     ...(options?.paymentIntentId ? { paymentIntentId: options.paymentIntentId } : {}),
     ...(options?.documentDate ? { documentDate: options.documentDate } : {}),
     ...(options?.reviewTaskId ? { reviewTaskId: options.reviewTaskId } : {}),
+    // #3880 F2: a delta run's watermark rides its row, so an operator retry of
+    // a row this run created inline (no outbox queue type) re-enters delta
+    // mode; `perDelta` marks the row of a per-refund note as its link is marked.
+    ...(isDeltaMode ? { watermarkCents: effectiveWatermarkCents ?? watermarkCents } : {}),
+    ...(perRefundNote ? { perDelta: true } : {}),
   };
 
   // Idempotency guard: skip if a credit note already covers this payment/delta.
   // This row raised nothing, so it is closed as covered by that note, which
   // carries its own payment outcome (`INV-PAY-111`).
   if (existingCreditNoteId) {
-    if (!perRefundNote && payment.xeroRefundCreditNoteId !== existingCreditNoteId) {
+    // #3880 F1: a run covered by a per-refund note leaves the field alone - that
+    // note is never the payment's canonical one (`mayRecordAsCanonicalRefundNote`).
+    if (
+      !perRefundNote &&
+      payment.xeroRefundCreditNoteId !== existingCreditNoteId &&
+      (await mayRecordAsCanonicalRefundNote(paymentId, existingCreditNoteId, prisma))
+    ) {
       await prisma.payment.update({
         where: { id: paymentId },
         data: {
@@ -510,7 +523,7 @@ export async function createXeroCreditNote(
       amount: effectiveRefundAmountCents / 100,
     },
     refundMethod,
-    ...lateCaptureFields,
+    ...recordedPayloadFields,
   };
 
   if (operationId) {
@@ -556,7 +569,7 @@ export async function createXeroCreditNote(
           amount: effectiveRefundAmountCents / 100,
         },
         refundMethod,
-        ...lateCaptureFields,
+        ...recordedPayloadFields,
       }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(

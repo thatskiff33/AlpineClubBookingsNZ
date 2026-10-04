@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
 import { XERO_REQUEUE_OPERATION_TYPE } from "@/lib/xero-hardening-shared";
@@ -25,6 +26,21 @@ import { liveRunningXeroOperationFilter } from "@/lib/xero-stale-operations";
  * include an inline retry's own create) and REQUEUE rows on the payment's
  * credit notes. Account-credit notes size off different evidence and are not.
  */
+/**
+ * The rows that can drive a credit note on ONE payment: outbound credit-note
+ * operations scoped to it. Both refund-note fences filter from this shape - the
+ * in-flight guard below and the link repair's blocking-row read
+ * (`findBlockingRefundCreditNoteOperationId`) - each with its own statuses.
+ */
+export function paymentCreditNoteOperationWhere(paymentId: string) {
+  return {
+    direction: "OUTBOUND",
+    entityType: "CREDIT_NOTE",
+    localModel: "Payment",
+    localId: paymentId,
+  } as const satisfies Prisma.XeroSyncOperationWhereInput;
+}
+
 export async function assertNoRefundCreditNoteInFlight(
   paymentId: string,
   ownOperationIds: ReadonlyArray<string | null | undefined>
@@ -33,10 +49,7 @@ export async function assertNoRefundCreditNoteInFlight(
   const inFlight = await prisma.xeroSyncOperation.findFirst({
     where: {
       ...(own.length > 0 ? { id: { notIn: own } } : {}),
-      direction: "OUTBOUND",
-      entityType: "CREDIT_NOTE",
-      localModel: "Payment",
-      localId: paymentId,
+      ...paymentCreditNoteOperationWhere(paymentId),
       ...liveRunningXeroOperationFilter(),
       OR: [
         { operationType: "CREATE", queueType: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE },

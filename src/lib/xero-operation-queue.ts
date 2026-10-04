@@ -21,9 +21,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { STALE_RUNNING_XERO_OPERATION_MINUTES } from "@/lib/xero-stale-operations";
 import { xeroSyncErrorText } from "@/lib/xero-sync-error-text";
 import { XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
-
-// test seam
-export const XERO_OPERATION_REQUEUE_TYPE = "REQUEUE";
+import { XERO_REQUEUE_OPERATION_TYPE } from "@/lib/xero-hardening-shared";
 
 // The requeue correlation key is `${REQUEUE_CORRELATION_KEY_PREFIX}${originalOperationId}`.
 // Operation IDs are cuids, so the key stays well under the idempotency-key
@@ -80,7 +78,7 @@ async function claimQueuedRetryOperation(operationId: string) {
   // precondition the resulting WHERE is identical to the pre-consolidation
   // inline claim.
   return claimXeroSyncOperationToRunning(operationId, {
-    operationType: XERO_OPERATION_REQUEUE_TYPE,
+    operationType: XERO_REQUEUE_OPERATION_TYPE,
   });
 }
 
@@ -110,7 +108,7 @@ export async function enqueueXeroSyncOperationRetry(
   const existingQueuedRetry = await prisma.xeroSyncOperation.findFirst({
     where: {
       correlationKey,
-      operationType: XERO_OPERATION_REQUEUE_TYPE,
+      operationType: XERO_REQUEUE_OPERATION_TYPE,
       status: {
         in: ["PENDING", "RUNNING"],
       },
@@ -130,7 +128,7 @@ export async function enqueueXeroSyncOperationRetry(
   const queuedOperation = await startXeroSyncOperation({
     direction: operation.direction,
     entityType: operation.entityType,
-    operationType: XERO_OPERATION_REQUEUE_TYPE,
+    operationType: XERO_REQUEUE_OPERATION_TYPE,
     localModel: operation.localModel ?? undefined,
     localId: operation.localId ?? undefined,
     status: "PENDING",
@@ -184,7 +182,7 @@ export async function processQueuedXeroOperationRetries(
   const queuedOperations = await prisma.xeroSyncOperation.findMany({
     where: {
       status: "PENDING",
-      operationType: XERO_OPERATION_REQUEUE_TYPE,
+      operationType: XERO_REQUEUE_OPERATION_TYPE,
     },
     orderBy: {
       createdAt: "asc",

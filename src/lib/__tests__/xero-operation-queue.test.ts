@@ -57,8 +57,8 @@ import {
   enqueueXeroSyncOperationRetry,
   parseXeroOperationRequeueOriginalId,
   processQueuedXeroOperationRetries,
-  XERO_OPERATION_REQUEUE_TYPE,
 } from "@/lib/xero-operation-queue";
+import { XERO_REQUEUE_OPERATION_TYPE } from "@/lib/xero-hardening-shared";
 import { XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
 import { XeroOperationResolvedInXeroError } from "@/lib/xero-operation-retry";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -112,7 +112,7 @@ describe("enqueueXeroSyncOperationRetry", () => {
       expect.objectContaining({
         direction: "OUTBOUND",
         entityType: "INVOICE",
-        operationType: XERO_OPERATION_REQUEUE_TYPE,
+        operationType: XERO_REQUEUE_OPERATION_TYPE,
         localModel: "Payment",
         localId: "pay_123",
         status: "PENDING",
@@ -223,7 +223,7 @@ describe("processQueuedXeroOperationRetries", () => {
         where: {
           id: "queue_1",
           status: "PENDING",
-          operationType: XERO_OPERATION_REQUEUE_TYPE,
+          operationType: XERO_REQUEUE_OPERATION_TYPE,
         },
       })
     );

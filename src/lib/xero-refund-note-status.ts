@@ -58,6 +58,14 @@ export function isPerDeltaRefundNoteLink(metadata: unknown): boolean {
   return asRecord(metadata)?.perDelta === true;
 }
 
+/**
+ * #3880: the create row that raised a per-refund note - `createXeroCreditNote`
+ * stamps `perDelta` on its request payload as on the link.
+ */
+export function isPerDeltaRefundNoteOperation(operation: { requestPayload: unknown }): boolean {
+  return asRecord(operation.requestPayload)?.perDelta === true;
+}
+
 /** #3880: the payment's per-refund notes, active or not, read on the caller's client. */
 export async function perDeltaRefundNoteIds(paymentId: string, db: Prisma.TransactionClient): Promise<Set<string>> {
   const links = await db.xeroObjectLink.findMany({
@@ -65,4 +73,36 @@ export async function perDeltaRefundNoteIds(paymentId: string, db: Prisma.Transa
     select: { xeroObjectId: true, metadata: true },
   });
   return new Set((links ?? []).filter((link) => isPerDeltaRefundNoteLink(link.metadata)).map((link) => link.xeroObjectId));
+}
+
+/**
+ * #3880: THE PAYMENT'S ONE CANONICAL REFUND NOTE, as `Payment.xeroRefundCreditNoteId`
+ * records it: the field, unless it names a per-refund note, which is never
+ * canonical. Every reader of the field that dedupes on it or retires siblings
+ * for it asks here, so a field an older writer pointed at a per-refund note
+ * cannot hide the cancellation's own note.
+ */
+export function canonicalRefundNoteFromField(
+  fieldNoteId: string | null | undefined,
+  perDeltaNoteIds: ReadonlySet<string>,
+): string | null {
+  return fieldNoteId && !perDeltaNoteIds.has(fieldNoteId) ? fieldNoteId : null;
+}
+
+/** #3880: `canonicalRefundNoteFromField`, reading the payment's per-refund notes on the caller's client. */
+export async function readCanonicalRefundNoteField(
+  payment: { id: string; xeroRefundCreditNoteId: string | null } | null | undefined,
+  db: Prisma.TransactionClient,
+): Promise<string | null> {
+  if (!payment?.xeroRefundCreditNoteId) return null;
+  return canonicalRefundNoteFromField(payment.xeroRefundCreditNoteId, await perDeltaRefundNoteIds(payment.id, db));
+}
+
+/** #3880: whether a note may be written into `Payment.xeroRefundCreditNoteId` - never a per-refund one. */
+export async function mayRecordAsCanonicalRefundNote(
+  paymentId: string,
+  creditNoteId: string,
+  db: Prisma.TransactionClient,
+): Promise<boolean> {
+  return !(await perDeltaRefundNoteIds(paymentId, db)).has(creditNoteId);
 }

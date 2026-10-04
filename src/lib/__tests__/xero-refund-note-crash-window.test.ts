@@ -44,6 +44,8 @@ const state = vi.hoisted(() => ({
     replayPaymentKeys: true,
     createPaymentsCalls: [] as Array<{ key: string; account?: string; amount: number; creditNoteId: string; date: string }>,
     failNextPayment: null as null | "before-commit" | "after-commit",
+    /** #3880 F2: the next credit-note create is refused before Xero raises anything. */
+    failNextCreate: false,
     readBarrier: null as null | { waiting: Array<() => void>; size: number },
   },
 }));
@@ -221,6 +223,10 @@ function xeroApi() {
       _b: unknown,
       key: string,
     ) => {
+      if (state.xero.failNextCreate) {
+        state.xero.failNextCreate = false;
+        throw new Error("Xero 503 on create");
+      }
       let id = state.xero.noteKeys.get(key);
       if (!id) {
         id = `cn_${state.xero.notes.size + 1}`;
@@ -466,6 +472,7 @@ beforeEach(() => {
   state.xero.replayPaymentKeys = true;
   state.xero.createPaymentsCalls = [];
   state.xero.failNextPayment = null;
+  state.xero.failNextCreate = false;
   state.xero.readBarrier = null;
   seedPayment();
 });
@@ -848,6 +855,102 @@ describe("#3880: one refund note in flight per payment, from coverage read to re
 
     await dispatch("op_b");
     expect(row("op_b")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_1" });
+  });
+});
+
+describe("#3880 F1/F2: a per-refund note is never the payment's canonical one, and its retries stay per-refund", () => {
+  /** A bank payment whose cancellation hand-back note H ($50) is its canonical note. */
+  function bankPaymentWithCancellationNote() {
+    seedPayment(PaymentSource.INTERNET_BANKING);
+    state.payment!.xeroRefundCreditNoteId = "cn_handback";
+    state.links.push({
+      localModel: "Payment", localId: PAYMENT_ID, xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_handback", role: "REFUND_CREDIT_NOTE",
+      active: true, metadata: { amountCents: 5000, watermarkCents: 5000 },
+    });
+  }
+  /** A review's $30 hand-back on the same payment, queued as the enqueue writes it. */
+  function queueReviewHandBack(id = "op_review") {
+    state.eligibleCents = 8000;
+    queueRefundNote(id, 3000, 8000, "internet-banking");
+    row(id).requestPayload = { ...(row(id).requestPayload as Row), reviewTaskId: "task_review" };
+  }
+
+  it("MUTATION (F1): the operator's repair of a per-refund note's failed refund payment leaves the payment's canonical note on the cancellation's", async () => {
+    bankPaymentWithCancellationNote();
+    queueReviewHandBack();
+    state.xero.failNextPayment = "before-commit";
+    await dispatch("op_review");
+    expect(row("op_review")).toMatchObject({ status: "PARTIAL", xeroObjectId: "cn_1" });
+
+    await retryXeroSyncOperation("op_review", CLUB_FORMAT_TEST);
+
+    expect(row("op_review").status).toBe("SUCCEEDED");
+    expect(state.payment!.xeroRefundCreditNoteId).toBe("cn_handback");
+  });
+
+  it("MUTATION (F1): a run covered by a per-refund note leaves the field alone", async () => {
+    seedPayment(PaymentSource.INTERNET_BANKING);
+    state.eligibleCents = 3000;
+    state.links.push({
+      localModel: "Payment", localId: PAYMENT_ID, xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_review", role: "REFUND_CREDIT_NOTE",
+      active: true, metadata: { amountCents: 3000, watermarkCents: 3000, perDelta: true },
+    });
+    queueRefundNote("op_single", 3000, 3000, "internet-banking");
+
+    await dispatch("op_single");
+
+    expect(row("op_single")).toMatchObject({ status: "SUCCEEDED", xeroObjectId: "cn_review" });
+    expect(state.payment!.xeroRefundCreditNoteId).toBeNull();
+  });
+
+  it("MUTATION (F1): a single-refund run never calls a per-refund note the field names its cover", async () => {
+    seedPayment(PaymentSource.INTERNET_BANKING);
+    state.payment!.xeroRefundCreditNoteId = "cn_review";
+    state.links.push({
+      localModel: "Payment", localId: PAYMENT_ID, xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_review", role: "REFUND_CREDIT_NOTE",
+      active: true, metadata: { amountCents: 3000, perDelta: true },
+    });
+
+    await createXeroCreditNote(PAYMENT_ID, 5000, { refundMethod: "internet-banking" });
+
+    expect([...state.xero.notes.values()].map((note) => note.total)).toEqual([50]);
+  });
+
+  /** The operator's retry ran inline, under a row of its own, and Xero refused it: that row. */
+  async function failedInlineRetryRow() {
+    state.xero.failNextCreate = true;
+    await expect(
+      createXeroCreditNote(PAYMENT_ID, 3000, { watermarkCents: 0, refundMethod: "internet-banking", reviewTaskId: "task_review", repairExistingLink: true }),
+    ).rejects.toThrow("Xero 503 on create");
+    const inline = state.operations.find((operation) => operation.queueType === undefined && operation.status === "FAILED")!;
+    expect(inline).toBeDefined();
+    return inline;
+  }
+
+  it("MUTATION (F2): a retry of the retry's own row is not 'covered' by the cancellation's note - it raises the review's own", async () => {
+    bankPaymentWithCancellationNote();
+    state.eligibleCents = 8000;
+    const inline = await failedInlineRetryRow();
+    expect(inline.requestPayload).toMatchObject({ watermarkCents: 8000, perDelta: true, reviewTaskId: "task_review" });
+
+    await retryXeroSyncOperation(inline.id as string, CLUB_FORMAT_TEST);
+
+    expect([...state.xero.notes.values()].map((note) => note.total)).toEqual([30]);
+    expect(state.links.find((link) => link.xeroObjectId === "cn_1")?.metadata).toMatchObject({ amountCents: 3000, perDelta: true });
+    expect(state.payment!.xeroRefundCreditNoteId).toBe("cn_handback");
+    expect(coveredCents()).toBe(8000);
+  });
+
+  it("MUTATION (F2): with no note before it, the retried row raises a per-refund note, never the payment's one canonical (v1) note", async () => {
+    seedPayment(PaymentSource.INTERNET_BANKING);
+    state.eligibleCents = 3000;
+    const inline = await failedInlineRetryRow();
+
+    await retryXeroSyncOperation(inline.id as string, CLUB_FORMAT_TEST);
+
+    expect([...state.xero.noteKeys.keys()]).toEqual([expect.stringMatching(/:refund-credit-note:3000:v2$/)]);
+    expect(state.links.find((link) => link.xeroObjectId === "cn_1")?.metadata).toMatchObject({ perDelta: true });
+    expect(state.payment!.xeroRefundCreditNoteId).toBeNull();
   });
 });
 

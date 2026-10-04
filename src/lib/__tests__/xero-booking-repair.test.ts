@@ -696,6 +696,28 @@ describe("runBookingXeroRepair", () => {
     expect(unsettledRefundNoteRows(operations as never, links)).toEqual([]);
   });
 
+  it("MUTATION (#3880 F1): a bank payment holding only per-refund notes is offered no backfill of its canonical field", async () => {
+    // Empty by design: a review's per-refund note is never the payment's one note.
+    const reviewNote = (id: string, creditNoteId: string) =>
+      paymentLink({ id, xeroObjectType: "CREDIT_NOTE", xeroObjectId: creditNoteId, role: "REFUND_CREDIT_NOTE", metadata: { amountCents: 1000, perDelta: true } });
+    const reviewRow = (id: string, creditNoteId: string) =>
+      makeOperation({
+        id, entityType: "CREDIT_NOTE", localModel: "Payment", localId: "payment_1", xeroObjectType: "CREDIT_NOTE", xeroObjectId: creditNoteId,
+        requestPayload: { allocation: { invoiceId: "inv_primary", amount: 10 }, refundMethod: "internet-banking", perDelta: true, reviewTaskId: "task_1" },
+        responsePayload: { refundPayment: { paymentID: `pay_${id}` } },
+      });
+    const links = [reviewNote("link_a", "cn_a"), reviewNote("link_b", "cn_b")];
+    const deps = createDependencies({ bookings: [makeBooking()], links, operations: [reviewRow("op_a", "cn_a"), reviewRow("op_b", "cn_b")] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const booking = report.passes[0].bookings[0];
+    expect(booking.actions.map((action) => action.type)).not.toContain("SYNC_PAYMENT_REFUND_CREDIT_NOTE_FIELD");
+    expect(booking.findings.map((finding) => finding.summary)).not.toContain(
+      "Refund credit note references conflict across local fields, links, or past operations.",
+    );
+  });
+
   it("classifies cancelled unpaid bookings with an open invoice", async () => {
     const booking = makeBooking({
       status: "CANCELLED",

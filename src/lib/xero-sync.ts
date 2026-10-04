@@ -3,7 +3,13 @@ import { createHash } from "crypto";
 import { prisma } from "./prisma";
 import { getXeroErrorStatusCode } from "./xero-error-shape";
 import { asRecord, readString } from "./xero-json";
-import { isPerDeltaRefundNoteLink, isRefundCreditNoteLinkCancelledInXero, perDeltaRefundNoteIds } from "./xero-refund-note-status";
+import {
+  canonicalRefundNoteFromField,
+  isPerDeltaRefundNoteLink,
+  isRefundCreditNoteLinkCancelledInXero,
+  perDeltaRefundNoteIds,
+  readCanonicalRefundNoteField,
+} from "./xero-refund-note-status";
 import { buildXeroObjectUrl, stripXeroOrgShortCode } from "./xero-links";
 import {
   redactSensitiveRecord,
@@ -379,11 +385,12 @@ export async function findCanonicalPaymentRefundCreditNote(
     );
   }
 
-  if (payment?.xeroRefundCreditNoteId && !perDeltaNoteIds.has(payment.xeroRefundCreditNoteId)) {
+  const canonicalFieldNoteId = canonicalRefundNoteFromField(payment?.xeroRefundCreditNoteId, perDeltaNoteIds);
+  if (canonicalFieldNoteId) {
     return {
-      xeroObjectId: payment.xeroRefundCreditNoteId,
+      xeroObjectId: canonicalFieldNoteId,
       xeroObjectNumber:
-        xeroObjectNumberById.get(payment.xeroRefundCreditNoteId) ?? null,
+        xeroObjectNumberById.get(canonicalFieldNoteId) ?? null,
       source: "payment",
     };
   }
@@ -558,7 +565,9 @@ async function normalizePaymentRefundLinkWithClient(
       };
     }
 
-    const canonicalCreditNoteId = payment?.xeroRefundCreditNoteId ?? link.xeroObjectId;
+    // #3880 F1: a field naming a per-refund note is no canonical note at all.
+    const canonicalCreditNoteId =
+      canonicalRefundNoteFromField(payment?.xeroRefundCreditNoteId, perDeltaNoteIds) ?? link.xeroObjectId;
     const shouldBeActive = (link.active ?? true) && canonicalCreditNoteId === link.xeroObjectId;
 
     if (canonicalCreditNoteId === link.xeroObjectId) {
@@ -595,7 +604,11 @@ async function normalizePaymentRefundLinkWithClient(
     });
     const metadata = asRecord(link.metadata);
     const linkedCreditNoteId = readString(metadata?.creditNoteId);
-    const canonicalCreditNoteId = payment?.xeroRefundCreditNoteId ?? linkedCreditNoteId;
+    const canonicalCreditNoteId =
+      (await readCanonicalRefundNoteField(
+        payment ? { id: link.localId, xeroRefundCreditNoteId: payment.xeroRefundCreditNoteId } : null,
+        client,
+      )) ?? linkedCreditNoteId;
     const shouldBeActive =
       (link.active ?? true)
       && (!canonicalCreditNoteId || linkedCreditNoteId === canonicalCreditNoteId);

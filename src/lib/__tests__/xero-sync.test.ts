@@ -388,6 +388,40 @@ describe("upsertXeroObjectLink", () => {
       expect(mocks.txLinkUpsert).toHaveBeenCalledWith(expect.objectContaining({ update: expect.objectContaining({ active: true }) }));
     });
 
+    it("MUTATION (F1): a field an older writer pointed at a per-refund note is no canonical note - the cancellation's note, re-read, stays active", async () => {
+      // H ($50, the cancellation's hand-back) beside D ($30, a review's), with the
+      // field on D: before the fix H's inbound re-read was written INACTIVE.
+      mocks.txPaymentFindUnique.mockResolvedValue({ source: "INTERNET_BANKING", xeroRefundCreditNoteId: "cn_review" });
+      mocks.txLinkFindMany.mockResolvedValue([
+        { xeroObjectId: "cn_review", metadata: { amountCents: 3000, perDelta: true } },
+        { xeroObjectId: "cn_handback", metadata: { amountCents: 5000 } },
+      ]);
+
+      await upsertXeroObjectLink({
+        localModel: "Payment", localId: "payment_1", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_handback", role: "REFUND_CREDIT_NOTE",
+        metadata: { status: "AUTHORISED", total: 50 }, mergeMetadata: true,
+      });
+
+      expect(mocks.txLinkUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ active: true }), update: expect.objectContaining({ active: true }) }),
+      );
+      expect(mocks.txLinkUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ xeroObjectId: { not: "cn_handback", notIn: ["cn_review"] } }) }),
+      );
+    });
+
+    it("MUTATION (F1): with the field on a per-refund note, the cancellation's note's refund payment link stays active", async () => {
+      mocks.txPaymentFindUnique.mockResolvedValue({ source: "INTERNET_BANKING", xeroRefundCreditNoteId: "cn_review" });
+      mocks.txLinkFindMany.mockResolvedValue([{ xeroObjectId: "cn_review", metadata: { perDelta: true } }]);
+
+      await upsertXeroObjectLink({
+        localModel: "Payment", localId: "payment_1", xeroObjectType: "PAYMENT", xeroObjectId: "pay_handback", role: "REFUND_PAYMENT",
+        metadata: { creditNoteId: "cn_handback" },
+      });
+
+      expect(mocks.txLinkUpsert).toHaveBeenCalledWith(expect.objectContaining({ update: expect.objectContaining({ active: true }) }));
+    });
+
     it("MUTATION: the payment's one canonical note retires older single notes but never a per-refund one", async () => {
       mocks.txPaymentFindUnique.mockResolvedValue({ source: "INTERNET_BANKING", xeroRefundCreditNoteId: "cn_canonical" });
       mocks.txLinkFindMany.mockResolvedValue([
