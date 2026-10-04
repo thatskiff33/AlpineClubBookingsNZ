@@ -937,7 +937,14 @@ cash NOT already minted for the other (a defensive invariant — no app flow
 produces that shape; the remaining-cash read-back happens inside each payment's
 reconcile transaction under the shared advisory lock, so it stays idempotent
 under retry, and a capped mint raises the same loud alert, never a silent
-overmint).
+overmint). The late-capacity-failure cancel also restores the booking's applied
+account credit in full, under the per-member credit-ledger lock and only once
+no applied-credit deallocation is unconverged (#3792). The inbound credit-note
+sync then leaves that booking's member ledger alone: a later de-allocation or
+raise in Xero on a booking with a restore row writes nothing, raises
+`applied-credit-restored-booking-allocation-change` through
+`notifyXeroSyncError`, and records a critical `xero` audit row, which survives
+that alert's one-an-hour throttle (`INV-PAY-019`).
 
 ```mermaid
 sequenceDiagram

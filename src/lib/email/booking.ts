@@ -44,6 +44,8 @@ import {
   checkoutDayChoreNote,
   composeChoreLine,
   composeOptionalEmailLine,
+  creditRestoredSentenceTail,
+  type CreditRestoredBasis,
   splitGuestPortionOwnBookingLine,
   wholeLodgeGuestNamesUrgencyNote,
 } from "../email-message-notes";
@@ -828,6 +830,8 @@ export async function sendBookingCancelledEmail(
   creditRestoredCents: number = 0,
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null,
+  // #3792: "in-full" for a cancel the member did not choose (capacity, hold expiry).
+  creditRestoredBasis: CreditRestoredBasis = "cancellation-policy",
 ) {
   await sendEmail({
     to: email,
@@ -840,6 +844,7 @@ export async function sendBookingCancelledEmail(
       format,
       refundMethod,
       creditRestoredCents,
+      creditRestoredBasis,
     )),
     bookingContext: bookingOwnerEmailContext(bookingContext.bookingId, bookingContext.recipientMemberId),
     templateName: "booking-cancelled",
@@ -862,7 +867,7 @@ export async function sendBookingCancelledEmail(
       creditRestored: formatMoneyCents(creditRestoredCents, format),
       creditRestoredMessage:
         creditRestoredCents > 0
-          ? `${formatMoneyCents(creditRestoredCents, format)} of previously applied account credit has been restored to your account (per the cancellation policy).`
+          ? `${formatMoneyCents(creditRestoredCents, format)}${creditRestoredSentenceTail(creditRestoredBasis)}`
           : "",
     },
     lodgeId,

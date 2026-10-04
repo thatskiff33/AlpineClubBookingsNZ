@@ -46,7 +46,9 @@ import { CLUB_LODGE_TRAVEL_NOTE } from "@/config/club-identity";
 import {
   bookingBumpedRebookAction,
   bookingPaymentDueNote,
+  creditRestoredSentenceTail,
   splitGuestPortionOwnBookingLine,
+  type CreditRestoredBasis,
 } from "@/lib/email-message-notes";
 import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 import type { ClubFormat } from "@/lib/club-format";
@@ -366,6 +368,9 @@ export function bookingCancelledTemplate(
   // raised instead), so it gets its own honest copy.
   refundMethod: "card" | "credit" | "manual" = "card",
   creditRestoredCents: number = 0,
+  // #3792: a cancel the member did not choose (capacity, hold expiry) restores
+  // the applied credit in full, so no cancellation policy applies to it.
+  creditRestoredBasis: CreditRestoredBasis = "cancellation-policy",
 ): string {
   let refundInfo: string;
   if (refundCents > 0 && refundMethod === "manual") {
@@ -396,7 +401,7 @@ export function bookingCancelledTemplate(
     creditRestoredCents > 0
       ? alertBox(
           formatCents(creditRestoredCents, format) +
-            " of previously applied account credit has been restored to your account (per the cancellation policy).",
+            creditRestoredSentenceTail(creditRestoredBasis),
           "success"
         )
       : "";
