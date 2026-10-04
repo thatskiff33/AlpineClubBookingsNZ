@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   // #3864: nothing to give back unless a case says so.
   giveBackAppliedCredit: vi.fn(async () => ({ appliedCreditCents: 0, givenBackCents: 0, payment: null })),
+  findAppliedCreditDeallocationFence: vi.fn(async (): Promise<{ id: string; status: string } | null> => null),
   paymentUpdate: vi.fn(),
   // #3792: the settle's member credit-ledger key.
   lockMemberCreditLedger: vi.fn(),
@@ -122,6 +123,11 @@ vi.mock("@/lib/member-credit", () => ({
     if (!memberId) throw new Error("no account to credit (#3369)");
     return memberId;
   },
+}));
+
+vi.mock("@/lib/xero-applied-credit-operation-serialization", () => ({
+  findAppliedCreditDeallocationFence: (...args: unknown[]) =>
+    mocks.findAppliedCreditDeallocationFence(...args),
 }));
 
 vi.mock("@/lib/email", () => ({
@@ -739,11 +745,10 @@ describe("markBookingPaymentSucceeded", () => {
         amountCents: EFFECTIVE,
         creditAppliedCents: APPLIED,
       });
-      // #3864: the credit covered exactly what the card did not, so none goes back.
-      const [giveBack] = mocks.giveBackAppliedCredit.mock.calls[0] as unknown as [
-        { giveBackCentsOf: (applied: number) => number },
-      ];
-      expect(giveBack.giveBackCentsOf(APPLIED)).toBe(0);
+      // #3864: the credit covered exactly what the card did not, so nothing is
+      // given back and the fence is never asked.
+      expect(mocks.giveBackAppliedCredit).not.toHaveBeenCalled();
+      expect(mocks.findAppliedCreditDeallocationFence).not.toHaveBeenCalled();
     });
 
     it("still accepts a legacy full-price capture (mirror credit = 0)", async () => {
@@ -767,6 +772,26 @@ describe("markBookingPaymentSucceeded", () => {
       expect(giveBack.giveBackCentsOf(3000)).toBe(3000);
       expect(mocks.paymentUpdate).toHaveBeenCalledWith(
         expect.objectContaining({ data: { creditAppliedCents: 0 } }),
+      );
+    });
+
+    it("holds the credit for an operator, and still settles, when a Xero deallocation fences the give-back (#3864)", async () => {
+      mocks.findAppliedCreditDeallocationFence.mockResolvedValueOnce({ id: "op-1", status: "FAILED" });
+      const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
+        bookingId: "booking-1",
+        paymentIntentId: "pi_legacy_full",
+        amountCents: FINAL,
+        paymentMethodId: "pm_1",
+      });
+      expect(result.outcome).toBe("paid");
+      expect(mocks.giveBackAppliedCredit).not.toHaveBeenCalled();
+      expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amountCents: APPLIED,
+          errorMessage: expect.stringContaining("could not be returned automatically"),
+        }),
+        CLUB_FORMAT_TEST,
       );
     });
 
