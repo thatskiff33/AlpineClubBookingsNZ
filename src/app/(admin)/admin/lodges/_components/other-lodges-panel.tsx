@@ -26,10 +26,14 @@ import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { isHttpUrl } from "@/lib/http-url";
 import {
   AMENITIES_PER_LODGE_MAX,
-  isHttpUrl,
+  OTHER_LODGE_BOUNDS,
+  amenitiesInputSchema,
   type OtherLodgeBooleanField,
+  type OtherLodgeDateField,
+  type OtherLodgeTextField,
   type SerializedOtherLodge,
 } from "@/lib/other-lodges";
 
@@ -39,8 +43,47 @@ import {
 type OtherLodgeRecord = SerializedOtherLodge;
 type OtherLodgePayload = Omit<OtherLodgeRecord, "id" | "createdAt" | "updatedAt">;
 
-// `Record` over the shared field type: a facility missing a label here is a
-// compile error, so the checklist cannot fall behind the schema.
+// EVERY EDITOR LABEL IS A `Record` OVER THE SHARED FIELD TYPE, so a field that
+// is stored, serialized and uploaded but missing here is a compile error — the
+// one list cannot gain a 15th field that the editor silently has no input for.
+// Lengths come from the same `OTHER_LODGE_BOUNDS` the API validates with.
+type TextInputSpec = {
+  label: string;
+  maxLength: number;
+  type?: "email" | "url";
+  placeholder?: string;
+};
+const TEXT_FIELDS: Record<OtherLodgeTextField, TextInputSpec> = {
+  location: { label: "Location", maxLength: OTHER_LODGE_BOUNDS.location },
+  bookingOfficerName: {
+    label: "Booking officer's name",
+    maxLength: OTHER_LODGE_BOUNDS.bookingOfficerName,
+  },
+  bookingOfficerEmail: {
+    label: "Booking officer's email",
+    maxLength: OTHER_LODGE_BOUNDS.bookingOfficerEmail,
+    type: "email",
+  },
+  bookingOfficerPhone: {
+    label: "Booking officer's phone",
+    maxLength: OTHER_LODGE_BOUNDS.bookingOfficerPhone,
+  },
+  siteUrl: {
+    label: "Website",
+    maxLength: OTHER_LODGE_BOUNDS.siteUrl,
+    type: "url",
+    placeholder: "https://",
+  },
+  bookingPath: { label: "How to book", maxLength: OTHER_LODGE_BOUNDS.bookingPath },
+  cancellationPeriod: {
+    label: "Cancellation period",
+    maxLength: OTHER_LODGE_BOUNDS.cancellationPeriod,
+  },
+};
+const DATE_FIELDS: Record<OtherLodgeDateField, string> = {
+  winterSeasonStart: "Winter season starts",
+  summerSeasonStart: "Summer season starts",
+};
 const FACILITY_LABELS: Record<OtherLodgeBooleanField, string> = {
   requiresLodgeCustodian: "Requires a lodge custodian",
   freeWifi: "Free wifi",
@@ -52,64 +95,43 @@ const FACILITY_LABELS: Record<OtherLodgeBooleanField, string> = {
   lunchIncluded: "Lunch included",
   dinnerIncluded: "Dinner included",
 };
+const TEXT_FIELD_NAMES = Object.keys(TEXT_FIELDS) as OtherLodgeTextField[];
+const DATE_FIELD_NAMES = Object.keys(DATE_FIELDS) as OtherLodgeDateField[];
 const FACILITY_FIELDS = Object.keys(FACILITY_LABELS) as OtherLodgeBooleanField[];
 
 type AmenityFormRow = { name: string; description: string };
 
 type OtherLodgeFormState = {
   name: string;
-  location: string;
-  bookingOfficerName: string;
-  bookingOfficerEmail: string;
-  bookingOfficerPhone: string;
   bedCapacity: string;
-  siteUrl: string;
-  bookingPath: string;
-  cancellationPeriod: string;
+  text: Record<OtherLodgeTextField, string>;
   /** `YYYY-MM-DD` from a date input, or "" — never a `Date`. */
-  winterSeasonStart: string;
-  summerSeasonStart: string;
+  dates: Record<OtherLodgeDateField, string>;
   facilities: Record<OtherLodgeBooleanField, boolean>;
   amenities: AmenityFormRow[];
 };
 
-const noFacilities = Object.fromEntries(
-  FACILITY_FIELDS.map((field) => [field, false]),
-) as Record<OtherLodgeBooleanField, boolean>;
+/** `{ [field]: value(field) }` typed over the field union, for the records above. */
+function recordOf<K extends string, V>(keys: readonly K[], value: (key: K) => V) {
+  return Object.fromEntries(keys.map((key) => [key, value(key)])) as Record<K, V>;
+}
 
 const emptyForm: OtherLodgeFormState = {
   name: "",
-  location: "",
-  bookingOfficerName: "",
-  bookingOfficerEmail: "",
-  bookingOfficerPhone: "",
   bedCapacity: "",
-  siteUrl: "",
-  bookingPath: "",
-  cancellationPeriod: "",
-  winterSeasonStart: "",
-  summerSeasonStart: "",
-  facilities: noFacilities,
+  text: recordOf(TEXT_FIELD_NAMES, () => ""),
+  dates: recordOf(DATE_FIELD_NAMES, () => ""),
+  facilities: recordOf(FACILITY_FIELDS, () => false),
   amenities: [],
 };
 
 function formFromLodge(lodge: OtherLodgeRecord): OtherLodgeFormState {
   return {
     name: lodge.name,
-    location: lodge.location ?? "",
-    bookingOfficerName: lodge.bookingOfficerName ?? "",
-    bookingOfficerEmail: lodge.bookingOfficerEmail ?? "",
-    bookingOfficerPhone: lodge.bookingOfficerPhone ?? "",
-    bedCapacity:
-      lodge.bedCapacity === null ? "" : String(lodge.bedCapacity),
-    siteUrl: lodge.siteUrl ?? "",
-    bookingPath: lodge.bookingPath ?? "",
-    cancellationPeriod: lodge.cancellationPeriod ?? "",
-    winterSeasonStart: lodge.winterSeasonStart ?? "",
-    summerSeasonStart: lodge.summerSeasonStart ?? "",
-    facilities: Object.fromEntries(
-      FACILITY_FIELDS.map((field) => [field, lodge[field]]),
-    ) as Record<OtherLodgeBooleanField, boolean>,
+    bedCapacity: lodge.bedCapacity === null ? "" : String(lodge.bedCapacity),
+    text: recordOf(TEXT_FIELD_NAMES, (field) => lodge[field] ?? ""),
+    dates: recordOf(DATE_FIELD_NAMES, (field) => lodge[field] ?? ""),
+    facilities: recordOf(FACILITY_FIELDS, (field) => lodge[field]),
     amenities: lodge.amenities.map((a) => ({
       name: a.name,
       description: a.description ?? "",
@@ -124,16 +146,9 @@ function formPayload(form: OtherLodgeFormState): OtherLodgePayload {
   const capacity = form.bedCapacity.trim();
   return {
     name: form.name.trim(),
-    location: form.location.trim() || null,
-    bookingOfficerName: form.bookingOfficerName.trim() || null,
-    bookingOfficerEmail: form.bookingOfficerEmail.trim() || null,
-    bookingOfficerPhone: form.bookingOfficerPhone.trim() || null,
     bedCapacity: capacity === "" ? null : Number(capacity),
-    siteUrl: form.siteUrl.trim() || null,
-    bookingPath: form.bookingPath.trim() || null,
-    cancellationPeriod: form.cancellationPeriod.trim() || null,
-    winterSeasonStart: form.winterSeasonStart.trim() || null,
-    summerSeasonStart: form.summerSeasonStart.trim() || null,
+    ...recordOf(TEXT_FIELD_NAMES, (field) => form.text[field].trim() || null),
+    ...recordOf(DATE_FIELD_NAMES, (field) => form.dates[field].trim() || null),
     ...form.facilities,
     amenities: form.amenities.map((a) => ({
       name: a.name.trim(),
@@ -142,7 +157,12 @@ function formPayload(form: OtherLodgeFormState): OtherLodgePayload {
   };
 }
 
-/** The inline message for a form the API would refuse, or null when it is fine. */
+/**
+ * The inline message for a form the API would refuse, or null when it is fine.
+ * The amenity list is checked with the API's OWN schema rather than a re-typed
+ * copy of its rules, so "needs a name", "unique ignoring case" and the per-lodge
+ * cap can only ever disagree with the server by not being run.
+ */
 function formProblem(form: OtherLodgeFormState): string | null {
   if (!form.name.trim()) return "Lodge name is required.";
   const capacity = form.bedCapacity.trim();
@@ -151,20 +171,18 @@ function formProblem(form: OtherLodgeFormState): string | null {
   }
   // Mirror the server's upper bound so an unrealistic value gets a clear
   // inline message instead of a generic "Invalid input" from the API.
-  if (capacity !== "" && Number(capacity) > 100_000) {
+  if (capacity !== "" && Number(capacity) > OTHER_LODGE_BOUNDS.bedCapacityMax) {
     return "Bed capacity looks too large. Enter a realistic number.";
   }
-  const siteUrl = form.siteUrl.trim();
+  const siteUrl = form.text.siteUrl.trim();
   if (siteUrl && !isHttpUrl(siteUrl)) {
     return "The site URL must start with http:// or https://.";
   }
-  if (form.amenities.length > AMENITIES_PER_LODGE_MAX) {
-    return `A lodge can list at most ${AMENITIES_PER_LODGE_MAX} amenities.`;
-  }
-  const names = form.amenities.map((a) => a.name.trim());
-  if (names.some((n) => !n)) return "Every amenity needs a name.";
-  if (new Set(names.map((n) => n.toLowerCase())).size !== names.length) {
-    return "Amenity names must be unique within a lodge.";
+  const amenities = amenitiesInputSchema.safeParse(formPayload(form).amenities);
+  if (!amenities.success) {
+    const [issue] = amenities.error.issues;
+    const row = typeof issue?.path[0] === "number" ? ` (amenity ${issue.path[0] + 1})` : "";
+    return `${issue?.message ?? "Check the amenities."}${row}`;
   }
   return null;
 }
@@ -231,13 +249,6 @@ export function OtherLodgesPanel({
     setEditingId(null);
     setCreating(false);
     setForm(emptyForm);
-  }
-
-  function setText(
-    field: Exclude<keyof OtherLodgeFormState, "facilities" | "amenities">,
-    value: string,
-  ) {
-    setForm((prev) => ({ ...prev, [field]: value }));
   }
 
   function setAmenity(index: number, patch: Partial<AmenityFormRow>) {
@@ -322,22 +333,6 @@ export function OtherLodgesPanel({
 
   const showForm = creating || editingId !== null;
 
-  const textField = (
-    field: Exclude<keyof OtherLodgeFormState, "facilities" | "amenities">,
-    label: string,
-    props: { type?: string; maxLength?: number; placeholder?: string } = {},
-  ) => (
-    <div className="space-y-2">
-      <Label htmlFor={`other-lodge-${field}`}>{label}</Label>
-      <Input
-        id={`other-lodge-${field}`}
-        value={form[field]}
-        onChange={(event) => setText(field, event.target.value)}
-        {...props}
-      />
-    </div>
-  );
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -380,46 +375,70 @@ export function OtherLodgesPanel({
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="grid gap-4 sm:grid-cols-2">
-              {textField("name", "Name", { maxLength: 120 })}
-              {textField("location", "Location", { maxLength: 300 })}
-              {textField("bookingOfficerName", "Booking officer's name", {
-                maxLength: 200,
-              })}
-              {textField("bookingOfficerEmail", "Booking officer's email", {
-                type: "email",
-                maxLength: 320,
-              })}
-              {textField("bookingOfficerPhone", "Booking officer's phone", {
-                maxLength: 50,
-              })}
+              <div className="space-y-2">
+                <Label htmlFor="other-lodge-name">Name</Label>
+                <Input
+                  id="other-lodge-name"
+                  value={form.name}
+                  maxLength={OTHER_LODGE_BOUNDS.name}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, name: event.target.value }))
+                  }
+                />
+              </div>
+              {TEXT_FIELD_NAMES.map((field) => (
+                <div key={field} className="space-y-2">
+                  <Label htmlFor={`other-lodge-${field}`}>
+                    {TEXT_FIELDS[field].label}
+                  </Label>
+                  <Input
+                    id={`other-lodge-${field}`}
+                    type={TEXT_FIELDS[field].type}
+                    placeholder={TEXT_FIELDS[field].placeholder}
+                    maxLength={TEXT_FIELDS[field].maxLength}
+                    value={form.text[field]}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        text: { ...prev.text, [field]: event.target.value },
+                      }))
+                    }
+                  />
+                </div>
+              ))}
               <div className="space-y-2">
                 <Label htmlFor="other-lodge-bedCapacity">Bed capacity</Label>
                 <Input
                   id="other-lodge-bedCapacity"
                   type="number"
                   min={0}
+                  max={OTHER_LODGE_BOUNDS.bedCapacityMax}
                   inputMode="numeric"
                   value={form.bedCapacity}
                   onChange={(event) =>
-                    setText("bedCapacity", event.target.value)
+                    setForm((prev) => ({
+                      ...prev,
+                      bedCapacity: event.target.value,
+                    }))
                   }
                 />
               </div>
-              {textField("siteUrl", "Website", {
-                type: "url",
-                maxLength: 500,
-                placeholder: "https://",
-              })}
-              {textField("bookingPath", "How to book", { maxLength: 300 })}
-              {textField("cancellationPeriod", "Cancellation period", {
-                maxLength: 200,
-              })}
-              {textField("winterSeasonStart", "Winter season starts", {
-                type: "date",
-              })}
-              {textField("summerSeasonStart", "Summer season starts", {
-                type: "date",
-              })}
+              {DATE_FIELD_NAMES.map((field) => (
+                <div key={field} className="space-y-2">
+                  <Label htmlFor={`other-lodge-${field}`}>{DATE_FIELDS[field]}</Label>
+                  <Input
+                    id={`other-lodge-${field}`}
+                    type="date"
+                    value={form.dates[field]}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        dates: { ...prev.dates, [field]: event.target.value },
+                      }))
+                    }
+                  />
+                </div>
+              ))}
             </div>
 
             <fieldset className="space-y-2">
@@ -465,7 +484,7 @@ export function OtherLodgesPanel({
                     <Input
                       id={`other-lodge-amenity-name-${index}`}
                       value={row.name}
-                      maxLength={120}
+                      maxLength={OTHER_LODGE_BOUNDS.amenityName}
                       onChange={(event) =>
                         setAmenity(index, { name: event.target.value })
                       }
@@ -480,7 +499,7 @@ export function OtherLodgesPanel({
                     <Input
                       id={`other-lodge-amenity-description-${index}`}
                       value={row.description}
-                      maxLength={1000}
+                      maxLength={OTHER_LODGE_BOUNDS.amenityDescription}
                       onChange={(event) =>
                         setAmenity(index, { description: event.target.value })
                       }
