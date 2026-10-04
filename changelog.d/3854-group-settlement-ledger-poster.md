@@ -12,7 +12,12 @@
   back-post (#3583) now records the same for groups settled before this
   release — each joiner's share, and for a cancelled group its planned refund
   and what the club kept — so a joiner it covers is no longer only listed; a
-  joiner it cannot explain is listed with the reason. A database change adds
+  joiner it cannot explain is listed with the reason, and the cut-over census
+  now keeps the gate shut on such a joiner rather than listing it as covered
+  (a refund the card retries have given up on, or shares that do not add up).
+  The census also counts a card refund that failed but will be retried as
+  still in flight, and accepts a joiner's share when the organiser's whole
+  payment was refunded. A database change adds
   one value to the ledger's list of anchors; it is safe to run while the
   previous version is still serving.
 

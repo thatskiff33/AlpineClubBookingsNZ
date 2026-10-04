@@ -545,8 +545,10 @@ the delta — never a repair. It also reports **coverage** (bookings with money
 columns and no lines at all; paid bookings not confirmed on the ledger; edits,
 change fees and credit rows no line records; a captured transaction or a
 recorded refund with no live `capture:` / `refund:` line of its own,
-`UNPOSTED_SETTLEMENT`; and, on `owed(b)`, a legacy seed's refund or a V3
-hand-back no line can yet record, `UNPOSTED_LEGACY_REFUND`), **integrity** (a reversal naming
+`UNPOSTED_SETTLEMENT`; on `owed(b)`, a legacy seed's refund or a V3
+hand-back no line can yet record, `UNPOSTED_LEGACY_REFUND`; and a group-settled
+child with no lines that the back-post could not post so the census agrees,
+`GROUP_SETTLEMENT_UNPOSTABLE`, below), **integrity** (a reversal naming
 no line or not its exact opposite, a second live night, an unknown key
 namespace or one on an anchor it never posts under, a live line its source row
 — or the CANCELLED event's frozen kept figure — no longer bears out) and a
@@ -565,19 +567,32 @@ and `V3_LEGACY_HAND_BACK` — the last
 two on the refunded column only, since on `owed(b)` they are money the ledger
 is missing; `CHANGE_FEE_REVERSED_BY_CANCELLATION`;
 `RETAINED_REVIEW_SHARE` (§5.3); and a cancelled booking's `IN_FLIGHT_HAND_BACK`,
-`IN_FLIGHT_REFUND`, `V5_PLANNED_REFUND_SHORT` and `D2_DISMISSED_HAND_BACK`.
+`IN_FLIGHT_REFUND`, `V5_PLANNED_REFUND_SHORT` and `D2_DISMISSED_HAND_BACK`. A
+refund is in flight while the recovery runner will still make it — pending,
+processing, or failed with a retry scheduled and attempts left
+(`isPaymentRecoveryOperationInFlight`, #3854 K1); an exhausted one is not, and
+the money it owes back is a disagreement.
 `AMBIGUOUS_REVIEW_GIVE_BACK` is a live booking whose review give-back rows
 the census cannot attribute to their tasks (below the review-line paragraph).
 `KNOWN_DEFECT_HISTORY` finds bookings #3791, #3792 or #1641's shape damaged,
-where the ledger is right, and `GROUP_SETTLEMENT_OFF_LEDGER` the group-settled
-children no poster reaches — a child with no transaction, refund or credit row
-of its own and no credit, refund or change-fee figure, whose money moved only
-through the organiser's settlement. Since #3854 a newly settled child holds
-lines, so the class is history only: its `GROUP_SETTLEMENT` share is checked
-against the child's payment and a plan refund against the frozen plan
-(`booking-ledger-projection-census-group.ts`); the back-post posts a child
-settled before #3854, so the class stays only for history it could not post
-(above); a child settled before #3854
+where the ledger is right, and `GROUP_SETTLEMENT_OFF_LEDGER` a group-settled
+child the back-post has not yet posted — a child with no line, no transaction,
+refund or credit row of its own and no credit, refund or change-fee figure,
+whose money moved only through the organiser's settlement. Owner decision 2A
+exempts the class from the gate because #3854's poster posts the child, so the
+census names it only where those lines would make it agree: it plans them in
+memory from its one snapshot through the back-post's own planners
+(`booking-ledger-group-child-plan.ts`, the confirmation and cancellation
+planners) and judges the result. A child whose planned lines would leave a
+disagreement, a gap, an integrity finding or a class — shares that do not add
+up, a #3653 refund whose retry is exhausted or still in flight — is
+`GROUP_SETTLEMENT_UNPOSTABLE`, a coverage gap no acknowledgement signs (#3854
+F1). Since #3854 a newly settled child holds lines, so the class is history
+only: its `GROUP_SETTLEMENT` share is checked against the child's payment
+under a settlement that captured — `REFUNDED` included, since an organiser
+cancel at 100% leaves the share standing beside its refunds (K2) — and a plan
+refund against the frozen plan (`booking-ledger-projection-census-group.ts`); a
+child settled before #3854
 that holds only a #3653 refund line is `NOT_CONFIRMED_ON_LEDGER` coverage; a
 pre-#3653 plan's one group retry still in flight is the child's planned share
 as `IN_FLIGHT_REFUND`; and an organiser cancel freezes no kept figure, so its
@@ -594,7 +609,8 @@ what permits Release 2 — precisely, zero **unclassified** disagreements, zero
 coverage gaps, zero integrity findings and no booking in a class that holds
 the gate, every other class acknowledged by the owner on #3583 — instance by
 instance, to the cent, in the acknowledgement file, save
-`GROUP_SETTLEMENT_OFF_LEDGER`, which the owner decided is listed only — because a
+`GROUP_SETTLEMENT_OFF_LEDGER`, which the owner decided is listed only (and
+which names only a child whose planned lines agree) — because a
 literal zero is not reachable on a live history (in-flight refunds and the
 classes above are expected states). A disagreement is a poster bug, fixed and
 re-run. It
@@ -661,12 +677,13 @@ every child the settlement paid, each at its payment's `amountCents` — sum or
 nothing, refused as `GROUP_SHARES_DO_NOT_RECONCILE` — a mirror plan's refund
 from `planGroupSettlementRefundLine` only once its mirror is written (an
 unmirrored one is the recovery replay's to post, under the same key), and an
-organiser cancel's kept figure from `groupSettledChildKeptCents`, with the
-payment as it stood at the cancel. A #3653 refund posts from its own row
-through the settlement sync. A later replay, retry or #3653 refund therefore
-finds its key posted. A child with no lines it cannot post stays
-`GROUP_SETTLEMENT_OFF_LEDGER`, listed with its reason; one with money of its own
-stays a coverage gap. The dry run is the same transaction, rolled
+organiser cancel's kept figure from `groupSettledChildKeptFrom` (the live
+cancel's own), with the payment as it stood at the cancel. The census plans a
+child with no lines through the same module (above). A #3653 refund posts from
+its own row through the settlement sync. A later replay, retry or #3653 refund
+therefore finds its key posted. A child it cannot post is listed `CANNOT POST`
+with its reason like any booking, and the census holds the gate on it
+(`GROUP_SETTLEMENT_UNPOSTABLE`, or `NO_LINES` for one with money of its own). The dry run is the same transaction, rolled
 back. Every run has an id and window, and names each line it inserted. What it does not reconstruct, and so lists: a review give-back or stand-in
 a closure before #3582 would have posted, an edit-review hand-back made by hand
 before #3599, and a legacy refund with no `PaymentRefund` row.
