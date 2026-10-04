@@ -169,7 +169,7 @@ export function getRemainingRefundableCents(
 }
 
 /**
- * #3827 (`INV-PAY-115`): the remaining refundable cash LESS the edit refunds
+ * #3827 (`INV-PAY-117`): the remaining refundable cash LESS the edit refunds
  * the club has promised back by bank transfer and not yet sent. The one
  * arithmetic for the server cap (`refundableCashNetOfOpenHandBacks`, which
  * reads the promised sum) and the screens that show that cap from a loaded
@@ -195,7 +195,7 @@ export function getRemainingRefundableCentsNetOf(
  * than the booking is worth; the refunded term is why an understated mirror
  * would (#3640).
  *
- * #3827 (`INV-PAY-115`): "not yet handed back" also excludes the edit refunds
+ * #3827 (`INV-PAY-117`): "not yet handed back" also excludes the edit refunds
  * already PROMISED back by hand (`openNonCancellationHandBackCents`, the sum of the
  * payment's open edit refund hand-backs), REQUIRED so no caller can forget it:
  * a cancellation must not refund or credit cash the treasurer still owes on an
@@ -234,7 +234,7 @@ export function cancelAppliedCreditBaseCents(input: {
   amountCents: number;
   refundedAmountCents: number;
   /**
-   * The payment's open edit / refund-request hand-backs (#3827, `INV-PAY-115`):
+   * The payment's open edit / refund-request hand-backs (#3827, `INV-PAY-117`):
    * cash already promised back, which counts as paid no more here than it does
    * in `cancelRefundableBaseCents`, so the cap reads the same paid figure.
    */

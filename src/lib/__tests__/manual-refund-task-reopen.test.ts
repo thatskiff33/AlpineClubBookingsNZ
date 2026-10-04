@@ -70,7 +70,7 @@ const tx = {
   memberCredit: {
     aggregate: (...a: unknown[]) => mocks.creditAggregate(...a),
   },
-  // `INV-PAY-116`: an appeal task's reopen re-reads the payment after the
+  // `INV-PAY-118`: an appeal task's reopen re-reads the payment after the
   // handed-back sums; echo whatever the task row carried.
   payment: {
     findUnique: async () => {
@@ -300,7 +300,7 @@ describe("the global settlement key the reopen takes (#3498 fix round, C1)", () 
   });
 });
 
-describe("reopening a dismissed EDIT refund hand-back (#3827, INV-PAY-115)", () => {
+describe("reopening a dismissed EDIT refund hand-back (#3827, INV-PAY-117)", () => {
   /** A $200 edit refund on a $300 internet-banking payment, dismissed. */
   function dismissedEditRefund(payment: { amountCents: number; refundedAmountCents: number }) {
     return {
@@ -366,7 +366,7 @@ describe("reopening a dismissed EDIT refund hand-back (#3827, INV-PAY-115)", () 
   });
 });
 
-describe("reopening a dismissed refund APPEAL hand-back (#3827, D-3813-7, INV-PAY-116)", () => {
+describe("reopening a dismissed refund APPEAL hand-back (#3827, D-3813-7, INV-PAY-118)", () => {
   /** A $100 appeal task on a cancelled $200 internet-banking payment, dismissed. */
   function dismissedAppeal(payment: { amountCents: number; refundedAmountCents: number }) {
     return {
@@ -395,7 +395,7 @@ describe("reopening a dismissed refund APPEAL hand-back (#3827, D-3813-7, INV-PA
     expect(mocks.updateMany).not.toHaveBeenCalled();
   });
 
-  // `INV-PAY-116`: an appeal's task is measured by the APPEAL's ceiling - every
+  // `INV-PAY-118`: an appeal's task is measured by the APPEAL's ceiling - every
   // open hand-back (a cancellation's own included) and the late-cash credit.
   it("measures it against every open hand-back, any kind", async () => {
     mocks.findUnique.mockResolvedValue(dismissedAppeal({ amountCents: 20000, refundedAmountCents: 10000 }));

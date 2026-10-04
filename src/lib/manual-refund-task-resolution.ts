@@ -160,7 +160,7 @@ export async function resolveManualRefundTask(
     // and only then reads what picks its money route, so nothing that route
     // depends on is stale. Why: docs/CONCURRENCY_AND_LOCKING.md.
     //
-    // #3827 (`INV-PAY-115`): an EDIT REFUND HAND-BACK takes the same key, and
+    // #3827 (`INV-PAY-117`): an EDIT REFUND HAND-BACK takes the same key, and
     // so (D-3813-7) does an approved refund request's. Its
     // completion moves `refundedAmountCents` and closes the task in one commit,
     // and every edit, acceptance and paid cancel reads those two separately to
@@ -202,7 +202,7 @@ export async function resolveManualRefundTask(
       isPartPaymentReviewTask(task),
     );
     if (refusal) throw new ManualBookingPaymentError(refusal, 400);
-    // #3827 (`INV-PAY-115`): a cancelled booking's edit refund hand-back is
+    // #3827 (`INV-PAY-117`): a cancelled booking's edit refund hand-back is
     // settled by paying it. The cancel counted it as going back; dismissing it
     // now would leave the cancellation's kept figure wrong. Read under lock(1)
     // (taken above for this kind), which a paid cancel also holds.
@@ -634,7 +634,7 @@ export async function resolveManualRefundTask(
       // against - `hasIssuedXeroInvoice` is false for every CANCELLED booking.
       cancellationHandBackInvoiceId: cancellationHandBackInvoiceIdOf(task),
       /**
-       * #3827 (`INV-PAY-115`): the Xero leg owes nothing for an edit refund
+       * #3827 (`INV-PAY-117`): the Xero leg owes nothing for an edit refund
        * hand-back - its edit already queued the credit note that corrects the
        * invoice. A refund request's (D-3813-8) queues that request's own note
        * instead (`refundRequestId` below), never the cancellation's.
@@ -646,7 +646,7 @@ export async function resolveManualRefundTask(
        * route, so the leg queues nothing) as on every other task.
        */
       refundRequestId: refundRequestIdOfHandBack(task),
-      /** The REFUNDED event's marker for those two (`INV-PAY-115`), else null. */
+      /** The REFUNDED event's marker for those two (`INV-PAY-117`), else null. */
       nonCancellationHandBackSnapshot: isNonCancellationHandBackTask(task)
         ? nonCancellationHandBackCompletedSnapshot({ id: task.id, kind: task.kind, occurrenceKey: task.occurrenceKey })
         : null,
@@ -665,7 +665,7 @@ export async function resolveManualRefundTask(
       actorMemberId: actingMemberId,
       amountCents: result.recordedRefund.amountCents,
       reason: "manual_refund_completed",
-      // #3827 (`INV-PAY-115`): an edit's refund on a live booking, or an
+      // #3827 (`INV-PAY-117`): an edit's refund on a live booking, or an
       // appeal's decided after the cancel - marked so the narrative never reads
       // it as the cancellation's settlement.
       ...(result.nonCancellationHandBackSnapshot

@@ -1,5 +1,5 @@
 /**
- * #3827, owner decision D-3813-7 (#3492, `INV-PAY-116`): an approved refund
+ * #3827, owner decision D-3813-7 (#3492, `INV-PAY-118`): an approved refund
  * request's part that no card refund carries raises ONE officer refund task,
  * marked like an edit's, netted with it, and promised to the member as a bank
  * transfer.
@@ -87,7 +87,7 @@ describe("raising an approved appeal's hand-back (D-3813-7)", () => {
   });
 });
 
-describe("telling an appeal's hand-back apart (INV-PAY-116)", () => {
+describe("telling an appeal's hand-back apart (INV-PAY-118)", () => {
   const appeal = { kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: refundRequestHandBackOccurrenceKey("req-1") };
   const edit = { kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "edit-refund-hand-back:mod-1" };
   const cancellation = { kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: null };
@@ -210,12 +210,12 @@ describe("the queue payload marks an appeal's hand-back for the card", () => {
 });
 
 /**
- * #3827 (`INV-PAY-116`): the appeal's ceiling nets the money already returned
+ * #3827 (`INV-PAY-118`): the appeal's ceiling nets the money already returned
  * through the two channels that never move `refundedAmountCents` - every open
  * hand-back on the payment (a cancellation's own included) and the member
  * credit minted from late cash - on the server and on the screens alike.
  */
-describe("the refund appeal ceiling (INV-PAY-116)", () => {
+describe("the refund appeal ceiling (INV-PAY-118)", () => {
   const payment = { id: "pay-1", bookingId: "booking-1", status: "SUCCEEDED", amountCents: 10000, refundedAmountCents: 0 };
   const lateCash = { amountCents: 3000, description: "Internet Banking payment credit for cancelled booking booking-" };
   const cancellationCredit = { amountCents: 2000, description: "Cancellation refund credit for booking booking-" };

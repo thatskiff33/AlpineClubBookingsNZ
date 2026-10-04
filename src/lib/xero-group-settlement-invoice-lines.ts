@@ -11,7 +11,7 @@
  * settlement's before it asks Xero for anything, so an invoice whose total is
  * not the settlement's is never raised.
  *
- * #3828 (`INV-MONEY-039`): a child carrying several promo codes gets one
+ * #3828 (`INV-MONEY-040`): a child carrying several promo codes gets one
  * promotion line per code, exactly as a per-booking invoice does, through the
  * same planner; a split that cannot be trusted is that child's single
  * aggregate line, and every several-code child's split is handed back for the

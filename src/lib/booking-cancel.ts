@@ -1613,7 +1613,7 @@ async function performBookingCancellation(
       payment: organiserCard
         ? { ...payment, refundedAmountCents: organiserCard.committedRefundCents }
         : payment,
-      // #3827 (`INV-PAY-115`): read under lock(1), which every edit that raises
+      // #3827 (`INV-PAY-117`): read under lock(1), which every edit that raises
       // such a task also holds, so none can appear before this cancel commits.
       openNonCancellationHandBackCents: await openNonCancellationHandBackCents(tx, payment.id),
       finalPriceCents: fresh.finalPriceCents,

@@ -62,7 +62,7 @@ export const UNPAID_INVOICE_CLEARING_WORDING = "Invoice cleared - booking not pa
 export const UNPAID_BALANCE_CLEARING_WORDING = "Unpaid balance cleared - booking cancelled";
 
 /**
- * #3536 (`INV-PAY-114`): the two wordings the owner added on 2 Oct 2026 for
+ * #3536 (`INV-PAY-116`): the two wordings the owner added on 2 Oct 2026 for
  * booking-edit credit notes that were previously worded as bank transfers.
  * Neither is a refund method and neither changes a note's settlement: a
  * modification credit note is allocated against the original invoice, never

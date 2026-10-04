@@ -49,7 +49,7 @@ export async function refundedPaymentCreditRestore(
       payment: { amountCents: number; refundedAmountCents: number; changeFeeCents: number; creditAppliedCents: number };
     };
     /**
-     * The payment's open edit / refund-request hand-backs (#3827, `INV-PAY-115`),
+     * The payment's open edit / refund-request hand-backs (#3827, `INV-PAY-117`),
      * which the cap counts as paid no more than the paid path does.
      */
     openNonCancellationHandBackCents: number;

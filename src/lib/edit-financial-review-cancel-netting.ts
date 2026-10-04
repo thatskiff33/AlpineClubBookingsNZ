@@ -132,7 +132,7 @@ export function cancellationTierOf(
     const money = paidCancellationMoney({
       payment: { amountCents: baseCents, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: appliedCents },
       // The bases are the cancel's frozen ones, already net of any open hand-back
-      // (#3827, `INV-PAY-115`), so none is subtracted a second time here.
+      // (#3827, `INV-PAY-117`), so none is subtracted a second time here.
       openNonCancellationHandBackCents: 0,
       finalPriceCents: baseCents + appliedCents,
       capAppliedCredit,
@@ -308,7 +308,7 @@ export async function capturedShareOwedAfterCancellation({
     paidCancellationMoney({
       payment: { amountCents: paidCents - captureSliceCents, refundedAmountCents: 0, changeFeeCents, creditAppliedCents: appliedRowsCents - creditSliceCents },
       // The CANCELLED event froze `paidAmountCents` already net of the open
-      // hand-backs it read (#3827, `INV-PAY-115`), so the reproduction subtracts none.
+      // hand-backs it read (#3827, `INV-PAY-117`), so the reproduction subtracts none.
       openNonCancellationHandBackCents: 0,
       finalPriceCents: worthCents,
       appliedCreditCents: appliedRowsCents - creditSliceCents,

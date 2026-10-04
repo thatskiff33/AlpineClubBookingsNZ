@@ -54,7 +54,7 @@ export async function GET(
 
     const booking = await prisma.booking.findUnique({
       where: { id },
-      // #3827 (`INV-PAY-115`): the open edit refunds ride on the SAME read as
+      // #3827 (`INV-PAY-117`): the open edit refunds ride on the SAME read as
       // the payment rather than a second query after it, so a completion that
       // moves `refundedAmountCents` and closes its task in one commit is seen
       // either wholly or not at all - not as money neither refunded nor
@@ -189,7 +189,7 @@ export async function GET(
                 : booking.payment.amountCents,
             }
           : booking.payment,
-      // #3827 (`INV-PAY-115`): cash an earlier edit already promised back by hand.
+      // #3827 (`INV-PAY-117`): cash an earlier edit already promised back by hand.
       openNonCancellationHandBackCents: sumOpenNonCancellationHandBackCents(booking.payment.manualRefundTasks),
       finalPriceCents: booking.finalPriceCents,
       checkIn: booking.checkIn,

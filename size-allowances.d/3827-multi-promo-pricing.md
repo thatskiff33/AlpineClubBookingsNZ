@@ -56,15 +56,15 @@ reason: the Booking Modified sender takes the required bank-transfer flag and
 file: src/app/(admin)/admin/refund-requests/page.tsx
 lines: 885
 reason: the appeal review's ceiling is the approve route's net-of-open-edit-
-  refunds figure (INV-PAY-115); the page carries the loaded rows' type and one
+  refunds figure (INV-PAY-117); the page carries the loaded rows' type and one
   shared helper call, the arithmetic lives in manual-refund-task-settlement-rules.ts.
 
 file: src/app/api/admin/refund-requests/[id]/route.ts
 lines: 610
 reason: the approval's cap and its claim must share one transaction under
-  lock(1) (INV-PAY-115) so the figure checked is the figure approved; moving
+  lock(1) (INV-PAY-117) so the figure checked is the figure approved; moving
   the claim out of the handler would split the #818 single-flight claim from
-  the money it guards. D-3813-7 (INV-PAY-116) plans the card refund and
+  the money it guards. D-3813-7 (INV-PAY-118) plans the card refund and
   raises the bank-transfer task in that same transaction, and a released
   claim takes its task with it under the same lock. Only an internet-banking
   payment raises one (a card shortfall stays logged drift), and a task that
@@ -75,7 +75,7 @@ file: src/app/api/bookings/[id]/refund-request/route.ts
 lines: 283
 reason: the appeal request refuses past the cash net of open hand-backs and
   late-cash credit and says plainly when all of it is already being returned
-  (INV-PAY-115, INV-PAY-116); both are refusals beside the existing ones they
+  (INV-PAY-117, INV-PAY-118); both are refusals beside the existing ones they
   extend.
 
 file: src/lib/email-message-registry.ts
@@ -95,7 +95,7 @@ reason: a required token needs its plain-English guidance in the one table the
 
 file: src/lib/xero-credit-notes.ts
 lines: 1239
-reason: owner decision D-3813-8 (INV-PAY-116) - the refund-note builder raises
+reason: owner decision D-3813-8 (INV-PAY-118) - the refund-note builder raises
   a refund request's own note: keyed by the request, linked under its own role,
   never per-delta and never the payment's pointer. Those are branches inside
   the one builder every refund note goes through (its #3548 crash-window

@@ -6825,7 +6825,7 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
 });
 
 /**
- * #3827 review F1 (`INV-PAY-116`): a refund request's OWN note is never "the"
+ * #3827 review F1 (`INV-PAY-118`): a refund request's OWN note is never "the"
  * payment's refund note. Before the fix its succeeded create was a candidate,
  * so the tool proposed (auto-apply) pointing `xeroRefundCreditNoteId` at it -
  * after which the cancellation's note was absorbed as "already linked" - read

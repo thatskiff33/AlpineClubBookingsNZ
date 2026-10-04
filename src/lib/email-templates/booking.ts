@@ -486,7 +486,7 @@ export function bookingModifiedTemplate(params: {
    * review, the way `confirmedAmountCents` is asked for (`INV-SSOT`).
    */
   financialReviewPending: boolean;
-  /** #3827 (D-3813-6, `INV-PAY-115`): a bank transfer the club must still send.
+  /** #3827 (D-3813-6, `INV-PAY-117`): a bank transfer the club must still send.
    * REQUIRED, as `financialReviewPending` is (`bookingModifiedRefundSentence`). */
   refundByBankTransfer: boolean;
 },

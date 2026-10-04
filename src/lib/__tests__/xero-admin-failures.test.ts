@@ -222,7 +222,7 @@ describe("getFailedXeroOperationOverview", () => {
     });
   });
 
-  // #3827 review F2 (`INV-PAY-116`): the payment's pointer and refund payment
+  // #3827 review F2 (`INV-PAY-118`): the payment's pointer and refund payment
   // belong to its ONE refund note. A refund request's own note is a separate
   // document; its failure stays ACTIVE so the operations panel offers Retry.
   it.each([

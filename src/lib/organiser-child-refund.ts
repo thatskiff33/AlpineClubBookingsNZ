@@ -420,7 +420,7 @@ export async function planOrganiserCancelChildRefunds({
       const baseCents = cancelRefundableBaseCents({
         amountCents: payment.amountCents,
         refundedAmountCents: await organiserChildCommittedRefundCents(tx, payment, combined.stripePaymentIntentId),
-        // #3827 (`INV-PAY-115`): cash already promised back by hand is not refunded twice.
+        // #3827 (`INV-PAY-117`): cash already promised back by hand is not refunded twice.
         openNonCancellationHandBackCents: await openNonCancellationHandBackCents(tx, payment.id),
         finalPriceCents: child.finalPriceCents,
         changeFeeCents: payment.changeFeeCents,

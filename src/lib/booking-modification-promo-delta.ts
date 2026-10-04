@@ -1,6 +1,6 @@
 /**
  * ONE PROMOTION-DELTA LINE PER CODE ON AN EDIT'S STORED LINES (#3828, epic
- * #3813 C3; `INV-MONEY-039`).
+ * #3813 C3; `INV-MONEY-040`).
  *
  * A booking may carry several promo codes (#3492). An edit that moves more than
  * one of them stores one `PROMO_DELTA` line per code whose adjustment changed,
@@ -82,7 +82,7 @@ export function modificationPromoDeltaCents(
  * remain) on a one-code edit, byte for byte as always. Where either side
  * carried several codes the split failed for, it names NO code: the change is
  * not one code's, and a line naming one would be coded to that code's account
- * (`INV-MONEY-039`) — the edit-document counterpart of the invoice's aggregate
+ * (`INV-MONEY-040`) — the edit-document counterpart of the invoice's aggregate
  * fallback line.
  */
 export function modificationPromoDeltas(

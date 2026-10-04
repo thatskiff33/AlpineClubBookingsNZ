@@ -167,7 +167,7 @@ export async function calculateModificationSettlementOptions({
   netChargeCents: number;
   /**
    * Also reads the payment's OPEN edit refund hand-backs (#3827,
-   * `INV-PAY-115`), so a reduction is sized off cash not already promised back.
+   * `INV-PAY-117`), so a reduction is sized off cash not already promised back.
    */
   db: CancellationPolicyDb & OpenNonCancellationHandBackDb;
   /**
@@ -229,7 +229,7 @@ export async function calculateModificationSettlementOptions({
  * policy-tiered options above and the untiered ones below.
  *
  * `refundableCashCents` is REQUIRED and is
- * `refundableCashNetOfOpenHandBacks` (#3827, `INV-PAY-115`): the captured
+ * `refundableCashNetOfOpenHandBacks` (#3827, `INV-PAY-117`): the captured
  * cash not yet refunded AND not already promised back by an open edit refund
  * hand-back.
  */
@@ -263,7 +263,7 @@ export function calculateFullReductionSettlementOptions({
     "checkIn" | "status" | "payment" | "organiserSettled" | "parentBookingId"
   >;
   netChargeCents: number;
-  /** `refundableCashNetOfOpenHandBacks`, read by the caller under its locks (`INV-PAY-115`). */
+  /** `refundableCashNetOfOpenHandBacks`, read by the caller under its locks (`INV-PAY-117`). */
   refundableCashCents: number;
   todayAtClub: CalendarDate;
 }): BookingModificationSettlementOptions | null {
@@ -398,7 +398,7 @@ export async function applyPaymentAdjustments(
   const hasSucceededPayment =
     hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
-  // #3827 (`INV-PAY-115`): net of edit refunds already promised back by hand.
+  // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
   const remainingRefundableCents = await refundableCashNetOfOpenHandBacks(tx, booking.payment);
 
   const netAmountCents = priceDiffCents + changeFeeCents;

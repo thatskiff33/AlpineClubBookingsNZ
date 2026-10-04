@@ -97,7 +97,7 @@ const mocks = vi.hoisted(() => {
   // #3643 (owner decision 28 Sep 2026): the DECISION 2 hand-back task, raised
   // inside the unpaid claim.
   txManualRefundTaskFindFirst: vi.fn(),
-  // #3827 (`INV-PAY-115`): the open edit refund hand-backs on the payment.
+  // #3827 (`INV-PAY-117`): the open edit refund hand-backs on the payment.
   txManualRefundTaskAggregate: vi.fn(),
   txManualRefundTaskCreate: vi.fn(),
   // #3653: a joiner's own cancel of a booking the organiser paid for by card.
@@ -383,7 +383,7 @@ describe("cancelBooking credit refunds", () => {
               aggregate: mocks.txMemberCreditAggregate,
             },
             manualRefundTask: {
-              // #3827 (`INV-PAY-115`): no open edit refund hand-back on file
+              // #3827 (`INV-PAY-117`): no open edit refund hand-back on file
               // unless a test says otherwise.
               aggregate: async (...args: unknown[]) =>
                 (await mocks.txManualRefundTaskAggregate(...args)) ?? { _sum: { amountCents: null } },
@@ -1663,7 +1663,7 @@ describe("cancelBooking credit refunds", () => {
     );
   });
 
-  it("#3827 (INV-PAY-115): tiers off the cash NOT already promised back on an open edit refund hand-back", async () => {
+  it("#3827 (INV-PAY-117): tiers off the cash NOT already promised back on an open edit refund hand-back", async () => {
     // $200 taken, the booking now worth $250 after an edit whose $50 refund
     // task is still open: the cancel may return only the other $150.
     const booking6 = {
@@ -4454,7 +4454,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
             // #3835: the reviews settled before the cancel, frozen on its event.
             manualRefundTask: {
               findMany: vi.fn().mockResolvedValue([]),
-              // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
+              // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
               aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
             },
             bookingModification: { findFirst: mocks.txBookingModificationFindFirst },

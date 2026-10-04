@@ -3,7 +3,7 @@
 import { useId } from "react";
 
 /**
- * #3536 (`INV-PAY-114`, owner decision 3 Oct 2026): HOW A HAND-SETTLED REFUND
+ * #3536 (`INV-PAY-116`, owner decision 3 Oct 2026): HOW A HAND-SETTLED REFUND
  * WENT BACK, in the officer's own words.
  *
  * Shown on a financial review the club would pay back by hand. "Marked paid by

@@ -297,7 +297,7 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
             // #3835: the reviews settled before the cancel, frozen on its event.
             manualRefundTask: {
               findMany: vi.fn().mockResolvedValue([]),
-              // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
+              // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
               aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
             },
             // #3809: no edit here ran through the give-back, so no cap.

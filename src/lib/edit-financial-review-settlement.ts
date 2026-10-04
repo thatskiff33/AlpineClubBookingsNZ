@@ -193,7 +193,7 @@ export type EditReviewSettlementRoute =
       refundCents: number;
       /** #3835: the applied-credit part of what is still owed, given back as credit. */
       creditBackCents: number;
-      /** #3536 (`INV-PAY-114`): the officer said this went back in cash, never inferred from
+      /** #3536 (`INV-PAY-116`): the officer said this went back in cash, never inferred from
        * "marked paid by hand". Words on the Xero note only; settlement and ledger unchanged. */
       handedBackInCash?: true;
     }
@@ -292,7 +292,7 @@ export async function chooseEditReviewSettlementRoute({
    * the member's card.
    */
   direction: ManualRefundTaskDirection;
-  /** #3536 (`INV-PAY-114`): the officer's cash answer, read only on the `local-allocation` route;
+  /** #3536 (`INV-PAY-116`): the officer's cash answer, read only on the `local-allocation` route;
    * absent or false keeps the bank-transfer wording. */
   handedBackInCash?: boolean;
   /** #3835: the club's zone (`INV-LOCK-004`) and format, resolved before the transaction. */
@@ -442,7 +442,7 @@ export async function chooseEditReviewSettlementRoute({
     // the task OPEN, which is the guarantee the pre-claim card cap above has to
     // buy by hand.
     const handBack = await owed();
-    // #3827 (`INV-PAY-115`): and, before the claim, the cash that actually goes
+    // #3827 (`INV-PAY-117`): and, before the claim, the cash that actually goes
     // back is net of open hand-backs. (#3835's netting can only shrink it.)
     await assertByHandReviewRefundWithinUnpromisedCash(store, settlementPaymentId, handBack.captureCents);
     return {

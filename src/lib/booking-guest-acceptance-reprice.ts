@@ -67,7 +67,7 @@ import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settleme
  * #3827 (D-3813-4): A GUEST'S ACCEPTANCE RE-PRICES THE BOOKING'S CODES.
  *
  * A cross-family guest awaiting acceptance is shown to no promo code, so their
- * nights carry none (INV-MONEY-037). When they accept, the owner's decision is
+ * nights carry none (INV-MONEY-038). When they accept, the owner's decision is
  * that the booking is re-priced "under the ordinary edit rules": every code
  * the booking already carries runs again — in its stored order, over the
  * nights now present — exactly as a guest edit would run it. Nothing is
@@ -81,7 +81,7 @@ import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settleme
  *   ordinary edit's "money back" arm (`applyPaymentAdjustments` with
  *   `calculateFullReductionSettlementOptions`): a Stripe refund after commit for
  *   a card, and for internet banking (or cash) an officer refund task in the
- *   money-to-settle queue (D-3813-6, `INV-PAY-115`) beside the Xero credit note;
+ *   money-to-settle queue (D-3813-6, `INV-PAY-117`) beside the Xero credit note;
  * - whatever the cash cannot cover went on account credit and goes back as
  *   account credit, the way an edit returns over-applied credit
  *   (`clampAppliedCreditToBookingPrice`, INV-MOD-012) — the whole reduction for
@@ -382,7 +382,7 @@ export async function repriceBookingAfterGuestAcceptance(
     );
     if (clamp.refundedExcessCents !== creditReturn.amountCents) {
       throw new Error(
-        `INV-MONEY-037 (D-3813-5): a guest's acceptance would return ${formatCents(clamp.refundedExcessCents, format)} of credit for ${formatCents(creditReturn.amountCents, format)} of a reduction paid with credit on booking ${bookingId} (#3827).`,
+        `INV-MONEY-038 (D-3813-5): a guest's acceptance would return ${formatCents(clamp.refundedExcessCents, format)} of credit for ${formatCents(creditReturn.amountCents, format)} of a reduction paid with credit on booking ${bookingId} (#3827).`,
       );
     }
     if (booking.payment) {
@@ -476,7 +476,7 @@ export async function repriceBookingAfterGuestAcceptance(
     sides,
     site: "guest-acceptance",
   });
-  // D-3813-6 (`INV-PAY-115`): the cash share of a reduction on a booking paid
+  // D-3813-6 (`INV-PAY-117`): the cash share of a reduction on a booking paid
   // by internet banking or by hand is the treasurer's to send back.
   await raiseEditRefundHandBackIfOwed(tx, {
     bookingId,
@@ -563,7 +563,7 @@ async function fullReductionReturnRoute(
   // Captured cash: the edit's money-back arm, at 100% and never above what is
   // still refundable (`calculateFullReductionSettlementOptions`); null once a
   // card has been refunded in full.
-  // Net of edit refunds already promised back by hand (#3827, `INV-PAY-115`):
+  // Net of edit refunds already promised back by hand (#3827, `INV-PAY-117`):
   // an earlier edit's open task is cash the club owes, not cash it holds.
   const settlementOptions = capturedCash
     ? calculateFullReductionSettlementOptions({

@@ -491,7 +491,7 @@ export function calculateCancellationPreview(input: {
     creditAppliedCents?: number | null;
   };
   /**
-   * #3827 (`INV-PAY-115`): the payment's open edit refund hand-backs, the same
+   * #3827 (`INV-PAY-117`): the payment's open edit refund hand-backs, the same
    * figure the executed cancel reads (`openNonCancellationHandBackCents`), so the
    * preview promises nothing the treasurer already owes back.
    */

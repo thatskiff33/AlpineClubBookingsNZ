@@ -1,5 +1,5 @@
 /**
- * #3827 (`INV-PAY-115`): an edit refund hand-back is raised when the edit
+ * #3827 (`INV-PAY-117`): an edit refund hand-back is raised when the edit
  * commits, but the payment's `refundedAmountCents` moves only when the treasurer
  * marks it paid back. Until then every later edit, acceptance and cancellation
  * must size its refund off the captured cash NET of those open tasks, so the

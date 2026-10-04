@@ -149,7 +149,7 @@ describe("POST /api/bookings/[id]/refund-request", () => {
     });
   });
 
-  // #3827 (`INV-PAY-115`): paid 200, an edit lowered it to 150 (a 50 refund
+  // #3827 (`INV-PAY-117`): paid 200, an edit lowered it to 150 (a 50 refund
   // task still OPEN), the cancel handed back 75. The gross remainder is 125;
   // 50 of it is already promised back, so the most to appeal for is 75.
   function cancelledAfterEdit() {
@@ -198,7 +198,7 @@ describe("POST /api/bookings/[id]/refund-request", () => {
       where: {
         paymentId: "payment-1",
         status: "OPEN",
-        // `INV-PAY-116`: every open hand-back, of any kind.
+        // `INV-PAY-118`: every open hand-back, of any kind.
         kind: "CANCELLED_BOOKING_HAND_BACK",
       },
       _sum: { amountCents: true },
@@ -229,7 +229,7 @@ describe("POST /api/bookings/[id]/refund-request", () => {
     expect(mocks.refundRequestCreate).not.toHaveBeenCalled();
   });
 
-  // M1(a), `INV-PAY-116`: a bank transfer that arrived after the cancel was
+  // M1(a), `INV-PAY-118`: a bank transfer that arrived after the cancel was
   // handed back as account credit without moving `refundedAmountCents`, so the
   // member may not appeal for it again.
   it("nets the credit already minted from late cash (#3827)", async () => {

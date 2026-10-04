@@ -349,7 +349,7 @@ export async function settleGroupBookingOnOrganiserCancel(
       const { refundAmountCents } = calculateRefundAmount(
         cancelRefundableBaseCents({
           ...child.payment,
-          // #3827 (`INV-PAY-115`): cash an earlier edit or refund request already
+          // #3827 (`INV-PAY-117`): cash an earlier edit or refund request already
           // promised back by hand is not refunded a second time here.
           openNonCancellationHandBackCents: await openNonCancellationHandBackCents(prisma, child.payment.id),
           finalPriceCents: child.finalPriceCents,

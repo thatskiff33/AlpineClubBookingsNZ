@@ -1504,7 +1504,7 @@ total at apply).
   `xero-operation-retry.test.ts`.
 
 
-## INV-PAY-114
+## INV-PAY-116
 
 **Related: `INV-PAY-101`** (the settlement decision).
 
@@ -1856,7 +1856,7 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     `edit-financial-review-charge-recovery.ts`; proven against PostgreSQL by
     `edit-financial-review-charge-raise-claim.realdb.test.ts`.
 
-## INV-PAY-115
+## INV-PAY-117
 
 - **A price reduction the club returns by hand raises ONE officer refund
   task** (#3827; owner decision D-3813-6 on #3492). When a batch modify, date
@@ -1885,14 +1885,14 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     cancellation's. It queues NO Xero document: the edit's credit note stands.
   - **Promised cash is not refundable twice.** Until it closes, later edits,
     acceptances, paid cancels and by-hand reviews size refunds off captured
-    cash less open tasks, `INV-PAY-116`'s too
+    cash less open tasks, `INV-PAY-118`'s too
     (`refundableCashNetOfOpenHandBacks`); a reopen is refused past that cash. Completing one, or approving an appeal,
     takes `lock(1)`. Once the booking is cancelled it is only paid: the
     cancel counted it.
   - **The member is told the club WILL refund by bank transfer**, never that a
     refund "has been processed" (`bookingModifiedRefundSentence`).
 
-## INV-PAY-116
+## INV-PAY-118
 
 - **An approved refund appeal's non-card part raises ONE officer refund task**
   (#3827; owner decision D-3813-7 on #3492). Approving a refund request plans

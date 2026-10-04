@@ -949,7 +949,7 @@ describe("enqueueXeroSupplementaryInvoiceOperation", () => {
   });
 });
 
-// #3827, owner decision D-3813-8 (`INV-PAY-116`): a refund request's OWN note,
+// #3827, owner decision D-3813-8 (`INV-PAY-118`): a refund request's OWN note,
 // queued when its task is marked paid back - keyed by the request, so a second
 // request on the same payment is never absorbed, and a replay queues nothing.
 describe("enqueueXeroRefundRequestCreditNoteOperation (D-3813-8)", () => {

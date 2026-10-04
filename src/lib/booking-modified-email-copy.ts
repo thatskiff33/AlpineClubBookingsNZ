@@ -1,5 +1,5 @@
 /**
- * #3827 (owner decision D-3813-6, `INV-PAY-115`): the refund half of a
+ * #3827 (owner decision D-3813-6, `INV-PAY-117`): the refund half of a
  * "Booking Modified" email's money note, ONE wording for the HTML template and
  * the admin-editable body (`INV-SSOT`). A card refund has already been made by
  * the time the email goes; a bank-transfer refund is an officer task the club
@@ -12,7 +12,7 @@ export function bookingModifiedRefundSentence(amount: string, refundByBankTransf
 }
 
 /**
- * #3827 (owner decision D-3813-7, `INV-PAY-116`): the refund sentence of a
+ * #3827 (owner decision D-3813-7, `INV-PAY-118`): the refund sentence of a
  * "Refund Appeal Approved" email, ONE wording for the HTML template and the
  * admin-editable body's `{{refundSentence}}` (`INV-SSOT`). The part a card
  * refund carries is on its way; the part the club sends by bank transfer is an

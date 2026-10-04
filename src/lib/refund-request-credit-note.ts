@@ -1,5 +1,5 @@
 /**
- * #3827, owner decision D-3813-8 (#3492, `INV-PAY-116`): A REFUND REQUEST'S
+ * #3827, owner decision D-3813-8 (#3492, `INV-PAY-118`): A REFUND REQUEST'S
  * OWN XERO REFUND CREDIT NOTE.
  *
  * An approved refund request on an internet-banking payment is paid back by
@@ -30,7 +30,7 @@ export function readRefundRequestIdFromPayload(payload: unknown): string | null 
 }
 
 /**
- * #3827 (`INV-PAY-116`): is this outbox row a refund request's OWN note? Read
+ * #3827 (`INV-PAY-118`): is this outbox row a refund request's OWN note? Read
  * from the payload (`refundRequestId`, on the queued and the executed shape)
  * or, for a row whose payload was lost, the key's `refund-request-credit-note`
  * segment (`refundRequestCreditNoteKey`; no executor rewrites a key). Every
