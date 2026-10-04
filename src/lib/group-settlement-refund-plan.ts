@@ -60,3 +60,14 @@ export function mirrorPlanRefundedCents(
 ): number {
   return Math.min(payment.amountCents, payment.refundedAmountCents + plannedRefundCents);
 }
+
+/**
+ * Is the settlement's refund the `{childId: cents}` mirror plan (#1236) rather
+ * than #3653's per-child card refunds? A plan already frozen in the mirror
+ * shape, or any Internet Banking settlement (no card intent to refund per
+ * child). The one test the organiser cancel decides by and the back-post
+ * (#3854) re-reads history by (`INV-SSOT`).
+ */
+export function isMirrorRefundPlan(settlement: { refundPlan: unknown; stripePaymentIntentId: string | null }): boolean {
+  return readPerChildRefundPlan(settlement.refundPlan) === null && (settlement.refundPlan != null || !settlement.stripePaymentIntentId);
+}

@@ -106,7 +106,7 @@ import {
   enqueueGroupSettlementRefundRecovery,
   markGroupSettlementRefundRecoverySucceeded,
 } from "@/lib/payment-recovery";
-import { deserializeRefundPlan, mirrorPlanRefundedCents, readPerChildRefundPlan } from "@/lib/group-settlement-refund-plan";
+import { deserializeRefundPlan, isMirrorRefundPlan, mirrorPlanRefundedCents } from "@/lib/group-settlement-refund-plan";
 import { refundOrganiserCancelChildren } from "@/lib/organiser-child-refund-executor";
 import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 import logger from "@/lib/logger";
@@ -329,10 +329,7 @@ export async function settleGroupBookingOnOrganiserCancel(
   // row must not say no payment was taken.
   let owedByChildId = new Map<string, number>();
   let totalRefundCents = 0;
-  const mirrorPlan =
-    settlement != null &&
-    readPerChildRefundPlan(settlement.refundPlan) === null &&
-    (settlement.refundPlan != null || !settlement.stripePaymentIntentId);
+  const mirrorPlan = settlement != null && isMirrorRefundPlan(settlement);
 
   if (settlement && mirrorPlan && settlement.refundPlan != null) {
     // A previous (crash-interrupted) run already computed + persisted the plan.

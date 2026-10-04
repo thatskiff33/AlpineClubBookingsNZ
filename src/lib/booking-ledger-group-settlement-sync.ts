@@ -206,10 +206,26 @@ async function groupSettledChildCancellationKeptCents(
     status: BookingStatus;
     payment: { id: string; status: string; amountCents: number; refundedAmountCents: number } | null;
   },
-  plan: { kind: "per-child"; paymentIntentId: string } | { kind: "mirror"; plannedRefundCents: number },
+  plan: GroupCancelRefundPlan,
 ): Promise<number> {
   const payment = child.payment;
   if (child.status !== BookingStatus.PAID || !payment || !hasCapturedPayment(payment)) return 0;
+  return groupSettledChildKeptCents(db, payment, plan);
+}
+
+export type GroupCancelRefundPlan = { kind: "per-child"; paymentIntentId: string } | { kind: "mirror"; plannedRefundCents: number };
+
+/**
+ * The kept figure for a child the settlement paid, `payment` as it stood when
+ * the organiser cancelled it. Shared by the live cancel (above) and the
+ * back-post (#3583, `booking-ledger-back-post-group.ts`), so history keeps
+ * what the live cancel would have kept.
+ */
+export async function groupSettledChildKeptCents(
+  db: Prisma.TransactionClient,
+  payment: { id: string; amountCents: number; refundedAmountCents: number },
+  plan: GroupCancelRefundPlan,
+): Promise<number> {
   const committedRefundCents =
     plan.kind === "per-child"
       ? await organiserChildCommittedRefundCents(db, payment, plan.paymentIntentId)
