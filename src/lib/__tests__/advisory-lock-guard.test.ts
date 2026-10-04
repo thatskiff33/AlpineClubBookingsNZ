@@ -500,7 +500,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "lockBookingForBackPost#1",
     tier: "GLOBAL",
     reason:
-      "#3583: the operator back-post posts a historical booking's ledger lines on a live database, and asks the same questions the live posters ask under this key — is the booking confirmed on the ledger, which line is live — so a settle, cancel, edit or closure on the same booking either commits before it reads or waits until it commits; without it both could see 'not yet confirmed' and both post. First lock of each booking's transaction, then the lodge key, the member credit-ledger keys and the payment and booking rows; no provider is called.",
+      "#3583: the operator back-post posts a historical booking's ledger lines on a live database, and asks the same questions the live posters ask under this key — is the booking confirmed on the ledger, which line is live — so a settle, cancel, edit or closure on the same booking either commits before it reads or waits until it commits; without it both could see 'not yet confirmed' and both post. First lock of each booking's transaction, then a 5s lock_timeout bounding every later wait while it is held, the lodge key, the owner read under it (member merge re-points it holding the lodge key), the member credit-ledger keys and the payment and booking rows; no provider is called.",
     invariant: "INV-LOCK-002",
   },
   {

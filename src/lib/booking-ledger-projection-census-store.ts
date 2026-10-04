@@ -115,24 +115,45 @@ const CENSUS_SELECT = {
 
 type StoredCensusBooking = Prisma.BookingGetPayload<{ select: typeof CENSUS_SELECT }>;
 
-/** What the census reads of the paid path's CANCELLED snapshot; anything else is ignored. */
+/**
+ * What is read of the paid path's CANCELLED snapshot (`writePaidCancellationEvent`),
+ * by the census and the back-post alike; anything else is ignored.
+ */
 const CANCELLATION_SNAPSHOT = z.object({
   refundMethod: z.string().nullable().optional(),
   settledAmountCents: z.number().int().nullable().optional(),
+  // The paid-but-not-refunded figure every paid-path snapshot froze (`INV-PAY-106`).
+  retainedAmountCents: z.number().int().nullable().optional(),
   // #3611's frozen ledger figures; absent on a snapshot written before it.
-  ledger: z.object({ keptCents: z.number().int() }).nullable().optional(),
+  ledger: z.object({ keptCents: z.number().int(), policyKeptCents: z.number().int().optional() }).nullable().optional(),
 });
 
-function cancellationOf(booking: StoredCensusBooking): BookingLedgerCensusRow["cancellation"] {
-  const snapshot = booking.events[0]?.snapshot;
+export type CancelledEventSnapshot = {
+  refundMethod: string | null;
+  settledAmountCents: number | null;
+  retainedAmountCents: number | null;
+  keptCents: number | null;
+  policyKeptCents: number | null;
+};
+
+/** The one parser of that snapshot; null where it is not one. */
+export function parseCancelledEventSnapshot(snapshot: unknown): CancelledEventSnapshot | null {
   if (snapshot === undefined || snapshot === null) return null;
   const parsed = CANCELLATION_SNAPSHOT.safeParse(snapshot);
   if (!parsed.success) return null;
   return {
     refundMethod: parsed.data.refundMethod ?? null,
     settledAmountCents: parsed.data.settledAmountCents ?? null,
+    retainedAmountCents: parsed.data.retainedAmountCents ?? null,
     keptCents: parsed.data.ledger?.keptCents ?? null,
+    policyKeptCents: parsed.data.ledger?.policyKeptCents ?? null,
   };
+}
+
+function cancellationOf(booking: StoredCensusBooking): BookingLedgerCensusRow["cancellation"] {
+  const parsed = parseCancelledEventSnapshot(booking.events[0]?.snapshot);
+  if (!parsed) return null;
+  return { refundMethod: parsed.refundMethod, settledAmountCents: parsed.settledAmountCents, keptCents: parsed.keptCents };
 }
 
 /** What the census reads of a review closure's `PRICE_REBASE` row (`recordBookingPriceRebaseHistory`). */

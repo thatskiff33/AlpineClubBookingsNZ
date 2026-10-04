@@ -105,20 +105,6 @@ async function createBooking(
       reference: options.payment.source === "INTERNET_BANKING" ? `REF-${id}` : null,
     },
   });
-  // A card payment's primary row, as checkout writes it before the webhook
-  // captures it — not the legacy backfill a payment with no rows would get.
-  if (options.payment.source === "STRIPE") {
-    await prisma.paymentTransaction.create({
-      data: {
-        paymentId: `${id}-payment`,
-        kind: "PRIMARY",
-        source: "STRIPE",
-        amountCents: options.payment.amountCents,
-        status: "PENDING",
-        stripePaymentIntentId: options.payment.intent ?? null,
-      },
-    });
-  }
 }
 
 /** The ledger as it stood before #3580: no lines at all. */
@@ -162,7 +148,7 @@ async function postedEdit(
   names: HistoryNames,
   bookingId: string,
   modificationId: string,
-  edit: { removeGuestId?: string; changeFeeCents: number },
+  edit: { removeGuestId?: string; reprice?: { guestId: string; stayDate: Date; priceCents: number }; changeFeeCents: number },
 ): Promise<void> {
   tick();
   const before = await prisma.bookingGuest.findMany({
@@ -171,19 +157,34 @@ async function postedEdit(
     select: { id: true, firstName: true, lastName: true, ageTier: true, isMember: true, rateMembershipTypeId: true, nights: { select: { stayDate: true, priceCents: true } } },
   });
   const removed = before.find((guest) => guest.id === edit.removeGuestId);
-  const priceDiffCents = -(removed?.nights.reduce((sum, night) => sum + (night.priceCents ?? 0), 0) ?? 0);
+  const repriced = edit.reprice
+    ? before.find((guest) => guest.id === edit.reprice!.guestId)?.nights.find((night) => night.stayDate.getTime() === edit.reprice!.stayDate.getTime())
+    : undefined;
+  const priceDiffCents =
+    -(removed?.nights.reduce((sum, night) => sum + (night.priceCents ?? 0), 0) ?? 0) +
+    (edit.reprice && repriced ? edit.reprice.priceCents - (repriced.priceCents ?? 0) : 0);
   const { diffBookingPricing, modificationPriceLinesToStore, pricingSideFromWrittenGuests } = await import("@/lib/booking-modification-lines");
   const { postModificationLedgerLines } = await import("@/lib/booking-ledger-modification-sync");
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     if (removed) await tx.bookingGuest.delete({ where: { id: removed.id } });
+    if (edit.reprice) {
+      await tx.bookingGuestNight.updateMany({
+        where: { bookingGuestId: edit.reprice.guestId, stayDate: edit.reprice.stayDate },
+        data: { priceCents: edit.reprice.priceCents, priceSource: "SOLD" },
+      });
+    }
     const booking = await tx.booking.findUniqueOrThrow({ where: { id: bookingId }, select: { totalPriceCents: true, finalPriceCents: true, lodgeId: true } });
     await tx.booking.update({
       where: { id: bookingId },
       data: { totalPriceCents: booking.totalPriceCents + priceDiffCents, finalPriceCents: booking.finalPriceCents + priceDiffCents },
     });
     await tx.payment.update({ where: { bookingId }, data: { changeFeeCents: { increment: edit.changeFeeCents } } });
-    const after = before.filter((guest) => guest.id !== removed?.id);
+    const after = await tx.bookingGuest.findMany({
+      where: { bookingId },
+      orderBy: { id: "asc" },
+      select: { id: true, firstName: true, lastName: true, ageTier: true, isMember: true, rateMembershipTypeId: true, nights: { select: { stayDate: true, priceCents: true } } },
+    });
     const sides = {
       before: pricingSideFromWrittenGuests(before, { promoAdjustmentCents: 0 }),
       after: pricingSideFromWrittenGuests(after, { promoAdjustmentCents: 0 }),
@@ -259,6 +260,7 @@ export const HISTORIES = [
   "card-refund-edits",
   "review-closure",
   "change-fee",
+  "two-edits",
 ] as const;
 export type HistoryName = (typeof HISTORIES)[number];
 
@@ -378,6 +380,18 @@ export async function buildBookingLedgerHistories(prisma: PrismaClient, prefix: 
   await settleByCard(fee, 20_000);
   await postedEdit(prisma, names, fee, `${fee}-fee`, { changeFeeCents: 1_500 });
   await stripAllLines(prisma, fee);
+
+  // Confirmed by card (C1), then two edits before #3582: a guest removed (no
+  // fee), then a night re-priced up $10 with a $5 fee. The back-post anchors
+  // both edits' nights on the second; a second run must find nothing left
+  // (#3583's review, M1).
+  const two = id("two-edits");
+  await createBooking(prisma, names, two, { payment: { amountCents: 20_000, source: "STRIPE", intent: `pi_${two}` } });
+  await settleByCard(two, 20_000);
+  await postedEdit(prisma, names, two, `${two}-e1`, { removeGuestId: `${two}-g2`, changeFeeCents: 0 });
+  await postedEdit(prisma, names, two, `${two}-e2`, { reprice: { guestId: `${two}-g1`, stayDate: D2, priceCents: 6_000 }, changeFeeCents: 500 });
+  await stripModificationLines(prisma, two, `${two}-e2`);
+  await stripModificationLines(prisma, two, `${two}-e1`);
 
   return Object.fromEntries(HISTORIES.map((name) => [name, id(name)])) as Record<HistoryName, string>;
 }

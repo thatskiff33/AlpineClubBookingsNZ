@@ -18,7 +18,7 @@
  * own `race-3583b-` fixtures.
  */
 import type { PrismaClient } from "@prisma/client";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { BookingLedgerCensusReport } from "@/lib/booking-ledger-projection-census-report";
 import {
@@ -63,7 +63,7 @@ function about(report: BookingLedgerCensusReport, bookingId: string) {
 const NOTHING = { disagreements: [], coverage: [], integrity: [], classes: [] };
 
 async function runOne(bookingId: string, apply: boolean) {
-  const run = await backPost.runBookingLedgerBackPost({ client: prisma, apply, bookingId });
+  const run = await backPost.runBookingLedgerBackPost({ client: prisma, apply, bookingIds: [bookingId] });
   return run.outcomes[0]!;
 }
 
@@ -106,17 +106,19 @@ async function lines(bookingId: string) {
     const before = await prisma.bookingLedgerLine.count({ where: { bookingId: { in: Object.values(built) } } });
     for (const id of Object.values(built)) {
       const outcome = await runOne(id, false);
-      expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "POSTED" });
+      expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "POSTED", lineIds: [] });
     }
     expect(await prisma.bookingLedgerLine.count({ where: { bookingId: { in: Object.values(built) } } })).toBe(before);
   }, 120_000);
 
   it("--apply posts every history so the census finds nothing to say, each through the live posters' own keys", async () => {
-    const posted: Record<string, number> = {};
     for (const id of Object.values(built)) {
+      const before = new Set((await lines(id)).map((line) => line.id));
       const outcome = await runOne(id, true);
       expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: "POSTED" });
-      if (outcome.kind === "POSTED") posted[id] = outcome.lines;
+      // The run names every line it inserted, so they can be found again.
+      const inserted = (await lines(id)).map((line) => line.id).filter((lineId) => !before.has(lineId)).sort();
+      if (outcome.kind === "POSTED") expect(outcome.lineIds, id).toEqual(inserted);
     }
     const report = await census();
     for (const [name, id] of Object.entries(built)) {
@@ -172,6 +174,37 @@ async function lines(bookingId: string) {
     expect(await prisma.bookingLedgerLine.count({ where: { bookingId: { startsWith: PREFIX } } })).toBe(before);
   }, 120_000);
 
+  it("two unposted edits anchor on the later one, and a second and third run find nothing left (review M1)", async () => {
+    const id = built["two-edits"];
+    const rows = await lines(id);
+    expect(rows.filter((line) => line.anchorId === `${id}-e1`)).toEqual([]);
+    expect(rows.filter((line) => line.anchorId === `${id}-e2`).map((line) => [line.kind, line.amountCents]).sort()).toEqual([
+      ["CHANGE_FEE", 500],
+      ["GUEST_NIGHT", -5_000],
+      ["GUEST_NIGHT", -5_000],
+      ["GUEST_NIGHT", -5_000],
+      ["GUEST_NIGHT", 6_000],
+    ]);
+    for (const run of [2, 3]) expect(await runOne(id, true), `run ${run}`).toMatchObject({ kind: "NOTHING_TO_POST" });
+    expect(about(await census(), id)).toEqual(NOTHING);
+  }, 120_000);
+
+  it("a refused live edit with no later posted edit stays coverage, and the back-post then posts it", async () => {
+    const id = built["two-edits"];
+    // As a refused edit leaves it: its rows written, its price moved, no line.
+    const nightsBefore = await prisma.bookingGuestNight.findFirstOrThrow({ where: { bookingGuestId: `${id}-g1`, stayDate: new Date("2027-08-01T00:00:00.000Z") } });
+    await prisma.bookingGuestNight.update({ where: { id: nightsBefore.id }, data: { priceCents: 4_000 } });
+    await prisma.booking.update({ where: { id }, data: { totalPriceCents: { decrement: 1_000 }, finalPriceCents: { decrement: 1_000 } } });
+    vi.setSystemTime(new Date(Date.now() + 60_000));
+    await prisma.bookingModification.create({
+      data: { id: `${id}-refused`, bookingId: id, memberId: NAMES.officerId, modificationType: "GUEST_UPDATE", previousData: {}, newData: {}, priceDiffCents: -1_000 },
+    });
+    expect(about(await census(), id).coverage).toContain("UNPOSTED_EDIT");
+    expect(await runOne(id, true)).toMatchObject({ kind: "POSTED" });
+    expect(about(await census(), id)).toEqual(NOTHING);
+    expect(await runOne(id, true)).toMatchObject({ kind: "NOTHING_TO_POST" });
+  }, 120_000);
+
   it("a cancellation from before #3611 replays its kept figure from the frozen retained figure and the credit rows", async () => {
     const id = `${PREFIX}pre-3611-cancel`;
     await createHistoryBooking(prisma, NAMES, id, { payment: { amountCents: 20_000, source: "STRIPE", intent: `pi_${id}` } });
@@ -210,7 +243,7 @@ async function lines(bookingId: string) {
     expect(about(await census(), id).coverage).toContain("NO_LINES");
 
     // And the report says why, in words.
-    const run = await backPost.runBookingLedgerBackPost({ client: prisma, apply: false, bookingId: id });
+    const run = await backPost.runBookingLedgerBackPost({ client: prisma, apply: false, bookingIds: [id] });
     const text = backPost.formatBookingLedgerBackPostReport(run, (cents) => `${cents}`);
     expect(text).toContain(`CANNOT POST  ${id}  UNPRICED_NIGHT`);
   }, 120_000);
@@ -230,6 +263,58 @@ async function lines(bookingId: string) {
       disagreements: expect.arrayContaining([{ identity: "CAPTURED", columnCents: 25_000, ledgerCents: 20_000, deltaCents: 5_000 }]),
     });
     expect(await lines(id)).toEqual([]);
+  }, 120_000);
+
+  it("one booking's unexpected error is listed against it, and the run goes on to the next (review M2)", async () => {
+    const bad = `${PREFIX}negative-night`;
+    const good = `${PREFIX}after-negative`;
+    for (const id of [bad, good]) {
+      await createHistoryBooking(prisma, NAMES, id, { payment: { amountCents: 20_000, source: "STRIPE", intent: `pi_${id}` } });
+      await settleHistoryByCard(id, 20_000);
+      await stripAllLines(prisma, id);
+    }
+    // A legacy negative night price, which the NOT VALID check never examined
+    // on old rows: the write door refuses to post it.
+    await prisma.$executeRawUnsafe(`ALTER TABLE "BookingGuestNight" DROP CONSTRAINT "BookingGuestNight_price_nonnegative"`);
+    try {
+      await prisma.bookingGuestNight.updateMany({ where: { bookingGuestId: `${bad}-g1`, stayDate: new Date("2027-08-01T00:00:00.000Z") }, data: { priceCents: -100 } });
+      await prisma.bookingGuestNight.updateMany({ where: { bookingGuestId: `${bad}-g1`, stayDate: new Date("2027-08-02T00:00:00.000Z") }, data: { priceCents: 10_100 } });
+    } finally {
+      await prisma.$executeRawUnsafe(`ALTER TABLE "BookingGuestNight" ADD CONSTRAINT "BookingGuestNight_price_nonnegative" CHECK ("priceCents" >= 0) NOT VALID`);
+    }
+    const seen: string[] = [];
+    const run = await backPost.runBookingLedgerBackPost({ client: prisma, apply: true, bookingIds: [bad, good], onOutcome: (outcome) => seen.push(outcome.bookingId) });
+    expect(run.outcomes[0]).toMatchObject({ bookingId: bad, kind: "CANNOT_POST", reason: "UNEXPECTED_ERROR", detail: expect.stringContaining("unitCents") });
+    expect(run.outcomes[1]).toMatchObject({ bookingId: good, kind: "POSTED" });
+    expect(seen).toEqual([bad, good]);
+    expect(await lines(bad)).toEqual([]);
+  }, 120_000);
+
+  it("a booking whose rows another writer holds past the lock timeout is listed for a re-run, then posts (review M2)", async () => {
+    const id = `${PREFIX}held-rows`;
+    await createHistoryBooking(prisma, NAMES, id, { payment: { amountCents: 20_000, source: "STRIPE", intent: `pi_${id}` } });
+    await settleHistoryByCard(id, 20_000);
+    await stripAllLines(prisma, id);
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let holding: () => void = () => undefined;
+    const locked = new Promise<void>((resolve) => (holding = resolve));
+    // A writer that takes the payment row and never lock(1) — the card-refund writer's shape.
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT 1 FROM "Payment" WHERE "bookingId" = ${id} FOR NO KEY UPDATE`;
+        holding();
+        await held;
+      },
+      { timeout: 60_000 },
+    );
+    await locked;
+    const outcome = await runOne(id, true);
+    release();
+    await holder;
+    expect(outcome).toMatchObject({ kind: "CANNOT_POST", reason: "LOCK_TIMEOUT" });
+    expect(await lines(id)).toEqual([]);
+    expect(await runOne(id, true)).toMatchObject({ kind: "POSTED" });
   }, 120_000);
 
   describe("racing a live writer on the same booking", () => {
