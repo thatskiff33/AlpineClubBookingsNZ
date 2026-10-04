@@ -11,9 +11,9 @@ import "server-only";
  *  - the group settle (`settleConfirmedChildrenAndNotify`, card capture and the
  *    Internet Banking invoice's inbound reconcile alike), under `lock(1)` and the
  *    children's lodge keys, in the transaction that flips them CONFIRMED -> PAID;
- *  - the organiser cancel's per-child claim (`group-cancel.ts`), under its
- *    `lock(1)`, for the refund its frozen `refundPlan` hands back and the figure
- *    the cancellation keeps;
+ *  - the organiser cancel's per-child claim (`group-cancel.ts`,
+ *    `postGroupCancelChildLedgerLines`), under its `lock(1)`, for the refund its
+ *    frozen `refundPlan` hands back and the figure the cancellation keeps;
  *  - that plan's recovery replay (`executeGroupSettlementRefundPlan`), in the
  *    transaction that writes the refund's mirror.
  *
@@ -40,6 +40,7 @@ import {
   planGroupSettlementShareLines,
   type GroupSettlementForPosting,
 } from "@/lib/booking-ledger-group-settlement-posting";
+import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { bookingHasConfirmationLines } from "@/lib/booking-ledger-read";
 import {
   buildBookingLedgerRows,
@@ -174,7 +175,7 @@ export async function postGroupSettlementRefundLedgerLine({
  * child's mirror before this cancel plus its planned share, whether or not the
  * card refund has gone through yet (a failed one is replayed from the plan).
  */
-export async function groupSettledChildCancellationKeptCents(
+async function groupSettledChildCancellationKeptCents(
   db: Prisma.TransactionClient,
   child: {
     status: BookingStatus;
@@ -192,5 +193,57 @@ export async function groupSettledChildCancellationKeptCents(
     retainedAmountCents: Math.max(0, payment.amountCents - committedRefundCents),
     appliedCreditCents: 0,
     creditRestoredCents: 0,
+  });
+}
+
+/**
+ * The organiser cancel's per-child half, in its claim transaction after its
+ * `lock(1)`: the refund a mirror plan hands back on the child (posted beside the
+ * mirror that records it; a #3653 per-child debt posts from its own refund row
+ * instead), then the child's cancellation lines with what the club keeps.
+ * `plannedRefundCents` is the mirror plan's share as frozen, which a failed card
+ * refund does not clear, so the kept figure is the same whether the refund went
+ * through now or is replayed from the plan later.
+ */
+export async function postGroupCancelChildLedgerLines(
+  tx: Prisma.TransactionClient,
+  input: {
+    child: {
+      id: string;
+      lodgeId: string;
+      status: BookingStatus;
+      payment: { id: string; status: string; amountCents: number; refundedAmountCents: number } | null;
+    };
+    settlement: { id: string; source: PaymentSource; stripePaymentIntentId: string | null } | null;
+    mirrorPlan: boolean;
+    refundForChild: number;
+    plannedRefundCents: number;
+  },
+): Promise<void> {
+  const { child, settlement } = input;
+  if (settlement && input.mirrorPlan && child.payment) {
+    await postGroupSettlementRefundLedgerLine({
+      store: tx,
+      settlement,
+      bookingId: child.id,
+      lodgeId: child.lodgeId,
+      refundCents: input.refundForChild,
+    });
+  }
+  const keptCents = settlement
+    ? await groupSettledChildCancellationKeptCents(
+        tx,
+        child,
+        input.mirrorPlan || !settlement.stripePaymentIntentId
+          ? { kind: "mirror", plannedRefundCents: input.plannedRefundCents }
+          : { kind: "per-child", paymentIntentId: settlement.stripePaymentIntentId },
+      )
+    : 0;
+  await postCancellationLedgerLines({
+    store: tx,
+    bookingId: child.id,
+    lodgeId: child.lodgeId,
+    keptCents,
+    site: "group-cancel:organiser-settled-child",
   });
 }

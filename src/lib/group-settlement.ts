@@ -1260,16 +1260,8 @@ async function settleConfirmedChildrenAndNotify(
       });
       settledIds.push(child.id);
     }
-
-    // #3854: each child's confirmation and its share of this settlement post to
-    // the booking ledger here, in the claim that flips them PAID, under this
-    // transaction's `lock(1)` and lodge keys. A replay never reaches here (the
-    // SUCCEEDED re-read above), and every line is keyed besides.
-    await postGroupSettlementLedgerLines({
-      store: tx,
-      settlement: { id: settlement.id, source: options.source, amountCents: recordedCents },
-      children,
-    });
+    // #3854: each child's confirmation and share post in this claim, keyed.
+    await postGroupSettlementLedgerLines({ store: tx, settlement: { id: settlement.id, source: options.source, amountCents: recordedCents }, children });
 
     // Status-guarded settlement SUCCEEDED claim (#1881): never overwrite a
     // settlement a concurrent reaper/refund already moved to a terminal state.
