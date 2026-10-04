@@ -39,6 +39,7 @@ import {
 } from "@/lib/booking-ledger-group-settlement-posting";
 import type { BookingLedgerPosting } from "@/lib/booking-ledger-write";
 import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
+import { cancellationKeptCents } from "@/lib/cancellation-kept";
 import {
   deserializeRefundPlan,
   isMirrorRefundPlan,
@@ -92,11 +93,13 @@ export type GroupSettledChildKeptPlan =
 export function groupSettledChildKeptFrom(payment: { amountCents: number; refundedAmountCents: number }, plan: GroupSettledChildKeptPlan): number {
   const committedRefundCents =
     plan.kind === "per-child" ? plan.committedRefundCents : mirrorPlanRefundedCents(payment, plan.plannedRefundCents);
-  // `cancellationKeptCents` with no credit applied and none restored: the
-  // organiser paid in money, so the kept figure is what it retained. Spelled
-  // here because that module's import chain reaches the Prisma client, and the
-  // census that plans with this must stay pure.
-  return Math.max(0, payment.amountCents - committedRefundCents);
+  // No credit applied and none restored: the organiser paid in money, so the
+  // kept figure is what it retained (never below zero).
+  return cancellationKeptCents({
+    retainedAmountCents: Math.max(0, payment.amountCents - committedRefundCents),
+    appliedCreditCents: 0,
+    creditRestoredCents: 0,
+  });
 }
 
 /**

@@ -22,6 +22,11 @@ import {
   calculateRefundAmount,
   type CancellationRule,
 } from "@/lib/cancellation";
+import { cancellationKeptCents } from "@/lib/cancellation-kept";
+
+// The kept formula lives in a Prisma-free module (#3854) so the census can use
+// it; re-exported here for readers already holding this module.
+export { cancellationKeptCents };
 
 export type PaidCancellationMoney = {
   /** Money taken for the booking, net of earlier refunds (`amountCents - refundedAmountCents`). */
@@ -62,19 +67,6 @@ export type PaidCancellationMoney = {
   /** The mirror's applied credit above what the booking is now worth, which no tier restores (#3809). */
   appliedCreditAboveRefundableCents: number;
 };
-
-/** The one formula for what the club keeps on a cancellation (design §5.1). */
-export function cancellationKeptCents({
-  retainedAmountCents,
-  appliedCreditCents,
-  creditRestoredCents,
-}: {
-  retainedAmountCents: number;
-  appliedCreditCents: number;
-  creditRestoredCents: number;
-}): number {
-  return retainedAmountCents + appliedCreditCents - creditRestoredCents;
-}
 
 export function paidCancellationMoney({
   payment,
