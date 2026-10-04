@@ -638,6 +638,7 @@ At the successful end of a meaningful piece of work:
   a `.github/CODEOWNERS` path needs the owner's GitHub Approve, and a push after
   it dismisses it; others merge as before. The Approve is the lock; the comment
   stays the gate agents check, so a code-owned PR's ready comment asks for both.
+  This includes bot-opened epic-sync PRs that touch workflows.
   Owner checklist:
   `CONTRIBUTING.md` → "Branch protection".
 
