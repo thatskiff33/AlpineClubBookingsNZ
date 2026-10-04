@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
-import { netCollectedBookingSelect } from "@/lib/additional-ledger-gap";
+import {
+  netCollectedBookingSelect,
+  netCollectedCaptureEvidenceSelect,
+} from "@/lib/additional-ledger-gap";
 import {
   formatNetCollectedBreakdown,
   summarizeCollectedCash,
@@ -164,6 +167,7 @@ async function getStats() {
         status: true,
         amountCents: true,
         refundedAmountCents: true,
+        ...netCollectedCaptureEvidenceSelect,
         booking: { select: netCollectedBookingSelect },
       },
     }),

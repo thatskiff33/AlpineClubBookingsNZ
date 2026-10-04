@@ -22,8 +22,10 @@ import {
   NET_COLLECTED_SCOPE_FIXTURE,
   NET_COLLECTED_SCOPE_PAYMENTS,
   netCollectedFixtureBooking,
+  netCollectedFixtureEvidence,
 } from "@/lib/__tests__/helpers/net-collected-scope-fixture";
 import { netCollectedBookingSelect } from "@/lib/additional-ledger-gap";
+import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 
 const EXPECTED_REPORT_STATUS_VALUES = [
   "PENDING",
@@ -283,6 +285,17 @@ describe("admin reports route", () => {
       },
     });
     expect(paymentQuery.select).toEqual({
+      // Net Collected's capture evidence (#3372, owner's rule on PR #3811):
+      // the source, and a count of CAPTURED ledger rows only - an Internet
+      // Banking payment has a PENDING ledger row before it is paid.
+      source: true,
+      _count: {
+        select: {
+          transactions: {
+            where: { status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } },
+          },
+        },
+      },
       bookingId: true,
       status: true,
       amountCents: true,
@@ -508,6 +521,7 @@ describe("admin reports route", () => {
         additionalAmountCents: 0,
         additionalPaymentStatus: null,
         transactions: [],
+        ...netCollectedFixtureEvidence(payment),
         booking: netCollectedFixtureBooking(payment),
       })),
     );

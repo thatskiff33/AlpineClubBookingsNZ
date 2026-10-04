@@ -40,6 +40,7 @@ import {
   NET_COLLECTED_SCOPE_FIXTURE,
   NET_COLLECTED_SCOPE_PAYMENTS,
   netCollectedFixtureBooking,
+  netCollectedFixtureEvidence,
 } from "@/lib/__tests__/helpers/net-collected-scope-fixture";
 import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
@@ -167,6 +168,10 @@ function netCollectedPaymentRows(
             additionalAmountCents: row.payment.additionalAmountCents ?? 0,
             additionalPaymentStatus: row.payment.additionalPaymentStatus ?? null,
             transactions: row.payment.transactions ?? [],
+            // #3372: Net Collected's capture evidence - a card payment with a
+            // captured ledger row, so a refunded status counts as before.
+            source: "STRIPE",
+            _count: { transactions: 1 },
             booking: {
               checkIn: row.checkIn,
               checkOut: row.checkOut,
@@ -1508,6 +1513,7 @@ describe("finance net collected cash: the one Net Collected scope (#3637)", () =
         status: row.status,
         amountCents: row.amountCents,
         refundedAmountCents: row.refundedAmountCents,
+        ...netCollectedFixtureEvidence(row),
         booking: {
           ...stay(row.bookingId, "2026-04-02", "2026-04-04"),
           ...netCollectedFixtureBooking(row),

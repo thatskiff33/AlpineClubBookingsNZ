@@ -4,6 +4,7 @@ import {
   NET_COLLECTED_SCOPE_FIXTURE,
   NET_COLLECTED_SCOPE_PAYMENTS,
   netCollectedFixtureBooking,
+  netCollectedFixtureEvidence,
 } from "@/lib/__tests__/helpers/net-collected-scope-fixture";
 
 vi.mock("@/lib/prisma", () => ({
@@ -279,6 +280,8 @@ describe("Admin Payments API", () => {
       xeroInvoiceNumber: null,
       updatedAt: new Date("2026-04-01T09:00:00.000Z"),
       transactions: [],
+      // #3372: Net Collected's capture evidence (one captured ledger row).
+      _count: { transactions: 1 },
       refunds: [],
       booking: {
         id: "b1",
@@ -482,6 +485,7 @@ describe("Admin Payments API", () => {
             status: payment.status,
             amountCents: payment.amountCents,
             refundedAmountCents: payment.refundedAmountCents,
+            ...netCollectedFixtureEvidence(payment),
             booking: {
               ...makePaymentCandidate().booking,
               ...netCollectedFixtureBooking(payment),
@@ -504,10 +508,11 @@ describe("Admin Payments API", () => {
       NET_COLLECTED_SCOPE_FIXTURE.expectedNetCollectedCents
     );
     // The refund tile is every matched row, as its hint says - the never-paid
-    // cancelled booking's $30.00 mirror refund included, though the Net
-    // Collected tile (owner review on #3811) gives that booking nil.
-    expect(body.summary.refundedCents).toBe(18_000);
-    expect(body.summary.count).toBe(5);
+    // cancelled booking's $30.00 mirror refund and the never-paid live
+    // booking's $50.00 folded credit note included, though the Net Collected
+    // tile (owner review on #3811) gives both bookings nil.
+    expect(body.summary.refundedCents).toBe(23_000);
+    expect(body.summary.count).toBe(6);
   });
 
   /*

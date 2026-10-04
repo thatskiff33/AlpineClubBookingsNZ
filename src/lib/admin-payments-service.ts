@@ -18,12 +18,14 @@ import {
 import { bookingOwner } from "@/lib/booking-owner";
 import {
   netCollectedBookingSelect,
+  netCollectedCaptureEvidenceSelect,
   summarizeNetCollectedWithLedgerGap,
 } from "@/lib/additional-ledger-gap";
 import {
   getPaymentNetOfRefundsCents,
   sumRefundedAndCreditedCents,
   type NetCollectedBookingFields,
+  type NetCollectedPaymentRow,
 } from "@/lib/booking-payment-state";
 import logger from "@/lib/logger";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
@@ -159,6 +161,8 @@ type PaymentCandidate = {
   updatedAt: Date;
   transactions: Array<{ updatedAt: Date; kind: PaymentTransactionKind; status: PaymentStatus; amountCents: number }>;
   refunds: Array<{ updatedAt: Date }>;
+  // #3372: captured ledger rows, the Net Collected capture evidence.
+  _count: NetCollectedPaymentRow["_count"];
   booking: {
     id: string;
     status: string;
@@ -462,6 +466,9 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
     const candidates = await prisma.payment.findMany({
       where,
       select: {
+        // #3372: the capture evidence a refunded status needs to count in
+        // Net Collected.
+        ...netCollectedCaptureEvidenceSelect,
         id: true,
         bookingId: true,
         amountCents: true,

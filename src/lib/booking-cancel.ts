@@ -84,7 +84,7 @@ import { bookingStayHasStarted } from "@/lib/booking-edit-policy";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
-import { stripeRefundMirrorShowsCapture } from "@/lib/booking-payment-state";
+import { paymentShowsCaptureEvidence } from "@/lib/booking-payment-state";
 
 // #3497: the cancellable sets live in `booking-cancel-eligibility.ts`, a leaf
 // module the member-facing doors also read — one home, no copy.
@@ -2643,8 +2643,8 @@ export async function paymentEligibleForPaidCancelPath(
 // first — any transaction row that holds/held money — because the aggregate
 // mirror lies in both directions (the invoice-side fold on never-captured IB
 // payments, and the pre-#1473 cancel flow flattening captured statuses to
-// FAILED); then the pre-ledger STRIPE mirror, whose one home is
-// `stripeRefundMirrorShowsCapture`.
+// FAILED); then the pre-ledger STRIPE mirror. The combination's one home is
+// `paymentShowsCaptureEvidence`.
 async function paymentHasCaptureEvidence(
   payment: {
     id: string;
@@ -2663,7 +2663,7 @@ async function paymentHasCaptureEvidence(
     },
     select: { id: true },
   });
-  return Boolean(capturedTransaction) || stripeRefundMirrorShowsCapture(payment);
+  return paymentShowsCaptureEvidence(payment, Boolean(capturedTransaction));
 }
 
 // #1547: every cancel branch that restores applied credit appends this line to

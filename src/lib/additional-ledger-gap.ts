@@ -6,7 +6,10 @@ import {
   type CollectedCashSummary,
   type NetCollectedPaymentRow,
 } from "@/lib/booking-payment-state";
-import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
+import {
+  CAPTURED_TRANSACTION_STATUS_LIST,
+  isCapturedTransactionStatus,
+} from "@/lib/payment-transaction-status";
 
 interface AdditionalLedgerGapPaymentLike {
   additionalPaymentStatus: string | null;
@@ -118,7 +121,28 @@ export const netCollectedBookingSelect = Prisma.validator<Prisma.BookingSelect>(
   },
 });
 
+/**
+ * #3372 (owner's rule on PR #3811: only money actually received counts): the
+ * capture evidence `getNetCollectedPaymentParts` asks of a payment whose status
+ * is REFUNDED / PARTIALLY_REFUNDED (`netCollectedPaymentTookMoney`) - the
+ * payment's `source`, for the STRIPE mirror, and how many of its ledger rows
+ * hold a captured status. A filtered relation count inside the one payment
+ * query: no per-row read, and no ledger rows loaded on the dashboard. Every Net
+ * Collected select spreads it, so none can count every ledger row instead.
+ */
+export const netCollectedCaptureEvidenceSelect = Prisma.validator<Prisma.PaymentSelect>()({
+  source: true,
+  _count: {
+    select: {
+      transactions: {
+        where: { status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } },
+      },
+    },
+  },
+});
+
 export const netCollectedPaymentSelect = Prisma.validator<Prisma.PaymentSelect>()({
+  ...netCollectedCaptureEvidenceSelect,
   bookingId: true,
   status: true,
   amountCents: true,
