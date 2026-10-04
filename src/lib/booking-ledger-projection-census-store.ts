@@ -276,6 +276,8 @@ export async function readBookingLedgerCensusRow(
   return toCensusRow(
     booking,
     credits.filter((credit) => bookingIdOfCreditRow(credit) === bookingId),
+    // #3854: a group child's in-flight plan retry, read as the census pages read it.
+    await inFlightGroupRefunds(tx, [booking]),
   );
 }
 
