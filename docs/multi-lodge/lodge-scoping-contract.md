@@ -692,7 +692,16 @@ is the lodge's capacity) is per-lodge on `LodgeSettings.schoolGroupSoftCap`,
 resolving via the default lodge in a single-lodge club (ADR-002) and
 falling back to the code default (`DEFAULT_SCHOOL_GROUP_SOFT_CAP`) when
 unset. It is editable on the lodge-settings card (both `/admin/setup`
-and, per-lodge, the lodge hub). The public school form measures against
+and, per-lodge, the lodge hub).
+
+"Who can be hut leader for school bookings" (#3819) is per-lodge on the same
+row, as four booleans (`LodgeSettings.schoolHutLeader*`), resolved the same way
+(`loadSchoolHutLeaderKinds`: own row, else the legacy row when unlinked or
+linked to this lodge, else the code defaults) and edited only on the lodge hub.
+Its writer (`updateSchoolHutLeaderKinds`) follows the config importer's rule:
+it never claims an unlinked legacy row, and when one was serving the lodge the
+new own row carries its capacity and soft cap. The approval writer and the
+coverage helper read it for the booking's concrete lodge. The public school form measures against
 the selected lodge's cap (the booking-request settings endpoint returns
 each lodge's cap plus a top-level default for the single-lodge case).
 

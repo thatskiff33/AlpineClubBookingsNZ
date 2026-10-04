@@ -79,6 +79,14 @@ same **lodge edit** permission as the properties above.
    **always** shown, even while the Member lodge roster module is off, because
    you need to be able to choose how much of a name the roster would show
    before you switch it on. See [Modules](modules.md).
+3. **Who can be hut leader for school bookings** (shown while the Hut Leaders
+   module is on) lists four kinds of leader: a teacher on the booking, the
+   lodge custodian, a member on the school booking, and a member staying
+   separately. Click **Edit**, tick any combination, and **Save**. On a night a
+   school group stays here, the night counts as covered only when its hut
+   leader is a ticked kind; ticking teachers also makes approving a school
+   booking at this lodge give its teachers hut-leader assignments and PIN
+   emails. See [Hut Leaders](hut-leaders.md#school-groups).
 
 ### Deactivate a lodge
 
@@ -108,6 +116,7 @@ same **lodge edit** permission as the properties above.
 | Travel note | Directions / arrival notes | — | Optional; appears in booking/pre-arrival emails (up to 2000 chars) |
 | Active | Whether the lodge takes new bookings | on | At least one lodge must stay active; inactive lodges are kept for history |
 | Configure | Opens the per-lodge configuration hub | — | Hub cards: rooms/beds, lockers, seasons & rates, chores. Per-lodge display is a separate section, shown only when the `lobbyDisplay` module is on (off by default) |
+| Who can be hut leader for school bookings | Which kinds of leader cover a school group's nights at this lodge, and whether approving a school booking here makes its teachers hut leaders | Custodian, member on the school booking and member staying separately ticked; teachers unticked (an upgrade carries the old club-wide "Assign school teachers as hut leaders" switch into every lodge) | Per lodge, on the hub. Needs lodge edit access to change. With nothing ticked, no leader can cover a school night here, and the card warns you |
 | Member roster name detail | How much of a name other members see for this lodge on the member lodge roster | Use the default (full names) | Per lodge, on the hub's **Member roster** card. Four levels: full names, first name plus surname initial, first names only, or counts with no names. Separate from the lobby display's guest name setting, and editable while the Member lodge roster module is off. Whatever you choose, these never name anyone: a booking that includes a child, a booking by an organisation, a booking that hired the whole lodge, and a party of eight or more that was the only booking in the building on every one of its nights |
 
 ### Other lodges

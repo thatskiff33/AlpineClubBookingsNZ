@@ -438,11 +438,11 @@ because there is nowhere to ask yet.
 
 ### School teacher hut-leader assignments
 
-**Assign school teachers as hut leaders** is off by default. Leave it off unless
-your club wants every named teacher on a newly approved school request to receive
-a hut-leader assignment and PIN email. Off retains teachers as named school
-contacts; officers use the normal hut-leader assignment tools. The policy is read
-when approval starts, so changing it affects later approvals only.
+This used to be a club-wide **Assign school teachers as hut leaders** switch
+here. It is now per lodge: tick **A teacher on the booking** under **Who can be
+hut leader for school bookings** on the lodge's hub
+([Lodges](lodges.md#configure-a-lodge)). Upgrading carried the switch's value
+into every lodge.
 
 ## Settings reference
 
@@ -469,7 +469,6 @@ when approval starts, so changing it affects later approvals only.
 | Show indicative pricing | Public Requests | Price shown on the public request form | off | — |
 | Quote response window | Public Requests | Days a quote link stays valid | 14 | 1–60 days |
 | Reminder lead time | Public Requests | Days before expiry to remind the requester | 3 | 0–30, must be shorter than the window |
-| Assign school teachers as hut leaders | Public Requests | Whether future school approvals automatically create teacher hut-leader assignments and PIN emails | off | Teachers remain named school contacts either way; read at approval start |
 | Attendee first prompt / reminder | Public Requests | Timing for both guest-naming chases: the school attendee-confirmation prompt and the member whole-lodge "who is coming with you?" reminder (which escalates to daily from two days out, with a last one on the arrival morning) | 14 / 3 days | Prompt 0–90 (0 = off, both chases); reminder 1–30 |
 
 ## Troubleshooting

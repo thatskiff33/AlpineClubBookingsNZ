@@ -83,7 +83,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `fee-configuration` | finance | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) (redirect → Fees) | 2 |
 | `fees` | finance (see note) | `AUTHORITATIVE_FEES.md` | [guide](guides/fees.md) | 2 |
 | `health` | support | — | [guide](guides/health.md) | 4 |
-| `hut-leaders` | lodge | `ARCHITECTURE.md` (hut-leader auto-assign cron) | [guide](guides/hut-leaders.md) | 3 |
+| `hut-leaders` | lodge | `ARCHITECTURE.md` (hut-leader auto-assign cron), `invariants/booking-dates-and-capacity.md` (`INV-DATE-031`: night cover, school-night kinds #3819) | [guide](guides/hut-leaders.md) | 3 |
 | `image-manager` | content | — | [guide](guides/image-manager.md) | 4 |
 | `induction` | membership | — | [guide](guides/induction.md) | 2 |
 | `integrations` | support | `CONFIGURATION.md`, `DEPLOYMENT.md` | [guide](guides/integrations.md) | 4 |
@@ -92,7 +92,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `lockers` | membership | — | [guide](guides/lockers.md) | 2 |
 | `lodge` | lodge | `ARCHITECTURE.md` (lodge kiosk / operations) | [guide](guides/lodge.md) | 3 |
 | `lodge-instructions` | lodge | `src/lib/token-catalogue.ts`, `PUBLIC_PAGE_CONTENT_TOKENS.md` | [guide](guides/lodge-instructions.md) | 3 |
-| `lodges` | lodge | `multi-lodge/README.md`, `multi-lodge/feature-overview.md` | [guide](guides/lodges.md) (+ [feature hub](multi-lodge/README.md)) | 3 |
+| `lodges` | lodge | `multi-lodge/README.md`, `multi-lodge/feature-overview.md`, `multi-lodge/lodge-scoping-contract.md` (per-lodge settings, incl. who can be hut leader for school bookings, #3819) | [guide](guides/lodges.md) (+ [feature hub](multi-lodge/README.md)) | 3 |
 | `maintenance-reports` | lodge | `multi-lodge/lodge-scoping-contract.md` (scoping), `SECURITY.md` (QR bearer token) | [guide](guides/maintenance-reports.md) | — (maintenanceReports module, on by default; outside #2050) |
 | `member-applications` | membership | `ARCHITECTURE.md` (membership application / nominations) | [guide](guides/member-applications.md) | 2 |
 | `member-fields` | membership | — | [guide](guides/member-fields.md) | 2 |

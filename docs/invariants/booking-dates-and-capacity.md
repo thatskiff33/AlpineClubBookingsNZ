@@ -217,13 +217,12 @@ covered?": many rows were stamped through the leader's check-out day.
   `hutLeaderStayBookingWhere` (`INV-DATE-030`), consent operationally present,
   judged by `isGuestActiveOnNight` (`INV-DATE-005`), never a restated range. A
   custodian — holding a bed or ticked, `isCustodianOccupancy` — is present on
-  every night the assignment covers (`INV-LIFE-062`). A school teacher row is present on its OWN dates,
-  `startDate` to `endDate − 1`: the school writer stamps the booking's stay,
-  check-out day included, and the census pins that stamp. The row has no
-  booking key, so a school booking cancelled or re-dated afterwards still
-  covers its original nights until an officer changes the rows — a stated
-  limit that #3819, which replaces this one branch with the per-lodge setting,
-  inherits.
+  every night the assignment covers (`INV-LIFE-062`). A school teacher row is
+  present on a night its dates claim only while a school booking stays at its
+  lodge (#3819); the writer stamps arrival to checkout − 1.
+- **School nights obey the lodge (#3819).** On a night a school booking stays,
+  a present leader covers only if a kind the lodge ticks applies: teacher,
+  custodian, member on that booking, or member staying separately.
 - **Readers heal rows; nothing is backfilled.** A row ending on its leader's
   check-out day stops covering that night by being read correctly. The row is
   never rewritten by this rule.
