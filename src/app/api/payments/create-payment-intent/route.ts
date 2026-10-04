@@ -47,13 +47,14 @@ import { recordBookingEvent } from "@/lib/booking-events";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import {
+  CREDIT_ELECTION_NOT_APPLIED_BODIES,
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_BODY,
   PAYMENT_PROCESSING_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
   SWITCHED_TO_INTERNET_BANKING_BODY,
 } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
-import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE as CURRENCY_REFUSED, UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
+import { chargeCurrencyRefusal, stripeChargeCurrency, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE as CURRENCY_REFUSED, UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
 import { intentCurrencyDiffers, staleIntentAction } from "@/lib/additional-intent-currency";
 
 class PaymentIntentCapacityError extends Error {
@@ -75,6 +76,9 @@ class PaymentIntentConflictError extends Error {
     this.name = "PaymentIntentConflictError";
   }
 }
+
+/** #3864: another tab attached an intent beside the one retired; nothing spent. */
+class CreditElectionIntentConflictError extends Error {}
 
 /**
  * Defence in depth (#2266): a DRAFT carrying an unresolved admin review must
@@ -219,13 +223,7 @@ export async function POST(request: NextRequest) {
           })
         : null;
     if (retired === "unconfirmed") {
-      return NextResponse.json(
-        {
-          error:
-            "We couldn't confirm your earlier card payment was cancelled, so your account credit has not been applied yet. Please try again in a few minutes.",
-        },
-        { status: 409 }
-      );
+      return NextResponse.json(CREDIT_ELECTION_NOT_APPLIED_BODIES.cancelUnconfirmed, { status: 409 });
     }
     const retiredIntentId = retired === "retired" ? priorIntentId : null;
 
@@ -381,7 +379,7 @@ export async function POST(request: NextRequest) {
                   });
             const lockedIntentId = lockedPayment?.stripePaymentIntentId;
             if (lockedIntentId && lockedIntentId !== retiredIntentId) {
-              throw new PaymentIntentConflictError();
+              throw new CreditElectionIntentConflictError();
             }
 
             // #2265 — honour the election the member made when they saved the
@@ -752,9 +750,12 @@ export async function POST(request: NextRequest) {
         // `bookingOwnerProviderMetadata`.
         ...bookingOwnerProviderMetadata(booking),
       },
+      // #3864: the amount and currency are in the key, so two tabs minting
+      // different amounts off one pointer each get their own intent rather than
+      // Stripe's idempotency_error (a 500); a retry of the same mint replays.
       idempotencyKey: repaySupersededIntentId
         ? `pi_${booking.id}_repay_${repaySupersededIntentId}`
-        : `pi_${booking.id}_${booking.payment?.stripePaymentIntentId ?? "initial"}`,
+        : `pi_${booking.id}_${booking.payment?.stripePaymentIntentId ?? "initial"}_${effectivePriceCents}_${stripeChargeCurrency(format)}`,
     });
 
     // #3638 (`INV-PAY-102`) — attach under lock(1), after re-reading the
@@ -858,6 +859,9 @@ export async function POST(request: NextRequest) {
     // Every other unexpected error gets the fixed generic message so internal
     // detail (Prisma constraint names, connection strings, ...) never reaches
     // the client (#1888).
+    if (error instanceof CreditElectionIntentConflictError) {
+      return NextResponse.json(CREDIT_ELECTION_NOT_APPLIED_BODIES.otherPaymentStarted, { status: 409 });
+    }
     if (
       error instanceof PaymentIntentCapacityError ||
       error instanceof PaymentIntentConflictError ||
