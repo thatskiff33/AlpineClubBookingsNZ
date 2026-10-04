@@ -510,8 +510,13 @@ Neither figure is stored per task, so each is read from the money it is made
 of, each row used once: a give-back line plus its closure's re-price (the
 `PRICE_REBASE` row's `newData`) must equal one review give-back row
 (`BOOKING_APPLIED` naming the booking as source and target), and a stand-in
-posted after a cancellation for less than the share must be one give-back row,
-one share credit, or both. Any other stand-in is the share as typed. On a live
+posted after a cancellation for less than the share must be its task's own
+refund to the capture plus one give-back row, one share credit, or both. That
+refund (#3835, #3907) is the card debt the task froze (its review recovery
+key) or its `BANK_REFUND` line, the facts #3835's netting reads; it makes only
+its own task's line, and a hand-back smaller than the share is borne out only
+by the stand-in it makes. A stand-in whose task refunded the capture is judged
+this way at the full share too. Any other stand-in is the share as typed. On a live
 booking, a give-back row no line records and no re-price of a task without
 one could absorb is counted on `owed(b)`'s column side, so a missing give-back
 line is a disagreement. What the rows cannot say is which sibling a row
