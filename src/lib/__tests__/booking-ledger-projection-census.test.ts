@@ -775,7 +775,7 @@ describe("#3791's review closures: a line is judged by what the member was credi
   function bankReviewed(shareCents: number, lineCents: number, handBackCents: number): BookingLedgerCensusRow {
     const base = cashCancelled("COMPLETED");
     const ledger = new Ledger();
-    ledger.lines = [...base.lines];
+    ledger.lines = base.lines.map((line) => ({ rateMembershipTypeId: null, ageTier: null, guestNames: [], narration: "", ...line }));
     ledger.post([share(lineCents), planHandBackLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: TASK, amountCents: handBackCents, settlementMethod: "INTERNET_BANKING", officerMemberId: "officer" })], LATER);
     return {
       ...base,
@@ -804,7 +804,7 @@ describe("#3791's review closures: a line is judged by what the member was credi
     expect(isEditReviewHandBackLine(handBack, TASK)).toBe(true);
     for (const [key, value] of [["kind", "CARD_REFUND"], ["anchorKind", "CANCELLATION"], ["anchorId", "task-other"], ["reversesLineId", "line-1"]] as const) {
       expect(isEditReviewHandBackLine({ ...handBack, [key]: value }, TASK), key).toBe(false);
-      expect(where[key] === value || (key === "anchorId" && where.anchorId.in.includes(value)), key).toBe(false);
+      expect((where as Record<string, unknown>)[key] === value || (key === "anchorId" && where.anchorId.in.includes(value)), key).toBe(false);
     }
     // #3835 counts a hand-back a later reversal undid (`reversesLineId: null` keeps the original);
     // the census does not, so such a stand-in is drift - the stricter reading, never an excuse.
