@@ -624,8 +624,17 @@ const CENSUS_CEILING = {
    * nights by their date-only string and stores them as calendar days; the
    * sentence a person reads goes through `club-time`'s `formatClubDate`, not
    * this adapter. Re-measured by RUNNING this suite on this tree.
+   *
+   * 225 -> 226 (#50): one importer, `src/lib/other-lodges.ts`, and the
+   * zone-free direction again. The other-lodges registry gains two `@db.Date`
+   * season-start columns that travel as `yyyy-MM-dd` strings, so the shared
+   * field list validates them with `isDateOnlyString`, stores them through
+   * `parseDateOnly` and serialises them with `formatDateOnly` — none of which
+   * takes a `timeZone`, and the file consults no zone anywhere else; the one
+   * comparison it makes between two stored days goes through `storedDateOnly`.
+   * Re-measured by RUNNING this suite on this tree.
    */
-  dateOnlyImporters: 225,
+  dateOnlyImporters: 226,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *
