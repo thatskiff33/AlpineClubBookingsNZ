@@ -18,7 +18,7 @@ reason: the pay step retires the booking's earlier card intent (through the
   arguments.
 
 file: src/lib/payment-reconciliation.ts
-lines: 3135
+lines: 3136
 reason: the settle door gives back applied credit a full-price capture left
   unspent and writes the creditAppliedCents mirror to match, inside the settle
   transaction under the member credit-ledger key it already holds; the Stripe
