@@ -35,7 +35,9 @@
 # misc
 .DS_Store
 *.pem
-.claude/
+# Claude Code local state is ignored; the shared subagent roles are tracked.
+.claude/*
+!.claude/agents/
 
 # debug
 npm-debug.log*

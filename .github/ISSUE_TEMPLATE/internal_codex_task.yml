@@ -143,17 +143,6 @@ body:
         - ui
     validations:
       required: true
-  - type: dropdown
-    id: recommended_effort
-    attributes:
-      label: Recommended effort
-      options:
-        - xhigh
-        - high
-        - medium
-        - low
-    validations:
-      required: true
   - type: textarea
     id: context_files
     attributes:
@@ -214,11 +203,5 @@ body:
       description: >-
         What the PR must report back, and anything already known to be at risk.
         Residuals are resolved on the PR that finds them, not carried forward.
-    validations:
-      required: true
-  - type: textarea
-    id: codex_prompt
-    attributes:
-      label: Codex invocation prompt
     validations:
       required: true

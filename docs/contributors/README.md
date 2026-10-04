@@ -14,8 +14,9 @@ is required reading to deploy the product.
 the only entry point you need. It carries the always-read core, the routing
 table that names what to read for the change you are about to make, the safety
 rules, the orchestration model, and the merge gate. Read it first and let its
-routing table bring you back here. It is the only agent file: Claude Code,
-Codex and other agents all load it directly.
+routing table bring you back here. It is the only agent rules file: Codex
+loads it directly and Claude Code loads it through the one-line `CLAUDE.md`
+import.
 
 **Humans:** read [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md) for local
 setup, the development rules and the pull-request contract, then
@@ -117,9 +118,9 @@ in. Cite rules by id, never by line number.
   design.
 - [`../../SECURITY.md`](../../SECURITY.md) — the public disclosure policy.
   Report a suspected vulnerability privately, never in an issue or pull request.
-- [`../../REVIEW.md`](../../REVIEW.md) — a **historical** record: the
-  production-hardening review of 15 July 2026, written at remediation altitude
-  against `origin/main @ 297216a7`. It is a point-in-time report, not a live
+- [`../reviews/2026-07-15-production-hardening.md`](../reviews/2026-07-15-production-hardening.md)
+  — a **historical** record: the production-hardening review of 15 July 2026,
+  written at remediation altitude against `origin/main @ 297216a7`. It is a point-in-time report, not a live
   list of open defects; each finding names the issue that tracks it, and that
   issue is where the current status lives.
 
@@ -143,22 +144,27 @@ in. Cite rules by id, never by line number.
   tracked-only, bounded code/import/Prisma context locator shared by Codex and
   Claude Code.
 - [`../agents/CODEX_WORKFLOW.md`](../agents/CODEX_WORKFLOW.md) — the operating
-  guide for Codex agents, including the Windows worktree runtime and
-  dependency preflight, and lane-owned Docker teardown with the report-only
+  guide for agent lanes, including the worktree runtime and dependency
+  preflight (Windows and Linux/WSL), and lane-owned Docker teardown with the report-only
   `pnpm run stale-containers` debris check.
 - [`../agents/ISSUE_WORKFLOW.md`](../agents/ISSUE_WORKFLOW.md) — issue
-  contracts: the human-first issue-body order, the four-question test for
-  whether work is an atomic epic at all (and how an epic differs from a
-  programme, a standalone issue and a GitHub Project), how an epic ships from
-  its integration branch, claiming, recording a decision, and what never goes
-  in a public artifact.
+  contracts: the human-first issue-body order, reading the whole thread,
+  claiming, recording a decision, the ready comment, and what never goes in a
+  public artifact.
+- [`../agents/EPIC_PLAYBOOK.md`](../agents/EPIC_PLAYBOOK.md) — the
+  four-question test for whether work is an atomic epic at all (and how an
+  epic differs from a programme, a standalone issue and a GitHub Project), how
+  an epic ships from its integration branch, and running a multi-issue wave.
+- [`../agents/MODELS.md`](../agents/MODELS.md) — the current models, the
+  cost-aware defaults, and when to escalate.
 - [`../agents/CODEX_PROMPTS.md`](../agents/CODEX_PROMPTS.md) — invocation
   prompts, and the [skill definitions](../agents/codex/skills/README.md) they
   draw on.
 - [`../agents/PROFILE_GUIDE.md`](../agents/PROFILE_GUIDE.md) — execution
   profiles, and the [profile definitions](../agents/codex/profiles/README.md).
 - [`../agents/SUBAGENT_GUIDE.md`](../agents/SUBAGENT_GUIDE.md) — when to spawn a
-  subagent and how to brief one.
+  subagent and how to brief one; the role definitions live in
+  `.claude/agents/` and `.codex/agents/`.
 - [`../agents/REVIEW_SEVERITY.md`](../agents/REVIEW_SEVERITY.md) — the review
   severity scale.
 - [`../agents/PROMPT_INJECTION_GUIDE.md`](../agents/PROMPT_INJECTION_GUIDE.md) —
