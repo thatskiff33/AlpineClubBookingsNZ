@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/payment-transaction-status", async (importOriginal) => ({
   // The module reads the list at import time for Net Collected's capture
   // evidence select (#3372); only the predicate is diverged.
-  ...(await importOriginal<typeof import("@/lib/payment-transaction-status")>()),
+  ...((await importOriginal()) as typeof import("@/lib/payment-transaction-status")),
   isCapturedTransactionStatus: (status: PaymentStatus) =>
     status === PaymentStatus.REFUNDED,
 }));
