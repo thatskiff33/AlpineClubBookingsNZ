@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockFindMany = vi.fn();
 const mockFindUnique = vi.fn();
 const mockUpsert = vi.fn();
-const mockUpdate = vi.fn();
+const mockUpdateMany = vi.fn();
 const mockAmenityDeleteMany = vi.fn();
 const mockAmenityUpsert = vi.fn();
 
@@ -17,7 +17,7 @@ vi.mock("@/lib/prisma", () => {
       findMany: (...args: unknown[]) => mockFindMany(...args),
       findUnique: (...args: unknown[]) => mockFindUnique(...args),
       upsert: (...args: unknown[]) => mockUpsert(...args),
-      update: (...args: unknown[]) => mockUpdate(...args),
+      updateMany: (...args: unknown[]) => mockUpdateMany(...args),
     },
     amenity: {
       deleteMany: (...args: unknown[]) => mockAmenityDeleteMany(...args),
@@ -139,7 +139,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockLoadSettings.mockResolvedValue({ ...SETTINGS });
   mockUpsert.mockResolvedValue({ id: "ol_new" });
-  mockUpdate.mockResolvedValue({});
+  mockUpdateMany.mockResolvedValue({ count: 1 });
   mockAmenityDeleteMany.mockResolvedValue({ count: 0 });
   mockAmenityUpsert.mockResolvedValue({});
   mockRecordUpload.mockResolvedValue(undefined);
@@ -259,8 +259,8 @@ describe("downloadOtherClubsFromServer", () => {
 
     const result = await downloadOtherClubsFromServer();
 
-    expect(mockUpdate).toHaveBeenCalledWith({
-      where: { id: "ol_1" },
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: "ol_1", updatedAt: new Date("2026-08-01T00:00:00.000Z") },
       data: expect.objectContaining({ bedCapacity: 30 }),
     });
     expect(result).toMatchObject({ created: 0, updated: 1, unchanged: 0 });
@@ -277,7 +277,7 @@ describe("downloadOtherClubsFromServer", () => {
 
     const result = await downloadOtherClubsFromServer();
 
-    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
     expect(mockUpsert).not.toHaveBeenCalled();
     expect(mockAmenityDeleteMany).not.toHaveBeenCalled();
     expect(mockAmenityUpsert).not.toHaveBeenCalled();
@@ -356,8 +356,8 @@ describe("lodge details and amenities round trip", () => {
 
     const result = await downloadOtherClubsFromServer();
 
-    expect(mockUpdate).toHaveBeenCalledWith({
-      where: { id: "ol_1" },
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: "ol_1", updatedAt: new Date("2026-08-01T00:00:00.000Z") },
       data: expect.objectContaining({
         ...LOCAL_DETAILS,
         updatedAt: new Date(REMOTE_UPDATED_AT),
@@ -397,8 +397,8 @@ describe("lodge details and amenities round trip", () => {
         where: { otherLodgeId_name: { otherLodgeId: "ol_1", name: "Boot room" } },
       }),
     );
-    expect(mockUpdate).toHaveBeenCalledWith({
-      where: { id: "ol_1" },
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: "ol_1", updatedAt: new Date("2026-08-01T00:00:00.000Z") },
       data: expect.objectContaining({ updatedAt: new Date(REMOTE_UPDATED_AT) }),
     });
     expect(result).toMatchObject({ updated: 1, unchanged: 0, keptLocal: 0 });
@@ -421,6 +421,58 @@ describe("lodge details and amenities round trip", () => {
     expect(mockAmenityUpsert).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a local edit that lands between the read and the write, and writes no amenities", async () => {
+    // Rule 2 was decided on `existing.updatedAt`, read OUTSIDE the transaction.
+    // An admin saving the same lodge in that gap moves the row's timestamp, so
+    // the guarded updateMany matches nothing. An unguarded update would have
+    // overwritten the admin's edit AND stamped the row with the server's older
+    // timestamp — below the upload watermark, so the edit would never be sent.
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [
+        remoteLodge("Aorangi Ski Club", {
+          bedCapacity: 30,
+          amenities: [{ name: "Boot room", description: null }],
+        }),
+      ],
+      count: 1,
+      cursor: "c-406",
+      dropped: 0,
+    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-08-01T00:00:00.000Z"));
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+
+    const result = await downloadOtherClubsFromServer();
+
+    // The write was attempted, guarded on the timestamp we read...
+    expect(mockUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "ol_1", updatedAt: new Date("2026-08-01T00:00:00.000Z") },
+      }),
+    );
+    // ...and the miss is the local edit winning: nothing else is written.
+    expect(mockAmenityDeleteMany).not.toHaveBeenCalled();
+    expect(mockAmenityUpsert).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ updated: 0, keptLocal: 1 });
+    // The cursor still advances: the row was handled, not failed.
+    expect(mockRecordDownload).toHaveBeenCalledWith("c-406");
+  });
+
+  it("writes the lodge row before its amenities, so the row lock orders concurrent replacements", async () => {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [remoteLodge("Aorangi Ski Club", { amenities: [AMENITIES[0]] })],
+      count: 1,
+      cursor: "c-407",
+      dropped: 0,
+    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-08-01T00:00:00.000Z"));
+
+    await downloadOtherClubsFromServer();
+
+    const rowWrite = mockUpdateMany.mock.invocationCallOrder[0];
+    expect(rowWrite).toBeLessThan(mockAmenityDeleteMany.mock.invocationCallOrder[0]);
+    expect(rowWrite).toBeLessThan(mockAmenityUpsert.mock.invocationCallOrder[0]);
+  });
+
   it("keeps a newer local copy even when only the amenities differ", async () => {
     mockPullOtherLodges.mockResolvedValue({
       lodges: [remoteLodge("Aorangi Ski Club", { amenities: [] })],
@@ -432,7 +484,7 @@ describe("lodge details and amenities round trip", () => {
 
     const result = await downloadOtherClubsFromServer();
 
-    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
     expect(mockAmenityDeleteMany).not.toHaveBeenCalled();
     expect(result).toMatchObject({ updated: 0, keptLocal: 1 });
   });
@@ -460,7 +512,7 @@ describe("lodge details and amenities round trip", () => {
 
     const result = await downloadOtherClubsFromServer();
 
-    const [{ data }] = mockUpdate.mock.calls[0];
+    const [{ data }] = mockUpdateMany.mock.calls[0];
     expect(data).toMatchObject({ bedCapacity: 30 });
     for (const key of Object.keys(WIRE_DETAILS)) expect(data).not.toHaveProperty(key);
     expect(mockAmenityDeleteMany).not.toHaveBeenCalled();
@@ -482,7 +534,7 @@ describe("lodge details and amenities round trip", () => {
 
     const result = await downloadOtherClubsFromServer();
 
-    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
     expect(result).toMatchObject({ unchanged: 1 });
   });
 });
@@ -506,8 +558,8 @@ describe("sync loop hygiene", () => {
 
     await downloadOtherClubsFromServer();
 
-    expect(mockUpdate).toHaveBeenCalledWith({
-      where: { id: "ol_1" },
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: "ol_1", updatedAt: new Date("2026-08-01T00:00:00.000Z") },
       data: expect.objectContaining({
         bedCapacity: 30,
         updatedAt: new Date(REMOTE_UPDATED_AT),
@@ -530,7 +582,7 @@ describe("sync loop hygiene", () => {
 
     const result = await downloadOtherClubsFromServer();
 
-    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
     expect(result).toMatchObject({ updated: 0, keptLocal: 1 });
   });
 
@@ -700,7 +752,7 @@ describe("download cursor overlap", () => {
 
     // One write, for the one row that actually differed. An inflated `updated`
     // here would make every overlapped pull look like a burst of remote edits.
-    expect(mockUpdate).toHaveBeenCalledTimes(1);
+    expect(mockUpdateMany).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ fetched: 2, created: 0, updated: 1, unchanged: 1, keptLocal: 0 });
   });
 
@@ -729,7 +781,7 @@ describe("download cursor overlap", () => {
     const result = await downloadOtherClubsFromServer();
 
     expect(mockPullOtherLodges).toHaveBeenCalledWith("2026-06-20T10:04:30.000Z");
-    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
     expect(result).toMatchObject({ updated: 0, keptLocal: 1 });
   });
 
@@ -773,7 +825,7 @@ describe("download cursor overlap", () => {
       dropped: 0,
     });
     mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-06-19T00:00:00.000Z"));
-    mockUpdate.mockRejectedValue(new Error("write failed"));
+    mockUpdateMany.mockRejectedValue(new Error("write failed"));
 
     await expect(downloadOtherClubsFromServer()).rejects.toThrow("write failed");
     expect(mockRecordDownload).not.toHaveBeenCalled();

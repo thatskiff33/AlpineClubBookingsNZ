@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   requireActiveSessionUser: vi.fn(),
   findMany: vi.fn(),
   findUnique: vi.fn(),
+  findUniqueOrThrow: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
   del: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock("@/lib/prisma", () => {
     otherLodge: {
       findMany: mocks.findMany,
       findUnique: mocks.findUnique,
+      findUniqueOrThrow: mocks.findUniqueOrThrow,
       create: mocks.create,
       update: mocks.update,
       delete: mocks.del,
@@ -267,6 +269,10 @@ describe("POST /api/admin/other-lodges", () => {
     ["a non-boolean facility", { name: "X", freeWifi: "yes" }],
     ["an over-long cancellation period", { name: "X", cancellationPeriod: "x".repeat(201) }],
     ["an amenity with no name", { name: "X", amenities: [{ name: "" }] }],
+    // PostgreSQL text cannot hold U+0000; refused here as a 400 rather than a 500.
+    ["a NUL character in the name", { name: "X\u0000Y" }],
+    ["a NUL character in the location", { name: "X", location: "Whaka\u0000papa" }],
+    ["a NUL character in an amenity name", { name: "X", amenities: [{ name: "Sa\u0000una" }] }],
     [
       "amenity names that differ only by case",
       { name: "X", amenities: [{ name: "Sauna" }, { name: "sauna" }] },
@@ -323,7 +329,14 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     // the central-server upload watermark is keyed on that column, so the new
     // amenities would never be sent.
     mocks.findUnique.mockResolvedValue(record());
-    mocks.update.mockResolvedValue(record());
+    mocks.update.mockResolvedValue({ id: "ol-1" });
+    const saved = record({
+      amenities: [
+        { name: "Boot room", description: null },
+        { name: "Sauna", description: "Wood fired" },
+      ],
+    });
+    mocks.findUniqueOrThrow.mockResolvedValue(saved);
     const response = await PATCH(
       jsonRequest("PATCH", {
         amenities: [{ name: "Sauna", description: "Wood fired" }, { name: "Boot room" }],
@@ -331,6 +344,15 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
       params("ol-1"),
     );
     expect(response.status).toBe(200);
+    // The response carries the set as saved, re-read after the replacement.
+    expect((await response.json()).otherLodge.amenities).toHaveLength(2);
+    // THE LODGE ROW IS WRITTEN FIRST. Its update holds the row lock for the rest
+    // of the transaction, so a concurrent replacement of the same lodge's
+    // amenities (the nightly download) queues behind it instead of interleaving
+    // its deletes and upserts with ours.
+    const rowWrite = mocks.update.mock.invocationCallOrder[0];
+    expect(rowWrite).toBeLessThan(mocks.amenityDeleteMany.mock.invocationCallOrder[0]);
+    expect(rowWrite).toBeLessThan(mocks.amenityUpsert.mock.invocationCallOrder[0]);
     expect(mocks.amenityDeleteMany).toHaveBeenCalledWith({
       where: { otherLodgeId: "ol-1", name: { notIn: ["Sauna", "Boot room"] } },
     });
@@ -378,6 +400,17 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     expect(data).toEqual({ winterSeasonStart: null, freeWifi: false });
     // Not sent, so not in the write: a partial update never clears a column it
     // did not mention, and no transaction is opened when the amenities are absent.
+    expect(mocks.amenityDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the name", { name: "Ruapehu\u0000Ski Club" }],
+    ["a text field", { cancellationPeriod: "7\u0000days" }],
+    ["an amenity description", { amenities: [{ name: "Sauna", description: "a\u0000b" }] }],
+  ])("returns 400 for a NUL character in %s, which PostgreSQL would reject with 22021", async (_label, body) => {
+    mocks.findUnique.mockResolvedValue(record());
+    expect((await PATCH(jsonRequest("PATCH", body), params("ol-1"))).status).toBe(400);
+    expect(mocks.update).not.toHaveBeenCalled();
     expect(mocks.amenityDeleteMany).not.toHaveBeenCalled();
   });
 

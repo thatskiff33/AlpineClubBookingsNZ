@@ -11,7 +11,12 @@ vi.mock("@/lib/servernz-settings", () => ({
   validateCentralServerBaseUrl: (value: string) => ({ ok: true, value }),
 }));
 
-import { pullOtherLodges, uploadOtherLodges } from "@/lib/servernz-api";
+import { OTHER_LODGE_DATA_FIELDS } from "@/lib/other-lodges";
+import {
+  pullOtherLodges,
+  uploadOtherLodges,
+  type OtherLodgeUploadItem,
+} from "@/lib/servernz-api";
 
 const fetchMock = vi.fn();
 
@@ -147,6 +152,11 @@ describe("pullOtherLodges — lodge details and amenities (#50)", () => {
       { amenities: Array.from({ length: 51 }, (_, i) => ({ name: `A${i}` })) },
     ],
     ["an amenity with a key this client does not know", { amenities: [{ name: "Sauna", id: "x" }] }],
+    // PostgreSQL text cannot hold U+0000 (22021). Accepted here it would throw
+    // mid-merge, leave the cursor unmoved and re-fail on this row every pull.
+    ["a NUL character in the name", { name: "Aorangi\u0000Ski Club" }],
+    ["a NUL character in a text field", { bookingOfficerName: "Ann\u0000Officer" }],
+    ["a NUL character in an amenity description", { amenities: [{ name: "Sauna", description: "a\u0000b" }] }],
   ])("drops only the row with %s, never the batch", async (_label, bad) => {
     respondWith({
       lodges: [remoteRow(bad), remoteRow({ id: "srv_2", name: "Arlberg Ski Club" })],
@@ -181,9 +191,77 @@ describe("pullOtherLodges — lodge details and amenities (#50)", () => {
   });
 });
 
-// ── Upload: exactly the keys the server's strict item schema knows ─────────
+// ── Upload: the payload reaches the endpoint as given ───────────────────────
+
+/**
+ * The keys the central server's `.strict()` upload item schema accepts, copied
+ * from its contract (`otherLodgeUploadItemSchema` in the server's
+ * `src/lib/other-lodges.ts`, API version 1.1). ONE key outside this set rejects
+ * the WHOLE upload with 400, so the client's item type is pinned to exactly it.
+ * This is a deliberate second copy: deriving it from this repository's own field
+ * list would prove the client agrees with itself, not with the server.
+ */
+const SERVER_UPLOAD_ITEM_KEYS = [
+  "name",
+  "location",
+  "bookingOfficerName",
+  "bookingOfficerEmail",
+  "bookingOfficerPhone",
+  "bedCapacity",
+  "siteUrl",
+  "bookingPath",
+  "requiresLodgeCustodian",
+  "freeWifi",
+  "quietRoom",
+  "dryingRoom",
+  "sharedKitchen",
+  "wheelchairAccessible",
+  "breakfastIncluded",
+  "lunchIncluded",
+  "dinnerIncluded",
+  "cancellationPeriod",
+  "winterSeasonStart",
+  "summerSeasonStart",
+  "amenities",
+].sort();
 
 describe("uploadOtherLodges — payload shape (#50)", () => {
+  it("sends exactly the key set the server's strict item schema knows", () => {
+    // A complete item of the client's type: every key present, none extra. The
+    // type is `SerializedOtherLodgeData & { name; amenities }`, so a field added
+    // to the shared list appears here (the object below would fail to compile
+    // without it) and this assertion then asks whether the SERVER knows it too.
+    const item: OtherLodgeUploadItem = {
+      name: "Aorangi Ski Club",
+      location: null,
+      bookingOfficerName: null,
+      bookingOfficerEmail: null,
+      bookingOfficerPhone: null,
+      bedCapacity: null,
+      siteUrl: null,
+      bookingPath: null,
+      requiresLodgeCustodian: false,
+      freeWifi: false,
+      quietRoom: false,
+      dryingRoom: false,
+      sharedKitchen: false,
+      wheelchairAccessible: false,
+      breakfastIncluded: false,
+      lunchIncluded: false,
+      dinnerIncluded: false,
+      cancellationPeriod: null,
+      winterSeasonStart: null,
+      summerSeasonStart: null,
+      amenities: [],
+    };
+    expect(Object.keys(item).sort()).toEqual(SERVER_UPLOAD_ITEM_KEYS);
+    // And the sync builds its items from the same list, so it cannot add a key
+    // this pin does not know.
+    expect([...OTHER_LODGE_DATA_FIELDS, "name", "amenities"].sort()).toEqual(
+      SERVER_UPLOAD_ITEM_KEYS,
+    );
+  });
+
   it("posts the lodges as given, under `lodges`, to the other-lodges endpoint", async () => {
     respondWith({ created: 1, updated: 0, unchanged: 0, skipped: 0, results: [] });
     const item = {
