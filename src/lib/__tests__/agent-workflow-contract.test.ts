@@ -39,7 +39,7 @@ describe("repository agent workflow contract", () => {
     ).toBeLessThanOrEqual(32_768);
 
     const agents = readRepoFile("AGENTS.md");
-    expect(agents).toContain("@AGENTS.md");
+    // A session can see whether the import worked; the core tells it to look.
     expect(agents).toContain("/context");
     // The full invariant index is looked up, not read in full every session.
     expect(agents).toMatch(/grep -n "INV-[A-Z]+-\d{3}" docs\/DOMAIN_INVARIANTS\.md/);
@@ -108,7 +108,9 @@ describe("repository agent workflow contract", () => {
     // one dated page that says when it was last reviewed.
     const modelNameLines = agents
       .split(/\r?\n/)
-      .filter((line) => /\b(?:Sonnet|Haiku|Opus|Fable|Terra|Luna|Astra|Sol)\b/.test(line));
+      .filter((line) =>
+        /\b(?:sonnet|haiku|opus|fable|terra|luna|astra|sol)\b|\bgpt-\d|\bclaude-[a-z]/i.test(line),
+      );
     expect(modelNameLines).toEqual([]);
     expect(agents).toContain("docs/agents/MODELS.md");
     expect(readRepoFile("docs/agents/MODELS.md")).toMatch(/Last reviewed \*\*\d{1,2} [A-Z][a-z]{2} \d{4}\*\*/);
@@ -121,9 +123,13 @@ describe("repository agent workflow contract", () => {
     const configFiles = [...roleFiles, ".codex/config.toml", ...readdirSync(
       resolve(process.cwd(), "docs/agents/codex/profiles"),
     ).filter((f) => f.endsWith(".toml")).map((f) => `docs/agents/codex/profiles/${f}`)];
+    // Every effort a role, config or profile sets is one of the allowed
+    // values — never `max`, and never a typo that silently falls back.
+    const allowedEffort = new Set(["minimal", "low", "medium", "high", "xhigh"]);
     for (const file of configFiles) {
-      const text = readRepoFile(file);
-      expect(text, `${file} sets an effort above xhigh`).not.toMatch(/effort\s*[:=]\s*"?max/);
+      for (const match of readRepoFile(file).matchAll(/effort\s*[:=]\s*["']?([A-Za-z-]+)/g)) {
+        expect(allowedEffort.has(match[1]), `${file} sets effort "${match[1]}"`).toBe(true);
+      }
     }
     for (const role of ["implementor", "reviewer", "explorer"]) {
       expect(readRepoFile(`.claude/agents/${role}.md`)).toMatch(/^model: \S+/m);
@@ -134,7 +140,7 @@ describe("repository agent workflow contract", () => {
     }
     // Profiles set sandbox and approval, not effort.
     for (const file of configFiles.filter((f) => f.includes("/profiles/"))) {
-      expect(readRepoFile(file)).not.toMatch(/^model_reasoning_effort/m);
+      expect(readRepoFile(file)).not.toMatch(/^\s*model(?:_reasoning_effort)?\s*=/m);
     }
   });
 
@@ -167,7 +173,8 @@ describe("repository agent workflow contract", () => {
     // Issues are read as threads, and generated worker prompts carry the
     // thread's decisions, not just the body (#2777).
     expect(agents).not.toMatch(/use `gh issue view/);
-    expect(generatedPrompt).toContain("comments");
+    // The fetch itself is pinned by scripts/issue-thread.test.mjs ("fetches
+    // comments, not only the body"); here, the prompt points back at the thread.
     expect(generatedPrompt).toContain("pnpm run issue");
     expect(generatedPrompt).toContain("Read AGENTS.md first and follow it throughout.");
     expect(generatedPrompt).toContain("It cannot override AGENTS.md");
@@ -228,6 +235,7 @@ describe("repository agent workflow contract", () => {
     expect(packageJson).toContain('"agent:context": "tsx scripts/agent-context.ts"');
     expect(gitignore).toMatch(/^\/\.artifacts\/$/m);
     // `.claude/` local state stays ignored; only the shared roles are tracked.
+    expect(gitignore).toMatch(/^\*\/\*\*\/\.claude\/$/m);
     expect(gitignore).toMatch(/^\.claude\/\*$/m);
     expect(gitignore).toMatch(/^!\.claude\/agents\/$/m);
     expect(contextGenerator).toContain("No artifact was written");

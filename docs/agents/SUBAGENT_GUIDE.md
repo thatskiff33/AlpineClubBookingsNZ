@@ -118,5 +118,5 @@ Two more things that help. Give it the **reason**
 behind the task in one sentence — who the change is for and what it unblocks —
 because it connects the work to the right context rather than inferring intent.
 And give it a **memory surface**: a checkpoint file outside the worktree that
-it updates after every material step, which is also what `AGENTS.md` → "Durable
-lane state" already requires.
+it updates after every material step, which is also what `AGENTS.md` → "Orchestration Model" → "Parallel
+lanes" already requires.

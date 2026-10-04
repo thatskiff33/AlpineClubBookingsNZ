@@ -35,7 +35,9 @@
 # misc
 .DS_Store
 *.pem
-# Claude Code local state is ignored; the shared subagent roles are tracked.
+# Claude Code local state is ignored at any depth; only the repository's
+# shared subagent roles (.claude/agents/ at the root) are tracked.
+*/**/.claude/
 .claude/*
 !.claude/agents/
 

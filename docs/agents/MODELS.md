@@ -34,8 +34,13 @@ usage is not a direct conversion, and retries, context and effort all count.
 | Implementor — well-specified Low/Medium work, docs, UI copy | Sonnet 5.5 | Sol 6.1 | `medium` |
 | Review lens — correctness, invariants, concurrency, security, money | Opus 5.5 | Sol 6.1 | `high`; `xhigh` for a Critical security or money lens |
 | Review lens — UX, docs, drift | Sonnet 5.5 | Sol 6.1 | `medium` |
-| Search, extraction, mechanical checks with checkable output | Haiku 4.5 or Sonnet 5.5 | Luna | `low` |
+| Search, extraction, mechanical checks with checkable output | Haiku 4.5 or Sonnet 5.5 | Luna | `low` (Haiku has no effort setting) |
 | Planning and blueprints for High/Critical work | Opus 5.5 | Sol 6.1 | `high`–`xhigh` |
+
+Exact identifiers: Claude aliases `opus` (Opus 5.5), `sonnet` (Sonnet 5.5),
+`haiku` (Haiku 4.5), `fable` (Fable 5.1); Codex slugs `gpt-6.1-sol`,
+`gpt-6-luna`, `gpt-6-astra`. Older slugs such as `gpt-6-sol`, `gpt-5.6-sol`
+and `gpt-5.6-luna` are superseded — don't pick them by accident.
 
 Terra (`gpt-5.6-terra`) is a previous generation; prefer Luna for cheap
 bounded work. Haiku 4.5 has no effort setting and falls well behind on long

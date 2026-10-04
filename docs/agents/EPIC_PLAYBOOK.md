@@ -329,20 +329,14 @@ work — this repository already carries a disabled ruleset that does nothing, a
 `main` is protected the classic way, so matching it keeps both readable from the
 same command.
 
-Pattern `epic/**`, and the settings that matter, as applied on 23 Aug 2026:
+Pattern `epic/**`, as applied on 23 Aug 2026: the same required checks as
+`main` — the list in [`CONTRIBUTING.md`](../../CONTRIBUTING.md#required-checks-applied-today),
+which is their one home — plus:
 
-```json
-{
-  "checks": ["verify", "Migration drift check", "Data migration verification",
-             "Static analysis gate", "Playwright E2E", "E2E multi-lodge",
-             "Secret scan (gitleaks)", "Image security gate (Trivy CRITICAL)",
-             "Dependency audit"],
-  "strict": false,          // requiring up-to-date serialises every child
-  "enforce_admins": false,  // matches main; an owner can unblock themselves
-  "deletions": true,        // or the branch cannot be deleted after the epic merges
-  "force_pushes": false
-}
-```
+- `strict: false` — requiring up-to-date branches serialises every child;
+- `enforce_admins: false` — matches `main`; an owner can unblock themselves;
+- deletions allowed — or the branch cannot be deleted after the epic merges;
+- force pushes blocked.
 
 Verify with `gh api repos/<owner>/<repo>/branches/epic%2F<branch>/protection`
 (note the `%2F`), and check `rules/branches/<branch>` returns `[]` to confirm no
@@ -353,7 +347,7 @@ mismatched pattern is the likeliest mistake and it reports `false`.
 
 **Two consequences of that configuration, both load-bearing.** Required status
 checks gate **pushes**, not only merges, so nothing lands on an integration branch
-without the nine checks — which is why the sync opens a pull request from
+without the required checks — which is why the sync opens a pull request from
 `main` rather than pushing a merge commit it has just created. And
 `required_pull_request_reviews` is deliberately absent (`main` has it with a count
 of `0`, plus the code-owner rule applied on 2 Oct 2026 — `AGENTS.md` →

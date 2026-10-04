@@ -11,7 +11,7 @@ is required reading to deploy the product.
 ## Start here
 
 **Automated agents:** [`../../AGENTS.md`](../../AGENTS.md) is the contract and
-the only entry point you need. It carries the always-read core, the routing
+the only entry point you need and the only file read every time. It carries the routing
 table that names what to read for the change you are about to make, the safety
 rules, the orchestration model, and the merge gate. Read it first and let its
 routing table bring you back here. It is the only agent rules file: Codex
