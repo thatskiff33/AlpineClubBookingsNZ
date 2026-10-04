@@ -112,11 +112,6 @@ it — or nothing whatsoever. Put one of those tokens on its own, with no label 
 your own in front of it, and the email reads correctly whether or not the value
 exists.
 
-`{{promoSummary}}` on a booking that carries several promo codes shows one
-`Promo adjustment (CODE)` line per code, each with its own amount, while
-`{{promoCode}}` names every code, comma-separated (#3828). A booking with one
-code reads exactly as before.
-
 `{{paymentNote}}` on the **Booking Modified** message is another: it says what
 happens to the money for the change, and the wording follows how the booking was
 paid. A card refund reads "A refund of $X has been processed to your original
@@ -133,6 +128,11 @@ payment method."; on a booking paid by internet banking it reads "The club will
 refund $X to you by bank transfer.", and a booking paid partly by card names
 both parts (#3827). `{{amount}}` is still available to a saved override, but it
 cannot say which way the money goes, so use `{{refundSentence}}`.
+
+`{{promoSummary}}` on a booking that carries several promo codes shows one
+`Promo adjustment (CODE)` line per code, each with its own amount, while
+`{{promoCode}}` names every code, comma-separated (#3828). A booking with one
+code reads exactly as before.
 
 One of these blocks is several lines at once: **`{{ical}}`** on the Booking
 Confirmed message renders a short add-to-calendar section — a link that
