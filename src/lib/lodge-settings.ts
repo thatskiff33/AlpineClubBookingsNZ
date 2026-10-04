@@ -11,6 +11,10 @@ type LodgeSettingsRecord = {
   hutLeaderLookaheadDays?: number | null;
   schoolGroupSoftCap?: number | null;
   lodgeId?: string | null;
+  schoolHutLeaderTeacherOnBooking?: boolean;
+  schoolHutLeaderCustodian?: boolean;
+  schoolHutLeaderMemberOnBooking?: boolean;
+  schoolHutLeaderMemberStayingSeparately?: boolean;
 };
 
 // Per-lodge conversion (lodge-scoping contract): a lodge's settings row is
@@ -408,4 +412,144 @@ export async function updateLodgeSettings(input: {
       savedOwnRow.schoolGroupSoftCap ?? DEFAULT_SCHOOL_GROUP_SOFT_CAP,
     updatedAt: savedOwnRow.updatedAt,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Who can be hut leader for school bookings (#3819)
+// ---------------------------------------------------------------------------
+
+/**
+ * The four kinds of leader a lodge may accept for a school booking's nights
+ * (owner decisions, 2 Oct 2026, #3789/#3820), in the order the admin card
+ * lists them. A lodge ticks any combination.
+ *
+ * - `teacherOnBooking`: a teacher on the school booking. Ticking it is also
+ *   what makes approving a school request assign its teachers as hut leaders.
+ * - `custodian`: the lodge custodian — an assignment ticked "Custodian (lives
+ *   on site)" or holding a custodian bed (`isCustodianOccupancy`, #3817).
+ * - `memberOnBooking`: a member who is a guest on the school booking that night.
+ * - `memberStayingSeparately`: a member staying that night on a booking of
+ *   their own at the lodge.
+ */
+export const SCHOOL_HUT_LEADER_KINDS = [
+  "teacherOnBooking",
+  "custodian",
+  "memberOnBooking",
+  "memberStayingSeparately",
+] as const;
+
+export type SchoolHutLeaderKind = (typeof SCHOOL_HUT_LEADER_KINDS)[number];
+export type SchoolHutLeaderKinds = Record<SchoolHutLeaderKind, boolean>;
+
+/**
+ * What a lodge reads with no row of its own. These match the column defaults,
+ * which the expand migration chose so nothing changes for a lodge until an
+ * officer edits it: before this setting any present leader covered a school
+ * night, and #3416's switch (whose value the migration carried over) defaulted
+ * teachers off.
+ */
+export const DEFAULT_SCHOOL_HUT_LEADER_KINDS: Readonly<SchoolHutLeaderKinds> = {
+  teacherOnBooking: false,
+  custodian: true,
+  memberOnBooking: true,
+  memberStayingSeparately: true,
+};
+
+const SCHOOL_HUT_LEADER_KIND_COLUMNS = {
+  teacherOnBooking: "schoolHutLeaderTeacherOnBooking",
+  custodian: "schoolHutLeaderCustodian",
+  memberOnBooking: "schoolHutLeaderMemberOnBooking",
+  memberStayingSeparately: "schoolHutLeaderMemberStayingSeparately",
+} as const satisfies Record<SchoolHutLeaderKind, keyof LodgeSettingsRecord>;
+
+function kindsFromRecord(record: LodgeSettingsRecord): SchoolHutLeaderKinds {
+  const kinds = { ...DEFAULT_SCHOOL_HUT_LEADER_KINDS };
+  for (const kind of SCHOOL_HUT_LEADER_KINDS) {
+    const value = record[SCHOOL_HUT_LEADER_KIND_COLUMNS[kind]];
+    if (typeof value === "boolean") kinds[kind] = value;
+  }
+  return kinds;
+}
+
+function kindsToColumns(kinds: SchoolHutLeaderKinds) {
+  return {
+    schoolHutLeaderTeacherOnBooking: kinds.teacherOnBooking,
+    schoolHutLeaderCustodian: kinds.custodian,
+    schoolHutLeaderMemberOnBooking: kinds.memberOnBooking,
+    schoolHutLeaderMemberStayingSeparately: kinds.memberStayingSeparately,
+  };
+}
+
+/**
+ * A lodge's school hut-leader kinds, resolved like its soft cap: the lodge's
+ * own row, else the legacy "default" row when it is unlinked or linked to this
+ * lodge, else {@link DEFAULT_SCHOOL_HUT_LEADER_KINDS}.
+ *
+ * Unlike the soft cap, a failed read is NOT turned into the defaults: this
+ * answer decides whether an approval makes teachers hut leaders and whether a
+ * night counts as covered, and a silent default would do either wrongly. Pass
+ * the transaction client when the answer decides a write.
+ */
+export async function loadSchoolHutLeaderKinds(
+  db: LodgeSettingsReader,
+  lodgeId: string,
+): Promise<SchoolHutLeaderKinds> {
+  if (!db.lodgeSettings?.findUnique) return { ...DEFAULT_SCHOOL_HUT_LEADER_KINDS };
+  if (lodgeId !== LODGE_SETTINGS_ID) {
+    const ownRow = await db.lodgeSettings.findUnique({ where: { id: lodgeId } });
+    if (ownRow) return kindsFromRecord(ownRow);
+  }
+  const legacy = await db.lodgeSettings.findUnique({
+    where: { id: LODGE_SETTINGS_ID },
+  });
+  if (!legacy) return { ...DEFAULT_SCHOOL_HUT_LEADER_KINDS };
+  if (legacy.lodgeId != null && legacy.lodgeId !== lodgeId) {
+    return { ...DEFAULT_SCHOOL_HUT_LEADER_KINDS };
+  }
+  return kindsFromRecord(legacy);
+}
+
+/**
+ * Save one lodge's school hut-leader kinds onto the row its reader resolves,
+ * by the per-lodge rule the config importer follows
+ * (`writeImportedLodgeCapacity`):
+ *
+ * - a lodge with its own row is edited there;
+ * - the legacy "default" row is edited only when it is linked to this lodge;
+ * - otherwise the lodge gets its own row. When an UNLINKED legacy row was what
+ *   served this lodge, its capacity and soft cap are carried onto the new row,
+ *   because an own row is read first and would otherwise move both. The legacy
+ *   row itself is never claimed: it goes on serving every other lodge.
+ */
+export async function updateSchoolHutLeaderKinds(input: {
+  lodgeId: string;
+  kinds: SchoolHutLeaderKinds;
+  updatedByMemberId: string;
+}): Promise<SchoolHutLeaderKinds> {
+  const columns = kindsToColumns(input.kinds);
+  const data = { ...columns, updatedByMemberId: input.updatedByMemberId };
+  const [ownRow, legacy] = await Promise.all([
+    prisma.lodgeSettings.findUnique({
+      where: { id: input.lodgeId },
+      select: { id: true },
+    }),
+    prisma.lodgeSettings.findUnique({
+      where: { id: LODGE_SETTINGS_ID },
+      select: { lodgeId: true, capacity: true, schoolGroupSoftCap: true },
+    }),
+  ]);
+  const targetId =
+    ownRow || !legacy || legacy.lodgeId !== input.lodgeId
+      ? input.lodgeId
+      : LODGE_SETTINGS_ID;
+  const carried =
+    !ownRow && legacy && legacy.lodgeId === null
+      ? { capacity: legacy.capacity, schoolGroupSoftCap: legacy.schoolGroupSoftCap }
+      : {};
+  const saved = await prisma.lodgeSettings.upsert({
+    where: { id: targetId },
+    create: { id: input.lodgeId, lodgeId: input.lodgeId, ...carried, ...data },
+    update: data,
+  });
+  return kindsFromRecord(saved);
 }

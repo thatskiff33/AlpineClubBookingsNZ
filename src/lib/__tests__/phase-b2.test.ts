@@ -573,8 +573,13 @@ describe("#25: Auto-Assign Hut Leaders", () => {
     const result = await autoAssignHutLeaders();
     expect(result.assignedCount).toBe(0);
     expect(mockPrisma.hutLeaderAssignment.create).not.toHaveBeenCalled();
-    // Skipped at the probe: no candidate search ran for a covered night.
-    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
+    // Skipped at the probe: no candidate search ran for a covered night. The
+    // only booking read is the cover's own school-booking read (#3819), which
+    // carries the school filter under AND.
+    const candidateSearches = mockPrisma.booking.findMany.mock.calls.filter(
+      ([args]: [{ where?: { AND?: unknown } }]) => !args?.where?.AND,
+    );
+    expect(candidateSearches).toHaveLength(0);
   });
 
   it("does NOT skip a night whose assigned leader is not staying (#3818)", async () => {

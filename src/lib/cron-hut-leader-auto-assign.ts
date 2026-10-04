@@ -116,7 +116,10 @@ export async function autoAssignHutLeaders(): Promise<{
       // claims the night AND its leader is staying that night — so the cron
       // and the dashboard can never disagree about which nights need a leader.
       // Still source-blind as above: a teacher row covers its school booking's
-      // nights (`hut-leader-night-cover.ts`).
+      // nights (`hut-leader-night-cover.ts`) — when the lodge ticks teachers in
+      // "Who can be hut leader for school bookings" (#3819). On a school night
+      // the cover counts only a leader of a ticked kind, so the job may add a
+      // member staying that night; it covers only if that kind is ticked too.
       if (cheapCover.isCovered(lodge.id, day)) continue;
 
       // Find distinct adult members staying this night at this lodge. Scoped,
