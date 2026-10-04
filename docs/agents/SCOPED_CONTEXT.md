@@ -2,7 +2,7 @@
 
 Audience: Developer, Agent.
 
-Use the scoped context command when the always-read core and routed documents
+Use the scoped context command when `AGENTS.md` and the routed documents
 identify the rules but the code or data-model neighbourhood is still unclear.
 It creates a small local locator for either Codex or Claude Code; it is not a
 repository dump and it is never injected into a conversation automatically.
