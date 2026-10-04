@@ -11,12 +11,14 @@ import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 import { isCustodianOccupancy } from "@/lib/custodian-occupancy";
 import { hutLeaderStayBookingWhere } from "@/lib/hut-leader-stayed-nights";
 import {
-  DEFAULT_SCHOOL_HUT_LEADER_KINDS,
   loadSchoolHutLeaderKinds,
   type LodgeSettingsReader,
+} from "@/lib/lodge-settings";
+import {
+  DEFAULT_SCHOOL_HUT_LEADER_KINDS,
   type SchoolHutLeaderKind,
   type SchoolHutLeaderKinds,
-} from "@/lib/lodge-settings";
+} from "@/lib/school-hut-leader-kinds";
 import { memberName } from "@/lib/member-serialization";
 import {
   deriveHutLeaderDayHalves,

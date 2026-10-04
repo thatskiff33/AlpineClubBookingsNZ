@@ -15,7 +15,7 @@ import {
   SCHOOL_HUT_LEADER_KINDS,
   type SchoolHutLeaderKind,
   type SchoolHutLeaderKinds,
-} from "@/lib/lodge-settings";
+} from "@/lib/school-hut-leader-kinds";
 
 /**
  * The one presence-aware coverage definition (#3818, `INV-DATE-031`): a night
