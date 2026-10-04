@@ -175,7 +175,7 @@ async function lines(bookingId: string) {
   it("a cancellation from before #3611 replays its kept figure from the frozen retained figure and the credit rows", async () => {
     const id = `${PREFIX}pre-3611-cancel`;
     await createHistoryBooking(prisma, NAMES, id, { payment: { amountCents: 20_000, source: "STRIPE", intent: `pi_${id}` } });
-    await settleHistoryByCard(prisma, id, 20_000);
+    await settleHistoryByCard(id, 20_000);
     const { cancelBooking } = await import("@/lib/booking-cancel");
     const { CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture");
     // Card refund by credit: the policy's half goes back as account credit, no provider call.
@@ -196,7 +196,7 @@ async function lines(bookingId: string) {
   it("a booking it cannot post is listed with its reason, and nothing is posted for it — not even its settlement", async () => {
     const id = `${PREFIX}unpriced`;
     await createHistoryBooking(prisma, NAMES, id, { payment: { amountCents: 20_000, source: "STRIPE", intent: `pi_${id}` } });
-    await settleHistoryByCard(prisma, id, 20_000);
+    await settleHistoryByCard(id, 20_000);
     await stripAllLines(prisma, id);
     // A parked edit's review still open: a strand's nights carry no price.
     await parkHistoryStrand(prisma, NAMES, id, `${id}-g2`);
@@ -218,7 +218,7 @@ async function lines(bookingId: string) {
   it("a booking whose census would disagree is rolled back and listed with both figures", async () => {
     const id = `${PREFIX}disagrees`;
     await createHistoryBooking(prisma, NAMES, id, { payment: { amountCents: 20_000, source: "STRIPE", intent: `pi_${id}` } });
-    await settleHistoryByCard(prisma, id, 20_000);
+    await settleHistoryByCard(id, 20_000);
     await stripAllLines(prisma, id);
     // The mirror says more was captured than any transaction row holds.
     await prisma.payment.update({ where: { id: `${id}-payment` }, data: { amountCents: 25_000 } });
@@ -236,7 +236,7 @@ async function lines(bookingId: string) {
     async function paidHistory(name: string): Promise<string> {
       const id = `${PREFIX}${name}`;
       await createHistoryBooking(prisma, NAMES, id, { payment: { amountCents: 20_000, source: "STRIPE", intent: `pi_${id}` } });
-      await settleHistoryByCard(prisma, id, 20_000);
+      await settleHistoryByCard(id, 20_000);
       await stripAllLines(prisma, id);
       return id;
     }

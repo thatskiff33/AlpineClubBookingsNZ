@@ -133,7 +133,7 @@ async function stripModificationLines(prisma: PrismaClient, bookingId: string, m
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId, anchorKind: "MODIFICATION", anchorId: modificationId } });
 }
 
-async function settleByCard(prisma: PrismaClient, bookingId: string, amountCents: number): Promise<void> {
+async function settleByCard(bookingId: string, amountCents: number): Promise<void> {
   tick();
   const { markBookingPaymentSucceeded } = await import("@/lib/payment-reconciliation");
   const settled = await markBookingPaymentSucceeded({ bookingId, paymentIntentId: `pi_${bookingId}`, amountCents, paymentMethodId: null, format: CLUB_FORMAT_TEST });
@@ -273,7 +273,7 @@ export async function buildBookingLedgerHistories(prisma: PrismaClient, prefix: 
 
   // Confirmed and captured by card through the real settle; exact night prices.
   await createBooking(prisma, names, id("card-exact"), { payment: { amountCents: 20_000, source: "STRIPE", intent: `pi_${id("card-exact")}` } });
-  await settleByCard(prisma, id("card-exact"), 20_000);
+  await settleByCard(id("card-exact"), 20_000);
   await stripAllLines(prisma, id("card-exact"));
 
   // One strand evenly split (inexact, `INV-MOD-028`), one re-derived from the
@@ -285,7 +285,7 @@ export async function buildBookingLedgerHistories(prisma: PrismaClient, prefix: 
       [{ priceCents: 3_000, priceSource: "RATE_DERIVED" }, { priceCents: 3_667, priceSource: "RATE_DERIVED" }],
     ],
   });
-  await settleByCard(prisma, id("inexact"), 20_000);
+  await settleByCard(id("inexact"), 20_000);
   await stripAllLines(prisma, id("inexact"));
 
   // Account credit applied by the real writer, the rest received by internet
@@ -332,7 +332,7 @@ export async function buildBookingLedgerHistories(prisma: PrismaClient, prefix: 
   // date shift after it (its lines kept), and a card refund.
   const edits = id("card-refund-edits");
   await createBooking(prisma, names, edits, { payment: { amountCents: 20_000, source: "STRIPE", intent: `pi_${edits}` } });
-  await settleByCard(prisma, edits, 20_000);
+  await settleByCard(edits, 20_000);
   await postedEdit(prisma, names, edits, `${edits}-removal`, { removeGuestId: `${edits}-g2`, changeFeeCents: 0 });
   await stripModificationLines(prisma, edits, `${edits}-removal`);
   tick();
@@ -375,7 +375,7 @@ export async function buildBookingLedgerHistories(prisma: PrismaClient, prefix: 
   // ledger (#3611 V4), then a second, after it, before #3582.
   const fee = id("change-fee");
   await createBooking(prisma, names, fee, { payment: { amountCents: 20_000, source: "STRIPE", intent: `pi_${fee}` } });
-  await settleByCard(prisma, fee, 20_000);
+  await settleByCard(fee, 20_000);
   await postedEdit(prisma, names, fee, `${fee}-fee`, { changeFeeCents: 1_500 });
   await stripAllLines(prisma, fee);
 
