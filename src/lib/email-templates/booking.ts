@@ -452,12 +452,7 @@ export function bookingModifiedTemplate(params: {
   changeFeeCents: number;
   refundAmountCents: number;
   accountCreditAmountCents?: number;
-  /**
-   * #3809: applied credit this change gave back - the booking was paid with
-   * account credit, and the reduction returned it, tiered like a card refund.
-   * REQUIRED for the reason `financialReviewPending` is: a default answers the
-   * question wrongly for every caller that has a figure. 0 where none was.
-   */
+  /** #3809: applied credit this change gave back (0 if none). Required, as `financialReviewPending` is. */
   appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
   additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING";
@@ -600,8 +595,7 @@ export function bookingModifiedTemplate(params: {
     }
   }
 
-  // #3809: composed with the settlement note - both are true on a booking paid
-  // by card and credit - and worded once, in `appliedCreditGiveBackNote`.
+  // #3809: beside the settlement note (both apply to card plus credit).
   const giveBackSentence = appliedCreditGiveBackNote(appliedCreditGivenBackCents, format);
   const giveBackNote = giveBackSentence ? alertBox(giveBackSentence, "success") : "";
   const paymentNote = `${reviewNote}${settlementNote}${giveBackNote}`;

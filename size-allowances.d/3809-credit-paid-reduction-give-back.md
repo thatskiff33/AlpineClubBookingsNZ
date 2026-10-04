@@ -38,13 +38,13 @@ reason: a decline or expiry is a guest removal and now reaches Xero like one;
   split the post-commit half of a consent transition across two files.
 
 file: src/lib/email/booking.ts
-lines: 1762
+lines: 1767
 reason: the "Booking Modified" sender's flat body composes the credit-given-back
   sentence beside the settlement note; the sentence itself lives in
   `booking-credit-give-back-copy.ts`.
 
 file: src/lib/booking-cancel.ts
-lines: 2620
+lines: 2628
 reason: the paid path asks whether the booking was reduced through #3809's
   settlement before it caps the credit (owner decision of 4 Oct 2026) and
   freezes the base on its CANCELLED snapshot; the unpaid branch tiers a
@@ -71,7 +71,7 @@ reason: the missing-modification-credit-note finding sizes a credit-paid
   without it; the rules for that finding live only here.
 
 file: src/lib/xero-inbound/credit-note-repairs.ts
-lines: 1019
+lines: 1135
 reason: the fold of earlier modification notes into a payment's refunded total
   leaves out notes worded as account credit (no cash moved); the reader lives
   in `account-credit-modification-notes.ts`, the filter where the fold is.

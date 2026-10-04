@@ -447,7 +447,12 @@ describe("bed allocation lock topology", () => {
       }
     }
     // The reviewed population: a new caller is a new member-key site.
+    // #3809: the never-captured branch's restore became two calls (tiered
+    // when a reduction refunded the whole card, whole otherwise). Both sit in
+    // the same branch, after its lock(1), lodge key and member key, on the
+    // same `bookingOwner(fresh)` the key was taken for — reviewed, not new.
     expect(sites.sort()).toEqual([
+      "src/lib/booking-cancel.ts",
       "src/lib/booking-cancel.ts",
       "src/lib/booking-cancel.ts",
       "src/lib/booking-cancel.ts",
