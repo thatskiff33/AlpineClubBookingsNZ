@@ -823,6 +823,15 @@ const FULL = { refundPercentage: 100, fixedFeeCents: 0 };
     };
   }
   const NOTHING_TO_SAY = { disagreements: [], integrity: [], coverage: [], classes: [] };
+  /** #3913 (lens 2): what the PRICE and REFUNDED identities say of one booking, and the classes that explain them. */
+  async function priceAndRefunded(id: string) {
+    const evaluation = (await census.evaluateBookingLedgerPages(db)).find((entry) => entry.bookingId === id)!;
+    return Object.fromEntries(
+      evaluation.identities
+        .filter((result) => result.identity === "PRICE" || result.identity === "REFUNDED")
+        .map((result) => [result.identity, [result.status, ...result.explainedBy.filter((component) => component.cents !== 0).map((component) => component.name)].join(" ")]),
+    );
+  }
   const reviewLine = (id: string, taskId: string, kind: "AGREED_ADJUSTMENT" | "BANK_REFUND") =>
     db.bookingLedgerLine.findFirstOrThrow({ where: { bookingId: id, kind, anchorKind: "REVIEW_TASK", anchorId: taskId }, select: { id: true, amountCents: true } });
   const setLine = (lineId: string, amountCents: number) =>
@@ -874,6 +883,7 @@ const FULL = { refundPercentage: 100, fixedFeeCents: 0 };
     await stripeAnswers(id);
     built[name] = { id, tasks: [taskId] };
     expect(await says(id)).toEqual(NOTHING_TO_SAY);
+    expect(await priceAndRefunded(id)).toEqual({ PRICE: "AGREE", REFUNDED: "AGREE" });
   });
 
   it.each([
@@ -891,6 +901,7 @@ const FULL = { refundPercentage: 100, fixedFeeCents: 0 };
     expect({ ...found, classes: [] }).toEqual(NOTHING_TO_SAY);
     // What raised the refunded column without a card refund is named, never drift.
     expect(found.classes.filter((entry) => !entry.startsWith("REFUND_MIRROR_"))).toEqual([]);
+    expect(await priceAndRefunded(id)).toEqual({ PRICE: "AGREE", REFUNDED: "CLASSIFIED REFUND_MIRROR_HAND_BACK" });
   });
 
   it("the captured account-credit route: the give-back and the credit minted against the payment make the stand-in", async () => {
@@ -941,6 +952,25 @@ const FULL = { refundPercentage: 100, fixedFeeCents: 0 };
     const found = await says(id);
     expect({ ...found, classes: [] }).toEqual(NOTHING_TO_SAY);
     expect(found.classes.filter((entry) => !entry.startsWith("REFUND_MIRROR_"))).toEqual([]);
+  });
+
+  it("#3913 F2: two sibling reviews on credit plus card, both giving credit back - no row names its task, so the booking is AMBIGUOUS_REVIEW_GIVE_BACK, and with the give-backs swapped between the lines it is still never agreement", async () => {
+    const id = await paidBooking("sib-split", { cardCents: 5_000, appliedCents: 15_000, source: "STRIPE" });
+    const tasks = [await raiseOn(id, "2026-08-01"), await raiseOn(id, "2026-08-02")];
+    await cancelOn(id, { refundPercentage: 50, fixedFeeCents: 0 });
+    // $60: the $25 left on the card and $5 given back; $40: $20 given back.
+    expect([await complete(tasks[0]!, 6_000), await complete(tasks[1]!, 4_000)]).toEqual([3_000, 2_000]);
+    await stripeAnswers(id);
+    const AMBIGUOUS = ["AMBIGUOUS_REVIEW_GIVE_BACK null 5000", "AMBIGUOUS_REVIEW_GIVE_BACK null 2500", "AMBIGUOUS_REVIEW_GIVE_BACK null 2500"];
+    expect(await says(id)).toEqual({ ...NOTHING_TO_SAY, classes: AMBIGUOUS });
+    // The lines record the give-backs the other way round, $45 and $5, the total kept: the
+    // rows still make both, so nothing drifts - and the booking still is not agreement.
+    await setLine((await reviewLine(id, tasks[0]!, "AGREED_ADJUSTMENT")).id, -4_500);
+    await setLine((await reviewLine(id, tasks[1]!, "AGREED_ADJUSTMENT")).id, -500);
+    expect(await says(id)).toEqual({ ...NOTHING_TO_SAY, classes: AMBIGUOUS });
+    const report = await census.censusBookingLedgerProjection(db);
+    expect(report.classes.AMBIGUOUS_REVIEW_GIVE_BACK.instances.filter((instance) => instance.bookingId === id && !instance.acknowledged)).toHaveLength(3);
+    expect(report.verdict).toBe("GATE_CLOSED");
   });
 
   it("a corrupted line, card refund or hand-back still disagrees", async () => {
