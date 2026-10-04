@@ -37,6 +37,7 @@ function money(over: {
     payment,
     result: paidCancellationMoney({
       payment,
+      openNonCancellationHandBackCents: 0,
       finalPriceCents: over.finalPriceCents,
       appliedCreditCents: over.appliedCreditCents ?? payment.creditAppliedCents,
       restoresToMemberLedger: over.restoresToMemberLedger ?? true,
@@ -50,7 +51,7 @@ function money(over: {
 describe("paidCancellationMoney", () => {
   it("returns the policy's own refund and restore, unchanged", () => {
     const { payment, result } = money({ amountCents: 15_000, creditAppliedCents: 5_000, finalPriceCents: 20_000, policy: FIFTY_FEE });
-    const base = cancelRefundableBaseCents({ ...payment, finalPriceCents: 20_000 });
+    const base = cancelRefundableBaseCents({ ...payment, openNonCancellationHandBackCents: 0, finalPriceCents: 20_000 });
     expect(result.refundableBaseCents).toBe(base);
     expect(result.refundAmountCents).toBe(calculateRefundAmount(base, 10, FIFTY_FEE, "card").refundAmountCents);
     expect(result.creditToRestoreCents).toBe(calculateAppliedCreditRestore(5_000, base, 10, FIFTY_FEE).creditRestoredCents);

@@ -81,3 +81,6 @@ verifyDepsBeforeRun: error
 # (docs/agents/CODEX_WORKFLOW.md, "Require an isolated dependency tree"). This
 # is pnpm 11's default for a project; it is written down so nobody turns it on.
 enableGlobalVirtualStore: false
+
+patchedDependencies:
+  braces@3.0.3: patches/braces@3.0.3.patch

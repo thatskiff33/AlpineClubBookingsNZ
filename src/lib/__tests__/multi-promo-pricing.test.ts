@@ -24,7 +24,15 @@ import {
 import { validateAndCalculatePromoDiscount, type PromoApplicationSubject } from "../promo";
 import { resolvePromotionsInTransaction } from "../booking-create-promo";
 import { applyPromoCodeChanges } from "../booking-modify-plan";
-import { requestedPromoCodeListFor } from "../booking-modify-promo-request";
+import { requestedPromoCodeListFor, splitRequestedPromoCodes } from "../booking-modify-promo-request";
+import {
+  DUPLICATE_PROMO_CODE_MESSAGE,
+  ONE_PROMO_CODE_PER_BOOKING_MESSAGE,
+  PROMO_WORK_PARTY_EXCLUSION_MESSAGE,
+  promoCodeListRefusal,
+} from "../promo-code-list-rules";
+import { PROMO_LODGE_RESTRICTION_MESSAGE } from "../promo";
+import { bookingDiscountCents } from "../booking-final-price";
 import { requireCalendarDate } from "@/lib/club-time";
 
 const TODAY = requireCalendarDate("2026-07-01");
@@ -477,6 +485,7 @@ describe("an edit's code list (D-3813-2: add, remove or reorder in one field)", 
       requestedPromoCodeListFor(
         { promoCodes: [{ code: " bob " }, { code: "ann", promoGuestIds: ["g1"] }] },
         [],
+        true,
       ),
     ).toEqual([
       { code: "BOB", reapply: false },
@@ -485,23 +494,127 @@ describe("an edit's code list (D-3813-2: add, remove or reorder in one field)", 
   });
 
   it("keeps the legacy fields' meaning: one code replaces, removal removes, silence re-prices", () => {
-    expect(requestedPromoCodeListFor({ promoCode: "ann" }, [])).toEqual([
-      { code: "ANN", reapply: true },
-    ]);
-    expect(requestedPromoCodeListFor({ removePromoCode: true }, [])).toEqual([]);
-    expect(requestedPromoCodeListFor({}, [])).toBeNull();
+    for (const multiPromoCodes of [true, false]) {
+      expect(requestedPromoCodeListFor({ promoCode: "ann" }, [], multiPromoCodes)).toEqual([
+        { code: "ANN", reapply: true },
+      ]);
+      expect(requestedPromoCodeListFor({ removePromoCode: true }, [], multiPromoCodes)).toEqual([]);
+      expect(requestedPromoCodeListFor({}, [], multiPromoCodes)).toBeNull();
+    }
   });
 
   it("carries a stored working-bee discount the booker's list leaves out", () => {
     expect(
-      requestedPromoCodeListFor({ promoCodes: [{ code: "ann" }] }, [
-        { code: "WB-INTERNAL", internal: true },
-        { code: "BOB", internal: false },
-      ]),
+      requestedPromoCodeListFor(
+        { promoCodes: [{ code: "ann" }] },
+        [
+          { code: "WB-INTERNAL", internal: true },
+          { code: "BOB", internal: false },
+        ],
+        true,
+      ),
     ).toEqual([
       { code: "WB-INTERNAL", reapply: false },
       { code: "ANN", reapply: false },
     ]);
+  });
+
+  it("with the switch ON, the legacy fields combine with a working-bee discount rather than replacing it (D-3813-3)", () => {
+    const stored = [{ code: "WB-INTERNAL", internal: true }];
+    expect(requestedPromoCodeListFor({ promoCode: "ann" }, stored, true)).toEqual([
+      { code: "WB-INTERNAL", reapply: false },
+      { code: "ANN", reapply: true },
+    ]);
+    expect(requestedPromoCodeListFor({ removePromoCode: true }, stored, true)).toEqual([
+      { code: "WB-INTERNAL", reapply: false },
+    ]);
+  });
+
+  it("with the switch OFF, a legacy code replaces a working-bee discount and a removal removes it, as before multi-code (#3826)", () => {
+    const stored = [{ code: "WB-INTERNAL", internal: true }];
+    const replaced = requestedPromoCodeListFor({ promoCode: "ann" }, stored, false);
+    expect(replaced).toEqual([{ code: "ANN", reapply: true }]);
+    // And the single-code refusal does not fire on it: the booker's one code
+    // stands alone, exactly as on a single-code club before #3827.
+    expect(
+      promoCodeListRefusal({
+        ...splitRequestedPromoCodes(replaced!, [{ promoCode: stored[0] }]),
+        multiPromoCodes: false,
+      }),
+    ).toBeNull();
+    expect(requestedPromoCodeListFor({ removePromoCode: true }, stored, false)).toEqual([]);
+    expect(
+      requestedPromoCodeListFor({ promoCodes: [{ code: "ann" }] }, stored, false),
+    ).toEqual([{ code: "ANN", reapply: false }]);
+  });
+});
+
+describe("a legacy removal on a working-bee booking follows the club's multiPromoCodes switch (#3826, D-3813-3)", () => {
+  async function removeOnWorkBeeBooking(multiPromoCodes: boolean) {
+    const deleted: string[] = [];
+    const tx = {
+      ...usageDb(),
+      $executeRaw: vi.fn(async () => 1),
+      clubModuleSettings: { findUnique: vi.fn(async () => ({ multiPromoCodes, promoCodes: true })) },
+      promoCode: {
+        findUnique: vi.fn(async () => ({ currentRedemptions: 1 })),
+        findMany: vi.fn(async () => []),
+        update: vi.fn(),
+      },
+      promoRedemption: {
+        update: vi.fn(),
+        delete: vi.fn(async ({ where }: { where: { id: string } }) => {
+          deleted.push(where.id);
+        }),
+      },
+      promoRedemptionGuestTarget: { deleteMany: vi.fn(), createMany: vi.fn() },
+      member: { findMany: vi.fn(async () => []) },
+    };
+    Object.assign(tx.promoRedemptionAllocation, {
+      deleteMany: vi.fn(),
+      createMany: vi.fn(),
+      count: vi.fn(async () => 1),
+    });
+    const result = await applyPromoCodeChanges(tx as never, {
+      booking: {
+        memberId: "ann",
+        lodgeId: "lodge-1",
+        promoRedemptions: [
+          {
+            id: "r-wb",
+            promoCodeId: PCT.id,
+            bookingId: "booking-1",
+            memberId: "ann",
+            applicationOrder: 0,
+            guestTargets: [],
+            promoCode: { ...PCT, code: "WB", internal: true, assignments: [], lodges: [] },
+          },
+        ],
+      } as never,
+      bookingId: "booking-1",
+      input: { removePromoCode: true } as never,
+      inProgressPlan: null,
+      newCheckIn: N1,
+      newTotalPriceCents: 19000,
+      guestNightRates: [{ ...guest("ann", [10000, 9000]), nightDates: [N1, N2] }],
+      todayAtClub: TODAY,
+    });
+    return { result, deleted };
+  }
+
+  it("OFF: the removal removes the working-bee discount, as on a single-code club before multi-code", async () => {
+    const { result, deleted } = await removeOnWorkBeeBooking(false);
+    expect(deleted).toEqual(["r-wb"]);
+    expect(result.promoRemoved).toBe(true);
+    expect(result.promoCodeLabel).toBeNull();
+    expect(result.newDiscountCents).toBe(0);
+  });
+
+  it("ON: the working-bee discount is not the booker's code, so it is carried", async () => {
+    const { result, deleted } = await removeOnWorkBeeBooking(true);
+    expect(deleted).toEqual([]);
+    expect(result.promoCodeLabel).toBe("WB");
+    expect(result.newDiscountCents).toBe(4500);
   });
 });
 
@@ -571,5 +684,162 @@ describe("an edit that reorders the booking's codes stores the new order", () =>
       { id: "r-ann", data: { applicationOrder: 0 } },
       { id: "r-pct", data: { applicationOrder: 1 } },
     ]);
+  });
+});
+
+describe("the headline discount is the net reduction, not the sum of the codes' discounts (INV-MONEY-031)", () => {
+  it("a raising SET_PRICE code beside a free night stores 8000, not 10000", async () => {
+    // Ann's two $30 nights under a $40 set price (+2000); Bob's $100 free night (-10000).
+    const setPrice = subject("promo-setp", {
+      type: "FIXED_NIGHTLY_PRICE",
+      fixedNightlyPriceCents: 4000,
+      fixedNightlyMode: "SET_PRICE",
+      freeNightsPerIndividual: null,
+    });
+    const result = await price(
+      [application("SETP", setPrice, ["ann"]), application("BOB", BOB, ["bob"])],
+      [guest("ann", [3000, 3000]), guest("bob", [10000])],
+    );
+    expect(result.outcomes.map((o) => o.result.discount?.priceAdjustmentCents)).toEqual([2000, -10000]);
+    // Each code keeps its own figures...
+    expect(result.outcomes.map((o) => o.result.discount?.discountCents)).toEqual([0, 10000]);
+    // ...and the booking's pair reconciles: discount = max(0, -adjustment).
+    expect(result.priceAdjustmentCents).toBe(-8000);
+    expect(result.discountCents).toBe(8000);
+    expect(result.discountCents).toBe(bookingDiscountCents({ promoAdjustmentCents: result.priceAdjustmentCents }));
+  });
+});
+
+describe("a lodge-restricted code is refused for its lodge before its guest choice (engine order)", () => {
+  it("names the lodge, not the out-of-range guest", async () => {
+    const restricted = subject("promo-lodge", { lodges: [{ lodgeId: "another-lodge" }] });
+    const result = await price(
+      [application("LODGE", restricted, null, { selectedGuestIndexes: [7] })],
+      [guest("ann", [10000])],
+    );
+    expect(result.outcomes[0]?.result.error).toBe(PROMO_LODGE_RESTRICTION_MESSAGE);
+  });
+});
+
+/** A re-price transaction that records what it wrote. */
+function repriceTx(calls: string[]) {
+  const tx = {
+    ...usageDb(),
+    $executeRaw: vi.fn(async (_strings: TemplateStringsArray, id: string) => {
+      calls.push(`lock:${id}`);
+      return 1;
+    }),
+    promoCode: {
+      findUnique: vi.fn(async () => ({ currentRedemptions: 1 })),
+      update: vi.fn(async () => undefined),
+    },
+    promoRedemption: {
+      delete: vi.fn(async ({ where }: { where: { id: string } }) => {
+        calls.push(`delete:${where.id}`);
+      }),
+      update: vi.fn(async ({ where, data }: { where: { id: string }; data: { priceAdjustmentCents?: number } }) => {
+        calls.push(`update:${where.id}:${data.priceAdjustmentCents}`);
+      }),
+    },
+    promoRedemptionGuestTarget: {
+      deleteMany: vi.fn(),
+      createMany: vi.fn(async ({ data }: { data: Array<{ bookingGuestId: string }> }) => {
+        calls.push(`targets:${data.map((row) => row.bookingGuestId).join(",")}`);
+      }),
+    },
+    member: { findMany: vi.fn(async () => []) },
+  };
+  Object.assign(tx.promoRedemptionAllocation, {
+    deleteMany: vi.fn(),
+    createMany: vi.fn(),
+    count: vi.fn(async () => 1),
+  });
+  return tx;
+}
+
+describe("a booker-picks code waiting on a pending guest is kept, so the acceptance applies it (A5)", () => {
+  const pick = subject("promo-pick", { assignedMembersOnlyOwnNights: false });
+  const stored = (targets: string[]) =>
+    ({
+      id: "r-pick",
+      promoCodeId: pick.id,
+      bookingId: "booking-1",
+      memberId: "ann",
+      guestTargets: targets.map((bookingGuestId) => ({ bookingGuestId })),
+      promoCode: { ...pick, code: "PICK", assignments: [{ memberId: "ann" }], lodges: [] },
+    }) as unknown as RepricedRedemption;
+  const reprice = (tx: ReturnType<typeof repriceTx>, targets: string[], cara: PromotionGuest["consentStatus"]) =>
+    repriceBookingPromotions(tx as never, {
+      bookingId: "booking-1",
+      redemptions: [stored(targets)],
+      memberId: "ann",
+      bookingCheckIn: N1,
+      totalPriceCents: 16000,
+      // Xavi, the other chosen guest, has left; Cara's place still awaits her.
+      guests: [guest("ann", [10000]), guest("cara", [6000], cara)],
+      lodgeId: null,
+      todayAtClub: TODAY,
+    });
+
+  it("keeps the code at zero, its choice intact, while the chosen guest is pending", async () => {
+    const calls: string[] = [];
+    const result = await reprice(repriceTx(calls), ["bg-xavi", "bg-cara"], "PENDING");
+    expect(result.releasedPromoCodes).toEqual([]);
+    expect(result.remainingPromoCodeLabel).toBe("PICK");
+    expect(result.newPromoAdjustmentCents).toBe(0);
+    expect(calls).not.toContain("delete:r-pick");
+    expect(calls).toContain("targets:bg-cara");
+  });
+
+  it("applies the kept code to her nights once she accepts", async () => {
+    const calls: string[] = [];
+    const result = await reprice(repriceTx(calls), ["bg-cara"], "CONFIRMED");
+    expect(result.newPromoAdjustmentCents).toBe(-6000);
+    expect(calls).toContain("update:r-pick:-6000");
+  });
+
+  it("still releases a code whose chosen guests have all left (INV-MONEY-024)", async () => {
+    const calls: string[] = [];
+    const result = await reprice(repriceTx(calls), ["bg-xavi"], "PENDING");
+    expect(result.releasedPromoCodes).toEqual(["PICK"]);
+    expect(calls).toContain("delete:r-pick");
+  });
+});
+
+describe("with multiPromoCodes ON, the legacy edit fields keep a stored working-bee code (D-3813-3)", () => {
+  const stored = [
+    { code: "WB-INTERNAL", internal: true },
+    { code: "BOB", internal: false },
+  ];
+  it("a legacy single code replaces the booker's code and keeps the working bee first", () => {
+    expect(requestedPromoCodeListFor({ promoCode: "ann" }, stored, true)).toEqual([
+      { code: "WB-INTERNAL", reapply: false },
+      { code: "ANN", reapply: true },
+    ]);
+  });
+  it("a legacy removal removes the booker's code, not the working bee", () => {
+    expect(requestedPromoCodeListFor({ removePromoCode: true }, stored, true)).toEqual([
+      { code: "WB-INTERNAL", reapply: false },
+    ]);
+  });
+});
+
+describe("one home for the code-list refusals (#3827)", () => {
+  it("refuses a repeat whatever the switch says", () => {
+    expect(promoCodeListRefusal({ typedCodes: ["A", "A"], workPartyApplied: false, multiPromoCodes: true })).toBe(
+      DUPLICATE_PROMO_CODE_MESSAGE,
+    );
+  });
+  it("with the switch off: one code, and none beside a working bee", () => {
+    expect(promoCodeListRefusal({ typedCodes: ["A", "B"], workPartyApplied: false, multiPromoCodes: false })).toBe(
+      ONE_PROMO_CODE_PER_BOOKING_MESSAGE,
+    );
+    expect(promoCodeListRefusal({ typedCodes: ["A"], workPartyApplied: true, multiPromoCodes: false })).toBe(
+      PROMO_WORK_PARTY_EXCLUSION_MESSAGE,
+    );
+    expect(promoCodeListRefusal({ typedCodes: ["A"], workPartyApplied: false, multiPromoCodes: false })).toBeNull();
+  });
+  it("with the switch on: any number, beside a working bee too", () => {
+    expect(promoCodeListRefusal({ typedCodes: ["A", "B"], workPartyApplied: true, multiPromoCodes: true })).toBeNull();
   });
 });

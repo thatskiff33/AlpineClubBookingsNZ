@@ -518,7 +518,11 @@ single-guest removal (`DELETE …/guests/[guestId]`), and date change
 tier for the days until check-in, folding any change fee into the net delta, and
 requires the member to elect a card refund or account credit whenever a captured
 payment makes a settlement returnable. No reduction path refunds the full price
-delta outside the policy. A request against a booking with a captured payment
+delta outside the policy. The one exception is not an edit: a guest's
+acceptance re-pricing the booking's promo codes returns its whole reduction the
+way the booking was paid, unasked (`INV-MONEY-037`, D-3813-5). Money returned
+on a booking not paid through Stripe is sent by the treasurer from an officer
+refund task (`INV-PAY-115`). A request against a booking with a captured payment
 that omits the settlement election is rejected rather than defaulted, so a
 body-less self-removal cannot silently settle the booking owner's money; the
 owner or an admin makes the election through the batch edit flow.

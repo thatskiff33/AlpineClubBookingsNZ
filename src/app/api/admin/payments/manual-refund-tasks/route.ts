@@ -7,6 +7,7 @@ import {
   automaticallyRefundedManualRefundTaskFilter,
 } from "@/lib/deleted-booking-modification-payment";
 import {
+  OPEN_TASK_BOOKING_PAYMENT_SELECT, OPEN_TASK_REFUND_PAYMENT_SELECT,
   toAutoRefundedManualRefundTaskPayload,
   toDismissedManualRefundTaskPayload,
   toOpenManualRefundTaskPayload,
@@ -90,6 +91,7 @@ export async function GET() {
     ...bookingSummary,
     memberId: true,
     deletedAt: true,
+    ...OPEN_TASK_BOOKING_PAYMENT_SELECT,
   } as const;
 
   /*
@@ -138,15 +140,15 @@ export async function GET() {
         bookingId: true,
         amountCents: true,
         /*
-          #3033. `kind` decides which SENTENCE the card prints beside a row: the
-          queue's standing paragraph says every row "was paid in cash or by a
-          bank transfer that never reached Xero", which is simply untrue of an
-          EDIT_FINANCIAL_REVIEW row. `raisedAmountCents` is what the task was
-          raised with, so a row whose amount an admin has since amended says so
-          on its face rather than only in the audit log. `reviewContext` is owner
-          decision D3's evidence — projected below, never sent raw.
+          #3033/#3827. `kind` - with `occurrenceKey`, which marks an edit's or an
+          appeal's hand-back (`INV-PAY-115`, `INV-PAY-116`) - decides the SENTENCE
+          the card prints: the standing "paid in cash or by a bank transfer that
+          never reached Xero" is untrue of those and of an EDIT_FINANCIAL_REVIEW
+          row. `raisedAmountCents` shows an amended amount on its face, not only
+          in the audit log; `reviewContext` is D3's evidence, never sent raw.
         */
         kind: true,
+        occurrenceKey: true,
         // #3639: marks a late capture held for a treasurer's approval.
         lateCaptureApprovalIntentId: true,
         // #3643: marks a part-payment review, settled in Xero.
@@ -158,14 +160,13 @@ export async function GET() {
         reviewContext: true,
         reason: true,
         createdAt: true,
+        ...OPEN_TASK_REFUND_PAYMENT_SELECT,
         booking: { select: handBackBookingSummary },
       },
     }),
     /*
-      #2750. Newest first, and oldest-first would be wrong here for the same
-      reason it is right above: the OPEN queue is worked from the top, whereas
-      this is "what happened lately" and the most recent automatic refund is the
-      one an operator can still act on if the deletion was the mistake.
+      #2750. Newest first: this is "what happened lately", and the most recent
+      automatic refund is the one an operator can still act on.
     */
     readOrDegrade(
       prisma.manualRefundTask.findMany({

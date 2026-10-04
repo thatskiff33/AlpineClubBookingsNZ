@@ -25,6 +25,8 @@ import {
 } from "@/lib/booking-ledger-charge-line";
 import {
   agreedAdjustmentKey,
+  agreedGiveBackKey,
+  isAgreedGiveBackKey,
   modificationChangeFeeKey,
   modificationNightKey,
   modificationPromotionKey,
@@ -254,6 +256,8 @@ export type PostedAdjustmentLine = {
   unitCents: number;
   narration: string;
   reversesLineId: string | null;
+  /** #3791: an agreed give-back (`isAgreedGiveBackKey`) is not a stand-in. */
+  postingKey: string | null;
 };
 
 /**
@@ -297,6 +301,7 @@ export function planReviewClosureShareLines({
   chargeLinesAfter,
   repriceRecordsMovement,
   postedAdjustmentLines,
+  agreedGiveBackCents = null,
 }: {
   bookingId: string;
   lodgeId: string;
@@ -313,6 +318,13 @@ export function planReviewClosureShareLines({
   repriceRecordsMovement: boolean;
   /** Every AGREED_ADJUSTMENT the booking holds, live or not. */
   postedAdjustmentLines: readonly PostedAdjustmentLine[];
+  /**
+   * #3791: a give-back of applied credit on a booking its credit covered is an
+   * agreed reduction of the price, beyond what the re-price removed by this
+   * much. It posts under its own key whatever the charges carry, and replaces
+   * this share's stand-in. Null on every other closure.
+   */
+  agreedGiveBackCents?: number | null;
 }): BookingLedgerPosting[] {
   const chargedCents = chargeLinesAfter.reduce((sum, line) => sum + ledgerLineAmountCents(line), 0);
   // A re-price that posted re-prices every strand from the live ledger, so it
@@ -320,15 +332,39 @@ export function planReviewClosureShareLines({
   // totals miss (#3740 delta L1): either way, no stand-in survives beside it.
   const chargesCarryThePrice =
     rebasedFinalPriceCents !== null && (chargedCents === rebasedFinalPriceCents || repriceRecordsMovement);
-  if (chargesCarryThePrice) {
-    return liveLines(postedAdjustmentLines).map((line) =>
-      agreedAdjustmentReversal(
-        { bookingId, lodgeId, anchorKind: "REVIEW_TASK", anchorId: manualRefundTaskId },
-        line,
-        officerMemberId,
-      ),
-    );
+  // An earlier review's agreed give-back is not a stand-in the strands could
+  // come to carry, so no re-price supersedes it (#3791).
+  const reversals = chargesCarryThePrice
+    ? liveLines(postedAdjustmentLines)
+        .filter((line) => !isAgreedGiveBackKey(line.postingKey))
+        .map((line) =>
+          agreedAdjustmentReversal(
+            { bookingId, lodgeId, anchorKind: "REVIEW_TASK", anchorId: manualRefundTaskId },
+            line,
+            officerMemberId,
+          ),
+        )
+    : [];
+  if (agreedGiveBackCents !== null) {
+    return agreedGiveBackCents > 0 && settlement
+      ? [
+          ...reversals,
+          {
+            ...planAgreedAdjustmentLine({
+              bookingId,
+              lodgeId,
+              manualRefundTaskId,
+              direction: settlement.direction,
+              amountCents: agreedGiveBackCents,
+              note,
+              officerMemberId,
+            }),
+            postingKey: agreedGiveBackKey(manualRefundTaskId),
+          },
+        ]
+      : reversals;
   }
+  if (chargesCarryThePrice) return reversals;
   if (settlement === null) return [];
   return [
     planAgreedAdjustmentLine({

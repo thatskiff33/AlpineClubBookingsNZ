@@ -202,13 +202,20 @@ added for them. The rules (`INV-MONEY-037`, `INV-MONEY-038`):
 **A guest who has not yet accepted their place gets no discount.** A member
 added from outside the booker's family waits as *pending* until they accept.
 Until then no code — not even one typed at booking — discounts their nights.
-When they accept, the booking's codes are applied again over their nights, and
-any change is settled the way an ordinary edit settles it: on a paid booking a
-lower price is returned to the booking owner as **account credit**, and an
-issued invoice is corrected in Xero. A decline uses up nothing. Two cases keep
-the price unchanged until the booking is next edited: a booking already paid or
-invoiced whose price would *rise*, and a booking with an edit still under
-financial review.
+When they accept, the booking's codes are applied again over their nights. On a
+paid booking the **whole** reduction goes back — this is not a cancellation, so
+no cancellation-policy percentage applies — and it goes back **the way the
+booking was paid**: cash first — to the card, or for internet banking a bank
+transfer the treasurer sends from the **Money to settle** card (beside the usual
+refund credit note in Xero) — and whatever the cash cannot cover goes back as
+the account credit it was paid with. Nobody is asked to choose. The owner gets the usual booking-changed email. A decline uses up
+nothing. The price stays as it was until the booking is next edited when:
+- a paid or invoiced booking's price would *rise*;
+- the reduction cannot all go back the way it was paid (the cash still
+  refundable and the credit applied do not add up to the price, for example
+  after an earlier change kept part of a payment) — the codes then use nothing;
+- an edit is still under financial review, the booking is waiting for officer
+  review or on the waitlist, or the stay has started.
 
 ## Settings reference
 
@@ -226,7 +233,7 @@ financial review.
 | Xero Item Code / Account Code | Post the discount line to a specific Xero item/account | none | Item's mapped account wins over the account code |
 | Restrict to Lodges | Limit redemption to chosen lodges | all lodges | Multi-lodge only |
 | Assign to Specific Members | Limit use to named members, with a scope choice | none | Own-nights-only or whole booking |
-| Several promo codes on one booking (Admin → Modules) | Whether one booking may carry more than one code | off | A rollout switch (#3826): while off, a second code on a booking is refused. Turn it on only after the upgrade that added it has fully cut over |
+| Several promo codes on one booking (Admin → Modules) | Whether one booking may carry more than one code | off | A rollout switch (#3826): while off, a second code on a booking is refused and a code entered on a booking with a working-bee discount replaces it, as before. Turn it on only after the upgrade that added it has fully cut over |
 
 ## After upgrading to this release
 
@@ -259,6 +266,7 @@ That is the intended correction, not a fault.
 | No promo codes appear | None have been created (the demo seed ships none) | Click **Add Promo Code** to create one |
 | A second code is refused with "Already covered by …" | Every night it could discount already carries an earlier code in the booker's list | Move it earlier in the booking's list, or leave it off — see [Several codes on one booking](#several-codes-on-one-booking) |
 | A code gave a guest's nights nothing | The guest is still pending acceptance; no code discounts their nights until they accept | Nothing to do — the codes are applied again when they accept |
+| A guest accepted but the price did not drop | The booking's lower price could not all go back the way it was paid, or the booking was under review, waitlisted or already under way | Edit the booking: the ordinary edit re-prices its codes |
 | "Only one promo code can be used on a booking" | The **Several promo codes on one booking** module is off | Turn it on (Admin → Modules) once the upgrade that added it has fully cut over |
 
 ## Related links

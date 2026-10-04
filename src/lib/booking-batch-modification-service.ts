@@ -98,6 +98,10 @@ import {
   type PromoChangeNotAppliedNotice,
 } from "@/lib/promo-change-not-applied";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import {
+  editRefundGoesBackByHand,
+  raiseEditRefundHandBackIfOwed,
+} from "@/lib/edit-refund-hand-back";
 import { prisma } from "@/lib/prisma";
 import {
   withOptionalTransaction,
@@ -1952,6 +1956,16 @@ export async function modifyBookingBatch({
       site: "batch-modify",
     });
 
+    // D-3813-6 (`INV-PAY-115`): a reduction on a booking paid by internet
+    // banking or by hand asks the treasurer to send it back.
+    await raiseEditRefundHandBackIfOwed(tx, {
+      bookingId,
+      paymentId: booking.payment?.id ?? null,
+      bookingModificationId: bookingModification.id,
+      adjusted: payments,
+      editLabel: "booking change",
+    });
+
     /**
      * #3170 (epic #2797), the money half of parking: ONE OPEN
      * `EDIT_FINANCIAL_REVIEW` TASK PER UNREADABLE STRAND, raised inside this
@@ -2625,6 +2639,7 @@ async function dispatchBatchPostTransactionSideEffects({
     // who closed the panel without reading the banner still has this.
     promoChangeNotAppliedNote: result.promoChangeNotApplied?.message ?? null,
     financialReviewPending,
+    refundByBankTransfer: editRefundGoesBackByHand(result),
     lodgeId: result.booking.lodgeId,
   }, format).catch((err) =>
     logger.error(

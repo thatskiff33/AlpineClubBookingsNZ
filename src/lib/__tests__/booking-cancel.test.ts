@@ -95,6 +95,8 @@ const mocks = vi.hoisted(() => {
   // #3643 (owner decision 28 Sep 2026): the DECISION 2 hand-back task, raised
   // inside the unpaid claim.
   txManualRefundTaskFindFirst: vi.fn(),
+  // #3827 (`INV-PAY-115`): the open edit refund hand-backs on the payment.
+  txManualRefundTaskAggregate: vi.fn(),
   txManualRefundTaskCreate: vi.fn(),
   };
 });
@@ -370,6 +372,10 @@ describe("cancelBooking credit refunds", () => {
               aggregate: mocks.txMemberCreditAggregate,
             },
             manualRefundTask: {
+              // #3827 (`INV-PAY-115`): no open edit refund hand-back on file
+              // unless a test says otherwise.
+              aggregate: async (...args: unknown[]) =>
+                (await mocks.txManualRefundTaskAggregate(...args)) ?? { _sum: { amountCents: null } },
               findFirst: mocks.txManualRefundTaskFindFirst,
               create: mocks.txManualRefundTaskCreate,
             },
@@ -1635,6 +1641,43 @@ describe("cancelBooking credit refunds", () => {
     expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: "payment_5", amountCents: 20000 })
     );
+  });
+
+  it("#3827 (INV-PAY-115): tiers off the cash NOT already promised back on an open edit refund hand-back", async () => {
+    // $200 taken, the booking now worth $250 after an edit whose $50 refund
+    // task is still open: the cancel may return only the other $150.
+    const booking6 = {
+      id: "booking_6",
+      memberId: "member_1",
+      lodgeId: "lodge_1",
+      status: "PAID",
+      finalPriceCents: 25000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: { id: "member_1", email: "member@example.com", firstName: "Alice" },
+      payment: {
+        id: "payment_6",
+        bookingId: "booking_6",
+        amountCents: 20000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_6",
+      },
+    };
+    mocks.bookingFindUnique.mockResolvedValueOnce(booking6);
+    mocks.txBookingFindUnique.mockResolvedValueOnce(booking6);
+    mocks.txManualRefundTaskAggregate.mockResolvedValueOnce({ _sum: { amountCents: 5000 } });
+    mocks.calculateRefundAmount.mockReturnValueOnce({ refundAmountCents: 15000, refundPercentage: 100 });
+
+    const result = await cancelBooking("booking_6", "member_1", "MEMBER", "127.0.0.1", CLUB_FORMAT_TEST, "card");
+
+    expect(result.status).toBe(200);
+    expect(mocks.txManualRefundTaskAggregate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ paymentId: "payment_6", status: "OPEN" }) }),
+    );
+    expect(mocks.calculateRefundAmount).toHaveBeenCalledWith(15000, expect.anything(), expect.anything(), "card");
   });
 
   it("cancels outstanding additional payment intents and marks them failed on credit refunds", async () => {
@@ -4221,6 +4264,8 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
               // #3793: the re-read under the Payment row lock.
               findUnique: lockedPaymentReReadDouble(mocks.txBookingFindUnique),
             },
+            // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
+            manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
           };
           return arg(mockTx);
         }

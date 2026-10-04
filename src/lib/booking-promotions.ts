@@ -1,6 +1,6 @@
 import type { MemberGuestConsentStatus, Prisma } from "@prisma/client";
 
-import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { bookingDiscountCents, bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { calendarDateOfDateOnlyInstant, type CalendarDate } from "@/lib/club-time";
 import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
 import type { PromoAdjustmentTarget } from "@/lib/night-adjustment-write";
@@ -10,6 +10,7 @@ import {
   lockAndRefreshPromoCodeUsage,
   lockPromoCodeRowsForUpdate,
   promoGuestCountRefusal,
+  promoLodgeRestrictionRefusal,
   replacePromoRedemptionAllocations,
   validateAndCalculatePromoDiscount,
   type PromoApplicationResult,
@@ -93,8 +94,13 @@ export interface PromotionApplicationOutcome<A extends PromotionApplicationInput
 
 export interface BookingPromotionsResult<A extends PromotionApplicationInput> {
   outcomes: PromotionApplicationOutcome<A>[];
-  /** Σ over the applied codes, each its own integer cents (no cross-code rounding). */
+  /**
+   * The booking's headline discount, `max(0, -priceAdjustmentCents)`
+   * (`INV-MONEY-031`) — NOT the sum of the codes' own discounts, which a raising
+   * `SET_PRICE` code beside a discounting one would overstate.
+   */
   discountCents: number;
+  /** Σ over the applied codes, each its own integer cents (no cross-code rounding). */
   priceAdjustmentCents: number;
   /** Every applied code's targets, each naming its code, by caller guest index. */
   adjustmentTargets: PromoAdjustmentTarget[];
@@ -219,6 +225,23 @@ function mapResultToCaller(
   };
 }
 
+/** A kept code that discounts nothing until a chosen guest accepts (#3827, A5). */
+function awaitingAcceptanceResult(selectedGuestIndexes: number[]): PromoApplicationResult {
+  return {
+    discount: {
+      discountCents: 0,
+      priceAdjustmentCents: 0,
+      freeNightsUsed: 0,
+      eligibleGuestCount: 0,
+      allocations: [],
+      targets: [],
+      adjustmentTargets: [],
+    },
+    selectedGuestIndexes,
+    beneficiaryMemberIds: [],
+  };
+}
+
 /** The targets a code that APPLIED decided — none for a refused code. */
 function appliedTargets(result: PromoApplicationResult): PromoAdjustmentTarget[] {
   return !result.error && result.discount ? result.discount.adjustmentTargets : [];
@@ -248,7 +271,6 @@ export async function applyBookingPromotions<A extends PromotionApplicationInput
   const ordered = promotionApplicationOrder(applications);
   const claims = new Map<number, GuestClaim>();
   const outcomes: PromotionApplicationOutcome<A>[] = [];
-  let discountCents = 0;
   let priceAdjustmentCents = 0;
   const adjustmentTargets: PromoAdjustmentTarget[] = [];
 
@@ -288,17 +310,18 @@ export async function applyBookingPromotions<A extends PromotionApplicationInput
         ? undefined
         : normalizeSelectedGuestIndexes(application.selectedGuestIndexes, context.guests.length);
     if (callerSelection?.error) {
-      outcomes.push({
-        application,
-        applicationOrder: position,
-        result: { error: callerSelection.error, beneficiaryMemberIds: [] },
-      });
+      // The engine's own precedence: a lodge-restricted code is refused for its
+      // lodge before its guest choice is read.
+      const error =
+        promoLodgeRestrictionRefusal(application.promoCode, context.lodgeId) ?? callerSelection.error;
+      outcomes.push({ application, applicationOrder: position, result: { error, beneficiaryMemberIds: [] } });
       continue;
     }
     const { view, toOriginal } = promotionView(context.guests, claims.size > 0 ? claims : null);
     const viewSelection = toViewIndexes(callerSelection?.indexes, toOriginal);
 
     let result: PromoApplicationResult | null = null;
+    let awaitingAcceptance = false;
     const hidden = (callerSelection?.indexes ?? []).filter(
       (index) => !toOriginal.includes(index),
     );
@@ -316,7 +339,14 @@ export async function applyBookingPromotions<A extends PromotionApplicationInput
         viewSelection!.length === 0 &&
         hidden.some((index) => !isOperationallyPresentConsent(context.guests[index]!.consentStatus))
       ) {
-        result = { error: PROMO_PENDING_GUEST_MESSAGE, beneficiaryMemberIds: [] };
+        // A code the booking already carries, whose chosen guests still on it
+        // are awaiting acceptance (or hold no unclaimed night): KEPT, at zero,
+        // with the choice intact, so the acceptance applies it (D-3813-4). A
+        // code with no chosen guest left at all is released (INV-MONEY-024).
+        awaitingAcceptance = application.capOverflow === "coverExisting";
+        result = awaitingAcceptance
+          ? awaitingAcceptanceResult(callerSelection!.indexes)
+          : { error: PROMO_PENDING_GUEST_MESSAGE, beneficiaryMemberIds: [] };
       }
     }
     if (result === null) {
@@ -332,7 +362,7 @@ export async function applyBookingPromotions<A extends PromotionApplicationInput
     // nights is refused as "already covered", naming the code that holds them.
     // Asked only when an earlier code claimed something, so a lone code — and
     // every single-code booking — is answered exactly as before.
-    if (claims.size > 0 && appliedTargets(result).length === 0) {
+    if (claims.size > 0 && !awaitingAcceptance && appliedTargets(result).length === 0) {
       const unclaimed = promotionView(context.guests, null);
       const probe = mapResultToCaller(
         await run(application, unclaimed.view, toViewIndexes(callerSelection?.indexes, unclaimed.toOriginal)),
@@ -356,7 +386,6 @@ export async function applyBookingPromotions<A extends PromotionApplicationInput
 
     outcomes.push({ application, applicationOrder: position, result });
     if (result.error || !result.discount) continue;
-    discountCents += result.discount.discountCents;
     priceAdjustmentCents += result.discount.priceAdjustmentCents;
     const targets = result.discount.adjustmentTargets;
     adjustmentTargets.push(...targets);
@@ -381,7 +410,12 @@ export async function applyBookingPromotions<A extends PromotionApplicationInput
     }
   }
 
-  return { outcomes, discountCents, priceAdjustmentCents, adjustmentTargets };
+  return {
+    outcomes,
+    discountCents: bookingDiscountCents({ promoAdjustmentCents: priceAdjustmentCents }),
+    priceAdjustmentCents,
+    adjustmentTargets,
+  };
 }
 
 /** A stored redemption the re-price reads, as the booking includes load it. */

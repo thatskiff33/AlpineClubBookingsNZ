@@ -191,7 +191,7 @@ const PROMO_WRITERS: Record<string, (code: string) => void> = {
     // #3827 (D-3813-4): the acceptance re-price writes the codes, then records
     // their build-up over the stored nights, before it moves any money.
     expect(everyWriteIsFollowedBy(code, /\bawait persistRepricedPromotions\(/, RECORD)).toBe(true);
-    expect(precedes(code, RECORD, /calculateModificationSettlementOptions\(/)).toBe(true);
+    expect(precedes(code, RECORD, /\bawait applyPaymentAdjustments\(/)).toBe(true);
   },
   "prisma/demo-seed.ts": (code) => {
     // The paid FREE_NIGHTS fixture is a real canonical promotion write, even

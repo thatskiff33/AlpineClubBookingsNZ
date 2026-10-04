@@ -857,6 +857,7 @@ export async function finaliseMemberGuestConsentTransition(params: {
       bookingId,
       actorMemberId,
       reprice: outcome.reprice,
+      format,
     });
   }
 

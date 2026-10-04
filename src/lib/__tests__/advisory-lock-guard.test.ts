@@ -261,6 +261,20 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
       "Switching to Internet Banking with holdBedSlots flips the booking to CONFIRMED — a net-new capacity claim and a money side effect — and re-reads under the locks, because the pre-transaction snapshot was read with no lock at all.",
     invariant: "INV-LOCK-002",
   },
+  {
+    site: "PUT /api/admin/refund-requests/[id]#1",
+    tier: "GLOBAL",
+    reason:
+      "#3827 (INV-PAY-115, INV-PAY-116): a refund appeal's approval caps at the refundable cash NET of the refunds still promised back by bank transfer (an edit's, or an earlier approved appeal's). A hand-back's completion moves the payment's refunded total and closes its task in one commit under this key, and a reopen re-promises one under it, so the cap reads the payment and the open-task sum under the same key, claims the request, plans the card refund and raises the bank-transfer task for the rest in the same transaction - a second approval queues behind it and sees that task. Takes the global key alone; the Stripe refund and Xero note run after the commit.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "PUT /api/admin/refund-requests/[id]#2",
+    tier: "GLOBAL",
+    reason:
+      "#3827 (INV-PAY-116): releasing an approval whose Stripe refund AND recovery enqueue both failed puts the request back to PENDING and deletes the OPEN bank-transfer task the approval raised, in one transaction under the key every reader of the open-task sum and every approval holds, so no approval can size its cap between the two writes. Takes the global key alone; no provider call.",
+    invariant: "INV-LOCK-001",
+  },
 
   // ── Bed allocation: inventory, placement and reconciliation ───────────────
   {
@@ -493,7 +507,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "resolveManualRefundTask#1",
     tier: "GLOBAL",
     reason:
-      "#3582: an EDIT_FINANCIAL_REVIEW closure posts booking-ledger lines, and whether the booking is confirmed on the ledger must be asked under the key the settle asks it under, or a closure and a first settle could both see 'not yet' and both post. Taken only for that task kind, as the transaction's first lock — before the claim, the payment-row allocation and the re-price's promotion key — so it orders global before anything narrower as every edit door does; the Stripe refund and the Xero leg run after the commit, so it is never held across a provider round trip.",
+      "#3582: an EDIT_FINANCIAL_REVIEW closure posts booking-ledger lines, and whether the booking is confirmed on the ledger must be asked under the key the settle asks it under, or a closure and a first settle could both see 'not yet' and both post. Taken only for that task kind, as the transaction's first lock — before the claim, the payment-row allocation and the re-price's promotion key — so it orders global before anything narrower as every edit door does; the Stripe refund and the Xero leg run after the commit, so it is never held across a provider round trip. Order: global → member-credit (#3791, account-credit route only).",
     invariant: "INV-LOCK-002",
   },
   {

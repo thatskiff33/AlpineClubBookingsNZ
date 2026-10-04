@@ -196,6 +196,84 @@ describe("classifyXeroBookingEditSettlement", () => {
     ).toMatchObject({ refundMethod: "card" });
   });
 
+  // #3536 (`INV-PAY-101`): an UNPAID pay-on-account invoice lowered by an edit
+  // refunds nothing, so it is an invoice correction rather than a bank transfer.
+  it("words a reduction of an unpaid invoice as an invoice correction with no refund method (#3536)", () => {
+    const decision = classifyXeroBookingEditSettlement({
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "PENDING",
+      priceDiffCents: -2500,
+      settlementMethod: "card",
+      refundedThroughStripe: false,
+    });
+
+    expect(decision.financialAction).toEqual({
+      type: "modification-credit-note",
+      refundAmountCents: 2500,
+      noteWording: "invoice-correction",
+      reason: expect.stringContaining("modification credit note"),
+    });
+  });
+
+  it("MUTATION: only an unpaid invoice is a correction - a paid one, an unknown status or a caller's own method keeps its words (#3536)", () => {
+    const base = {
+      hasIssuedXeroInvoice: true,
+      priceDiffCents: -2500,
+      settlementMethod: "card" as const,
+      refundedThroughStripe: false,
+    };
+    // Paid by internet banking: the club returns the money, and says so.
+    for (const originalPaymentStatus of ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"]) {
+      const { financialAction } = classifyXeroBookingEditSettlement({ ...base, originalPaymentStatus });
+      expect(financialAction).toMatchObject({ refundMethod: "internet-banking" });
+      expect(financialAction).not.toHaveProperty("noteWording");
+    }
+    // A status nobody stated is not evidence the invoice is unpaid.
+    const unknown = classifyXeroBookingEditSettlement(base).financialAction;
+    expect(unknown).toMatchObject({ refundMethod: "internet-banking" });
+    expect(unknown).not.toHaveProperty("noteWording");
+    // A Stripe-captured payment is never a correction, and a named method wins.
+    expect(
+      classifyXeroBookingEditSettlement({
+        ...base,
+        originalPaymentStatus: "PENDING",
+        refundedThroughStripe: true,
+      }).financialAction,
+    ).toMatchObject({ refundMethod: "card" });
+    const named = classifyXeroBookingEditSettlement({
+      ...base,
+      originalPaymentStatus: "PENDING",
+      refundMethod: "internet-banking",
+    }).financialAction;
+    expect(named).toMatchObject({ refundMethod: "internet-banking" });
+    expect(named).not.toHaveProperty("noteWording");
+  });
+
+  it("words a cash hand-back as cash and keeps the bank-transfer method it settles by (#3536)", () => {
+    const cash = classifyXeroBookingEditSettlement({
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -2500,
+      refundMethod: "internet-banking",
+      handedBackInCash: true,
+    });
+    expect(cash.financialAction).toMatchObject({
+      type: "modification-credit-note",
+      refundMethod: "internet-banking",
+      noteWording: "cash",
+    });
+
+    // MUTATION: without the flag the same hand-back is not worded as cash.
+    expect(
+      classifyXeroBookingEditSettlement({
+        hasIssuedXeroInvoice: true,
+        originalPaymentStatus: "SUCCEEDED",
+        priceDiffCents: -2500,
+        refundMethod: "internet-banking",
+      }).financialAction,
+    ).not.toHaveProperty("noteWording");
+  });
+
   it("uses unapplied account-credit notes for credit-settled negative deltas", () => {
     const decision = classifyXeroBookingEditSettlement({
       hasIssuedXeroInvoice: true,
@@ -397,6 +475,36 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
       mocks.enqueueXeroModificationCreditNoteOperation,
     ).toHaveBeenCalledWith(
       expect.objectContaining({ refundMethod: "internet-banking" }),
+      expect.anything(),
+    );
+  });
+
+  it("hands the booking-edit wordings to the modification credit note enqueue (#3536)", async () => {
+    await queueXeroBookingEditSettlement({
+      bookingId: "booking_3",
+      bookingModificationId: "mod_3",
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "PENDING",
+      priceDiffCents: -3000,
+      settlementMethod: "card",
+      refundedThroughStripe: false,
+    });
+    const [correction] = mocks.enqueueXeroModificationCreditNoteOperation.mock.calls[0];
+    expect(correction).toMatchObject({ noteWording: "invoice-correction" });
+    expect(correction).not.toHaveProperty("refundMethod");
+
+    mocks.enqueueXeroModificationCreditNoteOperation.mockClear();
+    await queueXeroBookingEditSettlement({
+      bookingId: "booking_4",
+      bookingModificationId: "mod_4",
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -3000,
+      refundMethod: "internet-banking",
+      handedBackInCash: true,
+    });
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ refundMethod: "internet-banking", noteWording: "cash" }),
       expect.anything(),
     );
   });

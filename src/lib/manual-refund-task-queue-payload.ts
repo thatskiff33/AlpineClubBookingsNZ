@@ -4,7 +4,12 @@ import {
   type EditFinancialReviewEvidence,
 } from "@/lib/edit-financial-review-context";
 import { bookingOwner } from "@/lib/booking-owner";
-import { isPartPaymentReviewTask } from "@/lib/manual-refund-task-settlement-rules";
+import { editReviewRefundIsPaidBackByHand } from "@/lib/booking-payment-state";
+import {
+  isEditRefundHandBackTask,
+  isPartPaymentReviewTask,
+  isRefundRequestHandBackTask,
+} from "@/lib/manual-refund-task-settlement-rules";
 import type { QueueRepairableStrand } from "@/lib/stored-night-price-repair-queue";
 
 /**
@@ -32,6 +37,23 @@ type QueueBookingSummary = {
   organisation: { name: string; email: string | null } | null;
 };
 
+/**
+ * #3536: what `editReviewRefundIsPaidBackByHand` reads of an OPEN row - the
+ * task's own payment, and the booking's as it stands now - selected by the
+ * route so the settle screen can ask the cash-or-bank question only where a
+ * refund would be paid back by hand.
+ */
+export const OPEN_TASK_REFUND_PAYMENT_SELECT = {
+  paymentId: true,
+  payment: { select: { source: true } },
+} as const;
+export const OPEN_TASK_BOOKING_PAYMENT_SELECT = {
+  status: true,
+  payment: {
+    select: { id: true, status: true, amountCents: true, refundedAmountCents: true, source: true },
+  },
+} as const;
+
 /** An OPEN row the operator has to settle by hand. */
 export type OpenManualRefundTaskRow = {
   id: string;
@@ -49,13 +71,27 @@ export type OpenManualRefundTaskRow = {
   lateCaptureApprovalIntentId: string | null;
   /** #3643: set on a part-payment review, settled in Xero rather than here. */
   partPaymentReviewPaymentId: string | null;
+  /** #3827 (`INV-PAY-115`): an edit refund hand-back's marker (with the kind). */
+  occurrenceKey: string | null;
   /** #3643 (`INV-PAY-108`): the inbound sync's note that Xero reported the invoice paid. */
   partPaymentReviewXeroPaidAt: Date | null;
   partPaymentReviewXeroPaidCents: number | null;
   reviewContext: unknown;
   reason: string;
   createdAt: Date;
+  /** #3536: `OPEN_TASK_REFUND_PAYMENT_SELECT`. */
+  paymentId: string | null;
+  payment: { source: string } | null;
   booking: QueueBookingSummary & {
+    /** #3536: `OPEN_TASK_BOOKING_PAYMENT_SELECT`. */
+    status: string;
+    payment: {
+      id: string;
+      status: string;
+      amountCents: number | null;
+      refundedAmountCents: number | null;
+      source: string;
+    } | null;
     /**
      * #3033: who owns the booking, for the ownership half of the link grant.
      * Null since #3369 when the owner is an `Organisation`, which never signs
@@ -117,12 +153,33 @@ export type OpenManualRefundTaskPayload = {
    */
   partPaymentReview: boolean;
   /**
+   * #3827 (owner decision D-3813-6, `INV-PAY-115`): an edit lowered the price
+   * of a booking paid by internet banking or by hand, and the club refunds the
+   * difference by bank transfer. A hand-back like any other, but of a LIVE
+   * booking, so the cancelled-booking sentence does not fit it.
+   */
+  editRefundHandBack: boolean;
+  /**
+   * #3827 (owner decision D-3813-7, `INV-PAY-116`): an approved refund appeal
+   * on a booking not paid by card, which the club refunds by bank transfer.
+   * The booking was cancelled before the appeal, but the money is the
+   * appeal's, so neither the cancellation nor the edit sentence fits it.
+   */
+  refundRequestHandBack: boolean;
+  /**
    * #3643 (`INV-PAY-108`, ORCHESTRATOR DECISION 3): on a review, when the inbound
    * Xero sync learned the invoice was reported PAID and the invoice's cash then.
    * Nothing was credited or handed back for it; the treasurer decides. The
    * card prints it, because this - not the best-effort email - is the record.
    */
   partPaymentReviewXeroPaid: { reportedAt: string; cashCents: number } | null;
+  /**
+   * #3536 (`INV-PAY-114`): a financial review whose refund the club would pay
+   * back by hand, so the settle screen asks the officer whether it went back in
+   * cash or by bank transfer. A preview only: the completion re-chooses the
+   * route under its lock, and the answer counts only on that route.
+   */
+  paidBackByHand: boolean;
   reason: string;
   createdAt: string;
   memberName: string;
@@ -191,6 +248,8 @@ export function toOpenManualRefundTaskPayload(
     kind: task.kind,
     awaitingLateCaptureApproval: task.lateCaptureApprovalIntentId !== null,
     partPaymentReview: isPartPaymentReviewTask(task),
+    editRefundHandBack: isEditRefundHandBackTask(task),
+    refundRequestHandBack: isRefundRequestHandBackTask(task),
     partPaymentReviewXeroPaid:
       isPartPaymentReviewTask(task) &&
       task.partPaymentReviewXeroPaidAt &&
@@ -200,6 +259,8 @@ export function toOpenManualRefundTaskPayload(
             cashCents: task.partPaymentReviewXeroPaidCents,
           }
         : null,
+    paidBackByHand:
+      task.kind === "EDIT_FINANCIAL_REVIEW" && editReviewRefundIsPaidBackByHand(task),
     reason: task.reason,
     createdAt: task.createdAt.toISOString(),
     memberName: memberName(task.booking),

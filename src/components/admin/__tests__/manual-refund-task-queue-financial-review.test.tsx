@@ -119,6 +119,42 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe("an edit's refund hand-back is not described as a cancellation (#3827, D-3813-6)", () => {
+  it("prints the edit-refund sentence, and not the cancelled-booking one, over an edit refund", async () => {
+    await renderQueue({
+      tasks: [{ ...HAND_BACK_TASK, editRefundHandBack: true }],
+      viewerCanViewBookings: true,
+    });
+    expect(screen.getByTestId("manual-refund-task-edit-refund-intro")).toBeInTheDocument();
+    expect(screen.queryByTestId("manual-refund-task-hand-back-intro")).not.toBeInTheDocument();
+    // Completed like any hand-back: the same paid-back control.
+    expect(screen.getByRole("button", { name: /paid back/i })).toBeInTheDocument();
+  });
+
+  it("a cancellation's hand-back keeps its own sentence alone", async () => {
+    await renderQueue({ tasks: [HAND_BACK_TASK], viewerCanViewBookings: true });
+    expect(screen.queryByTestId("manual-refund-task-edit-refund-intro")).not.toBeInTheDocument();
+  });
+});
+
+describe("an approved appeal's refund hand-back has its own sentence (#3827, D-3813-7)", () => {
+  it("prints the appeal sentence, and neither the cancelled-booking nor the edit one", async () => {
+    await renderQueue({
+      tasks: [{ ...HAND_BACK_TASK, refundRequestHandBack: true }],
+      viewerCanViewBookings: true,
+    });
+    expect(screen.getByTestId("manual-refund-task-refund-request-intro")).toBeInTheDocument();
+    expect(screen.queryByTestId("manual-refund-task-hand-back-intro")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("manual-refund-task-edit-refund-intro")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /paid back/i })).toBeInTheDocument();
+  });
+
+  it("a cancellation's hand-back does not print it", async () => {
+    await renderQueue({ tasks: [HAND_BACK_TASK], viewerCanViewBookings: true });
+    expect(screen.queryByTestId("manual-refund-task-refund-request-intro")).not.toBeInTheDocument();
+  });
+});
+
 describe("the card only makes claims about rows it actually holds (#3033)", () => {
   it("prints the cash hand-back sentence only over rows it describes", async () => {
     await renderQueue({ tasks: [REVIEW_TASK], viewerCanViewBookings: true });
@@ -466,6 +502,45 @@ describe("what completing or dismissing means, per kind (#3033)", () => {
       expect(body.confirmedAmountCents).toBe(20000);
       expect(body.direction).toBe("CHARGE_TO_MEMBER");
     });
+  });
+
+  it("asks how a hand-settled refund went back, and posts only what the officer chose (#3536)", async () => {
+    const handSettled = { ...REVIEW_TASK, id: "task-review-hand", paidBackByHand: true };
+    await openDialog(handSettled, "Record the adjustment");
+    // Not before a direction: a charge is never handed back.
+    expect(screen.queryByLabelText("In cash")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/The member owes the club/));
+    expect(screen.queryByLabelText("In cash")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/The club owes the member/));
+    // Offered with nothing chosen: the app never answers for the officer.
+    expect(screen.getByLabelText("In cash")).not.toBeChecked();
+    expect(screen.getByLabelText("By bank transfer")).not.toBeChecked();
+    // The help sentence is the group's accessible description, not loose text.
+    expect(
+      screen.getByRole("group", { name: "How did the club pay the member back?" }),
+    ).toHaveAccessibleDescription(/only changes the wording on the Xero credit note/);
+    fireEvent.click(screen.getByLabelText("In cash"));
+    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "73.00" } });
+    fireEvent.change(screen.getByLabelText(/^Note/), {
+      target: { value: "handed back at the lodge" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Pay the member back" }));
+
+    await waitFor(() => {
+      const call = vi.mocked(fetch).mock.calls.find(
+        ([url]) => typeof url === "string" && url.includes("/manual-refund-tasks/task-review-hand"),
+      );
+      expect(call).toBeDefined();
+      const body = JSON.parse(String((call?.[1] as RequestInit).body));
+      expect(body.direction).toBe("REFUND_TO_MEMBER");
+      expect(body.handedBackInCash).toBe(true);
+    });
+  });
+
+  it("never asks cash-or-bank where a refund is not paid back by hand (#3536)", async () => {
+    await openDialog({ ...REVIEW_TASK, id: "task-review-card", paidBackByHand: false }, "Record the adjustment");
+    fireEvent.click(screen.getByLabelText(/The club owes the member/));
+    expect(screen.queryByLabelText("In cash")).not.toBeInTheDocument();
   });
 
   it("does not read a hand-back's placeholder as an amount", async () => {

@@ -46,6 +46,10 @@ vi.mock("@/lib/prisma", () => ({
       create: (...args: unknown[]) => mocks.refundRequestCreate(...args),
       findMany: (...args: unknown[]) => mocks.refundRequestFindMany(...args),
     },
+    // #3827 (`INV-PAY-116`): the appeal ceiling's two reads - nothing open,
+    // no late-cash credit.
+    manualRefundTask: { aggregate: async () => ({ _sum: { amountCents: null } }) },
+    memberCredit: { aggregate: async () => ({ _sum: { amountCents: null } }) },
   },
 }));
 vi.mock("@/lib/audit", () => ({
@@ -88,6 +92,8 @@ function cancelledBooking(deletedAt: Date | null) {
     checkIn: new Date("2026-07-01"),
     checkOut: new Date("2026-07-03"),
     payment: {
+      id: "payment-1",
+      bookingId: "booking-1",
       amountCents: 9000,
       refundedAmountCents: 2000,
       status: "PARTIALLY_REFUNDED",

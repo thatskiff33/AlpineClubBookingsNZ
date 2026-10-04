@@ -4,6 +4,7 @@ import {
   type MemberGuestConsentStatus,
   type Prisma,
 } from "@prisma/client";
+import { raiseEditRefundHandBackIfOwed } from "@/lib/edit-refund-hand-back";
 import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { repriceBookingPromotions } from "@/lib/booking-promotions";
 import {
@@ -1196,6 +1197,16 @@ export async function removeBookingGuestInTransaction({
     bookingModification,
     sides: pricingSides,
     site: "guest-removal",
+  });
+
+  // D-3813-6 (`INV-PAY-115`): a reduction on a booking paid by internet
+  // banking or by hand asks the treasurer to send it back.
+  await raiseEditRefundHandBackIfOwed(tx, {
+    bookingId,
+    paymentId: booking.payment?.id ?? null,
+    bookingModificationId: bookingModification.id,
+    adjusted: paymentImpact,
+    editLabel: "guest removal",
   });
 
   /**

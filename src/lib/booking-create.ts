@@ -52,7 +52,7 @@ import { ApiError } from "@/lib/api-error";
 import { addDaysDateOnly } from "@/lib/date-only";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { redeemPromoCode } from "@/lib/promo";
+import { lockPromoCodeRowsForUpdate, redeemPromoCode } from "@/lib/promo";
 import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
@@ -1922,7 +1922,20 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
 
     // #3827: one redemption per applied code, in the booker's order, on the
     // booking created above in this transaction (the switch probe's
-    // precondition).
+    // precondition). Each redemption's counter write row-locks its code, and
+    // this path holds the lodge key but not lock(1), so two waitlisted creates
+    // naming the same codes in opposite orders would take those row locks in
+    // opposite orders and deadlock. Every code row is therefore locked first,
+    // in ONE sorted call, after the lodge key (INV-LOCK-002, INV-MONEY-023).
+    // No cap is re-read here, deliberately: a waitlisted booking consumes no use
+    // until it is offered, the offer re-prices every code under its own locks,
+    // and the counter write is an atomic increment rather than a read-then-write.
+    if (promotions.redemptions.length > 1) {
+      await lockPromoCodeRowsForUpdate(
+        tx,
+        promotions.redemptions.map((redemption) => redemption.promoCodeId),
+      );
+    }
     for (const redemption of promotions.redemptions) {
       await redeemPromoCode(
         tx,

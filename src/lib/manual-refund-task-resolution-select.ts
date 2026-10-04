@@ -23,6 +23,9 @@ export const MANUAL_REFUND_TASK_RESOLUTION_SELECT = Prisma.validator<Prisma.Manu
   // sentence that names a #2700 task's capture.
   lateCaptureApprovalIntentId: true,
   partPaymentReviewPaymentId: true,
+  // #3827 (`INV-PAY-115`): an edit refund hand-back's marker, so its
+  // completion queues no cancellation refund note.
+  occurrenceKey: true,
   reason: true,
   status: true,
   // #3032: the settlement route needs three more facts, all read inside

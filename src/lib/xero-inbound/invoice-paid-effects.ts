@@ -1,6 +1,6 @@
 import { type Invoice } from "xero-node";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
-import { BookingEventType, BookingStatus, CreditType, ManualRefundTaskKind, PaymentSource, PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
+import { BookingEventType, BookingStatus, CreditType, ManualRefundTaskKind, PaymentSource, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -39,11 +39,13 @@ import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { reportUnappliedCreditElection } from "@/lib/booking-credit-election-report";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
+import { NOT_NON_CANCELLATION_HAND_BACK_WHERE } from "@/lib/manual-refund-task-settlement-rules";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { syncBookingLedgerCredits } from "@/lib/booking-ledger-credit-sync";
+import { sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
 import {
   hasInvoiceClearingNote,
   retirePendingClearingNote,
@@ -226,35 +228,9 @@ function resolveMintableCents(
   };
 }
 
-// Sum the credit THIS Internet Banking minting pipeline has already minted for
-// a set of bookings (#1505). Read back INSIDE the reconcile transaction (after
-// the shared advisory lock) so the aggregate cap sees every credit committed
-// by an earlier payment in the same invoice's loop — each payment commits its
-// own transaction under `pg_advisory_xact_lock(1)` before the next begins — as
-// well as any prior invocation's, which keeps the cap idempotent under retry:
-// a replayed payment finds its own credit via the per-booking dedup and mints
-// nothing, and the cap for a fresh payment is computed from OTHER bookings'
-// already-committed credits (never this booking's own), so it is stable across
-// runs. Keyed on the pipeline's own credit descriptions and CANCELLATION_REFUND
-// type — never on amount — exactly as the per-booking dedup keys, so it never
-// counts unrelated cancellation-flow credit rows.
-async function sumInternetBankingMintedCentsForBookings(
-  tx: Prisma.TransactionClient,
-  bookingIds: string[]
-): Promise<number> {
-  if (bookingIds.length === 0) {
-    return 0;
-  }
-  const aggregate = await tx.memberCredit.aggregate({
-    where: {
-      sourceBookingId: { in: bookingIds },
-      type: CreditType.CANCELLATION_REFUND,
-      description: { startsWith: "Internet Banking payment credit for " },
-    },
-    _sum: { amountCents: true },
-  });
-  return aggregate._sum.amountCents ?? 0;
-}
+// The pipeline's already-minted sum (#1505) lives with its description prefix
+// in `internet-banking-late-cash-credit.ts` (#3827): a refund appeal's cap
+// reads the same rows, so the spelling has one home (`INV-SSOT`).
 
 export async function syncInternetBankingPaymentsForPaidInvoice(
   invoice: Invoice,
@@ -746,6 +722,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
                   bookingId: settlementPayment.bookingId,
                   paymentId: settlementPayment.id,
                   kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+                  // #3827 (`INV-PAY-115`): an edit's refund hand-back on the
+                  // same payment is not this cancellation's.
+                  ...NOT_NON_CANCELLATION_HAND_BACK_WHERE,
                 },
                 select: { id: true },
               })

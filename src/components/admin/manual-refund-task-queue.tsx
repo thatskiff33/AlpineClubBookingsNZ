@@ -71,6 +71,7 @@ import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import type { ClubFormat } from "@/lib/club-format";
 import { useClubFormat } from "@/components/club-format-provider";
 import { PartPaymentReviewXeroPaidLine } from "@/components/admin/part-payment-review-xero-paid-line";
+import { HandBackMethodChoice } from "@/components/admin/hand-back-method-choice";
 
 const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 
@@ -99,11 +100,17 @@ interface ManualRefundTask {
   awaitingLateCaptureApproval?: boolean;
   /** #3643: a part payment the club settles in Xero. Optional, as above. */
   partPaymentReview?: boolean;
+  /** #3827: an edit's refund, sent back by bank transfer. Optional, as above. */
+  editRefundHandBack?: boolean;
+  /** #3827 (D-3813-7): an approved appeal's refund, by bank transfer. Optional, as above. */
+  refundRequestHandBack?: boolean;
   /**
    * #3643 (`INV-PAY-108`): Xero reported the review's invoice paid after the
    * cancel, and the invoice's cash then. Optional, as above.
    */
   partPaymentReviewXeroPaid?: { reportedAt: string; cashCents: number } | null;
+  /** #3536: a refund here is paid back by hand, so ask cash or bank. Optional, as above. */
+  paidBackByHand?: boolean;
   reason: string;
   createdAt: string;
   memberName: string;
@@ -230,6 +237,27 @@ function isLateCaptureApproval(task: ManualRefundTask): boolean {
  */
 function isPartPaymentReview(task: ManualRefundTask): boolean {
   return task.partPaymentReview === true;
+}
+
+/**
+ * #3827 (owner decision D-3813-6, `INV-PAY-115`): an edit lowered the price of
+ * a booking paid by internet banking or by hand, so the club owes the
+ * difference back by bank transfer. Completed exactly like a cancellation's
+ * hand-back; only the sentence explaining where it came from differs, because
+ * the booking was not cancelled. The route's flag marks it.
+ */
+function isEditRefundHandBack(task: ManualRefundTask): boolean {
+  return task.editRefundHandBack === true;
+}
+
+/**
+ * #3827 (owner decision D-3813-7, `INV-PAY-116`): a refund appeal the club
+ * approved on a booking that was not paid by card, so the approved amount (or
+ * the part a card refund could not carry) goes back by bank transfer. The
+ * route's flag marks it.
+ */
+function isRefundRequestHandBack(task: ManualRefundTask): boolean {
+  return task.refundRequestHandBack === true;
 }
 
 /**
@@ -1020,6 +1048,8 @@ export function ManualRefundTaskQueue() {
    * null for anything malformed rather than a zero.
    */
   const [direction, setDirection] = useState<SettlementDirection | null>(null);
+  /** #3536: the officer's cash-or-bank answer; null is "not said" (bank wording). */
+  const [handedBackInCash, setHandedBackInCash] = useState<boolean | null>(null);
   const [amountInput, setAmountInput] = useState("");
   /**
    * #3191: what the officer says each unpriced night sold for, as typed text
@@ -1133,6 +1163,9 @@ export function ManualRefundTaskQueue() {
     target !== null &&
     target.resolution === "completed" &&
     isFinancialReview(target.task);
+  // #3536: only a refund the club pays back by hand asks how it went back.
+  const askHandBackMethod =
+    pricingReview && direction === "REFUND_TO_MEMBER" && target.task.paidBackByHand === true;
   const pricedAmountCents = pricingReview
     ? parseDecimalDollarsToCents(amountInput)
     : null;
@@ -1352,6 +1385,9 @@ export function ManualRefundTaskQueue() {
               ? {
                   confirmedAmountCents: pricedAmountCents,
                   direction,
+                  ...(askHandBackMethod && handedBackInCash !== null
+                    ? { handedBackInCash }
+                    : {}),
                 }
               : {}),
             /*
@@ -1376,6 +1412,7 @@ export function ManualRefundTaskQueue() {
       setTarget(null);
       setNote("");
       setDirection(null);
+      setHandedBackInCash(null);
       setAmountInput("");
       setNightPriceInputs({});
       await load();
@@ -1445,12 +1482,16 @@ export function ManualRefundTaskQueue() {
   */
   const hasLateCaptureRows = openTasks.some(isLateCaptureApproval);
   const hasPartPaymentReviewRows = openTasks.some(isPartPaymentReview);
+  const hasEditRefundRows = openTasks.some(isEditRefundHandBack);
+  const hasRefundRequestRows = openTasks.some(isRefundRequestHandBack);
   const hasHandBackRows = openTasks.some(
     (task) =>
       !isFinancialReview(task) &&
       !isWithheldShare(task) &&
       !isLateCaptureApproval(task) &&
-      !isPartPaymentReview(task),
+      !isPartPaymentReview(task) &&
+      !isEditRefundHandBack(task) &&
+      !isRefundRequestHandBack(task),
   );
   if (
     !showQueue &&
@@ -1504,6 +1545,31 @@ export function ManualRefundTaskQueue() {
                 no card payment to reverse, so the club has to pay the member
                 back directly. Mark a refund as paid back once the money has
                 actually gone — that is when the ledger records it.
+              </p>
+            ) : null}
+            {hasEditRefundRows ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="manual-refund-task-edit-refund-intro"
+              >
+                Some of these are booking changes that lowered the price of a
+                booking paid by internet banking or in cash. There is no card
+                to refund, so the club sends the difference back by bank
+                transfer; the member has been told it is coming. The Xero
+                credit note for the change was raised with the change. Mark a
+                refund as paid back once the money has actually gone.
+              </p>
+            ) : null}
+            {hasRefundRequestRows ? (
+              <p
+                className="text-sm text-muted-foreground"
+                data-testid="manual-refund-task-refund-request-intro"
+              >
+                Some of these are refund appeals the club approved on bookings
+                that were not paid by card. There is no card to refund, so the
+                club sends the approved amount by bank transfer; the member has
+                been told it is coming. Mark a refund as paid back once the
+                money has actually gone.
               </p>
             ) : null}
             {hasReviewRows ? (
@@ -1793,6 +1859,7 @@ export function ManualRefundTaskQueue() {
                 // typed for. Carrying either onto the next row would offer a
                 // pre-filled figure nobody priced.
                 setDirection(null);
+                setHandedBackInCash(null);
                 setAmountInput("");
                 // #3191: figures typed for one booking's nights must never be
                 // carried onto another's, for the same reason the amount is not.
@@ -1857,6 +1924,12 @@ export function ManualRefundTaskQueue() {
                           </label>
                         ))}
                       </fieldset>
+                      {askHandBackMethod && (
+                        <HandBackMethodChoice
+                          handedBackInCash={handedBackInCash}
+                          onChange={setHandedBackInCash}
+                        />
+                      )}
                       <div className="space-y-2">
                         <Label htmlFor="manual-refund-task-amount">Amount</Label>
                         <div className="flex items-center gap-2">

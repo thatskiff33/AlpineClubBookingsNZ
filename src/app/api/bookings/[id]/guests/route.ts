@@ -1485,6 +1485,8 @@ export async function POST(
         newFinalPriceCents: result.booking.finalPriceCents,
         changeFeeCents: 0,
         refundAmountCents: 0,
+        // Guest adds never decrease the price, so nothing is refunded.
+        refundByBankTransfer: false,
         additionalAmountCents: result.additionalAmountCents,
         additionalPaymentMethod:
           result.additionalAmountCents > 0 &&

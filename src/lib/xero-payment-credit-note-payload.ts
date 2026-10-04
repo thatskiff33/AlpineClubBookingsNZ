@@ -46,6 +46,8 @@ export function parsePaymentCreditNoteRetryInput(
    */
   paymentIntentId?: string;
   documentDate?: string;
+  /** #3827 (D-3813-8): a refund request's own note, keyed by the request. */
+  refundRequestId?: string;
 } | null {
   const payload = asRecord(operation.requestPayload);
   if (!payload) {
@@ -60,6 +62,7 @@ export function parsePaymentCreditNoteRetryInput(
   const lateCapture = {
     ...(readString(payload.paymentIntentId) ? { paymentIntentId: readString(payload.paymentIntentId)! } : {}),
     ...(readString(payload.documentDate) ? { documentDate: readString(payload.documentDate)! } : {}),
+    ...(readString(payload.refundRequestId) ? { refundRequestId: readString(payload.refundRequestId)! } : {}),
   };
   const queuedRefundAmount = readNumber(payload.refundAmountCents);
   if (queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE && queuedRefundAmount !== null) {
@@ -67,7 +70,11 @@ export function parsePaymentCreditNoteRetryInput(
     return {
       amountCents: Math.round(queuedRefundAmount),
       kind: "refund",
-      watermarkCents: queuedWatermark !== null ? Math.round(queuedWatermark) : 0,
+      // #3827 (D-3813-8): a refund request's own note carries no watermark and
+      // must not be re-entered as a per-delta note.
+      ...(readString(payload.refundRequestId)
+        ? {}
+        : { watermarkCents: queuedWatermark !== null ? Math.round(queuedWatermark) : 0 }),
       refundMethod: readCashRefundMethod(payload),
       ...lateCapture,
     };

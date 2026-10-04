@@ -70,11 +70,15 @@ import {
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
+import { promoCodeListRefusal } from "@/lib/promo-code-list-rules";
 // Pure readers of the request, from their home rather than the barrel (#3827).
 import {
   requestChangesPromoCodes,
   requestedPromoCodeChange,
+  keptStoredPromoRedemption,
+  promoRequestReadsMultiPromoSwitch,
   requestedPromoCodeListFor,
+  splitRequestedPromoCodes,
 } from "@/lib/booking-modify-promo-request";
 import {
   describePromoChangeNotApplied,
@@ -2283,10 +2287,13 @@ export async function POST(
     // the save's pricing (`applyBookingPromotions`), unlocked and read-only, so
     // the preview and the save cannot tell different stories (#2390). `null`
     // means no promo change: every code the booking carries is re-priced.
-    const requested = requestedPromoCodeListFor(
-      promoRequest,
-      promoRedemptions.map((redemption) => redemption.promoCode),
-    );
+    // #3826: the switch decides what the request means; the save reads it
+    // the same way (`applyPromoCodeChanges`).
+    const storedCodes = promoRedemptions.map((redemption) => redemption.promoCode);
+    const multiPromoCodes = promoRequestReadsMultiPromoSwitch(promoRequest, storedCodes)
+      ? await multiPromoCodesEnabled(prisma)
+      : true;
+    const requested = requestedPromoCodeListFor(promoRequest, storedCodes, multiPromoCodes);
     const quoteGuestNightRates = getGuestNightRates();
     const existingByCode = new Map(
       promoRedemptions.map((redemption) => [redemption.promoCode.code, redemption]),
@@ -2299,15 +2306,16 @@ export async function POST(
         promoGuestIds: undefined,
         promoAddedGuestIndexes: undefined,
       }));
-    let refusal: string | null = null;
-    if (requested && new Set(requested.map((entry) => entry.code)).size !== requested.length) {
-      refusal = "The same promo code was entered more than once.";
-    } else if (requested && requested.length > 1 && !(await multiPromoCodesEnabled(prisma))) {
-      refusal = "Only one promo code can be used on a booking.";
-    }
+    // The save's own refusal (`promoCodeListRefusal`), read the same way.
+    let refusal: string | null = requested
+      ? promoCodeListRefusal({
+          ...splitRequestedPromoCodes(requested, promoRedemptions),
+          multiPromoCodes,
+        })
+      : null;
     const applications: Array<PromotionApplicationInput & { kept: boolean }> = [];
     for (const entry of refusal ? [] : entries) {
-      const keptRedemption = entry.reapply ? undefined : existingByCode.get(entry.code);
+      const keptRedemption = keptStoredPromoRedemption(entry, existingByCode);
       if (keptRedemption) {
         const promo = keptRedemption.promoCode;
         applications.push({
@@ -2464,7 +2472,7 @@ export async function POST(
   const settlementOptions = await calculateModificationSettlementOptions({
     booking,
     netChargeCents,
-    db: prisma, // advisory quote: no transaction, no lock held
+    db: prisma, // advisory, unlocked; payment and open edit refunds read apart (#3827 stated limit: commit re-reads both under lock(1))
     todayAtClub,
   });
 

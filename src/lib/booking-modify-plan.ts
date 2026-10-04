@@ -7,7 +7,13 @@
 import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { applyBookingPromotions, repriceBookingPromotions } from "@/lib/booking-promotions";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
-import { requestedPromoCodeListFor } from "@/lib/booking-modify-promo-request";
+import {
+  keptStoredPromoRedemption,
+  promoRequestReadsMultiPromoSwitch,
+  requestedPromoCodeListFor,
+  splitRequestedPromoCodes,
+} from "@/lib/booking-modify-promo-request";
+import { promoCodeListRefusal } from "@/lib/promo-code-list-rules";
 import {
   AdminReviewStatus,
   BookingStatus,
@@ -2368,10 +2374,14 @@ export async function applyPromoCodeChanges(
   const stored = bookingPromoRedemptions(booking);
   const existing = stored.filter((redemption) => redemption.promoCode);
   const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
-  const requested = requestedPromoCodeListFor(
-    input,
-    existing.map((redemption) => redemption.promoCode),
-  );
+  // #3826: the switch decides what the request MEANS (a working-bee discount
+  // is carried only while it is on), so it is read whenever it can matter,
+  // and the same answer gates the list's refusal below.
+  const storedCodes = existing.map((redemption) => redemption.promoCode);
+  const multiPromoCodes = promoRequestReadsMultiPromoSwitch(input, storedCodes)
+    ? await multiPromoCodesEnabled(tx)
+    : true;
+  const requested = requestedPromoCodeListFor(input, storedCodes, multiPromoCodes);
 
   if (requested === null) {
     // No promo change asked for: re-price every code the booking carries
@@ -2402,16 +2412,15 @@ export async function applyPromoCodeChanges(
   }
 
   // The booker's new list (D-3813-2: add, remove or reorder in one request).
-  if (new Set(requested.map((entry) => entry.code)).size !== requested.length) {
-    throw new ApiError("The same promo code was entered more than once.", 400);
-  }
-  if (requested.length > 1 && !(await multiPromoCodesEnabled(tx))) {
-    throw new ApiError("Only one promo code can be used on a booking.", 400);
-  }
+  const listRefusal = promoCodeListRefusal({
+    ...splitRequestedPromoCodes(requested, existing),
+    multiPromoCodes,
+  });
+  if (listRefusal) throw new ApiError(listRefusal, 400);
   const existingByCode = new Map(existing.map((redemption) => [redemption.promoCode.code, redemption]));
   const kept = new Set(
     requested
-      .filter((entry) => !entry.reapply && existingByCode.has(entry.code))
+      .filter((entry) => keptStoredPromoRedemption(entry, existingByCode))
       .map((entry) => entry.code),
   );
   const incomingCodes = requested.filter((entry) => !kept.has(entry.code)).map((entry) => entry.code);

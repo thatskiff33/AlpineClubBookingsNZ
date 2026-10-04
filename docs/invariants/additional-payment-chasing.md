@@ -629,8 +629,7 @@ operations for every queue type (keeping them replayable rather than
 RUNNING-stuck dead-ends); the daily credit-reconciliation cron re-enqueues
 the uncovered delta for any flagged payment so historical gaps self-heal; and
 a partial unique index allows at most one ACTIVE outbox operation per
-correlation key (owner-approved defence in depth — terminal rows may repeat
-the key across attempts). Every canonical-link maintainer is bound by the
+correlation key (terminal rows may repeat it). Every canonical-link maintainer is bound by the
 multi-note contract too: `cleanupStaleCanonicalXeroObjectLinks` and the
 reconciliation report's drift classifications never deactivate or flag a LIVE
 active Stripe per-delta refund-note link as stale, mismatched, or duplicate
@@ -641,7 +640,10 @@ home for that judgement), its still-active local mirror is stale drift that
 cleanup deactivates, and active non-cancelled coverage above the cash
 refund-note target is reported as its own drift class
 (`overCoveredStripeRefundPayments`) because it silently suppresses every
-later refund note. The operator repair for already-damaged links is
+later refund note. A non-Stripe payment keeps ONE refund note; a refund
+request's own note (`INV-PAY-116`, role `REFUND_REQUEST_CREDIT_NOTE`) is
+outside it.
+The operator repair for already-damaged links is
 `scripts/xero-refund-note-link-repair.ts`
 ([runbook](../xero/ARCHITECTURE.md)).
 
