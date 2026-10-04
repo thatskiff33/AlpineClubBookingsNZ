@@ -454,6 +454,54 @@ describe("the OWED identity's column side, and the evidence a mirror class needs
   });
 });
 
+describe("a legacy-backfilled payment's credit allocation is counted once (#3583, the back-post lane's double count)", () => {
+  /**
+   * The payment's transaction came from the legacy backfill, and a credit
+   * allocation since raised its refunded total. The allocation's own row and
+   * line explain those cents; only what no row explains is the legacy seed.
+   */
+  const onLegacy = (seededCents = 0) => {
+    const subject = reductionCredited(true);
+    return {
+      ...subject,
+      transactions: [txn("t1", 20_000, { refundedAmountCents: 5_000 + seededCents, reason: "legacy_primary_backfill" })],
+      payment: payment({ amountCents: 20_000, refundedAmountCents: 5_000 + seededCents }),
+    };
+  };
+  const refunded = (subject: BookingLedgerCensusRow) => identity(subject, "REFUNDED");
+
+  it("the allocation alone explains the refunded column; nothing is left for the legacy seed", () => {
+    expect(refunded(onLegacy())).toMatchObject({ status: "CLASSIFIED", deltaCents: 5_000, explainedBy: [{ name: "REFUND_MIRROR_CREDIT_ALLOCATION", cents: 5_000 }] });
+    expect(identity(onLegacy(), "OWED").status).toBe("AGREE");
+    expect(evaluateBookingLedgerIdentities(onLegacy()).coverage).toEqual([]);
+  });
+
+  it("a seed beside the allocation is the legacy class for exactly what no row explains", () => {
+    expect(refunded(onLegacy(2_000))).toMatchObject({
+      status: "CLASSIFIED",
+      deltaCents: 7_000,
+      explainedBy: [
+        { name: "REFUND_MIRROR_CREDIT_ALLOCATION", cents: 5_000 },
+        { name: "REFUND_MIRROR_LEGACY_SEED", cents: 2_000 },
+      ],
+    });
+  });
+
+  it("a cent either way on the column is still a disagreement", () => {
+    for (const by of [1, -1] as const) expect(refunded(bumpPayment(onLegacy(), "refundedAmountCents", by)).status).toBe("DISAGREE");
+  });
+
+  it("the seed is never more than the legacy transactions hold: another transaction's unexplained refund is a disagreement", () => {
+    const seeded = legacySeed();
+    const drifted = {
+      ...seeded,
+      transactions: [...seeded.transactions, txn("t9", 3_000, { refundedAmountCents: 3_000 })],
+      payment: payment({ refundedAmountCents: 5_000 }),
+    };
+    expect(refunded(drifted)).toMatchObject({ status: "DISAGREE", deltaCents: 5_000 });
+  });
+});
+
 describe("the review's two gate escapes are closed (fix round of #3583)", () => {
   it("S1: a missing CREDIT_ISSUED line is coverage, holding the gate — and with the line every identity agrees", () => {
     const missing = evaluateBookingLedgerIdentities(reductionCredited(false));
