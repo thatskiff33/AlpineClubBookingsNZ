@@ -17,7 +17,7 @@
  * unless a case here installs the double, because that harness imports every
  * suite into one process.
  */
-import type { PrismaClient } from "@prisma/client";
+import { Role, type PrismaClient } from "@prisma/client";
 import type Stripe from "stripe";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -96,7 +96,14 @@ vi.mock("stripe", async (importOriginal) => {
         options?: { idempotencyKey?: string },
       ) => {
         const known = options?.idempotencyKey ? fake.byKey.get(options.idempotencyKey) : undefined;
-        if (known) return read(known);
+        if (known) {
+          // As Stripe does: a key replayed with other parameters is refused.
+          const original = fake.intents.get(known)!;
+          if (original.amount !== params.amount || original.currency !== params.currency) {
+            return Promise.reject(new Error("fake Stripe: idempotency_error, key reused with different parameters"));
+          }
+          return read(known);
+        }
         fake.sequence += 1;
         const id = `pi_race_3864_${fake.sequence}`;
         fake.intents.set(id, {
@@ -182,6 +189,8 @@ let webhook: typeof import("@/lib/stripe-webhook-service");
 let editService: typeof import("@/lib/booking-batch-modification-service");
 let creditElection: typeof import("@/lib/booking-credit-election");
 let clubTimeServer: typeof import("@/lib/club-time/server");
+let xeroSync: typeof import("@/lib/xero-sync");
+let outboxPayload: typeof import("@/lib/xero-operation-outbox-payload");
 let webhookEventSequence = 0;
 
 async function clean(): Promise<void> {
@@ -261,7 +270,7 @@ async function payStep(): Promise<{ status: number; body: Record<string, unknown
 async function editToApplyCredit() {
   return editService.modifyBookingBatch({
     bookingId: BOOKING_ID,
-    actor: { id: MEMBER_ID, role: "MEMBER" },
+    actor: { id: MEMBER_ID, role: Role.USER },
     input: { applyCreditCents: ELECTION_CENTS },
     ipAddress: "127.0.0.1",
     todayAtClub: (await clubTimeServer.clubTime()).today(),
@@ -319,6 +328,32 @@ function expectPaidOnce(state: Awaited<ReturnType<typeof money>>, { cardCents, c
   expect(state.booking.creditElectionCents).toBeNull();
 }
 
+/** A Xero applied-credit deallocation in flight for the booking's payment: the give-back's fence. */
+async function raiseDeallocationFence(): Promise<void> {
+  const payment = await prisma.payment.findUniqueOrThrow({ where: { bookingId: BOOKING_ID }, select: { id: true } });
+  const key = `race-3864-dealloc-${payment.id}`;
+  await xeroSync.startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "ALLOCATION",
+    operationType: "UPDATE",
+    localModel: "Payment",
+    localId: payment.id,
+    status: "FAILED",
+    idempotencyKey: key,
+    correlationKey: key,
+    requestPayload: { queueType: outboxPayload.XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE, bookingId: BOOKING_ID },
+  });
+}
+
+/** A manual deferred (the lib target predates `Promise.withResolvers`). */
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 /** The member's booking history says their credit was not spent (#2265's report). */
 async function unspentCreditReports(): Promise<number[]> {
   const rows = await prisma.auditLog.findMany({
@@ -347,6 +382,8 @@ async function mintFullPriceIntent(): Promise<string> {
     editService = await import("@/lib/booking-batch-modification-service");
     creditElection = await import("@/lib/booking-credit-election");
     clubTimeServer = await import("@/lib/club-time/server");
+    xeroSync = await import("@/lib/xero-sync");
+    outboxPayload = await import("@/lib/xero-operation-outbox-payload");
 
     await clean();
     await prisma.lodgeSettings.deleteMany({ where: { id: LODGE_ID } });
@@ -367,7 +404,7 @@ async function mintFullPriceIntent(): Promise<string> {
     fake.beforeRead = null;
     fake.afterCancel = null;
     fake.failCancel = false;
-    session.current = { user: { id: MEMBER_ID, role: "MEMBER", accessRoles: [], canLogin: true } };
+    session.current = { user: { id: MEMBER_ID, role: "USER", accessRoles: [], canLogin: true } };
     await seed();
   });
 
@@ -384,7 +421,7 @@ async function mintFullPriceIntent(): Promise<string> {
   it("C, W, then E: the capture settles first, so the edit refuses to store the election", async () => {
     const oldIntent = await mintFullPriceIntent();
     capture(oldIntent);
-    expect((await deliverSucceededWebhook(oldIntent)).status ?? 200).toBe(200);
+    expect((await deliverSucceededWebhook(oldIntent)).init?.status ?? 200).toBe(200);
 
     await expect(editToApplyCredit()).rejects.toThrow(/has not been paid yet/);
 
@@ -465,7 +502,7 @@ async function mintFullPriceIntent(): Promise<string> {
     const reload = await payStep();
     expect(reload.status).toBe(409);
     // Told why, not sent to reload a booking that is still payable.
-    expect(reload.body.error).toMatch(/credit has not been applied yet/);
+    expect(reload.body).toMatchObject({ code: "CREDIT_ELECTION_NOT_APPLIED", error: expect.stringMatching(/credit has not been applied yet/) });
     expect(fake.intents.get(oldIntent)!.status).toBe("requires_payment_method");
     const state = await money();
     expect(state.appliedRows).toBe(0);
@@ -474,8 +511,8 @@ async function mintFullPriceIntent(): Promise<string> {
 
   it("A STALE TAB mints a full-price intent between this pay step's cancel and its spend: the spend is refused under the locks", async () => {
     const oldIntent = await mintFullPriceIntent();
-    const aCancelled = Promise.withResolvers<void>();
-    const staleTabDone = Promise.withResolvers<void>();
+    const aCancelled = deferred();
+    const staleTabDone = deferred();
     let reloadA: Promise<Awaited<ReturnType<typeof payStep>>> | null = null;
 
     // Tab B read the booking BEFORE the edit; it pauses at its Stripe read while
@@ -502,6 +539,8 @@ async function mintFullPriceIntent(): Promise<string> {
     expect(reloadB.body.chargedAmountCents).toBe(PRICE_CENTS);
     const resultA = await reloadA!;
     expect(resultA.status).toBe(409);
+    // The booking IS payable: the member is told their credit waits, not "no longer payable".
+    expect(resultA.body).toMatchObject({ code: "CREDIT_ELECTION_NOT_APPLIED", error: expect.stringMatching(/Another card payment/) });
     expect((await money()).appliedRows).toBe(0);
 
     // Tab B's full-price intent captures: the election was never spent under it.
@@ -511,6 +550,66 @@ async function mintFullPriceIntent(): Promise<string> {
     const state = await money();
     expectPaidOnce(state, { cardCents: PRICE_CENTS, creditCents: 0 });
     expect(state.appliedRows).toBe(0);
+  }, 60_000);
+
+  it("TWO TABS mint different amounts off one pointer: each gets its own intent, and the price is still paid once", async () => {
+    const oldIntent = await mintFullPriceIntent();
+    const frozenNow = new Date();
+    let reloadA: Awaited<ReturnType<typeof payStep>> | null = null;
+    // Tab B read the booking before the edit and pauses at its Stripe read;
+    // meanwhile the edit lands and tab A spends the credit and mints at $150.
+    fake.beforeRead = {
+      intentId: oldIntent,
+      run: async () => {
+        await editToApplyCredit();
+        reloadA = await payStep();
+        vi.setSystemTime(new Date(frozenNow.getTime() + 60_000));
+      },
+    };
+    const reloadB = await payStep().finally(() => vi.setSystemTime(frozenNow));
+    expect(reloadA!.status).toBe(200);
+    expect(reloadA!.body.chargedAmountCents).toBe(PRICE_CENTS - ELECTION_CENTS);
+    // Same pointer, different amount: B gets its own intent, not a 500.
+    expect(reloadB.status, JSON.stringify(reloadB.body)).toBe(200);
+    expect(reloadB.body.chargedAmountCents).toBe(PRICE_CENTS);
+    expect(reloadB.body.paymentIntentId).not.toBe(reloadA!.body.paymentIntentId);
+
+    // B's full-price intent captures: the spent credit goes back.
+    const staleIntent = reloadB.body.paymentIntentId as string;
+    capture(staleIntent);
+    await deliverSucceededWebhook(staleIntent);
+    expectPaidOnce(await money(), { cardCents: PRICE_CENTS, creditCents: 0 });
+  }, 60_000);
+
+  it("A FENCE with nothing to give back is never consulted: an ordinary credit-reduced capture settles", async () => {
+    await mintFullPriceIntent();
+    await editToApplyCredit();
+    const reload = await payStep();
+    const newIntent = reload.body.paymentIntentId as string;
+    await raiseDeallocationFence();
+
+    capture(newIntent);
+    await deliverSucceededWebhook(newIntent);
+    expectPaidOnce(await money(), { cardCents: PRICE_CENTS - ELECTION_CENTS, creditCents: ELECTION_CENTS });
+  }, 60_000);
+
+  it("A FENCE beside excess credit holds it for an operator and still settles the captured payment", async () => {
+    const oldIntent = await mintFullPriceIntent();
+    await editToApplyCredit();
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await creditElection.consumeStoredCreditElection(tx, { bookingId: BOOKING_ID, format: CLUB_FORMAT_TEST });
+    });
+    await raiseDeallocationFence();
+
+    capture(oldIntent);
+    await deliverSucceededWebhook(oldIntent);
+    const state = await money();
+    expect(state.booking.status).toBe("PAID");
+    expect(state.payment).toMatchObject({ amountCents: PRICE_CENTS, creditAppliedCents: 0, status: "SUCCEEDED" });
+    // Not given back automatically: still spent, and nothing tells the member otherwise.
+    expect(state.ledgerApplied).toBe(ELECTION_CENTS);
+    expect(await unspentCreditReports()).toEqual([]);
   }, 60_000);
 
   it("THE SETTLE DOOR: a full-price capture landing on a booking whose election was already spent gives the credit back", async () => {
@@ -528,9 +627,14 @@ async function mintFullPriceIntent(): Promise<string> {
     await deliverSucceededWebhook(oldIntent);
 
     // The card paid the whole price, so the credit was not spent: it is back,
-    // through one give-back row, and the member is told.
+    // through one give-back row, and the member is told it was RETURNED.
     expectPaidOnce(await money(), { cardCents: PRICE_CENTS, creditCents: 0 });
     expect(await unspentCreditReports()).toEqual([ELECTION_CENTS]);
+    const report = await prisma.auditLog.findFirstOrThrow({
+      where: { action: creditElection.UNAPPLIED_CREDIT_ELECTION_AUDIT_ACTION, targetId: BOOKING_ID },
+      select: { details: true },
+    });
+    expect(JSON.parse(report.details ?? "{}")).toMatchObject({ creditReturnedCents: ELECTION_CENTS });
     // A replay of the same event gives nothing back twice.
     await deliverSucceededWebhook(oldIntent);
     expectPaidOnce(await money(), { cardCents: PRICE_CENTS, creditCents: 0 });
