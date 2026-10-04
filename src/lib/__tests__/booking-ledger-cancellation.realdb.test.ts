@@ -398,6 +398,8 @@ function reversedTwice(all: Awaited<ReturnType<typeof lines>>): boolean {
       finalPriceCents: 20_000,
       appliedCreditCents: 0,
       restoresToMemberLedger: true,
+      // #3809: no edit ran through the give-back, so main's uncapped credit (`INV-PAY-115`).
+      capAppliedCredit: false,
       days: 30,
       policy: [{ daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 2_000 }],
       refundMethod: "card",

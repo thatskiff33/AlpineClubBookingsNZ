@@ -32,6 +32,8 @@ const mocks = vi.hoisted(() => {
   prismaTransaction: vi.fn(),
   // #3639: the paid path writes its CANCELLED event inside the claim.
   txBookingEventCreate: vi.fn().mockResolvedValue({}),
+  // #3809: whether an edit of the booking ran through the give-back; none by default.
+  txBookingModificationFindFirst: vi.fn().mockResolvedValue(null),
   calculateRefundAmount: vi.fn(),
   calculateAppliedCreditRestore: vi.fn(),
   daysUntilDate: vi.fn(),
@@ -351,6 +353,7 @@ describe("cancelBooking credit refunds", () => {
           );
           const mockTx = {
             bookingEvent: { create: mocks.txBookingEventCreate },
+            bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
@@ -378,6 +381,8 @@ describe("cancelBooking credit refunds", () => {
               aggregate: mocks.txMemberCreditAggregate,
             },
             manualRefundTask: {
+              // #3835: the reviews settled before the cancel, frozen on its event.
+              findMany: vi.fn().mockResolvedValue([]),
               findFirst: mocks.txManualRefundTaskFindFirst,
               create: mocks.txManualRefundTaskCreate,
             },
@@ -2504,7 +2509,7 @@ describe("cancelBooking credit refunds", () => {
         expect.stringContaining("beyond what its policy keeps"),
       );
       const snapshot = mocks.txBookingEventCreate.mock.calls.find((call) => call[0].data.type === "CANCELLED")?.[0].data.snapshot;
-      expect(snapshot.ledger).toEqual({ keptCents: 8000, policyKeptCents: 5000, keptBeyondPolicyCents: 3000, appliedCreditCents: 3000, creditRestoredCents: 0 });
+      expect(snapshot.ledger).toEqual({ keptCents: 8000, policyKeptCents: 5000, keptBeyondPolicyCents: 3000, appliedCreditCents: 3000, creditRestoredCents: 0, appliedCreditBaseCents: 0 });
       // The member's narrative figure is untouched.
       expect(snapshot.retainedAmountCents).toBe(5000);
     });
@@ -2575,7 +2580,11 @@ describe("cancelBooking credit refunds", () => {
             retainedAmountCents: 10000,
             changeFeeCents: 0,
             // #3611: what the ledger was told the club keeps, frozen with the decision.
-            ledger: { keptCents: 10000, policyKeptCents: 10000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0 },
+            ledger: { keptCents: 10000, policyKeptCents: 10000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0, appliedCreditBaseCents: 0 },
+            // #3835: what the tier ran on, and the reviews settled before it.
+            tierRefundMethod: "card",
+            refundableBaseCents: 10000,
+            completedReviewTaskIds: [],
           },
         },
       });
@@ -2606,7 +2615,10 @@ describe("cancelBooking credit refunds", () => {
         settledAmountCents: 5000,
         retainedAmountCents: 5000,
         changeFeeCents: 0,
-        ledger: { keptCents: 5000, policyKeptCents: 5000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0 },
+        ledger: { keptCents: 5000, policyKeptCents: 5000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0, appliedCreditBaseCents: 0 },
+        tierRefundMethod: "card",
+        refundableBaseCents: 10000,
+        completedReviewTaskIds: [],
       });
       expect(
         mocks.txBookingEventCreate.mock.invocationCallOrder[0]
@@ -2636,6 +2648,8 @@ describe("cancelBooking credit refunds", () => {
           refundMethod: "credit",
           settledAmountCents: 5000,
           retainedAmountCents: 5000,
+          // #3835: the CREDIT tier is what this cancel ran on.
+          tierRefundMethod: "credit",
         })
       );
       expectNoPostCommitCancelledEvent();
@@ -3189,9 +3203,50 @@ describe("cancelBooking credit refunds", () => {
 
       expect(result.status).toBe(200);
       // Restore still ran at 100% (no override), but the captured payment's
-      // status is preserved and no invoice-clearing note is queued.
+      // status is preserved and no invoice-clearing note is queued. #3809: no
+      // edit of this booking ran through the give-back, so it keeps main's
+      // full restore (owner decision of 4 Oct 2026: never short).
       expect(mocks.restoreCreditFromBooking).toHaveBeenCalledTimes(1);
       expect(mocks.restoreCreditFromBooking.mock.calls[0]).toHaveLength(3);
+      expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+      expect(
+        mocks.enqueueXeroModificationCreditNoteOperation
+      ).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION #3809 (F2): tiers the credit of a fully-REFUNDED captured payment reduced through the give-back, without flattening it", async () => {
+      mocks.txBookingModificationFindFirst.mockResolvedValueOnce({ id: "mod_give_back" });
+      const booking = neverCapturedBooking(
+        { finalPriceCents: 7000 },
+        {
+          amountCents: 10000,
+          refundedAmountCents: 10000,
+          status: "REFUNDED",
+          source: "STRIPE",
+          xeroInvoiceId: "inv_fr2",
+        }
+      );
+      mocks.bookingFindUnique.mockResolvedValueOnce(booking);
+      mocks.txBookingFindUnique.mockResolvedValueOnce(booking);
+      // Capture evidence is the STRIPE refund mirror; leave the ledger empty.
+      mocks.txPaymentTransactionFindFirst.mockResolvedValueOnce(null);
+      mocks.restoreCreditFromBooking.mockResolvedValue(2000);
+
+      const result = await cancelBooking(
+        "bk_nc",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        CLUB_FORMAT_TEST,
+        "card"
+      );
+
+      expect(result.status).toBe(200);
+      // #3809 (F2): money was captured, so the credit is tiered as the paid
+      // path tiers it - the override is the tier's figure - while the captured
+      // payment's status is preserved and no invoice-clearing note is queued.
+      expect(mocks.restoreCreditFromBooking).toHaveBeenCalledTimes(1);
+      expect(mocks.restoreCreditFromBooking.mock.calls[0]).toHaveLength(4);
       expect(mocks.paymentUpdate).not.toHaveBeenCalled();
       expect(
         mocks.enqueueXeroModificationCreditNoteOperation
@@ -3869,6 +3924,9 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
           );
           const mockTx = {
             bookingEvent: { create: mocks.txBookingEventCreate },
+            // #3835: the reviews settled before the cancel, frozen on its event.
+            manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
+            bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
@@ -4033,6 +4091,9 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
           );
           const mockTx = {
             bookingEvent: { create: mocks.txBookingEventCreate },
+            // #3835: the reviews settled before the cancel, frozen on its event.
+            manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
+            bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
@@ -4324,6 +4385,9 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
           );
           const mockTx = {
             bookingEvent: { create: mocks.txBookingEventCreate },
+            // #3835: the reviews settled before the cancel, frozen on its event.
+            manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
+            bookingModification: { findFirst: mocks.txBookingModificationFindFirst },
             $executeRaw: mocks.txExecuteRaw,
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so

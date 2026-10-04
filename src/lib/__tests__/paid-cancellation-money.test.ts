@@ -40,6 +40,8 @@ function money(over: {
       finalPriceCents: over.finalPriceCents,
       appliedCreditCents: over.appliedCreditCents ?? payment.creditAppliedCents,
       restoresToMemberLedger: over.restoresToMemberLedger ?? true,
+      // #3809: no edit ran through the give-back, so main's uncapped credit (`INV-PAY-115`).
+      capAppliedCredit: false,
       days: 10,
       policy: over.policy ?? FIFTY,
       refundMethod: "card",

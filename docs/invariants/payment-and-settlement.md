@@ -1623,10 +1623,11 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   credit coming back, once** (#3791, owner decisions of 2 October 2026; Xero
   per the orchestrator's reading of decision 1).
   - **One give-back.** `giveBackAppliedCredit` (`member-credit.ts`) is the
-    clamp's mechanism and the share's: the credit-ledger lock, the
+    clamp's mechanism, the share's and, since #3809, a credit-paid booking's
+    price reduction's (`INV-MOD-011`): the credit-ledger lock, the
     deallocation fence, a positive `BOOKING_APPLIED` row (a review's names the
-    booking in `sourceBookingId`) and the deallocation of an internet-banking
-    invoice's excess credit. The share lowers the mirror a cancellation tiers.
+    booking in `sourceBookingId`) and the deallocation of an invoice's excess
+    allocated credit (bank transfer or card, #3809). The share lowers the mirror a cancellation tiers.
   - **Xero agrees with the app**, for an issued invoice: invoice less its
     reduction notes is the booking's price, Xero's due is the app's owed, and
     the member's Xero credit, counting noteless rows minted when spent, is the
@@ -1636,18 +1637,47 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     scoped to the review task and wait for the deallocation, failing for an
     operator retry when it FAILED. A captured payment's share keeps the
     document rule.
-  - **The ledger posts what was credited**, none at zero; on a covered booking
+  - **The ledger posts what was returned**, none at zero; on a covered booking
     the give-back beyond the re-price is an agreed reduction no re-price
     reverses (`agreedGiveBackKey`).
   - **Unpaid** - credit short of the price beyond earlier review give-backs:
     no more given back than the booking's review re-prices removed.
-  - **Cancelled first**: netted cumulatively against the restore from figures
-    frozen at the cancellation, the tier re-run and refused, task OPEN, where
-    it does not reproduce the restore. $200 credit-paid, $50 share: $200 back
-    at 100%, $105 at 50% less $20, either order.
+  - **Cancelled first**, every route (#3835): netted cumulatively against
+    the cancellation, by what its CANCELLED event froze (tier method, bases,
+    `INV-PAY-115`'s cap, earlier reviews); refused, task OPEN, where the tier
+    does not reproduce it. Untiered money goes first; the capture gets only
+    its part. $200, $50 share: $200, $105, $50 back at 100%, 50% less $20, 0%.
   - Home: `edit-financial-review-account-credit.ts`,
-    `dispatchEditReviewAccountCreditXero`; proven by
-    `edit-financial-review-races.realdb.test.ts`.
+    `edit-financial-review-cancel-netting.ts`; proven by
+    `edit-financial-review-{races,captured-cancel}.realdb.test.ts`.
+
+
+## INV-PAY-115
+
+- **A cancellation tiers applied credit capped at what the booking is now worth,
+  money paid first - for a booking reduced through #3809's settlement** (owner
+  decision A: credit-paid members are treated the same as card-paid ones). The
+  card slice's base caps money paid at price plus change fee
+  (`cancelRefundableBaseCents`); the credit slice is what the same cap leaves of
+  the applied credit (`cancelAppliedCreditBaseCents`), tiered by
+  `calculateAppliedCreditRestore`. $200 credit-paid, $5 back on a $50 reduction
+  at 50% less $20, then a cancel at the same tier restores $55: $60 in all, the
+  card-paid figure.
+  - **Only new reductions** (owner decision, 4 Oct 2026, "Cap new reductions
+    only"): the cap applies where an edit's history row records the settlement
+    of applied credit (`bookingReducedThroughCreditGiveBack`,
+    `BookingModification.newData`). A booking reduced before that release tiers
+    all the credit still applied, as before: never short, and up to about $20
+    more than an all-card member at partial tiers. No data change.
+  - **A captured payment the cancel cannot refund** - a reduction refunded the
+    card whole - has its credit tiered the same way, with no card slice, not
+    restored whole (`refundedPaymentCreditRestore`), on a booking reduced
+    through that settlement. Before it, or never captured, it is restored
+    whole, as on main.
+  - The executed cancel, the member's preview and the review's netting
+    (`INV-PAY-113`) use one base; the CANCELLED event freezes it
+    (`appliedCreditBaseCents`), capped or not. Credit kept above the cap counts
+    as kept beyond the policy (design §5.1).
 
 ## INV-PAY-069
 
