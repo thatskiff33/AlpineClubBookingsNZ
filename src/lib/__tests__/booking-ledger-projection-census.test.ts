@@ -762,6 +762,8 @@ describe("#3791's review closures: a line is judged by what the member was credi
     });
     expect(findings(both)).toEqual(["SOURCE_DRIFT:line-2"]);
     expect(findings({ ...both, recoveryOperations: [debt(2_500), debt(1_000, sibling.id)] })).toEqual([]);
+    // Nor is a second live stand-in of the same task made by the refund the first used.
+    expect(findings(row({ ...both, lines: new Ledger().post([share(2_500), { ...share(2_500), postingKey: `${share(2_500).postingKey}-again` }], LATER).lines, tasks: [task] }))).toEqual(["SOURCE_DRIFT:line-2"]);
   });
 
   it("before a cancellation the stand-in is the typed share, whatever rows the booking holds", () => {
