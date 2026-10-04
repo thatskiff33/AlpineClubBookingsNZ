@@ -7,7 +7,7 @@
  * owner's Approve. GitHub never complains about a pattern that matches nothing —
  * it simply stops gating — so a renamed money module would silently leave the
  * gate while the file still read as complete. This census makes that loud, and
- * holds the file to the two surfaces the owner scoped it to.
+ * holds the file to the three surfaces the owner scoped it to.
  *
  * `git ls-files` is the instrument, because CODEOWNERS is evaluated against the
  * files a pull request changes, which are tracked files. It reads the index, so
@@ -55,6 +55,9 @@ const ALLOWED_PREFIXES = [
   "/patches/",
   "/scripts/ci/dependency-mitigation.mjs",
   "/scripts/ci/audit-dependencies.mjs",
+  // #3853: required-workflow and npm install configuration must be reviewed.
+  "/.github/workflows/",
+  "/.npmrc",
 ];
 const MAX_OWNED_OUTSIDE_SRC_LIB = 40;
 
@@ -125,7 +128,7 @@ const tracked = execSync("git ls-files", { cwd: ROOT, encoding: "utf8", maxBuffe
   .map((file) => file.trim())
   .filter(Boolean);
 
-describe(".github/CODEOWNERS covers the money surface, the dependency-audit gate, and nothing stale (#3341, #3843)", () => {
+describe(".github/CODEOWNERS covers the money surface, dependency-audit and CI-config gates, and nothing stale (#3341, #3843, #3853)", () => {
   it("anchors every pattern and names the one owner", () => {
     const malformed = rules()
       .filter((rule) => !rule.pattern.startsWith("/") || rule.owners.join(" ") !== OWNER)
@@ -183,7 +186,7 @@ describe(".github/CODEOWNERS covers the money surface, the dependency-audit gate
       .map((rule) => `line ${rule.line}: ${rule.pattern}`);
     expect(
       outside,
-      "CODEOWNERS owns the money surface and the dependency-audit gate only. A pattern outside these prefixes needs the prefix added to ALLOWED_PREFIXES with the owner decision that widens it, in the same pull request.",
+      "CODEOWNERS owns the money surface, dependency-audit gate, and CI configuration boundary only. A pattern outside these prefixes needs the prefix added to ALLOWED_PREFIXES with the owner decision that widens it, in the same pull request.",
     ).toEqual([]);
     const patterns = rules().map((rule) => matcher(rule.pattern));
     const ownedOutside = tracked.filter(
@@ -210,6 +213,23 @@ describe(".github/CODEOWNERS covers the money surface, the dependency-audit gate
     }
     expect(owned("pnpm-workspace.yaml"), "the owner decided NOT to own pnpm-workspace.yaml").toBe(false);
     expect(owned("pnpm-lock.yaml")).toBe(false);
+  });
+
+  it("owns every CI workflow and npm configuration, but not package.json (#3853)", () => {
+    const owned = (file: string) => rules().some((rule) => matcher(rule.pattern).test(file));
+    const workflows = tracked.filter(
+      (file) => file.startsWith(".github/workflows/") && /\.ya?ml$/.test(file),
+    );
+    expect(workflows.length).toBeGreaterThan(0);
+    for (const file of [
+      ...workflows,
+      ".github/workflows/any-future-workflow.yml",
+      ".github/workflows/any/future-workflow.yaml",
+      ".npmrc",
+    ]) {
+      expect(owned(file), `${file} must be code-owned, or a PR can weaken CI security unreviewed`).toBe(true);
+    }
+    expect(owned("package.json"), "#3853 deliberately leaves package.json unowned").toBe(false);
   });
 
   it("owns every module known to move money, including every money seam", () => {

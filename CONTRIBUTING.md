@@ -371,8 +371,10 @@ since the owner's
 the dependency-audit security gate — `dependency-mitigations.d/`, `patches/`,
 `scripts/ci/dependency-mitigation.mjs` and `scripts/ci/audit-dependencies.mjs`
 — because a mitigation record can turn the required `Dependency audit` check
-green. `pnpm-workspace.yaml` is deliberately not owned, so ordinary dependency
-bumps need no Approve.
+green. Since #3853, every `.github/workflows/**` file and `.npmrc` are also
+owned because they control required CI gates and install behaviour. `package.json`,
+`pnpm-workspace.yaml`, and `pnpm-lock.yaml` are deliberately not owned, so
+ordinary dependency bumps need no Approve.
 
 **Applied by the owner on 2 Oct 2026** (owner decisions of 26 Sep 2026 on
 #3341: code-owner review, option A; stale approvals dismissed on push). Step 4's
