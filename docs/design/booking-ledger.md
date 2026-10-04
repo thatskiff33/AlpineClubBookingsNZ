@@ -393,7 +393,7 @@ the database makes — and its lines cascade with it.)
 | Hand-back completed on the `local-allocation` route — an IB/cash cancellation (`CANCELLED_BOOKING_HAND_BACK`, #3529), or a review refund the club sends back itself — on a payment that is not a card payment | `BANK_REFUND` (−), `method = INTERNET_BANKING` by #3529's wording decision (`refundMethodForEditReviewRoute`, `INV-PAY-101`), `postedByMemberId` = the officer. A legacy task on a card capture posts none: that money goes back on the card and posts `CARD_REFUND` from its refund row | `REVIEW_TASK` | `manual-refund-task-resolution.ts` |
 | Applied credit restored on cancellation (`INV-PAY-019`) | `CREDIT_ISSUED` (−) for exactly what was restored — **not** a reversal of the `CREDIT_APPLIED` line, because the restore is tiered (see above) | `CANCELLATION` (the booking) | `restoreCreditFromBooking`, through `syncBookingLedgerCredits` |
 | A group organiser's settlement paid — card capture, or the combined Internet Banking invoice's inbound reconcile (#3854) | per child it paid: the child's confirmation lines (§5.1, fenced per booking), and its share — the child's own `finalPriceCents`, never a split of the total — as `CARD_CAPTURE` (`method = CARD`) or `BANK_RECEIPT` (`method = INTERNET_BANKING`), keyed `groupSettlementShareKey`; sum or nothing against what the settlement collected | `GROUP_SETTLEMENT` / settlement id | `settleConfirmedChildrenAndNotify`, in the claim that flips the children PAID, under its `lock(1)` and the children's lodge keys, through `postGroupSettlementLedgerLines` |
-| Organiser cancel's frozen mirror plan (`refundPlan`, #1236): a card plan frozen before #3653, or an Internet Banking settlement's | `CARD_REFUND` or `BANK_REFUND` (−) for the child's planned share, beside the mirror that records it, keyed `groupSettlementRefundKey` | `GROUP_SETTLEMENT` / settlement id | the organiser cancel's per-child claim, and the plan's recovery replay (`executeGroupSettlementRefundPlan`) for a refund that failed inline — one key, so only one posts |
+| Organiser cancel's frozen mirror plan (`refundPlan`, #1236): a card plan frozen before #3653, or an Internet Banking settlement's | `CARD_REFUND` or `BANK_REFUND` (−) for the child's planned share, beside the mirror that records it, keyed `groupSettlementRefundKey` — only where this settlement's share is on the child's ledger, so a child settled before #3854 waits for the back-post to post share, refund and kept together | `GROUP_SETTLEMENT` / settlement id | the organiser cancel's per-child claim, and the plan's recovery replay (`executeGroupSettlementRefundPlan`) for a refund that failed inline — one key, so only one posts |
 | A refund out of the combined card payment (#3653: an edit's reduction, a joiner's own cancel, the organiser cancel's per-child debt) | `CARD_REFUND` (−) from the child's `PaymentRefund` row, and its reversal if Stripe later fails it — the convergence above | `PAYMENT_REFUND` | `processOrganiserChildRefundOperation` and `reconcilePendingOrganiserChildRefunds`, through `syncBookingLedgerSettlements` in the transaction that writes the row |
 | Hold-expiry release / stale-invoice clearing note (`INV-PAY-017`) | no settlement line — no money moved. The charge side is §5.1's cancellation row: the stay's reversals, and no fee, since nothing was kept; the Xero note is a rendering of `owed(b)` going to zero | — | — |
 
@@ -476,7 +476,7 @@ finalPriceCents        == Σ GUEST_NIGHT + PROMOTION + GROUP_DISCOUNT + adjusted
 owed(b)                == 0                                                          (cancelled, once its refunds have posted)
 amountCents            == Σ CARD_CAPTURE + BANK_RECEIPT + CASH_RECORDED     (gross of refunds — today's meaning)
 creditAppliedCents     == Σ CREDIT_APPLIED (a give-back is a negative line; a restore is CREDIT_ISSUED and leaves it alone) — EXCEPT where the Xero allocation repair capped the mirror at the payment amount; C4 classifies that, on evidence the money adds up
-refundedAmountCents    == -Σ CARD_REFUND
+refundedAmountCents    == -Σ CARD_REFUND − Σ BANK_REFUND anchored GROUP_SETTLEMENT   (an IB group plan's refund raises the column in the same transaction, #3854)
 changeFeeCents         == Σ CHANGE_FEE
 uncollected ask        == max(0, owed(b)) while the payment's latest, unwithdrawn ADDITIONAL row is not captured, else 0   (not cancelled)
 owed(b)                == INV-PAY-047's residual + the uncollected ask + issued credit the refunded column never counted − the agreed give-backs the credit rows evidence   (not cancelled, confirmed)
@@ -564,7 +564,15 @@ the census cannot attribute to their tasks (below the review-line paragraph).
 where the ledger is right, and `GROUP_SETTLEMENT_OFF_LEDGER` the group-settled
 children no poster reaches — a child with no transaction, refund or credit row
 of its own and no credit, refund or change-fee figure, whose money moved only
-through the organiser's settlement. The owner releases a finding from the gate by listing it, to the
+through the organiser's settlement. Since #3854 a newly settled child holds
+lines, so the class is history only: its `GROUP_SETTLEMENT` share is checked
+against the child's payment and a plan refund against the frozen plan
+(`booking-ledger-projection-census-group.ts`); a child settled before #3854
+that holds only a #3653 refund line is `NOT_CONFIRMED_ON_LEDGER` coverage; a
+pre-#3653 plan's one group retry still in flight is the child's planned share
+as `IN_FLIGHT_REFUND`; and an organiser cancel freezes no kept figure, so its
+`CANCELLATION_FEE` is not drift-checked (it is the share less the plan's
+refunds, which the back-post re-derives from the rows). The owner releases a finding from the gate by listing it, to the
 cent, in an acknowledgement file the census reads; a figure that has moved since
 is reported stale and still holds.
 
