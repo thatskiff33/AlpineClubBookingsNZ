@@ -48,7 +48,6 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import logger from "@/lib/logger";
 import { getClubFormat } from "@/lib/club-format-settings";
-import type { ClubFormat } from "@/lib/club-format";
 import { formatCents } from "@/lib/utils";
 import {
   assertNoAppliedCreditDeallocationFence,
