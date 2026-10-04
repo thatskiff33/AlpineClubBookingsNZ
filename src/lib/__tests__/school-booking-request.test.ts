@@ -1124,6 +1124,26 @@ describe("approveSchoolBookingRequest", () => {
     expect(prisma.hutLeaderAssignment.create).not.toHaveBeenCalled();
   });
 
+  it("still replays an already-converted request when the default lodge has moved (#3819 review)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({
+        status: BookingRequestStatus.PRICED,
+        priceCents: 20000,
+        convertedBookingId: "booking-1",
+        convertedMemberId: "school-member",
+      }) as never,
+    );
+    let defaultReads = 0;
+    vi.mocked(prisma.lodge.findFirst).mockImplementation((async () => ({
+      id: defaultReads++ === 0 ? "lodge-1" : "lodge-9",
+    })) as never);
+
+    await expect(
+      approveSchoolBookingRequest({ requestId: "req-school", adminMemberId: "admin-1" }),
+    ).resolves.toMatchObject({ type: "approved", bookingId: "booking-1" });
+    expect(prisma.booking.create).not.toHaveBeenCalled();
+  });
+
   it("keeps teacher guests and school contact people without hut-leader PINs when the lodge does not tick teachers (#3416, #3819)", async () => {
     mockedFindUnique.mockResolvedValue(schoolRequest() as never);
     vi.mocked(prisma.lodgeSettings.findUnique).mockResolvedValue({

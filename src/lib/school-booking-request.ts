@@ -1017,14 +1017,6 @@ export async function approveSchoolBookingRequest(input: {
       const bookingLodgeId = expectedHeldBookingId
         ? expectedHeldLodgeId!
         : request.lodgeId ?? (await getDefaultLodgeId(tx));
-      if (bookingLodgeId !== hutLeaderPolicyLodgeId) {
-        // Only a default-lodge change between the read above and this lock can
-        // land here. Retrying reads the right lodge's hut-leader setting.
-        throw new BookingRequestError(
-          "The club's default lodge changed while this request was being approved; try again",
-          409,
-        );
-      }
       await acquireLodgeCapacityLock(tx, bookingLodgeId);
 
       const lockedRequest = await tx.bookingRequest.findUnique({
@@ -1068,6 +1060,16 @@ export async function approveSchoolBookingRequest(input: {
           memberGuestNotificationRows: [] as MemberGuestAddNotificationRow[],
           displacedMemberGuestIds: [] as string[],
         };
+      }
+
+      // #3819: after the replay check, so an idempotent replay still replays.
+      // Only a default-lodge change between the hut-leader setting read and
+      // this lock can land here. Retrying reads the right lodge's setting.
+      if (bookingLodgeId !== hutLeaderPolicyLodgeId) {
+        throw new BookingRequestError(
+          "The club's default lodge changed while this request was being approved; try again",
+          409,
+        );
       }
 
       // Any edit to the approval snapshot (including attaching/detaching a
