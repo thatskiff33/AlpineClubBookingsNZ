@@ -18,8 +18,9 @@ import { addAction, addFinding, addResolvedInXeroFinding, buildRetryAction } fro
  * engine (`allocateAppliedCreditForBooking`), which allocates only what the
  * ledger still holds unallocated and stamps it, so a re-run finds nothing.
  *
- * Not on a cancelled booking: its cancel cleared the invoice with a note, and
- * an allocation beside it would over-credit. While the booking's invoice
+ * Not on a cancelled booking: the cancelled-open-invoice arm
+ * (`CANCELLED_BOOKING_OPEN_INVOICE`) clears that invoice with a note, and an
+ * allocation beside it would over-credit. While the booking's invoice
  * operation is unfinished its own replay allocates, so that operation is
  * retried rather than a second engine run queued beside it.
  */

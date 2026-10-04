@@ -414,7 +414,22 @@ let observerClient: PrismaClient;
       expect(allocatedCents()).toBe(priceCents);
       expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(appCreditCents);
       expect(xeroCreditCents() + (await notelessRestoredCents()), "(iii) the member's Xero credit + the noteless restore = the app's").toBe(appCreditCents);
-      expect(await repairCodes()).not.toContain("UNALLOCATED_APPLIED_CREDIT");
+      const codes = await repairCodes();
+      expect(codes).not.toContain("UNALLOCATED_APPLIED_CREDIT");
+      expect(codes).not.toContain("CANCELLED_BOOKING_OPEN_INVOICE");
+    });
+
+    it("an invoice raised before #3836 and then cancelled is left to the cancelled-open-invoice arm's clearing note, never allocated beside it", async () => {
+      await creditOnlyCardBooking();
+
+      await cancel();
+
+      const codes = await repairCodes();
+      expect(codes).toContain("CANCELLED_BOOKING_OPEN_INVOICE");
+      expect(codes).not.toContain("UNALLOCATED_APPLIED_CREDIT");
+      // With that note: Xero owes nothing, and the floating note is the member's restored credit.
+      expect(PRICE_CENTS - PRICE_CENTS - allocatedCents()).toBe(await owed());
+      expect(xeroCreditCents()).toBe(await credit.getMemberCreditBalance(MEMBER_ID));
     });
 
     it("FORCES the lock order and keeps the provider outside it: the engine queues on the member's credit-ledger key holding no row lock, and no ledger key is held during a Xero write", async () => {
