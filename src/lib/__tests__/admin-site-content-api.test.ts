@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   siteContentFindUnique: vi.fn(),
   siteContentUpsert: vi.fn(),
   auditLogCreate: vi.fn(),
+  revalidatePublicPageContent: vi.fn(),
   buildStructuredAuditLogCreateArgs: vi.fn((event) => ({ data: event })),
   getAuditRequestContext: vi.fn(() => ({
     id: "req-1",
@@ -31,6 +32,10 @@ vi.mock("@/lib/session-guards", async () => ({
 vi.mock("@/lib/audit", () => ({
   buildStructuredAuditLogCreateArgs: mocks.buildStructuredAuditLogCreateArgs,
   getAuditRequestContext: mocks.getAuditRequestContext,
+}));
+
+vi.mock("@/lib/public-content-revalidation", () => ({
+  revalidatePublicPageContent: mocks.revalidatePublicPageContent,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -276,6 +281,25 @@ describe("PUT /api/admin/site-content", () => {
         }),
       }),
     );
+  });
+
+  it("clears the stored public pages after the audit write (#3852)", async () => {
+    mocks.auth.mockResolvedValue(adminSession);
+    const response = await PUT(
+      putRequest({ key: "FOOTER_QUICK_LINKS", contentHtml: "<p>Links</p>" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.revalidatePublicPageContent).toHaveBeenCalledTimes(1);
+    expect(
+      mocks.auditLogCreate.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.revalidatePublicPageContent.mock.invocationCallOrder[0]);
+  });
+
+  it("does not clear the public pages when the save is refused", async () => {
+    mocks.auth.mockResolvedValue(contentViewerSession);
+    await PUT(putRequest({ key: "FOOTER_BLURB", contentHtml: "<p>Hi</p>" }));
+    expect(mocks.revalidatePublicPageContent).not.toHaveBeenCalled();
   });
 
   it("strips event-handler attributes on write", async () => {
