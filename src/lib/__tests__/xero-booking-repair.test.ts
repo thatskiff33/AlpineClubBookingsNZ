@@ -2307,6 +2307,15 @@ describe("runBookingXeroRepair", () => {
     expect(bookingReport.findings.map((finding) => finding.code)).toContain("BLOCKED_BY_XERO_OPERATION");
   });
 
+  it("MUTATION (#3836 H1): a partial invoice operation nothing can retry (its email failed) will not run again, so the clearing note does not wait for it", async () => {
+    const partialEmail = makePrimaryInvoiceCreateOperation({ id: "op_invoice_partial", status: "PARTIAL", requestPayload: { queueType: "BOOKING_INVOICE", bookingId: "booking_1" } });
+    const deps = createDependencies({ bookings: [creditOnlyCardBooking({ status: "CANCELLED" })], operations: [partialEmail], ...unallocated });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    expect(report.passes[0].bookings[0].actions.map((action) => action.key)).toContain("queue:cancelled-open-invoice:booking_1");
+  });
+
   it("MUTATION (#3836 H1): with nothing unfinished, the cancelled credit-only booking's invoice is cleared as before", async () => {
     const deps = createDependencies({ bookings: [creditOnlyCardBooking({ status: "CANCELLED" })], operations: [makePrimaryInvoiceCreateOperation()], ...unallocated });
 
