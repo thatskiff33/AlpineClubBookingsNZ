@@ -1,5 +1,7 @@
 import "server-only";
 
+import { BookingStatus, ManualRefundTaskKind } from "@prisma/client";
+import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import {
   recordShortEditReviewChargeInvoice,
   restateEditReviewChargeSupplementaryInvoice,
@@ -37,6 +39,70 @@ export function refundMethodForEditReviewRoute(
     default:
       return "card";
   }
+}
+
+/**
+ * #3880: THE INVOICE A REFUND ON A CANCELLED BOOKING IS NOTED AGAINST, or null.
+ * A `CANCELLED_BOOKING_HAND_BACK` (#3529), and an edit financial review with its
+ * `BookingModification` anchor on a booking already CANCELLED. Both read the
+ * booking's primary invoice, since `hasIssuedXeroInvoice` is false for every
+ * cancelled booking; no invoice (a cash-settled booking) is no note, as a note
+ * against no invoice is a permanently failing outbox row. Every other kind is
+ * null and keeps its leg.
+ */
+export function cancelledBookingRefundInvoiceId(task: {
+  kind: ManualRefundTaskKind;
+  reviewContext: unknown;
+  booking: { status: BookingStatus; payment: { xeroInvoiceId: string | null } | null };
+}): string | null {
+  const anchoredReviewOfCancelled =
+    task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW &&
+    task.booking.status === BookingStatus.CANCELLED &&
+    Boolean(parseEditFinancialReviewContext(task.reviewContext)?.bookingModificationId);
+  return task.kind === ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK || anchoredReviewOfCancelled
+    ? (task.booking.payment?.xeroInvoiceId ?? null)
+    : null;
+}
+
+/**
+ * #3880: A REVIEW'S CARD REFUND OR BANK-TRANSFER HAND-BACK ON A CANCELLED
+ * BOOKING takes the document the paid cancellation's own card refund takes
+ * (`INV-SSOT`): a refund credit note on the payment through
+ * `enqueueXeroRefundCreditNoteOperation`, unallocated and settled by its own
+ * refund payment from the card clearing or bank-transfer refund account
+ * (`INV-PAY-101`), so the invoice stays exactly as the cancellation left it.
+ * Sized to what this review actually sent back - the netted capture part
+ * (#3835), never the typed share - and keyed on the task, so sibling reviews
+ * are a note each and a replay is the same one. The applied-credit part given
+ * back beside it takes no document: like the cancellation's own restore it is
+ * a noteless credit row, minted a note when spent (#2717).
+ */
+async function queueCancelledBookingReviewRefundNote({
+  bookingId,
+  taskId,
+  actingMemberId,
+  route,
+}: {
+  bookingId: string;
+  taskId: string;
+  actingMemberId: string;
+  route: Extract<EditReviewSettlementRoute, { kind: "stripe-refund" | "local-allocation" }>;
+}): Promise<void> {
+  if (route.refundCents <= 0) return;
+  await enqueueXeroRefundCreditNoteOperation(route.paymentId, route.refundCents, {
+    createdByMemberId: actingMemberId,
+    refundMethod: refundMethodForEditReviewRoute(route) === "internet-banking" ? "internet-banking" : "card",
+    reviewTaskId: taskId,
+  })
+    .then(async (queued) => {
+      if (queued.queueOperationId) await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+    })
+    .catch((err) =>
+      logger.error(
+        { err, bookingId, taskId, refundCents: route.refundCents },
+        "Failed to queue the Xero refund note for a completed review's refund on a cancelled booking",
+      ),
+    );
 }
 
 /**
@@ -115,7 +181,8 @@ export async function dispatchEditReviewXeroSettlement({
   taskId: string;
   /**
    * The booking's primary Xero invoice id when the task closed is a
-   * `CANCELLED_BOOKING_HAND_BACK`, else null. The hand-back leg reads THIS
+   * `CANCELLED_BOOKING_HAND_BACK` or an anchored review of a cancelled booking
+   * (`cancelledBookingRefundInvoiceId`, #3880), else null. The hand-back leg reads THIS
    * rather than `hasIssuedXeroInvoice`, which is false for a CANCELLED booking
    * by construction and would gate the note shut for the only kind of booking
    * that raises one. Null for a cash-settled booking (#2262) too, which is the
@@ -156,6 +223,18 @@ export async function dispatchEditReviewXeroSettlement({
    * Best-effort and after the commit, matching every other caller: a Xero outage
    * must not undo a completion whose money has already moved.
    */
+  // #3880: a review's refund on a CANCELLED booking. Its invoice is closed, so
+  // the edit's own leg below would raise nothing (`hasIssuedXeroInvoice` is
+  // false); the refund takes the cancellation's refund note instead.
+  if (
+    cancellationHandBackInvoiceId !== null &&
+    (route?.kind === "stripe-refund" || route?.kind === "local-allocation") &&
+    route.bookingModificationId !== null
+  ) {
+    await queueCancelledBookingReviewRefundNote({ bookingId, taskId, actingMemberId, route });
+    return;
+  }
+
   const isCharge = route?.kind === "additional-charge";
   // Captured outside the dispatch closure: `isCharge` is a boolean and does not
   // narrow `route` inside a `.then`.

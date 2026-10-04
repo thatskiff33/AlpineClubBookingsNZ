@@ -807,6 +807,14 @@ export async function enqueueXeroRefundCreditNoteOperation(
      * for a note raised after the fact. Omitted, the note is dated today.
      */
     documentDate?: string;
+    /**
+     * #3880: the edit financial review whose refund on a CANCELLED booking this
+     * note records. Its key carries the task (`reviewTaskKeyParts`), so sibling
+     * reviews' equal refunds are a note each and a replay of one is the same
+     * note; and a bank-transfer payment is noted per refund and capped by its
+     * coverage, as a card is, rather than once per payment.
+     */
+    reviewTaskId?: string;
   }
 ) {
   // Optional transaction client (#1357) so callers (e.g. the Internet Banking
@@ -868,7 +876,8 @@ export async function enqueueXeroRefundCreditNoteOperation(
   let noteAmountCents = refundAmountCents;
   let watermarkCents = refundAmountCents;
 
-  if (payment.source === PaymentSource.STRIPE) {
+  const stepped = payment.source === PaymentSource.STRIPE || Boolean(options?.reviewTaskId);
+  if (stepped) {
     // Stripe payments can be refunded in several steps, and each step needs
     // its own credit note for the still-uncovered delta. The cumulative total
     // a refund note may cover is the provider-backed CASH evidence (#2902,
@@ -942,8 +951,9 @@ export async function enqueueXeroRefundCreditNoteOperation(
     "payment",
     paymentId,
     "refund-credit-note",
-    payment.source === PaymentSource.STRIPE ? watermarkCents : noteAmountCents,
-    payment.source === PaymentSource.STRIPE ? "v2" : "v1"
+    stepped ? watermarkCents : noteAmountCents,
+    stepped ? "v2" : "v1",
+    ...reviewTaskKeyParts(options?.reviewTaskId)
   );
 
   // #3635: a non-Stripe payment issues one refund, so the resolved create for
