@@ -51,7 +51,7 @@ function Harness({
       validate={validate}
       multiPromoCodes={multiPromoCodes}
       ownCodes={[{ code: "MINE", detail: "10% off" }]}
-      guestGroups={[{ guestName: "Sam Guest", codes: [{ code: "SAMFREE", detail: "3 free nights per booking" }] }]}
+      guestGroups={[{ key: "bg-sam", holders: "Sam Guest", codes: [{ code: "SAMFREE", detail: "3 free nights per booking" }] }]}
       guestLabel={(index) => `Guest ${index + 1}`}
     />
   );
@@ -64,7 +64,7 @@ describe("PromoCodeList", () => {
 
   it("groups a guest's chip under their name and says it covers that guest only", async () => {
     render(<Harness />);
-    const group = screen.getByRole("group", { name: "Sam Guest's promo codes" });
+    const group = screen.getByRole("group", { name: "Promo codes held by Sam Guest" });
     const chip = screen.getByRole("button", {
       name: "Apply SAMFREE — 3 free nights per booking, applies to Sam Guest only",
     });
@@ -122,6 +122,88 @@ describe("PromoCodeList", () => {
     expect(screen.queryByRole("button", { name: /Apply SAMFREE/ })).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/promo code/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Move MINE/ })).not.toBeInTheDocument();
+  });
+
+  // C4 review (correctness 2): a removal the server refuses must not release
+  // the codes the booking already holds.
+  it("keeps every code and reads out the refusal when the codes left would not price", async () => {
+    const refuseRemoval = vi.fn(async (entries: PromoCodeListEntry[]): Promise<PromoListValidation> =>
+      entries.length === 1
+        ? { ok: false, error: "B: already covered by an earlier code" }
+        : { ok: true, applied: entries.map((entry) => result(entry.code, -1000)) },
+    );
+    const onChange = vi.fn();
+    render(
+      <PromoCodeList
+        applied={[result("A", -1000), result("B", -1000)]}
+        onChange={onChange}
+        validate={refuseRemoval}
+        multiPromoCodes
+        ownCodes={[]}
+        guestGroups={[]}
+        guestLabel={(index) => `Guest ${index + 1}`}
+      />,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove A" }));
+    });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByText("B: already covered by an earlier code")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("A was not removed. B: already covered by an earlier code");
+  });
+
+  it("refuses the same code twice in the shared duplicate wording", async () => {
+    render(<Harness initial={[result("MINE", -1000)]} />);
+    fireEvent.change(screen.getByPlaceholderText("Add another promo code"), { target: { value: " mine " } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(await screen.findByText("MINE: The same promo code was entered more than once.")).toBeInTheDocument();
+    expect(acceptAll).not.toHaveBeenCalled();
+  });
+
+  it("hands a working-bee discount back with the codes when the last code is removed", async () => {
+    const onChange = vi.fn();
+    const workParty = { ...result("", -500), code: null, workPartyEvent: { id: "e", name: "Bee", discountPercent: 50 } };
+    render(
+      <PromoCodeList
+        applied={[workParty, result("A", -1000)]}
+        onChange={onChange}
+        validate={acceptAll}
+        multiPromoCodes
+        ownCodes={[]}
+        guestGroups={[]}
+        guestLabel={(index) => `Guest ${index + 1}`}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Remove A" }));
+    expect(onChange).toHaveBeenCalledWith([workParty]);
+  });
+
+  // C4 review (a11y 3): focus is never dropped to the page.
+  describe("focus", () => {
+    it("moves to the applied code's Remove button, in single-code mode too where the entry box goes", async () => {
+      render(<Harness multiPromoCodes={false} />);
+      const chip = screen.getByRole("button", { name: "Apply MINE — 10% off" });
+      chip.focus();
+      fireEvent.click(chip);
+      const remove = await screen.findByRole("button", { name: "Remove MINE" });
+      await waitFor(() => expect(document.activeElement).toBe(remove));
+    });
+
+    it("moves to the next code's Remove button after a removal, else the previous one, else the entry box", async () => {
+      render(<Harness initial={[result("A", -1000), result("B", -1000), result("C", -1000)]} />);
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Remove B" }));
+      });
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Remove C" })));
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Remove C" }));
+      });
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Remove A" })));
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Remove A" }));
+      });
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByPlaceholderText("Enter promo code")));
+    });
   });
 
   it("applies nothing until the booker chooses", () => {

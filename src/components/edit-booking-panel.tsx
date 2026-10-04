@@ -36,6 +36,7 @@ import {
 import { countNightsDateOnly, parseDateOnly } from "@/lib/date-only";
 import { promoChangeNotAppliedHeading } from "@/lib/promo-change-not-applied";
 import { type PromoResult } from "@/components/promo-code-input";
+import { promoCodeListEntries } from "@/components/promo-code-list-client";
 import {
   hostingCoverageMutationSignature,
   readHostingCoverageOverridePrompt,
@@ -1081,10 +1082,7 @@ export function EditBookingPanel({
   function handlePromoListChange(next: PromoResult[]) {
     if (promoLocked) return;
     setAppliedPromoList(next);
-    setPromoAction({
-      type: "list",
-      codes: next.map((promo) => ({ code: promo.code!, guestIndexes: promo.promoGuestIndexes })),
-    });
+    setPromoAction({ type: "list", codes: promoCodeListEntries(next) });
   }
 
   /**

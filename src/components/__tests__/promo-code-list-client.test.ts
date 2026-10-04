@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createRequestPromoFields,
+  guestPromoChipGroups,
   validatePromoCodeList,
 } from "@/components/promo-code-list-client";
 import { promoActionPayload } from "@/components/edit-booking/hooks/use-promo-selection";
@@ -54,7 +55,7 @@ describe("promoActionPayload", () => {
   it("binds an existing guest by id and an added guest by its request position, per code", () => {
     expect(
       promoActionPayload(
-        { type: "list", codes: [{ code: "KEEP" }, { code: "PICK", guestIndexes: [0, 2] }] },
+        { type: "list", codes: [{ code: "KEEP" }, { code: "PICK", promoGuestIndexes: [0, 2] }] },
         [{ id: "bg-1" }, { id: "bg-2" }],
       ),
     ).toEqual({
@@ -121,5 +122,112 @@ describe("validatePromoCodeList", () => {
         guests: [],
       }),
     ).resolves.toEqual({ ok: false, error: "B: Already covered by an earlier code" });
+  });
+
+  it("sends an edit preview against the booking, with each existing guest's row, so stored consent counts", async () => {
+    const fetchMock = stubPreview({ valid: true, codes: [{ code: "A", valid: true }] });
+    await validatePromoCodeList({
+      entries: [{ code: "A" }],
+      checkIn: "2026-08-01",
+      checkOut: "2026-08-03",
+      guests: [
+        { ageTier: "ADULT", isMember: true, memberId: "m1", bookingGuestId: "bg-1" },
+        { ageTier: "ADULT", isMember: true, memberId: "m2" },
+      ],
+      bookingId: "booking-1",
+    });
+    const sent = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(sent).toMatchObject({ bookingId: "booking-1", forBookingEdit: true });
+    expect(sent.guests).toEqual([
+      { ageTier: "ADULT", isMember: true, memberId: "m1", bookingGuestId: "bg-1" },
+      { ageTier: "ADULT", isMember: true, memberId: "m2" },
+    ]);
+  });
+
+  it("never sends a guest row id without a booking (the create wizard)", async () => {
+    const fetchMock = stubPreview({ valid: true, codes: [{ code: "A", valid: true }] });
+    await validatePromoCodeList({
+      entries: [{ code: "A" }],
+      checkIn: "2026-08-01",
+      checkOut: "2026-08-03",
+      guests: [{ ageTier: "ADULT", isMember: true, bookingGuestId: "bg-1" }],
+    });
+    const sent = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(sent).not.toHaveProperty("bookingId");
+    expect(sent).not.toHaveProperty("forBookingEdit");
+    expect(sent.guests[0]).not.toHaveProperty("bookingGuestId");
+  });
+
+  it("prices codes after a working bee and puts the working bee's own share first (D-3813-3)", async () => {
+    const fetchMock = stubPreview({
+      valid: true,
+      workPartyEvent: { id: "event-1", name: "Spring bee", discountPercent: 50 },
+      codes: [{ code: "A", valid: true, promoAdjustmentCents: -1000, discountCents: 1000 }],
+      discountCents: 3500,
+      promoAdjustmentCents: -3500,
+      totalPriceCents: 10000,
+      finalPriceCents: 6500,
+    });
+    const outcome = await validatePromoCodeList({
+      entries: [{ code: "A" }],
+      checkIn: "2026-08-01",
+      checkOut: "2026-08-03",
+      guests: [],
+      lodgeId: "lodge-1",
+      workPartyEventId: "event-1",
+    });
+    const sent = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(sent).toMatchObject({ workPartyEventId: "event-1", codes: [{ code: "A" }] });
+    expect(outcome).toMatchObject({
+      ok: true,
+      applied: [
+        { code: null, workPartyEvent: { id: "event-1" }, promoAdjustmentCents: -2500, discountCents: 2500 },
+        { code: "A", promoAdjustmentCents: -1000 },
+      ],
+    });
+  });
+});
+
+describe("guestPromoChipGroups", () => {
+  const names: Record<string, string> = { "bg-sam": "Sam", "bg-alex": "Alex", "bg-sam2": "Sam" };
+  const nameFor = (ref: string) => names[ref] ?? null;
+  const chip = (code: string) => ({ code, benefit: "3 free nights per booking" });
+
+  it("offers a code held by several staying guests once, labelled with every holder", () => {
+    expect(
+      guestPromoChipGroups({
+        groups: [
+          { guestRef: "bg-sam", codes: [chip("SHARED"), chip("SAMONLY")] },
+          { guestRef: "bg-alex", codes: [chip("SHARED")] },
+        ],
+        nameFor,
+        ownCodes: [],
+      }),
+    ).toEqual([
+      { key: "bg-sam|bg-alex", holders: "Sam and Alex", codes: [{ code: "SHARED", detail: "3 free nights per booking" }] },
+      { key: "bg-sam", holders: "Sam", codes: [{ code: "SAMONLY", detail: "3 free nights per booking" }] },
+    ]);
+  });
+
+  it("leaves a code the booker holds too to the booker's own chip, so no guest chip says 'only'", () => {
+    expect(
+      guestPromoChipGroups({ groups: [{ guestRef: "bg-sam", codes: [chip("MINE")] }], nameFor, ownCodes: ["mine"] }),
+    ).toEqual([]);
+  });
+
+  it("keys groups by guest reference, so two guests with one name never collide", () => {
+    const groups = guestPromoChipGroups({
+      groups: [
+        { guestRef: "bg-sam", codes: [chip("ONE")] },
+        { guestRef: "bg-sam2", codes: [chip("TWO")] },
+      ],
+      nameFor,
+      ownCodes: [],
+    });
+    expect(groups.map((group) => group.key)).toEqual(["bg-sam", "bg-sam2"]);
+  });
+
+  it("drops a reference the surface cannot name", () => {
+    expect(guestPromoChipGroups({ groups: [{ guestRef: "gone", codes: [chip("X")] }], nameFor, ownCodes: [] })).toEqual([]);
   });
 });

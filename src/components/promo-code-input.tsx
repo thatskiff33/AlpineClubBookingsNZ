@@ -28,6 +28,24 @@ export interface PromoResult {
   appliesTo?: string;
 }
 
+/** A party guest as the promo widgets name them. */
+export type PromoPartyGuest = { firstName?: string; lastName?: string; isMember?: boolean };
+
+/** A party guest's name, or "Guest N" (1-based) where none is known yet. */
+export function promoGuestName(guest: PromoPartyGuest | undefined, index: number): string {
+  const name = [guest?.firstName, guest?.lastName].filter(Boolean).join(" ").trim();
+  return name || `Guest ${index + 1}`;
+}
+
+/**
+ * THE label of a "choose promo guests" checkbox (#2266, #3492; `INV-SSOT-001`):
+ * the guest's name, marked "(member)" for a member. Every promo widget that
+ * asks the booker which guests a code covers draws it from here.
+ */
+export function promoGuestCheckboxLabel(guest: PromoPartyGuest | undefined, index: number): string {
+  return `${promoGuestName(guest, index)}${guest?.isMember ? " (member)" : ""}`;
+}
+
 interface PromoCodeInputProps {
   // NZ date-only lodge nights (`yyyy-MM-dd`), #2474 — never a local-midnight
   // `Date` re-serialised here.
@@ -187,12 +205,6 @@ export function PromoCodeInput({
     setError("");
   }
 
-  function guestLabel(index: number) {
-    const guest = guests[index];
-    const name = [guest?.firstName, guest?.lastName].filter(Boolean).join(" ").trim();
-    const label = name || `Guest ${index + 1}`;
-    return `${label}${guest?.isMember ? " (member)" : ""}`;
-  }
 
   return (
     <div className="space-y-2">
@@ -257,7 +269,7 @@ export function PromoCodeInput({
                   onChange={(event) => toggleGuestIndex(index, event.target.checked)}
                   className="rounded border-input"
                 />
-                <span>{guestLabel(index)}</span>
+                <span>{promoGuestCheckboxLabel(guests[index], index)}</span>
               </label>
             ))}
           </div>

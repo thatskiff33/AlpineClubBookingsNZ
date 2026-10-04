@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PromoResult } from "@/components/promo-code-input";
 import type { Guest, NewGuest } from "@/components/edit-booking/types";
+import type { PromoCodeListEntry } from "@/components/promo-code-list-client";
 
 /** What this edit will do to the booking's promo code. */
 export type PromoAction =
@@ -16,7 +17,7 @@ export type PromoAction =
   // in the booker's order (D-3813-2), sent as `promoCodes` — while the club's
   // `multiPromoCodes` switch is on. A code without guest indexes that the
   // booking already carries is kept and re-priced; positional indexes as above.
-  | { type: "list"; codes: Array<{ code: string; guestIndexes?: number[] }> };
+  | { type: "list"; codes: PromoCodeListEntry[] };
 
 type PromoGuestTargetFields = { promoGuestIds?: string[]; promoAddedGuestIndexes?: number[] };
 
@@ -64,7 +65,7 @@ export function promoActionPayload(
     return {
       promoCodes: promoAction.codes.map((entry) => ({
         code: entry.code,
-        ...promoGuestTargets(entry.guestIndexes, remainingGuests),
+        ...promoGuestTargets(entry.promoGuestIndexes, remainingGuests),
       })),
     };
   }
@@ -172,7 +173,7 @@ export function usePromoBeneficiaryReset({
       promoAction.type === "new"
         ? Boolean(promoAction.guestIndexes?.length)
         : promoAction.type === "list" &&
-          promoAction.codes.some((entry) => entry.guestIndexes?.length);
+          promoAction.codes.some((entry) => entry.promoGuestIndexes?.length);
     if (!targetsGuests) {
       appliedPromoGuestSignatureRef.current = null;
       return;

@@ -2,7 +2,12 @@
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
+import {
+  PromoCodeInput,
+  promoGuestCheckboxLabel,
+  promoGuestName,
+  type PromoResult,
+} from "@/components/promo-code-input";
 import { formatSignedCents } from "@/lib/utils";
 import type { PromoAction } from "@/components/edit-booking/hooks/use-promo-selection";
 import type {
@@ -13,8 +18,14 @@ import type {
   QuoteResult,
 } from "@/components/edit-booking/types";
 import { useClubFormat } from "@/components/club-format-provider";
-import { PromoCodeList, type GuestPromoChipGroup } from "@/components/promo-code-list";
-import { useGuestPromoCodes, validatePromoCodeList } from "@/components/promo-code-list-client";
+import { PromoCodeList } from "@/components/promo-code-list";
+import { PromoCodeChips } from "@/components/promo-code-chips";
+import {
+  guestPromoChipGroups,
+  guestPromoCodesProblem,
+  useGuestPromoCodes,
+  validatePromoCodeList,
+} from "@/components/promo-code-list-client";
 
 type StoredPromoLine = PromoInfo & { amountCents: number };
 
@@ -109,18 +120,18 @@ export function PromoCodeCard({
 }) {
   const format = useClubFormat();
   // #3492: the booking's staying guest members' codes (the server reads the
-  // guests itself and offers only family or accepted guests), and the club's
-  // `multiPromoCodes` switch, which decides which editor this card shows.
+  // guests itself and offers only family or confirmed guests, D-3492-4), and the
+  // club's `multiPromoCodes` switch, which decides which editor this card shows.
   const guestCodes = useGuestPromoCodes({ bookingId });
   const guestNameById = new Map(
-    remainingGuests.map((guest) => [guest.id, [guest.firstName, guest.lastName].filter(Boolean).join(" ")]),
+    remainingGuests.map((guest, index) => [guest.id, promoGuestName(guest, index)]),
   );
-  const guestGroups: GuestPromoChipGroup[] = guestCodes.groups.flatMap((group) => {
-    const guestName = guestNameById.get(group.guestRef);
-    return guestName
-      ? [{ guestName, codes: group.codes.map((chip) => ({ code: chip.code, detail: chip.benefit })) }]
-      : [];
+  const guestGroups = guestPromoChipGroups({
+    groups: guestCodes.groups,
+    nameFor: (guestRef) => guestNameById.get(guestRef) ?? null,
+    ownCodes: availablePromoCodes.map((pc) => pc.code),
   });
+  const lookupProblem = guestPromoCodesProblem(guestCodes.status);
   const partyGuests = [
     ...remainingGuests.map((g) => ({
       firstName: g.firstName,
@@ -128,6 +139,8 @@ export function PromoCodeCard({
       ageTier: g.ageTier,
       isMember: g.isMember,
       memberId: g.memberId ?? undefined,
+      // The row this guest already is: the preview reads its stored consent.
+      bookingGuestId: g.id,
       ...(perGuestDatesEnabled && !isInProgressEdit ? getExistingGuestRange(g) : {}),
     })),
     ...addedGuests.map((g) => ({
@@ -152,6 +165,24 @@ export function PromoCodeCard({
       ? quote.promoValidation.error
       : null;
 
+  // #3492 review (correctness 5): until the switch is answered no promo control
+  // is offered at all, so nothing can be staged on the one-code card and then
+  // carried, unseen, into the list editor when the answer turns out to be "on".
+  if (guestCodes.status === "loading" || guestCodes.status === "idle") {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Promo Codes</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p role="status" className="text-sm text-muted-foreground">
+            Checking promo codes…
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
   if (guestCodes.multiPromoCodes === true) {
     const storedByCode = new Map(stored.map((entry) => [entry.code, entry]));
     const shownByCode = new Map(shownList.map((entry) => [entry.code, entry]));
@@ -170,11 +201,7 @@ export function PromoCodeCard({
             multiPromoCodes
             ownCodes={availablePromoCodes.map((pc) => ({ code: pc.code, detail: pc.description }))}
             guestGroups={guestGroups}
-            guestLabel={(index) => {
-              const guest = partyGuests[index];
-              const name = [guest?.firstName, guest?.lastName].filter(Boolean).join(" ").trim();
-              return `${name || `Guest ${index + 1}`}${guest?.isMember ? " (member)" : ""}`;
-            }}
+            guestLabel={(index) => promoGuestCheckboxLabel(partyGuests[index], index)}
             // The edit's own quote (modify-quote) prices the whole list in
             // order; the amount shown is the summary's, never a per-code guess.
             showAmounts={false}
@@ -193,7 +220,9 @@ export function PromoCodeCard({
                     guests: partyGuests,
                     lodgeId,
                     forMemberId,
-                    forBookingEdit: true,
+                    // An edit preview, against this booking's stored guest
+                    // consent: a confirmed guest's code covers their nights.
+                    bookingId,
                   })
                 : { ok: true as const, applied: [] };
               if (!checked.ok) return checked;
@@ -219,10 +248,12 @@ export function PromoCodeCard({
     );
   }
 
-  // #3828: with the switch off (or not yet answered), a several-code booking's
+  // #3828: with the switch off (or unanswerable), a several-code booking's
   // codes are shown read-only — the one-code controls below would release
   // every other code.
-  if (hasSeveralPromoCodes({ promoLines })) return <SeveralPromoCodesCard promoLines={promoLines} />;
+  if (hasSeveralPromoCodes({ promoLines })) {
+    return <SeveralPromoCodesCard promoLines={promoLines} lookupProblem={lookupProblem} />;
+  }
 
   return (
     <Card>
@@ -281,52 +312,14 @@ export function PromoCodeCard({
           promoAction.type === "new" ||
           (!promo && promoAction.type === "keep")) && (
           <div className="space-y-3">
-            {availablePromoCodes.length > 0 && !appliedNewPromo && (
-              <div className="app-callout-brand p-4">
-                <p className="mb-2 text-sm font-medium text-foreground">
-                  You have promo codes available:
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {availablePromoCodes.map((pc) => (
-                    <button
-                      key={pc.code}
-                      type="button"
-                      onClick={() => onPrefillCode(pc.code)}
-                      className="app-chip-brand font-mono"
-                    >
-                      {pc.code}
-                      {pc.description && (
-                        <span className="font-sans font-normal text-brand-charcoal">
-                          — {pc.description}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </div>
+            {!appliedNewPromo && (
+              <PromoCodeChips
+                ownCodes={availablePromoCodes.map((pc) => ({ code: pc.code, detail: pc.description }))}
+                guestGroups={guestGroups}
+                onPick={(code) => onPrefillCode(code)}
+              />
             )}
-            {guestGroups.length > 0 && !appliedNewPromo && (
-              <div className="app-callout-brand space-y-2 p-4">
-                <p className="text-sm font-medium text-foreground">
-                  Your guests have promo codes. Each one covers only that guest&apos;s nights:
-                </p>
-                {guestGroups.map((group) =>
-                  group.codes.map((chip) => (
-                    <button
-                      key={`${group.guestName}:${chip.code}`}
-                      type="button"
-                      onClick={() => onPrefillCode(chip.code)}
-                      className="app-chip-brand mr-2 font-mono"
-                    >
-                      {chip.code}
-                      <span className="font-sans font-normal text-brand-charcoal">
-                        {chip.detail ? ` — ${chip.detail}` : ""} (applies to {group.guestName} only)
-                      </span>
-                    </button>
-                  )),
-                )}
-              </div>
-            )}
+            {lookupProblem && <p className="text-sm text-muted-foreground">{lookupProblem}</p>}
             <PromoCodeInput
               // #2770 (INV-MOD-026): this widget is on an EDIT, so the
               // validator must consult the club's `applyToEdits` switch. Left
@@ -378,8 +371,15 @@ export function hasSeveralPromoCodes(booking: { promoLines?: ReadonlyArray<unkno
  */
 export function SeveralPromoCodesCard({
   promoLines,
+  lookupProblem = null,
 }: {
   promoLines: ReadonlyArray<PromoInfo & { amountCents: number }> | undefined;
+  /**
+   * #3492: the switch could not be checked (a throttled or failed lookup), so
+   * whether the codes could be changed here is unknown — said as such, never as
+   * "can't be changed", which is false where the switch is on.
+   */
+  lookupProblem?: string | null;
 }) {
   const format = useClubFormat();
   if (!promoLines || !hasSeveralPromoCodes({ promoLines })) return null;
@@ -401,11 +401,18 @@ export function SeveralPromoCodesCard({
             </li>
           ))}
         </ul>
-        <p className="text-sm text-muted-foreground">
-          This booking has more than one promo code, and codes on a booking like this
-          can&apos;t be added, removed or swapped here. Any other change you make
-          re-prices them.
-        </p>
+        {lookupProblem ? (
+          <p className="text-sm text-muted-foreground">
+            {lookupProblem} Until then this booking&apos;s promo codes are shown
+            here without changes; any other change you make re-prices them.
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            This booking has more than one promo code, and codes on a booking like this
+            can&apos;t be added, removed or swapped here. Any other change you make
+            re-prices them.
+          </p>
+        )}
       </CardContent>
     </Card>
   );

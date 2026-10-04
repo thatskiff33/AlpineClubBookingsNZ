@@ -9,16 +9,13 @@ import { useClubFormat } from "@/components/club-format-provider";
 import type { PromoResult } from "@/components/promo-code-input";
 import {
   promoCodeListEntries,
+  type GuestPromoChipGroup,
   type PromoCodeListEntry,
   type PromoListValidation,
 } from "@/components/promo-code-list-client";
+import { PromoCodeChips, type PromoChipOption } from "@/components/promo-code-chips";
+import { DUPLICATE_PROMO_CODE_MESSAGE, normalizePromoCodeInput } from "@/lib/promo-code-list-rules";
 import { formatSignedCents } from "@/lib/utils";
-
-/** A chip the booker can opt into: the code and one line saying what it gives. */
-export type PromoChipOption = { code: string; detail: string | null };
-
-/** One guest's chips, drawn under that guest's name ("applies to Sam only"). */
-export type GuestPromoChipGroup = { guestName: string; codes: PromoChipOption[] };
 
 /**
  * The promo codes on one booking, in the booker's order (#3492, epic #3813 C4).
@@ -36,8 +33,14 @@ export type GuestPromoChipGroup = { guestName: string; codes: PromoChipOption[] 
  *   moved. A move the server refuses (a later code left covering nothing) is
  *   reverted and the refusal read out.
  * - **The whole list is priced at once** by `validate`, so every amount shown
- *   is the amount in this order; a change the server refuses leaves the list as
- *   it was.
+ *   is the amount in this order; a change the server refuses — an add, a move
+ *   or a removal — leaves the list as it was, and says why.
+ * - **Focus is never dropped.** After a code is applied focus moves to its
+ *   Remove button (the chip or the entry box it came from may be gone); after
+ *   a removal, to the next code's Remove button, else the previous one, else
+ *   the entry box, else the list itself.
+ * - A working-bee discount on the list (D-3813-3) is not one of the booker's
+ *   codes: it is never drawn here and always handed back with the codes.
  */
 export function PromoCodeList({
   applied,
@@ -79,9 +82,14 @@ export function PromoCodeList({
     chosen: number[];
   } | null>(null);
   const [focusAfterMove, setFocusAfterMove] = useState<{ code: string; direction: "up" | "down" } | null>(null);
+  const [focusAfterChange, setFocusAfterChange] = useState<{ remove: string | null } | null>(null);
   const moveButtons = useRef(new Map<string, HTMLButtonElement | null>());
+  const removeButtons = useRef(new Map<string, HTMLButtonElement | null>());
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   const codes = applied.filter((promo) => promo.code && !promo.workPartyEvent);
+  const otherDiscounts = applied.filter((promo) => !promo.code || promo.workPartyEvent);
   const appliedSet = new Set(codes.map((promo) => promo.code!));
   const canAddMore = !disabled && (multiPromoCodes || codes.length === 0);
   const reorderable = multiPromoCodes && codes.length > 1;
@@ -94,6 +102,16 @@ export function PromoCodeList({
     moveButtons.current.get(`${focusAfterMove.code}:${direction}`)?.focus();
     setFocusAfterMove(null);
   }, [focusAfterMove, codes]);
+
+  useEffect(() => {
+    if (!focusAfterChange) return;
+    const target =
+      (focusAfterChange.remove ? removeButtons.current.get(focusAfterChange.remove) : null) ??
+      inputRef.current ??
+      containerRef.current;
+    target?.focus();
+    setFocusAfterChange(null);
+  }, [focusAfterChange]);
 
   function appliesToMap(extra?: { code: string; appliesTo?: string }) {
     const map = new Map<string, string>();
@@ -113,13 +131,13 @@ export function PromoCodeList({
   }
 
   async function addCode(rawCode: string, appliesTo?: string, promoGuestIndexes?: number[]) {
-    const next = rawCode.toUpperCase().trim();
+    const next = normalizePromoCodeInput(rawCode);
     if (!next) {
       setError("Please enter a promo code");
       return;
     }
     if (appliedSet.has(next)) {
-      setError(`${next} is already on this booking.`);
+      setError(`${next}: ${DUPLICATE_PROMO_CODE_MESSAGE}`);
       return;
     }
     const outcome = await run(
@@ -142,6 +160,7 @@ export function PromoCodeList({
     setSelection(null);
     setCode("");
     onChange(outcome.applied);
+    setFocusAfterChange({ remove: next });
     setAnnouncement(
       codes.length === 0
         ? `${next} applied.`
@@ -150,23 +169,29 @@ export function PromoCodeList({
   }
 
   async function removeCode(target: string) {
+    const index = codes.findIndex((promo) => promo.code === target);
     const remaining = codes.filter((promo) => promo.code !== target);
+    // Where focus goes once the button it was on is gone: the code that takes
+    // this one's place, else the one before it, else the entry box.
+    const neighbour = remaining[index]?.code ?? remaining[index - 1]?.code ?? null;
     if (remaining.length === 0) {
-      onChange([]);
+      onChange(otherDiscounts);
       setAnnouncement(`${target} removed.`);
+      setFocusAfterChange({ remove: null });
       return;
     }
     const outcome = await run(promoCodeListEntries(remaining));
     if (!outcome.ok) {
-      // The remaining codes no longer price as they did; ask for them again
-      // rather than show amounts the save would not give.
-      onChange([]);
-      setError(`${target} was removed. Please apply your other codes again: ${outcome.error}`);
-      setAnnouncement(`${target} removed. Your other codes need applying again.`);
+      // The codes left would not price as they are: keep the list exactly as it
+      // was — every code the booking holds stays held — and say why, as a
+      // refused move does.
+      setError(outcome.error);
+      setAnnouncement(`${target} was not removed. ${outcome.error}`);
       return;
     }
     onChange(outcome.applied);
     setAnnouncement(`${target} removed.`);
+    setFocusAfterChange({ remove: neighbour });
   }
 
   async function moveCode(index: number, direction: "up" | "down") {
@@ -193,7 +218,12 @@ export function PromoCodeList({
     .filter((group) => group.codes.length > 0);
 
   return (
-    <div className="space-y-3">
+    <div
+      ref={containerRef}
+      tabIndex={-1}
+      aria-label="Promo codes"
+      className="space-y-3 focus:outline-none"
+    >
       <Label htmlFor="promoCode">Promo Code (optional)</Label>
 
       {codes.length > 0 && (
@@ -257,6 +287,9 @@ export function PromoCodeList({
                     </>
                   )}
                   <Button
+                    ref={(node) => {
+                      removeButtons.current.set(promo.code!, node);
+                    }}
                     type="button"
                     variant="ghost"
                     size="sm"
@@ -274,62 +307,19 @@ export function PromoCodeList({
         </div>
       )}
 
-      {canAddMore && ownChips.length > 0 && (
-        <div className="app-callout-brand p-4">
-          <p className="mb-2 text-sm font-medium text-foreground">You have promo codes available:</p>
-          <div className="flex flex-wrap gap-2">
-            {ownChips.map((chip) => (
-              <button
-                key={chip.code}
-                type="button"
-                disabled={busy}
-                onClick={() => addCode(chip.code)}
-                aria-label={`Apply ${chip.code}${chip.detail ? ` — ${chip.detail}` : ""}`}
-                className="app-chip-brand font-mono"
-              >
-                {chip.code}
-                {chip.detail && (
-                  <span className="font-sans font-normal text-brand-charcoal">— {chip.detail}</span>
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {canAddMore && guestChips.length > 0 && (
-        <div className="app-callout-brand space-y-3 p-4">
-          <p className="text-sm font-medium text-foreground">
-            Your guests have promo codes. Each one covers only that guest&apos;s nights:
-          </p>
-          {guestChips.map((group) => (
-            <div key={group.guestName} role="group" aria-label={`${group.guestName}'s promo codes`}>
-              <p className="mb-1 text-sm text-foreground">{group.guestName}</p>
-              <div className="flex flex-wrap gap-2">
-                {group.codes.map((chip) => (
-                  <button
-                    key={chip.code}
-                    type="button"
-                    disabled={busy}
-                    onClick={() => addCode(chip.code, group.guestName)}
-                    aria-label={`Apply ${chip.code}${chip.detail ? ` — ${chip.detail}` : ""}, applies to ${group.guestName} only`}
-                    className="app-chip-brand font-mono"
-                  >
-                    {chip.code}
-                    <span className="font-sans font-normal text-brand-charcoal">
-                      {chip.detail ? ` — ${chip.detail}` : ""} (applies to {group.guestName} only)
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
+      {canAddMore && (
+        <PromoCodeChips
+          ownCodes={ownChips}
+          guestGroups={guestChips}
+          disabled={busy}
+          onPick={(chip, appliesTo) => addCode(chip, appliesTo)}
+        />
       )}
 
       {(canAddMore || (disabled && codes.length === 0)) && (
         <div className="flex gap-2">
           <Input
+            ref={inputRef}
             id="promoCode"
             value={code}
             onChange={(event) => {

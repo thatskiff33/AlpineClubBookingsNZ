@@ -27,11 +27,21 @@ function jsonResponse(data: unknown) {
 type Captured = { url: string; body: Record<string, unknown> };
 let quoteBodies: Captured[] = [];
 let saveBodies: Captured[] = [];
+let validateBodies: Captured[] = [];
 
-/** `multiPromoCodes`: the guest-code lookup's answer; `"pending"` never answers. */
-function installFetch(multiPromoCodes: boolean | "pending") {
+type GuestCodesAnswer = boolean | "pending" | { status: number } | Promise<Response>;
+
+/**
+ * `multiPromoCodes`: the guest-code lookup's answer; `"pending"` never answers;
+ * `{ status }` fails with that status; a promise answers when the test says.
+ */
+function installFetch(
+  multiPromoCodes: GuestCodesAnswer,
+  guests: Array<{ guestRef: string; codes: Array<{ code: string; benefit: string }> }> = [],
+) {
   quoteBodies = [];
   saveBodies = [];
+  validateBodies = [];
   global.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     if (init?.method === "PUT" && url.includes("/modify")) {
@@ -60,7 +70,27 @@ function installFetch(multiPromoCodes: boolean | "pending") {
     }
     if (url.includes("/api/promo-codes/guest-codes")) {
       if (multiPromoCodes === "pending") return new Promise<Response>(() => {});
-      return jsonResponse({ multiPromoCodes, guests: [] });
+      if (multiPromoCodes instanceof Promise) return multiPromoCodes;
+      if (typeof multiPromoCodes === "object") {
+        return new Response(JSON.stringify({ error: "x" }), { status: multiPromoCodes.status });
+      }
+      return jsonResponse({ multiPromoCodes, guests });
+    }
+    if (url.includes("/api/promo-codes/validate")) {
+      const body = JSON.parse(String(init?.body));
+      validateBodies.push({ url, body });
+      return jsonResponse({
+        valid: true,
+        codes: (body.codes as Array<{ code: string }>).map((entry) => ({
+          code: entry.code,
+          valid: true,
+          promoAdjustmentCents: -2000,
+          discountCents: 2000,
+          type: "FREE_NIGHTS",
+        })),
+        totalPriceCents: 12000,
+        finalPriceCents: 10000,
+      });
     }
     if (url.includes("/api/promo-codes/available")) return jsonResponse([]);
     if (url.includes("/api/members/family")) {
@@ -134,7 +164,6 @@ function makeBooking(promo: {
 describe("EditBookingPanel on a several-code booking (#3828)", () => {
   it.each([
     ["the club's multiPromoCodes switch is off", false],
-    ["the switch has not answered yet", "pending"],
   ] as const)("locks the one-code controls and shows the codes read-only when %s", async (_label, mode) => {
     installFetch(mode);
     render(<EditBookingPanel booking={makeBooking(SEVERAL)} onDone={vi.fn()} />);
@@ -148,6 +177,20 @@ describe("EditBookingPanel on a several-code booking (#3828)", () => {
     expect(screen.queryByRole("button", { name: /remove/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /apply/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: /promo/i })).not.toBeInTheDocument();
+  });
+
+  // C4 review (privacy 4): a lookup that could not answer is said as such — the
+  // switch may well be on, so "can't be changed here" would be false.
+  it.each([
+    [429, /Too many requests/],
+    [500, /couldn't check your guests' promo codes/],
+  ] as const)("says the switch could not be checked when the lookup fails with %s", async (status, message) => {
+    installFetch({ status });
+    render(<EditBookingPanel booking={makeBooking(SEVERAL)} onDone={vi.fn()} />);
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(screen.getByText("SPRING10")).toBeInTheDocument();
+    expect(screen.queryByText(/can't be added, removed or swapped here/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /remove/i })).not.toBeInTheDocument();
   });
 
   it("keeps a one-code booking's card as it was", async () => {
@@ -206,5 +249,65 @@ describe("EditBookingPanel on a several-code booking with the switch on (#3492)"
       ]),
     );
     expectNoOneCodeField(quoteBodies);
+  });
+});
+
+// C4 review (correctness 5): until the switch is answered the card offers no
+// promo control, so nothing can be staged on the one-code card and then carried,
+// unseen, into the list editor.
+describe("EditBookingPanel before the multiPromoCodes switch answers (#3492)", () => {
+  it.each([
+    ["a several-code booking", SEVERAL],
+    ["a one-code booking", { promo: { code: "SPRING10", type: "PERCENTAGE", description: null } }],
+  ] as const)("shows %s's promo card as loading, with no control", async (_label, promo) => {
+    installFetch("pending");
+    render(<EditBookingPanel booking={makeBooking(promo)} onDone={vi.fn()} />);
+    expect(await screen.findByText("Checking promo codes…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /remove/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /apply/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/can't be added, removed or swapped here/)).not.toBeInTheDocument();
+  });
+
+  it("opens the list editor with nothing staged once the answer is on", async () => {
+    let answer: (response: Response) => void = () => {};
+    installFetch(new Promise<Response>((resolve) => (answer = resolve)));
+    render(
+      <EditBookingPanel
+        booking={makeBooking({ promo: { code: "SPRING10", type: "PERCENTAGE", description: null } })}
+        onDone={vi.fn()}
+      />,
+    );
+    await screen.findByText("Checking promo codes…");
+    answer(jsonResponse({ multiPromoCodes: true, guests: [] }));
+    expect(await screen.findByRole("button", { name: "Remove SPRING10" })).toBeInTheDocument();
+    for (const { body } of quoteBodies) {
+      expect(body).not.toHaveProperty("removePromoCode");
+      expect(body).not.toHaveProperty("promoCodes");
+    }
+  });
+});
+
+// C4 review (correctness 1, D-3492-4): a confirmed cross-family guest's chip is
+// previewed against the booking's stored consent, so it can be applied.
+describe("EditBookingPanel guest chips with the switch on (#3492)", () => {
+  it("previews a guest's chip against this booking and its guest rows, and stages it", async () => {
+    installFetch(true, [{ guestRef: "g2", codes: [{ code: "BENFREE", benefit: "3 free nights per booking" }] }]);
+    const booking = makeBooking({ promo: null });
+    booking.guests.push({ ...booking.guests[0]!, id: "g2", firstName: "Ben", lastName: "Outside", memberId: "member-ben" });
+    render(<EditBookingPanel booking={booking} onDone={vi.fn()} />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Apply BENFREE — 3 free nights per booking, applies to Ben Outside only",
+      }),
+    );
+    expect(await screen.findByRole("button", { name: "Remove BENFREE" })).toBeInTheDocument();
+    expect(validateBodies).toHaveLength(1);
+    expect(validateBodies[0]!.body).toMatchObject({ bookingId: "bk-3828", forBookingEdit: true });
+    expect((validateBodies[0]!.body.guests as Array<Record<string, unknown>>).map((guest) => guest.bookingGuestId)).toEqual([
+      "g1",
+      "g2",
+    ]);
+    await waitFor(() => expect(quoteBodies.at(-1)?.body.promoCodes).toEqual([{ code: "BENFREE" }]));
   });
 });

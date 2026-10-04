@@ -1,9 +1,18 @@
 "use client";
 
-import { useMemo } from "react";
-import type { PromoResult } from "@/components/promo-code-input";
-import { PromoCodeList, type PromoChipOption } from "@/components/promo-code-list";
-import { useGuestPromoCodes, validatePromoCodeList } from "@/components/promo-code-list-client";
+import { useEffect, useMemo } from "react";
+import {
+  promoGuestCheckboxLabel,
+  promoGuestName,
+  type PromoResult,
+} from "@/components/promo-code-input";
+import { PromoCodeList } from "@/components/promo-code-list";
+import {
+  guestPromoChipGroups,
+  guestPromoCodesProblem,
+  useGuestPromoCodes,
+  validatePromoCodeList,
+} from "@/components/promo-code-list-client";
 import { useClubFormat } from "@/components/club-format-provider";
 import { formatSignedCents } from "@/lib/utils";
 
@@ -17,17 +26,17 @@ type PartyGuest = {
   stayEnd?: string;
 };
 
-function guestName(guest: PartyGuest | undefined, index: number) {
-  const name = [guest?.firstName, guest?.lastName].filter(Boolean).join(" ").trim();
-  return name || `Guest ${index + 1}`;
-}
-
 /**
  * The promo codes of a booking that does not exist yet (#3492): the member
  * wizard's review step and the admin Book-on-Behalf review. Asks the guest-code
  * lookup about the party's member guests (the server keeps only the booker's
- * family — a cross-family guest's codes appear once the booking exists and they
- * have accepted), and prices the list through the several-code preview.
+ * family — a cross-family guest can only be confirmed once the booking exists,
+ * so their codes appear on its edit panel then), and prices the list through
+ * the several-code preview.
+ *
+ * `workPartyEventId` (the wizard, with the club's `multiPromoCodes` switch on):
+ * the working bee the booking also takes, which claims its in-window nights
+ * before any code (D-3813-3), so each code is priced after it.
  */
 export function BookingPromoCodes({
   applied,
@@ -40,6 +49,8 @@ export function BookingPromoCodes({
   ownCodes,
   disabled,
   disabledReason,
+  workPartyEventId,
+  onMultiPromoCodesChange,
 }: {
   applied: PromoResult[];
   onChange: (next: PromoResult[]) => void;
@@ -52,6 +63,9 @@ export function BookingPromoCodes({
   ownCodes: Array<{ code: string; description: string | null }>;
   disabled?: boolean;
   disabledReason?: string;
+  workPartyEventId?: string;
+  /** Told the club's `multiPromoCodes` switch once the lookup answers (null until then). */
+  onMultiPromoCodesChange?: (value: boolean | null) => void;
 }) {
   const guestMemberIds = useMemo(
     () => [...new Set(guests.flatMap((guest) => (guest.memberId ? [guest.memberId] : [])))],
@@ -62,40 +76,46 @@ export function BookingPromoCodes({
       ? { lodgeId, guestMemberIds, ...(forMemberId ? { forMemberId } : {}) }
       : null,
   );
-  const guestGroups = guestCodes.groups.flatMap((group) => {
-    const memberId = guestMemberIds[Number(group.guestRef)];
-    const index = guests.findIndex((guest) => guest.memberId === memberId);
-    if (!memberId || index < 0) return [];
-    return [
-      {
-        guestName: guestName(guests[index], index),
-        codes: group.codes.map((chip): PromoChipOption => ({ code: chip.code, detail: chip.benefit })),
-      },
-    ];
+  useEffect(() => {
+    onMultiPromoCodesChange?.(guestCodes.multiPromoCodes);
+  }, [guestCodes.multiPromoCodes, onMultiPromoCodesChange]);
+  const guestGroups = guestPromoChipGroups({
+    groups: guestCodes.groups,
+    nameFor: (guestRef) => {
+      const memberId = guestMemberIds[Number(guestRef)];
+      const index = memberId ? guests.findIndex((guest) => guest.memberId === memberId) : -1;
+      return index < 0 ? null : promoGuestName(guests[index], index);
+    },
+    ownCodes: ownCodes.map((chip) => chip.code),
   });
+  const problem = guestPromoCodesProblem(guestCodes.status);
 
   return (
-    <PromoCodeList
-      applied={applied}
-      onChange={onChange}
-      multiPromoCodes={guestCodes.multiPromoCodes === true}
-      ownCodes={ownCodes.map((chip) => ({ code: chip.code, detail: chip.description }))}
-      guestGroups={guestGroups}
-      guestLabel={(index) => `${guestName(guests[index], index)}${guests[index]?.isMember ? " (member)" : ""}`}
-      validate={(entries, appliesTo) =>
-        validatePromoCodeList({
-          entries,
-          appliesTo,
-          checkIn,
-          checkOut,
-          guests,
-          lodgeId,
-          forMemberId,
-        })
-      }
-      disabled={disabled}
-      disabledReason={disabledReason}
-    />
+    <>
+      <PromoCodeList
+        applied={applied}
+        onChange={onChange}
+        multiPromoCodes={guestCodes.multiPromoCodes === true}
+        ownCodes={ownCodes.map((chip) => ({ code: chip.code, detail: chip.description }))}
+        guestGroups={guestGroups}
+        guestLabel={(index) => promoGuestCheckboxLabel(guests[index], index)}
+        validate={(entries, appliesTo) =>
+          validatePromoCodeList({
+            entries,
+            appliesTo,
+            checkIn,
+            checkOut,
+            guests,
+            lodgeId,
+            forMemberId,
+            ...(workPartyEventId ? { workPartyEventId } : {}),
+          })
+        }
+        disabled={disabled}
+        disabledReason={disabledReason}
+      />
+      {problem && <p className="text-sm text-muted-foreground">{problem}</p>}
+    </>
   );
 }
 
