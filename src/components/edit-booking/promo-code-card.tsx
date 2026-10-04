@@ -356,8 +356,14 @@ export function PromoCodeCard({
 
 /**
  * #3828: does the booking carry several promo codes? Then the one-code
- * controls never show: `PromoCodeCard` renders #3492's list editor when the
- * club's `multiPromoCodes` switch is on, and `SeveralPromoCodesCard` otherwise.
+ * controls never show: `PromoCodeCard` renders #3492's list editor (which sends
+ * the whole `promoCodes` list) where the club's `multiPromoCodes` switch is on,
+ * and the read-only `SeveralPromoCodesCard` otherwise. Deliberately stricter
+ * than the server's refusal, which ignores a working-bee discount: with one
+ * booker code beside a working-bee discount the server would accept a one-code
+ * swap, but the one-code card cannot show which code is current on such a
+ * booking, so it is withheld there too (the list editor names the working-bee
+ * discount separately and keeps it).
  */
 export function hasSeveralPromoCodes(booking: { promoLines?: ReadonlyArray<unknown> }): boolean {
   return (booking.promoLines?.length ?? 0) > 1;
