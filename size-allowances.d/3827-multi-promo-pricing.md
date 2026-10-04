@@ -18,7 +18,7 @@ reason: the create request accepts the booker's code list beside the legacy sing
   (#3770's shape); the ordering itself lives in booking-create-promo.ts.
 
 file: src/app/api/promo-codes/validate/route.ts
-lines: 516
+lines: 532
 reason: the preview accepts a code list, works out which guests await acceptance
   through the create's own consent planner, and prices its single code through
   the one orchestrator; the several-code half is in promo-codes-preview.ts,
@@ -26,8 +26,9 @@ reason: the preview accepts a code list, works out which guests await acceptance
   PR #3895): an edit preview names its booking (owner-checked through the
   shared `bookingForPromoLookup`, one 404 for unowned and missing) and each
   guest's row, and the guests already on the booking are judged by their stored
-  consent beside the planner's answer for the others; that choice belongs in
-  the one place the preview decides consent.
+  consent beside the planner's answer for the others — a stored row counting
+  only for the member on it, so a borrowed row id cannot make another member
+  present; that choice belongs in the one place the preview decides consent.
 
 file: src/lib/member-guest-consent-service.ts
 lines: 1313

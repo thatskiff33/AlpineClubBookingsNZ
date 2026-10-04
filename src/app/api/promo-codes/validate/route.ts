@@ -180,7 +180,16 @@ export async function POST(req: NextRequest) {
   // #3492: an edit preview judges a guest already on the booking by the consent
   // stored on their row (D-3492-4: a confirmed cross-family guest's code counts),
   // exactly as `modify-quote` does. Unowned or missing: one 404, no difference.
-  let storedConsentByGuestId: Map<string, MemberGuestConsentStatus | null> | null = null;
+  //
+  // A row's stored consent belongs to the MEMBER on that row, never to whatever
+  // member the request names beside its id: it is used only when the row's
+  // member is the request guest's member. Otherwise — a borrowed booker or
+  // family row paired with a stranger's id, a row on another booking, an
+  // unknown id — the guest is judged as a fresh add, the same answer as sending
+  // no row id at all, so the pairing neither widens who counts as present
+  // (D-3492-3/4, D-3813-4) nor tells the caller anything.
+  let storedGuestById: Map<string, { memberId: string | null; consentStatus: MemberGuestConsentStatus | null }> | null =
+    null;
   if (parsed.data.bookingId) {
     const booking = await bookingForPromoLookup({
       bookingId: parsed.data.bookingId,
@@ -191,17 +200,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Booking not found" }, { status: 404 });
     }
     const bookingGuestIds = guests.flatMap((guest) => (guest.bookingGuestId ? [guest.bookingGuestId] : []));
-    storedConsentByGuestId = new Map(
+    storedGuestById = new Map(
       bookingGuestIds.length
         ? (
             await prisma.bookingGuest.findMany({
               where: { bookingId: booking.id, id: { in: bookingGuestIds } },
-              select: { id: true, consentStatus: true },
+              select: { id: true, memberId: true, consentStatus: true },
             })
-          ).map((row) => [row.id, row.consentStatus])
+          ).map((row) => [row.id, { memberId: row.memberId, consentStatus: row.consentStatus }])
         : [],
     );
   }
+  /** The stored row for this guest, only when it is this guest's own member's row. */
+  const storedRowFor = (guest: { bookingGuestId?: string; memberId?: string }) => {
+    const row = guest.bookingGuestId ? storedGuestById?.get(guest.bookingGuestId) : undefined;
+    const memberId = guest.memberId?.trim();
+    return row && row.memberId && memberId && row.memberId === memberId ? row : undefined;
+  };
   // Finding 2 (privacy re-review of MG3 #2308). Taken here rather than at the
   // top of the handler because everything above is schema and authorization —
   // the collapsed refusal cannot be raised until the party is priced.
@@ -373,6 +388,7 @@ export async function POST(req: NextRequest) {
           `Promo validation has no priced guest at breakdown position ${index} of ${price.guests.length} (#3031).`
         );
       }
+      const stored = storedRowFor(guest);
       return {
         memberId: guest.memberId ?? null,
         isMember: priced.isMember,
@@ -383,8 +399,8 @@ export async function POST(req: NextRequest) {
         firstNight: guest.stayStart ?? checkIn,
         consentStatus: guest.awaitingAcceptance
           ? ("PENDING" as const)
-          : guest.bookingGuestId && storedConsentByGuestId?.has(guest.bookingGuestId)
-            ? storedConsentByGuestId.get(guest.bookingGuestId) ?? null
+          : stored
+            ? stored.consentStatus
             : consentPlan
               ? guestConsentStatus(consentPlan.guests[index]!)
               : null,

@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
     groupDiscountSetting: { findUnique: vi.fn() },
     booking: { findUnique: vi.fn() },
     bookingGuest: { findMany: vi.fn() },
+    promoCode: { findMany: vi.fn() },
+    promoRedemptionAllocation: { aggregate: vi.fn(), count: vi.fn(), findMany: vi.fn() },
   },
   priceBookingGuestsWithMembershipTypePolicy: vi.fn(),
   validateSeveralPromoCodes: vi.fn(),
@@ -121,8 +123,8 @@ describe("the edit preview reads the booking's stored consent (D-3492-4)", () =>
     ["on a booking from before guest consent existed", null, null],
   ])("a cross-family guest %s keeps their stored state", async (_label, stored, expected) => {
     mocks.prisma.bookingGuest.findMany.mockResolvedValue([
-      { id: "bg-booker", consentStatus: null },
-      { id: "bg-friend", consentStatus: stored },
+      { id: "bg-booker", memberId: "booker", consentStatus: null },
+      { id: "bg-friend", memberId: "friend", consentStatus: stored },
     ]);
     const res = await post({ bookingId: "booking-1", guests: [BOOKER, FRIEND] });
     expect(res.status).toBe(200);
@@ -134,13 +136,13 @@ describe("the edit preview reads the booking's stored consent (D-3492-4)", () =>
   });
 
   it("a guest still pending on the booking stays pending", async () => {
-    mocks.prisma.bookingGuest.findMany.mockResolvedValue([{ id: "bg-friend", consentStatus: "PENDING" }]);
+    mocks.prisma.bookingGuest.findMany.mockResolvedValue([{ id: "bg-friend", memberId: "friend", consentStatus: "PENDING" }]);
     await post({ bookingId: "booking-1", guests: [BOOKER, FRIEND] });
     expect(consentSeenByEngine()).toEqual([null, "PENDING"]);
   });
 
   it("a guest being added in this edit (no row yet) is judged as the save will add them", async () => {
-    mocks.prisma.bookingGuest.findMany.mockResolvedValue([{ id: "bg-booker", consentStatus: null }]);
+    mocks.prisma.bookingGuest.findMany.mockResolvedValue([{ id: "bg-booker", memberId: "booker", consentStatus: null }]);
     const added = { ageTier: "ADULT", isMember: true, memberId: "friend" };
     await post({ bookingId: "booking-1", guests: [BOOKER, added] });
     expect(consentSeenByEngine()).toEqual([null, "PENDING"]);
@@ -175,9 +177,75 @@ describe("the booking id is the caller's to name", () => {
 
   it("lets a booking officer preview an edit to another member's booking", async () => {
     mocks.session.user = { id: "officer", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] };
-    mocks.prisma.bookingGuest.findMany.mockResolvedValue([{ id: "bg-friend", consentStatus: "CONFIRMED" }]);
+    mocks.prisma.bookingGuest.findMany.mockResolvedValue([{ id: "bg-friend", memberId: "friend", consentStatus: "CONFIRMED" }]);
     const res = await post({ bookingId: "booking-1", guests: [BOOKER, FRIEND] });
     expect(res.status).toBe(200);
     expect(consentSeenByEngine()).toEqual([null, "CONFIRMED"]);
+  });
+});
+
+// C4 privacy re-review (security blocker at 9e63db6c8): a row's stored consent
+// belongs to the member ON that row. Borrowing the caller's own (consent-null)
+// booker row id beside a stranger's member id must not make the stranger
+// present — the answer is exactly the one sending no row id gives.
+describe("a row id is bound to its own member", () => {
+  const STRANGER_ON_BORROWED_ROW = { ageTier: "ADULT", isMember: true, memberId: "stranger", bookingGuestId: "bg-booker" };
+  const STRANGER_NO_ROW = { ageTier: "ADULT", isMember: true, memberId: "stranger" };
+
+  beforeEach(() => {
+    mocks.prisma.bookingGuest.findMany.mockResolvedValue([
+      { id: "bg-booker", memberId: "booker", consentStatus: null },
+    ]);
+  });
+
+  it("judges a stranger paired with a borrowed row as a fresh add, the same as no row id", async () => {
+    await post({ bookingId: "booking-1", guests: [BOOKER, STRANGER_ON_BORROWED_ROW] });
+    const borrowed = consentSeenByEngine();
+    await post({ bookingId: "booking-1", guests: [BOOKER, STRANGER_NO_ROW] });
+    expect(borrowed).toEqual([null, "PENDING"]);
+    expect(consentSeenByEngine()).toEqual(borrowed);
+  });
+
+  it("so the stranger's own-night code does not apply to their nights", async () => {
+    const actual = (await vi.importActual("@/lib/promo-codes-preview")) as typeof import("@/lib/promo-codes-preview");
+    mocks.validateSeveralPromoCodes.mockImplementation(actual.validateSeveralPromoCodes);
+    mocks.prisma.promoCode.findMany.mockResolvedValue([
+      {
+        id: "pc-stranger",
+        code: "FRIENDFREE",
+        description: null,
+        type: "FREE_NIGHTS",
+        active: true,
+        archivedAt: null,
+        internal: false,
+        freeNightsPerIndividual: 2,
+        lifetimeFreeNightsCap: null,
+        memberGuestsOnly: false,
+        assignedMembersOnlyOwnNights: true,
+        validFrom: null,
+        validUntil: null,
+        bookingStartFrom: null,
+        bookingStartUntil: null,
+        maxRedemptionsTotal: null,
+        currentRedemptions: 0,
+        maxUsesPerMember: null,
+        maxUniqueMembers: null,
+        percentOff: null,
+        valueCents: null,
+        fixedNightlyPriceCents: null,
+        fixedNightlyMode: null,
+        assignments: [{ memberId: "stranger" }],
+        lodges: [],
+      },
+    ]);
+    mocks.prisma.promoRedemptionAllocation.aggregate.mockResolvedValue({ _sum: { freeNightsUsed: 0 } });
+    mocks.prisma.promoRedemptionAllocation.count.mockResolvedValue(0);
+    mocks.prisma.promoRedemptionAllocation.findMany.mockResolvedValue([]);
+
+    const res = await post({ bookingId: "booking-1", guests: [BOOKER, STRANGER_ON_BORROWED_ROW] });
+    const body = await res.json();
+    expect(body.valid).toBe(false);
+    expect(body.codes[0]).toMatchObject({ code: "FRIENDFREE", valid: false });
+    expect(body.promoAdjustmentCents ?? 0).toBe(0);
   });
 });
