@@ -153,7 +153,9 @@ export async function loadModificationDocumentCodingContext(
   // several-code fallback), or a booking that held several codes before the
   // edit (`codesBefore`, which tells it apart once the released redemptions
   // are deleted) — is coded per line. A stored row written before
-  // `codesBefore` existed carries none and is coded as it always was.
+  // `codesBefore` existed carries none: it is coded as it always was while the
+  // booking still carries the code it names, and by the code it names
+  // (INV-MONEY-039) once a later edit has swapped that code away.
   const perCode =
     redemptions.length > 1 ||
     lineCodes.length > 1 ||

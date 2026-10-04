@@ -213,6 +213,11 @@ export function PromoCodeCard({
 /**
  * #3828: does the booking carry several promo codes? Then the panel locks the
  * one-code card (its `promoLocked` gate) and shows `SeveralPromoCodesCard`.
+ * Deliberately stricter than the server's refusal, which ignores a working-bee
+ * discount: with one booker code beside a working-bee discount the server would
+ * accept a one-code swap, but the one-code card cannot show which code is
+ * current on such a booking, so the panel locks it too until the chips child
+ * (#3492) edits the list.
  */
 export function hasSeveralPromoCodes(booking: { promoLines?: ReadonlyArray<unknown> }): boolean {
   return (booking.promoLines?.length ?? 0) > 1;
