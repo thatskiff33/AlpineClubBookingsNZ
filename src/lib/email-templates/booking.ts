@@ -625,11 +625,7 @@ export function bookingModifiedTemplate(params: {
   `);
 }
 
-export function setupIntentFailedTemplate(data: {
-  firstName: string;
-  checkIn: Date;
-  checkOut: Date;
-}): string {
+export function setupIntentFailedTemplate(data: { firstName: string; checkIn: Date; checkOut: Date }): string {
   // #2256: these had the right locale but no `timeZone`, so they rendered in
   // whatever zone the sending process happened to run in — a 2026-04-15T23:30Z
   // check-in reads as 15 April from a UTC worker and 16 April in New Zealand.
@@ -654,12 +650,7 @@ export function setupIntentFailedTemplate(data: {
  * detail. "Still held for now" is the same reassurance `setupIntentFailedTemplate`
  * gives — the booking has not been cancelled by this.
  */
-export function savedCardChargeFailedTemplate(data: {
-  bookingId: string;
-  firstName: string;
-  checkIn: Date;
-  checkOut: Date;
-}): string {
+export function savedCardChargeFailedTemplate(data: { bookingId: string; firstName: string; checkIn: Date; checkOut: Date }): string {
   const dates = `${emailCalendarDay(data.checkIn)} – ${emailCalendarDay(data.checkOut)}`;
   return layout(`
     ${heading("We Couldn't Charge Your Saved Card")}
@@ -681,7 +672,6 @@ export function savedCardChargeFailedTemplate(data: {
  * changed by this cancellation, never a false "confirmed". No bearer token, so
  * this is not sensitive-log material.
  */
-
 export function splitGuestPortionCancelledTemplate(data: {
   firstName: string;
   checkIn: Date;
@@ -697,12 +687,7 @@ export function splitGuestPortionCancelledTemplate(data: {
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       ...(data.parentBookingReference
-        ? [
-            {
-              label: "Your booking reference",
-              value: escapeHtml(data.parentBookingReference),
-            },
-          ]
+        ? [{ label: "Your booking reference", value: escapeHtml(data.parentBookingReference) }]
         : []),
     ])}
     ${paragraph(ownBookingLine)}

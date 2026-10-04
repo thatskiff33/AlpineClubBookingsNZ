@@ -56,7 +56,10 @@ const TIERS = {
 } satisfies Record<string, CancellationRule[]>;
 
 const paymentUpdate = vi.fn();
-const tx = { payment: { update: paymentUpdate } } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
+// #3827 (composed by #3829): no open by-hand refund task on file, so the
+// refundable cash is the payment's own.
+const NO_HAND_BACKS = { manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) } };
+const tx = { payment: { update: paymentUpdate }, ...NO_HAND_BACKS } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
 
 /** $200, paid entirely by account credit: nothing captured, PAID. */
 function creditPaidBooking(overrides: { status?: string; payment?: Record<string, unknown>; memberId?: string | null } = {}) {
@@ -302,7 +305,7 @@ describe("#3809: a booking paid by card AND credit gets back what an all-card on
     const settlementOptions = await calculateModificationSettlementOptions({
       booking,
       netChargeCents: -15_000,
-      db: {} as never,
+      db: NO_HAND_BACKS as never,
       todayAtClub: TODAY,
     });
     return applyPaymentAdjustments(tx, {
@@ -357,7 +360,7 @@ describe("#3809: a booking paid by card AND credit gets back what an all-card on
     credit.policy = [{ daysBeforeStay: 0, refundPercentage: 100, fixedFeeCents: 1_000 }];
     credit.applied = 4_500;
     const booking = creditPaidBooking({ payment: { amountCents: 500, source: PaymentSource.STRIPE, creditAppliedCents: 4_500 } });
-    const settlementOptions = await calculateModificationSettlementOptions({ booking, netChargeCents: -5_000, db: {} as never, todayAtClub: TODAY });
+    const settlementOptions = await calculateModificationSettlementOptions({ booking, netChargeCents: -5_000, db: NO_HAND_BACKS as never, todayAtClub: TODAY });
     const result = await applyPaymentAdjustments(tx, {
       booking, priceDiffCents: -5_000, changeFeeCents: 0, settlementOptions, settlementMethod: "card", todayAtClub: TODAY, format: CLUB_FORMAT_TEST,
     });
@@ -499,7 +502,7 @@ describe("#3809: the quote previews the give-back the save makes", () => {
       reductionCents,
       cardBasisCents,
       todayAtClub: TODAY,
-      db: {} as never,
+      db: NO_HAND_BACKS as never,
     });
 
   it.each([

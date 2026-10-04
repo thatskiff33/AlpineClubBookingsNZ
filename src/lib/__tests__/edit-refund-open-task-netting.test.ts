@@ -34,6 +34,8 @@ function store(openCents: number | null) {
   return {
     manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: openCents } })) },
     payment: { update: vi.fn() },
+    // #3809 (composed by #3829): no applied credit, so a reduction gives none back.
+    memberCredit: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
   };
 }
 

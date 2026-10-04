@@ -31,20 +31,24 @@ reason: the preview accepts a code list, works out which guests await acceptance
   present; that choice belongs in the one place the preview decides consent.
 
 file: src/lib/member-guest-consent-service.ts
-lines: 1313
+lines: 1349
 reason: an acceptance re-prices the booking's codes inside the consent transaction
   that already holds the locks it needs (D-3813-4), and its after-commit half
   runs from the one finalise step; the re-price itself is in
   booking-guest-acceptance-reprice.ts.
+  Re-measured at #3829, the final main sync, which composed main's #3653,
+  #3809, #3835 and #3792 growth of this file with the epic's.
 
 file: src/app/api/bookings/[id]/guests/[guestId]/route.ts
-lines: 567
+lines: 548
 reason: the removal's Booking Modified email says whether its refund is a bank
   transfer the club still has to send (D-3813-6); one import and one field
   beside the refund amount it qualifies.
+  Re-measured at #3829, the final main sync, which composed main's #3653,
+  #3809, #3835 and #3792 growth of this file with the epic's.
 
 file: src/lib/email/booking.ts
-lines: 1771
+lines: 1787
 reason: the Booking Modified sender takes the required bank-transfer flag and
   composes a split payment's cash and credit halves (D-3813-5/6); the sentence
   itself lives in booking-modified-email-copy.ts. Re-measured when epic #3813's
@@ -52,6 +56,8 @@ reason: the Booking Modified sender takes the required bank-transfer flag and
   sender's options gain each code's own adjustment (promoLines) and hand it to
   the one shared promo-rows builder; the option belongs beside promoCode on the
   sender it configures, typed by the one PromoCodeAdjustment import.
+  Re-measured at #3829, the final main sync, which composed main's #3653,
+  #3809, #3835 and #3792 growth of this file with the epic's.
 
 file: src/app/(admin)/admin/refund-requests/page.tsx
 lines: 885

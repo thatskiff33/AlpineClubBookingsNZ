@@ -552,8 +552,10 @@ describe("what completing or dismissing means, per kind (#3033)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Pay the member back" }));
 
     await waitFor(() => {
+      // #3835's still-owed preview GETs the same task's path; the settle is the call with a body.
       const call = vi.mocked(fetch).mock.calls.find(
-        ([url]) => typeof url === "string" && url.includes("/manual-refund-tasks/task-review-hand"),
+        ([url, init]) =>
+          typeof url === "string" && url.includes("/manual-refund-tasks/task-review-hand") && init !== undefined,
       );
       expect(call).toBeDefined();
       const body = JSON.parse(String((call?.[1] as RequestInit).body));

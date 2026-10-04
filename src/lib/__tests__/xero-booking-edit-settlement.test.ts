@@ -212,6 +212,8 @@ describe("classifyXeroBookingEditSettlement", () => {
       type: "modification-credit-note",
       refundAmountCents: 2500,
       noteWording: "invoice-correction",
+      // #3809 (composed by #3829): no applied credit given back on this edit.
+      allocatedGiveBackCents: 0,
       reason: expect.stringContaining("modification credit note"),
     });
   });

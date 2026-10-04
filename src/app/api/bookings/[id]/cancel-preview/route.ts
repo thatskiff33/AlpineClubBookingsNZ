@@ -144,12 +144,8 @@ export async function GET(
       const todayAtClub = (await clubTime()).today();
       const tiered =
         booking.payment && bookingOwner(booking).memberId && (await paymentHasCaptureEvidence(booking.payment))
-          ? await refundedPaymentCreditRestore(prisma, {
-              bookingId: booking.id,
-              booking: { ...booking, payment: booking.payment },
-              openNonCancellationHandBackCents: sumOpenNonCancellationHandBackCents(booking.payment.manualRefundTasks),
-              todayAtClub,
-            })
+          ? await refundedPaymentCreditRestore(prisma, { bookingId: booking.id, booking: { ...booking, payment: booking.payment },
+              openNonCancellationHandBackCents: sumOpenNonCancellationHandBackCents(booking.payment.manualRefundTasks), todayAtClub })
           : null;
       const creditRestoredCents = tiered ? Math.min(tiered.creditToRestoreCents, appliedCents) : appliedCents;
 
