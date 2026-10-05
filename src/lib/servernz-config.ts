@@ -28,6 +28,7 @@ import {
   deleteIntegrationCredential,
 } from "@/lib/integration-credentials";
 import type { CredentialActor } from "@/lib/integration-credential-actor";
+import { clearOtherLodgesOwnedNames } from "@/lib/servernz-settings";
 
 export const SERVERNZ_PROVIDER = "servernz";
 
@@ -74,7 +75,13 @@ export async function setServerNzApiKey(
   });
 }
 
-/** Remove the stored ServerNZ API key (disconnect). */
+/**
+ * Remove the stored ServerNZ API key (disconnect). The owned-lodge list the
+ * server issued for that key goes with it (#52): it was THAT connection's
+ * answer, and a key issued later — or by a different server, which is the other
+ * caller here — may own different lodges. The panel is read-only until the next
+ * download records a fresh list.
+ */
 export async function clearServerNzApiKey(
   actor: CredentialActor,
 ): Promise<void> {
@@ -84,6 +91,7 @@ export async function clearServerNzApiKey(
     actor,
     expect: { expect: "any" },
   });
+  await clearOtherLodgesOwnedNames();
 }
 
 export interface ServerNzSetupState {

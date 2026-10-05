@@ -1,13 +1,16 @@
 import "server-only";
 import type { Prisma } from "@prisma/client";
 import { formatCommitteeMemberPhone } from "@/lib/committee";
+import { ownsOtherLodge } from "@/lib/other-lodges";
+import { loadOwnedOtherLodgeNames } from "@/lib/servernz-settings";
 
 /**
  * Keep the "Other Clubs" registry's booking-officer contact in step with whoever
  * currently holds the Booking Officer committee role.
  *
  * When a member is assigned (or removed from) the Booking Officer committee role,
- * the OtherLodge rows whose `name` matches one of the club's own lodges have their
+ * the OtherLodge rows the central server says this club OWNS (#52) — or, until
+ * it has said, whose `name` matches one of the club's own lodges — have their
  * bookingOfficerName / bookingOfficerEmail / bookingOfficerPhone (and, via Prisma's
  * `@updatedAt`, `updatedAt`) refreshed. Name and phone come from the assigned
  * member; the email is the ROLE's shared contact address (e.g. bookings@club), not
@@ -32,7 +35,7 @@ const BOOKING_OFFICER_ROLE_NAME = "Booking Officer";
 // lets callers pass either `prisma` or an interactive-transaction client (`tx`).
 type CommitteeSyncClient = Pick<
   Prisma.TransactionClient,
-  "committeeRole" | "committeeAssignment" | "lodge" | "otherLodge"
+  "committeeRole" | "committeeAssignment" | "lodge" | "otherLodge" | "serverNzSettings"
 >;
 
 interface BookingOfficerContact {
@@ -65,7 +68,7 @@ async function bookingOfficerRoleIds(
 
 /**
  * Recompute the current Booking Officer contact and write it into every OtherLodge
- * row whose name matches one of the club's lodges.
+ * row that is the club's own.
  *
  * - The "current" holder is the active assignment ordered first (sortOrder asc,
  *   then earliest createdAt) — deterministic when more than one member holds it.
@@ -135,29 +138,42 @@ async function applyBookingOfficerContact(
       }
     : EMPTY_CONTACT;
 
-  // Match OtherLodge registry rows to the club's own lodge names.
+  // WHICH ROWS ARE OURS. The central server's answer, when it has given one
+  // (#52): the owned list on `ServerNzSettings`, read through the same rule the
+  // admin edit route, the upload and the panel apply (`ownsOtherLodge`). That
+  // closes the collision this block used to carry as a known limitation: a
+  // `Lodge` is a BUILDING while an `OtherLodge` is a CLUB, so a club that named
+  // one of its buildings exactly as another club's registry row had its booking
+  // officer written into that club's row, and then uploaded. With the owned
+  // list known, only rows the server names for this site are written, whatever
+  // the buildings are called.
   //
-  // KNOWN LIMITATION, stated rather than hidden: this identifies "our own" rows
-  // by free-text name equality, and a `Lodge` is a BUILDING while an
-  // `OtherLodge` is a CLUB. A deployment that happens to name one of its lodges
-  // exactly as another club's registry row would have our booking officer
-  // written into that club's row, and then uploaded. An explicit `isOwnClub`
-  // flag on OtherLodge removes the class outright and is the right fix; it needs
-  // its own migration against a table that already shipped (#2749), which is
-  // more schema surface than this change should carry, so it is left as a
-  // follow-up rather than done badly here. Until then the exposure is bounded by
-  // requiring an EXACT match — no normalisation, no case folding, no fuzzy
-  // matching — so it takes a deliberate collision rather than a near miss.
-  const lodges = await db.lodge.findMany({ select: { name: true } });
-  const lodgeNames = [...new Set(lodges.map((lodge) => lodge.name))];
-  if (lodgeNames.length === 0) {
+  // UNTIL the server has said (not connected, never downloaded, or an older
+  // server that does not send the list) the pre-#52 name rule stands: rows whose
+  // name exactly matches one of the club's lodges — no normalisation, no case
+  // folding — so the exposure above is bounded to a deliberate collision. A
+  // stored list that is present but UNREADABLE writes nothing (fail closed, the
+  // same answer the upload gives): the column is wrong, not the install new.
+  const owned = await loadOwnedOtherLodgeNames(db);
+  if (owned.unreadable) {
+    return { updated: 0, holderMemberId: holder?.memberId ?? null };
+  }
+  let candidateNames: string[];
+  if (owned.names !== null) {
+    candidateNames = owned.names;
+  } else {
+    const lodges = await db.lodge.findMany({ select: { name: true } });
+    candidateNames = [...new Set(lodges.map((lodge) => lodge.name))];
+  }
+  if (candidateNames.length === 0) {
     return { updated: 0, holderMemberId: holder?.memberId ?? null };
   }
 
   const rows = await db.otherLodge.findMany({
-    where: { name: { in: lodgeNames } },
+    where: { name: { in: candidateNames } },
     select: {
       id: true,
+      name: true,
       bookingOfficerName: true,
       bookingOfficerEmail: true,
       bookingOfficerPhone: true,
@@ -166,6 +182,9 @@ async function applyBookingOfficerContact(
 
   let updated = 0;
   for (const row of rows) {
+    // The query above already selects by name; this is the ONE rule applied at
+    // the write, so the decision is `ownsOtherLodge`'s and not the query's.
+    if (owned.names !== null && !ownsOtherLodge(owned.names, row.name)) continue;
     if (
       row.bookingOfficerName === contact.bookingOfficerName &&
       row.bookingOfficerEmail === contact.bookingOfficerEmail &&

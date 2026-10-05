@@ -74,7 +74,7 @@ export type OtherLodgesUploadResult = z.infer<typeof uploadResultSchema>;
 
 /**
  * A lodge as the central server sends it, held to the SAME bounds the club's own
- * officer is held to in `POST /api/admin/other-lodges` — literally the same
+ * officer is held to in `PATCH /api/admin/other-lodges/[id]` — literally the same
  * `otherLodgeDataShape` (name 120, location 300, officer name 200, email 320,
  * phone 50, capacity 0..100000, site URL 500 and `http(s)` only, booking path
  * 300, cancellation period 200, season starts a real `YYYY-MM-DD` calendar
@@ -129,13 +129,16 @@ const MAX_LODGES_PER_PULL = 5_000;
 // which the server sends on EVERY pull, incremental or not, because it is the
 // club's whole current list rather than a delta. OPTIONAL: an older server does
 // not send it, and absent must survive as `undefined` so the sync leaves the
-// stored list alone rather than reading "not sent" as "owns nothing". Bounded
-// by the shared schema (count, and each name to the lodge-name bound).
+// stored list alone rather than reading "not sent" as "owns nothing". It is
+// taken as `unknown` here and validated on its own below: a list that breaks
+// its bounds (count, or a name over the lodge-name bound) must not fail the
+// WHOLE pull — the lodges still merge and the cursor still advances — it is
+// treated as not sent, and reported so the sync can say so.
 const pullEnvelopeSchema = z.object({
   lodges: z.array(z.unknown()).max(MAX_LODGES_PER_PULL),
   cursor: z.string().max(64).nullable(),
   count: z.number(),
-  ownLodgeNames: ownedOtherLodgeNamesSchema.optional(),
+  ownLodgeNames: z.unknown().optional(),
 });
 
 export interface OtherLodgesPullResult {
@@ -150,6 +153,8 @@ export interface OtherLodgesPullResult {
    * and "owns nothing" are different answers.
    */
   ownLodgeNames: string[] | undefined;
+  /** True when the server sent an owned list that failed its bounds and was discarded. */
+  ownLodgeNamesRefused: boolean;
 }
 
 async function resolveConnection(): Promise<{ baseUrl: string; apiKey: string }> {
@@ -511,11 +516,24 @@ export async function pullOtherLodges(
     else dropped++;
   }
 
+  // The owned list, validated apart from the rows and the cursor: refused
+  // whole when it breaks its bounds (one name over the bound could never match
+  // a local row, but a list that is wrong in one place is not a list to edit
+  // and upload by), and then reported as not sent rather than failing the pull.
+  let ownLodgeNames: string[] | undefined;
+  let ownLodgeNamesRefused = false;
+  if (envelope.ownLodgeNames !== undefined) {
+    const owned = ownedOtherLodgeNamesSchema.safeParse(envelope.ownLodgeNames);
+    if (owned.success) ownLodgeNames = owned.data;
+    else ownLodgeNamesRefused = true;
+  }
+
   return {
     lodges,
     cursor: envelope.cursor,
     count: envelope.count,
     dropped,
-    ownLodgeNames: envelope.ownLodgeNames,
+    ownLodgeNames,
+    ownLodgeNamesRefused,
   };
 }

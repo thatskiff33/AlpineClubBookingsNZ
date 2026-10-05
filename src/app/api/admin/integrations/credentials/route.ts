@@ -46,6 +46,7 @@ import {
   SERVERNZ_PROVIDER,
   SERVERNZ_WRITABLE_CREDENTIAL_KEYS,
 } from "@/lib/servernz-config";
+import { clearOtherLodgesOwnedNames } from "@/lib/servernz-settings";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 
@@ -202,6 +203,9 @@ async function applyVerifyReset(
   if (provider === GOOGLE_PROVIDER) {
     await clearGoogleVerified(actor, request);
   }
+  // Alpine Central Server (#52): the owned-lodge list was the server's answer
+  // for the PREVIOUS key, so a replacement forgets it until the next download.
+  if (provider === SERVERNZ_PROVIDER) await clearOtherLodgesOwnedNames();
 }
 
 export async function POST(request: Request) {
