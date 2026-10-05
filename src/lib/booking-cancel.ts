@@ -33,6 +33,8 @@ import {
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { cancellationKeptCents, paidCancellationMoney } from "@/lib/paid-cancellation-money";
+import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
+import { refundedPaymentCreditRestore } from "@/lib/cancel-refunded-payment-credit";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import {
   applyLocalRefundAllocation,
@@ -1176,12 +1178,22 @@ async function performBookingCancellation(
       // #3369: an organisation-owned booking has no member ledger, so there
       // is nothing to restore. Zero is the fact, not a fallback -- credit can
       // only have been applied from a member's own account in the first place.
+      // #3809 (F2): money WAS captured (a reduction refunded the whole card):
+      // the credit is tiered as the paid path tiers it, not restored whole.
       const restoreMemberId = bookingOwner(fresh).memberId;
-      const creditRestoredCents = restoreMemberId
-        ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx)
-        : 0;
-      // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
-      await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:unpaid" });
+      const tiered = restoreMemberId && freshPaymentCaptured && fresh.payment
+        ? await refundedPaymentCreditRestore(tx, { bookingId, booking: { ...fresh, payment: fresh.payment }, todayAtClub })
+        : null;
+      const appliedAtCancelCents = tiered ? await deriveBookingAppliedCreditCents(bookingId, tx) : 0;
+      const creditRestoredCents = !restoreMemberId
+        ? 0
+        : tiered
+          ? await restoreCreditFromBooking(restoreMemberId, bookingId, tx, tiered.creditToRestoreCents)
+          : await restoreCreditFromBooking(restoreMemberId, bookingId, tx);
+      // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger) -
+      // unless the tier kept credit (#3809), which the ledger keeps so owed(b) reaches zero.
+      const creditKept = tiered ? { keptCents: appliedAtCancelCents - creditRestoredCents, policyKeptCents: tiered.appliedCreditBaseCents - creditRestoredCents } : { keptCents: 0 };
+      await postCancellationLedgerLines({ store: tx, bookingId, lodgeId: fresh.lodgeId, ...creditKept, site: "booking-cancel:unpaid" });
 
       // Applied-credit rows the inbound reconcile linked to a real Xero
       // credit-note allocation against this booking's invoice: the invoice's
@@ -1239,6 +1251,8 @@ async function performBookingCancellation(
         creditRestoredCents,
         xeroAllocatedAppliedCreditCents,
         partPaymentReviewTaskRaised,
+        // #3809: the tiered credit's frozen figures, for a later review's netting (`INV-PAY-113`).
+        creditLedger: tiered ? { ...creditKept, policyKeptCents: creditKept.policyKeptCents ?? 0, keptBeyondPolicyCents: creditKept.keptCents - (creditKept.policyKeptCents ?? 0), appliedCreditCents: appliedAtCancelCents, creditRestoredCents, appliedCreditBaseCents: tiered.appliedCreditBaseCents } : null,
       };
     });
 
@@ -1265,6 +1279,7 @@ async function performBookingCancellation(
       creditRestoredCents,
       xeroAllocatedAppliedCreditCents,
       partPaymentReviewTaskRaised,
+      creditLedger,
     } = claim;
 
     if (creditRestoredCents > 0) {
@@ -1386,6 +1401,8 @@ async function performBookingCancellation(
         creditRestoredCents,
         format,
       ),
+      // A ledger figure only, never a refund decision (`isPaidCancellationDecisionSnapshot`).
+      ...(creditLedger ? { snapshot: { ledger: creditLedger } } : {}),
     });
     if (manualPartPayment) await alertManualPartPaymentCancel(fresh, manualPartPayment, format);
 
@@ -1605,6 +1622,7 @@ async function performBookingCancellation(
       days,
       policy,
       refundMethod,
+      capAppliedCredit: await bookingReducedThroughCreditGiveBack(bookingId, tx),
     });
     const { paidAmountCents, refundableBaseCents } = money;
     let refundAmountCents = money.refundAmountCents;
@@ -1677,6 +1695,7 @@ async function performBookingCancellation(
           policyKeptCents: money.policyKeptCents,
           paidAboveRefundableCents: money.paidAboveRefundableCents,
           appliedCreditBeyondMirrorCents: money.appliedCreditBeyondMirrorCents,
+          appliedCreditAboveRefundableCents: money.appliedCreditAboveRefundableCents,
         },
         "Booking ledger: a cancellation keeps money beyond what its policy keeps; the retained line says so (#3611)",
       );
@@ -1948,8 +1967,8 @@ async function performBookingCancellation(
       branch,
       days,
       refundPercentage,
-      refundAmountCents,
-      paidAmountCents,
+      refundAmountCents, paidAmountCents,
+      tier: { refundMethod, refundableBaseCents }, // #3835: what the tier ran on
       changeFeeCents: payment.changeFeeCents,
       retainedAmountCents,
       ledger: {
@@ -1958,6 +1977,7 @@ async function performBookingCancellation(
         keptBeyondPolicyCents: ledgerKeptCents - money.policyKeptCents,
         appliedCreditCents,
         creditRestoredCents,
+        appliedCreditBaseCents: money.appliedCreditBaseCents,
       },
     });
 
@@ -2654,7 +2674,7 @@ export async function paymentEligibleForPaidCancelPath(
 // payments, and the pre-#1473 cancel flow flattening captured statuses to
 // FAILED); then the pre-ledger STRIPE mirror, whose one home is
 // `stripeRefundMirrorShowsCapture`.
-async function paymentHasCaptureEvidence(
+export async function paymentHasCaptureEvidence(
   payment: {
     id: string;
     source: string;

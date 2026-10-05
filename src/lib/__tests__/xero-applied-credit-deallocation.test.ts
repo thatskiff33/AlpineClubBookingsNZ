@@ -47,6 +47,8 @@ const h = vi.hoisted(() => {
       findMany: operationFindMany,
       findUnique: operationFindUnique,
       update: operationUpdate,
+      // #3809: the card invoice operation a missing provenance link waits on.
+      findFirst: vi.fn().mockResolvedValue(null),
     },
     memberCreditNoteAllocation: {
       findMany: allocationFindMany,
@@ -485,6 +487,23 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
     expect(new Date().toISOString()).toBe(frozenTestNow().toISOString());
   });
 
+  it("MUTATION (#3809 H1): deallocates a CARD booking's allocated credit too (#1641) - the slices decide, not the payment's source", async () => {
+    h.bookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      payment: { id: "payment-1", source: "STRIPE", xeroInvoiceId: "inv-1" },
+    });
+    h.linkFindMany.mockResolvedValue([regularAllocationLink()]);
+    h.getCreditNote
+      .mockResolvedValueOnce(providerNote(4000))
+      .mockResolvedValueOnce(providerNote(2500, "alloc-new"));
+
+    await deallocateExcessAppliedCreditForBooking("booking-1", { syncOperationId: "op-1" });
+
+    expect(h.deleteCreditNoteAllocations).toHaveBeenCalled();
+    expect(h.createCreditNoteAllocation).toHaveBeenCalled();
+  });
+
   it("scopes the recreate idempotency key to the operation so distinct operations never collide, while a retried operation reuses its key (#1887)", async () => {
     h.linkFindMany.mockResolvedValue([regularAllocationLink()]);
 
@@ -530,6 +549,40 @@ describe("deallocateExcessAppliedCreditForBooking (#1887 F3)", () => {
     // The SAME operation retried (crash-retry) must reuse its key so Xero's
     // idempotency dedupes the duplicate recreate.
     expect(keyOpARetry).toBe(keyOpA);
+  });
+
+  describe("#3809 (review M1): a card booking's #1641 allocation still in its invoice operation", () => {
+    const missingProvenance = () => new Error("Applied-credit allocation slice row-1 has no active Xero provenance");
+    const cardBooking = (source: string) =>
+      h.bookingFindUnique.mockResolvedValue({
+        id: "booking-1",
+        memberId: "member-1",
+        payment: { id: "payment-1", source, xeroInvoiceId: "inv-1" },
+      });
+
+    it("MUTATION: waits, as a transient busy error, while the invoice operation that allocates it is unfinished", async () => {
+      cardBooking("STRIPE");
+      const { repairLegacyAppliedCreditNoteAllocationsForBooking } = await import("@/lib/xero-applied-credit-allocation-repair");
+      vi.mocked(repairLegacyAppliedCreditNoteAllocationsForBooking).mockRejectedValueOnce(missingProvenance());
+      h.tx.xeroSyncOperation.findFirst.mockResolvedValueOnce({ id: "invoice-op" });
+
+      const error = await deallocateExcessAppliedCreditForBooking("booking-1", { syncOperationId: "op-1" }).then(() => null, (e: unknown) => e);
+
+      expect(isXeroAppliedCreditOperationBusyError(error)).toBe(true);
+      expect(h.deleteCreditNoteAllocations).not.toHaveBeenCalled();
+    });
+
+    it.each(["no unfinished invoice operation", "a bank-transfer payment"])("stays terminal with %s", async (shape) => {
+      cardBooking(shape === "a bank-transfer payment" ? "INTERNET_BANKING" : "STRIPE");
+      const { repairLegacyAppliedCreditNoteAllocationsForBooking } = await import("@/lib/xero-applied-credit-allocation-repair");
+      vi.mocked(repairLegacyAppliedCreditNoteAllocationsForBooking).mockRejectedValueOnce(missingProvenance());
+      h.tx.xeroSyncOperation.findFirst.mockResolvedValueOnce(shape === "a bank-transfer payment" ? { id: "invoice-op" } : null);
+
+      const error = await deallocateExcessAppliedCreditForBooking("booking-1", { syncOperationId: "op-1" }).then(() => null, (e: unknown) => e);
+
+      expect(isXeroAppliedCreditOperationBusyError(error)).toBe(false);
+      expect((error as Error).message).toMatch(/has no active Xero provenance/);
+    });
   });
 
   it("refuses a stale durable ledger snapshot before any provider call", async () => {

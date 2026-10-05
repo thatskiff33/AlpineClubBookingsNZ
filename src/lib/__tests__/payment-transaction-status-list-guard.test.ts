@@ -226,6 +226,8 @@ const AGGREGATE_CAPTURED_STATUS_AUTHORITY_READERS = new Map([
   ["src/lib/additional-payment-ask.ts", "census SQL over payment.status"],
   ["src/lib/admin-reports.ts", "payment.status in summarizeNetCollectedCash"],
   ["src/lib/booking-delete.ts", "payment.status in hasCapturedOrCreditedPayment"],
+  ["src/lib/booking-ledger-projection-census-classes.ts", "payment.status in nothingCapturedFaceCents (#3583)"],
+  ["src/lib/booking-ledger-projection-census.ts", "payment.status in hasMoneyColumns (#3583)"],
   ["src/lib/finance-booking-metrics.ts", "payment.status for capturedGrossCents"],
   ["src/lib/refunded-total-shortfall-audit.ts", "Prisma payment.findMany status filter"],
   ["src/lib/xero-booking-edit-conditions.ts", "primary-invoice payment.status"],
