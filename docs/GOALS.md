@@ -45,8 +45,9 @@ Each sweep is repeated until a fresh pass finds nothing.
 
 1. **Single source of truth.** Each fact is defined in one place. A second
    wording is fine; a second definition isn't.
-2. **Security**, explicitly including personal and card data never reaching
-   logs.
+2. **Security**, explicitly checking personal and card data against the
+   canonical logging and audit boundary in
+   [`INV-PRIV-011`](invariants/analytics-and-privacy.md#inv-priv-011).
 3. **Payment flows.**
 4. **Accuracy.**
 5. **Member screens are intuitive.**
@@ -84,8 +85,11 @@ Each finding becomes an issue with these sections:
 
 Then:
 
-- The maintainer walks through the decisions. Nothing starts until the issue
-  is marked "ready to action".
+- The maintainer walks through the decisions before implementation of
+  sweep-generated issues starts. Record those decisions in the issue body,
+  following [the issue workflow](agents/ISSUE_WORKFLOW.md#recording-a-decision-the-body-must-carry-the-answer).
+  Authorisation and attribution follow
+  [`AGENTS.md`](../AGENTS.md#pre-authorisation-and-attributability).
 - Before building, re-check the locations against the current code — they may
   have moved since the issue was written.
 - Run challenge-style reviews (reviewers trying to break the change) before

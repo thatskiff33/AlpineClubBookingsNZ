@@ -43,12 +43,6 @@ people who use the club: booking a stay, paying, the waitlist, your family, your
 account. Also mirrored to the
 [project wiki](https://github.com/thatskiff33/AlpineClubBookingsNZ/wiki).
 
-## Project goals
-
-[`GOALS.md`](GOALS.md) sets out where the project is heading — robustness,
-tested releases, then a pilot club live without the maintainer — and the
-method, scope and finish line for each.
-
 ## How this is organised
 
 Every live page under `docs/` has **one canonical home** on one of those three
