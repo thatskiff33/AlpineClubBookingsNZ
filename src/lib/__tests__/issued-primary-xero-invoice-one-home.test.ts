@@ -266,6 +266,8 @@ describe("the settlement the first three doors share", () => {
         } as never,
         priceDiffCents: 12_500,
         changeFeeCents: 0,
+        todayAtClub: "2026-07-01" as never,
+        format: {} as never,
       },
     );
 

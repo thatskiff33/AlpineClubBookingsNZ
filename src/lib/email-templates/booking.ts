@@ -23,6 +23,7 @@ import {
   unpaidMoneySummaryRows,
 } from "@/lib/booking-money-lines";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
+import { appliedCreditGiveBackNote } from "@/lib/booking-credit-give-back-copy";
 import { escapeHtml } from "./escape";
 import {
   type BookingCalendarLinks,
@@ -451,6 +452,8 @@ export function bookingModifiedTemplate(params: {
   changeFeeCents: number;
   refundAmountCents: number;
   accountCreditAmountCents?: number;
+  /** #3809: applied credit this change gave back (0 if none). Required, as `financialReviewPending` is. */
+  appliedCreditGivenBackCents: number;
   additionalAmountCents: number;
   additionalPaymentMethod?: "STRIPE" | "INTERNET_BANKING";
   paymentReference?: string | null;
@@ -497,6 +500,7 @@ export function bookingModifiedTemplate(params: {
     changeFeeCents,
     refundAmountCents,
     accountCreditAmountCents = 0,
+    appliedCreditGivenBackCents,
     additionalAmountCents,
     additionalPaymentMethod,
     paymentReference,
@@ -554,7 +558,7 @@ export function bookingModifiedTemplate(params: {
           // processed" in one email about one change. The additional-payment
           // arms are compatible and leave the sentence in place.
           moneyAlreadyMoved:
-            refundAmountCents > 0 || accountCreditAmountCents > 0,
+            refundAmountCents > 0 || accountCreditAmountCents > 0 || appliedCreditGivenBackCents > 0,
         }),
         "info",
       )
@@ -591,7 +595,10 @@ export function bookingModifiedTemplate(params: {
     }
   }
 
-  const paymentNote = `${reviewNote}${settlementNote}`;
+  // #3809: beside the settlement note (both apply to card plus credit).
+  const giveBackSentence = appliedCreditGiveBackNote(appliedCreditGivenBackCents, format);
+  const giveBackNote = giveBackSentence ? alertBox(giveBackSentence, "success") : "";
+  const paymentNote = `${reviewNote}${settlementNote}${giveBackNote}`;
 
   return layout(`
     ${heading("Booking Modified")}

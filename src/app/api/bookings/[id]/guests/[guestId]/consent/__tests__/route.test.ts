@@ -204,6 +204,18 @@ beforeEach(() => {
   h.acquireLodgeCapacityLock.mockResolvedValue(undefined);
   h.removeBookingGuestInTransaction.mockResolvedValue({
     accountCreditAmountCents: 4500,
+    // #3809: the figures the removal's Xero leg reads.
+    appliedCreditGivenBackCents: 0,
+    booking: { id: BOOKING_ID },
+    bookingModificationId: "mod-consent",
+    hasIssuedXeroInvoice: false,
+    paymentStatus: null,
+    priceDiffCents: -4500,
+    xeroRefundAmountCents: 0,
+    settlementMethod: "credit",
+    hasSucceededPayment: false,
+    xeroAdditionalAmountCents: 0,
+    zeroDollarAutoPaid: false,
   });
   h.canRespondForTarget.mockResolvedValue(false);
   h.resolveNotificationRecipients.mockResolvedValue([]);

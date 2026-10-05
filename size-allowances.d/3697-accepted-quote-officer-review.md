@@ -15,11 +15,10 @@ reason: #3414's shared money fields, #3415's accepted request action and
   state.
 
 file: src/lib/booking-cancel.ts
-lines: 2770
+lines: 2790
 reason: the accepted-hold guard and #3413 anonymous-reservation release belong
   with the existing cancellation lock and hold-release branch they fence.
-  Re-measured on the composed tree after `main`'s #3653 organiser-child refund
-  work (its own allowance, 3653-organiser-child-refund.md) joined it.
+  Measured on the tree composed with `main` (#3653, #3809 and #3835 grew it too).
 
 file: src/lib/booking-request-quotes.ts
 lines: 2228

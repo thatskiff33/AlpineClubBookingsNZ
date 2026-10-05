@@ -455,6 +455,15 @@ export function PriceSummaryCard({
               </div>
             )}
 
+            {/* #3809: the booking's applied credit coming back, beside (or
+                instead of) a card refund - no choice to make, there is no card. */}
+            {quote.netChargeCents < 0 && (quote.appliedCreditGiveBackCents ?? 0) > 0 && (
+              <p className="rounded-md border p-3 text-sm" data-testid="applied-credit-give-back">
+                Returned as account credit:{" "}
+                <span className="font-medium">{formatCents(quote.appliedCreditGiveBackCents ?? 0, format)}</span>
+              </p>
+            )}
+
             {!quote.promoStillValid && promoAction.type === "keep" && promo && (
               <div
                 className="rounded-md bg-warning-3 p-3 text-sm text-warning-11"

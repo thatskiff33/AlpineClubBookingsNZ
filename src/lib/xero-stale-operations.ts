@@ -48,6 +48,17 @@ export function isStaleRunningXeroOperation(
 }
 
 /**
+ * #3880: the complement - a RUNNING claim young enough to be genuinely in
+ * flight. A sibling that must wait for one waits only this long for a dead one.
+ */
+export function liveRunningXeroOperationFilter(now: Date = new Date()) {
+  return {
+    status: "RUNNING",
+    startedAt: { gte: staleRunningThreshold(now) },
+  } as const;
+}
+
+/**
  * Prisma `where` filter matching XeroSyncOperation rows stuck in RUNNING past
  * the staleness threshold. Rows with a null startedAt are never matched by the
  * `lt` comparison, so only genuinely-claimed-and-stuck rows are counted.

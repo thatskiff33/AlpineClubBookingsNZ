@@ -349,10 +349,6 @@ const FIGURES = {
    * 369 -> 371 (#3416): the School Teacher Hut-Leader Assignments card adds
    * Edit and Save. Cancel remains a plain Button because it only discards the
    * staged choice. MEASURED by re-running this census on the composed tree.
-   *
-   * 371 -> 371 (#3819): that card is retired with the club-wide switch (-2),
-   * and the lodge hub's "Who can be hut leader for school bookings" card adds
-   * its own Edit and Save (+2). MEASURED.
    */
   callSites: 371,
   /**
@@ -385,8 +381,6 @@ const FIGURES = {
    * 313 -> 314 (#3817): so does the hut-leaders row Custodian toggle.
    * 314 -> 316 (#3416): the new school-teacher policy card heads itself under
    * the existing section banner, so its Edit and Save opt out.
-   * 316 -> 316 (#3819): that card's two leave, and the lodge hub's school
-   * hut-leader card's two opt out under the hub's banner.
    */
   optOuts: 316,
   /**
@@ -453,7 +447,6 @@ const FIGURES = {
    *
    * 280 -> 282 (#3416): the school-teacher card's Edit and Save sit in the
    * same file as its section banner.
-   * 282 -> 280 (#3819): that card is retired with the club-wide switch.
    */
   staticOptOuts: 280,
   /**
@@ -466,17 +459,10 @@ const FIGURES = {
    * banner IS in the same file — and this contract caught it: an opt-out with no
    * covering banner in its own file deletes the explanation outright for anyone
    * who later renders the card somewhere else.
-   *
-   * 34 -> 36 (#3819): the school hut-leader card's Edit and Save live in their
-   * own component file, and the lodge hub page that renders the banner vouches
-   * for them at its render site.
    */
   vouchedOptOuts: 36,
-  /**
-   * …of the vouched: proved at a parent's own JSX render site (#2168).
-   * 29 -> 31 (#3819): the lodge hub vouches for the school hut-leader card.
-   */
-  renderSiteVouchedOptOuts: 31,
+  /** …of the vouched: proved at a parent's own JSX render site (#2168). */
+  renderSiteVouchedOptOuts: 29,
   /** …of the vouched: proved through the wizard shell's channel (#2324). */
   shellVouchedOptOuts: 5,
   /**

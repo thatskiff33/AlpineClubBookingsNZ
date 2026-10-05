@@ -578,9 +578,21 @@ describe("#3791: a review task's share is a document of its own", () => {
     expect(mocks.createCreditNoteAllocation).toHaveBeenCalledTimes(1);
   });
 
-  it("an edit's own note does not wait on a deallocation", async () => {
+  it("MUTATION (#3809): an edit's own note waits on the deallocation too - a credit-paid booking's reduction gives back through the same give-back", async () => {
     deallocationFence.findFirst.mockResolvedValue({ id: "dealloc-1", status: "PENDING" });
+    const { XeroAppliedCreditOperationBusyError } = await import("@/lib/xero-applied-credit-operation-serialization");
 
+    await expect(createXeroCreditNoteForModification({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING_ID,
+      refundAmountCents: 1000,
+      bookingModificationId: "cmmodification01",
+      refundMethod: "account-credit",
+    })).rejects.toBeInstanceOf(XeroAppliedCreditOperationBusyError);
+    expect(mocks.retryXeroWriteWithContactRepair).not.toHaveBeenCalled();
+  });
+
+  it("an edit's own note with no deallocation on its payment is raised at once", async () => {
     await createXeroCreditNoteForModification({
       format: CLUB_FORMAT_TEST,
       bookingId: BOOKING_ID,

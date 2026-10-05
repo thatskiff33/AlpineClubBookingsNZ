@@ -17,21 +17,21 @@ or production environment values to profile TOML.
 
 ## Suggested Profiles
 
-- `alpine-plan-xhigh`: read-only planning for broad reviews and issue splitting.
-- `alpine-review-xhigh`: read-only final review for high-risk diffs.
-- `alpine-fix-high`: workspace-write, no network, for supervised fixes.
-- `alpine-docs-medium`: workspace-write, no network, for docs-only work.
-- `alpine-ui-medium`: workspace-write, no network, for UI-only changes.
-- `alpine-autonomous-high`: workspace-write, no network, for low/medium risk
-  issue work only after a human accepts the prompt and scope.
+Profiles are named by purpose and set sandbox, network and approval only.
 
-## Effort Selection
+- `alpine-plan`: read-only planning for broad reviews and issue splitting.
+- `alpine-review`: read-only final review for high-risk diffs.
+- `alpine-fix`: workspace-write, no network, for supervised fixes.
+- `alpine-docs`: workspace-write, no network, for docs-only work.
+- `alpine-ui`: workspace-write, no network, for UI-only changes.
+- `alpine-autonomous`: workspace-write, no network, for low/medium risk issue
+  work only after a human accepts the prompt and scope.
 
-The profiles exist for their sandbox, network and approval settings. The
-effort in each name is only a starting point: choose the effort for the task in
-front of you as `AGENTS.md` → "Model selection" describes, and override it at
-launch with `-c model_reasoning_effort=<level>` when the task calls for a
-different one.
+## Model and effort
+
+Profiles set sandbox/network/approval only; choose model and effort at launch
+per `AGENTS.md` → "Model selection" and [`MODELS.md`](MODELS.md), for example
+`codex --profile alpine-fix -c model_reasoning_effort=high`.
 
 High and critical risk issues are not unattended coding candidates even if a
 profile permits workspace writes.

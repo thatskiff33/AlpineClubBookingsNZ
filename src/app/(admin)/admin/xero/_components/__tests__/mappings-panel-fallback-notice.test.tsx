@@ -31,7 +31,7 @@ vi.mock("../api", () => ({
 
 // Partial mock: the module also exports the shared view-only reason string the
 // admin button components read at render time (the widened-graph trap in
-// AGENTS.md §5), so replacing the module wholesale kills the file at import.
+// docs/TESTING.md and AGENTS.md "Per-issue pipeline"), so replacing the module wholesale kills the file at import.
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   useAdminAreaEditAccess: () => true,
