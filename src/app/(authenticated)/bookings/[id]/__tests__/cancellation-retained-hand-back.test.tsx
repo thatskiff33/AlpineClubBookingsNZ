@@ -25,7 +25,10 @@ const handBack = (status: string, amountCents: number) => ({
 // A cancelled booking marked paid by hand for $100.00 (Internet Banking, one
 // captured ledger row), $10.00 of it already refunded, whose $60.00 hand-back
 // refund is still an OPEN officer task.
-function cancelledMarkedPaid(manualRefundTasks: ReturnType<typeof handBack>[]) {
+function cancelledMarkedPaid(
+  manualRefundTasks: ReturnType<typeof handBack>[],
+  payment: Partial<{ status: string; refundedAmountCents: number; _count: { transactions: number } }> = {},
+) {
   return {
     id: "b-cancelled",
     status: "CANCELLED",
@@ -45,15 +48,21 @@ function cancelledMarkedPaid(manualRefundTasks: ReturnType<typeof handBack>[]) {
       creditAppliedCents: 0,
       changeFeeCents: 0,
       _count: { transactions: 1 },
+      ...payment,
     },
   };
 }
 
-function project(booking: ReturnType<typeof cancelledMarkedPaid>) {
+const OFFICER = { canManageBooking: true, isBookingOwner: false, nonOwnerAdminViewer: true };
+const OWNER = { canManageBooking: true, isBookingOwner: true, nonOwnerAdminViewer: false };
+// A guest on the booking viewing it read-only (`isLinkedGuestViewer`).
+const LINKED_GUEST = { canManageBooking: false, isBookingOwner: false, nonOwnerAdminViewer: false };
+
+function project(booking: ReturnType<typeof cancelledMarkedPaid>, viewer = OFFICER) {
   return resolveBookingDetailPayment({
     booking: booking as unknown as BookingDetailRecord,
     modules: { xeroIntegration: false, internetBankingPayments: false } as never,
-    viewer: { canManageBooking: true, isBookingOwner: false, nonOwnerAdminViewer: true } as never,
+    viewer: viewer as never,
     access: { isDeleted: false } as never,
     party: { hasProvisionalChildren: false, isProvisionalChild: false, isFlaggedProvisional: false } as never,
   });
@@ -83,11 +92,15 @@ describe("the cancellation outcome's retained line (#3811)", () => {
     expect(html).toContain("(after $60.00 still being paid back by hand)");
   });
 
-  it("is paid less refunded, with no note, once the hand-back is completed", () => {
-    const booking = cancelledMarkedPaid([handBack("COMPLETED", 6_000)]);
+  it("holds steady through completion: the refund lands in refundedAmountCents and the note goes", () => {
+    // Completing the task raises `refundedAmountCents` by what was handed back
+    // (`manual-refund-task-resolution.ts`): $10.00 + $60.00 = $70.00.
+    const booking = cancelledMarkedPaid([handBack("COMPLETED", 6_000)], {
+      refundedAmountCents: 7_000,
+    });
     const payment = project(booking);
 
-    expect(payment.retainedAfterCancellationCents).toBe(9_000);
+    expect(payment.retainedAfterCancellationCents).toBe(3_000);
     expect(payment.handBackOwedAfterCancellationCents).toBe(0);
     const html = renderToStaticMarkup(
       <BookingCancellationOutcome
@@ -96,6 +109,48 @@ describe("the cancellation outcome's retained line (#3811)", () => {
         payment={payment}
       />,
     );
+    expect(html).toContain("$30.00");
     expect(html).not.toContain("still being paid back by hand");
+  });
+
+  it("shows the hand-back note to the booker and officers, never to a linked guest", () => {
+    const booking = cancelledMarkedPaid([handBack("OPEN", 6_000)]);
+    const render = (viewer: typeof OFFICER) =>
+      renderToStaticMarkup(
+        <BookingCancellationOutcome
+          booking={booking as unknown as BookingDetailRecord}
+          money={money}
+          payment={project(booking, viewer)}
+        />,
+      );
+    expect(render(OWNER)).toContain("(after $60.00 still being paid back by hand)");
+    expect(render(OFFICER)).toContain("(after $60.00 still being paid back by hand)");
+    const guest = render(LINKED_GUEST);
+    expect(guest).not.toContain("still being paid back by hand");
+    // The figure itself is the same for everyone.
+    expect(project(booking, LINKED_GUEST).retainedAfterCancellationCents).toBe(3_000);
+  });
+
+  it("does not show a never-paid payment folded to PARTIALLY_REFUNDED as an original payment", () => {
+    // An Internet Banking payment never paid: a Xero credit note folded into
+    // its mirror marks it PARTIALLY_REFUNDED, but no captured ledger row exists.
+    const booking = cancelledMarkedPaid([], { _count: { transactions: 0 } });
+    const payment = project(booking);
+
+    expect(payment.originalPaymentCaptured).toBe(false);
+    expect(payment.retainedAfterCancellationCents).toBe(0);
+    const html = renderToStaticMarkup(
+      <BookingCancellationOutcome
+        booking={booking as unknown as BookingDetailRecord}
+        money={money}
+        payment={payment}
+      />,
+    );
+    expect(html).toContain("No original payment captured");
+    expect(html).not.toContain("$100.00");
+    expect(html).not.toContain("Non-refundable amount retained:");
+
+    // With its captured ledger row it is a real payment again.
+    expect(project(cancelledMarkedPaid([])).originalPaymentCaptured).toBe(true);
   });
 });

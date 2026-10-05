@@ -174,8 +174,10 @@ export interface NetCollectedPaymentParts {
  * folds a modification credit note into a never-paid Internet Banking payment
  * (`amountCents` = its full price) and marks it PARTIALLY_REFUNDED: bookkeeping,
  * not cash. A paid one has a captured ledger row, so its remainder still counts.
+ * The booking page's "Original payment" gate reads it too (#3924), so the page
+ * never shows a payment as taken that its retained line counts as nothing.
  */
-function netCollectedPaymentTookMoney(
+export function netCollectedPaymentTookMoney(
   payment: Omit<NetCollectedPaymentRow, "booking"> & { status: string },
 ): boolean {
   if (!isCapturedPaymentStatus(payment.status)) return false;
