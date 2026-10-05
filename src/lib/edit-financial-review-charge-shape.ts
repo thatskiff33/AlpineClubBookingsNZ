@@ -1,4 +1,6 @@
 import {
+  LedgerAnchorKind,
+  LedgerLineKind,
   ManualRefundTaskDirection,
   ManualRefundTaskKind,
   ManualRefundTaskStatus,
@@ -82,6 +84,40 @@ export const editReviewSettledShareTaskSelect = {
  */
 export function editReviewSettlementSign(direction: ManualRefundTaskDirection): 1 | -1 {
   return direction === ManualRefundTaskDirection.CHARGE_TO_MEMBER ? 1 : -1;
+}
+
+/**
+ * WHICH LEDGER LINES ARE REVIEWS' HAND-BACKS of a captured payment (#3835,
+ * #3907): the `BANK_REFUND` a review's bank-transfer route posts under its
+ * task. One fragment, read twice: #3835's netting sums what siblings returned
+ * with it (`settledSinceCancellation`, spread beside a `bookingId`), and the
+ * cut-over census matches its snapshot's lines against the same object
+ * (`isEditReviewHandBackLine`). The census also drops a line a later reversal
+ * undid (`liveLines`) from what a hand-back makes, yet still counts its task
+ * as one that refunded the capture, and so never mints (#3913): being the
+ * stricter both ways, it can only flag, never excuse.
+ */
+export function editReviewHandBackLinesWhere(taskIds: string[]) {
+  return {
+    kind: LedgerLineKind.BANK_REFUND,
+    anchorKind: LedgerAnchorKind.REVIEW_TASK,
+    anchorId: { in: taskIds },
+    reversesLineId: null,
+  } as const satisfies Prisma.BookingLedgerLineWhereInput;
+}
+
+/** Is `line` one of `taskId`'s hand-backs, by `editReviewHandBackLinesWhere` itself? */
+export function isEditReviewHandBackLine(
+  line: { kind: string; anchorKind: string; anchorId: string; reversesLineId: string | null },
+  taskId: string,
+): boolean {
+  const where = editReviewHandBackLinesWhere([taskId]);
+  return (
+    line.kind === where.kind &&
+    line.anchorKind === where.anchorKind &&
+    where.anchorId.in.includes(line.anchorId) &&
+    line.reversesLineId === where.reversesLineId
+  );
 }
 
 /** One settled share as a Xero document names it: signed like `priceDiffCents`. */
