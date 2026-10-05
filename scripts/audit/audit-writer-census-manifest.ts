@@ -591,15 +591,30 @@ export const AUDIT_CENSUS_TOTALS = {
   // enrolment and the erasure's clear, categorised `security` at the site. The
   // Xero token writes add no site: they go through the credential store's
   // existing `recordCredentialMutation`. RE-MEASURED with `pnpm run audit:census`.
-  // 495 -> 496 (#3827): `booking.modify.promo_reprice`, the edit-shaped record a
+  // 495 -> 496 (#3792): `xero.allocation.restored-booking-change-refused`, the
+  // durable record of a Xero allocation change the inbound credit-note sync
+  // refused to post to a cancelled booking whose applied credit was already
+  // restored. One awaited `createAuditLog` in
+  // `src/lib/xero-inbound/credit-note-repairs.ts`, categorised `xero` at the
+  // site, with `entityType`/`entityId` for the booking and no subject member.
+  // RE-MEASURED with `pnpm run audit:census`, not incremented.
+  // 496 -> 497 (#3653 fix round, composed onto #3792 by #3630): `booking.payment.refund_recovered` written by
+  // the organiser child refund executor when a refund an earlier attempt failed
+  // to make is finally made - the corrective row the group cancel's own record
+  // ("refund owed") needs. One `logAudit` in
+  // `src/lib/organiser-child-refund-executor.ts`, categorised `booking` like the
+  // legacy group replay's row with the same action. RE-MEASURED with
+  // `pnpm run audit:census`, not incremented.
+  // 497 -> 498 (#3827, epic #3813): `booking.modify.promo_reprice`, the edit-shaped record a
   // guest's acceptance writes when it re-prices the booking's promo codes and
   // moves money, `booking` at the site like the guest-removal edit it mirrors.
-  // RE-MEASURED with `pnpm run audit:census`.
-  // 496 -> 497 (#3492): `promo_code.guest_lookup`, the record every guest
+  // 498 -> 499 (#3492, epic #3813): `promo_code.guest_lookup`, the record every guest
   // promo-code chip lookup writes (`src/lib/promo-guest-codes.ts`), one awaited
   // `createStructuredAuditLog`, categorised `privacy` at the site like the
-  // member-guest finder's lookups. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 497,
+  // member-guest finder's lookups. Both disjoint from #3792's and #3653's, so the
+  // composed figure is all four. RE-MEASURED with `pnpm run audit:census` on the
+  // tree composed by #3829.
+  writeSites: 499,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -687,8 +702,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // awaited `createAuditLog` inside the reset's own transaction, so the
     // reset and its record commit together. RE-MEASURED with
     // `pnpm run audit:census`.
-    // 270 -> 271 (#3827): the guest-acceptance re-price record, above.
-    logAudit: { total: 271, uncategorised: 0 },
+    // 270 -> 271 (#3653 fix round): the organiser child refund recovery record,
+    // above. RE-MEASURED with `pnpm run audit:census`.
+    // 271 -> 272 (#3827, composed by #3829): the guest-acceptance re-price record, above.
+    logAudit: { total: 272, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -775,7 +792,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // each await their record inside the state change's transaction.
     // 137 -> 138 (#3454): the two-factor enrolment / erasure-clear record,
     // awaited on the transaction that changes the second factor.
-    createAuditLog: { total: 138, uncategorised: 0 },
+    // 138 -> 139 (#3792): the refused restored-booking allocation change record.
+    createAuditLog: { total: 139, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -895,9 +913,13 @@ export const AUDIT_CENSUS_TOTALS = {
     // 104 -> 105 (#3029): the booking dietary edit record. A stay's dietary
     // note is booking data, read by booking officers, so `booking` is its
     // affected domain (`INV-PRIV-012`); the row names the field, never its value.
-    // 105 -> 106 (#3827): the guest-acceptance re-price record — a booking's
+    // 105 -> 106 (#3653 fix round): the organiser child refund recovery record,
+    // `booking` like the legacy group replay's row with the same action - the
+    // same readers, and no member-facing disclosure. RE-MEASURED with
+    // `pnpm run audit:census`.
+    // 106 -> 107 (#3827, composed by #3829): the guest-acceptance re-price record — a booking's
     // money changing, read by booking officers like every `booking.modify.*`.
-    booking: 106,
+    booking: 107,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the
@@ -1188,7 +1210,11 @@ export const AUDIT_CENSUS_TOTALS = {
     //
     // 37 -> 38 (#3462): `xero.operation.marked_failed`, beside the other
     // operation-panel writers. Nobody's readership changes.
-    xero: 38,
+    //
+    // 38 -> 39 (#3792): `xero.allocation.restored-booking-change-refused`,
+    // beside the inbound reconcile's other `xero` rows. Nobody's readership
+    // changes.
+    xero: 39,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership

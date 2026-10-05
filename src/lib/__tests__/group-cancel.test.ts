@@ -42,6 +42,9 @@ const mocks = vi.hoisted(() => ({
   enqueueXeroGroupSettlementVoid: vi.fn(),
   reconcileHostingReviewForSystemCancellation: vi.fn(),
   settleHostingCoverageAfterCommit: vi.fn(),
+  planOrganiserCancelChildRefunds: vi.fn(),
+  runPaymentRecoveryOperationNow: vi.fn(),
+  recoveryOperationFindUnique: vi.fn(),
 }));
 
 const txClient = {
@@ -77,6 +80,9 @@ vi.mock("@/lib/prisma", () => ({
       update: mocks.settlementUpdate,
       findUnique: mocks.settlementFindUnique,
     },
+    paymentRecoveryOperation: { findUnique: mocks.recoveryOperationFindUnique },
+    // #3827 (composed by #3829): no open by-hand refund task on any child.
+    manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })) },
     $transaction: mocks.transaction,
   },
 }));
@@ -115,6 +121,13 @@ vi.mock("@/lib/payment-recovery", () => ({
     mocks.enqueueGroupSettlementRefundRecovery,
   markGroupSettlementRefundRecoverySucceeded:
     mocks.markGroupSettlementRefundRecoverySucceeded,
+  runPaymentRecoveryOperationNow: mocks.runPaymentRecoveryOperationNow,
+}));
+// #3653: the per-child planner is proved against PostgreSQL in
+// organiser-child-refund.realdb.test.ts; here only its use is observed.
+vi.mock("@/lib/organiser-child-refund", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/organiser-child-refund")),
+  planOrganiserCancelChildRefunds: mocks.planOrganiserCancelChildRefunds,
 }));
 vi.mock("@/lib/xero-group-settlement-void-outbox", () => ({
   enqueueXeroGroupSettlementInvoiceVoidOperation:
@@ -209,6 +222,14 @@ beforeEach(() => {
   });
   mocks.reconcileHostingReviewForSystemCancellation.mockResolvedValue(undefined);
   mocks.settleHostingCoverageAfterCommit.mockResolvedValue(undefined);
+  mocks.planOrganiserCancelChildRefunds.mockResolvedValue(new Map());
+  mocks.runPaymentRecoveryOperationNow.mockResolvedValue("succeeded");
+  // A debt reads PENDING until the inline run has run it, then SUCCEEDED.
+  mocks.recoveryOperationFindUnique.mockImplementation(async ({ where }: { where: { idempotencyKey: string } }) => {
+    const id = `op-${where.idempotencyKey}`;
+    const ran = mocks.runPaymentRecoveryOperationNow.mock.calls.some(([opId]) => opId === id);
+    return { id, status: ran ? "SUCCEEDED" : "PENDING" };
+  });
 });
 
 describe("settleGroupBookingOnOrganiserCancel", () => {
@@ -281,23 +302,24 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     });
   });
 
-  it("ORGANISER_PAYS settled: one refund, per-child Xero credit notes, children cancelled", async () => {
+  it("#3653 card settlement: one refund per paid child through its own debt; the child loop writes no mirror and no note", async () => {
     mocks.groupBookingFindUnique.mockResolvedValue({
       id: GROUP_ID,
       paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
       settlement: {
         id: "settle-1",
-        status: PaymentStatus.SUCCEEDED,
+        status: PaymentStatus.PARTIALLY_REFUNDED,
         amountCents: 9000,
         stripePaymentIntentId: "pi_settle_1",
+        refundPlan: null,
       },
     });
     mocks.bookingFindMany.mockResolvedValue([
       child({
         id: "child-1",
         status: BookingStatus.PAID,
-        finalPriceCents: 4500,
-        payment: { id: "pay-1", amountCents: 4500, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED },
+        finalPriceCents: 3000,
+        payment: { id: "pay-1", amountCents: 4500, refundedAmountCents: 1500, status: PaymentStatus.PARTIALLY_REFUNDED },
       }),
       child({
         id: "child-2",
@@ -306,64 +328,107 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
         payment: { id: "pay-2", amountCents: 4500, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED },
       }),
     ]);
+    mocks.planOrganiserCancelChildRefunds.mockResolvedValue(new Map([["child-1", 3000], ["child-2", 4500]]));
 
     await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
-    // Exactly one Stripe refund for the combined total.
-    expect(mocks.processRefund).toHaveBeenCalledTimes(1);
-    expect(mocks.processRefund).toHaveBeenCalledWith(
-      expect.objectContaining({
-        paymentIntentId: "pi_settle_1",
-        amountCents: 9000,
-      })
+    // A PARTIALLY_REFUNDED settlement (an edit already refunded child-1) is planned.
+    expect(mocks.planOrganiserCancelChildRefunds).toHaveBeenCalledWith(
+      expect.objectContaining({ settlementId: "settle-1", organiserBookingId: ORG_BOOKING, daysUntilCheckIn: 30 })
     );
-    // Settlement marked fully refunded.
-    expect(mocks.settlementUpdate).toHaveBeenCalledWith({
-      where: { id: "settle-1" },
-      data: { status: PaymentStatus.REFUNDED },
-    });
-    // Per-child Xero refund credit notes.
-    expect(mocks.enqueueXeroRefund).toHaveBeenCalledTimes(2);
-    expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-1", 4500, {
-      createdByMemberId: ORGANISER,
-      store: txClient,
-    });
-    // Each child's payment marked refunded and booking cancelled.
-    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
-      where: { id: "pay-1" },
-      data: { refundedAmountCents: 4500, status: PaymentStatus.REFUNDED },
-    });
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "child-1", status: { in: [BookingStatus.PAYMENT_PENDING, BookingStatus.CONFIRMED, BookingStatus.PAID] } },
-      data: {
-        status: BookingStatus.CANCELLED,
-        adminCapacityHoldAt: null,
-        adminCapacityHoldByMemberId: null,
-        wholeLodgeHold: false,
-        wholeLodgeHoldAt: null,
-        wholeLodgeHoldByMemberId: null,
-      },
-    });
-    // Joiners emailed with their refund amount.
+    expect(mocks.runPaymentRecoveryOperationNow).toHaveBeenCalledWith(
+      "op-organiser_child_refund_cancel_settle-1_child-1",
+      CLUB_FORMAT_TEST
+    );
+    expect(mocks.runPaymentRecoveryOperationNow).toHaveBeenCalledWith(
+      "op-organiser_child_refund_cancel_settle-1_child-2",
+      CLUB_FORMAT_TEST
+    );
+    // No combined refund, no legacy recovery, no mirror or note from this loop.
+    expect(mocks.processRefund).not.toHaveBeenCalled();
+    expect(mocks.enqueueGroupSettlementRefundRecovery).not.toHaveBeenCalled();
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroRefund).not.toHaveBeenCalled();
+    expect(mocks.settlementUpdate).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdate).toHaveBeenCalledTimes(2);
+    // Joiners are told what their refund actually returned.
     expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledWith(
       { bookingId: "child-1", recipientMemberId: "joiner-member-1" },
       "joiner@example.com",
       "Jo",
       CHECK_IN,
       CHECK_OUT,
-      4500,
+      3000,
       CLUB_FORMAT_TEST,
       "card",
       0,
       undefined
     );
-    expect(mocks.groupBookingUpdate).toHaveBeenCalledWith({
-      where: { id: GROUP_ID },
-      data: { status: GroupBookingStatus.CANCELLED },
-    });
+    // The executor recorded the REFUNDED event; the cancel records CANCELLED.
+    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "child-1", type: "CANCELLED" })
+    );
   });
 
-  it("Fix #3: keys the refund by the stable settlement id, not the tier-dependent amount", async () => {
+  it("#3653: a debt still owed after the inline run reads as nothing refunded yet, and stays owed", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: { id: "settle-1", status: PaymentStatus.SUCCEEDED, amountCents: 4500, stripePaymentIntentId: "pi_settle_1", refundPlan: null },
+    });
+    mocks.bookingFindMany.mockResolvedValue([
+      child({ id: "child-1", status: BookingStatus.PAID, payment: { id: "pay-1", amountCents: 4500, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED } }),
+    ]);
+    mocks.planOrganiserCancelChildRefunds.mockResolvedValue(new Map([["child-1", 4500]]));
+    mocks.runPaymentRecoveryOperationNow.mockResolvedValue("failed");
+    mocks.recoveryOperationFindUnique.mockResolvedValue({ id: "op-1", status: "FAILED" });
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
+
+    expect(mocks.runPaymentRecoveryOperationNow).toHaveBeenCalledWith("op-1", CLUB_FORMAT_TEST);
+    expect(mocks.bookingUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), expect.anything(), CHECK_IN, CHECK_OUT, 0,
+      CLUB_FORMAT_TEST, "card", 0, undefined
+    );
+    // #3653 fix round: the refund is OWED, not "no payment taken". The
+    // recovery that later makes it writes `booking.payment.refund_recovered`
+    // (the executor's own suite).
+    const childAudit = mocks.logAudit.mock.calls
+      .map(([entry]) => entry as { targetId: string; details: string; metadata: Record<string, unknown> })
+      .find((entry) => entry.targetId === "child-1");
+    expect(childAudit?.details).toBe(
+      "Group organiser cancelled; a refund of $45.00 to the organiser's card is owed and will be retried",
+    );
+    expect(childAudit?.metadata).toMatchObject({ refundForChild: 0, owedRefundForChild: 4500 });
+  });
+
+  it("#3653: a re-drive replays the frozen per-child plan and never re-plans or re-runs a closed debt", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: {
+        id: "settle-1",
+        status: PaymentStatus.PARTIALLY_REFUNDED,
+        amountCents: 9000,
+        stripePaymentIntentId: "pi_settle_1",
+        refundPlan: { perChildRefunds: { "child-1": 4500 } },
+      },
+    });
+    mocks.bookingFindMany.mockResolvedValue([]);
+    mocks.planOrganiserCancelChildRefunds.mockResolvedValue(new Map([["child-1", 4500]]));
+    mocks.recoveryOperationFindUnique.mockResolvedValue({ id: "op-1", status: "SUCCEEDED" });
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
+
+    // The planner returns the frozen plan itself (proved against PostgreSQL);
+    // a closed debt is not run again, and no legacy combined refund fires.
+    expect(mocks.runPaymentRecoveryOperationNow).not.toHaveBeenCalled();
+    expect(mocks.processRefund).not.toHaveBeenCalled();
+  });
+
+  it("Fix #3: a pre-#3653 plan keys its refund by the stable settlement id, not the tier-dependent amount", async () => {
     mocks.groupBookingFindUnique.mockResolvedValue({
       id: GROUP_ID,
       paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
@@ -372,6 +437,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
         status: PaymentStatus.SUCCEEDED,
         amountCents: 9000,
         stripePaymentIntentId: "pi_settle_1",
+        refundPlan: { "child-1": 4500 },
       },
     });
     mocks.bookingFindMany.mockResolvedValue([
@@ -544,85 +610,12 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       data: { status: PaymentStatus.FAILED },
     });
 
-    // The owed refund FIRES for the combined captured total (the core fix).
-    expect(mocks.processRefund).toHaveBeenCalledTimes(1);
-    expect(mocks.processRefund).toHaveBeenCalledWith(
-      expect.objectContaining({
-        paymentIntentId: "pi_settle_1",
-        amountCents: 9000,
-        idempotencyKey: "group_cancel_refund_settle-1",
-      })
+    // The owed refunds FIRE (the core fix): the FRESH SUCCEEDED status drove
+    // the per-child plan (#3653), and the loop wrote no mirror of its own.
+    expect(mocks.planOrganiserCancelChildRefunds).toHaveBeenCalledWith(
+      expect.objectContaining({ settlementId: "settle-1" })
     );
-    // The settlement flips REFUNDED (fresh status drove the decision).
-    expect(mocks.settlementUpdate).toHaveBeenCalledWith({
-      where: { id: "settle-1" },
-      data: { status: PaymentStatus.REFUNDED },
-    });
-    // Durable recovery is armed before the refund and closed after the flip.
-    expect(mocks.enqueueGroupSettlementRefundRecovery).toHaveBeenCalledTimes(1);
-    expect(
-      mocks.markGroupSettlementRefundRecoverySucceeded
-    ).toHaveBeenCalledWith({ settlementId: "settle-1" });
-
-    // Per-child mirrors ARE written, but each corresponds to the real refund:
-    // the mirror write follows the Stripe refund, never precedes it. No phantom
-    // mirror without a corresponding refund.
-    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
-      where: { id: "pay-1" },
-      data: { refundedAmountCents: 4500, status: PaymentStatus.REFUNDED },
-    });
-    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
-      where: { id: "pay-2" },
-      data: { refundedAmountCents: 4500, status: PaymentStatus.REFUNDED },
-    });
-    const firstMirrorOrder = Math.min(
-      ...mocks.paymentUpdate.mock.invocationCallOrder
-    );
-    expect(mocks.processRefund.mock.invocationCallOrder[0]).toBeLessThan(
-      firstMirrorOrder
-    );
-  });
-
-  it("ORGANISER_PAYS settled with a late unpaid joiner: refunds only the paid child", async () => {
-    mocks.groupBookingFindUnique.mockResolvedValue({
-      id: GROUP_ID,
-      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
-      settlement: {
-        id: "settle-1",
-        status: PaymentStatus.SUCCEEDED,
-        amountCents: 4500,
-        stripePaymentIntentId: "pi_settle_1",
-      },
-    });
-    mocks.bookingFindMany.mockResolvedValue([
-      child({
-        id: "paid-child",
-        status: BookingStatus.PAID,
-        finalPriceCents: 4500,
-        payment: { id: "pay-1", amountCents: 4500, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED },
-      }),
-      // Joined after settlement; never charged.
-      child({ id: "late-child", status: BookingStatus.PAYMENT_PENDING, finalPriceCents: 4500, payment: null }),
-    ]);
-
-    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
-
-    expect(mocks.processRefund).toHaveBeenCalledTimes(1);
-    expect(mocks.processRefund).toHaveBeenCalledWith(
-      expect.objectContaining({ amountCents: 4500 })
-    );
-    expect(mocks.settlementUpdate).toHaveBeenCalledWith({
-      where: { id: "settle-1" },
-      data: { status: PaymentStatus.REFUNDED },
-    });
-    // Only the paid child generated a Xero credit note.
-    expect(mocks.enqueueXeroRefund).toHaveBeenCalledTimes(1);
-    expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-1", 4500, {
-      createdByMemberId: ORGANISER,
-      store: txClient,
-    });
-    // Both children cancelled and beds released.
-    expect(mocks.bookingUpdate).toHaveBeenCalledTimes(2);
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
   });
 
   it("#1257/#1377: enqueues the per-child credit note INSIDE the child-cancel tx (store: tx), not post-commit", async () => {
@@ -634,6 +627,8 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
         status: PaymentStatus.SUCCEEDED,
         amountCents: 4500,
         stripePaymentIntentId: "pi_settle_1",
+        // A pre-#3653 plan: its mirrors and notes are still this loop's.
+        refundPlan: { "child-1": 4500 },
       },
     });
     mocks.bookingFindMany.mockResolvedValue([
@@ -673,7 +668,10 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
         id: "settle-1",
         status: PaymentStatus.SUCCEEDED,
         amountCents: 4500,
-        stripePaymentIntentId: "pi_settle_1",
+        // An Internet Banking settlement: no card intent, so the club pays the
+        // refund by hand and this loop writes the mirror and the note (#3653).
+        stripePaymentIntentId: null,
+        source: PaymentSource.INTERNET_BANKING,
       },
     });
     mocks.bookingFindMany.mockResolvedValue([
@@ -686,6 +684,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
           amountCents: 4500,
           refundedAmountCents: 0,
           status: PaymentStatus.SUCCEEDED,
+          changeFeeCents: 0,
           source: PaymentSource.INTERNET_BANKING,
         },
       }),
@@ -835,7 +834,7 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
     });
   }
 
-  it("first run persists the refund plan before issuing the Stripe refund", async () => {
+  it("an Internet Banking settlement persists its plan before any mirror is written, and refunds nothing through Stripe (#3653)", async () => {
     mocks.groupBookingFindUnique.mockResolvedValue({
       id: GROUP_ID,
       paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
@@ -843,27 +842,36 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
         id: "settle-1",
         status: PaymentStatus.SUCCEEDED,
         amountCents: 4500,
-        stripePaymentIntentId: "pi_settle_1",
+        stripePaymentIntentId: null,
+        source: PaymentSource.INTERNET_BANKING,
         refundPlan: null,
       },
     });
-    mocks.bookingFindMany.mockResolvedValue([paidChild("child-1", "pay-1")]);
+    // An earlier edit's refund is already off this child: the plan sizes from
+    // what remains (4500 - 1000), less the 500 change fee (`INV-PAY-018`).
+    mocks.bookingFindMany.mockResolvedValue([
+      child({
+        id: "child-1",
+        status: BookingStatus.PAID,
+        finalPriceCents: 4000,
+        payment: { id: "pay-1", amountCents: 4500, refundedAmountCents: 1000, changeFeeCents: 500, status: PaymentStatus.PARTIALLY_REFUNDED },
+      }),
+    ]);
 
     await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
 
-    // The plan (record of record) is persisted before any money moves.
     expect(mocks.settlementUpdate).toHaveBeenCalledWith({
       where: { id: "settle-1" },
-      data: { refundPlan: { "child-1": 4500 } },
+      data: { refundPlan: { "child-1": 3000 } },
     });
-    const persistCallIdx = mocks.settlementUpdate.mock.calls.findIndex(
-      ([arg]) => arg?.data?.refundPlan !== undefined
-    );
-    const persistOrder =
-      mocks.settlementUpdate.mock.invocationCallOrder[persistCallIdx];
-    const refundOrder = mocks.processRefund.mock.invocationCallOrder[0];
-    expect(persistOrder).toBeLessThan(refundOrder);
-    expect(mocks.processRefund).toHaveBeenCalledTimes(1);
+    const persistOrder = mocks.settlementUpdate.mock.invocationCallOrder[0];
+    expect(persistOrder).toBeLessThan(mocks.paymentUpdate.mock.invocationCallOrder[0]);
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay-1" },
+      data: { refundedAmountCents: 4000, status: PaymentStatus.PARTIALLY_REFUNDED },
+    });
+    expect(mocks.processRefund).not.toHaveBeenCalled();
+    expect(mocks.planOrganiserCancelChildRefunds).not.toHaveBeenCalled();
   });
 
   it("re-drive after the flip applies the plan mirror without a new refund", async () => {
@@ -1068,7 +1076,7 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
         status: PaymentStatus.SUCCEEDED,
         amountCents: 4500,
         stripePaymentIntentId: "pi_settle_1",
-        refundPlan: null,
+        refundPlan: { "child-1": 4500 }, // a pre-#3653 plan, re-driven
       },
     });
     mocks.bookingFindMany.mockResolvedValue([paidChild("child-1", "pay-1")]);

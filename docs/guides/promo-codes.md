@@ -180,7 +180,7 @@ Two consequences to expect:
 Once the **Several promo codes on one booking** module is switched on, a booking
 can carry more than one code — for example two members sharing a group booking,
 each using their own free nights. The booker chooses every code; nothing is
-added for them. The rules (`INV-MONEY-037`, `INV-MONEY-038`):
+added for them. The rules (`INV-MONEY-038`, `INV-MONEY-039`):
 
 - **A night is discounted once.** Each code covers only the nights no earlier
   code has already discounted. A member's own free-night code covers only that

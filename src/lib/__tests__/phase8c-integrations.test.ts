@@ -373,6 +373,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // False is the control state for every assertion here.
       financialReviewPending: false,
       refundByBankTransfer: false,
+      appliedCreditGivenBackCents: 0,
     }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("Booking Modified");
@@ -405,6 +406,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // False is the control state for every assertion here.
       financialReviewPending: false,
       refundByBankTransfer: false,
+      appliedCreditGivenBackCents: 0,
     }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("Guests Added");
@@ -436,6 +438,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // False is the control state for every assertion here.
       financialReviewPending: false,
       refundByBankTransfer: false,
+      appliedCreditGivenBackCents: 0,
     }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("Guest Removed");
@@ -465,6 +468,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // False is the control state for every assertion here.
       financialReviewPending: false,
       refundByBankTransfer: false,
+      appliedCreditGivenBackCents: 0,
     }, CLUB_FORMAT_TEST);
 
     expect(html).not.toContain("<script>");
@@ -494,6 +498,7 @@ describe("EML-01: bookingModifiedTemplate", () => {
       // False is the control state for every assertion here.
       financialReviewPending: false,
       refundByBankTransfer: false,
+      appliedCreditGivenBackCents: 0,
     }, CLUB_FORMAT_TEST);
 
     // Should show "Total" not "Previous Total" / "New Total"

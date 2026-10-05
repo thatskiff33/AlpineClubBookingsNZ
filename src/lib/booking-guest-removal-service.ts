@@ -53,6 +53,7 @@ import {
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
+import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
 import {
   assertNoPendingEditFinancialReview,
@@ -92,6 +93,7 @@ import { SELF_REMOVABLE_GUEST_BOOKING_STATUSES } from "@/lib/booking-guest-self-
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
+import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import logger from "@/lib/logger";
 import {
   pricingSideFromPriceBreakdown,
@@ -127,6 +129,9 @@ export type RemoveBookingGuestResult = {
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   xeroRefundAmountCents: number;
+  appliedCreditGivenBackCents: number;
+  /** #3653: see `BookingModificationPaymentContext`. */
+  organiserChildRefund: { amountCents: number } | null;
   xeroAdditionalAmountCents: number;
   hasSucceededPayment: boolean;
   hasIssuedXeroInvoice: boolean;
@@ -1016,6 +1021,8 @@ export async function removeBookingGuestInTransaction({
     changeFeeCents: 0,
     settlementOptions,
     settlementMethod,
+    todayAtClub,
+    format,
   });
 
   // Run the same lifecycle transitions the batch path applies (#1041):
@@ -1173,6 +1180,7 @@ export async function removeBookingGuestInTransaction({
         settlementMethod: paymentImpact.settlementMethod,
         accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
         policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
+        ...creditGiveBackHistory(paymentImpact.appliedCreditGiveBack),
         // #2390: the same sentence the member saw when they made the edit,
         // kept on the booking's own history so "why was I charged that?" has
         // an answer months later. Absent unless a cap left somebody out.
@@ -1199,7 +1207,7 @@ export async function removeBookingGuestInTransaction({
     site: "guest-removal",
   });
 
-  // D-3813-6 (`INV-PAY-115`): a reduction on a booking paid by internet
+  // D-3813-6 (`INV-PAY-117`): a reduction on a booking paid by internet
   // banking or by hand asks the treasurer to send it back.
   await raiseEditRefundHandBackIfOwed(tx, {
     bookingId,
@@ -1287,6 +1295,13 @@ export async function removeBookingGuestInTransaction({
       booking.payment?.id,
     );
   }
+  // #3653: an organiser-settled child's refund debt, before this edit commits.
+  await reserveOrganiserChildModificationRefund(tx, {
+    plan: paymentImpact.organiserChildRefund,
+    bookingId,
+    payment: booking.payment,
+    bookingModificationId: bookingModification.id,
+  });
 
   // #2364. Removing a guest cuts both ways: taking out the only adult member
   // opens a hosting review, and taking out the last non-member guest closes one.
@@ -1319,6 +1334,8 @@ export async function removeBookingGuestInTransaction({
     settlementMethod: paymentImpact.settlementMethod,
     policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,
+    appliedCreditGivenBackCents: paymentImpact.appliedCreditGivenBackCents,
+    organiserChildRefund: paymentImpact.organiserChildRefund,
     xeroAdditionalAmountCents: paymentImpact.xeroAdditionalAmountCents,
     hasSucceededPayment: paymentImpact.hasSucceededPayment,
     hasIssuedXeroInvoice: paymentImpact.hasIssuedXeroInvoice,

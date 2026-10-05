@@ -61,6 +61,7 @@ import {
 } from "@/lib/group-settlement";
 import { adoptSavedCardChargeAttemptForIntent } from "@/lib/saved-card-charge-settle";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -72,14 +73,6 @@ type JsonRouteResult = {
 
 function jsonResult(body: unknown, init?: ResponseInit): JsonRouteResult {
   return { body, init };
-}
-
-function isCapturedAdditionalPaymentTransaction(status: PaymentStatus) {
-  return (
-    status === PaymentStatus.SUCCEEDED ||
-    status === PaymentStatus.PARTIALLY_REFUNDED ||
-    status === PaymentStatus.REFUNDED
-  );
 }
 
 // F16 (#1887): the ProcessedWebhookEvent claim is a processing LEASE. A
@@ -895,7 +888,7 @@ async function handleAdditionalModificationPaymentSucceeded(
     return;
   }
 
-  if (isCapturedAdditionalPaymentTransaction(paymentTransaction.status)) {
+  if (isCapturedTransactionStatus(paymentTransaction.status)) {
     const released = await releaseXeroSupplementaryInvoiceForCapturedPaymentIntent(
       paymentIntent.id
     );
@@ -1440,7 +1433,7 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
   // captured. Record the capture before refunding (the refund allocates
   // against a captured transaction). Skipped on replays where the row is
   // already captured/refunded so a completed refund is not flipped back.
-  if (!isCapturedAdditionalPaymentTransaction(paymentTransaction.status)) {
+  if (!isCapturedTransactionStatus(paymentTransaction.status)) {
     await markPaymentIntentTransactionSucceeded({
       paymentIntentId: paymentIntent.id,
       amountCents: paymentIntent.amount,

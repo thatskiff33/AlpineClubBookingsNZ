@@ -200,7 +200,7 @@ export function getUnpaidCancellationClearingAmountCents(
 }
 
 /**
- * #3827 review (`INV-PAY-116`): what the payment's refund requests' own notes
+ * #3827 review (`INV-PAY-118`): what the payment's refund requests' own notes
  * took out of its refunded total - one amount per request, from its row's
  * payload or its link's `amountCents`. Null when any request's amount cannot
  * be recovered, so the caller cannot size around it.
@@ -240,7 +240,7 @@ function getRefundRequestNotesTotalCents(
 
 /**
  * The cash a cancellation's refund note should answer, from the refunded
- * total net of an edit's refunds and (#3827, `INV-PAY-116`) each refund
+ * total net of an edit's refunds and (#3827, `INV-PAY-118`) each refund
  * request's own note. Zero when nothing is left for it - an appeal-only refund
  * raises no finding. Null when a remainder sits beside those refunds, or a
  * request's amount cannot be recovered: manual review, never a wrong-sized

@@ -91,7 +91,7 @@ const bodySchema = z.discriminatedUnion("resolution", [
         .optional()
         .nullable(),
       /**
-       * #3536 (`INV-PAY-114`): on a refund the club pays back by hand, the
+       * #3536 (`INV-PAY-116`): on a refund the club pays back by hand, the
        * officer's answer to how it went back - true for cash, false for a bank
        * transfer. Optional: no answer keeps the bank-transfer wording. It
        * changes the words on the Xero credit note and nothing else.
@@ -207,7 +207,7 @@ export async function POST(
       task: result,
       message: `${
         parsed.data.resolution === "completed"
-          ? completionMessage(result)
+          ? completionMessage(result, format)
           : dismissalMessage(result.kind, result.partPaymentReview)
       }${nightPricesRecordedMessage(result.recordedNightPriceCount)}`,
     });

@@ -349,6 +349,16 @@ booking's money and is only drawn when this booking's own total falls; without
 this the member was told to choose a refund or account credit with nothing on the
 page to choose and could then move neither booking.
 
+A booking the group organiser paid for by card shows no **Return method** choice
+at all (#3653): the price summary says the reduction goes back to the
+organiser's card, and the edit refuses an account-credit request. A change that
+would raise its price is refused with a message to contact the club; the quote
+shows that message in the price summary and Save stays off, and an officer
+completing a parked edit's review cannot charge the joiner for it either. The
+cancel dialog likewise offers only the refund to the organiser's card, including
+after an earlier reduction was refunded. A child the organiser settled by
+Internet Banking keeps the ordinary choices.
+
 Picking one and saving again applies it. Both bookings move together or neither
 does. Choosing account credit can produce a different figure from the card
 option, so the offer is shown once more with the true numbers before it commits —
@@ -537,7 +547,7 @@ saying it is already settled.
 member" and the booking's money did not come in by card, a **How did the club
 pay the member back?** choice appears: **By bank transfer** or **In cash**,
 neither pre-selected. It sets only the wording on the Xero credit note; leaving
-it blank keeps the bank-transfer wording (`INV-PAY-114`).
+it blank keeps the bank-transfer wording (`INV-PAY-116`).
 
 **A third kind of row, and it has no settle box at all (#3213, registered in this
 release and written in the next).** A booking change settled as money the member
@@ -671,6 +681,23 @@ error after posting. Both the $0.00 refusal and the night-price verdict below it
 are live regions, and each is listed ahead of its box's worked example in
 `aria-describedby` - the confirm button is disabled behind both sentences, so a
 reader who cannot hear one is back at the bare refusal.
+
+**On a cancelled booking the dialog says what is still owed, before completing
+(#3835, `INV-PAY-113`).** Once a money-back direction and an amount are given, a
+review on a booking that was cancelled first asks the server what that share
+will actually give back - the completion's own route choice and netting, never
+a second calculation (`GET .../manual-refund-tasks/[id]/still-owed`) - and prints
+it under the amount box, for example "Only $25.00 of the $50.00 share is still
+owed after the booking's cancellation - hand back $25.00, not the full share".
+That matters most on a bank-transfer hand-back, where the officer moves the
+money themselves before completing; on the card and minted-credit routes it
+says what will be refunded or credited. Where part of what is owed came out of
+the member's applied credit, that part goes back as account credit and the line
+says so ("$25.00 to the card and $25.00 as account credit"). Nothing is printed when the whole share
+is still owed; when nothing is, it says so (and, on a hand-back, not to hand
+anything back); a share the completion would refuse shows that refusal. The
+line is a live region, mounted empty; the dialog's view-only gating is
+unchanged.
 
 **Two groups inside that one card, deleted first (#2760).** The record covers every
 auto-refunded late capture, and since #2760 that includes bookings which are

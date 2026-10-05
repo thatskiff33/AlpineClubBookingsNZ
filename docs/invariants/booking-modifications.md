@@ -518,14 +518,26 @@ single-guest removal (`DELETE …/guests/[guestId]`), and date change
 tier for the days until check-in, folding any change fee into the net delta, and
 requires the member to elect a card refund or account credit whenever a captured
 payment makes a settlement returnable. No reduction path refunds the full price
-delta outside the policy. The one exception is not an edit: a guest's
-acceptance re-pricing the booking's promo codes returns its whole reduction the
-way the booking was paid, unasked (`INV-MONEY-037`, D-3813-5). Money returned
-on a booking not paid through Stripe is sent by the treasurer from an officer
-refund task (`INV-PAY-115`). A request against a booking with a captured payment
+delta outside the policy. Not an edit, a guest's acceptance re-pricing promo
+codes returns its whole reduction as paid, credit included, untiered and
+unasked (`INV-MONEY-038`, D-3813-5; by hand via `INV-PAY-117`). A request against a booking with a captured payment
 that omits the settlement election is rejected rather than defaulted, so a
 body-less self-removal cannot silently settle the booking owner's money; the
 owner or an admin makes the election through the batch edit flow.
+
+Applied credit is held to the same tier (#3809, owner decision A). On a PAID
+or COMPLETED booking, the part of the reduction the captured money's basis
+cannot return - all of it with nothing captured - is given back from the
+applied credit, capped at it, tiered by the card tier with the fixed fee once,
+card-first (`calculateAppliedCreditRestore`), through `giveBackAppliedCredit`
+(`INV-PAY-113`), with no election. A booking paid by card and credit gets what
+an all-card one would. The member's credit-ledger key is taken before any
+`Payment` row write; the mirror then falls to the ledger's figure. In Xero the
+give-back is always an invoice-allocated note of its own, worded as account
+credit and scoped; edit notes wait for the deallocation. Every guest-removal door, the
+consent decline and expiry included, queues that Xero leg. The quote and the
+"Booking Modified" email state the amount. A booking still owing (CONFIRMED or
+PAYMENT_PENDING) gives nothing back: its reduction lowers what it owes.
 
 ## INV-MOD-012
 

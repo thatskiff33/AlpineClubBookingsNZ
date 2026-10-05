@@ -21,15 +21,10 @@ import {
   isQuotePricedBooking,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
-import {
-  calculateFullReductionSettlementOptions,
-  type BookingModificationSettlementOptions,
-} from "@/lib/booking-modify-settlement";
 import { bookingOwner } from "@/lib/booking-owner";
 import {
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
-  isSettledBookingStatus,
 } from "@/lib/booking-payment-state";
 import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import {
@@ -48,14 +43,13 @@ import { sendBookingModifiedEmail } from "@/lib/email/booking";
 import {
   editRefundGoesBackByHand,
   raiseEditRefundHandBackIfOwed,
-  refundableCashNetOfOpenHandBacks,
 } from "@/lib/edit-refund-hand-back";
+import { fullReductionReturnRoute } from "@/lib/booking-guest-acceptance-return-route";
 import { getDefaultLodgeId } from "@/lib/lodges";
+import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import logger from "@/lib/logger";
 import {
   clampAppliedCreditToBookingPrice,
-  deriveBookingAppliedCreditCents,
-  lockMemberCreditLedger,
 } from "@/lib/member-credit";
 import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
 import { prisma } from "@/lib/prisma";
@@ -66,7 +60,7 @@ import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settleme
  * #3827 (D-3813-4): A GUEST'S ACCEPTANCE RE-PRICES THE BOOKING'S CODES.
  *
  * A cross-family guest awaiting acceptance is shown to no promo code, so their
- * nights carry none (INV-MONEY-037). When they accept, the owner's decision is
+ * nights carry none (INV-MONEY-038). When they accept, the owner's decision is
  * that the booking is re-priced "under the ordinary edit rules": every code
  * the booking already carries runs again — in its stored order, over the
  * nights now present — exactly as a guest edit would run it. Nothing is
@@ -80,7 +74,7 @@ import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settleme
  *   ordinary edit's "money back" arm (`applyPaymentAdjustments` with
  *   `calculateFullReductionSettlementOptions`): a Stripe refund after commit for
  *   a card, and for internet banking (or cash) an officer refund task in the
- *   money-to-settle queue (D-3813-6, `INV-PAY-115`) beside the Xero credit note;
+ *   money-to-settle queue (D-3813-6, `INV-PAY-117`) beside the Xero credit note;
  * - whatever the cash cannot cover went on account credit and goes back as
  *   account credit, the way an edit returns over-applied credit
  *   (`clampAppliedCreditToBookingPrice`, INV-MOD-012) — the whole reduction for
@@ -142,6 +136,12 @@ export type GuestAcceptanceReprice =
       refundAmountCents: number;
       /** The Stripe slice of `refundAmountCents`, refunded after commit. */
       pendingRefundAmountCents: number;
+      /**
+       * #3653 (composed by #3829): non-null when that slice goes back to the
+       * group organiser's card out of the combined payment; its debt is reserved
+       * in this transaction under the modification's key.
+       */
+      organiserChildRefund: { amountCents: number } | null;
       accountCreditAmountCents: number;
       xeroRefundAmountCents: number;
       xeroAdditionalAmountCents: number;
@@ -327,6 +327,7 @@ export async function repriceBookingAfterGuestAcceptance(
       priceDiffCents: 0,
       refundAmountCents: 0,
       pendingRefundAmountCents: 0,
+      organiserChildRefund: null,
       accountCreditAmountCents: 0,
       xeroRefundAmountCents: 0,
       xeroAdditionalAmountCents: 0,
@@ -351,6 +352,11 @@ export async function repriceBookingAfterGuestAcceptance(
     ...(returnRoute.kind === "money-back"
       ? { settlementOptions: returnRoute.settlementOptions, settlementMethod: "card" as const }
       : {}),
+    todayAtClub,
+    format,
+    // D-3813-5: the credit share goes back below, in full, by the clamp - so
+    // #3809's tiered give-back for an ordinary edit does not run as well.
+    appliedCreditReturnedByCaller: true,
   });
   // What the cash arm above could not return went on account credit, and goes
   // back the way an edit returns over-applied credit (INV-MOD-012): the applied
@@ -369,7 +375,7 @@ export async function repriceBookingAfterGuestAcceptance(
     );
     if (clamp.refundedExcessCents !== creditReturn.amountCents) {
       throw new Error(
-        `INV-MONEY-037 (D-3813-5): a guest's acceptance would return ${formatCents(clamp.refundedExcessCents, format)} of credit for ${formatCents(creditReturn.amountCents, format)} of a reduction paid with credit on booking ${bookingId} (#3827).`,
+        `INV-MONEY-038 (D-3813-5): a guest's acceptance would return ${formatCents(clamp.refundedExcessCents, format)} of credit for ${formatCents(creditReturn.amountCents, format)} of a reduction paid with credit on booking ${bookingId} (#3827).`,
       );
     }
     if (booking.payment) {
@@ -463,7 +469,7 @@ export async function repriceBookingAfterGuestAcceptance(
     sides,
     site: "guest-acceptance",
   });
-  // D-3813-6 (`INV-PAY-115`): the cash share of a reduction on a booking paid
+  // D-3813-6 (`INV-PAY-117`): the cash share of a reduction on a booking paid
   // by internet banking or by hand is the treasurer's to send back.
   await raiseEditRefundHandBackIfOwed(tx, {
     bookingId,
@@ -472,6 +478,14 @@ export async function repriceBookingAfterGuestAcceptance(
     adjusted: paymentImpact,
     editLabel: "guest's acceptance re-price",
   });
+  // #3653 (composed by #3829): an organiser-settled child's refund debt, before
+  // this re-price commits, as every edit door reserves it.
+  await reserveOrganiserChildModificationRefund(tx, {
+    plan: adjusted.organiserChildRefund,
+    bookingId,
+    payment: booking.payment,
+    bookingModificationId: bookingModification.id,
+  });
 
   return {
     repriced: true,
@@ -479,6 +493,9 @@ export async function repriceBookingAfterGuestAcceptance(
     priceDiffCents,
     refundAmountCents: paymentImpact.refundAmountCents,
     pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
+    organiserChildRefund: adjusted.organiserChildRefund
+      ? { amountCents: adjusted.organiserChildRefund.amountCents }
+      : null,
     accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,
     xeroAdditionalAmountCents: paymentImpact.xeroAdditionalAmountCents,
@@ -493,75 +510,6 @@ export async function repriceBookingAfterGuestAcceptance(
     priceLines: priceLines ?? null,
     ...unmoved,
   };
-}
-
-type CreditReturn = { amountCents: number; memberId: string };
-
-type FullReductionReturnRoute =
-  | { kind: "none" }
-  | {
-      kind: "money-back";
-      settlementOptions: BookingModificationSettlementOptions;
-      /** The part of the reduction the cash could not cover, paid with credit (D-3813-5). */
-      creditRemainder: CreditReturn | null;
-    }
-  | ({ kind: "account-credit" } & CreditReturn);
-
-/**
- * D-3813-5: how the whole of a reduction goes back the way the booking was
- * paid, or null when it cannot go back in full. `none` is a booking whose
- * payment is not captured (it simply costs less) and every non-reduction.
- *
- * Cash first, up to what is still refundable, then credit for the rest. The
- * credit share is returned by netting the applied credit down to the new price
- * (`clampAppliedCreditToBookingPrice`), which gives back exactly the remainder
- * only when the refundable cash and the credit applied together ARE the price
- * — so that is the test, read under the member's ledger lock, which the return
- * then re-takes, so the two agree. An organisation holds no credit, so a
- * reduction its cash cannot cover cannot go back at all.
- */
-async function fullReductionReturnRoute(
-  tx: Prisma.TransactionClient,
-  booking: {
-    id: string;
-    status: string;
-    finalPriceCents: number;
-    payment: LoadedBookingForModify["payment"];
-  },
-  loaded: LoadedBookingForModify,
-  priceDiffCents: number,
-  todayAtClub: CalendarDate,
-): Promise<FullReductionReturnRoute | null> {
-  const reductionCents = Math.max(0, -priceDiffCents);
-  if (reductionCents === 0) return { kind: "none" };
-  const capturedCash = isSettledBookingStatus(booking.status) && hasCapturedPayment(booking.payment);
-  if (!capturedCash && !isPaidLikeBookingStatus(booking.status)) return { kind: "none" };
-  // Captured cash: the edit's money-back arm, at 100% and never above what is
-  // still refundable (`calculateFullReductionSettlementOptions`); null once a
-  // card has been refunded in full.
-  // Net of edit refunds already promised back by hand (#3827, `INV-PAY-115`):
-  // an earlier edit's open task is cash the club owes, not cash it holds.
-  const settlementOptions = capturedCash
-    ? calculateFullReductionSettlementOptions({
-        booking: loaded,
-        netChargeCents: priceDiffCents,
-        refundableCashCents: await refundableCashNetOfOpenHandBacks(tx, booking.payment),
-        todayAtClub,
-      })
-    : null;
-  const cashCents = settlementOptions?.basisAmountCents ?? 0;
-  if (settlementOptions && cashCents === reductionCents) {
-    return { kind: "money-back", settlementOptions, creditRemainder: null };
-  }
-  const creditHolder = bookingOwner(loaded).memberId;
-  if (creditHolder === null) return null;
-  await lockMemberCreditLedger(creditHolder, tx);
-  const appliedCreditCents = await deriveBookingAppliedCreditCents(booking.id, tx);
-  if (appliedCreditCents + cashCents !== booking.finalPriceCents) return null;
-  const creditReturn = { amountCents: reductionCents - cashCents, memberId: creditHolder };
-  return settlementOptions
-    ? { kind: "money-back", settlementOptions, creditRemainder: creditReturn }
-    : { kind: "account-credit", ...creditReturn };
 }
 
 /**
@@ -592,6 +540,7 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
     bookingId,
     result: {
       pendingRefundAmountCents: reprice.pendingRefundAmountCents,
+      organiserChildRefund: reprice.organiserChildRefund,
       paymentId: reprice.paymentId,
       additionalAsk: NO_ADDITIONAL_ASK,
       hasSucceededPayment: reprice.hasSucceededPayment,
@@ -629,6 +578,8 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       requiresAdditionalStripePayment: false,
       additionalPaymentIntentId: null,
       createPrimaryInvoiceWhenMissing: reprice.zeroDollarAutoPaid && !reprice.hasIssuedXeroInvoice,
+      // #3653: the organiser's refund raises its own note once Stripe has made it.
+      organiserChildRefundOwnsCreditNote: reprice.organiserChildRefund !== null,
     });
   } catch (err) {
     logger.error(
@@ -681,6 +632,9 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       changeFeeCents: 0,
       refundAmountCents: reprice.refundAmountCents,
       accountCreditAmountCents: reprice.accountCreditAmountCents,
+      // The credit share is returned in full by the clamp and reported as
+      // account credit above (D-3813-5); #3809's give-back never runs here.
+      appliedCreditGivenBackCents: 0,
       promoCoverageNote: reprice.promoCoverageNote,
       // The re-price is applied only where its money is decided in full, and
       // a booking under an open financial review is never re-priced.

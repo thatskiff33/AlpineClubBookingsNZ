@@ -72,6 +72,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { useClubFormat } from "@/components/club-format-provider";
 import { PartPaymentReviewXeroPaidLine } from "@/components/admin/part-payment-review-xero-paid-line";
 import { HandBackMethodChoice } from "@/components/admin/hand-back-method-choice";
+import { ManualRefundTaskStillOwedNotice } from "@/components/admin/manual-refund-task-still-owed-notice";
 
 const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 
@@ -240,7 +241,7 @@ function isPartPaymentReview(task: ManualRefundTask): boolean {
 }
 
 /**
- * #3827 (owner decision D-3813-6, `INV-PAY-115`): an edit lowered the price of
+ * #3827 (owner decision D-3813-6, `INV-PAY-117`): an edit lowered the price of
  * a booking paid by internet banking or by hand, so the club owes the
  * difference back by bank transfer. Completed exactly like a cancellation's
  * hand-back; only the sentence explaining where it came from differs, because
@@ -251,7 +252,7 @@ function isEditRefundHandBack(task: ManualRefundTask): boolean {
 }
 
 /**
- * #3827 (owner decision D-3813-7, `INV-PAY-116`): a refund appeal the club
+ * #3827 (owner decision D-3813-7, `INV-PAY-118`): a refund appeal the club
  * approved on a booking that was not paid by card, so the approved amount (or
  * the part a card refund could not carry) goes back by bank transfer. The
  * route's flag marks it.
@@ -1981,6 +1982,7 @@ export function ManualRefundTaskQueue() {
                         >
                           {zeroAmountRefusal ?? ""}
                         </p>
+                        <ManualRefundTaskStillOwedNotice taskId={target.task.id} shareCents={direction === "REFUND_TO_MEMBER" ? pricedAmountCents : null} />
                       </div>
                     </div>
                   ) : null}

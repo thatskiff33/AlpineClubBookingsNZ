@@ -71,7 +71,7 @@ export type OpenManualRefundTaskRow = {
   lateCaptureApprovalIntentId: string | null;
   /** #3643: set on a part-payment review, settled in Xero rather than here. */
   partPaymentReviewPaymentId: string | null;
-  /** #3827 (`INV-PAY-115`): an edit refund hand-back's marker (with the kind). */
+  /** #3827 (`INV-PAY-117`): an edit refund hand-back's marker (with the kind). */
   occurrenceKey: string | null;
   /** #3643 (`INV-PAY-108`): the inbound sync's note that Xero reported the invoice paid. */
   partPaymentReviewXeroPaidAt: Date | null;
@@ -153,14 +153,14 @@ export type OpenManualRefundTaskPayload = {
    */
   partPaymentReview: boolean;
   /**
-   * #3827 (owner decision D-3813-6, `INV-PAY-115`): an edit lowered the price
+   * #3827 (owner decision D-3813-6, `INV-PAY-117`): an edit lowered the price
    * of a booking paid by internet banking or by hand, and the club refunds the
    * difference by bank transfer. A hand-back like any other, but of a LIVE
    * booking, so the cancelled-booking sentence does not fit it.
    */
   editRefundHandBack: boolean;
   /**
-   * #3827 (owner decision D-3813-7, `INV-PAY-116`): an approved refund appeal
+   * #3827 (owner decision D-3813-7, `INV-PAY-118`): an approved refund appeal
    * on a booking not paid by card, which the club refunds by bank transfer.
    * The booking was cancelled before the appeal, but the money is the
    * appeal's, so neither the cancellation nor the edit sentence fits it.
@@ -174,7 +174,7 @@ export type OpenManualRefundTaskPayload = {
    */
   partPaymentReviewXeroPaid: { reportedAt: string; cashCents: number } | null;
   /**
-   * #3536 (`INV-PAY-114`): a financial review whose refund the club would pay
+   * #3536 (`INV-PAY-116`): a financial review whose refund the club would pay
    * back by hand, so the settle screen asks the officer whether it went back in
    * cash or by bank transfer. A preview only: the completion re-chooses the
    * route under its lock, and the answer counts only on that route.

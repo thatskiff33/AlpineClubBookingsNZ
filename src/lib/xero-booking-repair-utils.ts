@@ -133,7 +133,7 @@ export function getOperationQueueTypeHint(operation: {
  *   invoice-applied and an account-credit note op); `getOperationQueueTypeHint`
  *   resolves the kind across every ledger era. Rows with no hint stay
  *   admissible.
- * - #3827 (`INV-PAY-116`): a refund request's OWN note never answers for the
+ * - #3827 (`INV-PAY-118`): a refund request's OWN note never answers for the
  *   payment's refund note, its account-credit note, or any other document -
  *   it is a separate note per request, read only by the unsettled-note rows.
  */

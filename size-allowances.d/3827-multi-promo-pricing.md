@@ -31,20 +31,24 @@ reason: the preview accepts a code list, works out which guests await acceptance
   present; that choice belongs in the one place the preview decides consent.
 
 file: src/lib/member-guest-consent-service.ts
-lines: 1313
+lines: 1349
 reason: an acceptance re-prices the booking's codes inside the consent transaction
   that already holds the locks it needs (D-3813-4), and its after-commit half
   runs from the one finalise step; the re-price itself is in
   booking-guest-acceptance-reprice.ts.
+  Re-measured at #3829, the final main sync, which composed main's #3653,
+  #3809, #3835 and #3792 growth of this file with the epic's.
 
 file: src/app/api/bookings/[id]/guests/[guestId]/route.ts
-lines: 567
+lines: 548
 reason: the removal's Booking Modified email says whether its refund is a bank
   transfer the club still has to send (D-3813-6); one import and one field
   beside the refund amount it qualifies.
+  Re-measured at #3829, the final main sync, which composed main's #3653,
+  #3809, #3835 and #3792 growth of this file with the epic's.
 
 file: src/lib/email/booking.ts
-lines: 1771
+lines: 1787
 reason: the Booking Modified sender takes the required bank-transfer flag and
   composes a split payment's cash and credit halves (D-3813-5/6); the sentence
   itself lives in booking-modified-email-copy.ts. Re-measured when epic #3813's
@@ -52,19 +56,21 @@ reason: the Booking Modified sender takes the required bank-transfer flag and
   sender's options gain each code's own adjustment (promoLines) and hand it to
   the one shared promo-rows builder; the option belongs beside promoCode on the
   sender it configures, typed by the one PromoCodeAdjustment import.
+  Re-measured at #3829, the final main sync, which composed main's #3653,
+  #3809, #3835 and #3792 growth of this file with the epic's.
 
 file: src/app/(admin)/admin/refund-requests/page.tsx
 lines: 885
 reason: the appeal review's ceiling is the approve route's net-of-open-edit-
-  refunds figure (INV-PAY-115); the page carries the loaded rows' type and one
+  refunds figure (INV-PAY-117); the page carries the loaded rows' type and one
   shared helper call, the arithmetic lives in manual-refund-task-settlement-rules.ts.
 
 file: src/app/api/admin/refund-requests/[id]/route.ts
 lines: 610
 reason: the approval's cap and its claim must share one transaction under
-  lock(1) (INV-PAY-115) so the figure checked is the figure approved; moving
+  lock(1) (INV-PAY-117) so the figure checked is the figure approved; moving
   the claim out of the handler would split the #818 single-flight claim from
-  the money it guards. D-3813-7 (INV-PAY-116) plans the card refund and
+  the money it guards. D-3813-7 (INV-PAY-118) plans the card refund and
   raises the bank-transfer task in that same transaction, and a released
   claim takes its task with it under the same lock. Only an internet-banking
   payment raises one (a card shortfall stays logged drift), and a task that
@@ -75,7 +81,7 @@ file: src/app/api/bookings/[id]/refund-request/route.ts
 lines: 283
 reason: the appeal request refuses past the cash net of open hand-backs and
   late-cash credit and says plainly when all of it is already being returned
-  (INV-PAY-115, INV-PAY-116); both are refusals beside the existing ones they
+  (INV-PAY-117, INV-PAY-118); both are refusals beside the existing ones they
   extend.
 
 file: src/lib/email-message-registry.ts
@@ -95,7 +101,7 @@ reason: a required token needs its plain-English guidance in the one table the
 
 file: src/lib/xero-credit-notes.ts
 lines: 1239
-reason: owner decision D-3813-8 (INV-PAY-116) - the refund-note builder raises
+reason: owner decision D-3813-8 (INV-PAY-118) - the refund-note builder raises
   a refund request's own note: keyed by the request, linked under its own role,
   never per-delta and never the payment's pointer. Those are branches inside
   the one builder every refund note goes through (its #3548 crash-window

@@ -67,6 +67,7 @@ function params(overrides: Record<string, unknown> = {}) {
     // measured against, not an absence the compiler filled in.
     financialReviewPending: false,
     refundByBankTransfer: false,
+    appliedCreditGivenBackCents: 0,
     ...overrides,
   };
 }
@@ -307,5 +308,42 @@ describe("an internet-banking refund is promised, not reported (#3827, D-3813-6)
     const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
     expect(html).toMatch(/A refund of \$40\.00 has been processed/);
     expect(html).toMatch(/Account credit of \$20\.00 has been added/);
+  });
+});
+
+/*
+  #3809: a change that gave back applied credit says so, in the HTML email and
+  in the flat body's {{paymentNote}} alike - and beside a card refund on a
+  booking paid by card and credit, since both are true.
+*/
+describe("#3809: applied credit given back is named in the Booking Modified email", () => {
+  const SENTENCE = "$50.00 of the account credit used for this booking has been returned to your account credit.";
+
+  it("MUTATION: the HTML email and the flat body both state the amount, as account credit", async () => {
+    expect(bookingModifiedTemplate(params({ appliedCreditGivenBackCents: 5000 }), CLUB_FORMAT_TEST)).toContain(SENTENCE);
+    expect(await paymentNoteFromSender({ appliedCreditGivenBackCents: 5000 })).toBe(SENTENCE);
+  });
+
+  it("composes with a card refund rather than replacing it", async () => {
+    const note = await paymentNoteFromSender({ refundAmountCents: 10000, appliedCreditGivenBackCents: 5000 });
+
+    expect(note).toMatch(/A refund of \$100\.00 has been processed/);
+    expect(note).toContain(SENTENCE);
+  });
+
+  it("composes with an internet-banking refund promised by bank transfer (#3829: #3827 with #3809)", async () => {
+    const overrides = { refundAmountCents: 6000, refundByBankTransfer: true, appliedCreditGivenBackCents: 5000 };
+    const note = await paymentNoteFromSender(overrides);
+    expect(note).toContain("The club will refund $60.00 to you by bank transfer.");
+    expect(note).toContain(SENTENCE);
+    const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
+    expect(html).toMatch(/The club will refund \$60\.00 to you by bank transfer\./);
+    expect(html).toContain(SENTENCE);
+    expect(html).not.toMatch(/has been processed/);
+  });
+
+  it("is absent where nothing came back", async () => {
+    expect(await paymentNoteFromSender({})).not.toContain("returned to your account credit");
+    expect(bookingModifiedTemplate(params(), CLUB_FORMAT_TEST)).not.toContain("returned to your account credit");
   });
 });

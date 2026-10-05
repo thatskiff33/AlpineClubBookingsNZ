@@ -16,7 +16,7 @@
  *
  * Pure: the caller reads the rows and the policy; this reads nothing.
  */
-import { cancelRefundableBaseCents } from "@/lib/booking-payment-state";
+import { cancelAppliedCreditBaseCents, cancelRefundableBaseCents } from "@/lib/booking-payment-state";
 import {
   calculateAppliedCreditRestore,
   calculateRefundAmount,
@@ -27,7 +27,7 @@ export type PaidCancellationMoney = {
   /**
    * Money taken for the booking, net of earlier refunds and of edit refunds
    * already promised back by hand (`amountCents - refundedAmountCents -
-   * openNonCancellationHandBackCents`, `INV-PAY-115`).
+   * openNonCancellationHandBackCents`, `INV-PAY-117`).
    */
   paidAmountCents: number;
   /** The slice the tier applies to: paid, capped at price plus change fee, less the change fee. */
@@ -35,7 +35,13 @@ export type PaidCancellationMoney = {
   /** What the policy returns from that slice — by card, as credit or by hand. */
   refundAmountCents: number;
   refundPercentage: number;
-  /** What the policy restores of the applied credit, tiered off the mirror as before. */
+  /**
+   * The applied-credit slice the tier applies to: the mirror, capped with the
+   * money paid at what the booking is now worth where the booking was reduced
+   * through #3809's settlement, else the whole mirror (`cancelAppliedCreditBaseCents`).
+   */
+  appliedCreditBaseCents: number;
+  /** What the policy restores of that slice, by the card tier. */
   creditToRestoreCents: number;
   /**
    * What `restoreCreditFromBooking` will restore: the policy's figure capped at
@@ -57,6 +63,8 @@ export type PaidCancellationMoney = {
   paidAboveRefundableCents: number;
   /** Applied credit the booking's rows hold beyond (or, negative, short of) the mirror. */
   appliedCreditBeyondMirrorCents: number;
+  /** The mirror's applied credit above what the booking is now worth, which no tier restores (#3809). */
+  appliedCreditAboveRefundableCents: number;
 };
 
 /** The one formula for what the club keeps on a cancellation (design §5.1). */
@@ -81,6 +89,7 @@ export function paidCancellationMoney({
   days,
   policy,
   refundMethod,
+  capAppliedCredit,
 }: {
   payment: {
     amountCents: number;
@@ -90,7 +99,7 @@ export function paidCancellationMoney({
   };
   /**
    * The payment's open edit refund hand-backs (`openNonCancellationHandBackCents`,
-   * #3827 `INV-PAY-115`), read under the cancel's locks: cash promised back on an
+   * #3827 `INV-PAY-117`), read under the cancel's locks: cash promised back on an
    * earlier edit that this cancellation must not refund or credit a second time.
    */
   openNonCancellationHandBackCents: number;
@@ -102,6 +111,8 @@ export function paidCancellationMoney({
   days: number;
   policy: CancellationRule[];
   refundMethod: "card" | "credit";
+  /** `bookingReducedThroughCreditGiveBack`: whether the credit base is capped (`INV-PAY-115`). */
+  capAppliedCredit: boolean;
 }): PaidCancellationMoney {
   const paidAmountCents =
     payment.amountCents - payment.refundedAmountCents - openNonCancellationHandBackCents;
@@ -110,9 +121,15 @@ export function paidCancellationMoney({
     openNonCancellationHandBackCents,
     finalPriceCents,
   });
+  const appliedCreditBaseCents = cancelAppliedCreditBaseCents({
+    ...payment,
+    openNonCancellationHandBackCents,
+    finalPriceCents,
+    capAtWorth: capAppliedCredit,
+  });
   const creditToRestoreCents =
     payment.creditAppliedCents > 0
-      ? calculateAppliedCreditRestore(payment.creditAppliedCents, refundableBaseCents, days, policy)
+      ? calculateAppliedCreditRestore(appliedCreditBaseCents, refundableBaseCents, days, policy)
           .creditRestoredCents
       : 0;
   const creditRestoredCents =
@@ -132,13 +149,15 @@ export function paidCancellationMoney({
     refundableBaseCents,
     refundAmountCents,
     refundPercentage,
+    appliedCreditBaseCents,
     creditToRestoreCents,
     creditRestoredCents,
     retainedAmountCents,
     ledgerKeptCents: cancellationKeptCents({ retainedAmountCents, appliedCreditCents, creditRestoredCents }),
     policyKeptCents:
-      refundableBaseCents - refundAmountCents + payment.changeFeeCents + payment.creditAppliedCents - creditRestoredCents,
+      refundableBaseCents - refundAmountCents + payment.changeFeeCents + appliedCreditBaseCents - creditRestoredCents,
     paidAboveRefundableCents: Math.max(0, paidAmountCents - priceWithChangeFeeCents),
     appliedCreditBeyondMirrorCents: appliedCreditCents - payment.creditAppliedCents,
+    appliedCreditAboveRefundableCents: payment.creditAppliedCents - appliedCreditBaseCents,
   };
 }

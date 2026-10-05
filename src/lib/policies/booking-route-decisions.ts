@@ -22,7 +22,7 @@ import {
   type CancellationRule,
 } from "./cancellation";
 import { formatCents } from "@/lib/utils";
-import { cancelRefundableBaseCents } from "@/lib/booking-payment-state";
+import { cancelAppliedCreditBaseCents, cancelRefundableBaseCents } from "@/lib/booking-payment-state";
 import type { ClubFormat } from "@/lib/club-format";
 
 export type { CancellationRule };
@@ -491,7 +491,7 @@ export function calculateCancellationPreview(input: {
     creditAppliedCents?: number | null;
   };
   /**
-   * #3827 (`INV-PAY-115`): the payment's open edit refund hand-backs, the same
+   * #3827 (`INV-PAY-117`): the payment's open edit refund hand-backs, the same
    * figure the executed cancel reads (`openNonCancellationHandBackCents`), so the
    * preview promises nothing the treasurer already owes back.
    */
@@ -513,6 +513,8 @@ export function calculateCancellationPreview(input: {
    * supplied, which is why this parameter cannot be an instant.
    */
   todayAtClub: CalendarDate;
+  /** #3809: `bookingReducedThroughCreditGiveBack`, as the cancel reads it (`INV-PAY-115`). */
+  capAppliedCredit: boolean;
 }): {
   refundAmountCents: number;
   keptAmountCents: number;
@@ -556,7 +558,16 @@ export function calculateCancellationPreview(input: {
     // (#1164 / D7), no longer restored at 100%. Fed the same refundableBaseCents
     // and days so preview == actual cancel.
     creditRestoredCents: calculateAppliedCreditRestore(
-      input.payment.creditAppliedCents ?? 0,
+      // #3809: capped with the money paid at what the booking is worth, as the cancel caps it.
+      cancelAppliedCreditBaseCents({
+        amountCents: input.payment.amountCents,
+        refundedAmountCents: input.payment.refundedAmountCents,
+        openNonCancellationHandBackCents: input.openNonCancellationHandBackCents,
+        finalPriceCents: input.finalPriceCents,
+        changeFeeCents,
+        creditAppliedCents: input.payment.creditAppliedCents ?? 0,
+        capAtWorth: input.capAppliedCredit,
+      }),
       refundableBaseCents,
       days,
       input.policyRules,

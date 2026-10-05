@@ -1,9 +1,0 @@
-# Example only. Copy to ~/.codex/alpine-fix-high.config.toml before use.
-# Supervised implementation profile for focused fixes.
-
-model_reasoning_effort = "high"
-approval_policy = "on-request"
-sandbox_mode = "workspace-write"
-
-[sandbox_workspace_write]
-network_access = false

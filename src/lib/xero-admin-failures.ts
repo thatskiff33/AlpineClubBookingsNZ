@@ -336,7 +336,7 @@ export async function resolveFailedXeroOperationStates(
       && representative.localId
       && paymentIdsWithRefundRepair.has(representative.localId)
       && paymentIdsWithRefundPaymentLink.has(representative.localId)
-      // #3827 (`INV-PAY-116`): the payment's pointer and refund payment are its
+      // #3827 (`INV-PAY-118`): the payment's pointer and refund payment are its
       // ONE refund note's; a refund request's own note is a separate document
       // they say nothing about, so its failure keeps its Retry.
       && !ordered.some(isRefundRequestNoteOperation)

@@ -43,8 +43,8 @@ import type { PromoUsageClient } from "@/lib/promo-usage-counts";
  * (`validateAndCalculatePromoDiscount`) runs once per code, unchanged, over the
  * nights no earlier code has claimed (`INV-SSOT-001`: a second pricing engine
  * for several codes was the rejected alternative on #3827). The rules — the
- * order, what claims a night, who may benefit — are `INV-MONEY-037` and
- * `INV-MONEY-038` in `docs/invariants/money.md`; this file implements them.
+ * order, what claims a night, who may benefit — are `INV-MONEY-038` and
+ * `INV-MONEY-039` in `docs/invariants/money.md`; this file implements them.
  *
  * With ONE code and every guest present, the engine is handed exactly the
  * arguments it was handed before #3827 — the same guest objects, in the same
@@ -161,7 +161,7 @@ function promotionView(
       const date = guest.nightDates?.[nightIndex];
       if (!date) {
         throw new Error(
-          `INV-MONEY-038: guest ${index + 1} has a night with no date, so a later promo code cannot tell which nights are still unclaimed (#3827).`,
+          `INV-MONEY-039: guest ${index + 1} has a night with no date, so a later promo code cannot tell which nights are still unclaimed (#3827).`,
         );
       }
       if (!claim.nights.has(nightKey(date))) kept.push(nightIndex);
@@ -249,7 +249,7 @@ function appliedTargets(result: PromoApplicationResult): PromoAdjustmentTarget[]
 
 /**
  * Price a booking's codes in order, each over the nights no earlier code has
- * claimed (INV-MONEY-037/038). Read-only: the caller persists.
+ * claimed (INV-MONEY-038/038). Read-only: the caller persists.
  *
  * Claims are recomputed from scratch on every call — nothing about a previous
  * pricing is carried — so a re-price, a reorder or a removed code always lands
@@ -390,7 +390,7 @@ export async function applyBookingPromotions<A extends PromotionApplicationInput
     const targets = result.discount.adjustmentTargets;
     adjustmentTargets.push(...targets);
     if (!later) continue;
-    // INV-MONEY-038: any target claims — a partial (`maxNightlyValueCents`) or
+    // INV-MONEY-039: any target claims — a partial (`maxNightlyValueCents`) or
     // zero-amount night included; a per-guest target claims the guest's
     // remaining nights.
     for (const target of targets) {
@@ -402,7 +402,7 @@ export async function applyBookingPromotions<A extends PromotionApplicationInput
       }
       if (!target.stayDate) {
         throw new Error(
-          "INV-MONEY-038: a promo code discounted a night with no date, so a later code cannot tell it is taken (#3827).",
+          "INV-MONEY-039: a promo code discounted a night with no date, so a later code cannot tell it is taken (#3827).",
         );
       }
       const key = nightKey(target.stayDate);

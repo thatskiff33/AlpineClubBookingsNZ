@@ -1,6 +1,6 @@
 /**
  * THE PROMOTION LINES ON A BOOKING'S XERO INVOICE (#3828, epic #3813 C3;
- * `INV-MONEY-039`).
+ * `INV-MONEY-040`).
  *
  * A booking may carry several promo codes (#3492, D-3813-1), and the treasurer
  * reconciles each code's discount on its own coded line. So a booking invoice
@@ -216,7 +216,7 @@ export function promoAdjustmentLineItems(
   }
 }
 
-/** What a sync operation records about a several-code split (`INV-MONEY-039`). */
+/** What a sync operation records about a several-code split (`INV-MONEY-040`). */
 export type PromoAdjustmentLineRecord = {
   promoLineSource: "PER_CODE" | "AGGREGATE_FALLBACK";
   promoLineReason: PromoLineFallbackReason | null;

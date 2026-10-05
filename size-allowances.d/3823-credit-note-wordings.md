@@ -1,7 +1,7 @@
 # File-size allowances for #3823 (issue #3536)
 
 file: src/components/admin/manual-refund-task-queue.tsx
-lines: 2188
+lines: 2190
 reason: the cash-or-bank control itself lives in its own component
   (hand-back-method-choice.tsx); what remains here is the dialog's state, its
   reset on close and submit, the one gate deciding when it is shown, and the
@@ -11,13 +11,17 @@ reason: the cash-or-bank control itself lives in its own component
   and an approved appeal's (D-3813-7), is a hand-back row that needs its own
   explaining paragraph, kept out of the cancelled-booking one (D-3813-6); each
   sits beside the other kinds' predicates and paragraphs it is chosen among.
+  Re-measured at #3829, the final main sync, which composed main's #3653,
+  #3809, #3835 and #3792 growth of this file with the epic's.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 2257
+lines: 2309
 reason: the repaired note has to carry its wording from the same stored
   request the amount is recovered from, inside the one arm that builds that
   action's payload; moving the spread elsewhere would split one payload
   across two files.
+  Re-measured at #3829, the final main sync, which composed main's #3653,
+  #3809, #3835 and #3792 growth of this file with the epic's.
 
 file: src/lib/xero-operation-retry.ts
 lines: 1865

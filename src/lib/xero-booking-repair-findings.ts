@@ -143,7 +143,7 @@ export function addUnsettledRefundCreditNoteFindings(
       actionKeys: [action.key],
     });
   }
-  // #3827 review (`INV-PAY-116`): a refund request's own note answers no other
+  // #3827 review (`INV-PAY-118`): a refund request's own note answers no other
   // arm, so its failed or partial create is reported here, with its Retry.
   for (const operation of paymentOperations) {
     if (

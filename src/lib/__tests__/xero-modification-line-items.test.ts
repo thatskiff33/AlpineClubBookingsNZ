@@ -334,7 +334,7 @@ describe("resolveModificationDocumentLineItems", () => {
     });
   });
 
-  describe("which code codes a lone promotion delta (#3828 review X1, INV-MONEY-039)", () => {
+  describe("which code codes a lone promotion delta (#3828 review X1, INV-MONEY-040)", () => {
     const codeA = { code: "SUMMER25", xeroItemCode: "PROMO", xeroAccountCode: "260" };
     const codeB = { code: "GUESTFREE", xeroItemCode: "FREE-NIGHT", xeroAccountCode: "205" };
     async function codedLone(

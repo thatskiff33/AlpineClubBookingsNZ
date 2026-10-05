@@ -23,7 +23,7 @@ export const MANUAL_REFUND_TASK_RESOLUTION_SELECT = Prisma.validator<Prisma.Manu
   // sentence that names a #2700 task's capture.
   lateCaptureApprovalIntentId: true,
   partPaymentReviewPaymentId: true,
-  // #3827 (`INV-PAY-115`): an edit refund hand-back's marker, so its
+  // #3827 (`INV-PAY-117`): an edit refund hand-back's marker, so its
   // completion queues no cancellation refund note.
   occurrenceKey: true,
   reason: true,
@@ -55,11 +55,16 @@ export const MANUAL_REFUND_TASK_RESOLUTION_SELECT = Prisma.validator<Prisma.Manu
         },
       },
       organisation: { select: { name: true, email: true } },
+      checkIn: true, // #3835: a cancelled booking's netting re-tiers by it
       // #3032: the booking's own status and its primary Xero invoice id,
       // for `hasIssuedPrimaryXeroInvoice`. A completion that moves money on
       // a booking whose invoice was issued has to correct that invoice, or
       // the ledger and Xero disagree permanently.
       status: true,
+      // #3653: a charge on a booking the group organiser paid for by card is
+      // refused (`chooseEditReviewChargeRoute`).
+      organiserSettled: true,
+      parentBookingId: true,
       payment: {
         select: {
           id: true,

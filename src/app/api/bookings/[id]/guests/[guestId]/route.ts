@@ -22,7 +22,7 @@ import {
   sendBookingModifiedEmail,
 } from "@/lib/email";
 import { ADULT_SUPERVISION_REVIEW_REASON } from "@/lib/booking-review";
-import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
+import { guestRemovalXeroSettlement, queueGuestRemovalXeroSettlement } from "@/lib/booking-guest-removal-xero";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
@@ -304,30 +304,10 @@ export async function DELETE(
       ipAddress,
     });
 
-    void queueXeroBookingEditSettlement({
-      bookingId,
-      bookingModificationId: result.bookingModificationId,
+    // #3809: the one guest-removal Xero leg, shared with the consent doors.
+    void queueGuestRemovalXeroSettlement(guestRemovalXeroSettlement(result), {
       createdByMemberId: session.user.id,
-      hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
-      originalPaymentStatus: result.paymentStatus,
-      priceDiffCents: result.priceDiffCents,
-      changeFeeCents: 0,
-      datesChanged: false,
-      // Policy-limited settlement amount + method so a captured-payment
-      // reduction issues the correct (card vs credit) modification credit
-      // note; an unpaid issued invoice falls back to the full delta inside
-      // classifyXeroBookingEditSettlement when this is null.
-      settlementAmountCents: result.xeroRefundAmountCents,
-      settlementMethod: result.settlementMethod,
-      refundedThroughStripe: result.hasSucceededPayment,
-      // A Stripe-collected increase must not double-bill through Xero: hold
-      // the supplementary invoice's payment recording on the Stripe intent,
-      // exactly as the batch flow does.
-      requiresAdditionalStripePayment:
-        result.xeroAdditionalAmountCents > 0 && result.hasSucceededPayment,
-      additionalPaymentIntentId,
-      createPrimaryInvoiceWhenMissing:
-        result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,
+      additionalPaymentIntentId: additionalPaymentIntentId ?? null,
     }).catch((err) =>
       logger.error({ err, bookingId }, "Failed to queue Xero settlement for guest removal")
     );
@@ -366,6 +346,7 @@ export async function DELETE(
         changeFeeCents: 0,
         refundAmountCents: result.refundAmountCents,
         accountCreditAmountCents: result.accountCreditAmountCents,
+        appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
         // #2390: same words as the edit preview and the booking history when a
         // usage cap stopped the promotion reaching somebody on this booking.
         promoCoverageNote: result.promoCoverage?.message ?? null,

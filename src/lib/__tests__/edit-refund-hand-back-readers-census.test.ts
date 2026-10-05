@@ -1,5 +1,5 @@
 /**
- * #3827 (`INV-PAY-115`): an edit's refund hand-back, and (D-3813-7) an
+ * #3827 (`INV-PAY-117`): an edit's refund hand-back, and (D-3813-7) an
  * approved refund request's, is a `CANCELLED_BOOKING_HAND_BACK` marked by its
  * occurrence key, so a reader that selects a CANCELLATION's hand-backs by kind
  * alone would count one (the repair tool's late-cash evidence, the organisation hand-back's
@@ -26,23 +26,34 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-/** The argument text of every `manualRefundTask.findFirst/findMany/count(...)` call. */
+/**
+ * The text of every read of the tasks: each `manualRefundTask.findFirst/findMany/
+ * count/aggregate/groupBy(...)` call, and (#3829) each NESTED relation read
+ * `manualRefundTasks: { ... }` inside another model's select or include - the
+ * shape the ledger census and the cancel preview load tasks through, which a
+ * call-only scan never reached.
+ */
 function readCalls(source: string): string[] {
   const calls: string[] = [];
-  const re = /manualRefundTask\.(?:findFirst|findMany|count|aggregate|groupBy)\(/g;
-  for (let match = re.exec(source); match; match = re.exec(source)) {
-    let depth = 1;
-    let i = match.index + match[0].length;
-    for (; i < source.length && depth > 0; i += 1) {
-      if (source[i] === "(") depth += 1;
-      else if (source[i] === ")") depth -= 1;
+  const shapes: Array<[RegExp, string, string]> = [
+    [/manualRefundTask\.(?:findFirst|findMany|count|aggregate|groupBy)\(/g, "(", ")"],
+    [/manualRefundTasks:\s*\{/g, "{", "}"],
+  ];
+  for (const [re, open, close] of shapes) {
+    for (let match = re.exec(source); match; match = re.exec(source)) {
+      let depth = 1;
+      let i = match.index + match[0].length;
+      for (; i < source.length && depth > 0; i += 1) {
+        if (source[i] === open) depth += 1;
+        else if (source[i] === close) depth -= 1;
+      }
+      calls.push(source.slice(match.index, i));
     }
-    calls.push(source.slice(match.index, i));
   }
   return calls;
 }
 
-describe("INV-PAY-115: a cancellation hand-back reader excludes an edit's refund hand-back", () => {
+describe("INV-PAY-117: a cancellation hand-back reader excludes an edit's refund hand-back", () => {
   const offenders: string[] = [];
   let readersByKind = 0;
   for (const file of sourceFiles(path.join(ROOT, "src"))) {
@@ -60,7 +71,12 @@ describe("INV-PAY-115: a cancellation hand-back reader excludes an edit's refund
     expect(readersByKind).toBeGreaterThanOrEqual(2);
   });
 
+  it("reaches nested relation reads too (#3829): the ledger census loads its tasks through one", () => {
+    const store = readFileSync(path.join(ROOT, "src/lib/booking-ledger-projection-census-store.ts"), "utf8");
+    expect(readCalls(store).some((call) => call.startsWith("manualRefundTasks:"))).toBe(true);
+  });
+
   it("every one spreads the exclusion", () => {
-    expect(offenders, "INV-PAY-115: spread NOT_NON_CANCELLATION_HAND_BACK_WHERE beside the kind").toEqual([]);
+    expect(offenders, "INV-PAY-117: spread NOT_NON_CANCELLATION_HAND_BACK_WHERE beside the kind").toEqual([]);
   });
 });

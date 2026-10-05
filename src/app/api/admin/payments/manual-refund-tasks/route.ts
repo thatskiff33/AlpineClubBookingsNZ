@@ -141,7 +141,7 @@ export async function GET() {
         amountCents: true,
         /*
           #3033/#3827. `kind` - with `occurrenceKey`, which marks an edit's or an
-          appeal's hand-back (`INV-PAY-115`, `INV-PAY-116`) - decides the SENTENCE
+          appeal's hand-back (`INV-PAY-117`, `INV-PAY-118`) - decides the SENTENCE
           the card prints: the standing "paid in cash or by a bank transfer that
           never reached Xero" is untrue of those and of an EDIT_FINANCIAL_REVIEW
           row. `raisedAmountCents` shows an amended amount on its face, not only

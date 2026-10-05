@@ -66,6 +66,7 @@ import {
   MANUAL_CAPTURED_PAYMENT_REFUSAL,
   MANUAL_SETTLE_FROM_PAYMENT_STATUS_LIST,
 } from "@/lib/booking-payment-state";
+import { CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { isAdditionalAmountUncollected } from "@/lib/unpaid-finished-stays";
 import {
   bookingHasCapacityOverride,
@@ -680,29 +681,19 @@ async function prepareManualSettlement(
   //     the absence of Xero evidence as WHERE clauses, so a concurrent writer
   //     that moved any of them yields count 0 -> 409 instead of a write whose
   //     third term is stale. That is the real runtime net.
-  //  3. AFTER THE FACT, AND ONLY NARROWLY. `auditIbAppliedCreditStrands`
-  //     (src/lib/ib-hold-clearing-audit.ts) recomputes
-  //     `amountCents + creditAppliedCents - finalPriceCents` over COMMITTED
-  //     data and now reports the uncollected addition beside it, so where it
-  //     DOES report, a residual that is not exactly the uncollected delta is
-  //     visible to an operator. It is the only one of the three that can fire
-  //     at all, because it is not reading back its own writes.
-  //
-  //     It is NOT a general after-the-fact net for this settle, and nothing
-  //     later should be built on the assumption that it is. Its enumeration is
-  //     narrow on three counts:
-  //       * it reports a payment only when that booking still carries
-  //         UN-ALLOCATED applied credit — `deriveIbAppliedCreditStrandFinding`
-  //         returns null on `ledgerAppliedCents <= 0`, and the ledger sum counts
-  //         BOOKING_APPLIED rows with `xeroCreditNoteId: null` only. An ordinary
-  //         "not covered" cash settlement on a booking with no applied credit
-  //         therefore produces NO finding, and its residual is never printed;
-  //       * it scans INTERNET_BANKING payments only; and
-  //       * it is an operator-run script (scripts/audit-ib-hold-clearing.ts),
-  //         not a scheduled job or an alert — nothing fires unless somebody runs
-  //         it and reads the output.
-  //     So (1) and (2) are what actually keep this settle honest; (3) is a
-  //     reading aid for the credit-strand population it already enumerates.
+  //  3. AFTER THE FACT. The booking-ledger census (#3583, `INV-MONEY-037`,
+  //     `pnpm run booking-ledger:census`) reads COMMITTED data and checks what
+  //     this settle wrote against the lines it posted, for every booking:
+  //     `amountCents` against the captures (the CASH_RECORDED line is this
+  //     settled figure), `creditAppliedCents` against the applied credit, and
+  //     the uncollected addition against `max(0, owed(b))` while its ask is
+  //     live. A booking whose figures disagree is listed with both. It is the
+  //     only one of the three that can fire at all, because it is not reading
+  //     back its own writes — and it is an operator-run command, not a
+  //     scheduled job or an alert, so (1) and (2) are what keep this settle
+  //     honest at the moment it runs. It replaced #1620's
+  //     `ib-hold-clearing-audit.ts` strand scan, which reported this residual
+  //     only for internet-banking payments still carrying unallocated credit.
 
   return {
     /** `finalPriceCents - credit`: everything the booking still owes. */
@@ -876,6 +867,15 @@ async function settleBookingPaymentInTransaction(
     if (!booking) {
       throw new Error("Booking not found");
     }
+
+    // #3792 (INV-LOCK-002): the member credit-ledger key third, before the Payment
+    // upsert, the order the inbound credit-note sync takes them in; the capacity
+    // void's restore and the manual settle's ledger read re-enter it. The owner is
+    // NOT immutable: member merge re-points it holding the lodge key, so it is read
+    // from this post-lodge-lock snapshot, and the restore below reuses this id.
+    // #3369: an organisation-owned booking has no member, so no key.
+    const settleCreditLedgerMemberId = bookingOwner(booking).memberId;
+    if (settleCreditLedgerMemberId) await lockMemberCreditLedger(settleCreditLedgerMemberId, tx);
 
     // B5 (#2262): the manual path's third lock tier, every guard-2 refusal and
     // the amount law, all decided from this same post-lock snapshot and all
@@ -1162,7 +1162,7 @@ async function settleBookingPaymentInTransaction(
             paymentId: payment.id,
             kind: PaymentTransactionKind.PRIMARY,
             status: {
-              in: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED],
+              in: [...CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST],
             },
             OR: [
               {
@@ -1390,13 +1390,13 @@ async function settleBookingPaymentInTransaction(
         },
       });
 
-      const restoreMemberId = bookingOwner(booking).memberId;
       // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
       // booking has none, so there is no key to take. Passing a null key would
       // either throw inside the helper or degenerate to a shared advisory key,
       // which is an `INV-LOCK` hazard that shows up only under concurrency.
-      if (restoreMemberId) {
-        await restoreCreditFromBooking(restoreMemberId, booking.id, tx);
+      // #3792: the same id the member key above was taken on, never a re-read.
+      if (settleCreditLedgerMemberId) {
+        await restoreCreditFromBooking(settleCreditLedgerMemberId, booking.id, tx);
       }
       // #3611: the whole charge goes back, so nothing is kept; a booking already
       // confirmed on the ledger (a mark-paid since reversed) has its stay taken
@@ -2639,7 +2639,7 @@ export async function reverseManualBookingPayment({
         paymentId: payment.id,
         source: PaymentSource.STRIPE,
         status: {
-          in: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED],
+          in: [...CAPTURED_NOT_FULLY_REFUNDED_TRANSACTION_STATUS_LIST],
         },
       },
       select: { id: true },

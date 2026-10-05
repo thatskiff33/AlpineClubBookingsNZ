@@ -68,7 +68,7 @@ vi.mock("@/lib/prisma", () => ({
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
     manualRefundTask: {
-      // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
+      // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
       aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
       // #3032: the modified email asks whether the club is still working
@@ -500,7 +500,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
     manualRefundTask: {
-      // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
+      // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
       aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
       // #3032: the modified email asks whether the club is still working
@@ -3234,6 +3234,7 @@ describe("bookingModifiedTemplate", () => {
       // False is the control state for every assertion here.
       financialReviewPending: false,
       refundByBankTransfer: false,
+      appliedCreditGivenBackCents: 0,
     }, CLUB_FORMAT_TEST);
     expect(html).toContain("Booking Modified");
     expect(html).toContain("Alice");
@@ -3262,6 +3263,7 @@ describe("bookingModifiedTemplate", () => {
       // False is the control state for every assertion here.
       financialReviewPending: false,
       refundByBankTransfer: false,
+      appliedCreditGivenBackCents: 0,
     }, CLUB_FORMAT_TEST);
     expect(html).toContain("Guests Added");
     expect(html).toContain("Previous Guests");
@@ -3289,6 +3291,7 @@ describe("bookingModifiedTemplate", () => {
       // False is the control state for every assertion here.
       financialReviewPending: false,
       refundByBankTransfer: false,
+      appliedCreditGivenBackCents: 0,
     }, CLUB_FORMAT_TEST);
     expect(html).toContain("Guest Removed");
     expect(html).toContain("refund");
@@ -3315,6 +3318,7 @@ describe("bookingModifiedTemplate", () => {
       // False is the control state for every assertion here.
       financialReviewPending: false,
       refundByBankTransfer: false,
+      appliedCreditGivenBackCents: 0,
     }, CLUB_FORMAT_TEST);
     expect(html).toContain("Change Fee");
     expect(html).toContain("$50.00");
@@ -3344,6 +3348,7 @@ describe("bookingModifiedTemplate", () => {
       // False is the control state for every assertion here.
       financialReviewPending: false,
       refundByBankTransfer: false,
+      appliedCreditGivenBackCents: 0,
     }, CLUB_FORMAT_TEST);
 
     expect(html).toContain("additional Internet Banking payment");
@@ -3372,6 +3377,7 @@ describe("bookingModifiedTemplate", () => {
       // False is the control state for every assertion here.
       financialReviewPending: false,
       refundByBankTransfer: false,
+      appliedCreditGivenBackCents: 0,
     }, CLUB_FORMAT_TEST);
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");

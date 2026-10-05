@@ -21,7 +21,7 @@ import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 
 /**
- * #3827 (owner decision D-3813-6, `INV-PAY-115`): AN EDIT'S REFUND THAT THE
+ * #3827 (owner decision D-3813-6, `INV-PAY-117`): AN EDIT'S REFUND THAT THE
  * CLUB SENDS BACK BY HAND.
  *
  * A price reduction on a booking paid by card is refunded through Stripe after
@@ -97,7 +97,7 @@ export async function raiseEditRefundHandBackIfOwed(
 }
 
 /**
- * #3827 (owner decision D-3813-7, `INV-PAY-116`): AN APPROVED REFUND REQUEST'S
+ * #3827 (owner decision D-3813-7, `INV-PAY-118`): AN APPROVED REFUND REQUEST'S
  * REFUND THAT THE CLUB SENDS BACK BY HAND.
  *
  * Approving an appeal refunds through Stripe whatever the payment's card
@@ -155,7 +155,7 @@ export async function raiseRefundRequestHandBack(
 export type OpenNonCancellationHandBackDb = Pick<PrismaClient, "manualRefundTask">;
 
 /**
- * #3827 (`INV-PAY-115`): MONEY ALREADY PROMISED BACK, NOT YET SENT.
+ * #3827 (`INV-PAY-117`): MONEY ALREADY PROMISED BACK, NOT YET SENT.
  *
  * An edit refund hand-back is raised when the edit commits, but the payment's
  * `refundedAmountCents` moves only when the treasurer marks it paid back. Until
@@ -183,7 +183,7 @@ export async function openNonCancellationHandBackCents(
 }
 
 /**
- * #3827 (`INV-PAY-115`): THE REFUNDABLE CASH ON A PAYMENT, NET OF REFUNDS
+ * #3827 (`INV-PAY-117`): THE REFUNDABLE CASH ON A PAYMENT, NET OF REFUNDS
  * ALREADY PROMISED BACK BY HAND (an edit's, or an approved refund request's).
  * The one figure an edit, a guest's acceptance, a cancellation and a refund
  * appeal's approval size their refund from, so what the club promises back
@@ -204,7 +204,7 @@ export async function refundableCashNetOfOpenHandBacks(
 }
 
 /**
- * #3827 (`INV-PAY-115`): an edit review refunded BY HAND is refused past the
+ * #3827 (`INV-PAY-117`): an edit review refunded BY HAND is refused past the
  * payment's cash net of open hand-backs - before its claim, under the
  * caller's lock(1), so the task stays OPEN. The ledger cap inside
  * `applyLocalRefundAllocation` counts only what was already refunded, so on
@@ -228,7 +228,7 @@ export async function assertByHandReviewRefundWithinUnpromisedCash(
 export type RefundAppealCapDb = Pick<PrismaClient, "manualRefundTask" | "memberCredit">;
 
 /**
- * #3827 (`INV-PAY-116`): the sum of EVERY open hand-back on one payment - any
+ * #3827 (`INV-PAY-118`): the sum of EVERY open hand-back on one payment - any
  * kind, the cancellation's own included. Only a refund appeal's cap reads
  * this; an edit or a cancel reads `openNonCancellationHandBackCents`, which
  * leaves the cancellation's task out by design.
@@ -245,7 +245,7 @@ export async function openHandBackCentsForRefundAppeal(
 }
 
 /**
- * #3827 (`INV-PAY-116`): what a refund appeal must treat as ALREADY handed
+ * #3827 (`INV-PAY-118`): what a refund appeal must treat as ALREADY handed
  * back, beyond `refundedAmountCents`: every hand-back still open on the
  * payment and the member credit already minted from its late cash
  * (`refundAppealCeiling` says why each one is missing from the mirror).
@@ -270,7 +270,7 @@ export async function refundAppealHandedBackCents(
 }
 
 /**
- * #3827 (`INV-PAY-116`): THE MOST A REFUND APPEAL MAY PROMISE BACK, for a
+ * #3827 (`INV-PAY-118`): THE MOST A REFUND APPEAL MAY PROMISE BACK, for a
  * caller holding no lock (the member's advisory request): the refundable cash
  * less `refundAppealHandedBackCents`, read before the payment. The admin
  * approval and the reopen of a dismissed appeal task, which re-read the

@@ -955,6 +955,7 @@ describe("P2.3: Guest subscription check", () => {
       accountCreditPercentage: 75,
       daysUntilCheckIn: 30,
       requiresSettlementMethod: true,
+      returnsToOrganiser: false,
     });
   });
 

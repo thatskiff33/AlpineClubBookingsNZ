@@ -326,7 +326,7 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   per-member safety-cap rescale; unknown rows are excluded from the sums, and
   `?? 0` on the column is prohibited exactly as it is on
   `BookingGuestNight.priceCents`. **A reader asks `deriveNightAdjustmentState`
-  — the one home — over every redemption (#3826), or per code (`INV-MONEY-039`):** a booking with no redemption had
+  — the one home — over every redemption (#3826), or per code (`INV-MONEY-040`):** a booking with no redemption had
   nothing taken off (`NO_PROMOTION`); rows that reconcile are `KNOWN`; anything
   else — rows missing, rows that do not sum, a NULL amount — is `NOT_KNOWN`.
   No column stores that answer: a flag can be left asserting what a draining
@@ -355,9 +355,9 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   `promo-money-byte-identical.test.ts`.
 
 
-## INV-MONEY-037
+## INV-MONEY-038
 
-**Related: `INV-MONEY-038`** (which nights each code may take) and
+**Related: `INV-MONEY-039`** (which nights each code may take) and
 **`INV-MONEY-024`** (the re-price rule each code keeps).
 
 - **Several promo codes on one booking are priced by ONE orchestrator, in the
@@ -374,7 +374,7 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   machinery; a decline consumed nothing. A lower price on a paid booking goes
   back in full, with no cancellation-policy tier, the way it was paid
   (D-3813-5): refundable cash first — a card refund, or an officer's bank
-  transfer (`INV-PAY-115`) — then account credit for the rest; a re-price
+  transfer (`INV-PAY-117`) — then account credit for the rest; a re-price
   that cannot return the whole reduction is not written, so no code is used
   beyond what is returned. Each code keeps its own caps, its own allocations and its own
   integer cents: `Booking.promoAdjustmentCents` is the sum of the redemptions'
@@ -386,9 +386,9 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   (`INV-MONEY-023`). While the `multiPromoCodes` switch is off a second code is
   refused (#3826).
 
-## INV-MONEY-038
+## INV-MONEY-039
 
-**Related: `INV-MONEY-037`** (the order the codes run in) and
+**Related: `INV-MONEY-038`** (the order the codes run in) and
 **`INV-MONEY-029`** (the rows a claim is written as).
 
 - **A night is discounted by at most one promo code, and the earliest code
@@ -405,7 +405,7 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   same promise: one promotion row per night
   (`BookingGuestNightAdjustment(bookingGuestNightId, kind)`, #3826).
 
-## INV-MONEY-039
+## INV-MONEY-040
 
 **Related: `INV-MONEY-029`** (each code's rows), **`INV-MONEY-030`** (the
 verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
@@ -469,7 +469,7 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   election preserves its headline, clamp, shortfall, and ledger arithmetic and
   records the verdict with its atomic credit result. Per-booking Xero invoices
   retain gross guest/night lines plus the verified promotion, as one line per
-  code (`INV-MONEY-039`), and record its source on the existing operation.
+  code (`INV-MONEY-040`), and record its source on the existing operation.
   **Correction (#3828):** group invoices carry each child's promotion line
   (#3642, `INV-PAY-105`); the omission this rule once stated was the D3 defect
   a fixture proved, a discounted joiner failing the settlement's cash check.
@@ -501,7 +501,7 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   named `WITHHELD` state replacing a nullable absence, and the wording. Behind
   it, booking detail and lists, officer history, finance metrics, reports,
   exports and per-booking Xero reconciliation input carry the same state and
-  ordered reasons; every displayed or settled amount and, bar `INV-MONEY-039`,
+  ordered reasons; every displayed or settled amount and, bar `INV-MONEY-040`,
   the invoice shape are unchanged. A read-only repeatable-read census
   (`pnpm run booking-money:census`) reports state/reason counts, night rows by
   provenance and strands by `INV-MOD-028` verdict per booking month, and edit
@@ -593,9 +593,9 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   `Payment.amountCents` whenever anything is captured. Its refunds do NOT
   always equal `refundedAmountCents`: that column only rises, is seeded
   without rows on legacy payments, and is moved by credit and hand-back
-  refunds (#3599) — `INV-PAY-050` already says it is not cash evidence. C4
-  (#3583) classifies those as known divergences. A line whose source amount
-  later changes is reported, not corrected.
+  refunds (#3599) — `INV-PAY-050` already says it is not cash evidence. C4's
+  census names those as `REFUND_MIRROR_*` classes (`INV-MONEY-037`). A line
+  whose source amount later changes is reported, not corrected.
 
 ## INV-MONEY-035
 
@@ -638,6 +638,39 @@ verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
   `booking-ledger-modification-posting.test.ts`,
   `booking-ledger-modification-sync.test.ts` (two-sibling fixtures per
   direction), `booking-ledger-modification.realdb.test.ts`.
+
+## INV-MONEY-037
+
+- **Until the reads move, every booking's ledger is proved against its money
+  columns, and the cut-over waits on that proof** (#3583, design
+  `booking-ledger.md` §6, §7). `pnpm run booking-ledger:census` reads one
+  `RepeatableRead`, `READ ONLY` snapshot, writes nothing, and checks seven
+  identities per booking: `finalPriceCents` is Σ `GUEST_NIGHT`, `PROMOTION`
+  and `GROUP_DISCOUNT` plus `adjusted(b)` less agreed give-backs, or, once
+  cancelled, `owed(b)` is zero; `amountCents` is Σ captures; `creditAppliedCents` is
+  Σ `CREDIT_APPLIED`; `refundedAmountCents` is −Σ `CARD_REFUND`;
+  `changeFeeCents` is Σ `CHANGE_FEE`; the uncollected ask is `max(0, owed(b))`
+  while an ask is live; and a live booking's `owed(b)` is what its columns say
+  is owed (`INV-PAY-047`'s residual plus the ask, less evidenced give-backs),
+  so no line can be wrong while every column agrees. A review line must match
+  what its closure credited, from credit rows and its own refund; rows it
+  cannot attribute fail closed (`AMBIGUOUS_REVIEW_GIVE_BACK`, §6). A disagreement names the
+  booking, both figures and the delta.
+
+  **A class explains an exact amount, from evidence the delta does not
+  hold.** It is classified only where components computed from the booking's
+  own rows sum to the delta to the cent; a cent either way, or the evidence
+  removed, is a disagreement (`booking-ledger-projection-census.test.ts`).
+
+  **The gate opens only on zero unclassified disagreements, coverage gaps and
+  integrity findings, and every class instance acknowledged.** Coverage is
+  money with no lines, a paid booking unconfirmed on the ledger, or an edit,
+  fee, credit row, capture or refund no live line records. Every class holds
+  the gate until the owner's `--acknowledged` file, kept outside the
+  repository, names its instance to the cent — `KNOWN_DEFECT_HISTORY` too —
+  except `GROUP_SETTLEMENT_OFF_LEDGER`, listed only (owner decisions,
+  #3583; poster #3854). A moved figure is stale and still holds. `booking-ledger-projection-census.realdb.test.ts` proves it
+  on bookings the real writers built.
 
 ## INV-MONEY-006
 

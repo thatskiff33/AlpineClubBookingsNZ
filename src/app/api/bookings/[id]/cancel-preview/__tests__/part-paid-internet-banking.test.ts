@@ -32,8 +32,10 @@ vi.mock("@/lib/prisma", () => ({
     booking: { findUnique: mocks.bookingFindUnique },
     memberCredit: { aggregate: mocks.memberCreditAggregate },
     clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique },
-    // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
+    // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
     manualRefundTask: { aggregate: mocks.manualRefundTaskAggregate },
+    // #3809: no edit of these bookings ran through the give-back, so no cap.
+    bookingModification: { findFirst: vi.fn().mockResolvedValue(null) },
   },
 }));
 vi.mock("@/lib/cancellation", () => ({
@@ -41,6 +43,8 @@ vi.mock("@/lib/cancellation", () => ({
 }));
 vi.mock("@/lib/booking-cancel", () => ({
   paymentEligibleForPaidCancelPath: mocks.paymentEligibleForPaidCancelPath,
+  // #3809 (F2): these payments never captured, so their credit comes back whole.
+  paymentHasCaptureEvidence: vi.fn().mockResolvedValue(false),
 }));
 vi.mock("@/lib/internet-banking-hold-payment-evidence", () => ({
   readHoldPaymentEvidence: mocks.readHoldPaymentEvidence,
@@ -154,7 +158,7 @@ describe("cancel preview for a part-paid internet banking booking (#3643)", () =
     );
   });
 
-  it("#3827 (INV-PAY-115): quotes only the cash not already promised back on an open edit refund hand-back", async () => {
+  it("#3827 (INV-PAY-117): quotes only the cash not already promised back on an open edit refund hand-back", async () => {
     // $150 recorded, $50 of it already owed back on an earlier edit's task -
     // read on the SAME booking read as the payment, never a second query.
     const booking = partPaidBooking();

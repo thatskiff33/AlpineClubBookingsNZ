@@ -140,7 +140,7 @@ export async function loadModificationDocumentCodingContext(
   ]);
   const redemptions = bookingPromoRedemptions(booking);
   const sole = redemptions.length === 1 ? (redemptions[0]!.promoCode?.code ?? null) : null;
-  // #3828 (INV-MONEY-039): a line is coded by the code it names — the
+  // #3828 (INV-MONEY-040): a line is coded by the code it names — the
   // booking's, or for a code an edit released, the code's own row — unless the
   // coding this document always had already says the same thing. Kept as it
   // was, byte for byte:
@@ -155,7 +155,7 @@ export async function loadModificationDocumentCodingContext(
   // are deleted) — is coded per line. A stored row written before
   // `codesBefore` existed carries none: it is coded as it always was while the
   // booking still carries the code it names, and by the code it names
-  // (INV-MONEY-039) once a later edit has swapped that code away.
+  // (INV-MONEY-040) once a later edit has swapped that code away.
   const perCode =
     redemptions.length > 1 ||
     lineCodes.length > 1 ||

@@ -103,9 +103,10 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-034` | Settlement lines converge from payment rows where the mirror is derived |
 | `INV-MONEY-035` | Every booking credit row and hand-back posts one line, in its writer |
 | `INV-MONEY-036` | Edits post per-night lines or none; closures record a share once |
-| `INV-MONEY-037` | Several codes price through one orchestrator, booker's order, staying guests |
-| `INV-MONEY-038` | A night carries at most one code; the earliest code claims it |
-| `INV-MONEY-039` | One promotion line per promo code in Xero, edits and emails |
+| `INV-MONEY-037` | Ledger projections proved per booking; the gate opens on exact agreement |
+| `INV-MONEY-038` | Several codes price through one orchestrator, booker's order, staying guests |
+| `INV-MONEY-039` | A night carries at most one code; the earliest code claims it |
+| `INV-MONEY-040` | One promotion line per promo code in Xero, edits and emails |
 | `INV-MONEY-006` | Refunds, credits, Stripe and Xero amounts reconcile back to cent-based ledger records |
 | `INV-MONEY-007` | Admin adjustments need audit, approval, and a visible business reason |
 | `INV-MONEY-008` | A confirmed subscription charge is immutable; only delivery, status, Xero metadata advance |
@@ -268,6 +269,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-097` | One withheld share is one item; a credit-only completion records no refund |
 | `INV-PAY-061` | Confirmed amounts settle through an existing path, chosen at completion |
 | `INV-PAY-113` | A credit-paid share is applied credit given back, once |
+| `INV-PAY-115` | A cancellation tiers applied credit capped at what the booking is worth |
 | `INV-PAY-069` | Completions record their direction; charging re-enters the additional-payment path |
 | `INV-PAY-062` | One booking edit raises one charge request, derived from settled shares |
 | `INV-PAY-098` | A replacement ask carries the unpaid balance it retires, and records it |
@@ -275,9 +277,9 @@ Prefix `INV-PAY`.
 | `INV-PAY-099` | A dismissed money task can be reopened; a completed one cannot |
 | `INV-PAY-100` | Work-item grain follows the moved strands; the lead absorbs the settlement |
 | `INV-PAY-101` | Refund documents name the method from the settlement decision, never the source |
-| `INV-PAY-114` | Invoice-correction and officer-chosen cash notes have their own wordings |
-| `INV-PAY-115` | A by-hand edit refund raises one officer refund task |
-| `INV-PAY-116` | An approved appeal's non-card part raises one officer refund task |
+| `INV-PAY-116` | Invoice-correction and officer-chosen cash notes have their own wordings |
+| `INV-PAY-117` | A by-hand edit refund raises one officer refund task |
+| `INV-PAY-118` | An approved appeal's non-card part raises one officer refund task |
 | `INV-PAY-111` | A refund note's own operation completes only with its payment or skip |
 | `INV-PAY-070` | Xero leg bills the total on one invoice per edit, anchor-locked |
 | `INV-PAY-063` | Recorded shortfalls are billed on a second invoice; sent invoices only |
@@ -328,6 +330,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-035` | Organiser cancellation is a durable settlement fence, written under `lock(1)` first |
 | `INV-PAY-036` | Each group-cancel child's refund credit-note enqueue commits inside that child's cancel transaction |
 | `INV-PAY-037` | Failed settlement refunds stay durably owed; no child mirror applies twice |
+| `INV-PAY-114` | An organiser child's refund: one recorded Stripe refund from the combined payment |
 | `INV-PAY-105` | Group settlements stay bound to their emailed invoice until paid or voided |
 | `INV-PAY-109` | Joiners a paid organiser bill does not cover pay for themselves |
 
@@ -396,7 +399,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-008` | An unpaid member repriced under `NON_MEMBER_PRICING` is `NON_MEMBER_DEFAULT`, not forced |
 | `INV-MOD-009` | Membership, not the subscription, gates member-only promotions; a repriced member stays eligible |
 | `INV-MOD-010` | Priced guests store a rate-type snapshot; kept locked nights stay stale |
-| `INV-MOD-011` | Reductions refund within the cancellation tier; captured payments need settlement elections |
+| `INV-MOD-011` | Reductions settle within the cancellation tier, credit-paid ones as applied credit |
 | `INV-MOD-012` | Pre-payment reduction below applied credit refunds the over-consumed slice under lock |
 | `INV-MOD-013` | A modification parked to AWAITING_REVIEW refunds no credit, auto-pays nothing until released |
 | `INV-MOD-014` | Xero deallocation commits the clamp offset and outbox op together, member-credit-locked |

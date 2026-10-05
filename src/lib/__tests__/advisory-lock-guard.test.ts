@@ -265,14 +265,14 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "PUT /api/admin/refund-requests/[id]#1",
     tier: "GLOBAL",
     reason:
-      "#3827 (INV-PAY-115, INV-PAY-116): a refund appeal's approval caps at the refundable cash NET of the refunds still promised back by bank transfer (an edit's, or an earlier approved appeal's). A hand-back's completion moves the payment's refunded total and closes its task in one commit under this key, and a reopen re-promises one under it, so the cap reads the payment and the open-task sum under the same key, claims the request, plans the card refund and raises the bank-transfer task for the rest in the same transaction - a second approval queues behind it and sees that task. Takes the global key alone; the Stripe refund and Xero note run after the commit.",
+      "#3827 (INV-PAY-117, INV-PAY-118): a refund appeal's approval caps at the refundable cash NET of the refunds still promised back by bank transfer (an edit's, or an earlier approved appeal's). A hand-back's completion moves the payment's refunded total and closes its task in one commit under this key, and a reopen re-promises one under it, so the cap reads the payment and the open-task sum under the same key, claims the request, plans the card refund and raises the bank-transfer task for the rest in the same transaction - a second approval queues behind it and sees that task. Takes the global key alone; the Stripe refund and Xero note run after the commit.",
     invariant: "INV-LOCK-001",
   },
   {
     site: "PUT /api/admin/refund-requests/[id]#2",
     tier: "GLOBAL",
     reason:
-      "#3827 (INV-PAY-116): releasing an approval whose Stripe refund AND recovery enqueue both failed puts the request back to PENDING and deletes the OPEN bank-transfer task the approval raised, in one transaction under the key every reader of the open-task sum and every approval holds, so no approval can size its cap between the two writes. Takes the global key alone; no provider call.",
+      "#3827 (INV-PAY-118): releasing an approval whose Stripe refund AND recovery enqueue both failed puts the request back to PENDING and deletes the OPEN bank-transfer task the approval raised, in one transaction under the key every reader of the open-task sum and every approval holds, so no approval can size its cap between the two writes. Takes the global key alone; no provider call.",
     invariant: "INV-LOCK-001",
   },
 
@@ -646,6 +646,27 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     reason:
       "Each child's cancel and its refund credit-note enqueue commit inside one transaction on the settlement cohort's key, and reconcile that child's allocations through the lock-held seam.",
     invariant: "INV-LOCK-002",
+  },
+  {
+    site: "planOrganiserCancelChildRefunds#1",
+    tier: "GLOBAL",
+    reason:
+      "#3653: an organiser cancel freezes one refund debt per paid child and the settlement's plan in one transaction. The headroom it reads - refunds recorded on the combined intent plus child-refund debts still owed - is written by edit doors (which already hold this key) and by the refund recorder below, so the read and the inserts must be one decision on the settlement cohort's key. Provider calls run after commit.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "processOrganiserChildRefundOperation#1",
+    tier: "GLOBAL",
+    reason:
+      "#3653: recording an organiser child's Stripe refund against the combined payment - the refund row, the child's mirror, its Xero note, the settlement status and the debt's close - commits as one unit on the settlement cohort's key, so a concurrent edit or cancel reading the combined headroom sees the debt either owed or recorded, never neither or both. Then the Payment row (`lockPaymentForRefundedTotal`), the order every refunded-total writer takes. The Stripe call has already returned.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "reconcilePendingOrganiserChildRefunds#1",
+    tier: "GLOBAL",
+    reason:
+      "#3653 fix round: taking a failed organiser child refund back out - its refund row, the child's mirror, the settlement status and reopening its debt - is the inverse of the recorder above and commits as one unit on the same key, so a concurrent edit or cancel reading the combined headroom sees the refund either recorded or owed again, never neither. Then the Payment row, the order every refunded-total writer takes. Stripe was read before the transaction opened.",
+    invariant: "INV-LOCK-001",
   },
   {
     site: "createGroupSettlementIntent#1",

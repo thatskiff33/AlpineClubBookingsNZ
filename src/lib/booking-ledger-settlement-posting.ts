@@ -25,7 +25,7 @@
  * once; review of #3604 showed a reversed mark-paid row can be paid through
  * Xero later (the inbound path revives a FAILED Internet Banking row). So each
  * source's lines form a chain — capture, reversal, capture again — and the
- * planner walks it to find the one line live now (see `walk`).
+ * planner walks it to find the one line live now (`settlementChainWalker`).
  */
 import type { PaymentSource, PaymentStatus } from "@prisma/client";
 
@@ -106,29 +106,26 @@ function captureShape(
     : { kind: "BANK_RECEIPT", settlementMethod: "INTERNET_BANKING", narration: "Internet Banking payment received" };
 }
 
-export function planSettlementLines(input: SettlementPlanInput): SettlementPlan {
-  const postings: BookingLedgerPosting[] = [];
-  const amountDrift: SettlementPlan["amountDrift"] = [];
-
-  const byKey = new Map<string, PostedSettlementLine>();
-  const reversalOf = new Map<string, PostedSettlementLine>();
-  for (const line of input.postedLines) {
+/**
+ * THE SOURCE'S CHAIN. A source can hold, stop holding, and hold again — a
+ * mark-paid reversed, then the same row paid through Xero (review of #3604).
+ * Its lines form a chain: the first under the base key, each later one under
+ * `afterReversalKey(base, <the reversal that retired its predecessor>)`.
+ * Walking it gives the one line that is live now (if any) and the key the
+ * next line would take. Keyed by the reversal, so a replay finds its own
+ * line and posts nothing. The booking-ledger census (#3583) walks the same
+ * chain to ask whether a source's line stands.
+ */
+export function settlementChainWalker<T extends { id: string; postingKey: string | null; reversesLineId: string | null }>(
+  lines: readonly T[],
+): (baseKey: string) => { live: T | null; nextKey: string } {
+  const byKey = new Map<string, T>();
+  const reversalOf = new Map<string, T>();
+  for (const line of lines) {
     if (line.postingKey) byKey.set(line.postingKey, line);
     if (line.reversesLineId) reversalOf.set(line.reversesLineId, line);
   }
-
-  const base = { bookingId: input.bookingId, lodgeId: input.lodgeId, side: "SETTLEMENT" as const };
-
-  /**
-   * THE SOURCE'S CHAIN. A source can hold, stop holding, and hold again — a
-   * mark-paid reversed, then the same row paid through Xero (review of #3604).
-   * Its lines form a chain: the first under the base key, each later one under
-   * `afterReversalKey(base, <the reversal that retired its predecessor>)`.
-   * Walking it gives the one line that is live now (if any) and the key the
-   * next line would take. Keyed by the reversal, so a replay finds its own
-   * line and posts nothing.
-   */
-  const walk = (baseKey: string): { live: PostedSettlementLine | null; nextKey: string } => {
+  return (baseKey) => {
     let current = byKey.get(baseKey);
     let nextKey = baseKey;
     while (current) {
@@ -139,6 +136,14 @@ export function planSettlementLines(input: SettlementPlanInput): SettlementPlan 
     }
     return { live: null, nextKey };
   };
+}
+
+export function planSettlementLines(input: SettlementPlanInput): SettlementPlan {
+  const postings: BookingLedgerPosting[] = [];
+  const amountDrift: SettlementPlan["amountDrift"] = [];
+
+  const walk = settlementChainWalker(input.postedLines);
+  const base = { bookingId: input.bookingId, lodgeId: input.lodgeId, side: "SETTLEMENT" as const };
 
   /** Converge one source: post if it holds and nothing live stands; reverse if it does not. */
   const converge = (

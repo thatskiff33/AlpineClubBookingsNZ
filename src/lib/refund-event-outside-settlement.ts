@@ -9,7 +9,7 @@
  *    capture on an already-paid booking;
  *  - #3340: a capture against an intent a later edit had already replaced,
  *    refunded by the recovery queue;
- *  - #3827 (`INV-PAY-115`): an edit's refund the treasurer sent back by hand
+ *  - #3827 (`INV-PAY-117`): an edit's refund the treasurer sent back by hand
  *    while the booking was live, or (D-3813-7) an approved refund appeal's,
  *    decided after the cancel - a card appeal refund writes no event at all.
  *

@@ -30,8 +30,26 @@ const OWNER = "@thatskiff33";
  * refund and settlement functions — measured 137 of 1132 (12.1%). 15% leaves
  * room for new money modules and still reds a glob that starts sweeping in
  * unrelated code; raise it only with the modules that justify it.
+ *
+ * 16% from 5 Oct 2026, measured at 188-189 of about 1254 (15.0-15.1%), for new
+ * money modules: the booking ledger's back-post (#3583,
+ * `booking-ledger-back-post*.ts`), #3854's group-settlement poster
+ * (`booking-ledger-group-settlement-*.ts`, the census's `-group.ts`), and
+ * #3836's applied-credit allocation (`credit-only-card-payment.ts`,
+ * `xero-applied-credit-*.ts`, `xero-booking-repair-applied-credit.ts`).
+ * And (#3829, epic #3813 composed with main at 185 of 1250, 14.8%): nine
+ * new money modules, each owned by an existing glob rather than a widened one -
+ * the by-hand refund task and its refusal (`edit-refund-hand-back.ts`,
+ * `manual-refund-task-settlement-refusal.ts`, `refund-event-outside-settlement.ts`),
+ * the refund-request credit note (`refund-request-credit-note.ts`,
+ * `xero-refund-request-credit-note-outbox.ts`), late internet-banking cash
+ * credit (`internet-banking-late-cash-credit.ts`), the multi-code price delta
+ * and request reader (`booking-modification-promo-delta.ts`,
+ * `booking-modify-promo-request.ts`) and the settlement options split out of
+ * `booking-modify-settlement.ts` (`booking-modify-settlement-options.ts`):
+ * 194 of 1271, 15.3%.
  */
-const MAX_OWNED_SRC_LIB_SHARE = 0.15;
+const MAX_OWNED_SRC_LIB_SHARE = 0.16;
 
 /**
  * Outside `src/lib`, a share of one directory bounds nothing, so every pattern

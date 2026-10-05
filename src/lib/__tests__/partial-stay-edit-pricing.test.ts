@@ -200,6 +200,8 @@ vi.mock("@/lib/bed-allocation-lifecycle", () => ({
 }));
 vi.mock("@/lib/member-credit", () => ({
   createBookingModificationCredit: vi.fn().mockResolvedValue({ id: "credit1" }),
+  // #3809: a paid booking's reduction asks whether credit is applied; none here.
+  deriveBookingAppliedCreditCents: vi.fn().mockResolvedValue(0),
   // #3369: the one home for the account-credit refusal four settlement paths
   // share. Real, not stubbed: the mock must not turn a refusal into a pass.
   requireMemberCreditRecipient: (memberId: string | null) => {
@@ -533,7 +535,7 @@ function makeTx(
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
     manualRefundTask: {
-      // #3827 (`INV-PAY-115`): no open edit refund hand-back on file.
+      // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
       aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
       // #3032: the modified email asks whether the club is still working

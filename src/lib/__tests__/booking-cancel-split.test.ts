@@ -59,6 +59,8 @@ vi.mock("@/lib/member-credit", () => ({
   deriveBookingAppliedCreditCents: appliedCredit.deriveBookingAppliedCreditCents,
   createCancellationCredit: vi.fn(),
   restoreCreditFromBooking: mocks.restoreCreditFromBooking,
+  // #3792: the pending and paid claims take the member credit-ledger key.
+  lockMemberCreditLedger: vi.fn().mockResolvedValue(undefined),
   // #3369: the one home for the account-credit refusal four settlement paths
   // share. Real, not stubbed: the mock must not turn a refusal into a pass.
   requireMemberCreditRecipient: (memberId: string | null) => {

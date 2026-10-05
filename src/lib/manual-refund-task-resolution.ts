@@ -13,15 +13,8 @@ import { recordBookingEvent } from "@/lib/booking-events";
 import { recordManualRefundTaskClosureAudit } from "@/lib/manual-refund-task-audit";
 import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
 import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
-import {
-  chooseEditReviewSettlementRoute,
-  executeEditReviewSettlement,
-  type EditReviewSettlementRoute,
-} from "@/lib/edit-financial-review-settlement";
-import {
-  writeEditReviewAccountCredit,
-  type EditReviewAccountCreditOutcome,
-} from "@/lib/edit-financial-review-account-credit";
+import { chooseEditReviewSettlementRoute, executeEditReviewSettlement, type EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
+import { giveBackCancelledShareCredit, writeEditReviewAccountCredit, type EditReviewAccountCreditOutcome } from "@/lib/edit-financial-review-account-credit";
 import { cancellationHandBackInvoiceIdOf, queueRefundRequestCreditNoteInTransaction, refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero-leg";
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { requireMemberCreditRecipient } from "@/lib/member-credit";
@@ -159,7 +152,7 @@ export async function resolveManualRefundTask(
     // and only then reads what picks its money route, so nothing that route
     // depends on is stale. Why: docs/CONCURRENCY_AND_LOCKING.md.
     //
-    // #3827 (`INV-PAY-115`): an EDIT REFUND HAND-BACK takes the same key, and
+    // #3827 (`INV-PAY-117`): an EDIT REFUND HAND-BACK takes the same key, and
     // so (D-3813-7) does an approved refund request's. Its
     // completion moves `refundedAmountCents` and closes the task in one commit,
     // and every edit, acceptance and paid cancel reads those two separately to
@@ -201,7 +194,7 @@ export async function resolveManualRefundTask(
       isPartPaymentReviewTask(task),
     );
     if (refusal) throw new ManualBookingPaymentError(refusal, 400);
-    // #3827 (`INV-PAY-115`): a cancelled booking's edit refund hand-back is
+    // #3827 (`INV-PAY-117`): a cancelled booking's edit refund hand-back is
     // settled by paying it. The cancel counted it as going back; dismissing it
     // now would leave the cancellation's kept figure wrong. Read under lock(1)
     // (taken above for this kind), which a paid cancel also holds.
@@ -334,9 +327,12 @@ export async function resolveManualRefundTask(
           // chosen here under the lock.
           handedBackInCash:
             input.resolution === "completed" && input.handedBackInCash === true,
+          club: { zone: clubZone, format },
           store: tx,
         })
       : null;
+    // #3835: what actually goes back - by card or by hand, netted against a cancellation.
+    const settledCents = settlementRoute && "refundCents" in settlementRoute ? settlementRoute.refundCents + settlementRoute.creditBackCents : (settlement?.amountCents ?? null);
 
     // #3191/#3219 D2: the night prices, checked BEFORE the claim so a refusal
     // leaves the task OPEN - one plan per repairable strand since #3498.
@@ -389,6 +385,11 @@ export async function resolveManualRefundTask(
     }
 
     if (settlement && settlementRoute) {
+      // #3835: the credit part goes back FIRST: member ledger lock before any Payment row (INV-LOCK-002).
+      if ("creditBackCents" in settlementRoute && settlementRoute.creditBackCents > 0) {
+        const memberId = requireMemberCreditRecipient(bookingOwner(task.booking).memberId);
+        await giveBackCancelledShareCredit({ memberId, bookingId: task.bookingId, cents: settlementRoute.creditBackCents, format, store: tx }).catch((error: unknown) => { throw settlementWriteRefusal(error); });
+      }
       // #2797 (owner decision D2) and #3032: the money moves only NOW, after the
       // claim, so a lost claim moves nothing at all. `applyLocalRefundAllocation`
       // INCREMENTS `refundedAmountCents` and is not idempotent - its only
@@ -400,10 +401,10 @@ export async function resolveManualRefundTask(
       // before the club handed anything back, which is the whole reason the task
       // exists.
       try {
-        if (settlementRoute.kind === "local-allocation") {
+        if (settlementRoute.kind === "local-allocation" && settlementRoute.refundCents > 0) {
           await applyLocalRefundAllocation({
             paymentId: settlementRoute.paymentId,
-            amountCents: settlement.amountCents,
+            amountCents: settlementRoute.refundCents,
             store: tx,
           });
         }
@@ -438,12 +439,12 @@ export async function resolveManualRefundTask(
             store: tx,
           });
         }
-        else if (settlementRoute.kind === "stripe-refund") {
+        else if (settlementRoute.kind === "stripe-refund" && settlementRoute.refundCents > 0) {
           await enqueueEditFinancialReviewRefundRecovery({
             bookingId: task.bookingId,
             paymentId: settlementRoute.paymentId,
             taskId: task.id,
-            amountCents: settlement.amountCents,
+            amountCents: settlementRoute.refundCents,
             allocationPlan: settlementRoute.allocation,
             store: tx,
           });
@@ -452,12 +453,12 @@ export async function resolveManualRefundTask(
         throw settlementWriteRefusal(error);
       }
       // #3599: the money the club handed back by hand, on the booking ledger.
-      if (settlementRoute.kind === "local-allocation") {
+      if (settlementRoute.kind === "local-allocation" && settlementRoute.refundCents > 0) {
         await postHandBackLedgerLine({
           bookingId: task.bookingId,
           lodgeId: task.booking.lodgeId,
           manualRefundTaskId: task.id,
-          amountCents: settlement.amountCents,
+          amountCents: settlementRoute.refundCents,
           refundMethod: refundMethodForEditReviewRoute(settlementRoute),
           paymentSource: task.payment?.source ?? null,
           officerMemberId: actingMemberId,
@@ -536,7 +537,7 @@ export async function resolveManualRefundTask(
         todayAtClub,
         hasIssuedXeroInvoice,
         settlementRoute,
-        settlementAmountCents: settlement?.amountCents ?? null,
+        settlementAmountCents: settledCents,
         settlementDirection: settlement ? settlementDirection : null,
         store: tx,
       });
@@ -599,8 +600,8 @@ export async function resolveManualRefundTask(
        * rather than `REFUNDED` - the member got credit, not their money back.
        */
       recordedRefund:
-        settlement && settlementRoute?.kind === "local-allocation"
-          ? { amountCents: settlement.amountCents }
+        settlement && settlementRoute?.kind === "local-allocation" && settlementRoute.refundCents > 0
+          ? { amountCents: settlementRoute.refundCents }
           : null,
       /**
        * #3032: the two routes whose money moves OUTSIDE this transaction, carried
@@ -608,7 +609,7 @@ export async function resolveManualRefundTask(
        * outcome, including a dismissal.
        */
       settlementRoute,
-      settlementAmountCents: settlement?.amountCents ?? null,
+      settlementAmountCents: settledCents,
       /** #3791: what the account-credit route gave back and minted, else null. */
       accountCredit: accountCredit as EditReviewAccountCreditOutcome | null,
       /** #3170: which way this completion sent the money, or null on a dismissal. */
@@ -625,7 +626,7 @@ export async function resolveManualRefundTask(
       // against - `hasIssuedXeroInvoice` is false for every CANCELLED booking.
       cancellationHandBackInvoiceId: cancellationHandBackInvoiceIdOf(task),
       /**
-       * #3827 (`INV-PAY-115`): the Xero leg owes nothing for an edit refund
+       * #3827 (`INV-PAY-117`): the Xero leg owes nothing for an edit refund
        * hand-back - its edit already queued the credit note that corrects the
        * invoice. A refund request's (D-3813-8) queues that request's own note
        * instead (`refundRequestId` below), never the cancellation's.
@@ -637,7 +638,7 @@ export async function resolveManualRefundTask(
        * route, so the leg queues nothing) as on every other task.
        */
       refundRequestId: refundRequestIdOfHandBack(task),
-      /** The REFUNDED event's marker for those two (`INV-PAY-115`), else null. */
+      /** The REFUNDED event's marker for those two (`INV-PAY-117`), else null. */
       nonCancellationHandBackSnapshot: isNonCancellationHandBackTask(task)
         ? nonCancellationHandBackCompletedSnapshot({ id: task.id, kind: task.kind, occurrenceKey: task.occurrenceKey })
         : null,
@@ -656,7 +657,7 @@ export async function resolveManualRefundTask(
       actorMemberId: actingMemberId,
       amountCents: result.recordedRefund.amountCents,
       reason: "manual_refund_completed",
-      // #3827 (`INV-PAY-115`): an edit's refund on a live booking, or an
+      // #3827 (`INV-PAY-117`): an edit's refund on a live booking, or an
       // appeal's decided after the cancel - marked so the narrative never reads
       // it as the cancellation's settlement.
       ...(result.nonCancellationHandBackSnapshot

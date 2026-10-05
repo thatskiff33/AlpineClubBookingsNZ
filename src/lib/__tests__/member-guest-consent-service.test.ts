@@ -73,6 +73,7 @@ const h = vi.hoisted(() => {
     loggerError: vi.fn(),
     loggerWarn: vi.fn(),
     loggerInfo: vi.fn(),
+    queueXero: vi.fn(async () => ({})),
   };
 });
 
@@ -115,6 +116,7 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
   settleHostingCoverageAfterCommit: h.settleHostingCoverage,
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: h.logAudit }));
+vi.mock("@/lib/xero-booking-edit-settlement", () => ({ queueXeroBookingEditSettlement: h.queueXero }));
 vi.mock("@/lib/email/member-guest", () => ({
   sendMemberGuestConsentOutcomeEmail: h.sendOutcomeEmail,
   sendMemberGuestConsentExpiredEmail: h.sendExpiredEmail,
@@ -407,9 +409,28 @@ beforeEach(() => {
   h.removeGuest.mockImplementation(async ({ guestId }: { guestId: string }) => {
     world().choreAssignments.delete(guestId);
     world().guests.delete(guestId);
-    return { accountCreditAmountCents: 0 };
+    return removalResult();
   });
 });
+
+/** What the shared removal path returns, with the figures its Xero leg reads (#3809). */
+function removalResult(overrides: Record<string, unknown> = {}) {
+  return {
+    booking: { id: BOOKING },
+    bookingModificationId: "mod-consent-1",
+    hasIssuedXeroInvoice: true,
+    paymentStatus: "SUCCEEDED",
+    priceDiffCents: -5_000,
+    xeroRefundAmountCents: 0,
+    settlementMethod: null,
+    hasSucceededPayment: false,
+    accountCreditAmountCents: 0,
+    appliedCreditGivenBackCents: 0,
+    xeroAdditionalAmountCents: 0,
+    zeroDollarAutoPaid: false,
+    ...overrides,
+  };
+}
 
 /**
  * A refusal that WRITES FIRST, exactly where the real removal path writes.
@@ -1288,6 +1309,37 @@ describe("expireMemberGuestConsent", () => {
     });
   });
 
+  it("elects nothing for a booking the group organiser paid for by card, so the removal goes ahead (#3653)", async () => {
+    // A joiner's booking the organiser paid for by card has ONE disposition, the
+    // organiser's card, and the shared path refuses a credit election for it.
+    // Electing credit here made every such lapse a refusal, leaving the guest
+    // on the booking for ever; the election is the OWNER's account, which is
+    // not where this money goes.
+    Object.assign(world().bookings.get(BOOKING)!, {
+      organiserSettled: true,
+      parentBookingId: "organiser-booking",
+      payment: { source: "STRIPE" },
+    });
+
+    const result = await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+
+    expect(result).toMatchObject({ outcome: "EXPIRED", removed: true });
+    expect(h.removeGuest).toHaveBeenCalledTimes(1);
+    expect(h.removeGuest.mock.calls[0][0]).not.toHaveProperty("settlementMethod");
+  });
+
+  it("still elects credit when the organiser settled by Internet Banking (#3653)", async () => {
+    Object.assign(world().bookings.get(BOOKING)!, {
+      organiserSettled: true,
+      parentBookingId: "organiser-booking",
+      payment: { source: "INTERNET_BANKING" },
+    });
+
+    await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
+
+    expect(h.removeGuest.mock.calls[0][0]).toMatchObject({ settlementMethod: "credit" });
+  });
+
   it("attributes the removal to the booking OWNER, never to the target", async () => {
     // Nobody acted, so nobody is named as the actor: the booking owner is passed
     // because they are the party whose booking is repriced and who receives the
@@ -1304,7 +1356,7 @@ describe("expireMemberGuestConsent", () => {
     // An expiry is nobody's decision. A responder id here would make the row
     // classify as DECLINED-shaped rather than EXPIRED, and the two are different
     // facts: somebody refused, versus the clock ran out.
-    h.removeGuest.mockImplementationOnce(async () => ({ accountCreditAmountCents: 0 }));
+    h.removeGuest.mockImplementationOnce(async () => removalResult());
     await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
     expect(world().guests.get(GUEST)).toMatchObject({
       consentStatus: "EXPIRED",
@@ -1388,5 +1440,60 @@ describe("expireMemberGuestConsent", () => {
     await expireMemberGuestConsent({ format: CLUB_FORMAT_TEST, guestId: GUEST, now: NOW });
     expect(h.getDefaultLodgeId).toHaveBeenCalledTimes(1);
     expect(h.acquireLodgeCapacityLock.mock.calls[0][1]).toBe("lodge-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3809 — a consent removal reaches Xero like any other guest removal
+// ---------------------------------------------------------------------------
+describe("#3809: a decline or expiry that lowers the price reaches Xero", () => {
+  it("MUTATION: queues the same edit settlement an ordinary removal queues, give-back included, and tells the owner of it as credit", async () => {
+    h.removeGuest.mockImplementationOnce(async ({ guestId }: { guestId: string }) => {
+      world().guests.delete(guestId);
+      return removalResult({ appliedCreditGivenBackCents: 5_000 });
+    });
+    const outcome = await respondToMemberGuestConsent({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING,
+      guestId: GUEST,
+      actorMemberId: TARGET,
+      action: "DECLINE",
+      now: NOW,
+      delegateResolver: acceptDelegate,
+    });
+    expect(outcome).toMatchObject({ outcome: "DECLINED", creditCents: 5_000 });
+
+    await finaliseMemberGuestConsentTransition({
+      format: CLUB_FORMAT_TEST,
+      bookingId: BOOKING,
+      guestId: GUEST,
+      targetMemberId: TARGET,
+      outcome,
+      actorMemberId: TARGET,
+    });
+
+    expect(h.queueXero).toHaveBeenCalledTimes(1);
+    expect(h.queueXero).toHaveBeenCalledWith(expect.objectContaining({
+      bookingId: BOOKING,
+      bookingModificationId: "mod-consent-1",
+      hasIssuedXeroInvoice: true,
+      priceDiffCents: -5_000,
+      appliedCreditGiveBackCents: 5_000,
+      createdByMemberId: TARGET,
+    }));
+  });
+
+  it("queues nothing for an approval, or for a lost race", async () => {
+    for (const outcome of [{ outcome: "APPROVED" }, { outcome: "ALREADY_RESOLVED" }] as const) {
+      await finaliseMemberGuestConsentTransition({
+        format: CLUB_FORMAT_TEST,
+        bookingId: BOOKING,
+        guestId: GUEST,
+        targetMemberId: TARGET,
+        outcome,
+        actorMemberId: TARGET,
+      });
+    }
+    expect(h.queueXero).not.toHaveBeenCalled();
   });
 });

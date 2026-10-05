@@ -86,7 +86,7 @@ export type ManualRefundTaskResolution =
        */
       recordedNightPrices: RecordedStrandNightPrices[] | null;
       /**
-       * #3536 (`INV-PAY-114`, owner decision 3 Oct 2026): how a refund the club
+       * #3536 (`INV-PAY-116`, owner decision 3 Oct 2026): how a refund the club
        * pays back BY HAND went back - true for cash, false for a bank transfer.
        * The officer says; the app never infers cash from "marked paid by hand".
        * Null or absent keeps the bank-transfer wording. Words on the Xero note
