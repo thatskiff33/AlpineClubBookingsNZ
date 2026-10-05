@@ -862,7 +862,7 @@ describe("Admin refund and credit review page", () => {
     render(<RefundRequestsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Review" }));
 
-    expect((screen.getByLabelText(/Refund Amount/i) as HTMLInputElement).value).toBe("75.00");
+    expect((screen.getByRole("textbox", { name: /Refund Amount/i }) as HTMLInputElement).value).toBe("75.00");
     expect(screen.getByText("Max refundable: $75.00")).toBeTruthy();
   });
 });
