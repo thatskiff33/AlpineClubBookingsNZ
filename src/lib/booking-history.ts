@@ -357,10 +357,18 @@ export function buildBookingHistoryItems({
           electionCents != null
             ? `You had chosen to put ${formatCents(electionCents, format)} of account credit towards this booking, but it was paid in full before the credit could be applied.`
             : "The account credit saved against this booking was not applied, because the booking was paid in full first.";
+        // #3864: credit that was spent and then returned because the card paid
+        // it all is "returned", not "not reduced".
+        const returned =
+          typeof parsedDetails?.creditReturnedCents === "number" &&
+          parsedDetails.creditReturnedCents > 0;
+        const usedClause = returned
+          ? "The credit applied to this booking was returned to your balance"
+          : "Your credit was not used for this booking and your balance was not reduced";
         const balanceSentence =
           availableCreditCents != null
-            ? ` Your credit was not used for this booking and your balance was not reduced — you had ${formatCents(availableCreditCents, format)} of account credit available at the time.`
-            : " Your credit was not used for this booking and your balance was not reduced.";
+            ? ` ${usedClause} — you had ${formatCents(availableCreditCents, format)} of account credit available at the time.`
+            : ` ${usedClause}.`;
 
         items.push({
           id: `audit-${auditLog.id}`,
