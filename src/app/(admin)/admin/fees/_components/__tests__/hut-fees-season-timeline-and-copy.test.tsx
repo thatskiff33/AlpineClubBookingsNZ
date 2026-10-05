@@ -321,7 +321,7 @@ describe("Hut Fees copies a season exactly (#2938)", () => {
     expect(document.getElementById(`rate-${FULL.id}::FLAT`)).toHaveValue("45.05");
     // The hole stays a hole: an empty box, not "0.00".
     expect(document.getElementById(`rate-${NON_MEMBER.id}::FLAT`)).toHaveValue("");
-    expect(screen.getByLabelText(/Flat whole-lodge night rate/)).toHaveValue("600.50");
+    expect(screen.getByRole("textbox", { name: /Flat whole-lodge night rate/ })).toHaveValue("600.50");
   });
 
   it("POSTs a new season with the exact cents, and never writes to the source", async () => {
@@ -536,7 +536,7 @@ describe("Hut Fees draws the whole-lodge box from its one home (#2938)", () => {
     renderSection();
     await openTheEdit();
 
-    expect(screen.getByLabelText(/Flat whole-lodge night rate/)).toHaveValue("");
+    expect(screen.getByRole("textbox", { name: /Flat whole-lodge night rate/ })).toHaveValue("");
   });
 
   it("shows a deliberate zero as 0.00, which is not the same box as empty", async () => {
@@ -547,7 +547,7 @@ describe("Hut Fees draws the whole-lodge box from its one home (#2938)", () => {
     renderSection();
     await openTheEdit();
 
-    expect(screen.getByLabelText(/Flat whole-lodge night rate/)).toHaveValue(
+    expect(screen.getByRole("textbox", { name: /Flat whole-lodge night rate/ })).toHaveValue(
       "0.00",
     );
   });
@@ -557,7 +557,7 @@ describe("Hut Fees draws the whole-lodge box from its one home (#2938)", () => {
     renderSection();
     await openTheEdit();
 
-    expect(screen.getByLabelText(/Flat whole-lodge night rate/)).toHaveValue(
+    expect(screen.getByRole("textbox", { name: /Flat whole-lodge night rate/ })).toHaveValue(
       "600.05",
     );
   });

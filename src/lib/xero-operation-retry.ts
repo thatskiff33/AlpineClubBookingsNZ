@@ -39,7 +39,9 @@ import {
 } from "@/lib/xero-sync";
 import logger from "@/lib/logger";
 import { CLUB_NAME } from "@/config/club-identity";
-import { resolveRefundNoteMethod } from "@/lib/xero-refund-method";
+import { parseRefundMethod, resolveRefundNoteMethod } from "@/lib/xero-refund-method";
+import { queuedReviewTaskId } from "@/lib/xero-review-task-key";
+import { mayRecordAsCanonicalRefundNote } from "@/lib/xero-refund-note-status";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
 import {
   readBookingClearingNoteRetryInput,
@@ -792,12 +794,15 @@ async function repairRefundCreditNoteFollowUpActions(
     refundMethod?: CashRefundMethod;
   },
 ) {
-  await prisma.payment.update({
-    where: { id: operation.localId! },
-    data: {
-      xeroRefundCreditNoteId: repair.creditNoteId,
-    },
-  });
+  // #3880 F1: a per-refund note is repaired, never made the payment's canonical one.
+  if (await mayRecordAsCanonicalRefundNote(operation.localId!, repair.creditNoteId, prisma)) {
+    await prisma.payment.update({
+      where: { id: operation.localId! },
+      data: {
+        xeroRefundCreditNoteId: repair.creditNoteId,
+      },
+    });
+  }
 
   // `INV-PAY-101`: the SAME decision the inline leg makes. A row that recorded
   // its method settles as it said; a row from before #3529 carries none, so
@@ -1198,7 +1203,8 @@ async function getBookingModificationRetryData(bookingModificationId: string) {
 export async function retryXeroSyncOperation(
   operationId: string,
   format: ClubFormat,
-  options?: { createdByMemberId?: string }
+  // #3880: `requeueOperationId` is the REQUEUE row it runs under (its own claim).
+  options?: { createdByMemberId?: string; requeueOperationId?: string }
 ): Promise<{ message: string }> {
   const operation = await prisma.xeroSyncOperation.findUnique({
     where: { id: operationId },
@@ -1633,9 +1639,13 @@ export async function retryXeroSyncOperation(
         // a per-delta refund note whose payload was later overwritten with
         // the Xero request shape. The advisory value 0 is safe:
         // createXeroCreditNote recomputes coverage at execution time.
+        // #3880 F2: and a review's note is a delta note whatever row carries
+        // it - an inline row a requeue created has no queue type, and single-
+        // note mode would call the cancellation's note this refund's cover.
+        const retriedReviewTaskId = queuedReviewTaskId(operation);
         const deltaWatermarkCents =
           retryInput.watermarkCents ??
-          (operation.queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE
+          (operation.queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE || retriedReviewTaskId
             ? 0
             : undefined);
         await xero.createXeroCreditNote(operation.localId!, retryInput.amountCents, {
@@ -1647,6 +1657,8 @@ export async function retryXeroSyncOperation(
           ...(retryInput.refundMethod ? { refundMethod: retryInput.refundMethod } : {}),
           ...(retryInput.paymentIntentId ? { paymentIntentId: retryInput.paymentIntentId } : {}),
           ...(retryInput.documentDate ? { documentDate: retryInput.documentDate } : {}),
+          ...(options?.requeueOperationId ? { requeueOperationId: options.requeueOperationId } : {}),
+          ...(retriedReviewTaskId ? { reviewTaskId: retriedReviewTaskId } : {}),
         });
         return { message: "Retried Xero refund credit note creation." };
       }
@@ -1702,6 +1714,10 @@ export async function retryXeroSyncOperation(
         throw new XeroOperationRetryError("Booking modification no longer has a refundable Xero delta.");
       }
 
+      // #3791: both payload shapes (queued and executed) carry the task under
+      // one key, so it is read raw like the refund method below.
+      const retriedReviewTaskId = queuedReviewTaskId(operation);
+
       // An account-credit settlement must be rebuilt as an UNAPPLIED credit
       // note, never applied against the invoice — the member already holds
       // the matching spendable credit locally. Discriminate via the queued
@@ -1731,6 +1747,8 @@ export async function retryXeroSyncOperation(
           paymentId,
           refundAmountCents,
           bookingModificationId: operation.localId!,
+          // #3791: a review task's share rebuilds its own task-scoped key.
+          reviewTaskId: retriedReviewTaskId,
           createdByMemberId,
           format,
         });
@@ -1739,11 +1757,15 @@ export async function retryXeroSyncOperation(
 
       // `INV-PAY-101`: both payload shapes carry the method under one key; the
       // execution-time shape is not the typed queued payload, so it is read raw.
-      const modificationRefundMethod = readCashRefundMethod(asRecord(operation.requestPayload));
+      // #3791: an invoice-allocated note for a review's given-back credit reads
+      // "account credit", so this note - unlike a payment's refund note - can
+      // carry any of the three.
+      const modificationRefundMethod = parseRefundMethod(asRecord(operation.requestPayload)?.refundMethod);
       await xero.createXeroCreditNoteForModification({
         bookingId: modification.bookingId,
         refundAmountCents,
         bookingModificationId: operation.localId!,
+        reviewTaskId: retriedReviewTaskId,
         createdByMemberId,
         repairExistingLink: true,
         ...(modificationRefundMethod ? { refundMethod: modificationRefundMethod } : {}),

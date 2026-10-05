@@ -581,6 +581,11 @@ export const AUDIT_CENSUS_TOTALS = {
   // (`src/lib/late-capture-refund-setting-change.ts`). The approved refund's
   // `refunded_after_cancellation` moved into one shared finisher, so it is still
   // one site. RE-MEASURED with `npm run audit:census`, not incremented.
+  // 493 -> 492 (#3415): accepted quotes keep their held beds for officer
+  // review, removing the former accept-time capacity-block/revert writer.
+  // RE-MEASURED on the composed tree with #3639.
+  // 492 -> 493 (#3413): pending-adult identity resolution adds one classified
+  // booking-category logAudit site. RE-MEASURED on the composed tree.
   // 493 -> 494 (#3462): `xero.operation.marked_failed`, the per-row Mark
   // failed on a stale RUNNING Xero operation. One awaited `createAuditLog` in
   // `src/app/api/admin/xero/operations/[id]/mark-failed/route.ts`,
@@ -591,7 +596,21 @@ export const AUDIT_CENSUS_TOTALS = {
   // enrolment and the erasure's clear, categorised `security` at the site. The
   // Xero token writes add no site: they go through the credential store's
   // existing `recordCredentialMutation`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 495,
+  // 495 -> 496 (#3792): `xero.allocation.restored-booking-change-refused`, the
+  // durable record of a Xero allocation change the inbound credit-note sync
+  // refused to post to a cancelled booking whose applied credit was already
+  // restored. One awaited `createAuditLog` in
+  // `src/lib/xero-inbound/credit-note-repairs.ts`, categorised `xero` at the
+  // site, with `entityType`/`entityId` for the booking and no subject member.
+  // RE-MEASURED with `pnpm run audit:census`, not incremented.
+  // 496 -> 497 (#3653 fix round, composed onto #3792 by #3630): `booking.payment.refund_recovered` written by
+  // the organiser child refund executor when a refund an earlier attempt failed
+  // to make is finally made - the corrective row the group cancel's own record
+  // ("refund owed") needs. One `logAudit` in
+  // `src/lib/organiser-child-refund-executor.ts`, categorised `booking` like the
+  // legacy group replay's row with the same action. RE-MEASURED with
+  // `pnpm run audit:census`, not incremented.
+  writeSites: 497,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -675,11 +694,15 @@ export const AUDIT_CENSUS_TOTALS = {
     // 267 -> 268 (#3639): the late-notice acknowledgement, above.
     // 268 -> 270 (#3639): the two late-capture approval writers, above.
     // 270 -> 271 (#3639 review): the setting-change record, above.
+    // 271 -> 270 (#3415): no accept-time capacity-block/revert writer.
+    // 270 -> 271 (#3413): pending-adult identity resolution, above.
     // 271 -> 270 (#3462 review): the bulk stale-RUNNING reset moved to an
     // awaited `createAuditLog` inside the reset's own transaction, so the
     // reset and its record commit together. RE-MEASURED with
     // `pnpm run audit:census`.
-    logAudit: { total: 270, uncategorised: 0 },
+    // 270 -> 271 (#3653 fix round): the organiser child refund recovery record,
+    // above. RE-MEASURED with `pnpm run audit:census`.
+    logAudit: { total: 271, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -766,7 +789,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // each await their record inside the state change's transaction.
     // 137 -> 138 (#3454): the two-factor enrolment / erasure-clear record,
     // awaited on the transaction that changes the second factor.
-    createAuditLog: { total: 138, uncategorised: 0 },
+    // 138 -> 139 (#3792): the refused restored-booking allocation change record.
+    createAuditLog: { total: 139, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -885,7 +909,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // 104 -> 105 (#3029): the booking dietary edit record. A stay's dietary
     // note is booking data, read by booking officers, so `booking` is its
     // affected domain (`INV-PRIV-012`); the row names the field, never its value.
-    booking: 105,
+    // -1 (#3415): the removed capacity-block/revert record was `booking`.
+    // +1 (#3653 fix round): the organiser child refund recovery record,
+    // `booking` like the legacy group replay's row with the same action - the
+    // same readers, and no member-facing disclosure. Composed (epic #3678 with
+    // `main`) and RE-MEASURED with `pnpm run audit:census`: 106.
+    booking: 106,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the
@@ -1176,7 +1205,11 @@ export const AUDIT_CENSUS_TOTALS = {
     //
     // 37 -> 38 (#3462): `xero.operation.marked_failed`, beside the other
     // operation-panel writers. Nobody's readership changes.
-    xero: 38,
+    //
+    // 38 -> 39 (#3792): `xero.allocation.restored-booking-change-refused`,
+    // beside the inbound reconcile's other `xero` rows. Nobody's readership
+    // changes.
+    xero: 39,
     // 12 -> 14 (#2581 child 2): `BULK_COMMUNICATION_SENT` and
     // `EMAIL_SUPPRESSION_CLEARED`. Safe only BECAUSE child 1 moved
     // `communication` out of the support-only system entry into the membership

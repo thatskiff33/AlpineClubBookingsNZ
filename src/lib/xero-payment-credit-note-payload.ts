@@ -82,10 +82,14 @@ export function parsePaymentCreditNoteRetryInput(
   const allocation = asRecord(payload.allocation);
   const allocationAmountCents = providerAmountToCents(readNumber(allocation?.amount));
   if (allocationAmountCents !== null) {
+    // #3880 F2: a delta run records its watermark on the Xero request shape
+    // too, so a row it created inline (no queue type) retries in delta mode.
+    const recordedWatermark = readNumber(payload.watermarkCents);
     return {
       amountCents: allocationAmountCents,
       kind: "refund",
       refundMethod: readCashRefundMethod(payload),
+      ...(recordedWatermark !== null ? { watermarkCents: Math.round(recordedWatermark) } : {}),
       ...lateCapture,
     };
   }

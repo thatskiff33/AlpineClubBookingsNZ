@@ -161,7 +161,7 @@ export async function findPostedAdjustmentLines(
 ): Promise<PostedAdjustmentLine[]> {
   const rows = await store.bookingLedgerLine.findMany({
     where: { bookingId, kind: { in: ["AGREED_ADJUSTMENT"] } },
-    select: { id: true, sign: true, quantity: true, unitCents: true, narration: true, reversesLineId: true },
+    select: { id: true, sign: true, quantity: true, unitCents: true, narration: true, reversesLineId: true, postingKey: true },
   });
   return rows.map((row) => ({ ...row, sign: row.sign === -1 ? -1 : 1 }));
 }

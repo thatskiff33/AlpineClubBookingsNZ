@@ -27,6 +27,7 @@ import {
   rebaseDivergesFromIssuedInvoice,
   rebaseChangedTheBooking,
   recordBookingPriceRebaseHistory,
+  type BookingPriceRebase,
 } from "@/lib/booking-review-price-rebase";
 
 /**
@@ -124,6 +125,7 @@ export async function recordReviewClosurePricing({
   settlementRoute,
   settlementAmountCents,
   settlementDirection,
+  settleAgainstRebase,
   store,
   format,
 }: {
@@ -162,6 +164,23 @@ export async function recordReviewClosurePricing({
   settlementAmountCents: number | null;
   /** #3582: which way that share went, or null where nothing was settled. */
   settlementDirection: ManualRefundTaskDirection | null;
+  /**
+   * #3791: a settlement whose figure depends on this re-price - the
+   * account-credit route, which gives back applied credit only up to what the
+   * booking's re-prices removed on an unpaid booking. Run straight after the
+   * re-base and before anything reads the settled amount, and it answers what
+   * the member was actually credited - the ledger stand-in posts that, none at
+   * zero - and what its Xero note takes off the invoice, which the
+   * invoice-divergence check compares with the re-price. Null on every other
+   * closure.
+   */
+  settleAgainstRebase:
+    | ((rebase: BookingPriceRebase | null) => Promise<{
+        creditedCents: number;
+        invoiceReductionCents: number | null;
+        agreedGiveBackCents: number | null;
+      }>)
+    | null;
   store: Prisma.TransactionClient;
   /** The club's format (#3565), resolved by the caller before any transaction. */
   format: ClubFormat;
@@ -198,16 +217,25 @@ export async function recordReviewClosurePricing({
     store,
   });
   const rebase = outcome.rebased ? outcome.rebase : null;
-  const xeroInvoiceDiverged =
-    rebase !== null &&
-    rebaseDivergesFromIssuedInvoice({
-      rebase,
-      hasIssuedXeroInvoice,
-      settlementIssuesXeroDocument: editReviewSettlementIssuesXeroDocument({
+  const settled = settleAgainstRebase ? await settleAgainstRebase(rebase) : null;
+  const creditedCents = settled?.creditedCents ?? null;
+  const xeroInvoiceDiverged = rebaseDivergesFromIssuedInvoice({
+    rebase,
+    hasIssuedXeroInvoice,
+    // A captured payment's account-credit share (null) is judged by the
+    // document rule every other route is (#3791 F1).
+    settlement: {
+      invoiceReductionCents: settled?.invoiceReductionCents ?? null,
+      issuesXeroDocument: editReviewSettlementIssuesXeroDocument({
         route: settlementRoute,
         xeroAmountCents: settlementAmountCents,
       }),
-    });
+    },
+  });
+  // #3791: the share as it was actually settled - an account-credit share
+  // netted against a cancellation's restore can credit less than was typed, or
+  // nothing, and the ledger's stand-in has to say the same.
+  const settledAmountCents = creditedCents ?? settlementAmountCents;
   let rebaseHistoryId: string | null = null;
   if (rebase !== null && rebaseChangedTheBooking(rebase)) {
     // D1's second consequence: a member can now be refunded less than they paid
@@ -242,11 +270,12 @@ export async function recordReviewClosurePricing({
     rebase,
     rebaseHistoryId,
     settlement:
-      resolution === "completed" && settlementAmountCents !== null && settlementDirection !== null
-        ? { direction: settlementDirection, amountCents: settlementAmountCents }
+      resolution === "completed" && settledAmountCents !== null && settledAmountCents > 0 && settlementDirection !== null
+        ? { direction: settlementDirection, amountCents: settledAmountCents }
         : null,
     note,
     officerMemberId: actingMemberId,
+    agreedGiveBackCents: settled?.agreedGiveBackCents ?? null,
   });
   await createAuditLog(
     {

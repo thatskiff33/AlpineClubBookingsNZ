@@ -20,9 +20,7 @@ import "dotenv/config";
 import process from "node:process";
 import {
   auditCardAppliedCreditDoublePays,
-  auditIbAppliedCreditStrands,
   formatCardAppliedCreditDoublePayReport,
-  formatIbAppliedCreditStrandReport,
 } from "../src/lib/ib-hold-clearing-audit";
 import {
   auditIbHoldClearingUnderclears,
@@ -72,14 +70,8 @@ async function main() {
 
   console.log(formatIbHoldClearingAuditReport(result, format));
 
-  // #1620 — enumerate every Internet-Banking payment carrying applied credit
-  // against a full invoice (realized double-pay vs pending exposure). Read-only.
-  const strandResult = await auditIbAppliedCreditStrands();
-
-  console.log("");
-  console.log("=".repeat(70));
-  console.log("");
-  console.log(formatIbAppliedCreditStrandReport(strandResult, format));
+  // #1620's Internet-Banking strand enumeration retired with #3583: its count
+  // is reported by `pnpm run booking-ledger:census`, under the credit identity.
 
   // #1641 — enumerate every captured CARD payment that also consumed applied
   // credit against a full-price charge (realized double-pay). Read-only.
@@ -95,10 +87,6 @@ async function main() {
     console.log("---BEGIN IB HOLD CLEARING AUDIT JSON---");
     console.log(JSON.stringify(result, null, 2));
     console.log("---END IB HOLD CLEARING AUDIT JSON---");
-    console.log("");
-    console.log("---BEGIN IB APPLIED-CREDIT STRAND JSON---");
-    console.log(JSON.stringify(strandResult, null, 2));
-    console.log("---END IB APPLIED-CREDIT STRAND JSON---");
     console.log("");
     console.log("---BEGIN CARD APPLIED-CREDIT DOUBLE-PAY JSON---");
     console.log(JSON.stringify(cardDoublePayResult, null, 2));

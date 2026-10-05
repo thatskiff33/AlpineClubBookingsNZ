@@ -97,6 +97,8 @@ const mocks = vi.hoisted(() => {
       findUnique: vi.fn().mockResolvedValue({ invoiceEmailDelivery: null }),
       // #3635: no refund note was resolved by hand in Xero unless a test says so.
       findMany: vi.fn().mockResolvedValue([]),
+      // #3809: no applied-credit deallocation is on its way for an edit's note to wait on.
+      findFirst: vi.fn().mockResolvedValue(null),
     },
   };
 

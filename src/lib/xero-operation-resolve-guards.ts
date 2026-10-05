@@ -3,10 +3,8 @@
 // route stays a thin handler and the reads have one home.
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import {
-  buildXeroOperationRequeueCorrelationKey,
-  XERO_OPERATION_REQUEUE_TYPE,
-} from "@/lib/xero-operation-queue";
+import { buildXeroOperationRequeueCorrelationKey } from "@/lib/xero-operation-queue";
+import { XERO_REQUEUE_OPERATION_TYPE } from "@/lib/xero-hardening-shared";
 import { isStaleRunningXeroOperation } from "@/lib/xero-stale-operations";
 
 type OperationReader = Pick<Prisma.TransactionClient, "xeroSyncOperation">;
@@ -36,7 +34,7 @@ export async function findRetryOverlappingMark(
   return db.xeroSyncOperation.findFirst({
     where: {
       correlationKey: buildXeroOperationRequeueCorrelationKey(operationId),
-      operationType: XERO_OPERATION_REQUEUE_TYPE,
+      operationType: XERO_REQUEUE_OPERATION_TYPE,
       OR: [
         { status: "RUNNING" },
         {

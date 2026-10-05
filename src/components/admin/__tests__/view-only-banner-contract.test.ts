@@ -335,15 +335,19 @@ const FIGURES = {
    *
    * 364 -> 365 (#2941): Admin -> Member Fields moved to the staged pattern, so
    * its Save gained an Edit beside it. Cancel is a plain Button. MEASURED.
-    * 365 -> 366 (#3408): the Membership Types editor adds Restore expected
-    * booking behavior for a drifted key-resolved built-in. MEASURED.
-    * 366 -> 367 (#3462): the Xero operations panel's per-row Mark failed on a
-    * stale running operation. MEASURED.
+   * 365 -> 366 (#3408): the Membership Types editor adds Restore expected
+   * booking behavior for a drifted key-resolved built-in. MEASURED.
+   * 366 -> 367 (#3462): the Xero operations panel's per-row Mark failed on a
+   * stale running operation. MEASURED.
    *
    * 367 -> 368 (#3407): the lodge setup wizard's new Capacity step adds its
    * Save and continue. Back and Skip are plain Buttons. MEASURED.
-    */
-   callSites: 368,
+   *
+   * 368 -> 370 (#3416): the School Teacher Hut-Leader Assignments card adds
+   * Edit and Save. Cancel remains a plain Button because it only discards the
+   * staged choice. MEASURED by re-running this census.
+   */
+  callSites: 370,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -371,8 +375,10 @@ const FIGURES = {
    *
    * 311 -> 312 (#3462): so does the Xero operations panel's Mark failed.
    * 312 -> 313 (#3407): so does the setup wizard's Capacity Save and continue.
+   * 313 -> 315 (#3416): the new school-teacher policy card heads itself under
+   * the existing section banner, so its Edit and Save opt out.
    */
-  optOuts: 313,
+  optOuts: 315,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -432,8 +438,11 @@ const FIGURES = {
    * 278 -> 279 (#3407): the setup wizard's Capacity Save and continue sits in
    * the same file as the wizard's own banner, beside its sibling steps' static
    * opt-outs.
+   *
+   * 279 -> 281 (#3416): the school-teacher card's Edit and Save sit in the
+   * same file as its section banner.
    */
-  staticOptOuts: 279,
+  staticOptOuts: 281,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
