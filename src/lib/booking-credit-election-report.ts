@@ -84,6 +84,7 @@ export async function reportUnappliedCreditElection({
   source,
   reference,
   extraDetails = {},
+  creditReturnedCents = 0,
   format,
 }: {
   bookingId: string;
@@ -125,6 +126,12 @@ export async function reportUnappliedCreditElection({
   reference: string;
   /** Source-specific identifiers to carry into the audit row. */
   extraDetails?: Record<string, string | number | null>;
+  /**
+   * #3864: of `electionCents`, credit that HAD been spent on the booking and
+   * was returned because the card paid it all — so the copy says "returned",
+   * not "never debited".
+   */
+  creditReturnedCents?: number;
   /** The club's format (#3565), resolved before any transaction by the caller. */
   format: ClubFormat;
 }): Promise<void> {
@@ -170,6 +177,7 @@ export async function reportUnappliedCreditElection({
     // has to treat the elected figure as if it were still available.
     availableCreditCents,
     refundableCents,
+    ...(creditReturnedCents > 0 ? { creditReturnedCents } : {}),
     ...extraDetails,
   };
 
@@ -202,7 +210,7 @@ export async function reportUnappliedCreditElection({
     // election — an operator reading "Amount: $450" against a $50 balance would
     // be reading an instruction to overpay.
     amountCents: refundableCents ?? electionCents,
-    errorMessage: `This member had asked to put ${formatCents(electionCents, format)} of account credit towards this booking, but it was settled for ${formatCents(paidAmountCents, format)} before the credit could be applied, so the saved choice has been cleared. Their account credit balance was never debited and the booking is fully settled — no money is missing and nothing was charged twice. ${operatorAvailabilitySentence(
+    errorMessage: `This member had asked to put ${formatCents(electionCents, format)} of account credit towards this booking, but it was settled for ${formatCents(paidAmountCents, format)} before the credit could be applied, so ${creditReturnedCents > 0 ? `the ${formatCents(creditReturnedCents, format)} of credit spent on it has been returned to their balance` : "the saved choice has been cleared. Their account credit balance was never debited"} and the booking is fully settled — no money is missing and nothing was charged twice. ${operatorAvailabilitySentence(
       electionCents,
       availableCreditCents,
       refundableCents,

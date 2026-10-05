@@ -22,6 +22,7 @@ import {
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { buildLodgeCustodianNightCounter } from "@/lib/custodian-occupancy";
 import { buildLodgePolicyExceptionReservationCounter } from "@/lib/booking-exception-reservations";
+import { buildLodgePendingAdultReservationCounter } from "@/lib/booking-request-pending-adult-reservations";
 
 import { acquireLodgeCapacityLock as acquireLodgeCapacityLockKey } from "@/lib/lodge-capacity-lock";
 
@@ -632,6 +633,15 @@ export async function computeNightOccupancy(input: {
     nights: input.nights,
     db,
   });
+  // Term 5: unnamed adults retained as capacity-only school-request rows (#3413).
+  const pendingAdultCount = await buildLodgePendingAdultReservationCounter({
+    lodgeId: input.lodgeId,
+    from: input.from,
+    toExclusive: input.toExclusive,
+    nights: input.nights,
+    excludeBookingId: input.excludeBookingId,
+    db,
+  });
 
   return (night, partyMemberIds) => {
     // Term 1.
@@ -643,7 +653,11 @@ export async function computeNightOccupancy(input: {
     // Term 2, after the one-person-one-space rule (#3817).
     const custodianBeds = custodianCount(night, guestMemberIds);
     return {
-      occupiedBeds: guests.length + custodianBeds + reservationCount(night),
+      occupiedBeds:
+        guests.length +
+        custodianBeds +
+        reservationCount(night) +
+        pendingAdultCount(night),
       wholeLodgeHeld: isNightWholeLodgeHeld(night, holdIndex),
       // Term 2 again, reported on its own so term 4's pin can subtract it
       // (INV-CAP-038, #2698). Same counter, same holds — never a second read.

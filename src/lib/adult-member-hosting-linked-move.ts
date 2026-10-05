@@ -395,6 +395,8 @@ export interface LinkedMoveSettledBooking {
   additionalAmountCents: number;
   refundAmountCents: number;
   accountCreditAmountCents: number;
+  /** #3809: applied credit the reduction gave back - money coming back as well. */
+  appliedCreditGivenBackCents: number;
   /** The WRITE's own answer, never inferred from the amounts — see `combineLinkedMoveQuote`. */
   requiresSettlementMethod: boolean;
   /** What the cancellation policy KEPT of this booking's reduction, in cents. */
@@ -599,9 +601,9 @@ export function combineLinkedMoveQuote(input: {
     // member chose once for both. Summing the two is right rather than
     // double-counting: exactly one of them is non-zero per booking, because
     // `calculateModificationSettlementOptions` routes a given reduction down one
-    // path or the other, never both.
+    // path or the other, never both; credit given back (#3809) adds to either.
     combinedRefundCents: sum(
-      (r) => r.refundAmountCents + r.accountCreditAmountCents,
+      (r) => r.refundAmountCents + r.accountCreditAmountCents + r.appliedCreditGivenBackCents,
     ),
     combinedPolicyRetainedCents: sum((r) => r.policyRetainedAmountCents),
     // THE WRITE'S OWN TEST, never a reading of the resolved amounts. The refusal is

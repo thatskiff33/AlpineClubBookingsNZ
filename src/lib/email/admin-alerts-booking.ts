@@ -4,6 +4,7 @@ import {
   adminBookingRequestHoldCancelledTemplate,
   adminBookingRequestHoldExpiredTemplate,
   adminBookingRequestPendingTemplate,
+  adminBookingRequestQuoteAcceptedTemplate,
   adminCapacityWarningTemplate,
   adminMinorsReviewRequiredTemplate,
   adminNewBookingTemplate,
@@ -342,6 +343,23 @@ export async function sendAdminBookingRequestPendingEmail(data: {
       guestCount: data.guestCount,
       reviewUrl,
     },
+    preferenceKey: "adminBookingRequest",
+  });
+}
+
+export async function sendAdminBookingRequestQuoteAcceptedEmail(data: {
+  requesterName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}${buildBookingRequestsHref("public", { filter: "ACCEPTED" })}`;
+  await sendToAdmins({
+    subject: `Quote accepted, ready for approval: ${data.requesterName}`,
+    html: await renderEmailHtml(() => adminBookingRequestQuoteAcceptedTemplate({ ...data, reviewUrl })),
+    templateName: "admin-booking-request-quote-accepted",
+    templateData: { ...data, checkIn: emailCalendarDay(data.checkIn), checkOut: emailCalendarDay(data.checkOut), reviewUrl },
     preferenceKey: "adminBookingRequest",
   });
 }

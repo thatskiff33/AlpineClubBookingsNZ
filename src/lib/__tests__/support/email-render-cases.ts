@@ -65,6 +65,7 @@ import {
   adminBookingRequestHoldCancelledTemplate,
   adminBookingRequestHoldExpiredTemplate,
   adminBookingRequestPendingTemplate,
+  adminBookingRequestQuoteAcceptedTemplate,
   adminCapacityWarningTemplate,
   adminMinorsReviewRequiredTemplate,
   adminNewBookingTemplate,
@@ -159,6 +160,7 @@ import {
   bookingRequestDeclinedTemplate,
   bookingRequestPaymentExpiredTemplate,
   bookingRequestQuoteTemplate,
+  bookingRequestQuoteAcceptedTemplate,
   bookingRequestVerificationTemplate,
   schoolAttendeeConfirmationTemplate,
   splitGuestPaymentLinkTemplate,
@@ -762,9 +764,9 @@ const GENERATED_CASES: EmailRenderCase[] = [
   { id: "bookingModificationTypeLabel:minimal", fn: "bookingModificationTypeLabel", render: () =>
     bookingModificationTypeLabel("modificationType-1") },
   { id: "bookingModifiedTemplate:minimal", fn: "bookingModifiedTemplate", render: () =>
-    bookingModifiedTemplate({ firstName: "firstName-1", modificationType: "modificationType-2", oldCheckIn: new Date("2026-03-04T00:00:00.000Z"), oldCheckOut: new Date("2026-03-05T00:00:00.000Z"), newCheckIn: new Date("2026-03-06T00:00:00.000Z"), newCheckOut: new Date("2026-03-07T00:00:00.000Z"), oldGuestCount: 107, newGuestCount: 108, oldFinalPriceCents: 109, newFinalPriceCents: 110, changeFeeCents: 111, refundAmountCents: 112, additionalAmountCents: 113, financialReviewPending: false }, CLUB_FORMAT_TEST) },
+    bookingModifiedTemplate({ firstName: "firstName-1", modificationType: "modificationType-2", oldCheckIn: new Date("2026-03-04T00:00:00.000Z"), oldCheckOut: new Date("2026-03-05T00:00:00.000Z"), newCheckIn: new Date("2026-03-06T00:00:00.000Z"), newCheckOut: new Date("2026-03-07T00:00:00.000Z"), oldGuestCount: 107, newGuestCount: 108, oldFinalPriceCents: 109, newFinalPriceCents: 110, changeFeeCents: 111, refundAmountCents: 112, additionalAmountCents: 113, appliedCreditGivenBackCents: 0, financialReviewPending: false }, CLUB_FORMAT_TEST) },
   { id: "bookingModifiedTemplate:full", fn: "bookingModifiedTemplate", render: () =>
-    bookingModifiedTemplate({ firstName: "firstName-1", modificationType: "modificationType-2", oldCheckIn: new Date("2026-03-04T00:00:00.000Z"), oldCheckOut: new Date("2026-03-05T00:00:00.000Z"), newCheckIn: new Date("2026-03-06T00:00:00.000Z"), newCheckOut: new Date("2026-03-07T00:00:00.000Z"), oldGuestCount: 107, newGuestCount: 108, oldFinalPriceCents: 109, newFinalPriceCents: 110, changeFeeCents: 111, refundAmountCents: 112, accountCreditAmountCents: 113, additionalAmountCents: 114, additionalPaymentMethod: "INTERNET_BANKING", paymentReference: "paymentReference-15", xeroInvoiceNumber: "xeroInvoiceNumber-16", promoCoverageNote: "promoCoverageNote-17", financialReviewPending: false }, CLUB_FORMAT_TEST) },
+    bookingModifiedTemplate({ firstName: "firstName-1", modificationType: "modificationType-2", oldCheckIn: new Date("2026-03-04T00:00:00.000Z"), oldCheckOut: new Date("2026-03-05T00:00:00.000Z"), newCheckIn: new Date("2026-03-06T00:00:00.000Z"), newCheckOut: new Date("2026-03-07T00:00:00.000Z"), oldGuestCount: 107, newGuestCount: 108, oldFinalPriceCents: 109, newFinalPriceCents: 110, changeFeeCents: 111, refundAmountCents: 112, accountCreditAmountCents: 113, additionalAmountCents: 114, additionalPaymentMethod: "INTERNET_BANKING", paymentReference: "paymentReference-15", xeroInvoiceNumber: "xeroInvoiceNumber-16", promoCoverageNote: "promoCoverageNote-17", appliedCreditGivenBackCents: 0, financialReviewPending: false }, CLUB_FORMAT_TEST) },
   /*
     #3032: the review note is a rendered shape of its own, so it gets its own
     pin rather than riding on `:full`. Deliberately COMPOSED - review pending
@@ -774,7 +776,7 @@ const GENERATED_CASES: EmailRenderCase[] = [
     and `:full` keep `false`, so their pins are byte-identical to before.
   */
   { id: "bookingModifiedTemplate:financialReviewPendingWithPayment", fn: "bookingModifiedTemplate", render: () =>
-    bookingModifiedTemplate({ firstName: "firstName-1", modificationType: "modificationType-2", oldCheckIn: new Date("2026-03-04T00:00:00.000Z"), oldCheckOut: new Date("2026-03-05T00:00:00.000Z"), newCheckIn: new Date("2026-03-06T00:00:00.000Z"), newCheckOut: new Date("2026-03-07T00:00:00.000Z"), oldGuestCount: 107, newGuestCount: 108, oldFinalPriceCents: 109, newFinalPriceCents: 110, changeFeeCents: 111, refundAmountCents: 0, accountCreditAmountCents: 0, additionalAmountCents: 114, additionalPaymentMethod: "INTERNET_BANKING", paymentReference: "paymentReference-15", xeroInvoiceNumber: "xeroInvoiceNumber-16", promoCoverageNote: "promoCoverageNote-17", financialReviewPending: true }, CLUB_FORMAT_TEST) },
+    bookingModifiedTemplate({ firstName: "firstName-1", modificationType: "modificationType-2", oldCheckIn: new Date("2026-03-04T00:00:00.000Z"), oldCheckOut: new Date("2026-03-05T00:00:00.000Z"), newCheckIn: new Date("2026-03-06T00:00:00.000Z"), newCheckOut: new Date("2026-03-07T00:00:00.000Z"), oldGuestCount: 107, newGuestCount: 108, oldFinalPriceCents: 109, newFinalPriceCents: 110, changeFeeCents: 111, refundAmountCents: 0, accountCreditAmountCents: 0, additionalAmountCents: 114, additionalPaymentMethod: "INTERNET_BANKING", paymentReference: "paymentReference-15", xeroInvoiceNumber: "xeroInvoiceNumber-16", promoCoverageNote: "promoCoverageNote-17", appliedCreditGivenBackCents: 0, financialReviewPending: true }, CLUB_FORMAT_TEST) },
   { id: "accountDeletionApprovedTemplate:minimal", fn: "accountDeletionApprovedTemplate", render: () =>
     accountDeletionApprovedTemplate("firstName-1") },
   { id: "familyGroupInvitationTemplate:minimal", fn: "familyGroupInvitationTemplate", render: () =>
@@ -935,6 +937,8 @@ const GENERATED_CASES: EmailRenderCase[] = [
     bookingRequestQuoteTemplate({ firstName: "firstName-1", respondUrl: "respondUrl-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z"), guestCount: 105, options: [{ label: "label-6", totalCents: 107 }], expiresAt: new Date("2026-03-09T00:00:00.000Z") }, CLUB_FORMAT_TEST) },
   { id: "bookingRequestQuoteTemplate:full", fn: "bookingRequestQuoteTemplate", render: () =>
     bookingRequestQuoteTemplate({ firstName: "firstName-1", respondUrl: "respondUrl-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z"), guestCount: 105, options: [{ label: "label-6", totalCents: 107 }], message: "message-8", expiresAt: new Date("2026-03-10T00:00:00.000Z"), schoolName: "schoolName-10", isReminder: true }, CLUB_FORMAT_TEST) },
+  { id: "bookingRequestQuoteAcceptedTemplate:minimal", fn: "bookingRequestQuoteAcceptedTemplate", render: () =>
+    bookingRequestQuoteAcceptedTemplate({ firstName: "firstName-1", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z"), guestCount: 105, priceCents: 106 }, CLUB_FORMAT_TEST) },
   { id: "bookingRequestDeclinedTemplate:minimal", fn: "bookingRequestDeclinedTemplate", render: () =>
     bookingRequestDeclinedTemplate({ firstName: "firstName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z") }) },
   { id: "bookingRequestDeclinedTemplate:full", fn: "bookingRequestDeclinedTemplate", render: () =>
@@ -943,6 +947,8 @@ const GENERATED_CASES: EmailRenderCase[] = [
     bookingRequestPaymentExpiredTemplate({ firstName: "firstName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z") }) },
   { id: "adminBookingRequestPendingTemplate:minimal", fn: "adminBookingRequestPendingTemplate", render: () =>
     adminBookingRequestPendingTemplate({ requesterName: "requesterName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, reviewUrl: "reviewUrl-5" }) },
+  { id: "adminBookingRequestQuoteAcceptedTemplate:minimal", fn: "adminBookingRequestQuoteAcceptedTemplate", render: () =>
+    adminBookingRequestQuoteAcceptedTemplate({ requesterName: "requesterName-1", checkIn: new Date("2026-03-03T00:00:00.000Z"), checkOut: new Date("2026-03-04T00:00:00.000Z"), guestCount: 104, reviewUrl: "reviewUrl-5" }) },
   { id: "adminSchoolManualInvoiceTemplate:minimal", fn: "adminSchoolManualInvoiceTemplate", render: () =>
     adminSchoolManualInvoiceTemplate({ schoolName: "schoolName-1", contactEmail: "contactEmail-2", checkIn: new Date("2026-03-04T00:00:00.000Z"), checkOut: new Date("2026-03-05T00:00:00.000Z"), guestCount: 105, totalCents: 106, reviewUrl: "reviewUrl-7" }, CLUB_FORMAT_TEST) },
   { id: "adminWholeLodgeManualInvoiceTemplate:minimal", fn: "adminWholeLodgeManualInvoiceTemplate", render: () =>

@@ -9,6 +9,7 @@ import SetupForm from "./SetupForm";
 import { FocusedActionError } from "@/components/focused-action-error";
 import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
+  isCreditElectionNotApplied,
   isExistingCardTransactionStatusUnconfirmed,
   isPaymentReceivedFinalisationPending,
   isPaymentProcessing,
@@ -191,6 +192,13 @@ export default function BookingPaymentWrapper({
           // not a provider detail, and not an error worth reporting.
           if (response.status === 409 && isPaymentProcessing(data)) {
             setRecoveryHeading("Payment being processed");
+            setInitRecoveryError(data.error);
+            return;
+          }
+          // #3864: the member's credit was not spent and the booking is still
+          // payable; they retry. The server's own copy, not a fault to report.
+          if (response.status === 409 && isCreditElectionNotApplied(data)) {
+            setRecoveryHeading("Account credit not applied yet");
             setInitRecoveryError(data.error);
             return;
           }

@@ -1,0 +1,10 @@
+# Project Codex settings for AlpineClubBookingsNZ. Loaded only when the project
+# is trusted. Model policy: AGENTS.md -> "Model selection" and
+# docs/agents/MODELS.md. Never set an effort above xhigh.
+
+# AGENTS.md is kept at or under 32 KiB (the default limit); this is headroom.
+project_doc_max_bytes = 65536
+
+[agents]
+default_subagent_model = "gpt-6.1-sol"
+default_subagent_reasoning_effort = "medium"

@@ -32,7 +32,7 @@ import {
 } from "./xero-hardening-shared";
 import {
   findStripeSourcePaymentIds,
-  isStripePerDeltaRefundCreditNoteLink,
+  isPerRefundCreditNoteLink,
 } from "./xero-hardening-canonical-links";
 import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
 import { buildUnsettledRefundNoteSection } from "@/lib/xero-refund-note-unsettled";
@@ -596,7 +596,7 @@ export async function buildXeroReconciliationReport(
       expectation,
     ])
   );
-  const activeLinksByScope = new Map<string, CanonicalLinkRecord[]>();
+  const activeLinksByScope = new Map<string, (typeof links)[number][]>();
 
   for (const link of links) {
     const scopeKey = buildCanonicalScopeKey(link);
@@ -637,7 +637,8 @@ export async function buildXeroReconciliationReport(
   // report every legitimate per-delta sibling as drift, so they are made
   // source-aware exactly like `cleanupStaleCanonicalXeroObjectLinks`. The
   // "missing" classification is deliberately kept: the scalar-pointed note
-  // should always carry an active link, whatever the source.
+  // should always carry an active link, whatever the source. A per-refund-
+  // stamped note on any source (#3880) is exempt by the same predicate.
   const stripePaymentIds = await findStripeSourcePaymentIds(
     Array.from(
       new Set(
@@ -653,7 +654,7 @@ export async function buildXeroReconciliationReport(
 
   const mismatchedCanonicalExpectations = canonicalExpectations.filter((expectation) => {
     if (
-      isStripePerDeltaRefundCreditNoteLink(expectation, stripePaymentIds)
+      isPerRefundCreditNoteLink({ ...expectation, metadata: null }, stripePaymentIds)
     ) {
       // Active sibling notes beside the scalar-pointed one are the multi-delta
       // contract, not a mismatch; an absent scalar link is already counted as
@@ -661,7 +662,11 @@ export async function buildXeroReconciliationReport(
       return false;
     }
     const scopeKey = buildCanonicalScopeKey(expectation);
-    const scopedLinks = activeLinksByScope.get(scopeKey) ?? [];
+    // #3880: a per-refund sibling is not "the active link" the field disagrees
+    // with; without the field's own link it is missing, counted above.
+    const scopedLinks = (activeLinksByScope.get(scopeKey) ?? []).filter(
+      (link) => !isPerRefundCreditNoteLink(link, stripePaymentIds)
+    );
     return (
       scopedLinks.length > 0 &&
       !exactCanonicalLinkKeys.has(buildCanonicalMatchKey(expectation))
@@ -670,7 +675,7 @@ export async function buildXeroReconciliationReport(
   const mismatchedCanonicalLinks = mismatchedCanonicalExpectations.length;
 
   const staleCanonicalLinkRecords = links.filter((link) => {
-    if (isStripePerDeltaRefundCreditNoteLink(link, stripePaymentIds)) {
+    if (isPerRefundCreditNoteLink(link, stripePaymentIds)) {
       // Exempt only LIVE per-delta coverage: the still-active mirror of a
       // note VOIDED/DELETED in Xero is exactly the drift the nightly cleanup
       // deactivates (#2901 fix round), so the digest must show it too.
@@ -700,7 +705,7 @@ export async function buildXeroReconciliationReport(
   const duplicateCanonicalLinkGroups = Array.from(activeLinksByScope.values())
     .map((scopedLinks) =>
       scopedLinks.filter(
-        (link) => !isStripePerDeltaRefundCreditNoteLink(link, stripePaymentIds)
+        (link) => !isPerRefundCreditNoteLink(link, stripePaymentIds)
       )
     )
     .flatMap((nonExemptLinks) => {
@@ -871,7 +876,9 @@ export async function buildXeroReconciliationReport(
     )
   );
   const mismatchedCanonicalItems = mismatchedCanonicalExpectations.map((expectation) => {
-    const scopedLinks = activeLinksByScope.get(buildCanonicalScopeKey(expectation)) ?? [];
+    const scopedLinks = (activeLinksByScope.get(buildCanonicalScopeKey(expectation)) ?? []).filter(
+      (link) => !isPerRefundCreditNoteLink(link, stripePaymentIds)
+    );
     const activeTargets = scopedLinks
       .map((link) => `${link.xeroObjectType} ${link.xeroObjectId}`)
       .join(", ");
@@ -883,7 +890,7 @@ export async function buildXeroReconciliationReport(
   });
   const staleCanonicalItems = staleCanonicalLinkRecords.map((link) => {
     if (
-      isStripePerDeltaRefundCreditNoteLink(link, stripePaymentIds) &&
+      isPerRefundCreditNoteLink(link, stripePaymentIds) &&
       isRefundCreditNoteLinkCancelledInXero(link.metadata)
     ) {
       return buildCanonicalLinkIssueItem(

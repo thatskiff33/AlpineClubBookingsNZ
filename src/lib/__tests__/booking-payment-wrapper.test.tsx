@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as Sentry from "@sentry/nextjs";
 import BookingPaymentWrapper from "@/components/stripe/BookingPaymentWrapper";
 import {
+  CREDIT_ELECTION_NOT_APPLIED_BODIES,
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
   PAYMENT_PROCESSING_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
@@ -190,6 +191,32 @@ describe("BookingPaymentWrapper", () => {
       "Payment received - check booking status",
     );
     consoleErrorSpy.mockRestore();
+  });
+
+  it("says the account credit was not applied yet, in the server's words, without reporting a payment-start failure (#3864)", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => CREDIT_ELECTION_NOT_APPLIED_BODIES.cancelUnconfirmed,
+    });
+
+    render(
+      <BookingPaymentWrapper
+        bookingId="booking-1"
+        amountCents={12500}
+        paymentMode="payment"
+        returnUrl="http://localhost/bookings/booking-1"
+        onPaymentComplete={vi.fn()}
+      />,
+    );
+
+    const alert = await screen.findByRole("alert");
+    await waitFor(() => expect(alert).toHaveTextContent("Account credit not applied yet"));
+    expect(alert).toHaveTextContent(CREDIT_ELECTION_NOT_APPLIED_BODIES.cancelUnconfirmed.error);
+    expect(screen.queryByText("Payment Error")).toBeNull();
+    expect(document.body.textContent).not.toContain("We couldn't start the card payment");
+    expect(screen.queryByText("payment-form")).toBeNull();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 
   it("says an earlier payment is still processing, without reporting a payment-start failure (#3567)", async () => {
