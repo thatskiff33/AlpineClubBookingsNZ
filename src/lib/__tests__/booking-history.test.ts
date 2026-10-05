@@ -565,6 +565,23 @@ describe("buildBookingHistoryItems — unapplied credit election (#2265)", () =>
     expect(item?.detail).toContain("balance was not reduced");
   });
 
+  it("says credit spent and then returned was RETURNED, not 'not reduced' (#3864)", () => {
+    const item = build(
+      JSON.stringify({
+        source: "payment-reconciliation",
+        creditElectionCents: 5000,
+        paidAmountCents: 20000,
+        availableCreditCents: 5000,
+        refundableCents: 5000,
+        creditReturnedCents: 5000,
+      })
+    ).find((entry) => entry.id === "audit-audit-election");
+
+    expect(item?.detail).toContain("The credit applied to this booking was returned to your balance");
+    expect(item?.detail).toContain("$50.00 of account credit available");
+    expect(item?.detail).not.toContain("balance was not reduced");
+  });
+
   it("omits the availability figure entirely on a legacy row that carries no balance", () => {
     // Rows written before the balance was recorded must not fall back to the
     // elected figure — they say only what is certainly true.

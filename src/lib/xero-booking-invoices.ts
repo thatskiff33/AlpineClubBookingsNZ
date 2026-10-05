@@ -265,11 +265,11 @@ export function buildInvoiceLineItems(
  *
  * Card-gated for three reasons: (1) Internet-Banking invoices allocate via their own
  * fire-after outbox op (#1620) — running it here would double-drive them; (2) a card
- * invoice follows capture, or a $0 credit-only settle (#3836); (3) a legacy full-price
- * capture carries `creditAppliedCents = 0` (its mirror was never credit-reduced) and
- * must NOT allocate — its invoice is settled in full by real cash and its historical
- * double-pay is repaired by a LOCAL credit restore, not a Xero note (which cannot
- * refund cash already sent). Dynamic import avoids a load-order cycle (mirrors
+ * invoice follows capture, or a $0 credit-only settle (#3836); (3) a full-price capture
+ * carries `creditAppliedCents = 0` and must NOT allocate — its invoice is settled in
+ * full by real cash, and the settle gave its applied credit back locally (#3864; a
+ * pre-#3864 double-pay by an operator's LOCAL restore), not by a Xero note (which
+ * cannot refund cash already sent). Dynamic import avoids a load-order cycle (mirrors
  * xero-operation-retry's engine import).
  *
  * THROWS on allocation failure so the caller fails the invoice sync op and the retry

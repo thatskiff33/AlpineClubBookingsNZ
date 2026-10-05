@@ -34,8 +34,7 @@ import {
   loadInternetBankingPaymentSettings,
 } from "@/lib/internet-banking-settings";
 import { recordInternetBankingPaymentTransaction } from "@/lib/payment-transactions";
-import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
-import { isCardIntentRetired } from "@/lib/card-intent-retirement";
+import { retireCardIntentBeforeElection } from "@/lib/card-intent-retirement";
 import {
   enqueueXeroAppliedCreditAllocationOperation,
   enqueueXeroBookingInvoiceOperation,
@@ -199,11 +198,12 @@ export async function POST(request: NextRequest) {
   // as a cancelled one. The rule: `INV-PAY-102`.
   const cancelledCardIntentId = booking.payment?.stripePaymentIntentId ?? null;
   if (cancelledCardIntentId && booking.payment) {
-    const retired = await retireCardIntentBeforeSwitch(
-      cancelledCardIntentId,
-      booking.payment.status,
+    const retired = await retireCardIntentBeforeElection({
+      paymentIntentId: cancelledCardIntentId,
+      paymentStatus: booking.payment.status,
       bookingId,
-    );
+      door: "internet-banking-switch",
+    });
     if (retired !== "retired") {
       return NextResponse.json(
         retired === "notCancellable"
@@ -513,38 +513,4 @@ export async function POST(request: NextRequest) {
     // booking carried no outstanding election.
     creditElection: paymentResult.creditElection,
   });
-}
-
-/**
- * #3638 — cancel the booking's card intent and report whether it can still
- * take money. `retired` when `isCardIntentRetired` says so (Stripe confirmed
- * the cancel, the intent was already cancelled, or it succeeded and the local
- * ledger shows it refunded); `notCancellable` for a succeeded intent with no
- * refund history — a live capture, typically with the local record lagging;
- * `unconfirmed` when a call throws, because a failed cancel proves nothing
- * about whether the card can still be charged.
- */
-async function retireCardIntentBeforeSwitch(
-  paymentIntentId: string,
-  paymentStatus: PaymentStatus,
-  bookingId: string,
-): Promise<"retired" | "notCancellable" | "unconfirmed"> {
-  try {
-    const result =
-      await cancelPaymentIntentIfCancellableWithResult(paymentIntentId);
-    if (await isCardIntentRetired({ result, paymentStatus })) {
-      return "retired";
-    }
-    logger.warn(
-      { bookingId, paymentIntentId, status: result.paymentIntent.status },
-      "Refused an Internet Banking switch: the card payment could not be cancelled (#3638)"
-    );
-    return "notCancellable";
-  } catch (err) {
-    logger.error(
-      { err, bookingId, paymentIntentId },
-      "Refused an Internet Banking switch: cancelling the card payment failed (#3638)"
-    );
-    return "unconfirmed";
-  }
 }

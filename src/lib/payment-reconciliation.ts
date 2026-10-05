@@ -36,8 +36,10 @@ import {
   buildDuplicateCaptureRefundStripeKeyPrefix,
 } from "@/lib/payment-recovery-keys";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
+import { findAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import {
   deriveBookingAppliedCreditCents,
+  giveBackAppliedCredit,
   lockMemberCreditLedger,
   restoreCreditFromBooking,
 } from "@/lib/member-credit";
@@ -57,6 +59,7 @@ import {
   sendAdminPaymentFailureAlert,
 } from "@/lib/email";
 import logger from "@/lib/logger";
+import { formatCents } from "@/lib/utils";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { reportUnappliedCreditElection } from "@/lib/booking-credit-election-report";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
@@ -239,6 +242,8 @@ type StripeSettlementSource = {
   paymentIntentId: string;
   amountCents: number;
   paymentMethodId: string | null;
+  /** #3864: for the applied-credit give-back, resolved before the transaction. */
+  format: ClubFormat;
 };
 
 /**
@@ -898,8 +903,8 @@ async function settleBookingPaymentInTransaction(
 
     // #1641 — split the captured amount into cash + credit so the mirror invariant
     // `amountCents + creditAppliedCents = finalPriceCents` holds for BOTH a new
-    // effective capture (credit = applied) and a legacy full-price capture
-    // (credit = 0, repaired locally by the audit — never a Xero over-allocation).
+    // effective capture (credit = applied) and a full-price capture (credit = 0,
+    // its applied credit given back below, #3864 — never a Xero over-allocation).
     // This is derived from the captured amount alone; the ledger is only read below
     // when the amount is NOT the full price (to admit the effective capture).
     // The manual path already derived both halves under the MEMBER-CREDIT lock.
@@ -1276,9 +1281,9 @@ async function settleBookingPaymentInTransaction(
     // A wrong-amount capture (e.g. a stale intent from a since-changed price, #1161)
     // equals neither and is still rejected. Full price is always a legitimate
     // settlement of a full-price booking's invoice, so admitting it can never
-    // under-charge the member; new bookings never mint a full-price intent, so the
-    // leniency does not re-open the double-charge. The ledger read is skipped
-    // entirely for a full-price capture.
+    // under-charge the member. It does not re-open the double-charge only because
+    // the #3864 give-back below returns any credit such a capture leaves spent (an
+    // intent minted before an election was spent can still capture at full price).
     //
     // The manual path has no arriving amount to validate: it DERIVED the
     // effective price under the MEMBER-CREDIT lock in prepareManualSettlement,
@@ -1691,6 +1696,39 @@ async function settleBookingPaymentInTransaction(
     // writer is never clobbered; see clearStaleCreditElection.
     const staleCreditElectionCents = await clearStaleCreditElection(tx, booking);
 
+    // #3864 (`INV-PAY-024`), the same rule for credit already SPENT: it stays
+    // spent only for what the capture did not cover (the mirror's figure); the
+    // rest goes back through the one give-back, under the member key taken above
+    // (INV-LOCK-002), so a member never pays by card AND by credit (#1641).
+    // Asked only when there IS excess; a Xero deallocation in flight holds it
+    // for an operator rather than failing a captured payment.
+    let givenBackCreditCents = 0;
+    let heldCreditCents = 0;
+    if (settlement.kind === "stripe") {
+      const excessCreditCents = settleCreditLedgerMemberId
+        ? (await deriveBookingAppliedCreditCents(booking.id, tx)) - mirrorCreditAppliedCents
+        : 0;
+      if (excessCreditCents > 0 && (await findAppliedCreditDeallocationFence(payment.id, tx))) {
+        heldCreditCents = excessCreditCents;
+      } else if (settleCreditLedgerMemberId && excessCreditCents > 0) {
+        ({ givenBackCents: givenBackCreditCents } = await giveBackAppliedCredit(
+          {
+            memberId: settleCreditLedgerMemberId,
+            bookingId: booking.id,
+            giveBackCentsOf: (appliedCreditCents) =>
+              appliedCreditCents - mirrorCreditAppliedCents,
+            description: `Applied credit returned: booking ${booking.id.slice(0, 8)} was paid in full by card`,
+            format: settlement.format,
+          },
+          tx
+        ));
+      }
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: { creditAppliedCents: mirrorCreditAppliedCents },
+      });
+    }
+
     await reconcileBedAllocationsForBookingWithLodgeLockHeld({
       bookingId: booking.id,
       db: tx,
@@ -1861,6 +1899,8 @@ async function settleBookingPaymentInTransaction(
       paymentId: payment.id,
       bumpedBookingIds: [] as string[],
       staleCreditElectionCents,
+      givenBackCreditCents,
+      heldCreditCents,
     };
 }
 
@@ -1884,6 +1924,7 @@ export async function markBookingPaymentSucceeded({
       paymentIntentId,
       amountCents,
       paymentMethodId,
+      format,
     })
   );
 
@@ -1900,14 +1941,18 @@ export async function markBookingPaymentSucceeded({
     throw new Error("Unexpected manual settlement outcome on the Stripe path");
   }
 
-  if (
-    reconciliation.outcome === "paid" &&
-    reconciliation.staleCreditElectionCents != null
-  ) {
+  // #3864: credit given back is reported like an election cleared.
+  const unspentCreditCents =
+    reconciliation.outcome === "paid"
+      ? (reconciliation.staleCreditElectionCents ?? 0) +
+        reconciliation.givenBackCreditCents
+      : 0;
+  if (reconciliation.outcome === "paid" && unspentCreditCents > 0) {
     // #2265 (#2319). Post-commit, outside the transaction: the member paid the
     // full price while holding credit they had asked to spend, so say so on
     // their booking history and put it in front of an operator who can decide
-    // whether to refund the difference. Their balance is untouched either way.
+    // whether to refund the difference. Their balance is whole either way: never
+    // debited, or (#3864) the credit spent on it returned.
     await reportUnappliedCreditElection({
       format,
       bookingId,
@@ -1916,12 +1961,26 @@ export async function markBookingPaymentSucceeded({
       memberLastName: bookingOwner(reconciliation.booking).member.lastName,
       checkIn: reconciliation.booking.checkIn,
       checkOut: reconciliation.booking.checkOut,
-      electionCents: reconciliation.staleCreditElectionCents,
+      electionCents: unspentCreditCents,
       paidAmountCents: amountCents,
       source: "payment-reconciliation",
       reference: paymentIntentId,
       extraDetails: { paymentIntentId },
+      creditReturnedCents: reconciliation.givenBackCreditCents,
     });
+  }
+  if (reconciliation.outcome === "paid" && reconciliation.heldCreditCents > 0) {
+    // #3864: the give-back waited on a Xero deallocation; an operator returns it.
+    await sendAdminPaymentFailureAlert({
+      memberName: `${bookingOwner(reconciliation.booking).member.firstName} ${bookingOwner(reconciliation.booking).member.lastName}`,
+      checkIn: reconciliation.booking.checkIn,
+      checkOut: reconciliation.booking.checkOut,
+      amountCents: reconciliation.heldCreditCents,
+      errorMessage: `This booking was paid in full by card, but ${formatCents(reconciliation.heldCreditCents, format)} of account credit spent on it could not be returned automatically because a Xero credit update for its payment is still in progress. Return that credit to the member by hand once the update completes.`,
+      paymentIntentId,
+    }, format).catch((err) =>
+      logger.error({ err, bookingId }, "Failed to alert admins about applied credit held on a full-price capture (#3864)")
+    );
   }
 
   if (reconciliation.outcome === "paid") {
