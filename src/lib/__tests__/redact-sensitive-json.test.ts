@@ -769,7 +769,7 @@ describe("redact-sensitive-json", () => {
   });
 
   // #2683 review finding 6. These were DOCUMENTED as a known gap. A gap in a
-  // redactor is work, not a note (AGENTS.md §6). `memberName` in particular is
+  // redactor is work, not a note (AGENTS.md "Residual risks are resolved in the PR"). `memberName` in particular is
   // first-party — composed in at least six server routes — and had been filed
   // as "Xero's own"; `City` is a CSV export header.
   describe("composed person names and bare address keys", () => {
