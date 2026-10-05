@@ -296,3 +296,51 @@ describe("uploadOtherLodges — payload shape (#50)", () => {
     expect(JSON.parse(init.body)).toEqual({ lodges: [item] });
   });
 });
+
+// ── Pull: the owned list (#52) ─────────────────────────────────────────────
+
+describe("pullOtherLodges — ownLodgeNames (#52)", () => {
+  it("carries the owned list the server sent", async () => {
+    respondWith({
+      lodges: [remoteRow()],
+      cursor: "c-1",
+      count: 1,
+      ownLodgeNames: ["Aorangi Ski Club", "Aorangi Ski Club (annex)"],
+    });
+
+    const result = await pullOtherLodges(null);
+
+    expect(result.ownLodgeNames).toEqual(["Aorangi Ski Club", "Aorangi Ski Club (annex)"]);
+  });
+
+  it("carries an empty list as an empty list: owning nothing is an answer", async () => {
+    respondWith({ lodges: [], cursor: "c-1", count: 0, ownLodgeNames: [] });
+
+    const result = await pullOtherLodges(null);
+
+    expect(result.ownLodgeNames).toEqual([]);
+  });
+
+  it("leaves the list `undefined` when the server does not send it, never defaulting to []", async () => {
+    // An older server. The sync must be able to tell "not sent" from "none".
+    respondWith({ lodges: [], cursor: "c-1", count: 0 });
+
+    const result = await pullOtherLodges(null);
+
+    expect(result.ownLodgeNames).toBeUndefined();
+    expect(result).toHaveProperty("ownLodgeNames");
+  });
+
+  it.each([
+    ["a name over the lodge-name bound", ["x".repeat(121)]],
+    ["a name carrying NUL", ["Aorangi\u0000Ski Club"]],
+    ["a non-string entry", [42]],
+    ["more names than the bound", Array.from({ length: 101 }, (_, i) => `Lodge ${i}`)],
+  ])("refuses an envelope whose owned list has %s", async (_label, ownLodgeNames) => {
+    // The list decides what may be edited and uploaded, so an envelope that
+    // breaks its bounds is refused whole, like an over-long cursor.
+    respondWith({ lodges: [], cursor: "c-1", count: 0, ownLodgeNames });
+
+    await expect(pullOtherLodges(null)).rejects.toThrow();
+  });
+});

@@ -33,6 +33,8 @@ describe("loadServerNzSettings", () => {
       otherLodgesLastUploadAt: null,
       otherLodgesLastDownloadAt: null,
       otherLodgesCursor: null,
+      otherLodgesOwnedNames: null,
+      otherLodgesOwnedNamesAt: null,
     });
   });
 
@@ -131,5 +133,64 @@ describe("recordOtherLodgesDownload", () => {
     await recordOtherLodgesDownload("c-900");
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.update.otherLodgesCursor).toBe("c-900");
+  });
+});
+
+describe("the owned lodge list (#52)", () => {
+  it("reads a stored list back, and its timestamp", async () => {
+    mocks.findUnique.mockResolvedValue({
+      id: SERVERNZ_SETTINGS_ID,
+      baseUrl: "https://central.test",
+      otherLodgesEnabled: true,
+      otherLodgesLastUploadAt: null,
+      otherLodgesLastDownloadAt: null,
+      otherLodgesCursor: null,
+      otherLodgesOwnedNames: ["Aorangi Ski Club"],
+      otherLodgesOwnedNamesAt: new Date("2026-06-20T10:00:00.000Z"),
+    });
+    const settings = await loadServerNzSettings();
+    expect(settings.otherLodgesOwnedNames).toEqual(["Aorangi Ski Club"]);
+    expect(settings.otherLodgesOwnedNamesAt).toBe("2026-06-20T10:00:00.000Z");
+  });
+
+  it("reads an empty stored list as empty, not as unknown", async () => {
+    mocks.findUnique.mockResolvedValue({ otherLodgesOwnedNames: [], otherLodgesEnabled: false });
+    expect((await loadServerNzSettings()).otherLodgesOwnedNames).toEqual([]);
+  });
+
+  it.each([
+    ["a string", "Aorangi Ski Club"],
+    ["an object", { name: "Aorangi Ski Club" }],
+    ["a list with a non-string", ["Aorangi Ski Club", 7]],
+    ["a list with an over-long name", ["x".repeat(121)]],
+  ])("reads a stored value that is %s as UNKNOWN, the fail-closed state", async (_label, stored) => {
+    // Junk in the column must not become a lodge name (editable, uploaded) and
+    // must not read as "owns nothing" either: both would be the column lying.
+    mocks.findUnique.mockResolvedValue({ otherLodgesOwnedNames: stored, otherLodgesEnabled: false });
+    expect((await loadServerNzSettings()).otherLodgesOwnedNames).toBeNull();
+  });
+
+  it("stores the list and its timestamp when the download carried one", async () => {
+    await recordOtherLodgesDownload("c-900", ["Aorangi Ski Club"]);
+    const [args] = mocks.upsert.mock.calls[0];
+    expect(args.update.otherLodgesOwnedNames).toEqual(["Aorangi Ski Club"]);
+    expect(args.update.otherLodgesOwnedNamesAt).toBeInstanceOf(Date);
+    expect(args.create.otherLodgesOwnedNames).toEqual(["Aorangi Ski Club"]);
+  });
+
+  it("stores an empty list, the server's answer that the club owns nothing", async () => {
+    await recordOtherLodgesDownload("c-900", []);
+    const [args] = mocks.upsert.mock.calls[0];
+    expect(args.update.otherLodgesOwnedNames).toEqual([]);
+  });
+
+  it("leaves the stored list and its timestamp untouched when the download carried none", async () => {
+    // An older server that does not send the list must not clear what a newer
+    // one recorded.
+    await recordOtherLodgesDownload("c-900");
+    const [args] = mocks.upsert.mock.calls[0];
+    expect(args.update).not.toHaveProperty("otherLodgesOwnedNames");
+    expect(args.update).not.toHaveProperty("otherLodgesOwnedNamesAt");
+    expect(args.create).not.toHaveProperty("otherLodgesOwnedNames");
   });
 });
