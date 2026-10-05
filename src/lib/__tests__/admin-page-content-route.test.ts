@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { Prisma } from "@prisma/client";
 
 vi.mock("server-only", () => ({}));
 
@@ -45,10 +46,17 @@ vi.mock("@/lib/session-guards", async () => ({
   requireActiveSessionUser: mocks.requireActiveSessionUser,
 }));
 
-vi.mock("@/lib/audit", () => ({
-  buildStructuredAuditLogCreateArgs: mocks.buildStructuredAuditLogCreateArgs,
-  getAuditRequestContext: mocks.getAuditRequestContext,
-}));
+// The REAL sanitiser: the DELETE measures what its archived snapshot will hold
+// with it, and a stub would make that measurement say whatever the stub says.
+vi.mock("@/lib/audit", async () => {
+  const actual = (await vi.importActual("@/lib/audit")) as typeof import("@/lib/audit");
+  return {
+    buildStructuredAuditLogCreateArgs: mocks.buildStructuredAuditLogCreateArgs,
+    getAuditRequestContext: mocks.getAuditRequestContext,
+    sanitizeAuditMetadata: actual.sanitizeAuditMetadata,
+    buildStoredMetadata: actual.buildStoredMetadata,
+  };
+});
 vi.mock("@/lib/public-content-revalidation", () => ({
   revalidatePublicPageContent: mocks.revalidatePublicPageContent,
 }));
@@ -540,6 +548,8 @@ describe("DELETE /api/admin/page-content", () => {
       referencedBySlugs: [],
       referencedByFooterSections: [],
       wasBookNowTarget: false,
+      bookNowPairRepaired: false,
+      snapshotComplete: true,
       publicCacheCleared: true,
     });
 
@@ -761,9 +771,10 @@ describe("DELETE /api/admin/page-content", () => {
       },
     });
     // Inside the one transaction, and before the row goes: a rolled-back delete
-    // must not leave the club's button moved.
+    // must not leave the club's button moved. The second settings statement is
+    // the post-delete repair (#3852).
     expect(mocks.transaction).toHaveBeenCalledOnce();
-    expect(order).toEqual(["settings", "delete"]);
+    expect(order).toEqual(["settings", "delete", "settings"]);
   });
 
   // The repoint is scoped rather than conditioned on an earlier read, so it is
@@ -994,5 +1005,157 @@ describe("DELETE /api/admin/page-content", () => {
     }) as { _truncated?: true; before?: unknown };
     expect(sizedOnBodyCapAlone._truncated).toBe(true);
     expect(sizedOnBodyCapAlone.before).toBeUndefined();
+  });
+
+  // #3852: the audit copy is the only way back for a deleted page, so it is the
+  // row the DELETE removed, not the read taken before the transaction — a
+  // concurrent edit committed in between must not be lost.
+  it("archives the row the delete removed, not the earlier read", async () => {
+    const editedRow = {
+      ...probeRow,
+      contentHtml: "<p>Edited a moment ago</p>",
+      updatedAt: new Date("2026-06-30T00:00:00Z"),
+    };
+    mocks.pageContentDelete.mockResolvedValue(editedRow);
+
+    const response = await DELETE(jsonRequest("DELETE", { id: "page-1" }));
+
+    expect(response.status).toBe(200);
+    const [auditEvent] =
+      mocks.buildStructuredAuditLogCreateArgs.mock.calls.at(-1)!;
+    expect(auditEvent.metadata.before.contentHtml).toBe(
+      "<p>Edited a moment ago</p>",
+    );
+    expect(auditEvent.metadata.before.updatedAt).toBe(
+      "2026-06-30T00:00:00.000Z",
+    );
+  });
+
+  // #3852: two officers delete the same page at once. Both pass the existence
+  // check; the loser's delete finds nothing (P2025). It gets the 404 the check
+  // would have given, and its transaction writes nothing.
+  it("answers the second of two simultaneous deletes with 404, not 500", async () => {
+    let deleted = false;
+    mocks.pageContentDelete.mockImplementation(async () => {
+      if (deleted) {
+        throw new Prisma.PrismaClientKnownRequestError(
+          "Record to delete does not exist.",
+          { code: "P2025", clientVersion: "test" },
+        );
+      }
+      deleted = true;
+      return probeRow;
+    });
+
+    const first = await DELETE(jsonRequest("DELETE", { id: "page-1" }));
+    // The second request read the page before the first one committed.
+    const second = await DELETE(jsonRequest("DELETE", { id: "page-1" }));
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(404);
+    expect(await second.json()).toEqual({ error: "Page not found" });
+    // Only the winner wrote an audit row, and the loser stopped at the delete:
+    // repoint, delete, repair for the winner; repoint, delete for the loser.
+    expect(mocks.auditLogCreate).toHaveBeenCalledOnce();
+    expect(mocks.publicContentSettingsUpdateMany).toHaveBeenCalledTimes(3);
+    expect(mocks.revalidatePublicPageContent).toHaveBeenCalledOnce();
+  });
+
+  // #3852: when the button pointed elsewhere the pre-delete repoint matches
+  // nothing and locks nothing, so a settings save can point AT this page before
+  // the delete, and `SetNull` then leaves `PAGE` with no page. Repaired after the
+  // delete, and said so.
+  it("repairs a Book Now setting left on a page with no id, and reports it", async () => {
+    mocks.publicContentSettingsUpdateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    const response = await DELETE(jsonRequest("DELETE", { id: "page-1" }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.wasBookNowTarget).toBe(false);
+    expect(body.bookNowPairRepaired).toBe(true);
+    expect(mocks.publicContentSettingsUpdateMany).toHaveBeenLastCalledWith({
+      where: { bookNowTarget: "PAGE", bookNowPageId: null },
+      data: { bookNowTarget: "BOOKING_FLOW", updatedByMemberId: "admin-1" },
+    });
+    const [auditEvent] =
+      mocks.buildStructuredAuditLogCreateArgs.mock.calls.at(-1)!;
+    expect(auditEvent.metadata.bookNowPairRepaired).toBe(true);
+  });
+
+  // #3852: one secret-shaped value costs the whole body in the audit copy. The
+  // delete still happens; the officer is told the copy is not complete.
+  it("reports an audit copy the sanitiser redacted as incomplete", async () => {
+    const secretRow = {
+      ...probeRow,
+      contentHtml: "<p>Cancel here: /membership-cancellation/abc123</p>",
+    };
+    mocks.pageContentDelete.mockResolvedValue(secretRow);
+
+    const response = await DELETE(jsonRequest("DELETE", { id: "page-1" }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.snapshotComplete).toBe(false);
+    const [auditEvent] =
+      mocks.buildStructuredAuditLogCreateArgs.mock.calls.at(-1)!;
+    expect(auditEvent.metadata.snapshotComplete).toBe(false);
+  });
+
+  // #3852, re-checked against #2704: the input caps do not bound the stored
+  // text (`&` is escaped after validation), so the archive is sized from the row.
+  // Sized from the caps, this page's body would be clipped.
+  it("sizes the archive from the stored text, past the input caps", async () => {
+    const storedRow = {
+      ...probeRow,
+      contentHtml: "&amp;".repeat(50_000),
+    };
+    expect(storedRow.contentHtml.length).toBeGreaterThan(
+      PAGE_CONTENT_LIMITS.contentHtmlMax + PAGE_CONTENT_LIMITS.headerTextMax,
+    );
+    mocks.pageContentDelete.mockResolvedValue(storedRow);
+
+    const response = await DELETE(jsonRequest("DELETE", { id: "page-1" }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.snapshotComplete).toBe(true);
+    const [auditEvent, auditOptions] =
+      mocks.buildStructuredAuditLogCreateArgs.mock.calls.at(-1)!;
+    expect(auditOptions.archiveText.maxStringLength).toBe(
+      storedRow.contentHtml.length + storedRow.headerText.length,
+    );
+    const { sanitizeAuditMetadata } =
+      (await vi.importActual("@/lib/audit")) as typeof import("@/lib/audit");
+    const stored = sanitizeAuditMetadata(auditEvent.metadata, auditOptions) as {
+      before?: { contentHtml?: string };
+    };
+    expect(stored.before?.contentHtml).toBe(storedRow.contentHtml);
+  });
+
+  // #3852, and the #2704 shape: a payload past the JSON budget keeps the fields
+  // that fit and drops `before` by name. That is reported, not hidden.
+  it("reports an audit copy dropped by the over-budget reduction as incomplete", async () => {
+    // Control characters escape to six bytes each in JSON, past the budget.
+    const denseRow = { ...probeRow, contentHtml: "\u0001".repeat(100_000) };
+    mocks.pageContentDelete.mockResolvedValue(denseRow);
+
+    const response = await DELETE(jsonRequest("DELETE", { id: "page-1" }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.snapshotComplete).toBe(false);
+    const [auditEvent, auditOptions] =
+      mocks.buildStructuredAuditLogCreateArgs.mock.calls.at(-1)!;
+    const { sanitizeAuditMetadata } =
+      (await vi.importActual("@/lib/audit")) as typeof import("@/lib/audit");
+    const stored = sanitizeAuditMetadata(auditEvent.metadata, auditOptions) as {
+      _truncated?: true;
+      before?: unknown;
+    };
+    expect(stored._truncated).toBe(true);
+    expect(stored.before).toBeUndefined();
   });
 });

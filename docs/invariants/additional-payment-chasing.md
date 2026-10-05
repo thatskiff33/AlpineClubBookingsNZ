@@ -366,14 +366,15 @@ breakdown, the hold and the approval read one list rather than two.
 
 ### INV-ADDPAY-009
 
-A booking converted from (or held for) a public/school booking request keeps
-the held booking's immutable concrete lodge even when the request stored a null
-default-lodge selector and the configured default later changes. Held generic
-and school conversions lock that concrete lodge, fully re-read the request and
-booking, and reject any explicit lodge mismatch before mutation. The booking
+A public/school request booking keeps the held booking's immutable concrete
+lodge despite a null request lodge selector and a later default change. Held
+generic and school conversions lock that lodge, re-read request and booking,
+and reject explicit lodge mismatches before mutation. The booking
 keeps its officer-negotiated price, flat-split across guest rows; the quote's
-per-tier rates are not persisted on the booking. Before a school group
-arrives, the school contact confirms who is attending (#1101): a tokenized
+per-tier rates are not persisted on the booking. For accepted SCHOOL quotes
+containing pending adults, naming and approval instead preserve proven accepted
+per-person totals (#3794). Before school arrival, the contact confirms who is
+attending (#1101): a tokenized
 public page (hash-stored, rotated per reminder email) applies identity-only
 name updates through the same price-preserving machinery as quoted-booking
 edits, and the explicit confirmation is stored on the booking request.
@@ -392,9 +393,9 @@ customer "booking cancelled" email (`cancelBooking`'s
 and it deliberately does **not** revoke the requester's quote response token:
 the link stays active, so the admin is warned to re-send a fresh quote after
 re-mapping. Releasing a hold (and declining a held request) refuses with HTTP
-409 rather than cancelling if the requester accepted the quote concurrently —
-i.e. the held booking has already left `AWAITING_REVIEW` (`cancelBooking`'s
-`requireRequestHold` guard, #1406) — so a just-accepted booking is never
+409 if acceptance won the race, including an `ACCEPTED` request whose held
+booking remains `AWAITING_REVIEW`, or if the hold already converted
+(`cancelBooking`'s `requireRequestHold` guard, #1406). A just-accepted booking is never
 cancelled and its payment links never revoked out from under the requester.
 
 ### INV-ADDPAY-010
@@ -418,17 +419,18 @@ requester-cancel `CANCELLED`). Because `loadSentQuoteByToken` requires
 (accept / modify / query / cancel) on a still-live link, and the pre-expiry
 reminder cron (which selects only `SENT` quotes) skips the declined request
 instead of nudging it. As defence-in-depth against a request finalised between a
-requester POST's token load and its write, the accept re-arm, the modify/query
-re-status, and the losing-accept capacity revert are each status-guarded with
-`status notIn [DECLINED, CANCELLED]`: a late accept or modify/query `409`s (no
-new booking, Payment, or PaymentLink; no resurrection to
-`MODIFICATION_REQUESTED`/`QUERY_PENDING`), and the revert simply does not
-un-decline the request. The guards still permit a re-arm from
-`CONVERTED`/`APPROVED`, preserving approve's `convertedBookingId` idempotency
-(#1232 double-accept returns the one existing booking). Per-teacher hut-leader records are always created fresh. The held owner is re-validated at conversion:
-if a previously mapped contact is no longer a valid non-login contact by the time
-the requester accepts (login enabled, archived, deactivated, role changed), the
-accept still succeeds — a fresh non-login contact is substituted and both a
+requester POST's token load and its write, acceptance and the modify/query
+re-status each claim the exact `SENT` quote and `QUOTE_SENT` request under the
+global lock (#3415): a late accept or modify/query `409`s (no new booking,
+Payment, or PaymentLink; no resurrection to
+`MODIFICATION_REQUESTED`/`QUERY_PENDING`). Approve's `convertedBookingId`
+idempotency returns the one existing booking (#1232). Per-teacher hut-leader
+records, when the school policy creates them (#3416), are always created fresh.
+The held owner is
+re-validated at officer approval's conversion:
+if a previously mapped contact is no longer a valid non-login contact by then
+(login enabled, archived, deactivated, role changed), the
+approval still succeeds — a fresh non-login contact is substituted and both a
 durable admin-attention audit row (`booking_request.owner_substituted`) and an
 active `admin-owner-substitution` admin email alert (gated by the
 `adminXeroSyncError` preference, F20 residual #2 / #1377) are raised post-commit

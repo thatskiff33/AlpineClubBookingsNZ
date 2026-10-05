@@ -10,8 +10,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { MONEY_INPUT_PROPS } from "@/lib/money-input"
 import { Label } from "@/components/ui/label"
+import { MoneyInput } from "@/components/ui/money-input"
 import { FocusedActionError } from "@/components/focused-action-error"
 import {
   JoiningFeePreviewHint,
@@ -101,12 +101,11 @@ export function MemberXeroCreateDialog({
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label htmlFor="member-detail-xero-entrance-amount">Amount override ($)</Label>
-                <Input
+                <MoneyInput
                   id="member-detail-xero-entrance-amount"
-                  {...MONEY_INPUT_PROPS}
                   placeholder="Use configured amount"
                   value={entranceFeeAmount}
-                  onChange={(e) => onChangeEntranceFeeAmount(e.target.value)}
+                  onValueChange={onChangeEntranceFeeAmount}
                 />
               </div>
               <div className="space-y-1">

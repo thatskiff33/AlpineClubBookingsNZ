@@ -12,8 +12,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Spinner } from "@/components/ui/spinner";
-import { MONEY_INPUT_PROPS } from "@/lib/money-input";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
 import { AiSpendCurrencyCard } from "@/components/admin/ai-spend-currency-card";
 import { useClubFormat } from "@/components/club-format-provider";
@@ -362,12 +362,11 @@ function BudgetCard() {
             <div className="grid gap-2 sm:max-w-xs">
               <Label htmlFor="ai-budget">Monthly cap ({currencyCode})</Label>
               <div className="flex items-center gap-2">
-                <Input
+                <MoneyInput
                   id="ai-budget"
-                  {...MONEY_INPUT_PROPS}
                   value={dollars}
                   disabled={editingDisabled}
-                  onChange={(event) => setDollars(event.target.value)}
+                  onValueChange={setDollars}
                 />
               </div>
               <p className="text-xs text-muted-foreground">

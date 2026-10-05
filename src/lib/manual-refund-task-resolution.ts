@@ -15,7 +15,7 @@ import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
 import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
 import { chooseEditReviewSettlementRoute, executeEditReviewSettlement, type EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { giveBackCancelledShareCredit, writeEditReviewAccountCredit, type EditReviewAccountCreditOutcome } from "@/lib/edit-financial-review-account-credit";
-import { cancellationHandBackInvoiceIdOf, queueRefundRequestCreditNoteInTransaction, refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero-leg";
+import { cancelledBookingRefundInvoiceId, queueCancelledBookingHandBackNoteInTransaction, queueRefundRequestCreditNoteInTransaction, refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero-leg";
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { requireMemberCreditRecipient } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -469,6 +469,8 @@ export async function resolveManualRefundTask(
           task, route: settlementRoute, amountCents: settlement.amountCents, createdByMemberId: actingMemberId, store: tx,
         });
       }
+      // #3880: its Xero note on a cancelled booking commits, or rolls back, with it.
+      await queueCancelledBookingHandBackNoteInTransaction({ task, route: settlementRoute, actingMemberId, store: tx });
     }
 
     // #3635 (`INV-PAY-110`): DISMISSED keeps the money, recorded in Xero from
@@ -622,9 +624,8 @@ export async function resolveManualRefundTask(
       hasIssuedXeroInvoice,
       bookingPaymentStatus: task.booking.payment?.status ?? null,
       bookingXeroInvoiceId: task.booking.payment?.xeroInvoiceId ?? null,
-      // `INV-PAY-101` (#3529): the invoice a cancellation hand-back refunds
-      // against - `hasIssuedXeroInvoice` is false for every CANCELLED booking.
-      cancellationHandBackInvoiceId: cancellationHandBackInvoiceIdOf(task),
+      // `INV-PAY-101` (#3529, #3880): a cancelled booking's refund invoice (`hasIssuedXeroInvoice` is false).
+      cancellationHandBackInvoiceId: cancelledBookingRefundInvoiceId(task),
       /**
        * #3827 (`INV-PAY-117`): the Xero leg owes nothing for an edit refund
        * hand-back - its edit already queued the credit note that corrects the
@@ -632,11 +633,8 @@ export async function resolveManualRefundTask(
        * instead (`refundRequestId` below), never the cancellation's.
        */
       nonCancellationHandBack: isNonCancellationHandBackTask(task),
-      /**
-       * #3827 (D-3813-8): a refund request's hand-back - its completion queues
-       * that request's own Xero refund credit note. Null on a dismissal (no
-       * route, so the leg queues nothing) as on every other task.
-       */
+      // #3827 (D-3813-8): a refund request's hand-back queues that request's own
+      // Xero refund note. Null on a dismissal (no route) and on every other task.
       refundRequestId: refundRequestIdOfHandBack(task),
       /** The REFUNDED event's marker for those two (`INV-PAY-117`), else null. */
       nonCancellationHandBackSnapshot: isNonCancellationHandBackTask(task)

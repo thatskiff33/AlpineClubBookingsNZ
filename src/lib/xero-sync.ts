@@ -3,7 +3,13 @@ import { createHash } from "crypto";
 import { prisma } from "./prisma";
 import { getXeroErrorStatusCode } from "./xero-error-shape";
 import { asRecord, readString } from "./xero-json";
-import { isRefundCreditNoteLinkCancelledInXero } from "./xero-refund-note-status";
+import {
+  canonicalRefundNoteFromField,
+  isPerDeltaRefundNoteLink,
+  isRefundCreditNoteLinkCancelledInXero,
+  perDeltaRefundNoteIds,
+  readCanonicalRefundNoteField,
+} from "./xero-refund-note-status";
 import { buildXeroObjectUrl, stripXeroOrgShortCode } from "./xero-links";
 import {
   redactSensitiveRecord,
@@ -313,7 +319,7 @@ export async function findCanonicalPaymentRefundCreditNote(
       xeroRefundCreditNoteId: true,
     },
   });
-  const refundCreditNoteLinks = await db.xeroObjectLink.findMany({
+  const allRefundCreditNoteLinks = await db.xeroObjectLink.findMany({
     where: {
       localModel: "Payment",
       localId: paymentId,
@@ -346,6 +352,10 @@ export async function findCanonicalPaymentRefundCreditNote(
       })) ?? []
     ).map((link) => link.xeroObjectId)
   );
+  // #3880: a per-refund note is never the canonical one, in any form below.
+  const perDeltaNoteIds = await perDeltaRefundNoteIds(paymentId, db);
+  const refundCreditNoteLinks = allRefundCreditNoteLinks.filter((link) => !perDeltaNoteIds.has(link.xeroObjectId));
+  const nonCanonicalNoteIds = new Set([...refundRequestNoteIds, ...perDeltaNoteIds]);
   const refundPaymentLinks = await db.xeroObjectLink.findMany({
     where: {
       localModel: "Payment",
@@ -370,8 +380,8 @@ export async function findCanonicalPaymentRefundCreditNote(
       localModel: "Payment",
       localId: paymentId,
       xeroObjectId:
-        refundRequestNoteIds.size > 0
-          ? { not: null, notIn: Array.from(refundRequestNoteIds) }
+        nonCanonicalNoteIds.size > 0
+          ? { not: null, notIn: [...nonCanonicalNoteIds] }
           : { not: null },
     },
     orderBy: [
@@ -396,11 +406,12 @@ export async function findCanonicalPaymentRefundCreditNote(
     );
   }
 
-  if (payment?.xeroRefundCreditNoteId) {
+  const canonicalFieldNoteId = canonicalRefundNoteFromField(payment?.xeroRefundCreditNoteId, perDeltaNoteIds);
+  if (canonicalFieldNoteId) {
     return {
-      xeroObjectId: payment.xeroRefundCreditNoteId,
+      xeroObjectId: canonicalFieldNoteId,
       xeroObjectNumber:
-        xeroObjectNumberById.get(payment.xeroRefundCreditNoteId) ?? null,
+        xeroObjectNumberById.get(canonicalFieldNoteId) ?? null,
       source: "payment",
     };
   }
@@ -408,7 +419,7 @@ export async function findCanonicalPaymentRefundCreditNote(
   for (const link of refundPaymentLinks) {
     const metadata = asRecord(link.metadata);
     const linkedCreditNoteId = readString(metadata?.creditNoteId);
-    if (linkedCreditNoteId && !refundRequestNoteIds.has(linkedCreditNoteId)) {
+    if (linkedCreditNoteId && !nonCanonicalNoteIds.has(linkedCreditNoteId)) {
       return {
         xeroObjectId: linkedCreditNoteId,
         xeroObjectNumber: xeroObjectNumberById.get(linkedCreditNoteId) ?? null,
@@ -552,7 +563,10 @@ async function normalizePaymentRefundLinkWithClient(
     // active so `sumCoveredRefundCreditNoteCents` totals them correctly, so skip
     // the single-active canonical enforcement that non-Stripe single-note
     // refunds still rely on below.
-    if (payment?.source === PaymentSource.STRIPE) {
+    // #3880: a non-Stripe payment's per-refund note takes the Stripe rule, and
+    // the single-refund rule below never retires one.
+    const perDeltaNoteIds = payment?.source === PaymentSource.STRIPE ? new Set<string>() : await perDeltaRefundNoteIds(link.localId, client);
+    if (payment?.source === PaymentSource.STRIPE || isPerDeltaRefundNoteLink(link.metadata) || perDeltaNoteIds.has(link.xeroObjectId)) {
       // ... unless the incoming write itself says the note was VOIDED/DELETED
       // in Xero (inbound reconciliation and the operator status recorder carry
       // the live provider status). A cancelled note credits nothing, so its
@@ -572,7 +586,9 @@ async function normalizePaymentRefundLinkWithClient(
       };
     }
 
-    const canonicalCreditNoteId = payment?.xeroRefundCreditNoteId ?? link.xeroObjectId;
+    // #3880 F1: a field naming a per-refund note is no canonical note at all.
+    const canonicalCreditNoteId =
+      canonicalRefundNoteFromField(payment?.xeroRefundCreditNoteId, perDeltaNoteIds) ?? link.xeroObjectId;
     const shouldBeActive = (link.active ?? true) && canonicalCreditNoteId === link.xeroObjectId;
 
     if (canonicalCreditNoteId === link.xeroObjectId) {
@@ -585,6 +601,7 @@ async function normalizePaymentRefundLinkWithClient(
           active: true,
           xeroObjectId: {
             not: canonicalCreditNoteId,
+            notIn: [...perDeltaNoteIds],
           },
         },
         data: {
@@ -608,7 +625,11 @@ async function normalizePaymentRefundLinkWithClient(
     });
     const metadata = asRecord(link.metadata);
     const linkedCreditNoteId = readString(metadata?.creditNoteId);
-    const canonicalCreditNoteId = payment?.xeroRefundCreditNoteId ?? linkedCreditNoteId;
+    const canonicalCreditNoteId =
+      (await readCanonicalRefundNoteField(
+        payment ? { id: link.localId, xeroRefundCreditNoteId: payment.xeroRefundCreditNoteId } : null,
+        client,
+      )) ?? linkedCreditNoteId;
     const shouldBeActive =
       (link.active ?? true)
       && (!canonicalCreditNoteId || linkedCreditNoteId === canonicalCreditNoteId);

@@ -453,7 +453,7 @@ describe("the settle dialog asks each strand separately (#3498 D1)", () => {
     );
 
     fireEvent.click(screen.getByRole("radio", { name: /club owes the member/i }));
-    fireEvent.change(screen.getByLabelText(/Amount/i), {
+    fireEvent.change(screen.getByRole("textbox", { name: /Amount/i }), {
       target: { value: "40.00" },
     });
     fireEvent.change(screen.getByLabelText(/Note/i), {

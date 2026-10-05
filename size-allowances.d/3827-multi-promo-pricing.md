@@ -60,7 +60,7 @@ reason: the Booking Modified sender takes the required bank-transfer flag and
   #3809, #3835 and #3792 growth of this file with the epic's.
 
 file: src/app/(admin)/admin/refund-requests/page.tsx
-lines: 885
+lines: 884
 reason: the appeal review's ceiling is the approve route's net-of-open-edit-
   refunds figure (INV-PAY-117); the page carries the loaded rows' type and one
   shared helper call, the arithmetic lives in manual-refund-task-settlement-rules.ts.
@@ -100,7 +100,7 @@ reason: a required token needs its plain-English guidance in the one table the
   two already there rather than living in a second table.
 
 file: src/lib/xero-credit-notes.ts
-lines: 1239
+lines: 1266
 reason: owner decision D-3813-8 (INV-PAY-118) - the refund-note builder raises
   a refund request's own note: keyed by the request, linked under its own role,
   never per-delta and never the payment's pointer. Those are branches inside
@@ -108,12 +108,12 @@ reason: owner decision D-3813-8 (INV-PAY-118) - the refund-note builder raises
   recording, settlement and completion), so a second builder would fork that.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 3275
+lines: 3282
 reason: the refund-note dispatch passes the request id through (D-3813-8); the
   enqueue itself lives in xero-refund-request-credit-note-outbox.ts.
 
 file: src/lib/xero-sync.ts
-lines: 1008
+lines: 1029
 reason: findCanonicalPaymentRefundCreditNote leaves refund-request notes out of
   its fallbacks (D-3813-8) so a cancellation's note is never absorbed into a
   request's; the exclusion belongs in the one finder every reader uses.

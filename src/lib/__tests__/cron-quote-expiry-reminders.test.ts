@@ -11,7 +11,8 @@ const mocks = vi.hoisted(() => {
     $executeRaw: vi.fn(),
     bookingRequest: { findUnique: vi.fn(), update: vi.fn() },
     booking: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
-    bookingRequestQuote: { count: vi.fn() },
+    bookingRequestPendingAdultReservationNight: { deleteMany: vi.fn() },
+    bookingRequestQuote: { count: vi.fn(), findUnique: vi.fn() },
   };
   return {
     tx,
@@ -103,6 +104,9 @@ beforeEach(() => {
   // #1881 — the hold-release flips are now status-guarded updateMany; default
   // to a successful claim (count 1) so the release proceeds.
   mocks.tx.booking.updateMany.mockResolvedValue({ count: 1 });
+  mocks.tx.bookingRequestQuote.findUnique.mockResolvedValue({
+    status: BookingRequestQuoteStatus.SENT,
+  });
   stubQuoteFindMany({ reminderQuotes: [], releaseQuotes: [] });
   // Phase 3 (stale MODIFY/QUERY hold release, #1254) is a no-op by default.
   vi.mocked(prisma.bookingRequest.findMany).mockResolvedValue([] as never);
@@ -238,7 +242,10 @@ describe("sendQuoteExpiryReminders — expired hold release (issue #1254)", () =
         },
       ],
     });
-    mocks.tx.bookingRequest.findUnique.mockResolvedValue({ heldBookingId: "held-9" });
+    mocks.tx.bookingRequest.findUnique.mockResolvedValue({
+      heldBookingId: "held-9",
+      status: BookingRequestStatus.QUOTE_SENT,
+    });
     mocks.tx.booking.findUnique.mockResolvedValue({
       status: BookingStatus.AWAITING_REVIEW,
     });
@@ -255,6 +262,9 @@ describe("sendQuoteExpiryReminders — expired hold release (issue #1254)", () =
     expect(mocks.mockReconcile).toHaveBeenCalledWith(
       expect.objectContaining({ bookingId: "held-9" }),
     );
+    expect(mocks.tx.bookingRequestPendingAdultReservationNight.deleteMany).toHaveBeenCalledWith({
+      where: { bookingId: "held-9" },
+    });
     expect(mocks.tx.bookingRequest.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "req-9" },
@@ -281,6 +291,7 @@ describe("sendQuoteExpiryReminders — expired hold release (issue #1254)", () =
     const result = await sendQuoteExpiryReminders();
 
     expect(result.releasedHoldCount).toBe(0);
+    expect(mocks.tx.bookingRequestPendingAdultReservationNight.deleteMany).not.toHaveBeenCalled();
     expect(mocks.tx.booking.update).not.toHaveBeenCalled();
     expect(mocks.tx.bookingRequest.update).not.toHaveBeenCalled();
   });
@@ -350,6 +361,9 @@ describe("sendQuoteExpiryReminders — stale MODIFY/QUERY hold release (issue #1
     expect(mocks.mockReconcile).toHaveBeenCalledWith(
       expect.objectContaining({ bookingId: "held-m" }),
     );
+    expect(mocks.tx.bookingRequestPendingAdultReservationNight.deleteMany).toHaveBeenCalledWith({
+      where: { bookingId: "held-m" },
+    });
     expect(mocks.tx.bookingRequest.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "req-m" },
@@ -394,6 +408,28 @@ describe("sendQuoteExpiryReminders — stale MODIFY/QUERY hold release (issue #1
     expect(result.releasedHoldCount).toBe(0);
     expect(mocks.tx.booking.update).not.toHaveBeenCalled();
     expect(mocks.tx.bookingRequest.update).not.toHaveBeenCalled();
+  });
+
+  it("does NOT release a stale sweep candidate once acceptance owns the hold", async () => {
+    vi.mocked(prisma.bookingRequest.findMany).mockResolvedValue([
+      {
+        id: "req-accepted",
+        heldBookingId: "held-accepted",
+        heldBooking: { createdAt: wayPast() },
+        quotes: [{ responseTokenExpiresAt: past() }],
+      },
+    ] as never);
+    mocks.tx.bookingRequest.findUnique.mockResolvedValue({
+      heldBookingId: "held-accepted",
+      status: BookingRequestStatus.MODIFICATION_REQUESTED,
+      acceptedQuoteId: "quote-accepted",
+    });
+
+    const result = await sendQuoteExpiryReminders();
+
+    expect(result.releasedHoldCount).toBe(0);
+    expect(mocks.tx.booking.updateMany).not.toHaveBeenCalled();
+    expect(mocks.tx.bookingRequestQuote.count).not.toHaveBeenCalled();
   });
 
   it("keeps a manual re-hold that post-dates the lapsed quote window (#1296)", async () => {
