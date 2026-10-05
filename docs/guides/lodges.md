@@ -81,7 +81,8 @@ same **lodge edit** permission as the properties above.
 ### Manage other lodges
 
 1. Scroll to the **Other lodges** panel below the lodge properties. Click **Add
-   other lodge**, enter at least a **Name** (the only required field), optionally
+   other lodge**. The form opens in a **popup over the page**, so the list stays
+   where it is. Enter at least a **Name** (the only required field), optionally
    fill in **Location**, the **booking officer's** name/email/phone, a
    **Bed capacity**, the lodge's **Website** and **How to book**, its
    **Cancellation period** and the dates its **winter** and **summer seasons
@@ -90,8 +91,15 @@ same **lodge edit** permission as the properties above.
    *unknown*), and add anything else the lodge offers under **Amenities** — one
    row per amenity, a name plus an optional description, up to fifty per lodge
    with no two names the same.
-3. Use **Edit** to change a lodge, or **Delete** to remove it from the list.
-   Names must be unique — a duplicate is rejected with a clear message.
+3. Use **Edit** to change a lodge (it opens the same popup), or **Delete** to
+   remove it from the list. Names must be unique — a duplicate is rejected with a
+   clear message, shown inside the popup next to **Save** so you can fix it
+   without losing what you typed.
+4. Close the popup with **Cancel**, the **×**, or **Esc** — this discards what you
+   have typed. Clicking the dimmed page behind it does *not* close it, so a stray
+   click cannot throw your work away, and while **Save** is working the popup
+   cannot be closed. When it closes, keyboard focus goes back to the button that
+   opened it.
 
 ## Settings reference
 
