@@ -8,7 +8,8 @@ import {
   useAdminAreaEditAccess,
 } from "@/hooks/use-admin-area-edit-access";
 import { useClubFormat } from "@/components/club-format-provider";
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import { MoneyInput } from "@/components/ui/money-input";
+import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents } from "@/lib/utils";
 import { centsToDollars } from "@/app/(admin)/admin/ai-assistant/budget";
 
@@ -72,8 +73,12 @@ type BudgetState =
  * the canonical exact parser's job (#2685), which is also what refuses "12.005"
  * outright rather than quietly deciding which cent the person meant.
  */
+function normalizeBudgetDraft(value: string): string {
+  return value.trim().replace(/^\$/, "");
+}
+
 function dollarsToCents(value: string): number | null {
-  return parseDecimalDollarsToCents(value.trim().replace(/^\$/, ""));
+  return parseDecimalDollarsToCents(normalizeBudgetDraft(value));
 }
 
 export function DiagnosticsBudgetCard({
@@ -291,12 +296,12 @@ export function DiagnosticsBudgetCard({
           <label htmlFor={inputId} className="font-medium">
             Monthly budget
           </label>
-          <input
+          <MoneyInput
             id={inputId}
-            {...MONEY_INPUT_PROPS}
             value={draft}
+            normalizeDraft={normalizeBudgetDraft}
             aria-describedby={hintId}
-            onChange={(event) => setDraft(event.target.value)}
+            onValueChange={setDraft}
             readOnly={!canEdit}
             data-testid="budget-input"
             className="w-32 rounded-md border border-border bg-background px-3 py-1.5 tabular-nums focus:outline-none focus-visible:ring-2 focus-visible:ring-ring read-only:opacity-60"

@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { BOOKING_ISSUED_CREDIT_TYPES } from "@/lib/member-credit-booking-rows";
 import { z } from "zod";
 import {
   buildXeroActivityByRecord,
@@ -466,7 +467,11 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
             id: true,
             status: true,
             checkIn: true,
+            // Credit ISSUED from the booking only (#3791): a review's give-back
+            // of applied credit names the booking as its source too, and is not
+            // a settlement of it.
             creditsFromCancellation: {
+              where: { type: { in: [...BOOKING_ISSUED_CREDIT_TYPES] } },
               select: {
                 amountCents: true,
                 description: true,
@@ -592,7 +597,9 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
                 status: true,
                 checkIn: true,
                 checkOut: true,
+                // Issued credit only, as above (#3791).
                 creditsFromCancellation: {
+                  where: { type: { in: [...BOOKING_ISSUED_CREDIT_TYPES] } },
                   select: {
                     amountCents: true,
                     description: true,

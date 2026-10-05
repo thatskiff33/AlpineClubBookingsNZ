@@ -37,7 +37,8 @@ describe("paidCancellationBranch", () => {
 describe("writePaidCancellationEvent", () => {
   it("writes the cash hand-back's sentence and method on the claim's own client", async () => {
     const create = vi.fn().mockResolvedValue({});
-    const tx = { bookingEvent: { create } } as never;
+    const findMany = vi.fn().mockResolvedValue([{ id: "review_before" }]);
+    const tx = { bookingEvent: { create }, manualRefundTask: { findMany } } as never;
 
     await writePaidCancellationEvent(tx, {
       bookingId: "booking_1",
@@ -50,6 +51,7 @@ describe("writePaidCancellationEvent", () => {
       changeFeeCents: 0,
       retainedAmountCents: 4000,
       ledger: { keptCents: 4000, policyKeptCents: 4000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0 },
+      tier: { refundMethod: "credit", refundableBaseCents: 8000 },
     });
 
     expect(create).toHaveBeenCalledWith({
@@ -69,14 +71,22 @@ describe("writePaidCancellationEvent", () => {
           retainedAmountCents: 4000,
           changeFeeCents: 0,
           ledger: { keptCents: 4000, policyKeptCents: 4000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0 },
+          // #3835: what the tier ran on, and the reviews settled before it.
+          tierRefundMethod: "credit",
+          refundableBaseCents: 8000,
+          completedReviewTaskIds: ["review_before"],
         },
       },
     });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ bookingId: "booking_1", kind: "EDIT_FINANCIAL_REVIEW", status: "COMPLETED", settlementDirection: "REFUND_TO_MEMBER" }),
+    }));
   });
 
   it("lets a failed write throw, so the claim rolls back", async () => {
     const tx = {
       bookingEvent: { create: vi.fn().mockRejectedValue(new Error("insert failed")) },
+      manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
     } as never;
 
     await expect(
@@ -91,6 +101,7 @@ describe("writePaidCancellationEvent", () => {
         changeFeeCents: 0,
         retainedAmountCents: 8000,
         ledger: { keptCents: 8000, policyKeptCents: 8000, keptBeyondPolicyCents: 0, appliedCreditCents: 0, creditRestoredCents: 0 },
+        tier: { refundMethod: "card", refundableBaseCents: 8000 },
       })
     ).rejects.toThrow("insert failed");
   });

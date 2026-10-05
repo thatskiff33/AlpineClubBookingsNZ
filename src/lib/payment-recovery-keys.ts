@@ -429,3 +429,29 @@ export function bookingModificationRefundReasonForKeyPrefix(
   }
   return "booking_modification_refund_recovery";
 }
+
+// #3653: an organiser-settled child's refund out of the organiser's COMBINED
+// card payment. One recovery row per refund, and the row's key doubles as the
+// Stripe idempotency key, so a replay can only ever answer with the refund the
+// first attempt made. An edit's refund is keyed by its `BookingModification`; a
+// group cancellation's by its settlement and the child.
+const ORGANISER_CHILD_REFUND_KEY_PREFIX = "organiser_child_refund_";
+export function buildOrganiserChildModificationRefundKey(bookingModificationId: string) {
+  return `${ORGANISER_CHILD_REFUND_KEY_PREFIX}mod_${bookingModificationId}`;
+}
+export function buildOrganiserChildCancellationRefundKey(
+  settlementId: string,
+  childBookingId: string,
+) {
+  return `${ORGANISER_CHILD_REFUND_KEY_PREFIX}cancel_${settlementId}_${childBookingId}`;
+}
+export function isOrganiserChildRefundKey(key: string) {
+  return key.startsWith(ORGANISER_CHILD_REFUND_KEY_PREFIX);
+}
+/** The Stripe `reason` metadata, rebuilt from the key alone so a replay sends the same body. */
+export function organiserChildRefundReasonForKey(key: string) {
+  return key.startsWith(`${ORGANISER_CHILD_REFUND_KEY_PREFIX}cancel_`)
+    ? "organiser_cancellation"
+    : "organiser_child_reduction";
+}
+export { ORGANISER_CHILD_REFUND_KEY_PREFIX };

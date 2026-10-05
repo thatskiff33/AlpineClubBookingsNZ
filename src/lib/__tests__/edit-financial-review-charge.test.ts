@@ -159,6 +159,9 @@ vi.mock("@/lib/stripe", () => ({
   listRefundsForCharge: vi.fn(),
 }));
 vi.mock("@/lib/payment-recovery", () => ({
+  // #3835: the status sets the card cap's debt read routes through - the real ones.
+  CLAIMABLE_PAYMENT_RECOVERY_STATUSES: ["PENDING", "FAILED"],
+  NON_TERMINAL_PAYMENT_RECOVERY_STATUSES: ["PENDING", "PROCESSING", "FAILED"],
   buildBookingModificationRefundMetadata: (
     bookingId: string,
     reason: string,
@@ -244,6 +247,7 @@ import { recordUncollectedEditReviewChargeShare } from "@/lib/edit-financial-rev
 import {
   REVIEW_CHARGE_ANCHOR_MISSING_MESSAGE,
   REVIEW_CHARGE_NO_INSTRUMENT_MESSAGE,
+  REVIEW_CHARGE_ORGANISER_PAID_MESSAGE,
   REVIEW_CHARGE_REQUEST_ALREADY_PAID_MESSAGE,
   REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE,
   REVIEW_CHARGE_WRONG_KIND_MESSAGE,
@@ -274,6 +278,8 @@ const tx = {
   paymentTransaction: {
     findFirst: (...a: unknown[]) => mocks.paymentTransactionFindFirst(...a),
   },
+  // #3835: the card refunds already promised out of the payment - none here.
+  paymentRecoveryOperation: { aggregate: async () => ({ _sum: { amountCents: null } }) },
   xeroObjectLink: {
     findFirst: (...a: unknown[]) => mocks.xeroObjectLinkFindFirst(...a),
   },
@@ -826,6 +832,39 @@ describe("a completed review that asks the member for money (#3170)", () => {
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.createAuditLog).not.toHaveBeenCalled();
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
+  });
+
+  it("a charge on a joiner's booking the group organiser paid for by card is REFUSED before the claim (#3653)", async () => {
+    // The card behind this payment mirror is the ORGANISER's combined payment:
+    // minting an ask would charge the joiner, and so would an invoice. Both
+    // instruments are present here, so only the organiser rule can refuse it.
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      cardReviewTask({
+        booking: {
+          ...cardReviewTask().booking,
+          organiserSettled: true,
+          parentBookingId: "organiser-booking-1",
+          payment: { ...cardReviewTask().booking.payment, xeroInvoiceId: "inv-1" },
+        },
+      }),
+    );
+
+    await expect(charge()).rejects.toMatchObject({
+      status: 409,
+      message: REVIEW_CHARGE_ORGANISER_PAID_MESSAGE,
+    });
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+    expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
+
+    // The control: the same booking, not organiser-settled, charges as before.
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      cardReviewTask({
+        booking: { ...cardReviewTask().booking, organiserSettled: false, parentBookingId: null },
+      }),
+    );
+    await expect(charge()).resolves.toBeDefined();
   });
 
   it("a review with no booking-change to hang the charge on is REFUSED before the claim", async () => {

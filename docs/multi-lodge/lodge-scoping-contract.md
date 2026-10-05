@@ -21,6 +21,7 @@ sequencing):
 | `Booking` | direct `lodgeId` | denormalised for capacity/availability query performance; always matches the room's lodge when a room is assigned. `waitlistOfferedLodgeId` (nullable) names the alternate lodge of a live cross-lodge waitlist offer (ADR-004) and never changes the entry's own lodge |
 | `BookingWaitlistAlternateLodge` | direct `lodgeId` junction | ADR-004 cross-lodge waitlist opt-in: lodges a waitlisted member would also accept; rows only widen what the processor may offer |
 | `BookingGuest` / `BookingGuestNight` | via `Booking` | no direct FK |
+| `BookingRequestPendingAdultReservationNight` | direct `lodgeId` | unnamed SCHOOL adult capacity, one count per request/night; always matches the held booking's immutable lodge, released with that hold (#3413) |
 | `GroupBooking` | via organiser `Booking` | one group = one lodge (ADR-001 open question 1) |
 | `ChoreTemplate` | direct `lodgeId` | roster generation filters by lodge |
 | `LodgeSettings` | per-lodge row | converted from singleton |

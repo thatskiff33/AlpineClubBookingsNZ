@@ -1258,8 +1258,8 @@ merge or a move can quietly disarm; a hard-coded path is the other.
 [`money-number-input-guard.test.ts`](../src/lib/__tests__/money-number-input-guard.test.ts)
 is in this family and is worth knowing about **before** you trip it, because it
 polices markup rather than a call site. `INV-MONEY-003` says a box someone types
-dollars into is `type="text"` with `inputMode="decimal"` — `MONEY_INPUT_PROPS`
-from [`money-input.ts`](../src/lib/money-input.ts) — never `type="number"`, and
+dollars into is `type="text"` with `inputMode="decimal"` through
+[`MoneyInput`](../src/components/ui/money-input.tsx), never `type="number"`, and
 this guard is the mechanical half of that rule. It walks every non-test `.tsx`
 under `src/` with the TypeScript parser, decides from each `type="number"`
 control's own `id`, `value`, `placeholder` and bound label whether it holds
@@ -1289,8 +1289,8 @@ when a change adds or edits a numeric input.
 
 ### Suites that time out under load and pass alone
 
-Running the whole suite natively on Windows was measured and rejected in
-`AGENTS.md` (§5, "Per-issue pipeline") because a few suites hit vitest's
+Running the whole suite natively on Windows was measured and rejected as the
+local gate (`AGENTS.md` → "Per-issue pipeline" leaves the full suite to CI) because a few suites hit vitest's
 5,000ms `testTimeout` under parallel load and pass the moment they run alone —
 a gate that red-lights the test it exists to protect is not a gate. The same
 suites can go red inside a by-name batch of disk-scanning censuses, which is
@@ -1308,7 +1308,7 @@ cannot show both is a claim rather than evidence:
    budget, 5,000ms unless the `it()` carries an inline one. Nothing else
    qualifies. A suite that fails on an **assertion** is never in this class,
    whatever the machine: `page-content-starter-backfill.test.ts` (seed-copy
-   drift, the "known-environmental failure" in `AGENTS.md`) is a different
+   drift, the known-environmental failure this section is the home of) is a different
    class, and #2886 removed two suites that had been excused as
    "load-sensitive" when they were failing deterministically on Windows for
    real reasons (the shell-out section above).

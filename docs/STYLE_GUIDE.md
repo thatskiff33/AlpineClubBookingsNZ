@@ -5,7 +5,7 @@ repository. It is the foundation the operator-guide programme (issue #2050)
 builds on: every new guide follows the skeleton and conventions below so the
 docs read as one coherent, best-in-class set rather than a pile of pages.
 
-`AGENTS.md` ("Change Discipline" → docs lockstep) makes following this guide a
+`AGENTS.md` ("Change discipline" → docs lockstep) makes following this guide a
 requirement whenever documentation is added or changed. Read it here first.
 
 ## Audience labels

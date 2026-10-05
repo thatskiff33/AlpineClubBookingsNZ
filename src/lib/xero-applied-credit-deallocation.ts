@@ -1,4 +1,3 @@
-import { PaymentSource } from "@prisma/client";
 import { prisma } from "./prisma";
 import {
   deriveBookingAppliedCreditCents,
@@ -18,6 +17,7 @@ import {
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
 } from "./xero-operation-outbox-payload";
+import { busyWhileCardAllocationUnfinished } from "./xero-card-allocation-busy";
 import {
   assertNoAppliedCreditDeallocationFence,
   XeroAppliedCreditDeallocationEventualConsistencyError,
@@ -641,13 +641,12 @@ export async function deallocateExcessAppliedCreditForBooking(
     where: { id: bookingId },
     include: { payment: true },
   });
-  if (
-    !booking?.payment ||
-    booking.payment.source !== PaymentSource.INTERNET_BANKING ||
-    !booking.payment.xeroInvoiceId
-  ) {
+  // #3809: any booking whose applied credit is allocated against its invoice -
+  // bank transfer, or card since #1641 - not internet banking alone. The
+  // give-back queues this only where the allocation slices exceed the target.
+  if (!booking?.payment || !booking.payment.xeroInvoiceId) {
     await completeXeroSyncOperation(options.syncOperationId, {
-      responsePayload: { skipped: true, reason: "No allocated Internet-Banking invoice." },
+      responsePayload: { skipped: true, reason: "No allocated booking invoice." },
     });
     return;
   }
@@ -736,12 +735,16 @@ export async function deallocateExcessAppliedCreditForBooking(
       excludeOperationId: options.syncOperationId,
       allowUncheckpointedPending: true,
     });
-    await repairLegacyAppliedCreditNoteAllocationsForBooking(
-      bookingId,
-      booking.payment!.xeroInvoiceId!,
-      tx,
-      format,
-    );
+    try {
+      await repairLegacyAppliedCreditNoteAllocationsForBooking(
+        bookingId,
+        booking.payment!.xeroInvoiceId!,
+        tx,
+        format,
+      );
+    } catch (error) {
+      throw await busyWhileCardAllocationUnfinished(error, booking.payment!, tx);
+    }
     const desiredAppliedCents = await deriveBookingAppliedCreditCents(bookingId, tx);
     const rows = await tx.memberCreditNoteAllocation.findMany({
       where: { appliedToBookingId: bookingId },

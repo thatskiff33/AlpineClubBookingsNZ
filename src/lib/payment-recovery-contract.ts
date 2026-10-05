@@ -42,6 +42,30 @@ export function isPaymentProcessing(value: unknown): value is { code: typeof PAY
   return candidate.code === PAYMENT_PROCESSING_CODE && typeof candidate.error === "string";
 }
 
+// #3864: the pay step left the member's stored credit election unspent because
+// an earlier card intent could not be confirmed dead. The booking is still
+// payable; the member retries. One code, two server-written reasons.
+export const CREDIT_ELECTION_NOT_APPLIED_CODE = "CREDIT_ELECTION_NOT_APPLIED" as const;
+
+export const CREDIT_ELECTION_NOT_APPLIED_BODIES = Object.freeze({
+  cancelUnconfirmed: Object.freeze({
+    code: CREDIT_ELECTION_NOT_APPLIED_CODE,
+    error:
+      "We couldn't confirm your earlier card payment was cancelled, so your account credit has not been applied yet. Please try again in a few minutes.",
+  }),
+  otherPaymentStarted: Object.freeze({
+    code: CREDIT_ELECTION_NOT_APPLIED_CODE,
+    error:
+      "Another card payment for this booking was started while this one was opening, so your account credit has not been applied yet. Reload the page and try again.",
+  }),
+});
+
+export function isCreditElectionNotApplied(value: unknown): value is { code: typeof CREDIT_ELECTION_NOT_APPLIED_CODE; error: string } {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return candidate.code === CREDIT_ELECTION_NOT_APPLIED_CODE && typeof candidate.error === "string";
+}
+
 /**
  * #3641 / #3635: Stripe already holds an additional (modification) payment —
  * `succeeded` or `requires_capture` — and our rows have not caught up yet. The

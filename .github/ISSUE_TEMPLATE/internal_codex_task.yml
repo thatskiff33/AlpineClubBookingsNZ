@@ -61,7 +61,7 @@ body:
         An epic is one atomic release outcome whose intermediate child states
         must not reach downstream clubs on their own. A dependency, a shared
         theme, shared files, or having been found in the same audit do not make
-        an epic. See `docs/agents/ISSUE_WORKFLOW.md` → "What qualifies as an
+        an epic. See `docs/agents/EPIC_PLAYBOOK.md` → "What qualifies as an
         epic".
       options:
         - Standalone issue — independently useful, ships on its own
@@ -141,17 +141,6 @@ body:
         - ui
     validations:
       required: true
-  - type: dropdown
-    id: recommended_effort
-    attributes:
-      label: Recommended effort
-      options:
-        - xhigh
-        - high
-        - medium
-        - low
-    validations:
-      required: true
   - type: textarea
     id: context_files
     attributes:
@@ -212,11 +201,5 @@ body:
       description: >-
         What the PR must report back, and anything already known to be at risk.
         Residuals are resolved on the PR that finds them, not carried forward.
-    validations:
-      required: true
-  - type: textarea
-    id: codex_prompt
-    attributes:
-      label: Codex invocation prompt
     validations:
       required: true

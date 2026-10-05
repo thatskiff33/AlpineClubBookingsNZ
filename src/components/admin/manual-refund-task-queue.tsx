@@ -14,13 +14,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
-import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
 import type { ManualRefundTaskKind } from "@prisma/client";
 import {
@@ -71,6 +71,7 @@ import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import type { ClubFormat } from "@/lib/club-format";
 import { useClubFormat } from "@/components/club-format-provider";
 import { PartPaymentReviewXeroPaidLine } from "@/components/admin/part-payment-review-xero-paid-line";
+import { ManualRefundTaskStillOwedNotice } from "@/components/admin/manual-refund-task-still-owed-notice";
 
 const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 
@@ -1861,13 +1862,12 @@ export function ManualRefundTaskQueue() {
                         <Label htmlFor="manual-refund-task-amount">Amount</Label>
                         <div className="flex items-center gap-2">
                           <span className="text-sm">$</span>
-                          <Input
+                          <MoneyInput
                             id="manual-refund-task-amount"
-                            {...MONEY_INPUT_PROPS}
                             value={amountInput}
                             className="w-32"
-                            onChange={(event) =>
-                              setAmountInput(event.target.value)
+                            onValueChange={(value) =>
+                              setAmountInput(value)
                             }
                             {...amountHint.fieldProps}
                           />
@@ -1908,6 +1908,7 @@ export function ManualRefundTaskQueue() {
                         >
                           {zeroAmountRefusal ?? ""}
                         </p>
+                        <ManualRefundTaskStillOwedNotice taskId={target.task.id} shareCents={direction === "REFUND_TO_MEMBER" ? pricedAmountCents : null} />
                       </div>
                     </div>
                   ) : null}

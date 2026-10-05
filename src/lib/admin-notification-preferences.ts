@@ -59,7 +59,7 @@ export const ADMIN_NOTIFICATION_PREFERENCE_META = {
   adminBookingRequest: {
     label: "Public booking requests",
     description:
-      "Alerts when a public booking request is verified and ready for pricing, or when a request booking's hold expires unpaid.",
+      "Alerts when a public booking request is ready for pricing or approval, or when a request booking's hold expires unpaid.",
   },
   adminBookingReviewRequired: {
     label: "Booking review required",

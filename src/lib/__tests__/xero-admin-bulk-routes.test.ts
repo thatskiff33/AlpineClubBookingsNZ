@@ -365,7 +365,7 @@ describe("Xero admin bulk routes", () => {
         preservedStripeRefundCreditNoteLinks: 3,
       },
       message:
-        "Backfilled 1 missing canonical Xero link, deactivated 2 stale canonical links, and preserved 3 live Stripe per-delta refund note links (#2901).",
+        "Backfilled 1 missing canonical Xero link, deactivated 2 stale canonical links, and preserved 3 live per-refund note links (#2901, #3880).",
     });
   });
 

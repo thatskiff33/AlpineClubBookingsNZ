@@ -783,6 +783,134 @@ deallocation, membership-cancellation credit note, membership-cancellation
 contact update, group-settlement invoice, group-settlement invoice void,
 membership subscription invoice, and kept late-capture invoice (#3635).
 
+**An applied-credit deallocation has one producer**: `giveBackAppliedCredit`
+(`member-credit.ts`), the give-back of applied credit that the pre-payment
+clamp, a credit-paid booking's financial-review share (#3791, `INV-PAY-113`)
+and a credit-paid booking's ordinary price reduction (#3809, `INV-MOD-011`) all
+go through. Where a booking's credit is allocated against its invoice beyond
+the new applied figure - a bank transfer's (#1620) or, since #3809, a card
+booking's (#1641), decided by the allocation slices and not the payment's
+source - it queues the deallocation in
+the same transaction as the ledger row, and the PENDING row fences the inbound
+applied-credit repair until it converges, so an inbound sync cannot pull the
+given-back credit back up to Xero's figure. It never deallocates on a CANCELLED
+booking, whose invoice must not reopen. A review share then reaches Xero the way
+an ordinary price reduction does (`dispatchEditReviewAccountCreditXero`), held
+to three invariants for an issued invoice: the invoice less its reduction notes
+is the booking's price, Xero's due is the app's owed, and the member's Xero
+credit (counting noteless rows minted when spent, #2717) is the app's. So an
+invoice-allocated modification credit note takes off the whole reduction
+(`reviewInvoiceReductionCents`: the re-price's drop on an unpaid booking, the
+agreed share on a covered one), the unallocated account note is raised only for
+minted credit, and on a cancelled booking nothing but that minted note is sent:
+given-back credit there is a noteless row, as the cancellation's own restore is.
+A captured payment's share on a cancelled booking - card, bank-transfer
+hand-back or minted credit - is netted against what the cancellation returned
+first (#3835), and whatever its route raises follows the netted figure. Since
+#3880 the card refund and the bank-transfer hand-back raise what the paid
+cancellation's own card refund raises (`INV-SSOT`): a `REFUND_CREDIT_NOTE` on
+the payment (`enqueueXeroRefundCreditNoteOperation`), unallocated and settled by
+its own refund payment from the card clearing or bank-transfer refund account,
+worded by the route (`INV-PAY-101`) - so the cancelled invoice is never reopened
+and the clearing or bank account has a document for every cent that left. The
+hand-back's row is queued inside the completion transaction, after its ledger
+allocation, so it commits or rolls back with the money; the card refund's is
+queued after the Stripe call, since a note is capped at the cash Stripe has
+refunded (a lost one is uncovered cash, which the Stripe self-heal raises). It
+is sized to the netted capture part, capped by the payment's uncovered refunds
+as every refund note is. Only the OUTBOX row's correlation key carries the
+review task (`reviewTaskKeyParts`), so sibling reviews' equal refunds queue a
+row each and a replay finds its own queued row; the note's Xero idempotency key
+is the payment's watermark key with no task, as every refund note's is, so a
+crashed raise, a retry and a repair of the same cash still converge on one note
+(`INV-PAY-111`). Two rows sized off the same recorded coverage would therefore
+get one note: a run sizes only while no other live refund-note run on the
+payment is RUNNING (`assertNoRefundCreditNoteInFlight`) and otherwise waits in
+PENDING. A bank-transfer payment is noted per refund like a card: the task rides
+the row's payload, and the note's link is stamped `perDelta`, stays active
+beside its siblings and is never the payment's one canonical note: no writer
+records it in `Payment.xeroRefundCreditNoteId`, every reader of that field takes
+it through `canonicalRefundNoteFromField` (a field naming one counts as none),
+and the booking-repair pass ignores it. The row of a per-refund note records its
+watermark and `perDelta` mark too, so a retry of an inline row the operator's
+retry created is still a per-refund run. A `CANCELLED_BOOKING_HAND_BACK`'s own
+note is queued inside its completion transaction, as the review's hand-back is.
+The
+applied-credit part given back beside it takes no document: like the
+cancellation's own restore it is a noteless credit row, minted a note when spent
+(#2717), so the member's Xero credit lags the app's by exactly those rows until
+then. A booking with no invoice (settled in cash) raises nothing, as a note
+against no invoice could never succeed. For #3791's modification notes, by
+contrast, each note's correlation and Xero idempotency keys carry the review task
+(`reviewTaskKeyParts`), so sibling reviews of one edit raise a note each, and a
+review's allocated note waits, returned to PENDING with the reason kept in
+`lastErrorMessage`, while the payment's deallocation is PENDING or RUNNING. A
+FAILED or PARTIAL deallocation only moves on an operator retry, so the note
+fails instead, naming it: retry the deallocation, then the note. Since #3809 an
+edit's own modification note waits the same way: a paid booking's price
+reduction gives back applied credit through the same deallocation - all of a
+credit-paid booking's tiered reduction, or what a card-and-credit booking's
+card basis could not return - and `queueXeroBookingEditSettlement` takes it as
+`appliedCreditGiveBackCents`: always an allocated note of its own, worded as
+account credit - alone where nothing else was refunded, or beside the card or
+bank refund's note or a credit election's unallocated one, since one note names
+one method (`INV-PAY-101`). It rides the per-share key slot
+(`reviewTaskKeyParts`) under the scope `applied-credit-give-back` (nested under
+a review task's where there is one), so one key identifies it everywhere: the
+edit's own note never answers for it, and the repair pass reads it only there,
+so it can never mint a second. A card booking's deallocation that meets a slice
+whose #1641 allocation is still in its invoice operation waits rather than
+failing. So the invoice reopened by the deallocation
+is closed again and no unallocated note is raised for it. The note is queued
+after the commit, as every edit's is; if that queue fails, the repair pass
+(`MISSING_MODIFICATION_CREDIT_NOTE`) re-queues it at the give-back the edit's
+history row records - none where the tier gave nothing back - never at the
+whole reduction. A card-path booking paid by credit has no allocation to release
+(#3836); there the note alone takes the give-back off the invoice. Every
+guest-removal door queues this leg through `queueGuestRemovalXeroSettlement`,
+the consent decline and expiry included, which before #3809 queued nothing.
+A note worded as account credit moved no cash, so the inbound credit-note sync
+leaves it out of the fold of modification notes into a payment's refunded total
+(`accountCreditModificationNoteIds`). The repair pass reads the scoped
+give-back note apart from the edit's own, so neither hides the other.
+
+**Deploy note (blue/green, #3791).** A review's note carries `reviewTaskId` in
+its outbox payload, which the previous release ignores: it would raise the note
+under the anchor's unscoped keys and without waiting for the deallocation.
+Before the old colour's workers stop, drain or pause the outbox's modification
+credit-note rows written by the new release (or stop the old workers before the
+new release completes its first financial review). The outbox claim filters on
+known queue types only, so the alternative is a queue type of its own for review
+notes; that was not added. Since #3809 an edit's own modification note (no
+review task) waits on the deallocation too, which the previous release does not
+do, and a give-back beside a refund raises a second, scoped note: the same
+drain or pause covers both.
+
+**Deploy and rollback note (#3880).** The release before this one keeps one
+active refund note per bank-transfer payment: a later write of a refund-note
+link on that payment leaves active only the note its `xeroRefundCreditNoteId`
+names (with the field empty, the note written); with the field empty it takes
+any active note as the payment's one note, so a later cancellation hand-back is
+skipped as "already linked"; and its worker raises a review's queued row as that
+one note (no `perDelta` mark, recorded in the field). So, as for #3791, stop the
+old colour's outbox workers before the new release completes a review's refund
+on a cancelled booking. Before rolling back: (1) let every `CREDIT_NOTE` row on
+a `Payment` whose payload carries `reviewTaskId` finish, whatever its queue type
+(an operator's retry runs inline under a row with none), and mark a failed one
+resolved in Xero, until this read-only list is empty:
+`SELECT id, "queueType", status FROM "XeroSyncOperation" WHERE "localModel" = 'Payment' AND "entityType" = 'CREDIT_NOTE' AND "requestPayload"->>'reviewTaskId' IS NOT NULL AND status IN ('PENDING', 'RUNNING', 'FAILED', 'PARTIAL')`;
+(2) list the per-refund notes,
+`SELECT "localId", "xeroObjectId", active FROM "XeroObjectLink" WHERE role = 'REFUND_CREDIT_NOTE' AND metadata->>'perDelta' = 'true'`.
+None: the rollback is safe. Any: the old code can switch those links off, so
+roll back only if needed and, after rolling forward again, list them once more.
+A listed link that is inactive while its note is still live in Xero (not VOIDED
+or DELETED) must be set active again by hand
+(`UPDATE "XeroObjectLink" SET active = true WHERE role = 'REFUND_CREDIT_NOTE' AND "localId" = '<payment>' AND "xeroObjectId" = '<note>'`):
+nothing in the app does it, as the inbound reconcile reaches only active links.
+Then check that each of those payments' `xeroRefundCreditNoteId` names its
+cancellation's note or is null, and that a hand-back completed meanwhile has its
+note.
+
 **Retry taxonomy** (each layer is distinct — do not conflate when changing):
 
 1. **Transport** — `withXeroRetry` retries 429/5xx/408 in-process with backoff;
@@ -871,7 +999,14 @@ cash NOT already minted for the other (a defensive invariant — no app flow
 produces that shape; the remaining-cash read-back happens inside each payment's
 reconcile transaction under the shared advisory lock, so it stays idempotent
 under retry, and a capped mint raises the same loud alert, never a silent
-overmint).
+overmint). The late-capacity-failure cancel also restores the booking's applied
+account credit in full, under the per-member credit-ledger lock and only once
+no applied-credit deallocation is unconverged (#3792). The inbound credit-note
+sync then leaves that booking's member ledger alone: a later de-allocation or
+raise in Xero on a booking with a restore row writes nothing, raises
+`applied-credit-restored-booking-allocation-change` through
+`notifyXeroSyncError`, and records a critical `xero` audit row, which survives
+that alert's one-an-hour throttle (`INV-PAY-019`).
 
 ```mermaid
 sequenceDiagram

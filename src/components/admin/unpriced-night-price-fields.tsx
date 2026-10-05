@@ -3,10 +3,9 @@
 import { useId, useState } from "react";
 
 import { describedByFieldHint, FieldHint } from "@/components/ui/field-hint";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MoneyInput } from "@/components/ui/money-input";
 import {
-  MONEY_INPUT_PROPS,
   parseDecimalDollarsToCents,
 } from "@/lib/money-input";
 import { formatCents } from "@/lib/utils";
@@ -171,13 +170,12 @@ export function UnpricedNightPriceFields({
               {formatClubDate(date, format)}
             </Label>
             <span className="text-sm">$</span>
-            <Input
+            <MoneyInput
               id={`${inputIdPrefix}-${date}`}
-              {...MONEY_INPUT_PROPS}
               className="w-28"
               value={values[date] ?? ""}
               disabled={disabled}
-              onChange={(event) => onChange(date, event.target.value)}
+              onValueChange={(value) => onChange(date, value)}
               onBlur={() =>
                 setBoxesLeft((current) => ({ ...current, [date]: true }))
               }

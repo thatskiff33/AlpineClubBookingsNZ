@@ -249,6 +249,8 @@ export interface SettlementOptions {
   accountCreditPercentage: number;
   daysUntilCheckIn: number;
   requiresSettlementMethod: boolean;
+  /** #3653: paid for by the group organiser; the reduction goes back to their card. */
+  returnsToOrganiser: boolean;
 }
 
 export interface QuoteResult {
@@ -260,6 +262,15 @@ export interface QuoteResult {
   changeFeeCents: number;
   netChargeCents: number;
   settlementOptions: SettlementOptions | null;
+  // #3809: applied credit saving would give back on a paid booking - all of a
+  // credit-paid one's tiered reduction, or what a card refund leaves.
+  appliedCreditGiveBackCents?: number;
+  /**
+   * #3653: set when the save would refuse this increase because the group
+   * organiser paid for the booking by card. The server's sentence, shown
+   * verbatim; Save stays off while it is set.
+   */
+  chargeRefusal?: string | null;
   // #2266: the member's live credit balance (create-flow quote parity).
   availableCreditCents?: number;
   capacityAvailable: boolean;

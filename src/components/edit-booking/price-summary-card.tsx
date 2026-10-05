@@ -377,6 +377,17 @@ export function PriceSummaryCard({
               </div>
             )}
 
+            {quote.chargeRefusal && (
+              // #3653: the organiser paid by card; the save refuses this charge.
+              <p
+                role="alert"
+                data-testid="organiser-charge-refusal"
+                className="rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11"
+              >
+                {quote.chargeRefusal}
+              </p>
+            )}
+
             {quote.netChargeCents < 0 && quote.settlementOptions && (
               <div className="space-y-2 rounded-md border p-3 text-sm">
                 <div className="flex items-center justify-between">
@@ -388,7 +399,14 @@ export function PriceSummaryCard({
                     Booking → you
                   </span>
                 </div>
-                {quote.settlementOptions.requiresSettlementMethod ? (
+                {quote.settlementOptions.returnsToOrganiser ? (
+                  // #3653: the organiser paid, so the organiser is refunded.
+                  <p data-testid="organiser-refund-notice">
+                    {quote.settlementOptions.cardRefundAmountCents > 0
+                      ? `Refunded to the group organiser's card: ${formatCents(quote.settlementOptions.cardRefundAmountCents, format)} (${quote.settlementOptions.cardRefundPercentage}%). The organiser paid for this booking, so the refund goes back to them.`
+                      : "No refund is available for this reduction under the current policy."}
+                  </p>
+                ) : quote.settlementOptions.requiresSettlementMethod ? (
                   <div className="space-y-2">
                     <label className="flex cursor-pointer items-start gap-2">
                       <input
@@ -435,6 +453,15 @@ export function PriceSummaryCard({
                   </p>
                 )}
               </div>
+            )}
+
+            {/* #3809: the booking's applied credit coming back, beside (or
+                instead of) a card refund - no choice to make, there is no card. */}
+            {quote.netChargeCents < 0 && (quote.appliedCreditGiveBackCents ?? 0) > 0 && (
+              <p className="rounded-md border p-3 text-sm" data-testid="applied-credit-give-back">
+                Returned as account credit:{" "}
+                <span className="font-medium">{formatCents(quote.appliedCreditGiveBackCents ?? 0, format)}</span>
+              </p>
             )}
 
             {!quote.promoStillValid && promoAction.type === "keep" && promo && (
