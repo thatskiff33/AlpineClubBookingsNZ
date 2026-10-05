@@ -94,6 +94,7 @@ import {
   type QueuedOutboxExpectedOperation,
   type QueuedOutboxPayload,
 } from "@/lib/xero-operation-outbox-payload";
+import { queuedReviewTaskId, reviewTaskKeyParts } from "@/lib/xero-review-task-key";
 import { formatDateOnly } from "@/lib/date-only";
 import { clubFormatValues } from "@/lib/club-format-server";
 
@@ -806,6 +807,9 @@ export async function enqueueXeroRefundCreditNoteOperation(
      * for a note raised after the fact. Omitted, the note is dated today.
      */
     documentDate?: string;
+    /** #3880: a review's refund on a CANCELLED booking - keyed on the task, and
+     * noted per refund, capped by coverage, on a bank transfer as on a card. */
+    reviewTaskId?: string;
   }
 ) {
   // Optional transaction client (#1357) so callers (e.g. the Internet Banking
@@ -867,7 +871,8 @@ export async function enqueueXeroRefundCreditNoteOperation(
   let noteAmountCents = refundAmountCents;
   let watermarkCents = refundAmountCents;
 
-  if (payment.source === PaymentSource.STRIPE) {
+  const stepped = payment.source === PaymentSource.STRIPE || Boolean(options?.reviewTaskId);
+  if (stepped) {
     // Stripe payments can be refunded in several steps, and each step needs
     // its own credit note for the still-uncovered delta. The cumulative total
     // a refund note may cover is the provider-backed CASH evidence (#2902,
@@ -941,8 +946,9 @@ export async function enqueueXeroRefundCreditNoteOperation(
     "payment",
     paymentId,
     "refund-credit-note",
-    payment.source === PaymentSource.STRIPE ? watermarkCents : noteAmountCents,
-    payment.source === PaymentSource.STRIPE ? "v2" : "v1"
+    stepped ? watermarkCents : noteAmountCents,
+    stepped ? "v2" : "v1",
+    ...reviewTaskKeyParts(options?.reviewTaskId)
   );
 
   // #3635: a non-Stripe payment issues one refund, so the resolved create for
@@ -1001,6 +1007,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
       ...(options?.refundMethod ? { refundMethod: options.refundMethod } : {}),
       ...(options?.paymentIntentId ? { paymentIntentId: options.paymentIntentId } : {}),
       ...(options?.documentDate ? { documentDate: options.documentDate } : {}),
+      ...(options?.reviewTaskId ? { reviewTaskId: options.reviewTaskId } : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
     store: db,
@@ -2136,6 +2143,12 @@ export async function enqueueXeroModificationCreditNoteOperation(
     bookingId: string;
     refundAmountCents: number;
     bookingModificationId?: string;
+    /**
+     * #3791: one review task's share, so the note is scoped to that task
+     * (`reviewTaskKeyParts`) and a sibling review's note on the same edit is
+     * neither folded into it nor refused by its link.
+     */
+    reviewTaskId?: string;
   } & ModificationNoteWording,
   options?: {
     createdByMemberId?: string;
@@ -2148,6 +2161,7 @@ export async function enqueueXeroModificationCreditNoteOperation(
     refundAmountCents,
     bookingModificationId,
   } = params;
+  const reviewTaskId = bookingModificationId ? params.reviewTaskId : undefined;
   const db = options?.store ?? prisma;
 
   if (refundAmountCents <= 0) {
@@ -2183,16 +2197,21 @@ export async function enqueueXeroModificationCreditNoteOperation(
   const localModel = bookingModificationId ? "BookingModification" : "Booking";
   const localId = bookingModificationId ?? bookingId;
 
-  const existingLink = await db.xeroObjectLink.findFirst({
-    where: {
-      localModel,
-      localId,
-      xeroObjectType: "CREDIT_NOTE",
-      role: "MODIFICATION_CREDIT_NOTE",
-      active: true,
-    },
-    select: { id: true },
-  });
+  // An edit's own note: one per anchor, so a link already there answers it. A
+  // review task's share is one of possibly several on that anchor, so its own
+  // key - including a SUCCEEDED row - is what answers it instead (#3791).
+  const existingLink = reviewTaskId
+    ? null
+    : await db.xeroObjectLink.findFirst({
+        where: {
+          localModel,
+          localId,
+          xeroObjectType: "CREDIT_NOTE",
+          role: "MODIFICATION_CREDIT_NOTE",
+          active: true,
+        },
+        select: { id: true },
+      });
 
   if (existingLink) {
     return {
@@ -2204,6 +2223,7 @@ export async function enqueueXeroModificationCreditNoteOperation(
   const correlationKey = buildXeroIdempotencyKey(
     bookingModificationId ? "booking-mod" : "booking",
     localId,
+    ...reviewTaskKeyParts(reviewTaskId),
     "mod-credit-note",
     refundAmountCents,
     "v1"
@@ -2218,7 +2238,7 @@ export async function enqueueXeroModificationCreditNoteOperation(
       localModel,
       localId,
       status: {
-        in: ["PENDING", "RUNNING"],
+        in: reviewTaskId ? ["PENDING", "RUNNING", "SUCCEEDED"] : ["PENDING", "RUNNING"],
       },
     },
     orderBy: {
@@ -2247,6 +2267,7 @@ export async function enqueueXeroModificationCreditNoteOperation(
       bookingId,
       refundAmountCents,
       bookingModificationId: bookingModificationId ?? null,
+      ...(reviewTaskId ? { reviewTaskId } : {}),
       ...readModificationNoteWording(params),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
@@ -2264,6 +2285,8 @@ export async function enqueueXeroModificationAccountCreditNoteOperation(
     bookingId: string;
     refundAmountCents: number;
     bookingModificationId: string;
+    /** #3791: as on `enqueueXeroModificationCreditNoteOperation`. */
+    reviewTaskId?: string;
   },
   options?: { createdByMemberId?: string }
 ) {
@@ -2271,6 +2294,7 @@ export async function enqueueXeroModificationAccountCreditNoteOperation(
     bookingId,
     refundAmountCents,
     bookingModificationId,
+    reviewTaskId,
   } = params;
 
   if (refundAmountCents <= 0) {
@@ -2303,16 +2327,20 @@ export async function enqueueXeroModificationAccountCreditNoteOperation(
     };
   }
 
-  const existingLink = await prisma.xeroObjectLink.findFirst({
-    where: {
-      localModel: "BookingModification",
-      localId: bookingModificationId,
-      xeroObjectType: "CREDIT_NOTE",
-      role: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
-      active: true,
-    },
-    select: { id: true },
-  });
+  // As on the invoice-applied note: a review task's share answers to its own
+  // key, never to the anchor's link (#3791).
+  const existingLink = reviewTaskId
+    ? null
+    : await prisma.xeroObjectLink.findFirst({
+        where: {
+          localModel: "BookingModification",
+          localId: bookingModificationId,
+          xeroObjectType: "CREDIT_NOTE",
+          role: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+          active: true,
+        },
+        select: { id: true },
+      });
 
   if (existingLink) {
     return {
@@ -2324,6 +2352,7 @@ export async function enqueueXeroModificationAccountCreditNoteOperation(
   const correlationKey = buildXeroIdempotencyKey(
     "booking-mod",
     bookingModificationId,
+    ...reviewTaskKeyParts(reviewTaskId),
     "mod-account-credit-note",
     refundAmountCents,
     "v1"
@@ -2338,7 +2367,7 @@ export async function enqueueXeroModificationAccountCreditNoteOperation(
       localModel: "BookingModification",
       localId: bookingModificationId,
       status: {
-        in: ["PENDING", "RUNNING"],
+        in: reviewTaskId ? ["PENDING", "RUNNING", "SUCCEEDED"] : ["PENDING", "RUNNING"],
       },
     },
     orderBy: {
@@ -2368,6 +2397,7 @@ export async function enqueueXeroModificationAccountCreditNoteOperation(
       paymentId: booking.payment.id,
       refundAmountCents,
       bookingModificationId,
+      ...(reviewTaskId ? { reviewTaskId } : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
   });
@@ -2966,6 +2996,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
               : {}),
             ...(payload.paymentIntentId ? { paymentIntentId: payload.paymentIntentId } : {}),
             ...(payload.documentDate ? { documentDate: payload.documentDate } : {}),
+            ...(queuedReviewTaskId(queuedOperation) ? { reviewTaskId: queuedReviewTaskId(queuedOperation) } : {}),
           }
         );
       } else if (
@@ -2988,6 +3019,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
           paymentId: payload.paymentId,
           refundAmountCents: payload.refundAmountCents,
           bookingModificationId: payload.bookingModificationId,
+          reviewTaskId: queuedReviewTaskId(queuedOperation),
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
           format,
@@ -3019,6 +3051,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
           bookingId: payload.bookingId,
           refundAmountCents: payload.refundAmountCents,
           bookingModificationId: payload.bookingModificationId,
+          reviewTaskId: queuedReviewTaskId(queuedOperation),
           ...readModificationNoteWording(payload),
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
@@ -3085,13 +3118,15 @@ export async function processQueuedXeroOutboxOperations(options?: {
         // for the same Payment before either handler observes the other. That
         // collision is transient: return this row to PENDING so the next scan
         // serializes them, rather than stranding both rows as FAILED.
+        // #3791: the reason stays on the row, so a note waiting on a
+        // deallocation says what it is waiting for.
         await prisma.xeroSyncOperation.updateMany({
           where: { id: queuedOperation.id, status: "RUNNING" },
           data: {
             status: "PENDING",
             startedAt: null,
             lastErrorCode: null,
-            lastErrorMessage: null,
+            lastErrorMessage: error.message,
           },
         });
         result.skipped += 1;

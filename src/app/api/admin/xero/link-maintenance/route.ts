@@ -26,7 +26,7 @@ export async function POST() {
       ok: true,
       backfill,
       cleanup,
-      message: `Backfilled ${backfill.totals.createdLinks} missing canonical Xero link${backfill.totals.createdLinks === 1 ? "" : "s"}, deactivated ${cleanup.deactivatedLinks} stale canonical link${cleanup.deactivatedLinks === 1 ? "" : "s"}, and preserved ${cleanup.preservedStripeRefundCreditNoteLinks} live Stripe per-delta refund note link${cleanup.preservedStripeRefundCreditNoteLinks === 1 ? "" : "s"} (#2901).`,
+      message: `Backfilled ${backfill.totals.createdLinks} missing canonical Xero link${backfill.totals.createdLinks === 1 ? "" : "s"}, deactivated ${cleanup.deactivatedLinks} stale canonical link${cleanup.deactivatedLinks === 1 ? "" : "s"}, and preserved ${cleanup.preservedStripeRefundCreditNoteLinks} live per-refund note link${cleanup.preservedStripeRefundCreditNoteLinks === 1 ? "" : "s"} (#2901, #3880).`,
     });
   } catch (error) {
     logger.error({ err: error }, "Failed to run Xero link ledger maintenance");

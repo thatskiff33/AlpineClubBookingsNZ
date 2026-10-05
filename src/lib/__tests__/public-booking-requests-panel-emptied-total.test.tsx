@@ -121,7 +121,7 @@ describe("PublicBookingRequestsPanel: an emptied total refuses rather than falli
 
     fireEvent.click(screen.getByRole("button", { name: "Save quote" }));
 
-    expect(await screen.findByText(/Enter a valid .*total/i)).toBeTruthy();
+    expect(await screen.findByText(/Enter .*total in dollars and cents, up to 2 decimal places/i)).toBeTruthy();
 
     // And nothing was sent. The refusal has to happen before the request, not
     // be a message shown after one.

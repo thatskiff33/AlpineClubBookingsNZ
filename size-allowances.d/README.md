@@ -18,7 +18,7 @@ branches cannot conflict over files they do not share.
 
 That is not a local trick, it is a rule: **an artifact every lane adds an entry
 to is a directory of per-lane fragments, never one shared file.** It lives in
-`AGENTS.md` -> "Change Discipline", and
+`AGENTS.md` -> "Change discipline", and
 [`changelog.d/README.md`](../changelog.d/README.md) - the original of the
 pattern - carries the full statement, the other instances, and when
 `merge=union` is the right remedy instead. This directory being one *instance*

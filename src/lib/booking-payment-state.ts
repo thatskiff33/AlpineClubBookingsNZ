@@ -3,10 +3,21 @@
  * refunded since. `REFUNDED` belongs here: the question is whether a capture
  * ever happened, not whether the club still holds the cash.
  *
- * THE ONE HOME for this list (`INV-SSOT-001`, #3340). There were two copies —
- * this module's and `additional-ledger-gap.ts`'s — and the change that
- * generalised the ledger mirror added a third, which is the finding that put the
- * list here. This file is a pure leaf — no
+ * THE ONE HOME for this list (`INV-SSOT-001`, #3340, #3503). Every reader of an
+ * aggregate `Payment.status` asks `isCapturedPaymentStatus` or spreads
+ * `CAPTURED_PAYMENT_STATUS_LIST`. `payment-transaction-status-list-guard.test.ts`
+ * holds that by TEXT over `src/`, `scripts/` and `prisma/` (not migrations): it
+ * refuses a list, comparison chain, fall-through `switch`, `true`-keyed map or
+ * SQL `IN (…)` naming exactly these three, outside its named exceptions, and
+ * pins the set of modules that read `isCapturedPaymentStatus` or
+ * `CAPTURED_PAYMENT_STATUS_LIST` directly. Readers of the derived
+ * `hasCapturedPayment` / `getRemainingRefundableCents` are not registered; the
+ * guard's by-name receiver tripwire refuses `hasCapturedPayment` handed a
+ * value named for a transaction, and nothing stronger. It cannot see a copy built
+ * indirectly (a filter over the enum, a list assembled at runtime) or a superset
+ * of these three. #3340 once routed
+ * `additional-ledger-gap.ts` here, but that module reads `PaymentTransaction`
+ * rows, so #3632 moved it to the transaction leaf. This file is a pure leaf — no
  * client, no logger, no `server-only` — so a census, a route and a page can all
  * import it without dragging anything behind it.
  *
@@ -179,6 +190,58 @@ export function cancelRefundableBaseCents(input: {
   return (
     Math.min(paidAmountCents, input.finalPriceCents + input.changeFeeCents) -
     input.changeFeeCents
+  );
+}
+
+/**
+ * #3809: the applied-credit slice a paid cancellation tiers, capped exactly as
+ * the card slice is - money paid and credit applied together count no further
+ * than the booking is now worth, money first. Without the cap, credit left
+ * applied above a reduced price (a reduction's policy-kept share) came back at
+ * the cancellation, so a credit-paid member got more than a card-paid one.
+ * The difference of two `cancelRefundableBaseCents`, so there is one base rule.
+ *
+ * ONLY FOR A BOOKING REDUCED THROUGH #3809's SETTLEMENT (owner decision of 4 Oct
+ * 2026, "Cap new reductions only"): `capAtWorth` is
+ * `bookingReducedThroughCreditGiveBack`. Any other booking tiers all the credit
+ * still applied, as before the cap - a credit-paid booking reduced before that
+ * release is never short.
+ */
+export function cancelAppliedCreditBaseCents(input: {
+  amountCents: number;
+  refundedAmountCents: number;
+  finalPriceCents: number;
+  changeFeeCents: number;
+  creditAppliedCents: number;
+  capAtWorth: boolean;
+}): number {
+  if (!input.capAtWorth) return Math.max(0, input.creditAppliedCents);
+  const withCredit = cancelRefundableBaseCents({ ...input, amountCents: input.amountCents + input.creditAppliedCents });
+  return Math.max(0, Math.min(input.creditAppliedCents, withCredit - cancelRefundableBaseCents(input)));
+}
+
+/**
+ * #1473/#1491: the pre-ledger half of a cancel's capture evidence, for a payment
+ * with no captured `PaymentTransaction` row to read. A STRIPE payment's refund
+ * mirror is trustworthy there: a Stripe refund needs a captured charge, and the
+ * invoice-side fold cannot reach an uncaptured Stripe booking (its Xero invoice
+ * is issued only at or after capture). Any other source's mirror is NOT: the
+ * inbound reconcile folds invoice-applied modification credit notes into
+ * `refundedAmountCents` / `PARTIALLY_REFUNDED` on never-captured Internet
+ * Banking payments, which is bookkeeping, not cash. The one home for that rule
+ * (`INV-SSOT-001`, #3630): `booking-cancel.ts` asks it after a ledger query,
+ * `cancel-flattened-payment-backfill.ts` after an in-memory ledger read.
+ */
+export function stripeRefundMirrorShowsCapture(payment: {
+  source: string;
+  status: string;
+  refundedAmountCents: number;
+}): boolean {
+  return (
+    payment.source === "STRIPE" &&
+    (payment.status === "REFUNDED" ||
+      payment.status === "PARTIALLY_REFUNDED" ||
+      payment.refundedAmountCents > 0)
   );
 }
 

@@ -1152,7 +1152,7 @@ function deriveBookingOperationalState(
       }))
     : [];
   const creditGenerated =
-    booking.creditsFromCancellation.length > 0 ||
+    booking.creditsFromCancellation.length > 0 || // a review's give-back counts: credit was given (#3791)
     booking.modifications.some((modification) => modification.creditsFromModification.length > 0);
 
   return {

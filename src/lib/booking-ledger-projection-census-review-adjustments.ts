@@ -1,0 +1,413 @@
+/**
+ * WHAT A REVIEW CLOSURE'S `AGREED_ADJUSTMENT` LINES SHOULD SAY, READ FROM THE
+ * BOOKING'S OWN ROWS (#3583 against #3791; design `docs/design/booking-ledger.md`
+ * §5.3, §6).
+ *
+ * A stand-in records the share as typed, with one exception #3791 made: on a
+ * booking paid by account credit, a closure completed AFTER the cancellation
+ * credits only what is still owed once its slice is netted against the
+ * restore, and its stand-in posts that (none at zero). And on a booking its
+ * credit covered, the give-back beyond the closure's re-price posts under its
+ * own `agreed-give-back:` key: a price below what the strands, and so
+ * `finalPriceCents`, will ever say.
+ *
+ * Neither figure is stored per task. What is stored is the money each one is
+ * made of: the review give-back rows (`BOOKING_APPLIED` naming the booking as
+ * source and target, `reviewGiveBackRowsWhere`), the share credit minted
+ * beside them, and each closure's re-price (its `PRICE_REBASE` row). So a line
+ * is borne out only when those rows make it, each row used once, and a
+ * give-back row no line accounts for on a live booking is evidence of a line
+ * that is missing. Where a row could instead be absorbed by another task's
+ * re-price, or two rows sit beside give-back lines, nothing says which task a
+ * row is: that live booking fails closed as `AMBIGUOUS_REVIEW_GIVE_BACK`
+ * (#3583's delta review). After a cancellation, stand-ins the rows could
+ * make another way at the same total, or too many to search within the
+ * census's budget, fail closed the same way (#3913).
+ *
+ * #3835 (#3907): on a CAPTURED payment the same netting sends the capture's
+ * part back to the capture - a card refund (the task's frozen Stripe debt,
+ * `buildEditFinancialReviewRefundRecoveryIdempotencyKey`) or a hand-back (its
+ * `BANK_REFUND` line) - and only the credit's part comes back as a give-back.
+ * So after a cancellation a stand-in is borne out by that task's own refund
+ * plus the rows, the facts #3835's `settledSinceCancellation` reads, and a
+ * hand-back smaller than the share is borne out only by such a stand-in. Pure:
+ * the snapshot row in, the judgement out.
+ */
+import { liveLines } from "@/lib/booking-ledger-modification-posting";
+import { isAgreedGiveBackKey } from "@/lib/booking-ledger-posting-keys";
+import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
+import { editReviewSettlementSign, isEditReviewHandBackLine } from "@/lib/edit-financial-review-charge-shape";
+import { buildEditFinancialReviewRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
+
+export type ReviewAdjustmentEvidence = {
+  /** A live review `AGREED_ADJUSTMENT` the rows do not bear out, by line id, with why. */
+  drift: ReadonlyMap<string, string>;
+  /** Σ live `agreed-give-back:` lines (≤ 0): a price below the strands', which `finalPriceCents` never carries. */
+  agreedGiveBackLineCents: number;
+  /**
+   * What the give-back rows say those lines come to (≤ 0, a live booking's):
+   * the lines the rows bear out, plus any give-back no line or re-price
+   * accounts for — the line that should have recorded it is missing. Exact
+   * only where no row could be absorbed elsewhere; the class below says when.
+   */
+  agreedGiveBackEvidenceCents: number;
+  /**
+   * A booking whose give-back rows cannot be attributed to its tasks
+   * (`AMBIGUOUS_REVIEW_GIVE_BACK`), with the figures the owner signs off, each
+   * named and as positive cents; null where every row is attributed exactly.
+   */
+  ambiguous: ReadonlyArray<{ detail: string; cents: number }> | null;
+  /** #3835: hand-backs smaller than their share, each borne out by its task's stand-in (by line id). */
+  nettedHandBackLineIds: ReadonlySet<string>;
+};
+
+function isReviewAdjustment(line: CensusLedgerLine): boolean {
+  return line.kind === "AGREED_ADJUSTMENT" && line.anchorKind === "REVIEW_TASK";
+}
+
+/** Remove one `cents` from `pool`; false if it holds none. */
+function take(pool: number[], cents: number): boolean {
+  const index = pool.indexOf(cents);
+  if (index < 0) return false;
+  pool.splice(index, 1);
+  return true;
+}
+
+/** What one closure's re-price took off the final price (`previous − new`), 0 where it wrote no row. */
+function repricedAwayCents(row: BookingLedgerCensusRow, taskId: string): number {
+  return row.modifications.reduce(
+    (sum, modification) => (modification.reviewRebase?.taskId === taskId ? sum - modification.reviewRebase.movementCents : sum),
+    0,
+  );
+}
+
+/**
+ * A stand-in after the cancellation: what it credited, what its task's own
+ * route returned to the capture, and whether that route ever refunded it at
+ * all - a hand-back since reversed included (#3913 lens 3).
+ */
+type CreditedShare = { creditedCents: number; ownRefundCents: number; refunded: boolean };
+
+/**
+ * How many steps one booking's attribution searches may take between them
+ * (#3913 lens 3). Each step is one figure tried for one stand-in; a booking
+ * with a handful of reviews needs dozens, and the whole budget is a fraction
+ * of a second. The census runs inside one snapshot over the club's whole
+ * history, so a booking with many reviews and many share credits must not
+ * hold it for minutes: past the budget the search stops, and the booking
+ * FAILS CLOSED as `AMBIGUOUS_REVIEW_GIVE_BACK`, never as exactness.
+ */
+const ATTRIBUTION_SEARCH_STEPS = 1_000_000;
+
+/** What one booking's searches have left to spend; `exhausted` once any of them ran out. */
+type SearchBudget = { stepsLeft: number; exhausted: boolean };
+
+function spend(budget: SearchBudget): boolean {
+  if (budget.stepsLeft <= 0) {
+    budget.exhausted = true;
+    return false;
+  }
+  budget.stepsLeft -= 1;
+  return true;
+}
+
+/** `pool` less one `cents` (none taken for 0); `pool` is sorted, and stays so. */
+function without(pool: readonly number[], cents: number): readonly number[] {
+  if (cents === 0) return pool;
+  const index = pool.indexOf(cents);
+  return index < 0 ? pool : [...pool.slice(0, index), ...pool.slice(index + 1)];
+}
+
+const sorted = (pool: readonly number[]) => [...pool].sort((a, b) => a - b);
+
+/**
+ * Can every credited figure be made of its task's own refund plus one
+ * give-back row, one share credit, or one of each, no row used twice? A
+ * figure the refund makes alone needs no row; nothing makes a figure of zero.
+ * A task that ever refunded the capture (#3835's card and bank routes, a
+ * hand-back since reversed included) never mints: what it credited beyond its
+ * refund is a give-back row alone, so an edit's unrelated share credit cannot
+ * stand in for a missing one (#3913 G1). Null where the budget ran out first.
+ */
+function creditedFromRows(credited: readonly CreditedShare[], giveBacks: readonly number[], minted: readonly number[], budget: SearchBudget): boolean | null {
+  // A pool left that failed from a stand-in on fails again: remember it.
+  const failed = new Set<string>();
+  const search = (index: number, giveBacksLeft: readonly number[], mintedLeft: readonly number[]): boolean | null => {
+    const share = credited[index];
+    if (share === undefined) return true;
+    const fromRowsCents = share.creditedCents - share.ownRefundCents;
+    if (fromRowsCents < 0) return false;
+    if (fromRowsCents === 0) return share.ownRefundCents > 0 && search(index + 1, giveBacksLeft, mintedLeft);
+    const key = `${index}|${giveBacksLeft.join(",")}|${mintedLeft.join(",")}`;
+    if (failed.has(key)) return false;
+    for (const givenBack of [0, ...new Set(giveBacksLeft)]) {
+      const mint = fromRowsCents - givenBack;
+      if (mint < 0 || (mint !== 0 && (share.refunded || !mintedLeft.includes(mint)))) continue;
+      if (!spend(budget)) return null;
+      const made = search(index + 1, without(giveBacksLeft, givenBack), without(mintedLeft, mint));
+      if (made !== false) return made;
+    }
+    failed.add(key);
+    return false;
+  };
+  return search(0, sorted(giveBacks), sorted(minted));
+}
+
+/**
+ * How many different sets of stand-in figures (counted to two) the census
+ * would accept at the booking's total: each its task's own refund plus at
+ * most one give-back row and, where it never refunded, one share credit - no
+ * row used twice - up to the share, or the share itself where it refunded
+ * nothing. Where the lines as posted are made so, they are one of them; a
+ * second is a set the rows cannot tell from it (#3913 F2). Null where the
+ * budget ran out first.
+ *
+ * Each stand-in's figure is bounded by what the rest can still come to, and
+ * what one remaining pool and total can still make is worked out once.
+ */
+function distinctMakings(
+  standIns: readonly (CreditedShare & { shareCents: number })[],
+  giveBacks: readonly number[],
+  minted: readonly number[],
+  budget: SearchBudget,
+): number | null {
+  const totalCents = standIns.reduce((sum, share) => sum + share.creditedCents, 0);
+  // The least and most the stand-ins from each index on can come to.
+  const least = standIns.map((_, index) => standIns.slice(index).reduce((sum, share) => sum + (share.ownRefundCents > 0 ? share.ownRefundCents : Math.min(1, share.shareCents)), 0));
+  const most = standIns.map((_, index) => standIns.slice(index).reduce((sum, share) => sum + share.shareCents, 0));
+  const known = new Map<string, readonly string[]>();
+  // The figure lists (counted to two) that make `targetCents` from `index` on.
+  const tails = (index: number, giveBacksLeft: readonly number[], mintedLeft: readonly number[], targetCents: number): readonly string[] | null => {
+    const share = standIns[index];
+    if (share === undefined) return targetCents === 0 ? [""] : [];
+    if (targetCents < least[index]! || targetCents > most[index]!) return [];
+    const key = `${index}|${targetCents}|${giveBacksLeft.join(",")}|${mintedLeft.join(",")}`;
+    const seen = known.get(key);
+    if (seen) return seen;
+    const found = new Set<string>();
+    const own = share.ownRefundCents;
+    const last = index + 1 === standIns.length;
+    // Try one figure, each try a step; true once two lists are found, null once the budget is spent.
+    const tryFigure = (cents: number, givenBack: number, mint: number): boolean | null => {
+      if (!spend(budget)) return null;
+      // A figure the rest cannot complete is ruled out before anything is built.
+      const restCents = targetCents - cents;
+      if (last ? restCents !== 0 : restCents < least[index + 1]! || restCents > most[index + 1]!) return false;
+      const rest = tails(index + 1, without(giveBacksLeft, givenBack), without(mintedLeft, mint), restCents);
+      if (rest === null) return null;
+      for (const tail of rest) found.add(`${cents};${tail}`);
+      return found.size > 1;
+    };
+    // Give-back rows first, largest first, each before any share credit is
+    // added to it, and the whole share last: where a second making exists
+    // it is most often two rows swapped, found soonest so.
+    let done: boolean | null = false;
+    for (const givenBack of [...new Set(giveBacksLeft)].reverse().concat(0)) {
+      for (const mint of share.refunded ? [0] : [0, ...[...new Set(mintedLeft)].reverse()]) {
+        if (done !== false) break;
+        const cents = own + givenBack + mint;
+        if (cents <= 0 || cents > share.shareCents || (own === 0 && cents === share.shareCents)) continue;
+        done = tryFigure(cents, givenBack, mint);
+      }
+    }
+    if (done === false && own === 0) done = tryFigure(share.shareCents, 0, 0);
+    if (done === null) return null;
+    const result = [...found].slice(0, 2);
+    known.set(key, result);
+    return result;
+  };
+  const made = tails(0, sorted(giveBacks), sorted(minted), totalCents);
+  return made === null ? null : made.length;
+}
+
+/**
+ * What one review's captured route returned to the capture (#3835), from its
+ * own rows: the card refund it froze as a debt, and the hand-back it posted;
+ * and whether it ever refunded at all, a hand-back a later reversal undid
+ * included (the original keeps `reversesLineId: null`).
+ */
+function ownRefundOf(row: BookingLedgerCensusRow, taskId: string): { cents: number; refunded: boolean; handBackLineIds: string[] } {
+  const key = buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId);
+  const debts = row.recoveryOperations.filter((operation) => operation.idempotencyKey === key);
+  const cardCents = debts.reduce((sum, operation) => sum + operation.amountCents, 0);
+  // #3835's own fragment, on the live lines only (`editReviewHandBackLinesWhere`).
+  const handBacks = liveLines(row.lines).filter((line) => isEditReviewHandBackLine(line, taskId));
+  return {
+    cents: cardCents - handBacks.reduce((sum, line) => sum + line.amountCents, 0),
+    refunded: debts.length > 0 || row.lines.some((line) => isEditReviewHandBackLine(line, taskId)),
+    handBackLineIds: handBacks.map((line) => line.id),
+  };
+}
+
+/**
+ * Each booking's evidence, read once: the census asks for it from the
+ * identities and again from the refunded column's classes, and a snapshot
+ * row is never changed once loaded (#3913 lens 3).
+ */
+const evidenceByRow = new WeakMap<BookingLedgerCensusRow, ReviewAdjustmentEvidence>();
+
+export function reviewAdjustmentEvidence(row: BookingLedgerCensusRow): ReviewAdjustmentEvidence {
+  let evidence = evidenceByRow.get(row);
+  if (!evidence) {
+    evidence = readReviewAdjustmentEvidence(row);
+    evidenceByRow.set(row, evidence);
+  }
+  return evidence;
+}
+
+function readReviewAdjustmentEvidence(row: BookingLedgerCensusRow): ReviewAdjustmentEvidence {
+  const bookingId = row.booking.id;
+  const drift = new Map<string, string>();
+  const tasks = new Map(row.tasks.map((task) => [task.id, task]));
+  // #3791's `reviewGiveBackRowsWhere`, and the share credit minted beside it
+  // (`createBookingModificationCredit`), as the snapshot holds them.
+  const giveBacks = row.credits
+    .filter((credit) => credit.type === "BOOKING_APPLIED" && credit.sourceBookingId === bookingId && credit.appliedToBookingId === bookingId && credit.amountCents > 0)
+    .map((credit) => credit.amountCents);
+  const minted = row.credits
+    .filter((credit) => credit.type === "BOOKING_MODIFICATION_REFUND" && credit.sourceBookingId === bookingId && credit.amountCents > 0)
+    .map((credit) => credit.amountCents);
+
+  const giveBackRowCount = giveBacks.length;
+  const giveBackRowCents = giveBacks.reduce((sum, cents) => sum + cents, 0);
+  const lines = liveLines(row.lines).filter(isReviewAdjustment);
+  let agreedGiveBackLineCents = 0;
+  let borneOutCents = 0;
+  const tasksWithGiveBackLine = new Set<string>();
+  const standIns: CensusLedgerLine[] = [];
+  for (const line of lines) {
+    const task = tasks.get(line.anchorId);
+    if (isAgreedGiveBackKey(line.postingKey)) agreedGiveBackLineCents += line.amountCents;
+    // A missing or open task is the anchor's finding, not the amount's.
+    if (!task || task.status !== "COMPLETED") continue;
+    if (!isAgreedGiveBackKey(line.postingKey)) {
+      standIns.push(line);
+      continue;
+    }
+    // The writer posts `givenBack − repricedAway` where that is above zero.
+    tasksWithGiveBackLine.add(task.id);
+    const repriced = repricedAwayCents(row, task.id);
+    const givenBack = repriced - line.amountCents;
+    if (task.settlementDirection !== "REFUND_TO_MEMBER" || line.amountCents >= 0) {
+      drift.set(line.id, `an agreed give-back of ${line.amountCents} on a share that gives nothing back`);
+    } else if (givenBack > (task.amountCents ?? 0)) {
+      drift.set(line.id, `an agreed give-back of ${line.amountCents} after a ${repriced} re-price is more than the ${task.amountCents ?? 0} share`);
+    } else if (!take(giveBacks, givenBack)) {
+      drift.set(line.id, `an agreed give-back of ${line.amountCents} after a ${repriced} re-price needs a review give-back of ${givenBack}; the booking holds [${giveBacks.join(", ")}] unused`);
+    } else {
+      borneOutCents += line.amountCents;
+    }
+  }
+
+  // A give-back no line bears out is accounted for only by a re-price that
+  // removed at least as much (no line posts then), or by the unpaid route's
+  // headroom, which the booking's re-prices bound the same way.
+  const repricedWithoutLineCents = row.modifications.reduce(
+    (sum, modification) =>
+      modification.reviewRebase && !tasksWithGiveBackLine.has(modification.reviewRebase.taskId)
+        ? sum + Math.max(0, -modification.reviewRebase.movementCents)
+        : sum,
+    0,
+  );
+  const unaccountedCents = Math.max(0, giveBacks.reduce((sum, cents) => sum + cents, 0) - repricedWithoutLineCents);
+  const cancelled = row.booking.status === "CANCELLED";
+  // Rows are matched to lines by amount, and no row names its task. That is
+  // exact only while nothing else could absorb a row: a re-price drop on a
+  // task with no give-back line (a dismissed review's included) can hide a
+  // missing, forged or overstated line, and so, conservatively, can a second
+  // row beside a give-back line. Such a live booking fails closed, as a class
+  // the owner acknowledges to the cent, never as agreement.
+  let ambiguous: ReviewAdjustmentEvidence["ambiguous"] =
+    !cancelled && giveBackRowCents > 0 && (repricedWithoutLineCents > 0 || (giveBackRowCount > 1 && agreedGiveBackLineCents !== 0))
+      ? [
+          { detail: "agreed give-back lines", cents: -agreedGiveBackLineCents || 0 },
+          { detail: "review give-back rows", cents: giveBackRowCents },
+          { detail: "re-price drops on reviews with no give-back line", cents: repricedWithoutLineCents },
+        ]
+      : null;
+
+  // After a cancellation (which reverses every stand-in it found live), a
+  // share credits what is still owed: up to the share, made of the task's own
+  // refund to the capture (#3835) and a give-back and the credit minted beside
+  // it (#3791). A stand-in whose task refunded the capture is judged so too,
+  // since its hand-back is borne out only by it. Anything else is the share.
+  const ownRefunds = new Map<string, ReturnType<typeof ownRefundOf>>();
+  const refundStandIns = cancelled
+    ? standIns.flatMap((line) => {
+        const task = tasks.get(line.anchorId);
+        if (task?.settlementDirection !== "REFUND_TO_MEMBER" || line.amountCents >= 0) return [];
+        // A task's own refund is used once: by its first live stand-in.
+        const first = !ownRefunds.has(task.id);
+        if (first) ownRefunds.set(task.id, ownRefundOf(row, task.id));
+        const own = ownRefunds.get(task.id)!;
+        return [{
+          line,
+          shareCents: task.amountCents ?? 0,
+          creditedCents: -line.amountCents,
+          ownRefundCents: first ? own.cents : 0,
+          refunded: own.refunded,
+          handBackLineIds: first ? own.handBackLineIds : [],
+        }];
+      })
+    : [];
+  const credited = refundStandIns.filter((share) => share.creditedCents < share.shareCents || share.ownRefundCents > 0);
+  const nettedShares = credited.filter(({ line }) => -line.amountCents < (tasks.get(line.anchorId)?.amountCents ?? 0)).map(({ line }) => line);
+  // One budget for every search on this booking (#3913 lens 3).
+  const budget: SearchBudget = { stepsLeft: ATTRIBUTION_SEARCH_STEPS, exhausted: false };
+  if (creditedFromRows(credited, giveBacks, minted, budget) === false) {
+    // Name the lines the rows cannot make on their own. Of the rest, where
+    // each is made but not all together: the one line without which the rest
+    // are made, where exactly one is; where more than one is, any of them -
+    // or two together - could be the wrong one, so every line that draws on
+    // a row (#3913 lens 3). A line its own refund makes alone takes no row
+    // from anyone, so it is never named for another's (#3913 G2). A search
+    // the budget cut short names no fewer: it counts as not made.
+    const named = credited.filter((share) => creditedFromRows([share], giveBacks, minted, budget) !== true);
+    const rest = credited.filter((share) => !named.includes(share));
+    if (creditedFromRows(rest, giveBacks, minted, budget) !== true) {
+      const drawsOnRows = rest.filter((share) => share.creditedCents !== share.ownRefundCents);
+      const withoutWhich = drawsOnRows.filter((share) => creditedFromRows(rest.filter((other) => other !== share), giveBacks, minted, budget) === true);
+      named.push(...(withoutWhich.length === 1 && !budget.exhausted ? withoutWhich : drawsOnRows));
+    }
+    for (const { line } of named) {
+      drift.set(line.id, `a share credited at ${-line.amountCents} after the cancellation, which no refund of its own, review give-back and share credit on this booking make`);
+    }
+  }
+  for (const line of standIns) {
+    const task = tasks.get(line.anchorId);
+    if (!task || task.settlementDirection === null || nettedShares.includes(line)) continue;
+    const expected = editReviewSettlementSign(task.settlementDirection) * (task.amountCents ?? 0);
+    if (line.amountCents !== expected) drift.set(line.id, `task share is ${expected}, line ${line.amountCents}`);
+  }
+  // Only after every check on the stand-ins: a hand-back is borne out only by
+  // a stand-in accepted whole, and so within its share - one its refund made
+  // above the share is drift above, and its hand-back with it (#3913 F1).
+  const nettedHandBackLineIds = new Set(
+    credited.filter(({ line }) => !drift.has(line.id)).flatMap((share) => share.handBackLineIds),
+  );
+  // The same gap after a cancellation (#3913 F2): `owed(b) == 0` checks only
+  // the total, and no give-back or minted row names its task (the give-back
+  // row has no field that could, and its description is rewritten by the
+  // Xero repair). So where the booking's rows could make its stand-ins in more
+  // than one way at the same total - lines swapped between siblings still
+  // made of them - the lines cannot be told right. That booking fails closed
+  // too, to the cent. One task's, or one the rows make only one way, is exact.
+  // A search the budget cut short proves nothing either way, so it fails
+  // closed the same way, never as exactness (#3913 lens 3).
+  const makings = budget.exhausted ? null : distinctMakings(refundStandIns, giveBacks, minted, budget);
+  if (makings === null || makings > 1) {
+    ambiguous = [
+      { detail: makings === null ? "review stand-ins after the cancellation, too many to attribute within the census's search budget" : "review stand-ins after the cancellation", cents: refundStandIns.reduce((sum, share) => sum + share.creditedCents, 0) },
+      { detail: "their own refunds to the capture", cents: refundStandIns.reduce((sum, share) => sum + share.ownRefundCents, 0) },
+      { detail: "review give-back and share credit rows beside them", cents: [...giveBacks, ...minted].reduce((sum, cents) => sum + cents, 0) },
+    ];
+  }
+
+  return {
+    drift,
+    agreedGiveBackLineCents,
+    agreedGiveBackEvidenceCents: cancelled ? 0 : borneOutCents - unaccountedCents,
+    ambiguous,
+    nettedHandBackLineIds,
+  };
+}

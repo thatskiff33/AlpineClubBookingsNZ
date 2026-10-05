@@ -50,6 +50,7 @@ import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants"
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { claimAlertCooldown } from "@/lib/alert-cooldown";
 import { formatCents } from "@/lib/utils";
+import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { finishApprovedLateCaptureRefundAfterReplay } from "@/lib/late-capture-refund-credit-note";
 import { holdSupersededLateCaptureIfRequired } from "@/lib/late-capture-refund-hold";
 
@@ -71,12 +72,6 @@ if (RETRY_BACKOFF_MINUTES.length !== MAX_PAYMENT_RECOVERY_ATTEMPTS) {
     "RETRY_BACKOFF_MINUTES must have exactly MAX_PAYMENT_RECOVERY_ATTEMPTS entries",
   );
 }
-
-const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>([
-  PaymentStatus.SUCCEEDED,
-  PaymentStatus.PARTIALLY_REFUNDED,
-  PaymentStatus.REFUNDED,
-]);
 
 /**
  * THE THREE STATUS SETS THIS MODULE READS, EACH SPELLED ONCE (#3220,
@@ -107,13 +102,13 @@ const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>([
  * `payment-recovery-terminal-failure-census.test.ts` now pins that there are
  * exactly these two plus the one write.
  */
-const CLAIMABLE_PAYMENT_RECOVERY_STATUSES = [
+export const CLAIMABLE_PAYMENT_RECOVERY_STATUSES = [
   PaymentRecoveryOperationStatus.PENDING,
   PaymentRecoveryOperationStatus.FAILED,
 ] as const;
 
 /** Everything a live operation can be. Excludes only the terminal SUCCEEDED. */
-const NON_TERMINAL_PAYMENT_RECOVERY_STATUSES = [
+export const NON_TERMINAL_PAYMENT_RECOVERY_STATUSES = [
   PaymentRecoveryOperationStatus.PENDING,
   PaymentRecoveryOperationStatus.PROCESSING,
   PaymentRecoveryOperationStatus.FAILED,
@@ -258,7 +253,7 @@ async function enqueueLedgerRefundRecovery({
     (transaction) =>
       transaction.source === PaymentSource.STRIPE &&
       Boolean(transaction.stripePaymentIntentId) &&
-      CAPTURED_TRANSACTION_STATUSES.has(transaction.status),
+      isCapturedTransactionStatus(transaction.status),
   );
   const representativePaymentIntentId =
     capturedTransaction?.stripePaymentIntentId ??
@@ -552,6 +547,7 @@ import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
   bookingModificationRefundReasonForKeyPrefix,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
+  isOrganiserChildRefundKey,
   stripeIdempotencyKeyForAskAmount,
 } from "./payment-recovery-keys";
 export {
@@ -1472,7 +1468,7 @@ async function cancelStrandedAdditionalIntentForDeadRecovery(
      * also saves a provider round trip on the one case where getting it wrong
      * would take money back off a member who paid.
      */
-    if (CAPTURED_TRANSACTION_STATUSES.has(request.status)) {
+    if (isCapturedTransactionStatus(request.status)) {
       logger.info(
         {
           operationId: operation.id,
@@ -1914,7 +1910,7 @@ async function processRefundSupersededPaymentOperation(
     throw new Error("Payment transaction not found for refund recovery");
   }
 
-  if (!CAPTURED_TRANSACTION_STATUSES.has(transaction.status)) {
+  if (!isCapturedTransactionStatus(transaction.status)) {
     await markSupersededTransactionSucceeded({
       operation,
       amountCents: Math.max(transaction.amountCents, operation.amountCents),
@@ -2038,6 +2034,14 @@ async function processBookingModificationRefundOperation(
   operation: PaymentRecoveryOperation,
   format: ClubFormat,
 ) {
+  // #3653: an organiser child's refund out of the group's combined card payment.
+  // Before anything reads the child's transactions, of which it has none; the
+  // executor closes the row in the transaction that records the refund.
+  if (isOrganiserChildRefundKey(operation.idempotencyKey)) {
+    const { processOrganiserChildRefundOperation } = await import("@/lib/organiser-child-refund-executor");
+    await processOrganiserChildRefundOperation(operation, format);
+    return;
+  }
   // Group settlement refund replay (F3, #1351): dispatch on the key prefix
   // BEFORE any payment lookup — these operations anchor paymentId to the
   // organiser's own payment purely for the schema FK, and deriving a refund
@@ -2091,7 +2095,7 @@ async function processBookingModificationRefundOperation(
   if (!plan) {
     const refundableTransactions = payment.transactions
       .filter((transaction) =>
-        CAPTURED_TRANSACTION_STATUSES.has(transaction.status),
+        isCapturedTransactionStatus(transaction.status),
       )
       .filter(
         (transaction) =>
@@ -3173,6 +3177,12 @@ export async function runPaymentRecoveryOperationNow(
 
 export async function processPaymentRecoveryOperations(options?: {
   limit?: number;
+  /**
+   * #3653: also read pending organiser child refunds back from Stripe. The
+   * payments cron passes it; the inline drain after an edit does not, so a
+   * member's request never waits on those provider reads.
+   */
+  reconcilePendingChildRefunds?: boolean;
 }): Promise<PaymentRecoveryProcessResult> {
   // The club's format (#3565), resolved once, before any transaction or
   // lock below — never per amount and never inside a transaction.
@@ -3232,6 +3242,19 @@ export async function processPaymentRecoveryOperations(options?: {
       } else {
         result.retried += 1;
       }
+    }
+  }
+
+  // #3653: an organiser child refund Stripe accepted as pending and later
+  // failed is owed again. The combined intent has no Payment for the webhook to
+  // resolve, so the cron's run reads those refunds back. Isolated: a failure
+  // here never fails the run that has already processed the queue above.
+  if (options?.reconcilePendingChildRefunds) {
+    try {
+      const { reconcilePendingOrganiserChildRefunds } = await import("@/lib/organiser-child-refund-executor");
+      await reconcilePendingOrganiserChildRefunds();
+    } catch (err) {
+      logger.error({ err }, "Could not re-read pending organiser child refunds (#3653)");
     }
   }
 

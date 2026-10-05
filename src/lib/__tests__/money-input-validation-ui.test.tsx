@@ -122,12 +122,12 @@ describe("the defect the owner decision was actually about", () => {
     const onInvalidAmountsChange = vi.fn();
     render(<Harness onInvalidAmountsChange={onInvalidAmountsChange} />);
 
-    typeInto("25.005");
+    typeInto("25.00x");
     expect(screen.getByRole("alert")).toBeTruthy();
 
     // The old clear-branch ran unconditionally, so one more character made the
     // error vanish and the fee become $0.00 with save re-enabled.
-    typeInto("25.005x");
+    typeInto("25.00xy");
 
     expect(screen.getByRole("alert")).toBeTruthy();
     expect(onInvalidAmountsChange).toHaveBeenLastCalledWith(true);
@@ -150,15 +150,15 @@ describe("a refused money amount is visible in the UI", () => {
     expect(onInvalidAmountsChange).toHaveBeenLastCalledWith(false);
     expect(screen.queryByRole("alert")).toBeNull();
 
-    // Three decimal places: unsupported precision on a typed amount.
-    typeInto("25.005");
+    // A stray suffix remains visible so the exact parser can explain it.
+    typeInto("25.00x");
 
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("Enter a fee in dollars and cents");
 
     // The box still shows exactly what was typed — it does not snap back and
     // pretend the entry never happened.
-    expect(feeBox().value).toBe("25.005");
+    expect(feeBox().value).toBe("25.00x");
 
     // The fee never became 2500.5, 2501, or 0: no rule update was emitted at
     // all, so the last accepted value stands and the section is told to refuse.
@@ -177,7 +177,7 @@ describe("a refused money amount is visible in the UI", () => {
       />,
     );
 
-    typeInto("12.345");
+    typeInto("12.34x");
     expect(screen.getByRole("alert")).toBeTruthy();
 
     typeInto("12.34");
@@ -222,7 +222,7 @@ describe("a refused money amount is visible in the UI", () => {
   it("names the error element from the input it belongs to", () => {
     render(<Harness />);
 
-    typeInto("1.005");
+    typeInto("1.00x");
 
     const alert = screen.getByRole("alert");
     expect(alert.id).toBeTruthy();

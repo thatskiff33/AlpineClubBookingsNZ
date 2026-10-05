@@ -194,6 +194,8 @@ vi.mock("@/lib/member-credit", () => ({
 
 vi.mock("@/lib/xero-applied-credit-operation-serialization", () => ({
   assertNoAppliedCreditDeallocationFence: mocks.assertNoAppliedCreditDeallocationFence,
+  // #3809: an edit's note waits on a deallocation; none is on its way here.
+  findUnconvergedAppliedCreditDeallocation: async () => null,
 }));
 
 vi.mock("@/lib/xero-contacts", () => ({

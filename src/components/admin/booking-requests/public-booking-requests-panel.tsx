@@ -23,6 +23,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -38,8 +39,9 @@ import { useClubTime } from "@/components/club-time-provider";
 import { formatStayDate } from "@/lib/club-time";
 import { countNightsDateOnly } from "@/lib/date-only";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { ResolvePendingSchoolAdults } from "@/components/admin/booking-requests/resolve-pending-school-adults";
 import {
   BookingRequestContactPicker,
   type OwnerContactChoice,
@@ -204,6 +206,8 @@ interface PublicBookingRequestData {
   // hint and the actual warning threshold cannot diverge per lodge (#1656).
   schoolGroupSoftCap: number;
   cateringPreference: "CATERED" | "NON_CATERED" | "QUOTE_BOTH" | null;
+  pendingAdultCount: number;
+  pendingAdultsWriteEnabled?: boolean;
   teachers: Array<{ firstName: string; lastName: string; email: string | null }>;
   linkedGuestMembers: Array<{ guestIndex: number; memberId: string }>;
   contactFirstName: string;
@@ -362,6 +366,7 @@ function statusBadgeClass(status: PublicBookingRequestData["status"]) {
     status === "PRICED" ||
     status === "QUOTED" ||
     status === "QUOTE_SENT" ||
+    status === "ACCEPTED" ||
     status === "QUERY_PENDING" ||
     status === "MODIFICATION_REQUESTED"
   ) return "border-warning-6 bg-warning-3 text-warning-11";
@@ -657,14 +662,19 @@ export function PublicBookingRequestsPanel({
   function pricingCombos(request: PublicBookingRequestData) {
     const seen = new Set<string>();
     const combos: Array<{ ageTier: string; isMember: boolean }> = [];
-    plannedGuests(request).forEach((guest, guestIndex) => {
-      const isMember = Boolean(linkedMemberIdFor(request, guestIndex));
-      const key = `${guest.ageTier}:${isMember}`;
+    function addCombo(ageTier: string, isMember: boolean) {
+      const key = `${ageTier}:${isMember}`;
       if (!seen.has(key)) {
         seen.add(key);
-        combos.push({ ageTier: guest.ageTier, isMember });
+        combos.push({ ageTier, isMember });
       }
+    }
+    plannedGuests(request).forEach((guest, guestIndex) => {
+      addCombo(guest.ageTier, Boolean(linkedMemberIdFor(request, guestIndex)));
     });
+    if (request.type === "SCHOOL" && request.pendingAdultCount > 0) {
+      addCombo("ADULT", false);
+    }
     return combos;
   }
 
@@ -874,11 +884,11 @@ export function PublicBookingRequestsPanel({
       (sum, tier) => sum + parseCount(counts[tier]),
       0,
     );
-    return request.teachers.length + children;
+    return request.teachers.length + (request.pendingAdultCount ?? 0) + children;
   }
 
   // #2685: the canonical exact parser. `null` already reaches the officer as a
-  // thrown "Enter a valid …" message below, and now covers a malformed suffix or
+  // thrown format-specific message below, and now covers a malformed suffix or
   // a third decimal place rather than silently keeping the leading digits.
   function dollarsToCents(raw: string) {
     return parseDecimalDollarsToCents(raw);
@@ -898,7 +908,7 @@ export function PublicBookingRequestsPanel({
         if (pricingMode === "OVERALL_TOTAL") {
           const totalCents = dollarsToCents(optionTotalInputValue(request, optionId));
           if (totalCents == null) {
-            throw new Error(`Enter a valid ${optionLabel(optionId).toLowerCase()} total`);
+            throw new Error(`Enter ${optionLabel(optionId).toLowerCase()} total in dollars and cents, up to 2 decimal places`);
           }
           return {
             id: optionId,
@@ -916,7 +926,7 @@ export function PublicBookingRequestsPanel({
           );
           if (rateCents == null) {
             throw new Error(
-              `Enter a valid ${optionLabel(optionId).toLowerCase()} ${combo.ageTier} ${combo.isMember ? "member" : "non-member"} rate`
+              `Enter ${optionLabel(optionId).toLowerCase()} ${combo.ageTier} ${combo.isMember ? "member" : "non-member"} rate in dollars and cents, up to 2 decimal places`
             );
           }
           return { ...combo, rateCents };
@@ -1334,9 +1344,13 @@ export function PublicBookingRequestsPanel({
         }
       } else if (data.type === "SCHOOL") {
         toast.success(
-          data.invoiceMode === "xero"
-            ? "School booking confirmed. The Xero invoice has been emailed to the school and the teacher PIN email sent."
-            : "School booking confirmed. The Xero module is off, so admins have been emailed to invoice the school manually."
+          data.alreadyConverted === true
+            ? "School booking was already confirmed. No new invoice or teacher PIN email was sent."
+            : `School booking confirmed. ${data.teacherHutLeaderAssignmentsCreated === true
+              ? "Teacher hut-leader assignments were created."
+              : "Teacher hut-leader assignments were not created."} ${data.invoiceMode === "xero"
+              ? "Check invoice progress and email delivery."
+              : "The Xero module is off, so manual invoicing is required. Check email delivery."}`
         );
       } else {
         toast.success("Request approved. A payment link has been emailed to the requester.");
@@ -1607,7 +1621,8 @@ export function PublicBookingRequestsPanel({
                       {nightsBetween(request.checkIn, request.checkOut)}
                     </div>
                     <div>
-                      <span className="text-muted-foreground">Guests:</span> {request.guests.length}
+                      <span className="text-muted-foreground">Guests:</span> {request.guests.length + (request.pendingAdultCount ?? 0)}
+                      {request.pendingAdultCount > 0 ? ` (${request.pendingAdultCount} adult names pending)` : ""}
                     </div>
                     {request.indicativePriceCents != null ? (
                       <div>
@@ -1958,7 +1973,7 @@ export function PublicBookingRequestsPanel({
                             </p>
                           ) : (
                             <p className="text-xs text-muted-foreground">
-                              {request.teachers.length} teachers &amp; helpers + children ={" "}
+                              {request.teachers.length} named teachers &amp; helpers + {request.pendingAdultCount ?? 0} adults awaiting names + children ={" "}
                               {plannedGuestTotal(request)} total. These boxes change only the
                               booking you are about to quote or approve, not what the school
                               asked for. To change the request itself — its dates, its teachers
@@ -2055,17 +2070,16 @@ export function PublicBookingRequestsPanel({
                                     <Label htmlFor={`price-${request.id}-${optionId}`}>
                                       Total ({currencyCode})
                                     </Label>
-                                    <Input
+                                    <MoneyInput
                                       id={`price-${request.id}-${optionId}`}
-                                      {...MONEY_INPUT_PROPS}
                                       className="w-32"
                                       disabled={actionsBlocked}
                                       value={optionTotalInputValue(request, optionId)}
-                                      onChange={(event) =>
+                                      onValueChange={(value) =>
                                         setPriceInputs((prev) => ({
                                           ...prev,
                                           [priceInputKey(request.id, optionId)]:
-                                            event.target.value,
+                                            value,
                                         }))
                                       }
                                     />
@@ -2096,19 +2110,18 @@ export function PublicBookingRequestsPanel({
                                           {combo.ageTier}{" "}
                                           {combo.isMember ? "member" : "non-member"}
                                         </Label>
-                                        <Input
+                                        <MoneyInput
                                           id={key}
-                                          {...MONEY_INPUT_PROPS}
                                           className="w-32"
                                           disabled={actionsBlocked}
                                           value={
                                             rateInputs[key] ??
                                             suggestedRateDollars(request, combo)
                                           }
-                                          onChange={(event) =>
+                                          onValueChange={(value) =>
                                             setRateInputs((prev) => ({
                                               ...prev,
-                                              [key]: event.target.value,
+                                              [key]: value,
                                             }))
                                           }
                                         />
@@ -2365,6 +2378,7 @@ export function PublicBookingRequestsPanel({
                           // The service refuses it as well.
                           disabled={
                             actionsBlocked ||
+                            request.pendingAdultCount > 0 ||
                             !request.latestQuote ||
                             schoolCountsChanged(request)
                           }
@@ -2424,7 +2438,8 @@ export function PublicBookingRequestsPanel({
                             actionsBlocked ||
                             (!memberWholeLodge &&
                               request.type !== "SCHOOL" &&
-                              request.status !== "PRICED") ||
+                              request.status !== "PRICED" &&
+                              request.status !== "ACCEPTED") ||
                             misplacedSchoolLinkOnApprove(request) !== null
                           }
                         >
@@ -2542,6 +2557,31 @@ export function PublicBookingRequestsPanel({
                       ) : null}
                     </div>
                     ) : null
+                  ) : null}
+
+                  {request.status === "ACCEPTED" ? (
+                    <div className="space-y-3 rounded-md border border-warning-6 bg-warning-3/30 p-3">
+                      <p className="text-sm text-warning-11">
+                        The requester accepted this quote. Review the accepted price and request details, then approve or decline it. Quote editing and contact changes are locked after acceptance.
+                      </p>
+                      {request.type === "SCHOOL" ? (
+                        <ResolvePendingSchoolAdults
+                          requestId={request.id}
+                          expectedVersion={request.version}
+                          pendingAdultCount={request.pendingAdultCount ?? 0}
+                          canEdit={canEdit}
+                          onResolved={fetchRequests}
+                        />
+                      ) : null}
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" onClick={() => handleApprove(request)} disabled={actionsBlocked || request.pendingAdultCount > 0 || misplacedSchoolLinkOnApprove(request) !== null}>
+                          {request.type === "SCHOOL" ? "Approve & invoice school" : "Approve & send payment link"}
+                        </Button>
+                        <Button size="sm" variant="destructive" onClick={() => openDeclineChoice(request)} disabled={isActioning}>
+                          Decline
+                        </Button>
+                      </div>
+                    </div>
                   ) : null}
 
                   {request.status === "DECLINED" ? (

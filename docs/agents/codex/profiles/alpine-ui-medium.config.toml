@@ -1,9 +1,0 @@
-# Example only. Copy to ~/.codex/alpine-ui-medium.config.toml before use.
-# UI-only profile. Do not use for payment, booking, membership, or provider logic.
-
-model_reasoning_effort = "medium"
-approval_policy = "on-request"
-sandbox_mode = "workspace-write"
-
-[sandbox_workspace_write]
-network_access = false

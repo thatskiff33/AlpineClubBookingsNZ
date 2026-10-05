@@ -31,7 +31,8 @@ vi.mock("@/lib/audit", () => ({
 }));
 
 import { recordManualRefundTaskClosureAudit } from "@/lib/manual-refund-task-audit";
-import { completionMessage, dismissalMessage } from "@/lib/manual-refund-task-copy";
+import { completionMessage, dismissalMessage, stillOwedNoticeText } from "@/lib/manual-refund-task-copy";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const WITHHELD_SHARE = "UNCOLLECTED_EDIT_REVIEW_SHARE";
 
@@ -212,12 +213,20 @@ describe("#3213 fix round: the durable summary names the money's direction", () 
         settlementRoute: route,
         stripeRefundId: "re_1",
         additionalPaymentIntentId: "pi_1",
-      });
+      }, CLUB_FORMAT_TEST);
       const asksTheMember = (sentence: string) =>
         /asked to pay|to pay|owed by the member/i.test(sentence) &&
         !/refund|paid back|credit issued/i.test(sentence);
       expect(asksTheMember(summary)).toBe(asksTheMember(toast));
     }
+  });
+
+  it("MUTATION: #3791 - a share the cancellation had already returned is not receipted as credit issued", () => {
+    const toast = (accountCredit: { givenBackCents: number; mintedCents: number }) =>
+      completionMessage({ amountAmended: false, settlementRoute: CREDIT, stripeRefundId: null, additionalPaymentIntentId: null, accountCredit }, CLUB_FORMAT_TEST);
+
+    expect(toast({ givenBackCents: 0, mintedCents: 0 })).toMatch(/^Nothing further was credited/);
+    expect(toast({ givenBackCents: 2_500, mintedCents: 0 })).toBe("Account credit issued to the member.");
   });
 
   it("makes no claim the provider call succeeded, because it is written before it", async () => {
@@ -231,5 +240,37 @@ describe("#3213 fix round: the durable summary names the money's direction", () 
       expect(summary.toLowerCase()).not.toContain("sent");
       expect(summary.toLowerCase()).not.toContain("received");
     }
+  });
+});
+
+describe("#3835: the settle dialog's still-owed sentence", () => {
+  const say = (stillOwedCents: number, route: "card" | "hand-back" | "account-credit", creditCents = 0, shareCents = 5_000) =>
+    stillOwedNoticeText(
+      { shareCents, stillOwedCents, captureCents: route === "account-credit" ? 0 : stillOwedCents - creditCents, creditCents: route === "account-credit" ? stillOwedCents : creditCents, route },
+      CLUB_FORMAT_TEST,
+    );
+
+  it("MUTATION: names the netted figure and what happens to it, route by route", () => {
+    expect(say(2_500, "hand-back")).toBe("Only $25.00 of the $50.00 share is still owed after the booking's cancellation - hand back $25.00, not the full share.");
+    expect(say(2_500, "card")).toBe("Only $25.00 of the $50.00 share is still owed after the booking's cancellation - $25.00 will be refunded to the card.");
+    expect(say(2_500, "account-credit")).toBe("Only $25.00 of the $50.00 share is still owed after the booking's cancellation - $25.00 will be credited.");
+  });
+
+  it("MUTATION: review F1 - says the split when part goes back as credit, even when the whole share is owed", () => {
+    expect(say(5_000, "card", 2_500, 10_000)).toBe("Only $50.00 of the $100.00 share is still owed after the booking's cancellation - $25.00 to the card and $25.00 as account credit.");
+    expect(say(5_000, "hand-back", 2_500, 10_000)).toBe("Only $50.00 of the $100.00 share is still owed after the booking's cancellation - hand back $25.00, not the full share, and $25.00 goes back as account credit.");
+    expect(say(2_500, "hand-back", 2_500, 10_000)).toBe("Only $25.00 of the $100.00 share is still owed after the booking's cancellation - hand nothing back: $25.00 goes back as account credit.");
+    expect(say(5_000, "card", 2_500)).toBe("The $50.00 share goes back in two parts - $25.00 to the card and $25.00 as account credit.");
+  });
+
+  it("MUTATION: at nothing owed, says so - and on a hand-back, not to hand anything back", () => {
+    expect(say(0, "hand-back")).toBe("Nothing of this share is still owed: the booking's cancellation already returned it. Do not hand anything back. Completing records no refund.");
+    expect(say(0, "card")).toBe("Nothing of this share is still owed: the booking's cancellation already returned it. Completing records no refund.");
+  });
+
+  it("says nothing where the whole share is owed, or there is nothing to preview; a refusal is passed on", () => {
+    expect(say(5_000, "hand-back")).toBeNull();
+    expect(stillOwedNoticeText(null, CLUB_FORMAT_TEST)).toBeNull();
+    expect(stillOwedNoticeText({ shareCents: 5_000, refusal: "Refused." }, CLUB_FORMAT_TEST)).toBe("Refused.");
   });
 });

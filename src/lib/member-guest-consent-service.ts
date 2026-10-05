@@ -31,6 +31,7 @@ import type {
   MemberGuestDelegateAnswer,
   MemberGuestStillOnBookingReason,
 } from "@/lib/member-guest-email-notes";
+import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import {
@@ -38,6 +39,11 @@ import {
   resolveBookingGuestDietarySeeding,
 } from "@/lib/member-dietary-booking-writes";
 import type { ClubFormat } from "@/lib/club-format";
+import {
+  guestRemovalXeroSettlement,
+  queueGuestRemovalXeroSettlement,
+  type GuestRemovalXeroSettlement,
+} from "@/lib/booking-guest-removal-xero";
 
 /**
  * The member-guest consent state machine ("+ Add Member Guest", epic #2305,
@@ -103,8 +109,8 @@ export type MemberGuestConsentOutcome =
    * email quotes it to the booking owner, so a second calculation here would be a
    * second chance to tell them the wrong number.
    */
-  | { outcome: "DECLINED"; removed: true; creditCents: number }
-  | { outcome: "EXPIRED"; removed: true; creditCents: number }
+  | { outcome: "DECLINED"; removed: true; creditCents: number; xeroSettlement?: GuestRemovalXeroSettlement }
+  | { outcome: "EXPIRED"; removed: true; creditCents: number; xeroSettlement?: GuestRemovalXeroSettlement }
   /** Claimed, but the guest is still on the booking and an admin must act. */
   | {
       outcome: "BLOCKED";
@@ -332,7 +338,7 @@ async function removeClaimedConsentGuest(
     /** The club's format (#3565), resolved with `today` and for the same reason. */
     format: ClubFormat;
   },
-): Promise<{ removed: true; creditCents: number }> {
+): Promise<{ removed: true; creditCents: number; xeroSettlement: GuestRemovalXeroSettlement }> {
   try {
     const result = await removeBookingGuestInTransaction({
       tx,
@@ -349,7 +355,14 @@ async function removeClaimedConsentGuest(
         targetMemberId: params.targetMemberId,
       },
     });
-    return { removed: true, creditCents: result.accountCreditAmountCents ?? 0 };
+    // #3809: credit given back of what the booking had applied is account
+    // credit the owner receives too, and the removal reaches Xero after commit
+    // (`finaliseMemberGuestConsentTransition`) like any other removal.
+    return {
+      removed: true,
+      creditCents: (result.accountCreditAmountCents ?? 0) + result.appliedCreditGivenBackCents,
+      xeroSettlement: guestRemovalXeroSettlement(result),
+    };
   } catch (err) {
     const refusal = consentRemovalRefusalMessage(err);
     if (refusal !== null) {
@@ -603,6 +616,7 @@ export async function respondToMemberGuestConsent(params: {
         outcome: "DECLINED",
         removed: true,
         creditCents: removal.creditCents,
+        xeroSettlement: removal.xeroSettlement,
       } as const;
     });
   } catch (err) {
@@ -669,7 +683,8 @@ export async function expireMemberGuestConsent(params: {
           consentStatus: true,
           consentExpiresAt: true,
           bookingId: true,
-          booking: { select: { id: true, lodgeId: true, memberId: true } },
+          // #3653: and whether the organiser paid for it by card (below).
+          booking: { select: { id: true, lodgeId: true, memberId: true, organiserSettled: true, parentBookingId: true, payment: { select: { source: true } } } },
         },
       });
 
@@ -724,7 +739,11 @@ export async function expireMemberGuestConsent(params: {
         // writing it here would attribute to them an act they did not take.
         actorMemberId: expiryActorMemberId,
         kind: "CONSENT_EXPIRY",
-        settlementMethod: "credit",
+        // #3653: D-15's credit election is the OWNER's account. A booking the
+        // group organiser paid for by card has one disposition instead - the
+        // organiser's card - and electing credit there is refused, which would
+        // leave the lapsed guest on the booking for ever. It falls through.
+        ...(paidByOrganiserCard(guest.booking) ? {} : { settlementMethod: "credit" as const }),
         today: clubTodayDateOnly,
         format,
       });
@@ -733,6 +752,7 @@ export async function expireMemberGuestConsent(params: {
         outcome: "EXPIRED",
         removed: true,
         creditCents: removal.creditCents,
+        xeroSettlement: removal.xeroSettlement,
       } as const;
     });
   } catch (err) {
@@ -866,6 +886,22 @@ export async function finaliseMemberGuestConsentTransition(params: {
     outcome.outcome === "EXPIRED"
   ) {
     await settleHostingCoverageAfterCommit({ bookingId });
+  }
+
+  // #3809: a decline or expiry REMOVED the guest, repriced the booking and
+  // settled the reduction - a refund, minted credit, applied credit given back.
+  // Xero hears of it exactly as of any other guest removal, through the same
+  // leg, or its invoice keeps the old price and the give-back's deallocation
+  // leaves an amount due the app does not have. Best-effort, after the commit.
+  if ((outcome.outcome === "DECLINED" || outcome.outcome === "EXPIRED") && outcome.xeroSettlement) {
+    try {
+      await queueGuestRemovalXeroSettlement(outcome.xeroSettlement, {
+        createdByMemberId: actorMemberId ?? undefined,
+        additionalPaymentIntentId: null,
+      });
+    } catch (err) {
+      logger.error({ err, bookingId, guestId }, "Failed to queue Xero settlement for a member-guest consent removal");
+    }
   }
 
   await notifyMemberGuestConsentOutcome({

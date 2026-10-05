@@ -1,0 +1,9 @@
+# Example only. Copy to ~/.codex/alpine-ui.config.toml before use.
+# UI-only profile. Do not use for payment, booking, membership, or provider logic.
+# Model and effort are chosen at launch (AGENTS.md → Model selection); e.g. -c model_reasoning_effort=high
+
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = false

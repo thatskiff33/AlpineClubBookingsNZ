@@ -15,7 +15,10 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { BookingEventType, BookingStatus, PaymentSource } from "@prisma/client";
 import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
-import { isRefundedPaymentIntentHistory } from "@/lib/card-intent-retirement";
+import {
+  isRefundedPaymentIntentHistory,
+  retireCardIntentBeforeElection,
+} from "@/lib/card-intent-retirement";
 import { attachMintedCardIntent } from "@/lib/card-intent-attach";
 import {
   acquireLodgeCapacityLock,
@@ -44,13 +47,14 @@ import { recordBookingEvent } from "@/lib/booking-events";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import {
+  CREDIT_ELECTION_NOT_APPLIED_BODIES,
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_BODY,
   PAYMENT_PROCESSING_BODY,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY,
   SWITCHED_TO_INTERNET_BANKING_BODY,
 } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
-import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE as CURRENCY_REFUSED, UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
+import { chargeCurrencyRefusal, stripeChargeCurrency, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE as CURRENCY_REFUSED, UnsupportedChargeCurrencyError } from "@/lib/stripe-charge-currency";
 import { intentCurrencyDiffers, staleIntentAction } from "@/lib/additional-intent-currency";
 
 class PaymentIntentCapacityError extends Error {
@@ -72,6 +76,9 @@ class PaymentIntentConflictError extends Error {
     this.name = "PaymentIntentConflictError";
   }
 }
+
+/** #3864: another tab attached an intent beside the one retired; nothing spent. */
+class CreditElectionIntentConflictError extends Error {}
 
 /**
  * Defence in depth (#2266): a DRAFT carrying an unresolved admin review must
@@ -201,6 +208,25 @@ export async function POST(request: NextRequest) {
       return switchedToInternetBankingResponse();
     }
 
+    // #3864 (`INV-PAY-024`): an intent this booking holds was minted at the
+    // pre-election price, so the election below is spent only once that intent
+    // is dead. A live capture leaves it unspent; the settle door clears it.
+    const priorIntentId = booking.payment?.stripePaymentIntentId ?? null;
+    const retired =
+      booking.creditElectionCents != null && booking.payment && priorIntentId &&
+      (booking.status === "DRAFT" || booking.status === "PAYMENT_PENDING")
+        ? await retireCardIntentBeforeElection({
+            paymentIntentId: priorIntentId,
+            paymentStatus: booking.payment.status,
+            bookingId: booking.id,
+            door: "card-pay-step",
+          })
+        : null;
+    if (retired === "unconfirmed") {
+      return NextResponse.json(CREDIT_ELECTION_NOT_APPLIED_BODIES.cancelUnconfirmed, { status: 409 });
+    }
+    const retiredIntentId = retired === "retired" ? priorIntentId : null;
+
     // This is the point at which a draft becomes a real, capacity-holding,
     // payable booking — so it is also the point at which the member's stored
     // credit election is honoured (#2265) and, if nothing is left to pay, the
@@ -223,9 +249,10 @@ export async function POST(request: NextRequest) {
     // like every other settle path (honouring a persisted override, #1771)
     // instead of settling blind.
     const draftTransition =
-      booking.status === "DRAFT" ||
-      (booking.status === "PAYMENT_PENDING" &&
-        booking.creditElectionCents != null)
+      (booking.status === "DRAFT" ||
+        (booking.status === "PAYMENT_PENDING" &&
+          booking.creditElectionCents != null)) &&
+      retired !== "notCancellable"
         ? await prisma.$transaction(async (tx) => {
             // Two-tier lock protocol (#1881): global booking/money lock first,
             // then the per-lodge capacity lock. The booking's lodge cannot
@@ -339,6 +366,20 @@ export async function POST(request: NextRequest) {
                 // cancel or refund the booking: a 409 is the whole answer.
                 throw new PaymentIntentCapacityError();
               }
+            }
+
+            // #3864: under the locks, no intent but the one retired above (say,
+            // one a stale tab minted since) may be live beside the spend.
+            const lockedPayment =
+              freshBooking.creditElectionCents == null
+                ? null
+                : await tx.payment.findUnique({
+                    where: { bookingId },
+                    select: { stripePaymentIntentId: true },
+                  });
+            const lockedIntentId = lockedPayment?.stripePaymentIntentId;
+            if (lockedIntentId && lockedIntentId !== retiredIntentId) {
+              throw new CreditElectionIntentConflictError();
             }
 
             // #2265 — honour the election the member made when they saved the
@@ -709,9 +750,12 @@ export async function POST(request: NextRequest) {
         // `bookingOwnerProviderMetadata`.
         ...bookingOwnerProviderMetadata(booking),
       },
+      // #3864: the amount and currency are in the key, so two tabs minting
+      // different amounts off one pointer each get their own intent rather than
+      // Stripe's idempotency_error (a 500); a retry of the same mint replays.
       idempotencyKey: repaySupersededIntentId
         ? `pi_${booking.id}_repay_${repaySupersededIntentId}`
-        : `pi_${booking.id}_${booking.payment?.stripePaymentIntentId ?? "initial"}`,
+        : `pi_${booking.id}_${booking.payment?.stripePaymentIntentId ?? "initial"}_${effectivePriceCents}_${stripeChargeCurrency(format)}`,
     });
 
     // #3638 (`INV-PAY-102`) — attach under lock(1), after re-reading the
@@ -815,6 +859,9 @@ export async function POST(request: NextRequest) {
     // Every other unexpected error gets the fixed generic message so internal
     // detail (Prisma constraint names, connection strings, ...) never reaches
     // the client (#1888).
+    if (error instanceof CreditElectionIntentConflictError) {
+      return NextResponse.json(CREDIT_ELECTION_NOT_APPLIED_BODIES.otherPaymentStarted, { status: 409 });
+    }
     if (
       error instanceof PaymentIntentCapacityError ||
       error instanceof PaymentIntentConflictError ||

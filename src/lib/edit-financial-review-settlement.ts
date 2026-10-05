@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   BookingEventType,
+  BookingStatus,
   ManualRefundTaskDirection,
   ManualRefundTaskKind,
   PaymentSource,
@@ -37,12 +38,22 @@ import {
 } from "@/lib/payment-transactions";
 import { dispatchEditReviewXeroSettlement } from "@/lib/edit-financial-review-xero-leg";
 import {
+  finishEditReviewAccountCredit,
+  type EditReviewAccountCreditOutcome,
+} from "@/lib/edit-financial-review-account-credit";
+import {
   assertLateCaptureHandBackStillOwed,
   executeLateCaptureApprovalRefund,
   planLateCaptureApprovalRefund,
   type LateCaptureRefundRoute,
 } from "@/lib/late-capture-refund-approval";
 import type { ClubFormat } from "@/lib/club-format";
+import type { ClubTimeZone } from "@/lib/club-time";
+import {
+  assertCardRefundNotOverPromised,
+  capturedShareOwedAfterCancellation,
+} from "@/lib/edit-financial-review-cancel-netting";
+import type { EditReviewSettlementTask } from "@/lib/edit-financial-review-settlement-task";
 
 /**
  * #3032 (epic #2797): WHERE a confirmed review amount goes when the task is
@@ -163,6 +174,10 @@ export type EditReviewSettlementRoute =
        * replay send byte-identical Stripe requests and converge on one refund.
        */
       allocation: RefundAllocationSlice[];
+      /** What goes back to the card: the share, or on a cancelled booking the card's part of what is still owed (#3835). */
+      refundCents: number;
+      /** #3835: the applied-credit part of what is still owed, given back as credit, never to the card. */
+      creditBackCents: number;
     }
   | {
       kind: "local-allocation";
@@ -174,6 +189,10 @@ export type EditReviewSettlementRoute =
        * behind them and no invoice line to correct.
        */
       bookingModificationId: string | null;
+      /** What is handed back: the share, or on a cancelled booking the capture's part of what is still owed (#3835). */
+      refundCents: number;
+      /** #3835: the applied-credit part of what is still owed, given back as credit. */
+      creditBackCents: number;
     }
   | {
       kind: "account-credit";
@@ -194,6 +213,11 @@ export type EditReviewSettlementRoute =
        * the booking that has LEFT it - cancelled, most obviously - whose cents
        * are just as capable of being refunded twice. Matching the route gate
        * would drop the allocation on the one shape that still needs it.
+       *
+       * NULL also decides HOW the share is credited (#3791): with no captured
+       * payment, what the member paid is their applied account credit, so
+       * `writeEditReviewAccountCredit` gives that back rather than minting new
+       * credit beside it.
        */
       allocateAgainstPaymentId: string | null;
     }
@@ -211,55 +235,6 @@ export type EditReviewSettlementRoute =
    * same Stripe keys.
    */
   | LateCaptureRefundRoute;
-
-/**
- * Exactly what the route decision reads off the task, and nothing else.
- *
- * `paymentId` is the money behind the booking WHEN THE REVIEW WAS RAISED;
- * `booking.status` and `booking.payment` are the money behind it NOW (#3194) -
- * see `chooseEditReviewSettlementRoute` for why both are read and which wins.
- */
-export type EditReviewSettlementTask = {
-  paymentId: string | null;
-  kind: ManualRefundTaskKind | null;
-  /** #3639: set on a late capture held for a treasurer; names its intent. */
-  lateCaptureApprovalIntentId: string | null;
-  /** #3639: a #2700 task's frozen sentence, which names its capture. */
-  reason: string;
-  reviewContext: unknown;
-  payment: { source: PaymentSource } | null;
-  booking: {
-    /**
-     * #3194: the booking's own lifecycle status, so the settle-time read of its
-     * captured money asks exactly the question the raise sites asked. Already
-     * selected by the caller for `hasIssuedPrimaryXeroInvoice`.
-     */
-    status: string;
-    payment: {
-      id: string;
-      status: string;
-      amountCents: number | null;
-      refundedAmountCents: number | null;
-      /**
-       * #3170: a CHARGE has no task payment to route on - the money is coming the
-       * other way - so it asks the BOOKING's payment whether there is a card
-       * behind it, and needs that payment's own source and Stripe customer.
-       */
-      source: PaymentSource;
-      stripeCustomerId: string | null;
-    } | null;
-    /**
-     * #3170: for `findOrCreateCustomer` when a charge has to mint a Stripe
-     * customer. Read inside the completion transaction with everything else.
-     */
-    member: {
-      id: string;
-      email: string;
-      firstName: string;
-      lastName: string;
-    } | null;
-  };
-};
 
 /**
  * Choose the settlement route for a completion, or throw the refusal that stops
@@ -281,6 +256,7 @@ export async function chooseEditReviewSettlementRoute({
   amountCents,
   hasIssuedXeroInvoice,
   direction,
+  club,
   store,
 }: {
   task: EditReviewSettlementTask;
@@ -312,6 +288,8 @@ export async function chooseEditReviewSettlementRoute({
    * the member's card.
    */
   direction: ManualRefundTaskDirection;
+  /** #3835: the club's zone (`INV-LOCK-004`) and format, resolved before the transaction. */
+  club: { zone: ClubTimeZone; format: ClubFormat };
   store: Prisma.TransactionClient;
 }): Promise<EditReviewSettlementRoute | null> {
   if (task.kind !== ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
@@ -333,6 +311,8 @@ export async function chooseEditReviewSettlementRoute({
           kind: "local-allocation",
           paymentId: task.paymentId,
           bookingModificationId: null,
+          refundCents: amountCents,
+          creditBackCents: 0,
         }
       : null;
   }
@@ -352,7 +332,7 @@ export async function chooseEditReviewSettlementRoute({
     // refund path is that the two share no code at all.
     return chooseEditReviewChargeRoute({
       bookingModificationId,
-      bookingPayment: task.booking.payment,
+      booking: task.booking, bookingPayment: task.booking.payment, // #3653: booking for the organiser-paid refusal
       member: bookingOwner(task.booking).member,
       hasIssuedXeroInvoice,
       // #3170: the same transaction the claim runs in, because the charge route
@@ -409,6 +389,16 @@ export async function chooseEditReviewSettlementRoute({
       ? (task.payment?.source ?? null)
       : (backfilledPayment?.source ?? null);
 
+  // #3835: on a cancelled booking a captured payment's share - by card or by
+  // hand - is netted against what the cancellation returned (owner decision 2
+  // on #3791), and only that is planned, capped and handed back.
+  const owed = () =>
+    task.booking.status === BookingStatus.CANCELLED
+      ? capturedShareOwedAfterCancellation({
+          bookingId: task.bookingId, taskId: task.id, booking: task.booking, shareCents: amountCents, clubZone: club.zone, store,
+        })
+      : Promise.resolve({ captureCents: amountCents, creditCents: 0 });
+
   if (
     settlementPaymentId !== null &&
     settlementPaymentSource === PaymentSource.STRIPE
@@ -419,26 +409,29 @@ export async function chooseEditReviewSettlementRoute({
         409,
       );
     }
+    const { captureCents: refundCents, creditCents: creditBackCents } = await owed();
     // Freeze the allocation and cap the amount in ONE read, on the caller's
     // transaction and before its claim. Once the cap has passed the planned total
-    // cannot be short of `amountCents`, because the planner allocates
-    // newest-first across exactly the transactions the cap totalled.
+    // cannot be short of it: the planner allocates newest-first across exactly
+    // the transactions the cap totalled.
     const { slices, totalRefundableCents } = await planStripeRefundAllocation({
       paymentId: settlementPaymentId,
-      amountCents,
+      amountCents: refundCents,
       store,
     });
-    if (amountCents > totalRefundableCents) {
-      throw new ManualBookingPaymentError(
-        REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE,
-        400,
-      );
+    if (refundCents > totalRefundableCents) {
+      throw new ManualBookingPaymentError(REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE, 400);
     }
+    // #3835: and less the card refunds already promised and not yet made.
+    const capped = { paymentId: settlementPaymentId, bookingId: task.bookingId, refundCents, totalRefundableCents };
+    await assertCardRefundNotOverPromised({ ...capped, format: club.format, store });
     return {
       kind: "stripe-refund",
       paymentId: settlementPaymentId,
       bookingModificationId,
       allocation: slices,
+      refundCents,
+      creditBackCents,
     };
   }
 
@@ -449,10 +442,13 @@ export async function chooseEditReviewSettlementRoute({
     // the caller's transaction - so its refusal rolls the claim back and leaves
     // the task OPEN, which is the guarantee the pre-claim card cap above has to
     // buy by hand.
+    const handBack = await owed();
     return {
       kind: "local-allocation",
       paymentId: settlementPaymentId,
       bookingModificationId,
+      refundCents: handBack.captureCents,
+      creditBackCents: handBack.creditCents,
     };
   }
 
@@ -513,8 +509,10 @@ export async function executeEditReviewSettlement({
   actingMemberId,
   route,
   amountCents,
+  accountCredit,
   hasIssuedXeroInvoice,
   bookingPaymentStatus,
+  bookingXeroInvoiceId = null,
   cancellationHandBackInvoiceId,
   format,
 }: {
@@ -523,6 +521,10 @@ export async function executeEditReviewSettlement({
   actingMemberId: string;
   route: EditReviewSettlementRoute | null;
   amountCents: number | null;
+  /** #3791: what the account-credit route gave back and minted, else null. */
+  accountCredit: EditReviewAccountCreditOutcome | null;
+  /** #3791: the booking's primary invoice, which a cancelled booking still has. */
+  bookingXeroInvoiceId?: string | null;
   hasIssuedXeroInvoice: boolean;
   bookingPaymentStatus: string | null;
   /** `INV-PAY-101` (#3529): see `dispatchEditReviewXeroSettlement`. */
@@ -546,8 +548,8 @@ export async function executeEditReviewSettlement({
     });
   }
 
-  if (route?.kind === "stripe-refund") {
-    const refundAmountCents = amountCents ?? 0;
+  if (route?.kind === "stripe-refund" && route.refundCents > 0) {
+    const refundAmountCents = route.refundCents;
     try {
       const refundResult = await refundPaymentTransactions({
         format,
@@ -608,6 +610,18 @@ export async function executeEditReviewSettlement({
     }
   }
 
+  // #3835: the applied-credit part of a cancelled booking's share, given back
+  // inside the completion's transaction (`giveBackCancelledShareCredit`).
+  if ((route?.kind === "stripe-refund" || route?.kind === "local-allocation") && route.creditBackCents > 0) {
+    await recordBookingEvent({
+      bookingId,
+      type: BookingEventType.CREDITED,
+      actorMemberId: actingMemberId,
+      amountCents: route.creditBackCents,
+      reason: "edit_financial_review_credited",
+    });
+  }
+
   /**
    * #3170: the charge direction, executed AFTER the commit for the same reason
    * the refund is - the Stripe call is a provider round trip and the locking
@@ -639,17 +653,20 @@ export async function executeEditReviewSettlement({
     chargeTotalCents = charged.totalCents;
   }
 
-  if (route?.kind === "account-credit") {
-    // `INV-PAY-051` asks for the booking event to be written where the money
-    // moves, and this is that place: the credit row is committed, so the claim
-    // the member reads is one the ledger can be pointed at.
-    await recordBookingEvent({
+  // #3791: an account-credit share's event and Xero leg - given back, minted,
+  // or on a cancelled booking - are its own, after the commit as everything here.
+  if (route?.kind === "account-credit" && accountCredit) {
+    await finishEditReviewAccountCredit({
       bookingId,
-      type: BookingEventType.CREDITED,
-      actorMemberId: actingMemberId,
-      amountCents: amountCents ?? 0,
-      reason: "edit_financial_review_credited",
+      taskId,
+      actingMemberId,
+      bookingModificationId: route.bookingModificationId,
+      outcome: accountCredit,
+      hasIssuedXeroInvoice,
+      bookingXeroInvoiceId,
+      bookingPaymentStatus,
     });
+    return { stripeRefundId, additionalPaymentIntentId };
   }
 
   /**

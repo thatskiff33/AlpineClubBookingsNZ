@@ -16,7 +16,7 @@ with a one-line description of what it covers. ID scheme and allocation rules:
 
 The operational test an agent applies in the moment — search first, route to the
 existing one, and prefer making the wrong thing unrepresentable over policing it
-— is in [`AGENTS.md`](../../AGENTS.md) → "Change Discipline" → "Single source of
+— is in [`AGENTS.md`](../../AGENTS.md) → "Change discipline" → "Single source of
 truth". It is stated there rather than here because `AGENTS.md` is read on every
 task and this file is routed. This file holds the citable rules; that section
 holds the habit.
@@ -345,7 +345,7 @@ are permanent: never renumbered, never reused.
   `INV-OPS` fact is the real risk, because the eleventh nobody tightened is the one
   that connects to something real. This change converged its own caller only.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 110 test files, five test
+  `stripComments`, and since #3164 a lint rule enforces it.** 111 test files, five test
   helpers and one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
   twelve minutes later in CI. **Use it; do not write a second.** The figure was
