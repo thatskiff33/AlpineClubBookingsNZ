@@ -579,8 +579,8 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   while an ask is live; and a live booking's `owed(b)` is what its columns say
   is owed (`INV-PAY-047`'s residual plus the ask, less evidenced give-backs),
   so no line can be wrong while every column agrees. A review line must match
-  what its closure credited, read from credit rows; rows it cannot attribute
-  fail closed (`AMBIGUOUS_REVIEW_GIVE_BACK`, §6). A disagreement names the
+  what its closure credited, from credit rows and its own refund; rows it
+  cannot attribute fail closed (`AMBIGUOUS_REVIEW_GIVE_BACK`, §6). A disagreement names the
   booking, both figures and the delta.
 
   **A class explains an exact amount, from evidence the delta does not

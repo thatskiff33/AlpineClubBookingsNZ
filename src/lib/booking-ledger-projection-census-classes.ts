@@ -21,6 +21,7 @@ import type { LedgerLineKind, ManualRefundTaskStatus } from "@prisma/client";
 import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
 import { inFlightGroupPlanRefundCents } from "@/lib/booking-ledger-projection-census-group";
 import { captureKey, creditKey, refundKey } from "@/lib/booking-ledger-posting-keys";
+import { reviewAdjustmentEvidence } from "@/lib/booking-ledger-projection-census-review-adjustments";
 import { settlementChainWalker } from "@/lib/booking-ledger-settlement-posting";
 import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 import { isPaidLikeBookingStatus } from "@/lib/booking-status";
@@ -334,14 +335,18 @@ function cardDoublePayCents(row: BookingLedgerCensusRow): number {
   return finding?.strandExposureCents ?? 0;
 }
 
-/** Hand-backs the ledger records against a completed task: −Σ matched BANK_REFUND lines. */
+/**
+ * Hand-backs the ledger records against a completed task: −Σ matched BANK_REFUND
+ * lines - the share, or a review's netted hand-back its stand-in bears out (#3835).
+ */
 function handBackCents(row: BookingLedgerCensusRow): number {
+  const netted = reviewAdjustmentEvidence(row).nettedHandBackLineIds;
   return -row.lines
     .filter(
       (line) =>
         line.kind === "BANK_REFUND" &&
         line.anchorKind === "REVIEW_TASK" &&
-        row.tasks.some((task) => task.id === line.anchorId && task.status === "COMPLETED" && task.amountCents === -line.amountCents),
+        row.tasks.some((task) => task.id === line.anchorId && task.status === "COMPLETED" && (task.amountCents === -line.amountCents || netted.has(line.id))),
     )
     .reduce((sum, line) => sum + line.amountCents, 0);
 }

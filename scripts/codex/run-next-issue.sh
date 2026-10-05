@@ -90,4 +90,4 @@ if ! command -v codex >/dev/null 2>&1; then
   exit 1
 fi
 
-codex --profile alpine-autonomous-high "$PROMPT"
+codex --profile alpine-autonomous "$PROMPT"
