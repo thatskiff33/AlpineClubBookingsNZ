@@ -298,6 +298,18 @@ export async function getBedAllocationDashboard(input: {
     }
   }
 
+  const pendingAdultRows = typeof db.bookingRequestPendingAdultReservationNight?.findMany === "function"
+    ? await db.bookingRequestPendingAdultReservationNight.findMany({
+        where: {
+          night: { gte: input.range.from, lt: input.range.to },
+          ...(input.lodgeId ? { lodgeId: input.lodgeId } : {}),
+          booking: { status: "AWAITING_REVIEW" },
+        },
+        select: { bookingId: true, night: true, adultCount: true },
+        orderBy: [{ bookingId: "asc" }, { night: "asc" }],
+      })
+    : [];
+
   return {
     settings,
     range: {
@@ -310,6 +322,11 @@ export async function getBedAllocationDashboard(input: {
     unallocatedGuestNights,
     exclusiveHolds,
     custodianHolds,
+    pendingAdultReservations: pendingAdultRows.map((row) => ({
+      bookingId: row.bookingId,
+      night: formatDateOnly(row.night),
+      adultCount: row.adultCount,
+    })),
     suggestedAllocations: plan.allocations,
     suggestedUnallocatedGuestNights: plan.unallocatedGuestNights,
     warnings: buildBedAllocationWarnings({

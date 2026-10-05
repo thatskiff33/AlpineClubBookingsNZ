@@ -29,7 +29,7 @@ import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { FieldHint, describedByFieldHint } from "@/components/ui/field-hint";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { MONEY_INPUT_PROPS } from "@/lib/money-input";
+import { MoneyInput } from "@/components/ui/money-input";
 import {
   Select,
   SelectContent,
@@ -983,12 +983,11 @@ export default function PaymentsPage() {
               <div className="flex flex-wrap items-end gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs" htmlFor="payment-amount-exact">Gross amount exact</Label>
-                  <Input
+                  <MoneyInput
                     id="payment-amount-exact"
-                    {...MONEY_INPUT_PROPS}
                     value={amountExact}
-                    onChange={(event) => {
-                      setAmountExact(event.target.value);
+                    onValueChange={(value) => {
+                      setAmountExact(value);
                       resetPage();
                     }}
                     className="w-32"
@@ -997,12 +996,11 @@ export default function PaymentsPage() {
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs" htmlFor="payment-amount-min">Gross amount min</Label>
-                  <Input
+                  <MoneyInput
                     id="payment-amount-min"
-                    {...MONEY_INPUT_PROPS}
                     value={amountMin}
-                    onChange={(event) => {
-                      setAmountMin(event.target.value);
+                    onValueChange={(value) => {
+                      setAmountMin(value);
                       resetPage();
                     }}
                     className="w-32"
@@ -1011,12 +1009,11 @@ export default function PaymentsPage() {
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs" htmlFor="payment-amount-max">Gross amount max</Label>
-                  <Input
+                  <MoneyInput
                     id="payment-amount-max"
-                    {...MONEY_INPUT_PROPS}
                     value={amountMax}
-                    onChange={(event) => {
-                      setAmountMax(event.target.value);
+                    onValueChange={(value) => {
+                      setAmountMax(value);
                       resetPage();
                     }}
                     className="w-32"

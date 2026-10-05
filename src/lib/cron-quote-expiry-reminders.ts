@@ -11,6 +11,7 @@ import {
   parseBookingRequestGuests,
 } from "@/lib/booking-request";
 import { parseBookingRequestQuoteOptions } from "@/lib/booking-request-quotes";
+import { releasePendingAdultNights } from "@/lib/booking-request-pending-adult-reservations";
 import { sendBookingRequestQuoteEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -202,11 +203,12 @@ export async function sendQuoteExpiryReminders(): Promise<{
  * Free the AWAITING_REVIEW hold behind any SENT quote whose response token has
  * expired (issue #1254). Idempotent and concurrency-safe: each release runs
  * under the GLOBAL booking advisory lock (`pg_advisory_xact_lock(1)`) — the
- * same lock the quote-accept now takes FIRST under the two-tier protocol
- * (#1881; booking-request.ts, before its per-lodge lock) — re-verifies under
- * it, and status-guards the CANCELLED flip. So a race with a late accept
- * (quote → ACCEPTED, held row → PENDING) or a requester cancel is a no-op
- * rather than cancelling a live booking.
+ * same lock requester acceptance takes, and that officer approval takes FIRST
+ * under the two-tier protocol (#1881; booking-request.ts, before its per-lodge
+ * lock) — re-verifies under it, and status-guards the CANCELLED flip. So a race
+ * with a late accept (request and quote → ACCEPTED, hold kept AWAITING_REVIEW
+ * for officer review, #3415), an approval's conversion (held row → PENDING) or
+ * a requester cancel is a no-op rather than cancelling a booking still wanted.
  */
 async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
   const expiredHeldQuotes = await prisma.bookingRequestQuote.findMany({
@@ -235,13 +237,23 @@ async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
 
         // Re-read under the lock: only act while the request still points at
         // this exact hold and the hold is still an unaccepted AWAITING_REVIEW
-        // row. An accept converts it to PENDING (and the quote to ACCEPTED), so
-        // we must never cancel that live booking.
+        // row. An accept marks the request and quote ACCEPTED and keeps the
+        // hold for officer review (#3415); approval later converts it to
+        // PENDING. We must never cancel either.
         const request = await tx.bookingRequest.findUnique({
           where: { id: quote.bookingRequestId },
-          select: { heldBookingId: true },
+          select: { heldBookingId: true, status: true, acceptedQuoteId: true },
         });
-        if (request?.heldBookingId !== heldBookingId) return false;
+        if (
+          request?.heldBookingId !== heldBookingId ||
+          request.status !== BookingRequestStatus.QUOTE_SENT ||
+          request.acceptedQuoteId != null
+        ) return false;
+        const liveQuote = await tx.bookingRequestQuote.findUnique({
+          where: { id: quote.id },
+          select: { status: true },
+        });
+        if (liveQuote?.status !== BookingRequestQuoteStatus.SENT) return false;
 
         const held = await tx.booking.findUnique({
           where: { id: heldBookingId },
@@ -258,6 +270,7 @@ async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
           data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
         });
         if (releasedRows.count === 0) return false;
+        await releasePendingAdultNights({ db: tx, bookingId: heldBookingId });
         await reconcileBedAllocationsForBookingWithGlobalLockHeld({
           bookingId: heldBookingId,
           db: tx,
@@ -348,8 +361,8 @@ const SWEEPABLE_HELD_STATUSES = [
  * undoes a deliberate re-hold (#1296).
  *
  * Idempotent and concurrency-safe: each release runs under the GLOBAL booking
- * advisory lock (`pg_advisory_xact_lock(1)`) — the same lock the quote-accept
- * takes FIRST under the two-tier protocol (#1881) — re-verifies the request is
+ * advisory lock (`pg_advisory_xact_lock(1)`) — the same lock officer approval's
+ * conversion takes FIRST under the two-tier protocol (#1881) — re-verifies the request is
  * still in a modify/query state with no SENT quote and a live AWAITING_REVIEW
  * hold, and status-guards the CANCELLED flip, so a race with a re-quote or an
  * accept is a no-op rather than cancelling a live booking.
@@ -412,9 +425,10 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
         // and the hold is still an unaccepted AWAITING_REVIEW row.
         const current = await tx.bookingRequest.findUnique({
           where: { id: request.id },
-          select: { heldBookingId: true, status: true },
+          select: { heldBookingId: true, status: true, acceptedQuoteId: true },
         });
         if (current?.heldBookingId !== heldBookingId) return false;
+        if (current.acceptedQuoteId != null) return false;
         if (!SWEEPABLE_HELD_STATUSES.includes(current.status as never)) {
           return false;
         }
@@ -445,6 +459,7 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
           data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
         });
         if (releasedRows.count === 0) return false;
+        await releasePendingAdultNights({ db: tx, bookingId: heldBookingId });
         await reconcileBedAllocationsForBookingWithGlobalLockHeld({
           bookingId: heldBookingId,
           db: tx,

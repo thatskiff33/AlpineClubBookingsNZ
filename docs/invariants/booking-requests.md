@@ -206,10 +206,10 @@ was actually shown.** Since #3367 approval resolves `schoolName` to an
   Approvals are the only writer of those records and take that key, so none can
   appear in between. The key is NOT what fences the conversion's own write: both
   approvals claim on `version` (#1923). What a version fence did not close are
-  the four quote writers — three fenced at the writer, and the fourth (the
-  MODIFY/QUERY response) deliberately left, writing a status and the requester's
-  message and nothing else (`INV-LOCK-001`;
-  `docs/CONCURRENCY_AND_LOCKING.md`).
+  four quote writers. Save claims version; send claims `DRAFT`/`SENT`.
+  Acceptance and MODIFY/QUERY require `SENT`/`QUOTE_SENT` under the global key
+  (#3415); MODIFY/QUERY also match loaded version
+  (`INV-LOCK-001`; [locking guide](../CONCURRENCY_AND_LOCKING.md)).
 - **The preview only ever reads.** `resolveOrCreateSchoolOrganisation` runs only
   inside the approval transaction; the preview asks the same filter
   (`schoolOrganisationNameClaim`) with the same ordering.
@@ -238,8 +238,10 @@ invalidates it.
   a hold never reads, because it selects quote options, not beds.
 - **Every other correction releases it**, through the shared `cancelBooking`
   path with the requester's cancellation email suppressed and
-  `requireRequestHold: true`, so a hold a requester accepted in between is
-  refused rather than clobbered.
+  `requireRequestHold: true` requiring `AWAITING_REVIEW`. Acceptance retains it
+  (#3415); correction refuses acceptance (`INV-REQ-008`). Cancellation re-checks
+  the request under the global lock, refusing `ACCEPTED`. Decline claims
+  `DECLINED` before release.
 - **The release runs AFTER the claim has committed and outside every
   transaction.** `cancelBooking` takes `pg_advisory_xact_lock(1)` and opens
   transactions of its own, so nesting it self-deadlocks. This is

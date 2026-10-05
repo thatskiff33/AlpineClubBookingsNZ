@@ -203,12 +203,25 @@ import "./edit-financial-review-charge-raise-claim.realdb.test";
 // orphan heal add nothing, and a cash-only booking is unchanged. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3792-` fixtures.
 import "./ib-capacity-cancel-credit-restore.realdb.test";
+// #3864 reuses it to prove an edit's stored credit election is never spent on top
+// of an old full-price card intent: the REAL edit, pay-step route and webhook,
+// with the old intent captured and its webhook delivered at each point, end with
+// the price paid once. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
+// cleans its own `race-3864-` fixtures, and its Stripe and session doubles pass
+// through for every other suite.
+import "./election-double-pay-race.realdb.test";
 // #3835 reuses it to prove a review completed after the REAL cancel of a
 // captured payment gives back only what the cancellation's refund left owed,
 // by card and by credit plus card at three tiers, on both captured routes and
 // across sibling reviews. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns
 // and cleans its own `race-3835-` fixtures.
 import "./edit-financial-review-captured-cancel.realdb.test";
+// #3880 reuses it to prove a review's card refund or bank-transfer hand-back on
+// a booking the REAL cancel already closed queues the cancellation's own kind
+// of Xero refund note, sized to the netted figure, keyed on the review task and
+// never touching the cancelled invoice. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3880-` fixtures.
+import "./edit-financial-review-cancelled-refund-xero.realdb.test";
 // #3454 reuses it to prove the Xero token store's two fences against real row
 // locks: simultaneous refresh-lease claims (this code against itself, and
 // against an older colour's own claim statement) let exactly one through, and a

@@ -2087,13 +2087,91 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       recordedNightPrices: null,
     }, CLUB_FORMAT_TEST);
 
+    // #3880 F4: queued on the completion's own transaction, as a review's hand-back is.
     expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
       "payment-1",
       9000,
-      { createdByMemberId: "admin-1", refundMethod: "internet-banking" }
+      { createdByMemberId: "admin-1", refundMethod: "internet-banking", store: tx }
     );
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
     expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
+  });
+
+  describe("#3880 F4 - the cancellation hand-back's note commits or rolls back with the hand-back", () => {
+    const handBackTask = (xeroInvoiceId: string | null = "inv-1") =>
+      mocks.manualRefundTaskFindUnique.mockResolvedValue({
+        id: "task-1",
+        bookingId: "booking-1",
+        paymentId: "payment-1",
+        amountCents: 9000,
+        raisedAmountCents: 9000,
+        kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+        status: ManualRefundTaskStatus.OPEN,
+        booking: {
+          memberId: "member-1",
+          status: "CANCELLED",
+          payment: { id: "payment-1", status: "SUCCEEDED", xeroInvoiceId },
+        },
+      });
+    const complete = () =>
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: null,
+        actingMemberId: "admin-1",
+        confirmedAmountCents: null,
+        direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: null,
+      }, CLUB_FORMAT_TEST);
+
+    it("MUTATION: queued INSIDE the completion, after the allocation, and the kick waits for the commit", async () => {
+      handBackTask();
+      let insideTransaction = false;
+      let queuedInside: boolean | null = null;
+      const realTransaction = mocks.transaction.getMockImplementation()!;
+      mocks.transaction.mockImplementation(async (...a: unknown[]) => {
+        insideTransaction = true;
+        try {
+          return await realTransaction(...a);
+        } finally {
+          insideTransaction = false;
+        }
+      });
+      mocks.enqueueXeroRefundCreditNoteOperation.mockImplementation(async () => {
+        queuedInside = insideTransaction;
+        return { queueOperationId: "op-1", message: "queued" };
+      });
+
+      await complete();
+
+      expect(queuedInside).toBe(true);
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledTimes(1);
+      expect(mocks.applyLocalRefundAllocation.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.enqueueXeroRefundCreditNoteOperation.mock.invocationCallOrder[0]!,
+      );
+      expect(mocks.enqueueXeroRefundCreditNoteOperation.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.kickQueuedXeroOutboxOperationsIfConnected.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("MUTATION: a note that cannot be queued fails the completion, so the hand-back is never recorded without its document", async () => {
+      handBackTask();
+      mocks.enqueueXeroRefundCreditNoteOperation.mockRejectedValueOnce(new Error("outbox insert refused"));
+
+      await expect(complete()).rejects.toThrow("outbox insert refused");
+
+      expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).not.toHaveBeenCalled();
+      expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    });
+
+    it("a hand-back with no invoice (settled in cash) queues nothing, inside or after the commit", async () => {
+      handBackTask(null);
+
+      await complete();
+
+      expect(mocks.applyLocalRefundAllocation).toHaveBeenCalled();
+      expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    });
   });
 
   it("MUTATION: a DISMISSED hand-back raises no refund note even with an issued invoice", async () => {
@@ -4101,5 +4179,158 @@ describe("#3835 - a review completed after a card-paid booking was cancelled", (
 
     await expect(complete()).rejects.toMatchObject({ status: 409 });
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("#3880 - a review's refund on a cancelled booking reaches Xero as the cancellation's own refund does", () => {
+  const cancelledTask = (source: PaymentSource, xeroInvoiceId: string | null = "inv-1") =>
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({
+        payment: { source },
+        booking: {
+          memberId: "member-1",
+          status: "CANCELLED",
+          checkIn: new Date("2026-08-01T00:00:00.000Z"),
+          lodgeId: "lodge-1",
+          payment: { id: "payment-1", status: "PARTIALLY_REFUNDED", amountCents: 20_000, refundedAmountCents: 8_000, source, stripeCustomerId: null, xeroInvoiceId },
+        },
+      }),
+    );
+  /** The cancellation's frozen record: card at the tier, or (bank transfer) as account credit. */
+  const cancelledAt = (settledAmountCents: number, refundMethod: "card" | "credit") => {
+    const frozen = frozenCardCancellation({ settledAmountCents });
+    mocks.bookingEventFindFirst.mockResolvedValue({ ...frozen, snapshot: { ...frozen.snapshot, refundMethod } });
+  };
+  const completeAt = (confirmedAmountCents = 5_000) =>
+    resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the booking's own payment history.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+  const fiftyLessTwenty = () =>
+    vi.mocked(loadCancellationPolicy).mockResolvedValueOnce([{ daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 2_000 }]);
+  /** Nothing reaches the cancelled invoice: no edit note, no reopening allocation. */
+  const invoiceLeftAsTheCancellationLeftIt = () => expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
+
+  it.each([
+    { route: "card", source: PaymentSource.STRIPE, cancelMethod: "card", refundMethod: "card" },
+    { route: "bank transfer", source: PaymentSource.INTERNET_BANKING, cancelMethod: "credit", refundMethod: "internet-banking" },
+  ] as const)("MUTATION: $route, cancelled at half less a twenty-dollar fee: one refund note for the 2500 cents still owed, worded by its route and keyed on the task", async ({ source, cancelMethod, refundMethod }) => {
+    cancelledTask(source);
+    cancelledAt(8_000, cancelMethod);
+    fiftyLessTwenty();
+
+    await completeAt();
+
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("payment-1", 2_500, {
+      createdByMemberId: "admin-1",
+      refundMethod,
+      reviewTaskId: "task-1",
+      // The hand-back's row is queued on the completion's own transaction (L2).
+      ...(source === PaymentSource.INTERNET_BANKING ? { store: tx } : {}),
+    });
+    expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
+    invoiceLeftAsTheCancellationLeftIt();
+  });
+
+  it("MUTATION: the bank-transfer hand-back's note is queued INSIDE the completion, after its allocation - and the kick waits for the commit", async () => {
+    cancelledTask(PaymentSource.INTERNET_BANKING);
+    cancelledAt(8_000, "credit");
+    fiftyLessTwenty();
+    let insideTransaction = false;
+    let queuedInside: boolean | null = null;
+    const realTransaction = mocks.transaction.getMockImplementation()!;
+    mocks.transaction.mockImplementation(async (...a: unknown[]) => {
+      insideTransaction = true;
+      try {
+        return await realTransaction(...a);
+      } finally {
+        insideTransaction = false;
+      }
+    });
+    mocks.enqueueXeroRefundCreditNoteOperation.mockImplementation(async () => {
+      queuedInside = insideTransaction;
+      return { queueOperationId: "op-1", message: "queued" };
+    });
+
+    await completeAt();
+
+    expect(queuedInside).toBe(true);
+    expect(mocks.applyLocalRefundAllocation.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.enqueueXeroRefundCreditNoteOperation.mock.invocationCallOrder[0]!,
+    );
+    expect(mocks.enqueueXeroRefundCreditNoteOperation.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.kickQueuedXeroOutboxOperationsIfConnected.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("MUTATION: a hand-back note that cannot be queued fails the completion, so the hand-back is never recorded without its document", async () => {
+    cancelledTask(PaymentSource.INTERNET_BANKING);
+    cancelledAt(8_000, "credit");
+    fiftyLessTwenty();
+    mocks.enqueueXeroRefundCreditNoteOperation.mockRejectedValueOnce(new Error("outbox insert refused"));
+
+    await expect(completeAt()).rejects.toThrow("outbox insert refused");
+
+    expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).not.toHaveBeenCalled();
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+  });
+
+  it("the card refund's note is still queued after the commit, once Stripe has refunded: sized at enqueue against the cash that left", async () => {
+    cancelledTask(PaymentSource.STRIPE);
+    cancelledAt(8_000, "card");
+    fiftyLessTwenty();
+
+    await completeAt();
+
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("payment-1", 2_500, expect.not.objectContaining({ store: expect.anything() }));
+    expect(mocks.refundPaymentTransactions.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.enqueueXeroRefundCreditNoteOperation.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it.each([
+    { route: "card", source: PaymentSource.STRIPE, cancelMethod: "card" },
+    { route: "bank transfer", source: PaymentSource.INTERNET_BANKING, cancelMethod: "credit" },
+  ] as const)("MUTATION: $route, cancelled in full: nothing left the club, so no document at all", async ({ source, cancelMethod }) => {
+    cancelledTask(source);
+    cancelledAt(20_000, cancelMethod);
+
+    await completeAt();
+
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    invoiceLeftAsTheCancellationLeftIt();
+  });
+
+  it("MUTATION: $50 card + $150 credit at 50%: the note is the card's $25 alone - the $25 of credit given back is a noteless row, as the cancellation's restore is (#2717)", async () => {
+    cancelledTask(PaymentSource.STRIPE);
+    mocks.appliedCredit.cents = 15_000;
+    vi.mocked(loadCancellationPolicy).mockResolvedValue([{ daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 0 }]);
+    mocks.bookingEventFindFirst.mockResolvedValue(
+      frozenCardCancellation({ settledAmountCents: 2_500, paidAmountCents: 5_000, appliedCreditCents: 15_000, creditRestoredCents: 7_500 }),
+    );
+
+    await completeAt(10_000);
+
+    expect(mocks.giveBackAppliedCredit).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("payment-1", 2_500, expect.objectContaining({ refundMethod: "card", reviewTaskId: "task-1" }));
+    invoiceLeftAsTheCancellationLeftIt();
+  });
+
+  it("MUTATION: a cancelled booking with no invoice (settled in cash) raises no note: one against no invoice would fail for ever", async () => {
+    cancelledTask(PaymentSource.INTERNET_BANKING, null);
+    cancelledAt(8_000, "credit");
+    fiftyLessTwenty();
+
+    await completeAt();
+
+    expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 2_500 }));
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
   });
 });
