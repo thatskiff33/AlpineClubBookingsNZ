@@ -15,11 +15,16 @@
 // in `normalizePaymentRefundLinkWithClient` (xero-sync.ts) — EXCEPT the mirror
 // of a note whose recorded Xero status is VOIDED/DELETED, which is stale by
 // definition and is deactivated so the self-heal can reissue the uncovered
-// delta. Non-Stripe payment sources still contract to a single refund note and
-// keep the enforcement.
+// delta. Non-Stripe payment sources contract to a single refund note and keep
+// the enforcement, except a link stamped per-refund (#3880: a review's
+// bank-transfer hand-back, `isPerDeltaRefundNoteLink`), which is never the
+// field's note and is exempt by the same rule as a Stripe delta.
 import { PaymentSource } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { isRefundCreditNoteLinkCancelledInXero } from "@/lib/xero-refund-note-status";
+import {
+  isPerDeltaRefundNoteLink,
+  isRefundCreditNoteLinkCancelledInXero,
+} from "@/lib/xero-refund-note-status";
 import type {
   CanonicalLinkExpectation,
   CanonicalLinkRecord,
@@ -52,25 +57,27 @@ export async function findStripeSourcePaymentIds(
 }
 
 /**
- * True when this active link is SHAPED like a Stripe per-delta refund credit
- * note link, which the multi-note contract (INV-ADDPAY-020) keeps active
- * alongside its siblings. Shape only: callers that exempt these links from
- * cleanup/drift must additionally check the recorded Xero status — a
- * VOIDED/DELETED note's mirror is NOT live coverage
- * (`isRefundCreditNoteLinkCancelledInXero`). A REFUND_CREDIT_NOTE link with
- * the wrong xeroObjectType is malformed (the pipeline only writes CREDIT_NOTE)
- * and stays subject to cleanup, as does a link whose payment does not exist or
- * is not Stripe-sourced.
+ * True when this active link is SHAPED like one of several per-refund credit
+ * note links a payment may hold, which stay active beside their siblings: any
+ * refund note on a `source: STRIPE` payment (INV-ADDPAY-020, #2901), or one
+ * whose link metadata stamps it per-refund on any source (#3880,
+ * `isPerDeltaRefundNoteLink`). ONE rule for the cleanup and every drift-report
+ * classification. Shape only: callers that exempt these links must still
+ * check the recorded Xero status, since a VOIDED/DELETED note's mirror is not
+ * live coverage (`isRefundCreditNoteLinkCancelledInXero`). A REFUND_CREDIT_NOTE
+ * link with the wrong xeroObjectType is malformed (the pipeline only writes
+ * CREDIT_NOTE) and stays subject to cleanup. Pass `metadata: null` for a
+ * canonical-field expectation, which is never itself a per-refund stamp.
  */
-export function isStripePerDeltaRefundCreditNoteLink(
-  link: Pick<CanonicalLinkRecord, "localModel" | "localId" | "role" | "xeroObjectType">,
+export function isPerRefundCreditNoteLink(
+  link: Pick<CanonicalLinkRecord, "localModel" | "localId" | "role" | "xeroObjectType"> & { metadata: unknown },
   stripePaymentIds: ReadonlySet<string>
 ): boolean {
   return (
     link.localModel === "Payment" &&
     link.role === "REFUND_CREDIT_NOTE" &&
     link.xeroObjectType === "CREDIT_NOTE" &&
-    stripePaymentIds.has(link.localId)
+    (stripePaymentIds.has(link.localId) || isPerDeltaRefundNoteLink(link.metadata))
   );
 }
 
@@ -247,9 +254,10 @@ export async function cleanupStaleCanonicalXeroObjectLinks(): Promise<XeroCanoni
   const staleLinks = links.filter((link) => {
     // Stripe payments legitimately hold one ACTIVE refund note per refund
     // delta (INV-ADDPAY-020); the scalar pointer is only the latest of them.
-    // Single-canonical enforcement is retained ONLY for sources whose contract
-    // genuinely permits one note (#2901).
-    if (isStripePerDeltaRefundCreditNoteLink(link, stripePaymentIds)) {
+    // A per-refund-stamped note (#3880) is never the scalar's note on any
+    // source. Single-canonical enforcement is retained ONLY for the rest
+    // (#2901).
+    if (isPerRefundCreditNoteLink(link, stripePaymentIds)) {
       // The exemption shields LIVE per-delta coverage, not the mirror of a
       // note the operator VOIDED/DELETED in Xero: a cancelled note credits
       // nothing (INV-ADDPAY-020), so its still-active mirror is stale drift.
