@@ -4,6 +4,7 @@ import {
   amenitiesInputSchema,
   otherLodgeDataShape,
   otherLodgeNameSchema,
+  ownedOtherLodgeNamesSchema,
   type OtherLodgeAmenity,
   type SerializedOtherLodgeData,
 } from "@/lib/other-lodges";
@@ -123,10 +124,18 @@ const MAX_LODGES_PER_PULL = 5_000;
 // `ServerNzSettings.otherLodgesCursor`'s VarChar(64): an over-long cursor would
 // otherwise raise P2000 AFTER the rows were written and BEFORE the cursor
 // advanced, so every subsequent run would re-fetch and re-fail, permanently.
+//
+// `ownLodgeNames` (#52) is the names of the lodges the AUTHENTICATED club owns,
+// which the server sends on EVERY pull, incremental or not, because it is the
+// club's whole current list rather than a delta. OPTIONAL: an older server does
+// not send it, and absent must survive as `undefined` so the sync leaves the
+// stored list alone rather than reading "not sent" as "owns nothing". Bounded
+// by the shared schema (count, and each name to the lodge-name bound).
 const pullEnvelopeSchema = z.object({
   lodges: z.array(z.unknown()).max(MAX_LODGES_PER_PULL),
   cursor: z.string().max(64).nullable(),
   count: z.number(),
+  ownLodgeNames: ownedOtherLodgeNamesSchema.optional(),
 });
 
 export interface OtherLodgesPullResult {
@@ -135,6 +144,12 @@ export interface OtherLodgesPullResult {
   count: number;
   /** Rows the server sent that failed the bounds above and were discarded. */
   dropped: number;
+  /**
+   * The lodges the server says this club owns, or `undefined` when the server
+   * did not send the list (an older release). Never defaulted to `[]`: absent
+   * and "owns nothing" are different answers.
+   */
+  ownLodgeNames: string[] | undefined;
 }
 
 async function resolveConnection(): Promise<{ baseUrl: string; apiKey: string }> {
@@ -496,5 +511,11 @@ export async function pullOtherLodges(
     else dropped++;
   }
 
-  return { lodges, cursor: envelope.cursor, count: envelope.count, dropped };
+  return {
+    lodges,
+    cursor: envelope.cursor,
+    count: envelope.count,
+    dropped,
+    ownLodgeNames: envelope.ownLodgeNames,
+  };
 }
