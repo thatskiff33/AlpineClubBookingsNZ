@@ -18,8 +18,9 @@ Sentry.init({
   replaysOnErrorSampleRate: 1.0,
 
   integrations: [
+    // Console breadcrumbs come from Sentry's default consoleIntegration since
+    // v11, which removed this option (MIGRATION.md, @sentry/browser).
     Sentry.breadcrumbsIntegration({
-      console: true,
       dom: true,
       fetch: true,
       history: true,
