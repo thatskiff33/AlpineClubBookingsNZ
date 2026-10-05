@@ -90,17 +90,7 @@ import {
 } from "@/lib/booking-money-build-up";
 import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
 import { asRecord } from "@/lib/xero-json";
-
-// #1765 — the aggregate Payment statuses that prove cash was captured at some
-// point. Settlement gating must pair one of these with a positive NET capture
-// (amountCents − refundedAmountCents); `status === "SUCCEEDED"` alone
-// misclassifies a repay-after-refund payment, whose aggregate sits in
-// PARTIALLY_REFUNDED even though its repay capture settles the invoice.
-const STRIPE_CAPTURED_PAYMENT_STATUSES = new Set<string>([
-  "SUCCEEDED",
-  "PARTIALLY_REFUNDED",
-  "REFUNDED",
-]);
+import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 
 export interface CreateXeroBookingInvoiceOptions
   extends FindOrCreateXeroContactOptions {
@@ -274,11 +264,11 @@ export function buildInvoiceLineItems(
  *
  * Card-gated for three reasons: (1) Internet-Banking invoices allocate via their own
  * fire-after outbox op (#1620) — running it here would double-drive them; (2) a card
- * invoice is only raised after capture (payment SUCCEEDED); (3) a legacy full-price
- * capture carries `creditAppliedCents = 0` (its mirror was never credit-reduced) and
- * must NOT allocate — its invoice is settled in full by real cash and its historical
- * double-pay is repaired by a LOCAL credit restore, not a Xero note (which cannot
- * refund cash already sent). Dynamic import avoids a load-order cycle (mirrors
+ * invoice is only raised after capture (payment SUCCEEDED); (3) a full-price capture
+ * carries `creditAppliedCents = 0` and must NOT allocate — its invoice is settled in
+ * full by real cash, and the settle gave its applied credit back locally (#3864; a
+ * pre-#3864 double-pay by an operator's LOCAL restore), not by a Xero note (which
+ * cannot refund cash already sent). Dynamic import avoids a load-order cycle (mirrors
  * xero-operation-retry's engine import).
  *
  * THROWS on allocation failure so the caller fails the invoice sync op and the retry
@@ -309,7 +299,7 @@ async function settleCardAppliedCreditAllocation(
   // A fully-refunded-out payment (net 0) still must not allocate.
   if (
     payment.source === PaymentSource.INTERNET_BANKING ||
-    !STRIPE_CAPTURED_PAYMENT_STATUSES.has(payment.status) ||
+    !isCapturedPaymentStatus(payment.status) ||
     payment.amountCents - (payment.refundedAmountCents ?? 0) <= 0 ||
     !(payment.creditAppliedCents > 0)
   ) {
@@ -787,9 +777,7 @@ export async function createXeroInvoiceForBooking(
     let paymentResponseBody: XeroPayment | null = null;
     let paymentWriteError: unknown = null;
     const paymentSource = booking.payment.source ?? PaymentSource.STRIPE;
-    const paymentCaptured = STRIPE_CAPTURED_PAYMENT_STATUSES.has(
-      booking.payment.status
-    );
+    const paymentCaptured = isCapturedPaymentStatus(booking.payment.status);
     const netCapturedCents = Math.max(
       0,
       booking.payment.amountCents - (booking.payment.refundedAmountCents ?? 0)

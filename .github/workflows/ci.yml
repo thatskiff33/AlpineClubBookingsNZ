@@ -23,7 +23,7 @@ on:
   #
   # This widens WHEN the existing jobs run and adds no new status context, so
   # `main`'s branch protection is untouched. See
-  # docs/agents/ISSUE_WORKFLOW.md -> "An epic reaches `main` as ONE merge".
+  # docs/agents/EPIC_PLAYBOOK.md -> "An epic reaches `main` as ONE merge".
   pull_request:
     branches:
       - main
@@ -310,7 +310,7 @@ jobs:
       # gate on findings so the alerts still publish.
       - name: Upload Semgrep SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@v4.38.1
+        uses: github/codeql-action/upload-sarif@v4.38.2
         with:
           sarif_file: ${{ runner.temp }}/semgrep-output/semgrep-results.published.sarif
           category: semgrep
@@ -1011,6 +1011,19 @@ jobs:
           CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
         run: pnpm exec vitest run src/lib/__tests__/member-merge-shared-double-races.realdb.test.ts
 
+      # #3852: the page-content DELETE under a concurrent edit and a second delete.
+      # The mocked route test can show a P2025 is mapped to 404, not that
+      # PostgreSQL raises one for the loser, nor that `DELETE ... RETURNING` hands
+      # back the row a concurrent UPDATE left. Its own step because it mocks the
+      # session guard, which the suites imported by the lock-race file forbid. It
+      # self-skips without the env vars, so this step MUST stay wired —
+      # `review-findings-contracts.test.ts` fails if it goes missing.
+      - name: Test page-content delete race against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+          CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
+        run: pnpm exec vitest run src/lib/__tests__/page-content-delete-race.realdb.test.ts
+
       # #2374 (AID-5): PROVE the dedicated SELECT-only AI Diagnostics database
       # role cannot write, cannot run DDL, cannot create a TEMP table, cannot read
       # the encrypted credential store, and is cancelled at its statement timeout.
@@ -1179,6 +1192,11 @@ jobs:
         env:
           DATA_MIGRATION_VERIFICATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55443/data_migration_verification
         run: pnpm exec vitest run src/lib/__tests__/school-organisation-backfill-fail-closed.realdb.test.ts
+
+      - name: Verify pending adult naming races and rollback
+        env:
+          DATA_MIGRATION_VERIFICATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55443/data_migration_verification
+        run: pnpm exec vitest run src/lib/__tests__/school-pending-adult-resolution.realdb.test.ts
 
   # #2686: the CRITICAL half of this job is a REQUIRED status check, so the job
   # carries an explicit `name:` — the required context is

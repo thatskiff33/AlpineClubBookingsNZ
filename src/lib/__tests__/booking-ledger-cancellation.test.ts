@@ -134,6 +134,8 @@ function paidCancel(payment: {
     days: payment.days,
     policy: payment.policy ?? FIFTY,
     refundMethod: payment.refundMethod,
+    // #3809: no edit ran through the give-back, so main's uncapped credit (`INV-PAY-115`).
+    capAppliedCredit: false,
   });
   return {
     refundAmountCents: money.refundAmountCents,
@@ -479,7 +481,7 @@ describe("postCancellationLedgerLines: what keeps nothing", () => {
  * either call fails.
  */
 describe("the stand-in reversal both a review closure and a cancellation post", () => {
-  const standIn = { id: "line-1", sign: -1 as const, quantity: 1, unitCents: 3_000, narration: "Adjustment agreed with member: share", reversesLineId: null };
+  const standIn = { id: "line-1", sign: -1 as const, quantity: 1, unitCents: 3_000, narration: "Adjustment agreed with member: share", reversesLineId: null, postingKey: "agreed-adjustment:t1" };
 
   it("a closure's: anchored on its task, naming the officer", () => {
     expect(

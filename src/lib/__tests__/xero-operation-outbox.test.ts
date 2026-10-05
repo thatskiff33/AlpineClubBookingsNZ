@@ -295,7 +295,7 @@ import {
   queueXeroBookingEditSettlement,
 } from "@/lib/xero-booking-edit-settlement";
 import { XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
-import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
+import { XeroAppliedCreditOperationBusyError, XeroRefundCreditNoteInFlightError } from "@/lib/xero-applied-credit-operation-serialization";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("enqueueXeroEntranceFeeInvoiceOperation", () => {
@@ -1339,6 +1339,70 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
     expect(mocks.findCanonicalPaymentRefundCreditNote).not.toHaveBeenCalled();
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
   });
+
+  // #3880: a review's refund on a CANCELLED booking - by card or handed back by
+  // bank transfer - is noted per refund and keyed on its review task.
+  describe("#3880 - a review's refund on a cancelled booking", () => {
+    const bankTransferPayment = (refundedAmountCents: number) =>
+      mocks.findUniquePayment.mockResolvedValue({
+        id: "payment_1",
+        source: "INTERNET_BANKING",
+        refundedAmountCents,
+        // The cancellation's or an earlier review's note is already linked.
+        xeroRefundCreditNoteId: "cn_existing",
+      });
+
+    it("MUTATION: a bank-transfer hand-back is noted beside the payment's existing note, capped by coverage and keyed on the task", async () => {
+      bankTransferPayment(3500);
+      mocks.findCanonicalPaymentRefundCreditNote.mockResolvedValue({ xeroObjectId: "cn_existing", xeroObjectNumber: "CN-1", source: "payment" });
+      mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(1000);
+
+      await expect(
+        enqueueXeroRefundCreditNoteOperation("payment_1", 2500, { refundMethod: "internet-banking", reviewTaskId: "task_1" })
+      ).resolves.toMatchObject({ queueOperationId: "op_credit_note_1" });
+
+      expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          correlationKey: "payment:payment_1:refund-credit-note:3500:v2:review-task:task_1",
+          idempotencyKey: "payment:payment_1:refund-credit-note:3500:v2:review-task:task_1",
+          requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 2500, watermarkCents: 3500, refundMethod: "internet-banking", reviewTaskId: "task_1" },
+        })
+      );
+    });
+
+    it("MUTATION: two sibling reviews' equal $10 refunds are a note each, not one folded into the other", async () => {
+      bankTransferPayment(2000);
+      await enqueueXeroRefundCreditNoteOperation("payment_1", 1000, { reviewTaskId: "task_1" });
+      await enqueueXeroRefundCreditNoteOperation("payment_1", 1000, { reviewTaskId: "task_2" });
+
+      const keys = mocks.startXeroSyncOperation.mock.calls.map((call) => call[0].correlationKey);
+      expect(keys).toEqual([
+        "payment:payment_1:refund-credit-note:1000:v2:review-task:task_1",
+        "payment:payment_1:refund-credit-note:1000:v2:review-task:task_2",
+      ]);
+    });
+
+    it("a replay while the note is queued answers with the queued row; once it is raised, a replay raises nothing", async () => {
+      mocks.findUniquePayment.mockResolvedValue({ id: "payment_1", source: "STRIPE", refundedAmountCents: 10500, xeroRefundCreditNoteId: "cn_cancel" });
+      mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(8000);
+      mocks.findFirstOperation.mockResolvedValue({ id: "op_queued" });
+
+      await expect(enqueueXeroRefundCreditNoteOperation("payment_1", 2500, { reviewTaskId: "task_1" })).resolves.toMatchObject({
+        queueOperationId: "op_queued",
+      });
+      expect(mocks.findFirstOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ correlationKey: "payment:payment_1:refund-credit-note:10500:v2:review-task:task_1" }) })
+      );
+
+      // Raised: its link covers the cash, so the same request sizes to nothing.
+      mocks.findFirstOperation.mockResolvedValue(null);
+      mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(10500);
+      await expect(enqueueXeroRefundCreditNoteOperation("payment_1", 2500, { reviewTaskId: "task_1" })).resolves.toMatchObject({
+        queueOperationId: null,
+      });
+      expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("enqueueXeroAccountCreditNoteOperation", () => {
@@ -1967,7 +2031,8 @@ describe("processQueuedXeroOutboxOperations", () => {
           status: "PENDING",
           startedAt: null,
           lastErrorCode: null,
-          lastErrorMessage: null,
+          // #3791: the busy reason stays on the requeued row.
+          lastErrorMessage: expect.stringMatching(/\S/),
         },
       });
     }
@@ -2008,7 +2073,7 @@ describe("processQueuedXeroOutboxOperations", () => {
         status: "PENDING",
         startedAt: null,
         lastErrorCode: null,
-        lastErrorMessage: null,
+        lastErrorMessage: expect.stringMatching(/\S/),
       },
     });
 
@@ -2192,6 +2257,32 @@ describe("processQueuedXeroOutboxOperations", () => {
       syncOperationId: "op_credit_note_1",
       watermarkCents: 8000,
     });
+  });
+
+  it("MUTATION (#3880): a refund-note row whose payment has another note mid-raise goes back to PENDING, reason kept, never FAILED", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_hand_back_2",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: null,
+        requestPayload: { queueType: "REFUND_CREDIT_NOTE", refundAmountCents: 1000, watermarkCents: 1000, refundMethod: "internet-banking" },
+      },
+    ]);
+    mocks.createXeroCreditNote.mockRejectedValue(new XeroRefundCreditNoteInFlightError("payment_1", "op_hand_back_1"));
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 0,
+      failed: 0,
+      skipped: 1,
+    });
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: "op_hand_back_2", status: "RUNNING" },
+      data: { status: "PENDING", startedAt: null, lastErrorCode: null, lastErrorMessage: expect.stringContaining("op_hand_back_1") },
+    });
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
   });
 
   // #3548 (`INV-PAY-111`): the outbox's half of the crash-window contract. A

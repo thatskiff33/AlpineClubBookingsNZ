@@ -14,6 +14,14 @@ const CLUB_ZONE = "Pacific/Auckland";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
+  // #3864: nothing to give back unless a case says so.
+  giveBackAppliedCredit: vi.fn<(...args: unknown[]) => Promise<{ appliedCreditCents: number; givenBackCents: number; payment: null }>>(
+    async () => ({ appliedCreditCents: 0, givenBackCents: 0, payment: null }),
+  ),
+  findAppliedCreditDeallocationFence: vi.fn<(...args: unknown[]) => Promise<{ id: string; status: string } | null>>(async () => null),
+  paymentUpdate: vi.fn(),
+  // #3792: the settle's member credit-ledger key.
+  lockMemberCreditLedger: vi.fn(),
   // #3580: the ledger's one write delegate, so a settle's charge lines are
   // observable here.
   ledgerCreateMany: vi.fn(),
@@ -103,6 +111,10 @@ vi.mock("@/lib/payment-recovery", () => ({
 vi.mock("@/lib/member-credit", () => ({
   restoreCreditFromBooking: (...args: unknown[]) =>
     mocks.restoreCreditFromBooking(...args),
+  // #3864: the settle gives back credit a full-price capture left unspent.
+  giveBackAppliedCredit: (...args: unknown[]) => mocks.giveBackAppliedCredit(...args),
+  // #3792: the settle takes the member credit-ledger key after its lodge key.
+  lockMemberCreditLedger: (...args: unknown[]) => mocks.lockMemberCreditLedger(...args),
   deriveBookingAppliedCreditCents: (...args: unknown[]) =>
     mocks.deriveBookingAppliedCreditCents(...args),
   getMemberCreditBalance: (...args: unknown[]) =>
@@ -113,6 +125,11 @@ vi.mock("@/lib/member-credit", () => ({
     if (!memberId) throw new Error("no account to credit (#3369)");
     return memberId;
   },
+}));
+
+vi.mock("@/lib/xero-applied-credit-operation-serialization", () => ({
+  findAppliedCreditDeallocationFence: (...args: unknown[]) =>
+    mocks.findAppliedCreditDeallocationFence(...args),
 }));
 
 vi.mock("@/lib/email", () => ({
@@ -194,6 +211,7 @@ const tx = {
   },
   payment: {
     upsert: (...args: unknown[]) => mocks.paymentUpsert(...args),
+    update: (...args: unknown[]) => mocks.paymentUpdate(...args),
   },
 };
 
@@ -614,6 +632,14 @@ describe("markBookingPaymentSucceeded", () => {
       globalIdx,
       "global lock(1) acquired before the per-lodge lock"
     ).toBeLessThan(lodgeIdx);
+    // #3792: then the member credit-ledger key, before the Payment upsert.
+    expect(mocks.lockMemberCreditLedger).toHaveBeenCalledTimes(1);
+    expect(mocks.executeRaw.mock.invocationCallOrder[lodgeIdx]).toBeLessThan(
+      mocks.lockMemberCreditLedger.mock.invocationCallOrder[0],
+    );
+    expect(mocks.lockMemberCreditLedger.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.paymentUpsert.mock.invocationCallOrder[0],
+    );
   });
 
   // #1764 — pay-while-held. An admin capacity hold makes the booking part of
@@ -721,6 +747,10 @@ describe("markBookingPaymentSucceeded", () => {
         amountCents: EFFECTIVE,
         creditAppliedCents: APPLIED,
       });
+      // #3864: the credit covered exactly what the card did not, so nothing is
+      // given back and the fence is never asked.
+      expect(mocks.giveBackAppliedCredit).not.toHaveBeenCalled();
+      expect(mocks.findAppliedCreditDeallocationFence).not.toHaveBeenCalled();
     });
 
     it("still accepts a legacy full-price capture (mirror credit = 0)", async () => {
@@ -736,6 +766,35 @@ describe("markBookingPaymentSucceeded", () => {
         amountCents: FINAL,
         creditAppliedCents: 0,
       });
+      // #3864: the card paid it all, so every cent of applied credit goes back
+      // and the existing Payment row's mirror is written to match.
+      const [giveBack] = mocks.giveBackAppliedCredit.mock.calls[0] as unknown as [
+        { giveBackCentsOf: (applied: number) => number },
+      ];
+      expect(giveBack.giveBackCentsOf(3000)).toBe(3000);
+      expect(mocks.paymentUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { creditAppliedCents: 0 } }),
+      );
+    });
+
+    it("holds the credit for an operator, and still settles, when a Xero deallocation fences the give-back (#3864)", async () => {
+      mocks.findAppliedCreditDeallocationFence.mockResolvedValueOnce({ id: "op-1", status: "FAILED" });
+      const result = await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST,
+        bookingId: "booking-1",
+        paymentIntentId: "pi_legacy_full",
+        amountCents: FINAL,
+        paymentMethodId: "pm_1",
+      });
+      expect(result.outcome).toBe("paid");
+      expect(mocks.giveBackAppliedCredit).not.toHaveBeenCalled();
+      expect(mocks.sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amountCents: APPLIED,
+          errorMessage: expect.stringContaining("could not be returned automatically"),
+        }),
+        CLUB_FORMAT_TEST,
+      );
     });
 
     it("rejects an amount that is neither full nor effective", async () => {
@@ -785,7 +844,9 @@ describe("markBookingPaymentSucceeded", () => {
     });
 
     expect(result.outcome).toBe("paid");
-    // Pre-lock read selects only the lock key.
+    // Pre-lock read selects only the immutable lodge key. The owner the member
+    // credit-ledger key is taken on is NOT immutable (member merge re-points it
+    // under the lodge key), so it comes from the post-lock re-read (#3792).
     expect(mocks.bookingFindUnique).toHaveBeenNthCalledWith(1, {
       where: { id: "booking-1" },
       select: { lodgeId: true },

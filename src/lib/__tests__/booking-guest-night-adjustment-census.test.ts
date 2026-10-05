@@ -198,6 +198,7 @@ const PROMO_WRITERS: Record<string, (code: string) => void> = {
 const NIGHT_WRITERS_WITHOUT_PROMOTION = new Map<string, string>([
   ["src/lib/booking-request.ts", "request conversion: an officer's total or an even split, no promotion"],
   ["src/lib/booking-request-shared.ts", "approval night vector: SOLD or EVEN_SPLIT, no promotion"],
+  ["src/lib/school-pending-adult-resolution.ts", "provisional held nights aligned to accepted officer cents via approval night vector; refuses promotion adjustments"],
   [
     "src/lib/stored-night-price-repair-store.ts",
     "an officer prices a night; the settle re-base that follows records the engine's figure over it",

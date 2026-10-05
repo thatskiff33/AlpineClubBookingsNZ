@@ -11,6 +11,9 @@
  * import it without dragging the settlement machinery in behind it.
  */
 
+import type { ClubFormat } from "@/lib/club-format";
+import { formatCents } from "@/lib/utils";
+
 /**
  * Raised when the review carries no `BookingModification` to settle against -
  * either because none was recorded, or because the stored `reviewContext` cannot
@@ -81,3 +84,51 @@ export const REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE =
  */
 export const REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE =
   "That is more than this booking's card payment can give back - check the amount against the booking's payment history, or hand the money back another way and dismiss this task with a note saying what was done.";
+
+/**
+ * #3791 (owner decision 2): a review completed after the booking was cancelled
+ * nets its share against the credit the cancellation already restored, which
+ * means re-running the cancellation's tier on what would have been applied had
+ * the share come back first. That is only honest where the policy in force
+ * still reproduces the restore actually made. When it does not - the policy was
+ * edited since, or the restore was made under some other rule - no figure here
+ * can be shown to be right, so the task stays OPEN rather than guessing.
+ */
+export const REVIEW_CANCELLATION_RESTORE_UNREPRODUCIBLE_MESSAGE =
+  "This booking was cancelled and its account credit restored under terms the current cancellation policy no longer reproduces, so the share cannot be netted against that restore automatically. Work out what is still owed, hand it back another way, then dismiss this task with a note saying what was done.";
+
+/**
+ * #3835: the same refusal on a captured payment's share, whose cancellation
+ * REFUNDED by tier: the frozen figures must reproduce that refund and restore
+ * before the share is netted against them (`capturedShareOwedAfterCancellationCents`).
+ */
+export const REVIEW_CANCELLATION_REFUND_UNREPRODUCIBLE_MESSAGE =
+  "This booking was cancelled and refunded under terms the current cancellation policy no longer reproduces, so the share cannot be netted against that refund automatically. Work out what is still owed, hand it back another way, then dismiss this task with a note saying what was done.";
+
+/**
+ * #3835: the card route's cap against refunds already promised to the card and
+ * not yet made (`assertCardRefundNotOverPromised`). The payment history shows
+ * the headroom before those refunds land, so the sentence names them.
+ */
+export function reviewRefundOverPromisedMessage({
+  refundCents,
+  promisedCents,
+  availableCents,
+  format,
+}: {
+  refundCents: number;
+  promisedCents: number;
+  availableCents: number;
+  format: ClubFormat;
+}): string {
+  return `This booking's card already has ${formatCents(promisedCents, format)} of refunds promised and not yet made (the cancellation's, or an earlier review's), so only ${formatCents(availableCents, format)} of the ${formatCents(refundCents, format)} this review owes the card can be refunded to it now. Wait for those refunds to finish (or settle a failed one in the refund recovery queue) and complete this review again.`;
+}
+
+/**
+ * #3835 / #3653 (`INV-PAY-114`): a review on a cancelled joiner's booking the
+ * group organiser paid by card. That cancellation refunded the organiser, out
+ * of the group's combined payment and clamped to the group's own debt, so its
+ * figures are not a tier a share can be netted against.
+ */
+export const REVIEW_CANCELLATION_ORGANISER_PAID_MESSAGE =
+  "This booking was paid for by the group organiser and has been cancelled, so its share cannot be netted against what the organiser was refunded automatically. Work out what is still owed to the organiser, hand it back another way, then dismiss this task with a note saying what was done.";

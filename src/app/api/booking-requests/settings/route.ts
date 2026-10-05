@@ -11,7 +11,9 @@ import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 /**
  * Public read of the booking request pricing visibility setting, used by the
  * non-member booking request form to decide between "Request to Book" (with
- * indicative pricing) and "Request for Price" (no pricing shown).
+ * indicative pricing) and "Request for Price" (no pricing shown). This route
+ * projects the existing public settings deliberately: the school teacher
+ * hut-leader policy stays on the authenticated admin route.
  *
  * Also lists the ACTIVE lodges a requester may choose between (id and name
  * only — this endpoint is public). Empty for a single-lodge club, so the
@@ -62,7 +64,11 @@ export async function GET(request: NextRequest) {
       getCachedDefaultLodgeCapacity(),
     ]);
   return NextResponse.json({
-    ...settings,
+    showPricingToNonMembers: settings.showPricingToNonMembers,
+    quoteResponseTtlDays: settings.quoteResponseTtlDays,
+    quoteReminderLeadDays: settings.quoteReminderLeadDays,
+    attendeeConfirmationLeadDays: settings.attendeeConfirmationLeadDays,
+    attendeeConfirmationReminderDays: settings.attendeeConfirmationReminderDays,
     lodges,
     otherLodges,
     schoolGroupSoftCap,

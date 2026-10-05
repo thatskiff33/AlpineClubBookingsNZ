@@ -1534,8 +1534,8 @@ export function auditIndexRows(files) {
  * restated the same facts seven times. Two budgets make the rule mechanical:
  *
  *  - an index row's description is at most {@link INDEX_ROW_WORD_CAP} words —
- *    the cap `SCHEME.md` §5.2 states, and the reason the index still fits the
- *    always-read core; it has no exceptions and no ratchet;
+ *    the cap `SCHEME.md` §5.2 states, which keeps each grep hit a complete,
+ *    scannable line; it has no exceptions and no ratchet;
  *  - an invariant entry is at most {@link INVARIANT_ENTRY_WORD_BUDGET} words
  *    unless {@link WORD_BUDGET_REGISTER} carries an approved exception for it
  *    (its own fixed ceiling, the deciding issue and the reason it cannot be
@@ -1844,8 +1844,8 @@ export function auditWordBudgets(files) {
         problems.push(
           `${INVARIANT_INDEX}:${number} — the description for ${match[1]} is ${words} ` +
             `words; the cap is ${INDEX_ROW_WORD_CAP} (SCHEME.md §5.2), with no exceptions ` +
-            "and no ratchet. The index is the part of the invariants everybody reads in " +
-            "full, and the cap is what keeps it inside the always-read core. Say what " +
+            "and no ratchet. An agent finds a rule by grepping the index, and the cap keeps " +
+            "each row a complete, scannable line. Say what " +
             "the rule covers, not what it says; the entry itself holds the rule.",
         );
       }

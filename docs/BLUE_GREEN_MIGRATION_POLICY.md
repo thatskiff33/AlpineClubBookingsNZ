@@ -194,7 +194,7 @@ condition on whether the diff adds a migration. That is a reasonable thing to
 build later; it is not a reason to skip the rehearsal now.
 
 The full model, including merge authority and the narrow inert-child exception,
-is [`agents/ISSUE_WORKFLOW.md`](agents/ISSUE_WORKFLOW.md) → "An epic reaches
+is [`agents/EPIC_PLAYBOOK.md`](agents/EPIC_PLAYBOOK.md) → "An epic reaches
 `main` as ONE merge".
 
 ## The lock timeout a `lock_impact_plan` may name

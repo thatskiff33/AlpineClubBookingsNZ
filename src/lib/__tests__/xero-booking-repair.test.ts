@@ -696,6 +696,82 @@ describe("runBookingXeroRepair", () => {
     expect(unsettledRefundNoteRows(operations as never, links)).toEqual([]);
   });
 
+  it("MUTATION (#3880 F1): a bank payment holding only per-refund notes is offered no backfill of its canonical field", async () => {
+    // Empty by design: a review's per-refund note is never the payment's one note.
+    const reviewNote = (id: string, creditNoteId: string) =>
+      paymentLink({ id, xeroObjectType: "CREDIT_NOTE", xeroObjectId: creditNoteId, role: "REFUND_CREDIT_NOTE", metadata: { amountCents: 1000, perDelta: true } });
+    const reviewRow = (id: string, creditNoteId: string) =>
+      makeOperation({
+        id, entityType: "CREDIT_NOTE", localModel: "Payment", localId: "payment_1", xeroObjectType: "CREDIT_NOTE", xeroObjectId: creditNoteId,
+        requestPayload: { allocation: { invoiceId: "inv_primary", amount: 10 }, refundMethod: "internet-banking", perDelta: true, reviewTaskId: "task_1" },
+        responsePayload: { refundPayment: { paymentID: `pay_${id}` } },
+      });
+    const links = [reviewNote("link_a", "cn_a"), reviewNote("link_b", "cn_b")];
+    const deps = createDependencies({ bookings: [makeBooking()], links, operations: [reviewRow("op_a", "cn_a"), reviewRow("op_b", "cn_b")] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const booking = report.passes[0].bookings[0];
+    expect(booking.actions.map((action) => action.type)).not.toContain("SYNC_PAYMENT_REFUND_CREDIT_NOTE_FIELD");
+    expect(booking.findings.map((finding) => finding.summary)).not.toContain(
+      "Refund credit note references conflict across local fields, links, or past operations.",
+    );
+  });
+
+  describe("#3880 round 3: a CANCELLED bank booking whose refund notes are all per-refund", () => {
+    // $30 handed back by bank transfer on the cancelled booking, documented by
+    // the review's per-refund note cn_a - never the payment's canonical note.
+    const cancelledBank = () =>
+      makeBooking({
+        status: "CANCELLED",
+        payment: { ...makeBooking().payment, source: "INTERNET_BANKING", refundedAmountCents: 3000, status: "PARTIALLY_REFUNDED" },
+      });
+    const classify = async (uncoveredCents: number) => {
+      const links = [
+        paymentLink({ id: "link_a", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_a", role: "REFUND_CREDIT_NOTE", metadata: { amountCents: 3000 - uncoveredCents, perDelta: true } }),
+      ];
+      const deps = createDependencies({ bookings: [cancelledBank()], links });
+      // What the one gap reader answers: the per-refund note counts as cover.
+      deps.readRefundCreditNoteGap = vi.fn().mockResolvedValue({ cashRefundCents: 3000, coveredCents: 3000 - uncoveredCents, resolvedInXeroCents: 0, uncoveredCents });
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+      return { deps, booking: report.passes[0].bookings[0] };
+    };
+
+    it("MUTATION: fully covered - no queued note and no critical finding, and the gap is read for a bank payment", async () => {
+      const { deps, booking } = await classify(0);
+      expect(deps.readRefundCreditNoteGap).toHaveBeenCalledWith({ id: "payment_1", bookingId: "booking_1", refundedAmountCents: 3000 });
+      expect(booking.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
+      expect(booking.findings.map((finding) => finding.code)).not.toContain("CANCELLED_BOOKING_OPEN_INVOICE");
+      expect(booking.findings.map((finding) => finding.code)).not.toContain("MANUAL_REVIEW_REQUIRED");
+    });
+
+    it("MUTATION: partially covered - asks for the gap only", async () => {
+      const { booking } = await classify(1000);
+      const queued = booking.actions.filter((action) => action.type === "QUEUE_REFUND_CREDIT_NOTE");
+      expect(queued).toEqual([expect.objectContaining({ key: "queue:refund-credit-note:payment_1:1000", payload: { paymentId: "payment_1", refundAmountCents: 1000 } })]);
+    });
+
+    it("MUTATION: fully covered with cancellation credit beside it - no 'ambiguous' manual review", async () => {
+      const links = [
+        paymentLink({ id: "link_a", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_a", role: "REFUND_CREDIT_NOTE", metadata: { amountCents: 3000, perDelta: true } }),
+      ];
+      // A cancellation that also gave $50 of account credit (its own note
+      // recorded): the cash share cannot be derived from local history alone.
+      const withCredit = {
+        ...cancelledBank(),
+        creditsFromCancellation: [
+          { id: "credit_cancel", amountCents: 5000, type: "CANCELLATION_REFUND", description: "Cancellation refund for booking booking_", xeroCreditNoteId: "cn_account", createdAt: new Date("2026-05-03T00:00:00Z") },
+        ],
+      };
+      const deps = createDependencies({ bookings: [withCredit], links });
+      deps.readRefundCreditNoteGap = vi.fn().mockResolvedValue({ cashRefundCents: 3000, coveredCents: 3000, resolvedInXeroCents: 0, uncoveredCents: 0 });
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+      expect(report.passes[0].bookings[0].findings.map((finding) => finding.summary)).not.toContain(
+        "The booking appears to have a cash cancellation refund, but the missing Xero refund note amount cannot be derived safely from local history.",
+      );
+    });
+  });
+
   it("classifies cancelled unpaid bookings with an open invoice", async () => {
     const booking = makeBooking({
       status: "CANCELLED",
@@ -2195,6 +2271,177 @@ describe("runBookingXeroRepair", () => {
       safeToAutoApply: true,
       details: { refundAmountSource: "net-amount" },
     });
+  });
+
+  // #3809: a credit-paid booking's reduction settled as applied credit given
+  // back, as the edit's history row records. Its note is the give-back - none
+  // where the tier gave nothing back - so a note whose post-commit queue failed
+  // after the deallocation committed is recovered at that figure, never at the
+  // whole reduction the policy partly kept.
+  function creditPaidReduction(givenBackCents: number) {
+    return makeBooking({
+      // Paid by credit: nothing captured, no card intent.
+      payment: { ...makeBooking().payment, status: "SUCCEEDED", amountCents: 0, stripePaymentIntentId: null, stripePaymentMethodId: null },
+      modifications: [
+        {
+          id: "mod_give_back",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -5000,
+          changeFeeCents: 0,
+          newData: { appliedCreditGiveBack: { basisCents: 5000, givenBackCents } },
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+  }
+
+  it("MUTATION (#3809): queues a lost give-back note at the recorded give-back, worded as account credit", async () => {
+    const deps = createDependencies({ bookings: [creditPaidReduction(500)] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.find((candidate) => candidate.type === "QUEUE_MODIFICATION_CREDIT_NOTE")).toMatchObject({
+      safeToAutoApply: true,
+      payload: { bookingModificationId: "mod_give_back", refundAmountCents: 500, refundMethod: "account-credit", reviewTaskId: "applied-credit-give-back" },
+    });
+    expect(bookingReport.findings.find((candidate) => candidate.code === "MISSING_MODIFICATION_CREDIT_NOTE")).toMatchObject({
+      details: { refundAmountSource: "recorded-give-back" },
+    });
+  });
+
+  it("MUTATION (#3809): expects no note where the give-back was nothing", async () => {
+    const deps = createDependencies({ bookings: [creditPaidReduction(0)] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_MODIFICATION_CREDIT_NOTE");
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("MISSING_MODIFICATION_CREDIT_NOTE");
+  });
+
+  // #3809 (review M1): $100 by card and $100 by credit, $150 removed at 100%:
+  // the card refund's note AND the give-back's own note, scoped. Whichever
+  // exists must not hide the other.
+  function cardAndCreditReduction() {
+    return makeBooking({
+      modifications: [
+        {
+          id: "mod_mixed",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -15000,
+          changeFeeCents: 0,
+          newData: { appliedCreditGiveBack: { basisCents: 5000, givenBackCents: 5000 } },
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+  }
+  const editNote = (overrides: Record<string, unknown>) =>
+    makeOperation({
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localId: "mod_mixed",
+      xeroObjectType: "CREDIT_NOTE",
+      ...overrides,
+    });
+  const giveBackScoped = { reviewTaskId: "applied-credit-give-back" };
+
+  it.each([
+    {
+      shape: "the card refund's note exists",
+      operations: [editNote({ id: "op_card", xeroObjectId: "cn_card", requestPayload: { queueType: "MODIFICATION_CREDIT_NOTE", bookingModificationId: "mod_mixed", refundAmountCents: 10000, refundMethod: "card" } })],
+    },
+    {
+      shape: "a credit election's unallocated note exists",
+      operations: [editNote({ id: "op_account", queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE", xeroObjectId: "cn_account", requestPayload: { queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE", bookingModificationId: "mod_mixed", refundAmountCents: 10000 } })],
+    },
+  ])("MUTATION (#3809 M1): re-queues a lost give-back note under its own scope where $shape", async ({ operations }) => {
+    const deps = createDependencies({ bookings: [cardAndCreditReduction()], operations });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.find((candidate) => candidate.key === "queue:give-back-note:mod_mixed")).toMatchObject({
+      type: "QUEUE_MODIFICATION_CREDIT_NOTE",
+      safeToAutoApply: true,
+      payload: { bookingModificationId: "mod_mixed", refundAmountCents: 5000, refundMethod: "account-credit", ...giveBackScoped },
+    });
+  });
+
+  it("MUTATION (#3809 M1): applying the re-queue keeps the give-back's own scope and wording", async () => {
+    const deps = createDependencies({
+      bookings: [cardAndCreditReduction()],
+      operations: [editNote({ id: "op_card", xeroObjectId: "cn_card", requestPayload: { queueType: "MODIFICATION_CREDIT_NOTE", bookingModificationId: "mod_mixed", refundAmountCents: 10000, refundMethod: "card" } })],
+    });
+
+    await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+
+    expect(deps.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingModificationId: "mod_mixed", refundAmountCents: 5000, refundMethod: "account-credit", ...giveBackScoped }),
+    );
+  });
+
+  it("MUTATION (#3809 delta H1): where the fee absorbed the card's share, the one $40 give-back note already raised is found under its scope - no second is queued", async () => {
+    const booking = makeBooking({
+      modifications: [
+        {
+          id: "mod_fee",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -5000,
+          changeFeeCents: 0,
+          newData: { appliedCreditGiveBack: { basisCents: 4500, givenBackCents: 4000 } },
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      operations: [
+        makeOperation({ id: "op_give_back", entityType: "CREDIT_NOTE", operationType: "CREATE", localId: "mod_fee", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_give_back", requestPayload: { queueType: "MODIFICATION_CREDIT_NOTE", bookingModificationId: "mod_fee", refundAmountCents: 4000, refundMethod: "account-credit", ...giveBackScoped } }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.map((action) => action.key)).not.toContain("queue:give-back-note:mod_fee");
+    expect(deps.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalledWith(expect.objectContaining({ refundAmountCents: 4000 }));
+  });
+
+  it("MUTATION (#3809 M1): retries a FAILED give-back note rather than queueing a second", async () => {
+    const deps = createDependencies({
+      bookings: [cardAndCreditReduction()],
+      operations: [
+        editNote({ id: "op_card", xeroObjectId: "cn_card", requestPayload: { queueType: "MODIFICATION_CREDIT_NOTE", bookingModificationId: "mod_mixed", refundAmountCents: 10000, refundMethod: "card" } }),
+        editNote({ id: "op_give_back", status: "FAILED", xeroObjectId: null, requestPayload: { queueType: "MODIFICATION_CREDIT_NOTE", bookingModificationId: "mod_mixed", refundAmountCents: 5000, refundMethod: "account-credit", ...giveBackScoped } }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.map((action) => action.key)).not.toContain("queue:give-back-note:mod_mixed");
+    expect(bookingReport.findings.find((finding) => finding.details?.operationId === "op_give_back")).toMatchObject({ code: "BLOCKED_BY_XERO_OPERATION" });
+  });
+
+  it("(#3809 M1) a raised give-back note is not queued again, and does not stand in for the edit's own", async () => {
+    const deps = createDependencies({
+      bookings: [cardAndCreditReduction()],
+      operations: [
+        editNote({ id: "op_give_back", xeroObjectId: "cn_give_back", requestPayload: { queueType: "MODIFICATION_CREDIT_NOTE", bookingModificationId: "mod_mixed", refundAmountCents: 5000, refundMethod: "account-credit", ...giveBackScoped } }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.map((action) => action.key)).not.toContain("queue:give-back-note:mod_mixed");
+    // The card refund's note is still missing, and is still reported.
+    expect(bookingReport.findings.map((finding) => finding.code)).toContain("MISSING_MODIFICATION_CREDIT_NOTE");
   });
 
   // #1427 failure scenario 1: the lost note was enqueued at the

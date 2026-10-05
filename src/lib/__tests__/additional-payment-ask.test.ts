@@ -15,6 +15,8 @@ import {
 } from "@/lib/additional-payment-ask";
 import { applyPaymentAdjustments } from "@/lib/booking-modify-settlement";
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
+import type { CalendarDate } from "@/lib/club-time";
+import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 // `booking-modify-settlement` reaches `@/lib/cancellation`, which constructs the
 // Prisma adapter at import time and therefore needs a `DATABASE_URL`. Nothing
@@ -463,6 +465,9 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
     } as unknown as LoadedBookingForModify;
   }
 
+  /** No reduction here, so the #3809 give-back never reads these. */
+  const SETTLEMENT_DAY = { todayAtClub: "2026-07-01" as CalendarDate, format: CLUB_FORMAT_TEST };
+
   function stubTx() {
     return {
       payment: { update: vi.fn().mockResolvedValue({}) },
@@ -477,6 +482,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
       }),
       priceDiffCents: 7000,
       changeFeeCents: 0,
+      ...SETTLEMENT_DAY,
     });
     // Before #3340 this was 7000 and the first extra simply stopped being owed.
     expect(result.additionalAmountCents).toBe(14000);
@@ -491,6 +497,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
       }),
       priceDiffCents: 30000,
       changeFeeCents: 0,
+      ...SETTLEMENT_DAY,
     });
     expect(result.additionalAmountCents).toBe(36500);
   });
@@ -500,6 +507,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
       booking: bookingWith({}),
       priceDiffCents: 7000,
       changeFeeCents: 0,
+      ...SETTLEMENT_DAY,
     });
     expect(result.additionalAmountCents).toBe(7000);
   });
@@ -513,6 +521,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
       }),
       priceDiffCents: 7000,
       changeFeeCents: 0,
+      ...SETTLEMENT_DAY,
     });
     expect(result.additionalAmountCents).toBe(7000);
   });
@@ -526,6 +535,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
       }),
       priceDiffCents: 7000,
       changeFeeCents: 1500,
+      ...SETTLEMENT_DAY,
     });
     expect(result.additionalAmountCents).toBe(15500);
     // The fee itself is still recorded on the payment exactly as before.
@@ -550,6 +560,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
       }),
       priceDiffCents: 7000,
       changeFeeCents: 0,
+      ...SETTLEMENT_DAY,
     });
     expect(result.additionalAmountCents).toBe(7000);
     expect(result.xeroAdditionalAmountCents).toBe(7000);
@@ -565,6 +576,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
       }),
       priceDiffCents: 7000,
       changeFeeCents: 0,
+      ...SETTLEMENT_DAY,
     });
     expect(result.additionalAmountCents).toBe(7000);
   });

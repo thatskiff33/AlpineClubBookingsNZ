@@ -35,7 +35,11 @@
 # misc
 .DS_Store
 *.pem
-.claude/
+# Claude Code local state is ignored at any depth; only the repository's
+# shared subagent roles (.claude/agents/ at the root) are tracked.
+*/**/.claude/
+.claude/*
+!.claude/agents/
 
 # debug
 npm-debug.log*
