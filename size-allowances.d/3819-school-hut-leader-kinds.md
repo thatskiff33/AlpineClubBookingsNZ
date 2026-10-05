@@ -23,14 +23,6 @@ reason: the retired switch moves from the booking-request settings field list
   to that spec's `excluded` map with its reason, which the reverse drift guard
   requires for every real column.
 
-file: src/app/api/admin/hut-leaders/eligible-members/route.ts
-lines: 278
-reason: on a school night a suggestion may only offer a member whose kind the
-  lodge ticks (#3819 review), so the route carries each stay's booking id and
-  asks the shared `memberMayLeadNight` per night, and reports the nights left
-  out. The rule itself lives in `hut-leader-night-cover.ts`; what stays here
-  is the per-member night lookup that only this route's data shape has.
-
 file: src/lib/config-transfer/categories/lodge-config.ts
 lines: 1074
 reason: the school hut-leader ticks travel in lodge.json beside capacity

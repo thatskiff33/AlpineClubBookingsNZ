@@ -462,7 +462,7 @@ const FIGURES = {
    */
   vouchedOptOuts: 36,
   /** …of the vouched: proved at a parent's own JSX render site (#2168). */
-  renderSiteVouchedOptOuts: 29,
+  renderSiteVouchedOptOuts: 31,
   /** …of the vouched: proved through the wizard shell's channel (#2324). */
   shellVouchedOptOuts: 5,
   /**
