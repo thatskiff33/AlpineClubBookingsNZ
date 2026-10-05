@@ -44,15 +44,13 @@ reason: the "Booking Modified" sender's flat body composes the credit-given-back
   `booking-credit-give-back-copy.ts`.
 
 file: src/lib/booking-cancel.ts
-lines: 2790
+lines: 2781
 reason: the paid path asks whether the booking was reduced through #3809's
   settlement before it caps the credit (owner decision of 4 Oct 2026) and
   freezes the base on its CANCELLED snapshot; the unpaid branch tiers a
   refunded-whole captured payment's credit (`refundedPaymentCreditRestore`)
   and posts and freezes what it kept. The rules live in their own modules; what
   stays here is the call inside each claim that already owns the restore.
-  Composed with epic #3678 (#3415's accepted-hold guard and #3413's
-  anonymous-reservation release, whose own entry this one replaces): 2790.
 
 file: src/app/api/bookings/[id]/modify-quote/route.ts
 lines: 2450

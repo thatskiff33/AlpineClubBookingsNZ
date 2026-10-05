@@ -7,7 +7,7 @@ fetch and its copy are in their own files
 lines left here are its import and the one place it mounts.
 
 file: src/components/admin/manual-refund-task-queue.tsx
-lines: 2116
+lines: 2117
 reason: the notice has to mount inside the dialog, beside the amount box whose
   figure it is computed from and whose state lives here; an import and one
   JSX element are the whole addition.
