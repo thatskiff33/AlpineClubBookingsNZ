@@ -714,6 +714,7 @@ describe("booking-modified default body (#2267)", () => {
       // value keeps the review note out of every assertion here.
       financialReviewPending: false,
       appliedCreditGivenBackCents: 0,
+      refundReturnedToOrganiser: false,
       ...overrides,
     }, CLUB_FORMAT_TEST);
     const call = sendEmailMock.mock.calls[0][0];

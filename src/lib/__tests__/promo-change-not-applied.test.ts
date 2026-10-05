@@ -417,6 +417,7 @@ function emailParams(overrides: Record<string, unknown> = {}) {
     additionalAmountCents: 0,
     financialReviewPending: true,
     appliedCreditGivenBackCents: 0,
+    refundReturnedToOrganiser: false,
     ...overrides,
   };
 }
