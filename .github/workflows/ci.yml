@@ -1024,6 +1024,19 @@ jobs:
       - name: Back-post a seeded booking history and require the census gate
         run: bash scripts/booking-ledger-seed-gate.sh postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881_ledger_history
 
+      # #3852: the page-content DELETE under a concurrent edit and a second delete.
+      # The mocked route test can show a P2025 is mapped to 404, not that
+      # PostgreSQL raises one for the loser, nor that `DELETE ... RETURNING` hands
+      # back the row a concurrent UPDATE left. Its own step because it mocks the
+      # session guard, which the suites imported by the lock-race file forbid. It
+      # self-skips without the env vars, so this step MUST stay wired —
+      # `review-findings-contracts.test.ts` fails if it goes missing.
+      - name: Test page-content delete race against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+          CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881
+        run: pnpm exec vitest run src/lib/__tests__/page-content-delete-race.realdb.test.ts
+
       # #2374 (AID-5): PROVE the dedicated SELECT-only AI Diagnostics database
       # role cannot write, cannot run DDL, cannot create a TEMP table, cannot read
       # the encrypted credential store, and is cancelled at its statement timeout.
