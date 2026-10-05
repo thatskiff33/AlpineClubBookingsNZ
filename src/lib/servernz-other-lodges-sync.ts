@@ -10,6 +10,7 @@ import {
   serializeOtherLodgeAmenities,
   serializeOtherLodgeData,
 } from "@/lib/other-lodges";
+import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import {
   uploadOtherLodges,
@@ -65,9 +66,20 @@ const LODGE_DATA_SELECT = {
  * its pre-#52 behaviour and sends every changed row, so a club on an older
  * central server loses nothing. A row the server then reports as `skipped` is
  * still held below the watermark exactly as before (INV-INT-004).
+ *
+ * A stored list that is PRESENT BUT UNREADABLE is neither: it is a defect in
+ * the column, and the honest answer is to send nothing until a download
+ * rewrites it, rather than fall back to sending every row because the parsed
+ * value happens to be `null`.
  */
 export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
   const settings = await loadServerNzSettings();
+  if (settings.otherLodgesOwnedNamesUnreadable) {
+    logger.warn(
+      "The stored owned-lodge list cannot be read; uploading nothing until the next download rewrites it",
+    );
+    return { created: 0, updated: 0, unchanged: 0, skipped: 0, results: [], sent: 0 };
+  }
   const since = settings.otherLodgesLastUploadAt
     ? new Date(settings.otherLodgesLastUploadAt)
     : null;
@@ -204,6 +216,15 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     overlappedRequestCursor(settings.otherLodgesCursor, OVERLAP_SYNC_LABEL),
   );
 
+  if (pull.ownLodgeNamesRefused) {
+    logger.warn(
+      "The central server sent an owned-lodge list that failed its bounds; it was ignored and the stored list left as it was",
+    );
+  }
+  // Which lodges are OURS for this merge: the list this pull carried, else the
+  // stored one; `null` when neither is known. Decides two things per row below.
+  const owned = pull.ownLodgeNames ?? settings.otherLodgesOwnedNames;
+
   let created = 0;
   let updated = 0;
   let unchanged = 0;
@@ -218,6 +239,15 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
     // Only the fields the server SENT: a field it omitted is absent here, so a
     // server that does not yet carry it leaves the local value alone.
     const data = otherLodgeDataColumns(lodge);
+    // Another club's lodge, once the owned list is known. Its booking officer's
+    // PHONE is never stored here (#52): a current server does not send it, and
+    // one that still does is overridden to null so the number does not land in
+    // this club's database — the one deliberate exception to "a field the
+    // server did not send is left alone", because what it would leave alone is
+    // a number an earlier download stored. The row is written only when
+    // something differs, so a row already at null is not touched for this.
+    const theirs = owned !== null && !ownsOtherLodge(owned, lodge.name);
+    if (theirs) data.bookingOfficerPhone = null;
     // `undefined` when the server sent no amenity list at all — also "leave
     // ours alone", never "the lodge has none".
     const amenities = lodge.amenities;
@@ -266,8 +296,14 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
 
     // Rule 2: a local edit made after the server's copy wins and is left to the
     // next upload. Equal timestamps apply the remote, so a server correction
-    // issued in the same instant is not silently dropped.
-    if (remoteUpdatedAt && existing.updatedAt > remoteUpdatedAt) {
+    // issued in the same instant is not silently dropped. ONLY for a lodge this
+    // club may edit (#52): another club's lodge has no local edit to protect —
+    // nothing here can write one, and the next upload would not carry it — so
+    // the server's copy is authoritative whatever the local timestamp says
+    // (a stale server-stamped row, or a pre-#52 local edit). The guarded
+    // `updateMany` below still applies: it is what makes the write safe against
+    // a concurrent download of the same row, not a rule about who wins.
+    if (!theirs && remoteUpdatedAt && existing.updatedAt > remoteUpdatedAt) {
       keptLocal++;
       continue;
     }

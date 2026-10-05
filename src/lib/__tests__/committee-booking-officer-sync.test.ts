@@ -26,8 +26,11 @@ function makeDb(opts: {
     committeeRole: { contactEmail: string | null };
   } | null;
   lodges?: Array<{ name: string }>;
+  /** The stored owned list (#52): absent = no settings row = never told. */
+  ownedNames?: unknown;
   otherLodges?: Array<{
     id: string;
+    name?: string;
     bookingOfficerName: string | null;
     bookingOfficerEmail: string | null;
     bookingOfficerPhone: string | null;
@@ -49,8 +52,16 @@ function makeDb(opts: {
       findMany: vi.fn().mockResolvedValue(opts.lodges ?? []),
     },
     otherLodge: {
+      // Deliberately NOT filtered by the `name: { in }` the sync asks with: the
+      // write-time `ownsOtherLodge` check is the rule, and this fake hands every
+      // row back so that check is what the owned-list cases prove, not the query.
       findMany: vi.fn().mockResolvedValue(opts.otherLodges ?? []),
       update,
+    },
+    serverNzSettings: {
+      findUnique: vi.fn().mockResolvedValue(
+        opts.ownedNames === undefined ? null : { otherLodgesOwnedNames: opts.ownedNames },
+      ),
     },
   };
   return { db, update };
@@ -261,5 +272,95 @@ describe("syncBookingOfficerForRole", () => {
     // number must actively leave the registry rather than merely stop refreshing.
     expect(result).toEqual({ updated: 1, holderMemberId: "m1" });
     expect(update.mock.calls[0][0].data.bookingOfficerPhone).toBeNull();
+  });
+});
+
+// ── Which rows are ours (#52) ───────────────────────────────────────────────
+//
+// Once the central server has said which lodges this club owns, THAT list
+// decides which registry rows take the officer's contact — through the same
+// `ownsOtherLodge` rule as the admin edit route and the upload — and the
+// building-name match is only the fallback for a site the server has not told.
+
+describe("writes only the rows the central server says are ours (#52)", () => {
+  const holder = {
+    memberId: "m1",
+    member: MEMBER,
+    committeeRole: { contactEmail: ROLE_CONTACT_EMAIL },
+  };
+  const blank = { bookingOfficerName: null, bookingOfficerEmail: null, bookingOfficerPhone: null };
+
+  it("writes the owned row and skips a row that merely shares a building's name", async () => {
+    // The collision the name rule carried: this club's building "Whakapapa
+    // Lodge" is also another club's registry row. With the owned list known,
+    // only "Aorangi Ski Club" — the server's answer — is written.
+    const { db, update } = makeDb({
+      roles: [{ id: "role_bo" }],
+      holder,
+      lodges: [{ name: "Whakapapa Lodge" }],
+      ownedNames: ["Aorangi Ski Club"],
+      otherLodges: [
+        { id: "theirs", name: "Whakapapa Lodge", ...blank },
+        { id: "ours", name: "Aorangi Ski Club", ...blank },
+      ],
+    });
+
+    const result = await syncBookingOfficerForRole(db as never, "role_bo");
+
+    expect(result).toEqual({ updated: 1, holderMemberId: "m1" });
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update.mock.calls[0][0].where).toEqual({ id: "ours" });
+    // The building names were not even consulted.
+    expect(db.lodge.findMany).not.toHaveBeenCalled();
+    expect(db.otherLodge.findMany.mock.calls[0][0].where).toEqual({
+      name: { in: ["Aorangi Ski Club"] },
+    });
+  });
+
+  it("writes nothing when the server said the club owns no lodge", async () => {
+    const { db, update } = makeDb({
+      roles: [{ id: "role_bo" }],
+      holder,
+      lodges: [{ name: "Whakapapa Lodge" }],
+      ownedNames: [],
+      otherLodges: [{ id: "theirs", name: "Whakapapa Lodge", ...blank }],
+    });
+
+    const result = await syncBookingOfficerForRole(db as never, "role_bo");
+
+    expect(result).toEqual({ updated: 0, holderMemberId: "m1" });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the building-name rule only while the server has not said", async () => {
+    const { db, update } = makeDb({
+      roles: [{ id: "role_bo" }],
+      holder,
+      lodges: [{ name: "Whakapapa Lodge" }],
+      // No ownedNames: no settings row, never told.
+      otherLodges: [{ id: "ol1", name: "Whakapapa Lodge", ...blank }],
+    });
+
+    const result = await syncBookingOfficerForRole(db as never, "role_bo");
+
+    expect(result).toEqual({ updated: 1, holderMemberId: "m1" });
+    expect(update.mock.calls[0][0].where).toEqual({ id: "ol1" });
+  });
+
+  it("writes nothing when the stored list is present but unreadable (fail closed)", async () => {
+    const { db, update } = makeDb({
+      roles: [{ id: "role_bo" }],
+      holder,
+      lodges: [{ name: "Whakapapa Lodge" }],
+      ownedNames: "Aorangi Ski Club",
+      otherLodges: [{ id: "ol1", name: "Whakapapa Lodge", ...blank }],
+    });
+
+    const result = await syncBookingOfficerForRole(db as never, "role_bo");
+
+    expect(result).toEqual({ updated: 0, holderMemberId: "m1" });
+    expect(update).not.toHaveBeenCalled();
+    expect(db.lodge.findMany).not.toHaveBeenCalled();
+    expect(db.otherLodge.findMany).not.toHaveBeenCalled();
   });
 });

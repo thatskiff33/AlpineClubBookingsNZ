@@ -112,8 +112,16 @@ and the central server distributes it, so there is nothing to add, edit or
 delete here. The panel also shows **no booking officer phone numbers**, not even
 your own lodge's (its phone is still in the popup, where you edit it) — a phone
 number is private, and other clubs' numbers are not even sent to the browser.
+A download never stores another club's officer phone either, and the next
+download of a lodge clears a number an earlier one stored.
 
-**Two cases make the whole panel read-only**, and the panel says which:
+**Stated limit:** other clubs' phone numbers that earlier downloads already
+stored stay in the database until that lodge's next download rewrites its row,
+and they remain in database backups and in older audit entries made before this
+release. No purge is built; this release stops new numbers arriving and clears
+each stored one as its lodge is next downloaded.
+
+**Three cases leave the panel with nothing to edit**, and the panel says which:
 
 - *"Which lodge is yours is set on the central server…"* — the central server
   has not yet told this site which lodge is its own. That is so until the site
@@ -124,6 +132,15 @@ number is private, and other clubs' numbers are not even sent to the browser.
 - *"The central server has no lodge assigned to this site…"* — the server has
   answered, and the answer is none. Ask the central server's operator to assign
   your lodge to your site's connection.
+- *"The central server names … as yours, but it has not been downloaded…"* —
+  the server has named your lodge, but no entry of that name has arrived yet.
+  Press **Download**; the **Edit my Lodge** button appears once the entry is
+  here.
+
+The list of which lodges are yours is forgotten when the site disconnects from
+the central server, when its API key is replaced, or when the server address is
+changed (which removes the key), because it was the previous connection's
+answer; the panel is read-only again until the next download.
 
 ## Settings reference
 
@@ -183,7 +200,8 @@ Lodges are never deleted here: the list is the central server's.
 | Door code/travel note isn't in an email | The lodge's field is blank, or the email template omits the token | Fill the field here; check the [Booking Messages](booking-messages.md)/email template |
 | The Other lodges panel has no **Edit my Lodge** button and says which lodge is yours is set on the central server | The site has not yet downloaded from a central server that names its lodge (not connected, never downloaded, or an older server) | Connect on **Integrations → Alpine Central Server** and press **Download**; the button appears for the lodge the server names |
 | The Other lodges panel says no lodge is assigned to this site | The central server's operator has not mapped a lodge to your site's connection | Ask them to assign your lodge |
-| Saving your lodge is refused with "Only this site's own lodge can be changed here" | The central server's list changed since the page loaded | Reload the page; only the lodge(s) the server names for your site can be saved |
+| Saving your lodge is refused with "Only this site's own lodge can be changed here" | The central server's list changed since the page loaded, or a download that ran while you were editing recorded a list that no longer names it | Reload the page; only the lodge(s) the server names for your site can be saved |
+| The panel went read-only after a download, although the server names your lodge | Two downloads ran at once (the nightly job and the **Download** button) and the one that finished last carried an older list | Nothing to fix: the next download records the current list again |
 
 ## Related links
 

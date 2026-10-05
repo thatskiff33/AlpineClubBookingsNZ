@@ -335,12 +335,28 @@ describe("pullOtherLodges — ownLodgeNames (#52)", () => {
     ["a name over the lodge-name bound", ["x".repeat(121)]],
     ["a name carrying NUL", ["Aorangi\u0000Ski Club"]],
     ["a non-string entry", [42]],
+    ["not a list at all", "Aorangi Ski Club"],
     ["more names than the bound", Array.from({ length: 101 }, (_, i) => `Lodge ${i}`)],
-  ])("refuses an envelope whose owned list has %s", async (_label, ownLodgeNames) => {
-    // The list decides what may be edited and uploaded, so an envelope that
-    // breaks its bounds is refused whole, like an over-long cursor.
-    respondWith({ lodges: [], cursor: "c-1", count: 0, ownLodgeNames });
+  ])("discards an owned list with %s as not sent, and still delivers the rows and the cursor", async (_label, ownLodgeNames) => {
+    // The list decides what may be edited and uploaded, so one that breaks its
+    // bounds is refused whole — but on its own. Failing the pull for it would
+    // stop every club's details merging and leave the cursor behind because of
+    // one bad field, so the rows land, the cursor advances, and the sync is
+    // told the list was refused and leaves the stored one alone.
+    respondWith({ lodges: [remoteRow()], cursor: "c-9", count: 1, ownLodgeNames });
 
-    await expect(pullOtherLodges(null)).rejects.toThrow();
+    const result = await pullOtherLodges(null);
+
+    expect(result.lodges).toHaveLength(1);
+    expect(result.cursor).toBe("c-9");
+    expect(result.ownLodgeNames).toBeUndefined();
+    expect(result.ownLodgeNamesRefused).toBe(true);
+  });
+
+  it("reports a well-formed or absent list as not refused", async () => {
+    respondWith({ lodges: [], cursor: "c-1", count: 0, ownLodgeNames: ["Aorangi Ski Club"] });
+    expect((await pullOtherLodges(null)).ownLodgeNamesRefused).toBe(false);
+    respondWith({ lodges: [], cursor: "c-1", count: 0 });
+    expect((await pullOtherLodges(null)).ownLodgeNamesRefused).toBe(false);
   });
 });
