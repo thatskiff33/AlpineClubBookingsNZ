@@ -21,7 +21,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   ADMIN_VIEW_ONLY_ACTION_REASON,
@@ -34,7 +33,8 @@ import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { useClubTime } from "@/components/club-time-provider"
 import { parseInstant, type BoundClubTime, type ClubDateFormat } from "@/lib/club-time"
 import { formatPayloadCalendarDay } from "../_lib/calendar-day"
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input"
+import { MoneyInput } from "@/components/ui/money-input"
+import { parseDecimalDollarsToCents } from "@/lib/money-input"
 import { formatCents, formatCentsPlain } from "@/lib/utils"
 import { useClubFormat } from "@/components/club-format-provider"
 
@@ -585,11 +585,10 @@ export default function RefundRequestsPage() {
                           <div className="border-t pt-4 mt-3 space-y-3">
                             <div className="space-y-2">
                               <Label htmlFor="approvedAmount">Refund Amount ($)</Label>
-                              <Input
+                              <MoneyInput
                                 id="approvedAmount"
-                                {...MONEY_INPUT_PROPS}
                                 value={approvedAmount}
-                                onChange={(e) => setApprovedAmount(e.target.value)}
+                                onValueChange={setApprovedAmount}
                                 disabled={!canEditFinance}
                                 title={
                                   !canEditFinance

@@ -14,13 +14,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
-import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
 import type { ManualRefundTaskKind } from "@prisma/client";
 import {
@@ -1935,13 +1935,12 @@ export function ManualRefundTaskQueue() {
                         <Label htmlFor="manual-refund-task-amount">Amount</Label>
                         <div className="flex items-center gap-2">
                           <span className="text-sm">$</span>
-                          <Input
+                          <MoneyInput
                             id="manual-refund-task-amount"
-                            {...MONEY_INPUT_PROPS}
                             value={amountInput}
                             className="w-32"
-                            onChange={(event) =>
-                              setAmountInput(event.target.value)
+                            onValueChange={(value) =>
+                              setAmountInput(value)
                             }
                             {...amountHint.fieldProps}
                           />

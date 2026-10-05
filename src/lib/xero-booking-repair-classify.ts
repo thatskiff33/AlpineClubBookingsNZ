@@ -80,6 +80,7 @@ import {
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
 import { formatDateOnly } from "@/lib/date-only";
+import { canonicalRefundNoteCandidates } from "@/lib/xero-refund-note-status";
 import {
   decideLateCapture,
   keptLateCaptureInvoiceAsked,
@@ -1332,9 +1333,8 @@ export function classifyBookingContext(
 
   const refundCreditNote = payment
     ? resolveObjectFromCandidates({
-        fieldObjectId: payment.xeroRefundCreditNoteId,
-        links: paymentLinks,
-        operations: paymentOperations,
+        // #3880 F1: never a per-refund note, as the field or as a conflict with it.
+        ...canonicalRefundNoteCandidates(payment.xeroRefundCreditNoteId, paymentLinks, paymentOperations),
         xeroObjectType: "CREDIT_NOTE",
         role: "REFUND_CREDIT_NOTE",
         entityType: "CREDIT_NOTE",
@@ -2216,7 +2216,10 @@ export function classifyBookingContext(
       }
     }
 
-    if (primaryInvoice && !refundCreditNote) {
+    // #3880 round 3: no canonical note, but notes - a bank payment's
+    // per-refund ones - already answer every cent a note may: nothing is
+    // missing, and nothing is ambiguous.
+    if (primaryInvoice && !refundCreditNote && context.refundNoteUncoveredCents !== 0) {
       const cashCancellationRefundCents = getCashCancellationRefundCandidateCents(booking, paymentOperations, paymentLinks);
       if (cashCancellationRefundCents === null) {
         const action = addAction(

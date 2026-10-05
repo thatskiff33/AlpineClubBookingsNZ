@@ -89,6 +89,7 @@ function body(overrides: Record<string, unknown> = {}) {
         { firstName: "Ann", lastName: "Baker", email: "ann@example.test" },
       ],
       childCounts: { CHILD: 3 },
+      pendingAdultCount: 0,
       cateringPreference: "QUOTE_BOTH",
       schoolRecord: { outcome: "existing", schoolRecordId: "org-7" },
     },

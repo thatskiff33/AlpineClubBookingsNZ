@@ -45,6 +45,7 @@ import {
   resolveRefundNoteMethod,
 } from "@/lib/xero-refund-method";
 import { queuedReviewTaskId } from "@/lib/xero-review-task-key";
+import { mayRecordAsCanonicalRefundNote } from "@/lib/xero-refund-note-status";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
 import {
   readBookingClearingNoteRetryInput,
@@ -800,8 +801,12 @@ async function repairRefundCreditNoteFollowUpActions(
 ) {
   // #3827 (D-3813-8): a refund request's own note is an allowed extra, never
   // the payment's one refund note, so it never takes the payment's pointer.
+  // #3880 F1: a per-refund note is repaired, never made the payment's canonical one.
   const refundRequestId = readRefundRequestIdFromPayload(operation.requestPayload);
-  if (!refundRequestId) {
+  if (
+    !refundRequestId &&
+    (await mayRecordAsCanonicalRefundNote(operation.localId!, repair.creditNoteId, prisma))
+  ) {
     await prisma.payment.update({
       where: { id: operation.localId! },
       data: {
@@ -1211,7 +1216,8 @@ async function getBookingModificationRetryData(bookingModificationId: string) {
 export async function retryXeroSyncOperation(
   operationId: string,
   format: ClubFormat,
-  options?: { createdByMemberId?: string }
+  // #3880: `requeueOperationId` is the REQUEUE row it runs under (its own claim).
+  options?: { createdByMemberId?: string; requeueOperationId?: string }
 ): Promise<{ message: string }> {
   const operation = await prisma.xeroSyncOperation.findUnique({
     where: { id: operationId },
@@ -1646,12 +1652,16 @@ export async function retryXeroSyncOperation(
         // a per-delta refund note whose payload was later overwritten with
         // the Xero request shape. The advisory value 0 is safe:
         // createXeroCreditNote recomputes coverage at execution time.
+        // #3880 F2: and a review's note is a delta note whatever row carries
+        // it - an inline row a requeue created has no queue type, and single-
+        // note mode would call the cancellation's note this refund's cover.
         // #3827 (D-3813-8): a refund request's own note is never a per-delta
         // note - it is keyed by its request, for exactly its amount.
+        const retriedReviewTaskId = queuedReviewTaskId(operation);
         const deltaWatermarkCents = retryInput.refundRequestId
           ? undefined
           : retryInput.watermarkCents ??
-            (operation.queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE
+            (operation.queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE || retriedReviewTaskId
               ? 0
               : undefined);
         await xero.createXeroCreditNote(operation.localId!, retryInput.amountCents, {
@@ -1664,6 +1674,8 @@ export async function retryXeroSyncOperation(
           ...(retryInput.paymentIntentId ? { paymentIntentId: retryInput.paymentIntentId } : {}),
           ...(retryInput.documentDate ? { documentDate: retryInput.documentDate } : {}),
           ...(retryInput.refundRequestId ? { refundRequestId: retryInput.refundRequestId } : {}),
+          ...(options?.requeueOperationId ? { requeueOperationId: options.requeueOperationId } : {}),
+          ...(retriedReviewTaskId ? { reviewTaskId: retriedReviewTaskId } : {}),
         });
         return { message: "Retried Xero refund credit note creation." };
       }

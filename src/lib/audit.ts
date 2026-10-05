@@ -754,7 +754,7 @@ function assertCanonicalAuditCategory(
  * declared sentence too long to slot into the room the kept fields leave is
  * still dropped if it is merged in first.
  */
-function buildStoredMetadata(params: {
+export function buildStoredMetadata(params: {
   action: string;
   metadata: unknown;
   memberDisclosure?: AuditMemberDisclosure;

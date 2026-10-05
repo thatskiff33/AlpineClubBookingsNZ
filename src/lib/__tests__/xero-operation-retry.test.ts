@@ -682,6 +682,56 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  it("MUTATION (#3880 F2): an inline row (no queue type) re-enters delta mode from the watermark its payload recorded", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        localId: "pay_9",
+        queueType: null,
+        requestPayload: {
+          creditNotes: [{ lineItems: [{ unitAmount: 30 }] }],
+          allocation: { invoiceId: "inv_1", amount: 30 },
+          refundMethod: "internet-banking",
+          reviewTaskId: "task_review",
+          watermarkCents: 8000,
+          perDelta: true,
+        },
+      })
+    );
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("pay_9", 3000, {
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+      watermarkCents: 8000,
+      refundMethod: "internet-banking",
+      reviewTaskId: "task_review",
+    });
+  });
+
+  it("MUTATION (#3880 F2): an inline row with a review task and no recorded watermark is still a delta run", async () => {
+    // Single-note mode would call the cancellation's note this review refund's
+    // cover, or raise a `v1` note that later hides the cancellation's own.
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        localId: "pay_9",
+        queueType: null,
+        requestPayload: {
+          creditNotes: [{ lineItems: [{ unitAmount: 30 }] }],
+          allocation: { invoiceId: "inv_1", amount: 30 },
+          refundMethod: "internet-banking",
+          reviewTaskId: "task_review",
+        },
+      })
+    );
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("pay_9", 3000, expect.objectContaining({ watermarkCents: 0, reviewTaskId: "task_review" }));
+  });
+
   it("replays a queued-shape account-credit note op (#1354)", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({

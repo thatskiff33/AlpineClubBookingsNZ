@@ -808,6 +808,9 @@ export async function enqueueXeroRefundCreditNoteOperation(
      * for a note raised after the fact. Omitted, the note is dated today.
      */
     documentDate?: string;
+    /** #3880: a review's refund on a CANCELLED booking - keyed on the task, and
+     * noted per refund, capped by coverage, on a bank transfer as on a card. */
+    reviewTaskId?: string;
   }
 ) {
   // Optional transaction client (#1357) so callers (e.g. the Internet Banking
@@ -869,7 +872,8 @@ export async function enqueueXeroRefundCreditNoteOperation(
   let noteAmountCents = refundAmountCents;
   let watermarkCents = refundAmountCents;
 
-  if (payment.source === PaymentSource.STRIPE) {
+  const stepped = payment.source === PaymentSource.STRIPE || Boolean(options?.reviewTaskId);
+  if (stepped) {
     // Stripe payments can be refunded in several steps, and each step needs
     // its own credit note for the still-uncovered delta. The cumulative total
     // a refund note may cover is the provider-backed CASH evidence (#2902,
@@ -943,8 +947,9 @@ export async function enqueueXeroRefundCreditNoteOperation(
     "payment",
     paymentId,
     "refund-credit-note",
-    payment.source === PaymentSource.STRIPE ? watermarkCents : noteAmountCents,
-    payment.source === PaymentSource.STRIPE ? "v2" : "v1"
+    stepped ? watermarkCents : noteAmountCents,
+    stepped ? "v2" : "v1",
+    ...reviewTaskKeyParts(options?.reviewTaskId)
   );
 
   // #3635: a non-Stripe payment issues one refund, so the resolved create for
@@ -1003,6 +1008,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
       ...(options?.refundMethod ? { refundMethod: options.refundMethod } : {}),
       ...(options?.paymentIntentId ? { paymentIntentId: options.paymentIntentId } : {}),
       ...(options?.documentDate ? { documentDate: options.documentDate } : {}),
+      ...(options?.reviewTaskId ? { reviewTaskId: options.reviewTaskId } : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
     store: db,
@@ -2995,6 +3001,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
             ...(readRefundRequestIdFromPayload(queuedOperation.requestPayload)
               ? { refundRequestId: readRefundRequestIdFromPayload(queuedOperation.requestPayload)! }
               : {}),
+            ...(queuedReviewTaskId(queuedOperation) ? { reviewTaskId: queuedReviewTaskId(queuedOperation) } : {}),
           }
         );
       } else if (

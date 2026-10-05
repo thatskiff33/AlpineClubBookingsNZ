@@ -1017,11 +1017,13 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   mirror aggregates gross captures and the invariant is NET-based:
   `(amountCents − refundedAmountCents) + creditAppliedCents = finalPriceCents`
   at repay settlement. Every capture/reconciliation guard accepts EITHER the
-  effective price OR the full `finalPriceCents` (legacy in-flight intents) and
-  rejects any other amount (create-payment-intent reuse,
-  `stripe-webhook-service`, `payment-reconciliation`, `confirm-payment`) — full
-  price is always a legitimate settlement, and new bookings only mint effective
-  intents. Because a card invoice is raised-and-paid at capture
+  effective price OR the full `finalPriceCents` and rejects any other amount
+  (create-payment-intent reuse, `stripe-webhook-service`,
+  `payment-reconciliation`, `confirm-payment`). A full-price capture gives the
+  applied credit back (`giveBackAppliedCredit`) and mirrors
+  `creditAppliedCents = 0` (#3864). A stored election is spent only once the
+  booking's earlier intent is retired (`retireCardIntentBeforeElection`); a live
+  capture leaves it unspent. Because a card invoice is raised-and-paid at capture
   (`queueXeroInvoiceForPaidBooking` → `createXeroInvoiceForBooking`), the #1620
   fire-after-invoice outbox op is NOT used on card; `createXeroInvoiceForBooking`
   records the NET captured Stripe cash — gross captures − refunds, capped at the
@@ -1494,14 +1496,15 @@ total at apply).
   `resolveRefundSettlement` is the one reading, shared by the inline and
   repair legs; a note skipped by design (`refundPaymentSkipped`) is never
   re-repaired.
-- **A completed `CANCELLED_BOOKING_HAND_BACK` raises the bank-transfer note**
-  against the booking's invoice — gated on that invoice's id, not
-  `hasIssuedPrimaryXeroInvoice`, false for every cancelled booking. Only
-  #3369's late internet-banking payment has one; a cash settlement has no
-  invoice (#2262) and writes nothing. Cancellation policy is untouched
-  (D2, #3527). Pinned by
+- **On a cancelled booking a completed `CANCELLED_BOOKING_HAND_BACK`, and a
+  review's netted card refund or hand-back (#3880), raise
+  the cancellation's refund note** against the invoice's id,
+  never `hasIssuedPrimaryXeroInvoice` (false here); a cash settlement
+  (#2262) has none. Cancellation policy is untouched (D2,
+  #3527). Pinned by
   `xero-refund-method-documents.test.ts`, `manual-refund-task.test.ts`,
-  `xero-operation-retry.test.ts`.
+  `xero-operation-retry.test.ts`,
+  `edit-financial-review-cancelled-refund-xero.realdb.test.ts`.
 
 
 ## INV-PAY-116

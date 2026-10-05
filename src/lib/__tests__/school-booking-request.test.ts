@@ -16,6 +16,7 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: vi.fn(),
       update: vi.fn(),
     },
+    bookingRequestSettings: { findUnique: vi.fn() },
     member: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     // #2364: the hosting review is reconciled inside the approving/holding
     // transaction, so every prisma/tx double a booking-writing path runs
@@ -252,6 +253,7 @@ import {
 // real reader and the real engine rather than described in a comment.
 import { lockedNightPricesForGuest } from "@/lib/booking-modify-plan";
 import { calculateBookingPrice } from "@/lib/policies/pricing";
+import { generateHutLeaderPin, hashHutLeaderPin } from "@/lib/lodge-pin-session";
 
 import { sendMemberGuestAddNotifications } from "@/lib/member-guest-consent-notifications";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -286,6 +288,8 @@ const mockedKickOutbox = vi.mocked(kickQueuedXeroOutboxOperationsIfConnected);
 const mockedSendOwnerSubstitution = vi.mocked(sendAdminOwnerSubstitutionAlert);
 const mockedAssertNoConflicts = vi.mocked(assertNoBookingMemberNightConflicts);
 const mockedLogAudit = vi.mocked(logAudit);
+const mockedGenerateHutLeaderPin = vi.mocked(generateHutLeaderPin);
+const mockedHashHutLeaderPin = vi.mocked(hashHutLeaderPin);
 
 /*
  * The #2619 hosting participant fence.
@@ -371,6 +375,7 @@ function schoolRequest(overrides: Partial<Record<string, unknown>> = {}) {
     status: BookingRequestStatus.VERIFIED,
     schoolName: "New Plymouth Primary School",
     teachers: [{ firstName: "Tana", lastName: "Teacher", email: "tana@school.test" }],
+    pendingAdultCount: 0,
     contactFirstName: "Carol",
     contactLastName: "Contact",
     contactEmail: "office@school.test",
@@ -698,6 +703,12 @@ describe("approveSchoolBookingRequest", () => {
     mockedModuleEnabled.mockResolvedValue(true);
     mockedSeasonFindMany.mockResolvedValue(seasonWithRates() as never);
     mockedGroupDiscount.mockResolvedValue(null as never);
+    // Existing conversion tests specify the legacy enabled policy. Each OFF
+    // case below overrides this explicitly, so the setting is part of the
+    // behaviour under test rather than ambient mock state.
+    vi.mocked(prisma.bookingRequestSettings.findUnique).mockResolvedValue({
+      assignSchoolTeachersAsHutLeaders: true,
+    } as never);
     vi.mocked(prisma.lodge.findFirst).mockResolvedValue({ id: "lodge-1" } as never);
 
     // #3369: keyed on the DATA rather than on the call index. Approval no
@@ -731,6 +742,18 @@ describe("approveSchoolBookingRequest", () => {
     vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
     // Default to no member-night conflict; individual tests override to reject.
     mockedAssertNoConflicts.mockResolvedValue(undefined);
+  });
+
+  it("refuses school conversion while an accepted adult still has no name", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest({
+      status: BookingRequestStatus.ACCEPTED,
+      pendingAdultCount: 1,
+      heldBookingId: "held-1",
+    }) as never);
+    await expect(approveSchoolBookingRequest({ requestId: "req-school", adminMemberId: "admin-1" }))
+      .rejects.toThrow(/Name the 1 pending adult/);
+    expect(prisma.member.create).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
   });
 
   it("tells a teacher linked to a real member account that they are on the booking (MG4-D-b)", async () => {
@@ -1012,6 +1035,7 @@ describe("approveSchoolBookingRequest", () => {
       schoolMemberId: null,
       invoiceMode: "xero",
       teacherCount: 1,
+      teacherHutLeaderAssignmentsCreated: true,
     });
     // 1 adult @ 5000 x2 nights + 2 children @ 2500 x2 nights = 20000.
     expect(result).toMatchObject({ priceCents: 20000 });
@@ -1066,6 +1090,43 @@ describe("approveSchoolBookingRequest", () => {
     expect(mockedSendManualInvoice).not.toHaveBeenCalled();
     // No substitution on a normal conversion → no owner-substitution alert (#1377).
     expect(mockedSendOwnerSubstitution).not.toHaveBeenCalled();
+  });
+
+  it("keeps teacher guests and school contact people without hut-leader PINs when the policy is off (#3416)", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+    vi.mocked(prisma.bookingRequestSettings.findUnique).mockResolvedValue({
+      assignSchoolTeachersAsHutLeaders: false,
+    } as never);
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result).toMatchObject({
+      type: "approved",
+      teacherCount: 1,
+      teacherHutLeaderAssignmentsCreated: false,
+    });
+    // Teacher Member and OrganisationContact creation remain the Xero contact
+    // path; only the optional hut-leader side effect is suppressed.
+    expect(prisma.member.create).toHaveBeenCalledTimes(1);
+    expect(prisma.organisationContact.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ role: "TEACHER" }),
+      }),
+    );
+    expect(prisma.organisationContact.deleteMany).toHaveBeenCalledWith({
+      where: {
+        organisationId: "org-1",
+        role: "TEACHER",
+        memberId: { notIn: ["teacher-member-2"] },
+      },
+    });
+    expect(prisma.hutLeaderAssignment.create).not.toHaveBeenCalled();
+    expect(mockedGenerateHutLeaderPin).not.toHaveBeenCalled();
+    expect(mockedHashHutLeaderPin).not.toHaveBeenCalled();
+    expect(mockedSendPin).not.toHaveBeenCalled();
   });
 
   /*
@@ -1837,7 +1898,11 @@ describe("approveSchoolBookingRequest", () => {
       type: "approved",
       bookingId: "booking-existing",
       schoolMemberId: "school-existing",
-      teacherCount: 0,
+      // A replay still reports the real named teacher count; it created no
+      // second assignment or PIN.
+      teacherCount: 1,
+      teacherHutLeaderAssignmentsCreated: false,
+      alreadyConverted: true,
     });
     expect(mockedAcquireLodgeLock).toHaveBeenCalledWith(prisma, "lodge-1");
     expect(prisma.booking.findUnique).toHaveBeenCalledTimes(1);
@@ -3466,6 +3531,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
 
   it("leaves the submitted list alone when no counts are given", async () => {
     const resolution = await resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
       request: storedRequest(),
       lodgeId: "lodge-1",
       linkedGuestIndexes: [],
@@ -3479,8 +3545,27 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
     expect(vi.mocked(getDefaultLodgeCapacity)).not.toHaveBeenCalled();
   });
 
+  it("counts pending adults without creating a named guest identity (#3413)", async () => {
+    const resolution = await resolveSchoolGuestOverride({
+      request: storedRequest(),
+      pendingAdultCount: 2,
+      childCounts: { INFANT: 0, CHILD: 2, YOUTH: 0 },
+      lodgeId: "lodge-1",
+      linkedGuestIndexes: [],
+    });
+
+    expect(resolution.guests).toHaveLength(4);
+    expect(resolution.party).toHaveLength(6);
+    expect(resolution.party.slice(-2)).toEqual([
+      { kind: "PENDING_ADULT", ageTier: "ADULT" },
+      { kind: "PENDING_ADULT", ageTier: "ADULT" },
+    ]);
+    expect(vi.mocked(getLodgeCapacity)).toHaveBeenCalled();
+  });
+
   it("keeps the named teachers and regenerates the children across tiers", async () => {
     const resolution = await resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
       request: storedRequest(),
       childCounts: { INFANT: 1, CHILD: 2, YOUTH: 0 },
       lodgeId: "lodge-1",
@@ -3504,6 +3589,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
     // arrived" is not "the party is different" — and only the latter may
     // rewrite the request or be refused under a hold.
     const resolution = await resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
       request: storedRequest(),
       childCounts: { YOUTH: 3 },
       lodgeId: "lodge-1",
@@ -3520,6 +3606,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
 
     await expect(
       resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
         request: storedRequest(),
         childCounts: { YOUTH: 39 },
         lodgeId: "lodge-1",
@@ -3531,6 +3618,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
     // nothing at all and any 422 satisfied it (#3412 review, F6).
     await expect(
       resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
         request: storedRequest(),
         childCounts: { YOUTH: 39 },
         lodgeId: "lodge-1",
@@ -3544,6 +3632,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
 
     await expect(
       resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
         request: storedRequest(),
         childCounts: { YOUTH: 3 },
         lodgeId: null,
@@ -3559,6 +3648,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
     // would let a 30-child group be priced and invoiced for two.
     await expect(
       resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
         request: storedRequest({ guests: [{ firstName: "Broken" }] }),
         childCounts: { YOUTH: 18 },
         lodgeId: "lodge-1",
@@ -3570,6 +3660,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
   it("refuses an empty group", async () => {
     await expect(
       resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
         request: storedRequest({ teachers: [] }),
         childCounts: { INFANT: 0, CHILD: 0, YOUTH: 0 },
         lodgeId: "lodge-1",
@@ -3588,6 +3679,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
    */
   it("refuses a member linked to a row the new numbers renumber", async () => {
     const refusal = (await resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
       request: storedRequest(),
       // Three youth become two children: every child row is renumbered or
       // retiered from index 2 on.
@@ -3611,6 +3703,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
     // Adding a fourth youth appends: rows 0-4 are byte-identical in both lists,
     // so nothing at those positions is renumbered and no link there is at risk.
     const resolution = await resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
       request: storedRequest(),
       childCounts: { YOUTH: 4 },
       lodgeId: "lodge-1",
@@ -3632,6 +3725,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
      * allowed a link there.
      */
     const refusal = (await resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
       request: storedRequest({
         guests: [
           { firstName: "Tui", lastName: "Teacher", ageTier: "ADULT" },
@@ -3656,6 +3750,7 @@ describe("resolveSchoolGuestOverride (#3412)", () => {
     // An unchanged list renumbers nobody, so a link anywhere in it is safe —
     // otherwise a correctly-linked row could never be re-saved at all.
     const resolution = await resolveSchoolGuestOverride({
+      pendingAdultCount: 0,
       request: storedRequest(),
       childCounts: { YOUTH: 3 },
       lodgeId: "lodge-1",
