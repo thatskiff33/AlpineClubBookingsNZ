@@ -13,6 +13,10 @@
  *   doors use to decide between reconciling and minting a repay intent.
  * - `isCardIntentRetired` — the two together: the switch may leave this intent
  *   beside an Internet Banking invoice, because it can never take money again.
+ * - `retireCardIntentBeforeElection` — the act built on it: before a stored
+ *   credit election is spent, the card intent minted at the pre-election price
+ *   is made dead, or the election is left alone (#3638's switch, #3864's pay
+ *   step).
  *
  * `processing` and `requires_capture` are not special-cased here: the cancel
  * helper (`cancelPaymentIntentIfCancellableWithResult`) cancels both, so they
@@ -20,7 +24,9 @@
  */
 import { PaymentStatus } from "@prisma/client";
 import type Stripe from "stripe";
+import logger from "@/lib/logger";
 import { findPaymentTransactionByIntentId } from "@/lib/payment-transactions";
+import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
 
 type CancelResult = {
   paymentIntent: Pick<Stripe.PaymentIntent, "id" | "status">;
@@ -89,4 +95,54 @@ export async function isCardIntentRetired({
     paymentIntentId: result.paymentIntent.id,
     paymentStatus,
   });
+}
+
+/**
+ * A STORED CREDIT ELECTION IS SPENT ONLY ONCE THE CARD INTENT MINTED BEFORE IT
+ * IS DEAD (#3638, #3864; `INV-PAY-024`, `INV-PAY-102`). Both doors that spend
+ * an election — the switch to Internet Banking and the card pay step — call
+ * this first,
+ * outside any transaction, because that intent was minted at the pre-election
+ * price: if it captures after the credit is spent, the member pays the whole
+ * price by card AND loses the credit (#1641's double pay).
+ *
+ * `retired` when `isCardIntentRetired` says so (Stripe confirmed the cancel,
+ * the intent was already cancelled, or it succeeded and the local ledger shows
+ * it refunded): spend the election. `notCancellable` for a succeeded intent
+ * with no refund history — a live capture, typically with the local record
+ * lagging: do NOT spend it; the capture settles the booking, and the settle
+ * door clears the election it cannot honour. `unconfirmed` when a call throws,
+ * because a failed cancel proves nothing about whether the card can still be
+ * charged: refuse and let the member retry.
+ */
+export async function retireCardIntentBeforeElection({
+  paymentIntentId,
+  paymentStatus,
+  bookingId,
+  door,
+}: {
+  paymentIntentId: string;
+  paymentStatus: PaymentStatus;
+  bookingId: string;
+  /** Which spender is asking, for the log line. */
+  door: "internet-banking-switch" | "card-pay-step";
+}): Promise<"retired" | "notCancellable" | "unconfirmed"> {
+  try {
+    const result =
+      await cancelPaymentIntentIfCancellableWithResult(paymentIntentId);
+    if (await isCardIntentRetired({ result, paymentStatus })) {
+      return "retired";
+    }
+    logger.warn(
+      { bookingId, paymentIntentId, door, status: result.paymentIntent.status },
+      "The card payment could not be cancelled, so the stored credit election was not spent (#3638, #3864)"
+    );
+    return "notCancellable";
+  } catch (err) {
+    logger.error(
+      { err, bookingId, paymentIntentId, door },
+      "Cancelling the card payment failed, so the stored credit election was not spent (#3638, #3864)"
+    );
+    return "unconfirmed";
+  }
 }
