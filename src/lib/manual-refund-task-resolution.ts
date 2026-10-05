@@ -624,8 +624,7 @@ export async function resolveManualRefundTask(
       hasIssuedXeroInvoice,
       bookingPaymentStatus: task.booking.payment?.status ?? null,
       bookingXeroInvoiceId: task.booking.payment?.xeroInvoiceId ?? null,
-      // `INV-PAY-101` (#3529, #3880): the invoice a refund on a cancelled
-      // booking is noted against - `hasIssuedXeroInvoice` is false for all of them.
+      // `INV-PAY-101` (#3529, #3880): a cancelled booking's refund invoice (`hasIssuedXeroInvoice` is false).
       cancellationHandBackInvoiceId: cancelledBookingRefundInvoiceId(task),
       /**
        * #3827 (`INV-PAY-117`): the Xero leg owes nothing for an edit refund
@@ -634,11 +633,8 @@ export async function resolveManualRefundTask(
        * instead (`refundRequestId` below), never the cancellation's.
        */
       nonCancellationHandBack: isNonCancellationHandBackTask(task),
-      /**
-       * #3827 (D-3813-8): a refund request's hand-back - its completion queues
-       * that request's own Xero refund credit note. Null on a dismissal (no
-       * route, so the leg queues nothing) as on every other task.
-       */
+      // #3827 (D-3813-8): a refund request's hand-back queues that request's own
+      // Xero refund note. Null on a dismissal (no route) and on every other task.
       refundRequestId: refundRequestIdOfHandBack(task),
       /** The REFUNDED event's marker for those two (`INV-PAY-117`), else null. */
       nonCancellationHandBackSnapshot: isNonCancellationHandBackTask(task)

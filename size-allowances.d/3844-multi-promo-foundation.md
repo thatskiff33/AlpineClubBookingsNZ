@@ -32,7 +32,7 @@ reason: one import of bookingPromoCodeLabel for the plural promo read (#3826); t
   #3809, #3835 and #3792 growth of this file with the epic's.
 
 file: src/lib/booking-cancel.ts
-lines: 2793
+lines: 2802
 reason: the cancel release now gives back every promo code a booking carries
   (#3826), through the one booking-level release in promo.ts; the existing
   cleanup helper keeps a cheap probe so a booking with no code opens no
@@ -59,7 +59,7 @@ reason: the promo change step reads the booking's one promo redemption through
   #3828 (re-measured in place) refuses the one-code fields on a several-code booking there, before any lock or write; the predicate lives in booking-modify-promo-request.ts.
 
 file: src/lib/config-transfer/categories/club-settings.ts
-lines: 1180
+lines: 1182
 reason: the new multiPromoCodes module key must be classified for config transfer
   (#3826), and the classification and its reason live in this one table.
 
