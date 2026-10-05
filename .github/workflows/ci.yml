@@ -1206,6 +1206,11 @@ jobs:
           DATA_MIGRATION_VERIFICATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55443/data_migration_verification
         run: pnpm exec vitest run src/lib/__tests__/school-organisation-backfill-fail-closed.realdb.test.ts
 
+      - name: Verify pending adult naming races and rollback
+        env:
+          DATA_MIGRATION_VERIFICATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55443/data_migration_verification
+        run: pnpm exec vitest run src/lib/__tests__/school-pending-adult-resolution.realdb.test.ts
+
   # #2686: the CRITICAL half of this job is a REQUIRED status check, so the job
   # carries an explicit `name:` — the required context is
   # `Image security gate (Trivy CRITICAL)`, not the job id.

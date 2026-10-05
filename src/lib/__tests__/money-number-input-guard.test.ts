@@ -14,7 +14,7 @@ import {
   #2932 — the mechanical guard for `INV-MONEY-003`'s input half.
 
   The rule says a money box is `type="text"` with `inputMode="decimal"` —
-  `MONEY_INPUT_PROPS` — because a `type="number"` control has already thrown
+  `MoneyInput` — because a `type="number"` control has already thrown
   away "50abc", "$45.00" and "1,000.00" by the time the exact parser runs, and
   every handler in this tree reads the `""` it hands over as "no value".
   #2685/#2712 wrote the rule and converted the surfaces of the day. Nothing
@@ -347,7 +347,7 @@ describe("money boxes are never browser number inputs (INV-MONEY-003, #2932)", (
     expect(
       offending.map(
         (hit) =>
-          `${hit.file}:${hit.line} <${hit.tag}> looks like money ("${hit.matched}") but is a browser number input — spell it {...MONEY_INPUT_PROPS} from @/lib/money-input (INV-MONEY-003)`,
+          `${hit.file}:${hit.line} <${hit.tag}> looks like money ("${hit.matched}") but is a browser number input — use MoneyInput from @/components/ui/money-input (INV-MONEY-003)`,
       ),
     ).toEqual([]);
   });

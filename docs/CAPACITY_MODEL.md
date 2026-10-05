@@ -157,7 +157,7 @@ hold fields via the shared `RELEASE_ADMIN_CAPACITY_HOLD_UPDATE` fragment, so
 no orphaned hold records survive a cancellation. Both hold and unhold write
 audit rows (`booking.admin_capacity_hold.*`).
 
-## How occupancy is counted: one calculation, four terms (#2681)
+## How occupancy is counted: one calculation, five terms (#2681, #3413)
 
 *Which* bookings consume capacity (above) is one question. *How many beds are
 occupied at this lodge on this night* is the other, and it has exactly one
@@ -178,16 +178,17 @@ dropped from it or if a seventh copy appears.
 | 2 | Custodian bed holds | #2286 | A bed held for a season by a hut-leader assignment. No booking, no guest row, so it is invisible to term 1. |
 | 3 | Policy-exception reservations | #2525 | Beds a **HELD** booking-policy exception request has provisionally reserved. Read under the same per-lodge capacity lock the claim is written under. |
 | 4 | Whole-lodge holds | ADR-001 / #118 | A capacity-holding booking that holds the lodge exclusively. Returned as a per-night **flag**, not folded into the number, because what a held night should *look like* is the one thing the callers genuinely differ on. |
+| 5 | Pending school-adult reservations | #3413 | Unnamed adult slots on a SCHOOL request's held booking. They are per-lodge, date-only counts, never `BookingGuest` rows or invented people. The request writer creates/removes them under its global-then-lodge lock; the canonical reader adds them before any later admission checks capacity. |
 
 ### Who counts what
 
-Every surface that goes through `computeNightOccupancy()` takes terms 1-3
+Every surface that goes through `computeNightOccupancy()` takes terms 1-3 and 5
 together — none of them takes some and not others. What varies among those
 surfaces is only what each does with term 4. (The admin utilisation report is
 the one occupancy-shaped surface that does *not* go through the calculation; it
 is listed last for exactly that reason.)
 
-| Surface | Terms 1-3 | Whole-lodge hold (term 4) | Why |
+| Surface | Terms 1-3 and 5 | Whole-lodge hold (term 4) | Why |
 |---|---|---|---|
 | `checkCapacity` | **Yes** | `occupiedBeds` pinned to a full lodge — the hold's represented beds plus the custodian beds it excludes (`INV-CAP-038`) — and `availableBeds` pinned to 0 | A member reading this payload (#155) must not be able to tell a held night from a genuinely full one (decision 6). Composed from the two disjoint sets rather than written as `lodgeCapacity`, so a hold that re-claimed the custodian's bed would break the contract instead of hiding inside it |
 | `checkCapacityForGuestRanges` | **Yes** | `availableBeds` pinned to 0; `occupiedBeds` **not** pinned | Its `occupiedBeds` is existing occupancy *plus the proposal being tested*; pinning would discard the proposal. Every consumer reads `availableBeds` / `wholeLodgeHeld` |

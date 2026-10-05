@@ -24,13 +24,14 @@ import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments"
  *
  * So this file asks three questions of the tree itself:
  *
- *  1. **Who may turn an existing `BookingGuestNight` row's price into a
- *     number?** Exactly one module. Every other production writer of that table
- *     creates rows wholesale from a priced breakdown - `syncGuestNights` and its
- *     siblings, governed by `nightPriceCentsToWrite` and `required-price-cents.ts`
- *     - and an in-place `update` of a price is a different act with a different
- *     rule. Measured from the source, so a second one fails here with its own
- *     file name.
+ *  1. **Who may fill an existing `BookingGuestNight` row's NULL price?** Only
+ *     the repair writer, with the officer's figures (`INV-MOD-036`). That rule
+ *     also admits #3794's bounded accepted SCHOOL naming reconciliation: proved,
+ *     already-priced held-night IDs only, NULL refusal and exact-count rollback.
+ *     Every other production writer creates rows wholesale from a priced
+ *     breakdown - `syncGuestNights` and its siblings, governed by
+ *     `nightPriceCentsToWrite` and `required-price-cents.ts`. An unproved in-place
+ *     writer fails here with its own file name.
  *  2. **Does this feature contain any arithmetic that could produce an amount?**
  *     A division, a rounding, a split helper, an averaging pass. It should not:
  *     the officer's figures are added up and compared, never derived. A `?? 0` is
@@ -89,7 +90,7 @@ import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments"
  *
  * WHAT IT STILL DOES NOT COVER, stated rather than left to be found: a fill on a
  * path that is not this dialog. That is what the scans below are for, and why
- * neither instrument can be dropped - this file catches a SECOND WRITER
+ * neither instrument can be dropped - this file catches an UNPROVED WRITER
  * appearing anywhere in the tree, and a reference to the target figure from
  * outside this feature, neither of which any behaviour test can see.
  *
@@ -99,8 +100,18 @@ import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments"
 
 const SRC = resolve(process.cwd(), "src");
 
-/** The one module allowed to update an existing night row's price in place. */
+/** The one module allowed to fill an existing night row's unknown price. */
 const REPAIR_WRITER = "lib/stored-night-price-repair-store.ts";
+
+/** #3794 reconciles only proven priced held rows; it cannot fill a NULL. */
+const PRICED_SCHOOL_WRITER = "lib/school-pending-adult-resolution.ts";
+
+function isPricedSchoolNightWriter(code: string): boolean {
+  const writes = code.match(/bookingGuestNight\s*\.\s*(update|updateMany|upsert|create)\b/g) ?? [];
+  return writes.length === 1 &&
+    /const\s+updated\s*=\s*await\s+tx\.bookingGuestNight\.updateMany\(\{\s*where:\s*\{\s*id:\s*\{\s*in:\s*group\.ids\s*\},\s*priceCents:\s*\{\s*not:\s*null\s*\}\s*\},\s*data:/.test(code) &&
+    /if\s*\(updated\.count\s*!==\s*group\.ids\.length\)\s*\{\s*throw\s+new\s+BookingRequestError\(/.test(code);
+}
 
 /**
  * The whole of this feature, as files.
@@ -177,7 +188,7 @@ function sourceFiles(): string[] {
 }
 
 describe("only one module may fill in a blank night price", () => {
-  it("is the repair writer, and nothing else updates a night row in place", () => {
+  it("permits only the repair writer or the proven priced-only school update", () => {
     const offenders: string[] = [];
     for (const file of sourceFiles()) {
       const code = stripCommentsAndStrings(readFileSync(file, "utf8"));
@@ -207,12 +218,22 @@ describe("only one module may fill in a blank night price", () => {
       }
       const rel = relative(SRC, file).split("\\").join("/");
       if (rel === REPAIR_WRITER) continue;
+      if (rel === PRICED_SCHOOL_WRITER && isPricedSchoolNightWriter(code)) continue;
       offenders.push(rel);
     }
     expect(
       offenders,
       `INV-MOD-028: a NULL BookingGuestNight.priceCents may only be filled in by a person supplying the amount, and ${REPAIR_WRITER} is the only writer that does. These modules also put a price on a night row one at a time - rewriting an existing row, or creating one: ${offenders.join(", ")}`,
     ).toEqual([]);
+  });
+
+  it("mutation-proves the school exception requires exact ids, non-NULL prices and full-count rollback", () => {
+    const code = stripCommentsAndStrings(readFileSync(join(SRC, PRICED_SCHOOL_WRITER), "utf8"));
+    expect(isPricedSchoolNightWriter(code)).toBe(true);
+    expect(isPricedSchoolNightWriter(code.replace("priceCents: { not: null }", "priceCents: null"))).toBe(false);
+    expect(isPricedSchoolNightWriter(code.replace("id: { in: group.ids }", "id: { not: null }"))).toBe(false);
+    expect(isPricedSchoolNightWriter(code.replace("updated.count !== group.ids.length", "false"))).toBe(false);
+    expect(isPricedSchoolNightWriter(`${code}\nawait tx.bookingGuestNight.update({});`)).toBe(false);
   });
 
   it("the repair writer really is one of the files on disk", () => {

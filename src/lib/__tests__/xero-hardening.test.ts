@@ -1686,4 +1686,30 @@ describe("cleanupStaleCanonicalXeroObjectLinks", () => {
       },
     });
   });
+
+  it("keeps a bank payment's live per-refund notes beside its field's note, or with no field, and retires a VOIDED one (#3880)", async () => {
+    mocks.memberFindMany.mockResolvedValue([]);
+    mocks.paymentFindMany.mockImplementation(async (args?: { where?: { source?: string } }) =>
+      args?.where?.source === "STRIPE" ? [] : [{ id: "pay_ib", xeroInvoiceId: "inv_ib", xeroRefundCreditNoteId: "cn_handback" }]
+    );
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    const link = (id: string, localId: string, xeroObjectId: string, metadata: Record<string, unknown> | null) => ({
+      id, localModel: "Payment", localId, xeroObjectType: "CREDIT_NOTE", xeroObjectId, role: "REFUND_CREDIT_NOTE", metadata,
+    });
+    mocks.linkFindMany.mockResolvedValue([
+      link("link_handback", "pay_ib", "cn_handback", { amountCents: 5_000 }),
+      link("link_review", "pay_ib", "cn_review", { amountCents: 3_000, perDelta: true }),
+      // A payment whose field is null: its per-refund note is still live coverage.
+      link("link_review_nofield", "pay_ib_nofield", "cn_review_2", { amountCents: 2_000, perDelta: true }),
+      link("link_review_voided", "pay_ib", "cn_review_voided", { amountCents: 1_000, perDelta: true, status: "VOIDED" }),
+      // Not stamped per-refund: the single-note contract still retires it.
+      link("link_old", "pay_ib", "cn_old", { amountCents: 1_000 }),
+    ]);
+    mocks.linkUpdateMany.mockResolvedValue({ count: 2 });
+
+    const result = await cleanupStaleCanonicalXeroObjectLinks();
+
+    expect(result.deactivatedLinkIds).toEqual(["link_review_voided", "link_old"]);
+    expect(result.preservedStripeRefundCreditNoteLinks).toBe(2);
+  });
 });

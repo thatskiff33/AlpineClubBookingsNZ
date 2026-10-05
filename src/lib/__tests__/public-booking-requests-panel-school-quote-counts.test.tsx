@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PublicBookingRequestsPanel } from "@/components/admin/booking-requests/public-booking-requests-panel";
+import { toast } from "sonner";
 
 // next/navigation: the panel replaces the URL in an effect and reads search params.
 const replace = vi.fn();
@@ -238,6 +239,41 @@ describe("PublicBookingRequestsPanel school group numbers on Save quote (#3412)"
     expect(screen.queryByLabelText("YOUTH non-member")).toBeNull();
     // The named teacher is still there, so the adult rate stays.
     expect(await screen.findByLabelText("ADULT non-member")).toBeTruthy();
+  });
+
+  it.each([
+    { type: "SCHOOL", pendingAdultCount: 1, needsPendingRate: true },
+    { type: "SCHOOL", pendingAdultCount: 0, needsPendingRate: false },
+    { type: "PUBLIC", pendingAdultCount: 1, needsPendingRate: false },
+  ])("prices pending adults separately from a linked teacher: $type/$pendingAdultCount", async ({ type, pendingAdultCount, needsPendingRate }) => {
+    const fetchMock = mockFetch({
+      ...baseSchoolRequest,
+      type,
+      pendingAdultCount,
+      linkedGuestMembers: [{ guestIndex: 0, memberId: "member-1" }],
+    });
+    render(<PublicBookingRequestsPanel />);
+
+    const pricingMode = (await screen.findAllByTestId("select")).find((node) =>
+      node.textContent?.includes("Per guest-night"),
+    );
+    fireEvent.change(pricingMode!, { target: { value: "PER_GUEST_NIGHT" } });
+    fireEvent.change(await screen.findByLabelText("ADULT member"), { target: { value: "35.00" } });
+    fireEvent.change(await screen.findByLabelText("YOUTH non-member"), { target: { value: "10.00" } });
+    if (needsPendingRate) {
+      fireEvent.change(await screen.findByLabelText("ADULT non-member"), { target: { value: "47.00" } });
+    } else {
+      expect(screen.queryByLabelText("ADULT non-member")).toBeNull();
+    }
+    fireEvent.click(await screen.findByRole("button", { name: "Save quote" }));
+    await waitFor(() => expect(quoteBody(fetchMock)).not.toBeNull());
+    const rates = quoteBody(fetchMock).options[0].guestNightRates;
+    expect(rates).toContainEqual({ ageTier: "ADULT", isMember: true, rateCents: 3500 });
+    expect(rates).toContainEqual({ ageTier: "YOUTH", isMember: false, rateCents: 1000 });
+    expect(rates.some((rate: { ageTier: string; isMember: boolean }) => rate.ageTier === "ADULT" && !rate.isMember)).toBe(needsPendingRate);
+    if (needsPendingRate) {
+      expect(rates).toContainEqual({ ageTier: "ADULT", isMember: false, rateCents: 4700 });
+    }
   });
 
   it("holds the beds only once the change is saved", async () => {
@@ -537,5 +573,55 @@ describe("PublicBookingRequestsPanel school group numbers on Save quote (#3412)"
     expect(
       screen.queryByText(/Beds are held for this request/i),
     ).toBeNull();
+  });
+});
+
+describe("PublicBookingRequestsPanel school approval result (#3785)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each([
+    { invoiceMode: "xero", assignmentsCreated: true },
+    { invoiceMode: "xero", assignmentsCreated: false },
+    { invoiceMode: "manual", assignmentsCreated: true },
+    { invoiceMode: "manual", assignmentsCreated: false },
+  ])("reports confirmed results for $invoiceMode, assignments=$assignmentsCreated", async ({ invoiceMode, assignmentsCreated }) => {
+    global.fetch = vi.fn().mockImplementation(async (url: string) => ({
+      ok: true,
+      json: async () => String(url).endsWith("/approve")
+        ? { type: "SCHOOL", invoiceMode, teacherHutLeaderAssignmentsCreated: assignmentsCreated }
+        : { data: [baseSchoolRequest] },
+    })) as unknown as typeof fetch;
+    render(<PublicBookingRequestsPanel />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Approve & invoice school" }));
+
+    const assignments = assignmentsCreated
+      ? "Teacher hut-leader assignments were created."
+      : "Teacher hut-leader assignments were not created.";
+    const invoice = invoiceMode === "xero"
+      ? "Check invoice progress and email delivery."
+      : "The Xero module is off, so manual invoicing is required. Check email delivery.";
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(
+      `School booking confirmed. ${assignments} ${invoice}`,
+    ));
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("keeps the already-converted replay result without promising another send", async () => {
+    global.fetch = vi.fn().mockImplementation(async (url: string) => ({
+      ok: true,
+      json: async () => String(url).endsWith("/approve")
+        ? { type: "SCHOOL", invoiceMode: "xero", teacherHutLeaderAssignmentsCreated: true, alreadyConverted: true }
+        : { data: [baseSchoolRequest] },
+    })) as unknown as typeof fetch;
+    render(<PublicBookingRequestsPanel />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Approve & invoice school" }));
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(
+      "School booking was already confirmed. No new invoice or teacher PIN email was sent.",
+    ));
   });
 });
