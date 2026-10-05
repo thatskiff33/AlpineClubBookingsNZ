@@ -545,7 +545,12 @@ export const AUDIT_CENSUS_TOTALS = {
   // environment-safety writers it is a sibling of, so it does not join
   // `UNCATEGORISED_AUDIT_WRITERS` below. RE-MEASURED with `npm run
   // audit:census` on the composed tree, not incremented.
-  writeSites: 486,
+  // 486 -> 484 (#52): the other-lodges CREATE and DELETE handlers are removed
+  // with their `OTHER_LODGE_CREATED` and `OTHER_LODGE_DELETED` writers - a site
+  // changes only the lodge the central server says it owns, and never adds to
+  // or removes from the shared registry. RE-MEASURED with `npm run
+  // audit:census`, not decremented.
+  writeSites: 484,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -737,7 +742,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // `tx.auditLog.create` + `buildStructuredAuditLogCreateArgs` form as the
     // club-timezone writer two entries above, on a route that does exactly the
     // same job, rather than a fifth form.
-    "auditLog.create": { total: 76, uncategorised: 0 },
+    // 76 -> 74 (#52): the two removed other-lodges writers above.
+    "auditLog.create": { total: 74, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -1007,7 +1013,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 106 -> 107 (#2940): `mirotalk.settings.update`. An ordinary admin-settings
     // save, read with `support:view` like every other settings row beside it, so
     // it widens nobody's access.
-    admin: 108,
+    // 108 -> 106 (#52): `OTHER_LODGE_CREATED` and `OTHER_LODGE_DELETED` are
+    // gone with their handlers; `OTHER_LODGE_UPDATED` stays, still `admin`.
+    admin: 106,
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -2483,10 +2491,9 @@ export const LODGE_GATED_ADMIN_CATEGORIES_2765: Readonly<
   // records (`admin/lodges/**`), files `admin` — so filing this registry `lodge`
   // would itself OPEN a split of exactly the kind the rule exists to close.
   // Gated `lodge:view`/`lodge:edit`, filing `admin`. Pinned on arrival so the
-  // next change is deliberate.
-  "src/app/api/admin/other-lodges/route.ts::POST#0": "admin",
+  // next change is deliberate. #52 removed the create and delete handlers (a
+  // site changes only its own lodge), so of the trio only the update remains.
   "src/app/api/admin/other-lodges/[id]/route.ts::PATCH#0": "admin",
-  "src/app/api/admin/other-lodges/[id]/route.ts::DELETE#0": "admin",
 };
 
 /**
@@ -2557,9 +2564,7 @@ export const LODGE_GATED_ADMIN_ACTIONS_2765: readonly string[] = [
   "workparty.create",
   "workparty.update",
   "workparty.delete",
-  "OTHER_LODGE_CREATED",
   "OTHER_LODGE_UPDATED",
-  "OTHER_LODGE_DELETED",
 ];
 
 /**

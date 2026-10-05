@@ -333,8 +333,13 @@ const FIGURES = {
    * `describeReason={!ancestorRendersViewOnlyBanner}` like the panel's existing
    * four, because the Lodges page renders the one banner and vouches for the
    * panel at its render site. MEASURED by re-running this census.
+   *
+   * 364 -> 362 (#52): the same panel loses Add other lodge, the per-row Edit
+   * and the per-row Delete (three vouched opt-outs) and gains ONE per-row
+   * Edit my Lodge, vouched the same way. Net two fewer. MEASURED by re-running
+   * this census.
    */
-  callSites: 364,
+  callSites: 362,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -358,8 +363,11 @@ const FIGURES = {
    *
    * 308 -> 310 (#50): so do the Other lodges panel's two amenity controls,
    * vouched rather than static (the banner is in the Lodges page, not the panel).
+   *
+   * 310 -> 308 (#52): three of the panel's vouched opt-outs go (Add, Edit,
+   * Delete) and one arrives (Edit my Lodge).
    */
-  optOuts: 310,
+  optOuts: 308,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -422,10 +430,13 @@ const FIGURES = {
    * Lodges page renders the lodge-area banner and passes
    * `ancestorRendersViewOnlyBanner` at the panel's render site. Render-site
    * vouched 29 -> 31 with them; the shell channel does not move.
+   *
+   * 36 -> 34 (#52): the Other lodges panel's Add/Edit/Delete go and Edit my
+   * Lodge arrives, all render-site vouched by the Lodges page; 31 -> 29 there.
    */
-  vouchedOptOuts: 36,
+  vouchedOptOuts: 34,
   /** …of the vouched: proved at a parent's own JSX render site (#2168). */
-  renderSiteVouchedOptOuts: 31,
+  renderSiteVouchedOptOuts: 29,
   /** …of the vouched: proved through the wizard shell's channel (#2324). */
   shellVouchedOptOuts: 5,
   /**
@@ -1607,6 +1618,19 @@ describe("view-only section banner coverage (#2160)", () => {
                no new banner, nothing keeping its own reason. Re-measured with
                `npm run test:named -- src/components/admin/__tests__/view-only-banner-contract.test.ts`,
                which reports 364 / 310 / 274.
+
+          362  -2  #52 makes the Other lodges panel edit only the site's own
+               lodge: **Add other lodge**, the per-row **Edit** and the per-row
+               **Delete** are removed and one per-row **Edit my Lodge** is added,
+               a `ViewOnlyActionButton` vouched exactly as the three it replaces
+               (the Lodges page renders the lodge-area banner and passes
+               `ancestorRendersViewOnlyBanner` at the panel's render site). So
+               callSites 364 -> 362, optOuts 310 -> 308 and vouchedOptOuts
+               36 -> 34 (renderSiteVouchedOptOuts 31 -> 29) move together;
+               staticOptOuts, the shell channel, the exceptions, the leaf bucket
+               and bannerComponents do not move. Re-measured with
+               `npm run test:named -- src/components/admin/__tests__/view-only-banner-contract.test.ts`,
+               which reports 362 / 308 / 274.
 
       */
       // #2259 adds the per-booking "No emails"
