@@ -222,6 +222,12 @@ import "./election-double-pay-race.realdb.test";
 // across sibling reviews. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns
 // and cleans its own `race-3835-` fixtures.
 import "./edit-financial-review-captured-cancel.realdb.test";
+// #3880 reuses it to prove a review's card refund or bank-transfer hand-back on
+// a booking the REAL cancel already closed queues the cancellation's own kind
+// of Xero refund note, sized to the netted figure, keyed on the review task and
+// never touching the cancelled invoice. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3880-` fixtures.
+import "./edit-financial-review-cancelled-refund-xero.realdb.test";
 // #3454 reuses it to prove the Xero token store's two fences against real row
 // locks: simultaneous refresh-lease claims (this code against itself, and
 // against an older colour's own claim statement) let exactly one through, and a

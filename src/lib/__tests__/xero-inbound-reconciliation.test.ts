@@ -4972,6 +4972,50 @@ describe("processStoredXeroInboundEvents", () => {
     );
   });
 
+  it("MUTATION (#3880 F1): inbound reconcile of a per-refund note never makes it the payment's canonical note", async () => {
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_3880",
+        source: "webhook",
+        eventCategory: "CREDIT_NOTE",
+        eventType: "UPDATE",
+        resourceId: "cn_review",
+        correlationKey: "corr_3880",
+        payload: { resourceId: "cn_review" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_3880" });
+    // A bank payment holding only a review's per-refund note: its field is empty by design.
+    mocks.linkFindMany.mockImplementation((async ({ where }: any) => {
+      if (where?.xeroObjectId === "cn_review" && where?.active === true) {
+        return [{ localModel: "Payment", localId: "pay_1", xeroObjectType: "CREDIT_NOTE", role: "REFUND_CREDIT_NOTE" }];
+      }
+      if (where?.localId === "pay_1" && where?.role === "REFUND_CREDIT_NOTE") {
+        return [{ localId: "pay_1", xeroObjectId: "cn_review", metadata: { amountCents: 3000, perDelta: true } }];
+      }
+      return [];
+    }) as never);
+    mocks.paymentFindMany.mockImplementation((async ({ where }: any) =>
+      where?.OR ? [{ id: "pay_1", xeroRefundCreditNoteId: null }] : []) as never);
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: {
+        accountingApi: {
+          getCreditNote: vi.fn().mockResolvedValue({
+            body: { creditNotes: [{ creditNoteID: "cn_review", creditNoteNumber: "CN-R", status: "PAID", total: 30, remainingCredit: 0, payments: [] }] },
+          }),
+        },
+      },
+      tenantId: "tenant_1",
+    });
+
+    await processStoredXeroInboundEvents();
+
+    expect(mocks.paymentUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ xeroRefundCreditNoteId: "cn_review" }) }),
+    );
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalled();
+  });
+
   it("reconciles account-credit note events into member credit Xero links", async () => {
     mocks.inboundFindMany.mockResolvedValue([
       {

@@ -79,6 +79,15 @@ const OCCUPANCY_TERMS = [
     ],
   },
   {
+    id: "pending-school-adult-reservations",
+    issue: "#3413",
+    what: "unnamed adults held for a school booking request, represented as a capacity-only per-night count",
+    evidence: [
+      "buildLodgePendingAdultReservationCounter(",
+      "pendingAdultCount(night)",
+    ],
+  },
+  {
     id: "whole-lodge-holds",
     issue: "ADR-001 / #118",
     what: "a capacity-holding booking that holds the whole lodge exclusively",
@@ -95,6 +104,7 @@ const OCCUPANCY_TERMS = [
 const TERM_SYMBOLS = [
   "buildLodgeCustodianNightCounter",
   "buildLodgePolicyExceptionReservationCounter",
+  "buildLodgePendingAdultReservationCounter",
   "buildWholeLodgeHoldIndex",
   "isNightWholeLodgeHeld",
   "getOccupiedBedsForNightFromIndex",
@@ -108,6 +118,8 @@ const TERM_OWNERS: Record<string, string> = {
     "owns the custodian bed-hold term (#2286)",
   "src/lib/booking-exception-reservations.ts":
     "owns the policy-exception reservation term (#2525)",
+  "src/lib/booking-request-pending-adult-reservations.ts":
+    "owns the pending school-adult reservation term (#3413)",
 };
 
 /**
@@ -287,6 +299,10 @@ describe("#2681 night-occupancy census: one calculation, every term", () => {
     expect(
       countOf("buildLodgePolicyExceptionReservationCounter("),
       "the policy-exception reservation term (#2525) must be summed in exactly one place — computeNightOccupancy",
+    ).toBe(1);
+    expect(
+      countOf("buildLodgePendingAdultReservationCounter("),
+      "the pending school-adult term (#3413) must be summed in exactly one place - computeNightOccupancy",
     ).toBe(1);
     expect(
       countOf("getOccupiedBedsForNightFromIndex(night, occupancyIndex)"),

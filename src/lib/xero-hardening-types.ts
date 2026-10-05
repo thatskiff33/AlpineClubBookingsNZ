@@ -150,8 +150,9 @@ export interface XeroCanonicalLinkCleanupResult {
   keptActiveLinks: number;
   deactivatedLinks: number;
   /**
-   * Active Stripe per-delta REFUND_CREDIT_NOTE links the source-aware cleanup
-   * deliberately left alone (#2901, INV-ADDPAY-020). Observability only.
+   * Active per-refund REFUND_CREDIT_NOTE links the source-aware cleanup
+   * deliberately left alone: every Stripe delta (#2901, INV-ADDPAY-020) and any
+   * link stamped per-refund (#3880). Observability only; the name predates #3880.
    */
   preservedStripeRefundCreditNoteLinks: number;
   byCategory: {

@@ -566,11 +566,13 @@ export async function loadAuditData(
   // #3635 (composed review): the refund cents a note may still answer, read
   // through the one gap reader (`readRefundCreditNoteGap`: note-eligible cash
   // less coverage, resolved notes included), so the missing-refund-note arm
-  // never asks for a late capture's refund no note may answer.
+  // never asks for a late capture's refund no note may answer. #3880 round 3:
+  // every source, so a bank payment's per-refund notes - never its canonical
+  // note - still count as cover and a fully covered booking asks for nothing.
   const refundNoteUncoveredCentsByPaymentId = new Map<string, number>();
   for (const booking of bookings) {
     const payment = booking.payment;
-    if (booking.status !== "CANCELLED" || !payment || payment.source !== "STRIPE") continue;
+    if (booking.status !== "CANCELLED" || !payment) continue;
     if (payment.refundedAmountCents <= 0) continue;
     try {
       const gap = await deps.readRefundCreditNoteGap({

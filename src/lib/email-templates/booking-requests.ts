@@ -74,6 +74,26 @@ export function bookingRequestApprovedTemplate(data: {
   `);
 }
 
+export function bookingRequestQuoteAcceptedTemplate(data: {
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  priceCents: number;
+}, format: ClubFormat): string {
+  return layout(`
+    ${heading("Quote Accepted")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", we have recorded your acceptance. The booking team will review it before confirming your stay.")}
+    ${infoTable([
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+      { label: "Accepted total", value: formatCents(data.priceCents, format) },
+    ])}
+    ${paragraph("Your places remain held while the booking team reviews the request. We will contact you with the next step. If you need to change anything, contact the club.")}
+  `);
+}
+
 /**
  * Split-booking guest-portion payment link (#1967). Sent to the member when the
  * provisional non-member child of a split booking reaches its hold deadline but

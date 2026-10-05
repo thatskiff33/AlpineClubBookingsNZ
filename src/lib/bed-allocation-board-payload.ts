@@ -182,6 +182,8 @@ export interface BedAllocationDashboardPayload {
   // exclusiveHolds precedent: the board draws a hatched non-allocatable band on
   // those bed-nights and the server 409s any drop regardless.
   custodianHolds: DashboardCustodianHold[];
+  /** Anonymous school adults reserve capacity but cannot be assigned a bed until named. */
+  pendingAdultReservations: Array<{ bookingId: string; night: string; adultCount: number }>;
   suggestedAllocations: BedAllocationCandidate[];
   suggestedUnallocatedGuestNights: UnallocatedGuestNight[];
   warnings: AdminBedAllocationWarning[];

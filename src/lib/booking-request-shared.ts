@@ -207,11 +207,12 @@ export function buildApprovalGuestNights(params: {
  * Idempotency guard (#1232 double-charge). Under the per-lodge advisory lock —
  * call this AFTER acquireLodgeCapacityLock and BEFORE the status-claim — observe
  * whether a prior approve already converted this request (a concurrent
- * double-accept, or a retry whose caller re-armed the request to PRICED after it
- * had already converted). If so, return the committed booking + owner ids so the
- * caller replays that conversion instead of creating a second booking; when the
- * status had been re-armed away from CONVERTED, re-assert the true terminal
- * status (we hold the lock). Returns null when no prior conversion exists.
+ * double-approve, or — before #3415, whose acceptance never writes a converted
+ * request — a requester accept retry that re-armed it to PRICED). If so, return
+ * the committed booking + owner ids so the caller replays that conversion
+ * instead of creating a second booking; when the status is not CONVERTED,
+ * re-assert the true terminal status (we hold the lock). Returns null when no
+ * prior conversion exists.
  */
 export async function claimAlreadyConvertedBookingRequest(
   tx: Prisma.TransactionClient,

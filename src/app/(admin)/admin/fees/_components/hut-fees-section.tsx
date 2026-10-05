@@ -11,10 +11,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { MoneyInput } from "@/components/ui/money-input";
 import { useClubFormat } from "@/components/club-format-provider";
 import { type ClubDateFormat } from "@/lib/club-time";
 import { formatCents } from "@/lib/pricing";
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
+import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import {
   computeMembershipTypeRateGaps,
   seasonRequiresRates,
@@ -1068,12 +1069,11 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                                         <Label htmlFor={`rate-${key}`} className="text-sm">{t.label}</Label>
                                         <div className="relative">
                                           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-                                          <Input
+                                          <MoneyInput
                                             id={`rate-${key}`}
-                                            {...MONEY_INPUT_PROPS}
                                             className="pl-7"
                                             value={amountFieldValue(rateDrafts[key], rates[key])}
-                                            onChange={(e) => handleRateChange(key, e.target.value)}
+                                            onValueChange={(value) => handleRateChange(key, value)}
                                             aria-invalid={rateErrors[key] ? true : undefined}
                                             /*
                                               #2685: the error id FIRST, then the
@@ -1107,15 +1107,14 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                                   <Label htmlFor={`rate-${rateKey(rt.id, FLAT_KEY)}`} className="text-sm">Flat rate (all ages)</Label>
                                   <div className="relative">
                                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-                                    <Input
+                                    <MoneyInput
                                       id={`rate-${rateKey(rt.id, FLAT_KEY)}`}
-                                      {...MONEY_INPUT_PROPS}
                                       className="pl-7"
                                       value={amountFieldValue(
                                         rateDrafts[rateKey(rt.id, FLAT_KEY)],
                                         rates[rateKey(rt.id, FLAT_KEY)],
                                       )}
-                                      onChange={(e) => handleRateChange(rateKey(rt.id, FLAT_KEY), e.target.value)}
+                                      onValueChange={(value) => handleRateChange(rateKey(rt.id, FLAT_KEY), value)}
                                       aria-invalid={rateErrors[rateKey(rt.id, FLAT_KEY)] ? true : undefined}
                                       aria-describedby={describedByFieldHint(
                                         rateHintId(rt.id),
@@ -1165,9 +1164,8 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                       </p>
                       <div className="relative max-w-xs">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-                        <Input
+                        <MoneyInput
                           id="flat-whole-lodge-rate"
-                          {...MONEY_INPUT_PROPS}
                           className="pl-7"
                           // The same absence-versus-zero display rule the rate
                           // boxes above use, from its one home: a draft wins,
@@ -1179,7 +1177,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                             flatWholeLodgeDraft ?? undefined,
                             flatWholeLodgeCents,
                           )}
-                          onChange={(e) => handleFlatWholeLodgeChange(e.target.value)}
+                          onValueChange={handleFlatWholeLodgeChange}
                           aria-invalid={flatWholeLodgeError ? true : undefined}
                           aria-describedby={describedByFieldHint(
                             "flat-whole-lodge-rate-hint",
