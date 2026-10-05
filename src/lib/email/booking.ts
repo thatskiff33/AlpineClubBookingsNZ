@@ -53,6 +53,7 @@ import { CLUB_NAME } from "@/config/club-identity";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
 import { appliedCreditGiveBackNote } from "@/lib/booking-credit-give-back-copy";
+import { editRefundNote } from "@/lib/booking-edit-refund-copy";
 import { supersededPaymentRefundedTemplate } from "@/lib/email-templates/refunds";
 import { supersededRefundOwingSentence } from "@/lib/superseded-additional-refund-event";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
@@ -1416,6 +1417,14 @@ export async function sendBookingModifiedEmail(params: {
    * instead (`INV-SSOT`, "prefer unrepresentable over policed").
    */
   financialReviewPending: boolean;
+  /**
+   * #3916: the reduction was refunded to the group organiser's card (#3653),
+   * not the joiner's. Pass the settlement result's own answer,
+   * `result.organiserChildRefund !== null` - the same flag the Xero leg reads
+   * (`organiserChildRefundOwnsCreditNote`) - never a recomputation. REQUIRED,
+   * like `financialReviewPending`: false where no refund was made.
+   */
+  refundReturnedToOrganiser: boolean;
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null;
 },
@@ -1469,7 +1478,7 @@ export async function sendBookingModifiedEmail(params: {
     : "";
   const settlementNote =
     params.refundAmountCents > 0
-      ? `A refund of ${formatMoneyCents(params.refundAmountCents, format)} has been processed to your original payment method.`
+      ? editRefundNote(params.refundAmountCents, params.refundReturnedToOrganiser, format)
       : accountCreditAmountCents > 0
         ? `Account credit of ${formatMoneyCents(accountCreditAmountCents, format)} has been added for future bookings.`
         : params.additionalAmountCents > 0

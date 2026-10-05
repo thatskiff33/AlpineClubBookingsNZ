@@ -358,6 +358,8 @@ export async function DELETE(
           docblock), and why this is a single hand-off rather than a query.
         */
         financialReviewPending: result.financialReviewPending,
+        // #3916: where the removal's refund went, as its settlement decided it.
+        refundReturnedToOrganiser: result.organiserChildRefund !== null,
         lodgeId: result.booking.lodgeId,
         // Removing a guest can raise the price when it invalidates a group
         // promo the remaining guests relied on. Surface the increase when a
