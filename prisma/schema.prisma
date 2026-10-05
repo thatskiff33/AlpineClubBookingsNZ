@@ -5092,6 +5092,20 @@ model ServerNzSettings {
   // across the central server's HTTP calls.
   otherLodgesSyncStartedAt DateTime?
 
+  // The lodge NAMES the central server says this club owns (#52), as it sends
+  // them on every pull (`ownLodgeNames`): a JSON array of strings, keyed by name
+  // because that is how the registry is keyed. THREE states, and the shape
+  // carries all three: NULL means the server has never said (not connected,
+  // never downloaded, or an older server that does not send the list) and the
+  // panel is read-only; an empty array means the server said the club owns
+  // NOTHING; a non-empty array is the editable set. A server that omits the
+  // field leaves the stored value alone - absent is not "owns nothing". The
+  // admin PATCH route refuses a lodge not in the list and the nightly upload
+  // sends only the lodges in it. `otherLodgesOwnedNamesAt` is when the list was
+  // last received, so an operator can see how stale it is.
+  otherLodgesOwnedNames   Json?
+  otherLodgesOwnedNamesAt DateTime?
+
   // Shared item: the cross-club message board (epic #2992). The cursor is the
   // pair the server's /api/v1/feed/sync hands back — an updatedAt instant plus
   // a tiebreak id — stored as strings because it is THEIR cursor, not a value
