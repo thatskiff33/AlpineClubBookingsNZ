@@ -1,7 +1,21 @@
 schema = 1
 
 [setup]
-run = "{ node -v | grep -q '^v24\\.' || { mkdir -p \"$SETUP_TOOL_DIR/bin\" && curl -fsSL https://nodejs.org/dist/v24.15.0/node-v24.15.0-linux-x64.tar.xz | tar -xJ -C \"$SETUP_TOOL_DIR\" && ln -sf \"$SETUP_TOOL_DIR\"/node-v24.15.0-linux-x64/bin/* \"$SETUP_TOOL_DIR/bin/\"; }; } && { command -v pnpm >/dev/null || npm install -g --prefix \"$SETUP_TOOL_DIR\" pnpm@11.27.1; } && pnpm install --frozen-lockfile && env DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tacbookings pnpm run db:generate"
+run = '''
+node_version=$(cat .nvmrc) &&
+node_major=${node_version%%.*} &&
+{ node -v | grep -q "^v${node_major}\." || {
+  mkdir -p "$SETUP_TOOL_DIR/bin" &&
+  curl -fsSL -o "$SETUP_TOOL_DIR/node.tar.xz" "https://nodejs.org/dist/v${node_version}/node-v${node_version}-linux-x64.tar.xz" &&
+  tar -xJf "$SETUP_TOOL_DIR/node.tar.xz" -C "$SETUP_TOOL_DIR" &&
+  rm "$SETUP_TOOL_DIR/node.tar.xz" &&
+  ln -sf "$SETUP_TOOL_DIR"/node-v${node_version}-linux-x64/bin/* "$SETUP_TOOL_DIR/bin/"
+}; } &&
+pnpm_spec=$(node -p 'require("./package.json").packageManager.split("+")[0]') &&
+{ command -v pnpm >/dev/null || npm install -g --prefix "$SETUP_TOOL_DIR" "$pnpm_spec"; } &&
+pnpm install --frozen-lockfile &&
+env DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tacbookings pnpm run db:generate
+'''
 
 [jobs.lint]
 run = "pnpm run lint"
