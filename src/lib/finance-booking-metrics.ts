@@ -34,7 +34,7 @@ import {
   summarizeBookingMoneyReconciliations,
   type BookingMoneyReconciliationSummary,
 } from "@/lib/booking-money-reconciliation";
-import { type CollectedCashSummary } from "@/lib/booking-payment-state";
+import { type CollectedCashSummary } from "@/lib/payment-net-collected";
 
 export const MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS = 366;
 export { getFinanceBookingMetricsWindowDayCount };

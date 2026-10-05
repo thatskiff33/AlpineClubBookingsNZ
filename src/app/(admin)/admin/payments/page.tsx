@@ -6,11 +6,8 @@ import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useClubTime } from "@/components/club-time-provider";
 import { bookingOwner } from "@/lib/booking-owner";
-import {
-  formatNetCollectedLedgerGapWarning,
-  formatPaidRefundedBreakdown,
-  getPaymentNetOfRefundsCents,
-} from "@/lib/booking-payment-state";
+import { formatPaidRefundedBreakdown, getPaymentNetOfRefundsCents } from "@/lib/booking-payment-state";
+import { formatNetCollectedLedgerGapWarning } from "@/lib/payment-net-collected";
 import { requireInstant } from "@/lib/club-time";
 import { formatPayloadCalendarDay } from "../_lib/calendar-day";
 import { readAdminQueryErrorMessage } from "@/lib/admin-query-error";
@@ -1229,7 +1226,7 @@ export default function PaymentsPage() {
                       rather than arithmetized. Gross and refund print
                       underneath, so only the headline figure changed. #3372:
                       the figure, the sort and the breakdown line each come from
-                      one helper in `booking-payment-state.ts`. */}
+                      one helper in `payment-net-collected.ts`. */}
                   <TableCell className="text-right text-sm font-medium tabular-nums">
                     {formatCents(netAmountCents, format)}
                     {paidRefundedBreakdown && (

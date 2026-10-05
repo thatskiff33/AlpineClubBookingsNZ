@@ -11,10 +11,7 @@ import {
   summarizeOverlappingGuests,
   type RevenueBookingLike,
 } from "@/lib/admin-reports";
-import {
-  isInNetCollectedBookingScope,
-  summarizeCollectedCash,
-} from "@/lib/booking-payment-state";
+import { isInNetCollectedBookingScope, summarizeCollectedCash } from "@/lib/payment-net-collected";
 
 /** A payment on a live booking that has not been soft-deleted. */
 const LIVE = {
@@ -24,6 +21,9 @@ const LIVE = {
   creditsFromCancellation: [],
   manualRefundTasks: [],
 };
+// A card payment with a captured ledger row: the capture evidence a refunded
+// status needs to count in Net Collected (`getNetCollectedPaymentParts`).
+const CARD = { source: "STRIPE", _count: { transactions: 1 } };
 
 const EXPECTED_REPORT_STATUS_VALUES = [
   "PENDING",
@@ -262,13 +262,13 @@ describe("admin reports helpers", () => {
           status: PaymentStatus.PARTIALLY_REFUNDED,
           amountCents: 12_100,
           refundedAmountCents: 1_000,
-          booking: LIVE,
+          ...CARD, booking: LIVE,
         },
         {
           status: PaymentStatus.PENDING,
           amountCents: 9_000,
           refundedAmountCents: 0,
-          booking: LIVE,
+          ...CARD, booking: LIVE,
         },
       ]).netCollectedCents,
     ).toBe(11_100);
@@ -291,15 +291,15 @@ describe("admin reports helpers", () => {
           status: PaymentStatus.PARTIALLY_REFUNDED,
           amountCents: 13_000,
           refundedAmountCents: 6_500,
-          booking: LIVE,
+          ...CARD, booking: LIVE,
         },
-        { status: PaymentStatus.SUCCEEDED, amountCents: 5_000, refundedAmountCents: 0, booking: LIVE },
-        { status: PaymentStatus.REFUNDED, amountCents: 2_000, refundedAmountCents: 2_000, booking: LIVE },
+        { status: PaymentStatus.SUCCEEDED, amountCents: 5_000, refundedAmountCents: 0, ...CARD, booking: LIVE },
+        { status: PaymentStatus.REFUNDED, amountCents: 2_000, refundedAmountCents: 2_000, ...CARD, booking: LIVE },
         // Uncaptured: never in the gross, whatever the amount.
-        { status: PaymentStatus.PENDING, amountCents: 9_000, refundedAmountCents: 0, booking: LIVE },
-        { status: PaymentStatus.FAILED, amountCents: 4_000, refundedAmountCents: 0, booking: LIVE },
+        { status: PaymentStatus.PENDING, amountCents: 9_000, refundedAmountCents: 0, ...CARD, booking: LIVE },
+        { status: PaymentStatus.FAILED, amountCents: 4_000, refundedAmountCents: 0, ...CARD, booking: LIVE },
         // A row with no status at all is uncaptured.
-        { status: null, amountCents: 1_000, refundedAmountCents: 0, booking: LIVE },
+        { status: null, amountCents: 1_000, refundedAmountCents: 0, ...CARD, booking: LIVE },
       ]),
     ).toEqual({
       capturedGrossCents: 20_000,
@@ -325,11 +325,11 @@ describe("admin reports helpers", () => {
           status: PaymentStatus.PARTIALLY_REFUNDED,
           amountCents: 20_000,
           refundedAmountCents: 15_000,
-          booking: LIVE,
+          ...CARD, booking: LIVE,
         },
         // A soft-deleted booking: out of scope, gross and refund alike.
-        { status: PaymentStatus.SUCCEEDED, amountCents: 7_000, refundedAmountCents: 0, booking: deleted },
-        { status: PaymentStatus.REFUNDED, amountCents: 3_000, refundedAmountCents: 3_000, booking: deleted },
+        { status: PaymentStatus.SUCCEEDED, amountCents: 7_000, refundedAmountCents: 0, ...CARD, booking: deleted },
+        { status: PaymentStatus.REFUNDED, amountCents: 3_000, refundedAmountCents: 3_000, ...CARD, booking: deleted },
       ]),
     ).toEqual({
       capturedGrossCents: 20_000,
@@ -350,8 +350,8 @@ describe("admin reports helpers", () => {
     // money that came in - gross less net, so the card's line adds up.
     expect(
       summarizeCollectedCash([
-        { status: PaymentStatus.REFUNDED, amountCents: 1_000, refundedAmountCents: 1_500, booking: LIVE },
-        { status: PaymentStatus.SUCCEEDED, amountCents: 4_000, refundedAmountCents: 0, booking: LIVE },
+        { status: PaymentStatus.REFUNDED, amountCents: 1_000, refundedAmountCents: 1_500, ...CARD, booking: LIVE },
+        { status: PaymentStatus.SUCCEEDED, amountCents: 4_000, refundedAmountCents: 0, ...CARD, booking: LIVE },
       ]),
     ).toEqual({
       capturedGrossCents: 5_000,

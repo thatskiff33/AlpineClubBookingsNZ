@@ -5,7 +5,7 @@
  * Finance dashboard's "Net Collected" (#3637) - so each surface's test
  * asserts the SAME expected amount from the SAME payments.
  *
- * Five payments:
+ * Six payments:
  *  - a CANCELLED booking that paid $200.00 and was refunded $150.00, so the
  *    club kept $50.00 of money it received. It counts: $50.00.
  *  - a SOFT-DELETED booking's captured $70.00. It does not count.
@@ -21,11 +21,21 @@
  *  - a CANCELLED booking marked paid by hand for $100.00 whose $75.00 refund
  *    is still an OPEN hand-back task (same decision: the refund owed is gone
  *    straight away). It counts: $25.00, not $100.00.
+ *  - a LIVE booking's never-paid Internet Banking payment, created PENDING at
+ *    its $450.00 price, that the inbound reconcile folded a $50.00
+ *    modification credit note into and marked PARTIALLY_REFUNDED (owner's
+ *    rule on PR #3811: only money actually received counts). It has no
+ *    captured ledger row and is not a card payment, so it adds nil; a
+ *    derivation that trusts the refunded status reads $400.00 more.
  *
  * Each surface used to answer differently: the payments tile, Reports and
  * Finance left cancelled bookings out, the dashboard counted the deleted
  * booking too. Under the one scope and the one per-payment rule all four read
  * $95.00.
+ *
+ * `source` and `capturedLedgerRows` are each payment's capture evidence
+ * (`netCollectedCaptureEvidenceSelect`); a surface's mock hands them in through
+ * `netCollectedFixtureEvidence`.
  */
 
 type FixtureRow = {
@@ -34,6 +44,9 @@ type FixtureRow = {
   status: string;
   amountCents: number;
   refundedAmountCents: number;
+  source: "STRIPE" | "INTERNET_BANKING";
+  /** How many of the payment's ledger rows hold a captured status. */
+  capturedLedgerRows: number;
   deletedAt: Date | null;
   creditsApplied: ReadonlyArray<{ type: string; amountCents: number }>;
   creditsFromCancellation: ReadonlyArray<{
@@ -62,6 +75,8 @@ export const NET_COLLECTED_SCOPE_FIXTURE = {
     status: "PARTIALLY_REFUNDED",
     amountCents: 20_000,
     refundedAmountCents: 15_000,
+    source: "STRIPE",
+    capturedLedgerRows: 1,
     deletedAt: null,
     ...noCreditOrTask,
   },
@@ -71,6 +86,8 @@ export const NET_COLLECTED_SCOPE_FIXTURE = {
     status: "SUCCEEDED",
     amountCents: 7_000,
     refundedAmountCents: 0,
+    source: "STRIPE",
+    capturedLedgerRows: 1,
     deletedAt: new Date("2026-04-02T00:00:00.000Z"),
     ...noCreditOrTask,
   },
@@ -80,6 +97,8 @@ export const NET_COLLECTED_SCOPE_FIXTURE = {
     status: "FAILED",
     amountCents: 20_000,
     refundedAmountCents: 3_000,
+    source: "INTERNET_BANKING",
+    capturedLedgerRows: 0,
     deletedAt: null,
     ...noCreditOrTask,
   },
@@ -89,6 +108,8 @@ export const NET_COLLECTED_SCOPE_FIXTURE = {
     status: "SUCCEEDED",
     amountCents: 0,
     refundedAmountCents: 0,
+    source: "INTERNET_BANKING",
+    capturedLedgerRows: 0,
     deletedAt: null,
     creditsApplied: [{ type: "BOOKING_APPLIED", amountCents: -8_000 }],
     creditsFromCancellation: [
@@ -106,6 +127,8 @@ export const NET_COLLECTED_SCOPE_FIXTURE = {
     status: "SUCCEEDED",
     amountCents: 10_000,
     refundedAmountCents: 0,
+    source: "INTERNET_BANKING",
+    capturedLedgerRows: 1,
     deletedAt: null,
     creditsApplied: [],
     creditsFromCancellation: [],
@@ -118,18 +141,35 @@ export const NET_COLLECTED_SCOPE_FIXTURE = {
       },
     ],
   },
-  /** What every Net Collected figure must read over the five payments above. */
+  foldedUnpaidLive: {
+    bookingId: "b-live-ib-folded-never-paid",
+    bookingStatus: "CONFIRMED",
+    status: "PARTIALLY_REFUNDED",
+    amountCents: 45_000,
+    refundedAmountCents: 5_000,
+    source: "INTERNET_BANKING",
+    capturedLedgerRows: 0,
+    deletedAt: null,
+    ...noCreditOrTask,
+  },
+  /** What every Net Collected figure must read over the six payments above. */
   expectedNetCollectedCents: 9_500,
 } as const satisfies Record<string, FixtureRow | number>;
 
-/** The fixture's five payments as a list. */
+/** The fixture's six payments as a list. */
 export const NET_COLLECTED_SCOPE_PAYMENTS: ReadonlyArray<FixtureRow> = [
   NET_COLLECTED_SCOPE_FIXTURE.keptFee,
   NET_COLLECTED_SCOPE_FIXTURE.deleted,
   NET_COLLECTED_SCOPE_FIXTURE.unpaidCancelled,
   NET_COLLECTED_SCOPE_FIXTURE.creditKept,
   NET_COLLECTED_SCOPE_FIXTURE.handBackOwed,
+  NET_COLLECTED_SCOPE_FIXTURE.foldedUnpaidLive,
 ];
+
+/** A fixture row's capture evidence, as `netCollectedCaptureEvidenceSelect` loads it. */
+export function netCollectedFixtureEvidence(row: FixtureRow) {
+  return { source: row.source, _count: { transactions: row.capturedLedgerRows } };
+}
 
 /** A fixture row's booking, in the shape `netCollectedBookingSelect` loads. */
 export function netCollectedFixtureBooking(row: FixtureRow) {

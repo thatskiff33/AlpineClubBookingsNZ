@@ -1,11 +1,8 @@
 import Link from "next/link";
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
-import { netCollectedBookingSelect } from "@/lib/additional-ledger-gap";
-import {
-  formatNetCollectedBreakdown,
-  summarizeCollectedCash,
-} from "@/lib/booking-payment-state";
+import { netCollectedBookingSelect, netCollectedCaptureEvidenceSelect } from "@/lib/additional-ledger-gap";
+import { formatNetCollectedBreakdown, summarizeCollectedCash } from "@/lib/payment-net-collected";
 import {
   MemberLifecycleAction,
   MemberLifecycleActionRequestStatus,
@@ -157,13 +154,13 @@ async function getStats() {
     // arrived. A bank-transfer row is created PENDING with the booking and paid
     // later, so it counts in the month it was recorded once it is paid.
     prisma.payment.findMany({
-      where: {
-        createdAt: { gte: startOfMonth, lte: endOfMonth },
-      },
+      where: { createdAt: { gte: startOfMonth, lte: endOfMonth } },
       select: {
         status: true,
         amountCents: true,
         refundedAmountCents: true,
+        // #3372: a refunded status counts only with capture evidence.
+        ...netCollectedCaptureEvidenceSelect,
         booking: { select: netCollectedBookingSelect },
       },
     }),

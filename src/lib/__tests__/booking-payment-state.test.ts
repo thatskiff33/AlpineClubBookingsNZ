@@ -1,15 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  formatNetCollectedLedgerGapWarning,
-  formatPaidRefundedBreakdown,
-  getPaymentNetOfRefundsCents,
-  getRemainingRefundableCents,
-  hasCapturedPayment,
-  formatNetCollectedBreakdown,
-  summarizeCollectedCash,
-  type NetCollectedPaymentRow,
-  stripeRefundMirrorShowsCapture,
-} from "@/lib/booking-payment-state";
+import { formatPaidRefundedBreakdown, getPaymentNetOfRefundsCents, getRemainingRefundableCents, hasCapturedPayment, stripeRefundMirrorShowsCapture } from "@/lib/booking-payment-state";
+import { formatNetCollectedLedgerGapWarning, formatNetCollectedBreakdown, getNetCollectedPaymentParts, summarizeCollectedCash, type NetCollectedPaymentRow } from "@/lib/payment-net-collected";
 
 describe("booking payment state helpers", () => {
   it("treats pending and failed payments as not captured", () => {
@@ -143,22 +134,112 @@ describe("the Net Collected ledger-gap warning", () => {
   into another booking's money shows up as a total other than $100.00 plus that
   booking's own share.
 */
+/*
+  #3372 (owner's rule on PR #3811: only money actually received counts): a
+  refunded `Payment.status` counts as money taken only with the cancel path's
+  capture evidence (`paymentShowsCaptureEvidence`) - a captured ledger row, or a
+  STRIPE refund mirror. The Xero inbound reconcile folds a modification credit
+  note into a never-paid Internet Banking payment (created PENDING at the full
+  price) and marks it PARTIALLY_REFUNDED: bookkeeping, not cash.
+*/
+describe("Net Collected counts a refunded status only with capture evidence", () => {
+  const noRows = { creditsApplied: [], creditsFromCancellation: [], manualRefundTasks: [] };
+  const live = { deletedAt: null, status: "CONFIRMED", ...noRows };
+  const cancelled = { deletedAt: null, status: "CANCELLED", ...noRows };
+  const nothing = { capturedGrossCents: 0, heldCashCents: 0, handBackOwedCents: 0, keptCreditCents: 0 };
+
+  describe("a never-paid Internet Banking payment the reconcile folded to PARTIALLY_REFUNDED", () => {
+    // $450.00 booked, edited down by $50.00; no money ever arrived.
+    const folded = {
+      status: "PARTIALLY_REFUNDED",
+      amountCents: 45_000,
+      refundedAmountCents: 5_000,
+      source: "INTERNET_BANKING",
+      _count: { transactions: 0 },
+    };
+
+    it("adds nothing on a live booking", () => {
+      expect(getNetCollectedPaymentParts({ ...folded, booking: live })).toEqual(nothing);
+      expect(summarizeCollectedCash([{ ...folded, booking: live }]).netCollectedCents).toBe(0);
+    });
+
+    it("adds nothing on a cancelled booking", () => {
+      expect(getNetCollectedPaymentParts({ ...folded, booking: cancelled })).toEqual(nothing);
+      expect(summarizeCollectedCash([{ ...folded, booking: cancelled }]).netCollectedCents).toBe(0);
+    });
+
+    it("adds nothing when the fold reaches the whole price (REFUNDED)", () => {
+      expect(
+        getNetCollectedPaymentParts({ ...folded, status: "REFUNDED", refundedAmountCents: 45_000, booking: live }),
+      ).toEqual(nothing);
+    });
+  });
+
+  it("still counts what is left of a paid Internet Banking payment later partly refunded", () => {
+    // Paid $200.00 by bank transfer (the receipt wrote a captured ledger row);
+    // $50.00 refunded since.
+    const paid = {
+      status: "PARTIALLY_REFUNDED",
+      amountCents: 20_000,
+      refundedAmountCents: 5_000,
+      source: "INTERNET_BANKING",
+      _count: { transactions: 1 },
+    };
+    expect(getNetCollectedPaymentParts({ ...paid, booking: live })).toEqual({
+      ...nothing,
+      capturedGrossCents: 20_000,
+      heldCashCents: 15_000,
+    });
+    expect(getNetCollectedPaymentParts({ ...paid, booking: cancelled })).toEqual({
+      ...nothing,
+      capturedGrossCents: 20_000,
+      heldCashCents: 15_000,
+    });
+  });
+
+  it("counts a STRIPE PARTIALLY_REFUNDED payment as before, ledger row or not", () => {
+    const card = { status: "PARTIALLY_REFUNDED", amountCents: 20_000, refundedAmountCents: 5_000, source: "STRIPE" };
+    const counted = { ...nothing, capturedGrossCents: 20_000, heldCashCents: 15_000 };
+    expect(getNetCollectedPaymentParts({ ...card, _count: { transactions: 1 }, booking: live })).toEqual(counted);
+    // Pre-ledger: the STRIPE refund mirror is the evidence (`stripeRefundMirrorShowsCapture`).
+    expect(getNetCollectedPaymentParts({ ...card, _count: { transactions: 0 }, booking: live })).toEqual(counted);
+  });
+
+  it("takes SUCCEEDED at its word, as before", () => {
+    expect(
+      getNetCollectedPaymentParts({
+        status: "SUCCEEDED",
+        amountCents: 20_000,
+        refundedAmountCents: 0,
+        source: "INTERNET_BANKING",
+        _count: { transactions: 0 },
+        booking: live,
+      }),
+    ).toEqual({ ...nothing, capturedGrossCents: 20_000, heldCashCents: 20_000 });
+  });
+});
+
 describe("what a cancelled booking adds to Net Collected (owner review on #3811, decision 3 Oct)", () => {
   const noRows = { creditsApplied: [], creditsFromCancellation: [], manualRefundTasks: [] };
+  // A card payment with a captured ledger row: the capture evidence a
+  // refunded status needs to count (`getNetCollectedPaymentParts`).
+  const cardEvidence = { source: "STRIPE", _count: { transactions: 1 } };
   const otherBooking = {
     status: "SUCCEEDED",
     amountCents: 10_000,
     refundedAmountCents: 0,
+    ...cardEvidence,
     booking: { deletedAt: null, status: "PAID", ...noRows },
   };
   type CancelledBooking = Partial<NetCollectedPaymentRow["booking"]>;
   const netWith = (
-    cancelled: { status: string | null; amountCents: number; refundedAmountCents: number },
+    cancelled: { status: string | null; amountCents: number; refundedAmountCents: number } &
+      Partial<Pick<NetCollectedPaymentRow, "source" | "_count">>,
     booking: CancelledBooking = {},
   ) =>
     summarizeCollectedCash([
       otherBooking,
-      { ...cancelled, booking: { deletedAt: null, status: "CANCELLED", ...noRows, ...booking } },
+      { ...cardEvidence, ...cancelled, booking: { deletedAt: null, status: "CANCELLED", ...noRows, ...booking } },
     ]);
   const applied = (cents: number) => ({ type: "BOOKING_APPLIED", amountCents: -cents });
   const restored = (cents: number) => ({
@@ -355,7 +436,7 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
     it("never counts a LIVE booking's applied credit", () => {
       expect(
         summarizeCollectedCash([
-          { ...creditPaid, booking: { deletedAt: null, status: "PAID", ...noRows, creditsApplied: [applied(8_000)] } },
+          { ...creditPaid, ...cardEvidence, booking: { deletedAt: null, status: "PAID", ...noRows, creditsApplied: [applied(8_000)] } },
         ]).netCollectedCents,
       ).toBe(0);
     });
@@ -365,7 +446,15 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
     // A reconciled Internet Banking payment cancels on the credit path: the
     // refunded share is on `refundedAmountCents` at once
     // (`applyLocalRefundAllocation`), so only the kept share counts.
-    expect(netWith({ status: "PARTIALLY_REFUNDED", amountCents: 20_000, refundedAmountCents: 10_000 }).netCollectedCents).toBe(20_000);
+    expect(
+      netWith({
+        status: "PARTIALLY_REFUNDED",
+        amountCents: 20_000,
+        refundedAmountCents: 10_000,
+        source: "INTERNET_BANKING",
+        _count: { transactions: 1 },
+      }).netCollectedCents,
+    ).toBe(20_000);
   });
 
   describe("marked paid by hand, $200.00; the 50% tier owes $100.00 back by hand", () => {
@@ -442,6 +531,7 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
             status: "SUCCEEDED",
             amountCents: 20_000,
             refundedAmountCents: 0,
+            ...cardEvidence,
             booking: { deletedAt: null, status: "PAID", ...noRows, manualRefundTasks: [handBack("OPEN", 10_000)] },
           },
         ]).netCollectedCents,

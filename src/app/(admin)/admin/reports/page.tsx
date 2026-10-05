@@ -36,7 +36,7 @@ import {
 } from "@/lib/club-time";
 import { escapeCsvCell } from "@/lib/csv";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
-import { formatNetCollectedLedgerGapWarning } from "@/lib/booking-payment-state";
+import { formatNetCollectedLedgerGapWarning } from "@/lib/payment-net-collected";
 import {
   getReportsDatasetDefaults,
   resetReportsDatasetState,

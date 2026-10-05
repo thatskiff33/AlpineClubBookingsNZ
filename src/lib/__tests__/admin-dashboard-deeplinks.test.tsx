@@ -55,7 +55,10 @@ import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
 import { prisma } from "@/lib/prisma";
-import { netCollectedBookingSelect } from "@/lib/additional-ledger-gap";
+import {
+  netCollectedBookingSelect,
+  netCollectedCaptureEvidenceSelect,
+} from "@/lib/additional-ledger-gap";
 
 function mockDashboardCounts({
   pendingBookingReviews,
@@ -472,6 +475,7 @@ describe("admin dashboard deep links", () => {
           status: true,
           amountCents: true,
           refundedAmountCents: true,
+          ...netCollectedCaptureEvidenceSelect,
           booking: { select: netCollectedBookingSelect },
         },
         where: {

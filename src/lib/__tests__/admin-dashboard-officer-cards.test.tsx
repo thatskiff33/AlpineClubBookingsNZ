@@ -67,8 +67,12 @@ import {
   NET_COLLECTED_SCOPE_FIXTURE,
   NET_COLLECTED_SCOPE_PAYMENTS,
   netCollectedFixtureBooking,
+  netCollectedFixtureEvidence,
 } from "@/lib/__tests__/helpers/net-collected-scope-fixture";
-import { netCollectedBookingSelect } from "@/lib/additional-ledger-gap";
+import {
+  netCollectedBookingSelect,
+  netCollectedCaptureEvidenceSelect,
+} from "@/lib/additional-ledger-gap";
 
 /*
  * The club's day the fixtures below are built in (#3123). The dashboard takes
@@ -187,6 +191,10 @@ function mockStats() {
       status: "PARTIALLY_REFUNDED",
       amountCents: 13_000,
       refundedAmountCents: 6_500,
+      // Paid by card, with a captured ledger row: the capture evidence a
+      // refunded status needs to count (#3372).
+      source: "STRIPE",
+      _count: { transactions: 1 },
       booking: { deletedAt: null },
     },
     {
@@ -340,6 +348,8 @@ describe("admin dashboard officer key cards", () => {
       status: true,
       amountCents: true,
       refundedAmountCents: true,
+      // Net Collected's capture evidence (#3372, owner's rule on PR #3811).
+      ...netCollectedCaptureEvidenceSelect,
       // The one shared booking select (#3372, owner decision 3 Oct 2026).
       booking: { select: netCollectedBookingSelect },
     });
@@ -385,6 +395,7 @@ describe("admin dashboard officer key cards", () => {
         status: payment.status,
         amountCents: payment.amountCents,
         refundedAmountCents: payment.refundedAmountCents,
+        ...netCollectedFixtureEvidence(payment),
         booking: netCollectedFixtureBooking(payment),
       })) as any,
     );

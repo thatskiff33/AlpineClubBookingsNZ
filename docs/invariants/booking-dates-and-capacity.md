@@ -739,7 +739,9 @@ derivation).
   deleted one, through `isInNetCollectedBookingScope` (#3372 decision A). Each
   payment adds only money it took and still holds, so a cancelled booking never
   paid adds nil; a cancelled one also loses an open hand-back and adds credit it
-  kept (`getNetCollectedPaymentParts`; owner, PR #3811 and #3372).
+  kept (`getNetCollectedPaymentParts`; owner, PR #3811 and #3372). A refunded
+  status is money taken only with capture evidence
+  (`paymentShowsCaptureEvidence`), never a Xero-folded mirror alone.
 
 ## Capacity and allocation
 

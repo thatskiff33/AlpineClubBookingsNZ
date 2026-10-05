@@ -1,12 +1,10 @@
 import { PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
 
+import { netCollectedScopedPayments, summarizeCollectedCash, type CollectedCashSummary, type NetCollectedPaymentRow } from "@/lib/payment-net-collected";
 import {
-  netCollectedScopedPayments,
-  summarizeCollectedCash,
-  type CollectedCashSummary,
-  type NetCollectedPaymentRow,
-} from "@/lib/booking-payment-state";
-import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
+  CAPTURED_TRANSACTION_STATUS_LIST,
+  isCapturedTransactionStatus,
+} from "@/lib/payment-transaction-status";
 
 interface AdditionalLedgerGapPaymentLike {
   additionalPaymentStatus: string | null;
@@ -118,7 +116,28 @@ export const netCollectedBookingSelect = Prisma.validator<Prisma.BookingSelect>(
   },
 });
 
+/**
+ * #3372 (owner's rule on PR #3811: only money actually received counts): the
+ * capture evidence `getNetCollectedPaymentParts` asks of a payment whose status
+ * is REFUNDED / PARTIALLY_REFUNDED (`netCollectedPaymentTookMoney`) - the
+ * payment's `source`, for the STRIPE mirror, and how many of its ledger rows
+ * hold a captured status. A filtered relation count inside the one payment
+ * query: no per-row read, and no ledger rows loaded on the dashboard. Every Net
+ * Collected select spreads it, so none can count every ledger row instead.
+ */
+export const netCollectedCaptureEvidenceSelect = Prisma.validator<Prisma.PaymentSelect>()({
+  source: true,
+  _count: {
+    select: {
+      transactions: {
+        where: { status: { in: [...CAPTURED_TRANSACTION_STATUS_LIST] } },
+      },
+    },
+  },
+});
+
 export const netCollectedPaymentSelect = Prisma.validator<Prisma.PaymentSelect>()({
+  ...netCollectedCaptureEvidenceSelect,
   bookingId: true,
   status: true,
   amountCents: true,
@@ -139,9 +158,9 @@ export const netCollectedPaymentSelect = Prisma.validator<Prisma.PaymentSelect>(
  * a payment its figure left out, or stay silent about one it counted. Reports,
  * the payments board and the finance dashboard all call it.
  *
- * It lives here, not beside `summarizeCollectedCash`, because
- * `booking-payment-state.ts` is an import-free leaf that this module already
- * imports: the reverse import would be a cycle.
+ * It lives here, not beside `summarizeCollectedCash` in
+ * `payment-net-collected.ts`, because this module already imports that one:
+ * the reverse import would be a cycle.
  */
 export function summarizeNetCollectedWithLedgerGap<
   T extends NetCollectedPaymentRow &

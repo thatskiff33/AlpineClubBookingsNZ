@@ -50,7 +50,7 @@ The booking metrics response includes:
   counts as `PENDING`, not `NONE`, so the split cannot contradict
   `outstandingAdditionalCents` below it
 - `capturedGrossCents`, `refundedCents` and `netCollectedCents` are the three
-  fields of `summarizeCollectedCash` (`src/lib/booking-payment-state.ts`), the
+  fields of `summarizeCollectedCash` (`src/lib/payment-net-collected.ts`), the
   one net-collected derivation every officer "Net Collected" figure reads
   (#3637, epic #3372 owner decision A). They, and the two ledger-gap fields
   that warn about them, count a different set of bookings from every other
@@ -113,7 +113,10 @@ The booking metrics response includes:
 - `netCollectedCents`: each payment in that scope adds what it took and still
   holds (`getNetCollectedPaymentParts`): never below zero, nothing for a payment
   that took no money, so a booking cancelled before it was paid adds nothing,
-  plus a cancelled booking's kept credit. It equals `capturedGrossCents -
+  plus a cancelled booking's kept credit. A refunded status counts as money
+  taken only with capture evidence (`paymentShowsCaptureEvidence`: a captured
+  ledger row, or a STRIPE refund mirror), so a never-paid Internet Banking
+  payment the Xero reconcile marked `PARTIALLY_REFUNDED` adds nothing. It equals `capturedGrossCents -
   refundedCents - handBackOwedCents + keptCreditCents` exactly.
   **Never** the sum of `capturedGrossCents` and `capturedAdditionalCents` — that
   was the #2408 double count, which reported a $121 booking with a collected $21

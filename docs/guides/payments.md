@@ -695,7 +695,9 @@ the card what it covers:
 
 - **Net Collected** counts captured payments, less the refunds and
   account credits on them. A payment that is still pending or failed does not
-  count. A **cancelled** booking counts only what the club kept of what was
+  count, and neither does an unpaid bank-transfer payment that shows as partly
+  refunded only because a Xero credit note was applied to its invoice: only
+  money actually received counts. A **cancelled** booking counts only what the club kept of what was
   paid on it: money not refunded or credited back, less any refund still owed
   on an open hand-back task, plus any account credit the cancellation kept. One
   cancelled before anything was paid adds nothing, and a **deleted** booking
