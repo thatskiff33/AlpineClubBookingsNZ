@@ -11,6 +11,11 @@ const mocks = vi.hoisted(() => ({
   clearStripeWebhookVerified: vi.fn(),
   loggerError: vi.fn(),
   findMany: vi.fn(),
+  clearOtherLodgesOwnedNames: vi.fn(),
+}));
+
+vi.mock("@/lib/servernz-settings", () => ({
+  clearOtherLodgesOwnedNames: mocks.clearOtherLodgesOwnedNames,
 }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
@@ -181,6 +186,26 @@ describe("POST /api/admin/integrations/credentials", () => {
     );
     // Cross-provider isolation: a Stripe write never touches Xero tokens.
     expect(mocks.deleteXeroTokens).not.toHaveBeenCalled();
+  });
+
+  it("forgets the owned-lodge list when the Alpine Central Server key is replaced (#52)", async () => {
+    asFullAdmin();
+    mocks.setIntegrationCredential.mockResolvedValue({
+      provider: "servernz",
+      key: "api_key",
+      secretSource: "AUTH_SECRET",
+      labelVersion: "integration-credential:v1",
+      updatedAt: new Date(),
+    });
+    const res = await POST(makeRequest({ provider: "servernz", key: "api_key", value: "acs_replacement" }));
+    expect(res.status).toBe(200);
+    expect(mocks.clearOtherLodgesOwnedNames).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT forget the owned-lodge list on another provider's write", async () => {
+    asFullAdmin();
+    await POST(makeRequest({ provider: "xero", key: "client_secret", value: SECRET_VALUE }));
+    expect(mocks.clearOtherLodgesOwnedNames).not.toHaveBeenCalled();
   });
 
   it("accepts the Stripe secret key via the extended allowlist", async () => {

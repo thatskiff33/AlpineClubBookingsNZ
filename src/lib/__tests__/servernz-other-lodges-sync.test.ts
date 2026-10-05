@@ -73,6 +73,7 @@ const SETTINGS = {
   // Unknown until a download from a server that sends the list records it (#52).
   otherLodgesOwnedNames: null as string[] | null,
   otherLodgesOwnedNamesAt: null as string | null,
+  otherLodgesOwnedNamesUnreadable: false,
 };
 
 /** A row as the central server sends it. */
@@ -1060,5 +1061,188 @@ describe("own lodges only (#52)", () => {
     await uploadOtherClubsToServer();
 
     expect(mockUploadOtherLodges).not.toHaveBeenCalled();
+  });
+});
+
+describe("own lodges only: the review fixes (#52)", () => {
+  it("uploads NOTHING when the stored owned list is present but unreadable, and says so", async () => {
+    // A column that was written and no longer parses is a defect, not a fresh
+    // install: the permissive "send every row" fallback is for never-told only.
+    mockLoadSettings.mockResolvedValue({
+      ...SETTINGS,
+      otherLodgesOwnedNames: null,
+      otherLodgesOwnedNamesUnreadable: true,
+    });
+    mockFindMany.mockResolvedValue([
+      { ...localCopyOf("ol_1", "2026-08-10T00:00:00.000Z"), name: "Aorangi Ski Club" },
+    ]);
+
+    const result = await uploadOtherClubsToServer();
+
+    expect(mockFindMany).not.toHaveBeenCalled();
+    expect(mockUploadOtherLodges).not.toHaveBeenCalled();
+    expect(mockRecordUpload).not.toHaveBeenCalled();
+    expect(result.sent).toBe(0);
+    expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/cannot be read/i));
+  });
+
+  it("applies the server's copy of ANOTHER club's lodge even when the local row is newer", async () => {
+    // Rule 2 protects a local edit awaiting upload. Another club's lodge can
+    // have no such edit, so the server is authoritative there.
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [remoteLodge("Arlberg Ski Club", { bedCapacity: 30 })],
+      count: 1,
+      cursor: "c-600",
+      dropped: 0,
+      ownLodgeNames: ["Aorangi Ski Club"],
+    });
+    // Local copy stamped AFTER the server's.
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_2", "2026-09-01T00:00:00.000Z"));
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: "ol_2", updatedAt: new Date("2026-09-01T00:00:00.000Z") },
+      data: expect.objectContaining({ bedCapacity: 30 }),
+    });
+    expect(result).toMatchObject({ updated: 1, keptLocal: 0 });
+  });
+
+  it("still keeps a newer local copy of OUR OWN lodge", async () => {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [remoteLodge("Aorangi Ski Club", { bedCapacity: 30 })],
+      count: 1,
+      cursor: "c-601",
+      dropped: 0,
+      ownLodgeNames: ["Aorangi Ski Club"],
+    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-09-01T00:00:00.000Z"));
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ updated: 0, keptLocal: 1 });
+  });
+
+  it("uses the STORED owned list for the merge when this pull did not carry one", async () => {
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesOwnedNames: ["Aorangi Ski Club"] });
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [remoteLodge("Arlberg Ski Club", { bedCapacity: 30 })],
+      count: 1,
+      cursor: "c-602",
+      dropped: 0,
+      ownLodgeNames: undefined,
+    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_2", "2026-09-01T00:00:00.000Z"));
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(result).toMatchObject({ updated: 1, keptLocal: 0 });
+  });
+
+  it("never stores another club's booking officer phone: a sent number lands as null", async () => {
+    // An older server still sends the number. It is the one deliberate
+    // exception to "a field the server did not send is left alone".
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [remoteLodge("Arlberg Ski Club", { bookingOfficerPhone: "+64 21 000 0000" })],
+      count: 1,
+      cursor: "c-603",
+      dropped: 0,
+      ownLodgeNames: ["Aorangi Ski Club"],
+    });
+    mockFindUnique.mockResolvedValue({
+      ...localCopyOf("ol_2", "2026-08-01T00:00:00.000Z"),
+      bookingOfficerPhone: null,
+    });
+
+    const result = await downloadOtherClubsFromServer();
+
+    // The row is already at null and nothing else differs, so it is not even
+    // written: the sent number is dropped before the "differs" comparison.
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ unchanged: 1, updated: 0 });
+  });
+
+  it("clears a phone an earlier download stored for another club's lodge, on its next download", async () => {
+    mockPullOtherLodges.mockResolvedValue({
+      // The current server sends no phone at all.
+      lodges: [remoteLodge("Arlberg Ski Club", { bookingOfficerPhone: undefined })],
+      count: 1,
+      cursor: "c-604",
+      dropped: 0,
+      ownLodgeNames: ["Aorangi Ski Club"],
+    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_2", "2026-08-01T00:00:00.000Z"));
+
+    const result = await downloadOtherClubsFromServer();
+
+    expect(mockUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ bookingOfficerPhone: null }) }),
+    );
+    expect(result.updated).toBe(1);
+  });
+
+  it("creates another club's lodge without its phone", async () => {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [remoteLodge("Ngauruhoe Ski Club", { bookingOfficerPhone: "+64 21 000 0000" })],
+      count: 1,
+      cursor: "c-605",
+      dropped: 0,
+      ownLodgeNames: ["Aorangi Ski Club"],
+    });
+    mockFindUnique.mockResolvedValue(null);
+
+    await downloadOtherClubsFromServer();
+
+    const [[{ create }]] = mockUpsert.mock.calls;
+    expect(create.bookingOfficerPhone).toBeNull();
+  });
+
+  it("stores our OWN lodge's phone as sent", async () => {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [remoteLodge("Aorangi Ski Club", { bookingOfficerPhone: "+64 21 000 0000" })],
+      count: 1,
+      cursor: "c-606",
+      dropped: 0,
+      ownLodgeNames: ["Aorangi Ski Club"],
+    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_1", "2026-08-01T00:00:00.000Z"));
+
+    await downloadOtherClubsFromServer();
+
+    const [[{ data }]] = mockUpdateMany.mock.calls;
+    expect(data.bookingOfficerPhone).toBe("+64 21 000 0000");
+  });
+
+  it("leaves the phone alone while the owned list is unknown", async () => {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [remoteLodge("Arlberg Ski Club", { bookingOfficerPhone: "+64 21 000 0000" })],
+      count: 1,
+      cursor: "c-607",
+      dropped: 0,
+      ownLodgeNames: undefined,
+    });
+    mockFindUnique.mockResolvedValue(localCopyOf("ol_2", "2026-08-01T00:00:00.000Z"));
+
+    await downloadOtherClubsFromServer();
+
+    const [[{ data }]] = mockUpdateMany.mock.calls;
+    expect(data.bookingOfficerPhone).toBe("+64 21 000 0000");
+  });
+
+  it("warns when the server's owned list was refused, and leaves the stored list alone", async () => {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [],
+      count: 0,
+      cursor: "c-608",
+      dropped: 0,
+      ownLodgeNames: undefined,
+      ownLodgeNamesRefused: true,
+    });
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockLoggerWarn).toHaveBeenCalledWith(expect.stringMatching(/failed its bounds/i));
+    expect(mockRecordDownload).toHaveBeenCalledWith("c-608", undefined);
   });
 });

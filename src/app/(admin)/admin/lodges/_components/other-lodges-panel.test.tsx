@@ -229,11 +229,42 @@ describe("Other lodges: only the site's own lodge is editable (#52)", () => {
     expect(screen.queryByTestId("owned-unknown")).toBeNull();
   });
 
-  it("shows neither note once the owned list is known and non-empty", async () => {
+  it("shows no note once the owned list is known and an owned row is on screen", async () => {
     stubFetch(oneOwned());
     await renderPanel();
     expect(screen.queryByTestId("owned-unknown")).toBeNull();
     expect(screen.queryByTestId("owned-none")).toBeNull();
+    expect(screen.queryByTestId("owned-not-downloaded")).toBeNull();
+  });
+
+  it("explains, with no button, when the server names a lodge that has not been downloaded yet", async () => {
+    // The list says "Tararua Lodge" but no local row carries that name.
+    stubFetch({ otherLodges: [theirs()], ownedLodgeNames: ["Tararua Lodge"] });
+    render(<OtherLodgesPanel ancestorRendersViewOnlyBanner />);
+    await screen.findByText("Ruapehu Hut");
+
+    expect(screen.queryByRole("button", { name: /^edit/i })).toBeNull();
+    const note = screen.getByTestId("owned-not-downloaded");
+    expect(note.textContent).toMatch(/Tararua Lodge/);
+    expect(note.textContent).toMatch(/not been downloaded/i);
+    expect(note.textContent).toMatch(/download/i);
+    expect(screen.queryByTestId("owned-unknown")).toBeNull();
+    expect(screen.queryByTestId("owned-none")).toBeNull();
+  });
+
+  it("labels the button by the owned rows ON SCREEN, not by the server's count", async () => {
+    // The server names two lodges; only one has been downloaded. One button,
+    // and it reads "Edit my Lodge" rather than naming a lodge to tell it apart
+    // from a sibling that is not there.
+    stubFetch({
+      otherLodges: [lodge(), theirs()],
+      ownedLodgeNames: ["Tararua Lodge", "Tararua Annex"],
+    });
+    await renderPanel();
+
+    expect(screen.getAllByRole("button", { name: /^edit/i })).toHaveLength(1);
+    expect(editMyLodge()).toBeTruthy();
+    expect(screen.queryByTestId("owned-not-downloaded")).toBeNull();
   });
 
   it("a view-only admin cannot open the popup", async () => {

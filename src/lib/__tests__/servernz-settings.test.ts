@@ -11,8 +11,10 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+import { Prisma } from "@prisma/client";
 import {
   SERVERNZ_SETTINGS_ID,
+  clearOtherLodgesOwnedNames,
   loadServerNzSettings,
   normalizeBaseUrl,
   recordOtherLodgesDownload,
@@ -35,6 +37,7 @@ describe("loadServerNzSettings", () => {
       otherLodgesCursor: null,
       otherLodgesOwnedNames: null,
       otherLodgesOwnedNamesAt: null,
+      otherLodgesOwnedNamesUnreadable: false,
     });
   });
 
@@ -167,7 +170,32 @@ describe("the owned lodge list (#52)", () => {
     // Junk in the column must not become a lodge name (editable, uploaded) and
     // must not read as "owns nothing" either: both would be the column lying.
     mocks.findUnique.mockResolvedValue({ otherLodgesOwnedNames: stored, otherLodgesEnabled: false });
-    expect((await loadServerNzSettings()).otherLodgesOwnedNames).toBeNull();
+    const settings = await loadServerNzSettings();
+    expect(settings.otherLodgesOwnedNames).toBeNull();
+    // ...and FLAGGED, so the writers with a permissive fallback on null (the
+    // upload, the committee sync) can fail closed instead.
+    expect(settings.otherLodgesOwnedNamesUnreadable).toBe(true);
+  });
+
+  it("does not flag a never-told (NULL) or a well-formed stored list as unreadable", async () => {
+    mocks.findUnique.mockResolvedValue({ otherLodgesOwnedNames: null, otherLodgesEnabled: false });
+    expect((await loadServerNzSettings()).otherLodgesOwnedNamesUnreadable).toBe(false);
+    mocks.findUnique.mockResolvedValue({ otherLodgesOwnedNames: ["A"], otherLodgesEnabled: false });
+    expect((await loadServerNzSettings()).otherLodgesOwnedNamesUnreadable).toBe(false);
+  });
+
+  it("forgets the list with a database NULL, never a JSON null, and clears its timestamp", async () => {
+    await clearOtherLodgesOwnedNames();
+    const [args] = mocks.upsert.mock.calls[0];
+    expect(args.where).toEqual({ id: SERVERNZ_SETTINGS_ID });
+    // DbNull reads back as "never told"; a JSON null would read as unreadable.
+    expect(args.update.otherLodgesOwnedNames).toBe(Prisma.DbNull);
+    expect(args.update.otherLodgesOwnedNamesAt).toBeNull();
+    // Nothing else on the row is touched.
+    expect(Object.keys(args.update).sort()).toEqual([
+      "otherLodgesOwnedNames",
+      "otherLodgesOwnedNamesAt",
+    ]);
   });
 
   it("stores the list and its timestamp when the download carried one", async () => {
