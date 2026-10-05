@@ -13,8 +13,8 @@ nodeLinker: isolated
 # overrides below point here too, so each range is written exactly once; bump
 # it here.
 catalog:
-  nodemailer: ^10.0.10
-  sharp: ^0.35.4
+  nodemailer: ^10.0.12
+  sharp: ^0.35.5
 
 # The former npm `overrides` block, translated one entry for one entry, less
 # `sharp`, retired in #3673 (see the last point below). The
