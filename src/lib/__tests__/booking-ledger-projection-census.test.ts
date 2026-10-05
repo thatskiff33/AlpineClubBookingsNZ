@@ -756,7 +756,7 @@ describe("#3791's review closures: a line is judged by what the member was credi
   });
 
   it("#3835 (#3907): on a captured payment the task's own refund - its card debt or its hand-back - makes the stand-in with any give-back, and only that bears out a smaller hand-back", () => {
-    const debt = (cents: number, taskId = TASK) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId) });
+    const debt = (cents: number, taskId = TASK) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, attempts: 0, nextRetryAt: LATER, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId), paymentId: "pay-3583", paymentIntentId: "pi-3583" });
     const handBack = (cents: number, taskId = TASK) =>
       planHandBackLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: taskId, amountCents: cents, settlementMethod: "INTERNET_BANKING", officerMemberId: "officer" });
     const captured = (lineCents: number, { debts = [] as ReturnType<typeof debt>[], handBacks = [] as number[], rows = [] as BookingLedgerCensusRow["credits"] }) =>
@@ -855,7 +855,7 @@ describe("#3791's review closures: a line is judged by what the member was credi
   });
 
   it("#3913 G1: a task that refunded the capture never mints, so an edit's unrelated share credit does not stand in for its missing give-back", () => {
-    const debt = (cents: number) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(TASK) });
+    const debt = (cents: number) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, attempts: 0, nextRetryAt: LATER, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(TASK), paymentId: "pay-3583", paymentIntentId: "pi-3583" });
     const editCredit = (cents: number) => credit("c-edit", "BOOKING_MODIFICATION_REFUND", cents);
     const cancelledBooking = { id: B, status: "CANCELLED" as const, deletedAt: null, organiserSettled: false, finalPriceCents: 19_000 };
     // Card: a $25 stand-in, $15 to the card, the $10 give-back missing, a $10 edit credit beside it.
@@ -888,7 +888,7 @@ describe("#3791's review closures: a line is judged by what the member was credi
   it("#3913 G2: where siblings are each made alone but not together, the one line without which the rest are made is named alone; where more could be wrong, every line drawing on a row is", () => {
     const standIn = (taskId: string, cents: number) =>
       planAgreedAdjustmentLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: taskId, direction: "REFUND_TO_MEMBER", amountCents: cents, note: "agreed", officerMemberId: "officer" });
-    const debt = (cents: number, taskId: string) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId) });
+    const debt = (cents: number, taskId: string) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, attempts: 0, nextRetryAt: LATER, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId), paymentId: "pay-3583", paymentIntentId: "pi-3583" });
     const cancelledBooking = { id: B, status: "CANCELLED" as const, deletedAt: null, organiserSettled: false, finalPriceCents: 19_000 };
     // A: $50, $20 handed back and $30 given back. B and C: $10 each, and only
     // one $10 give-back left for them. Removing B or C makes the rest, so more
@@ -935,7 +935,7 @@ describe("#3791's review closures: a line is judged by what the member was credi
   });
 
   it("#3913 F2: stand-ins the rows could make another way at the same total fail closed as AMBIGUOUS_REVIEW_GIVE_BACK, swapped or not; one task's, or one way's, stays exact", () => {
-    const debt = (cents: number, taskId: string) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId) });
+    const debt = (cents: number, taskId: string) => ({ type: "REFUND_BOOKING_MODIFICATION" as const, status: "PENDING" as const, attempts: 0, nextRetryAt: LATER, amountCents: cents, idempotencyKey: buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId), paymentId: "pay-3583", paymentIntentId: "pi-3583" });
     const sibling = { ...task, id: "task-sibling", amountCents: 2_500 };
     const siblingLine = (cents: number) =>
       planAgreedAdjustmentLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: sibling.id, direction: "REFUND_TO_MEMBER", amountCents: cents, note: "agreed", officerMemberId: "officer" });
