@@ -213,6 +213,12 @@ describe("sibling reviews of one cancelled booking", () => {
     rows.handedBackBySiblingsCents = 1_000;
 
     expect(await owed(2_000)).toBe(1_000);
+    // #3913 F4: the query #3835 always ran, spelled out - the census reads a
+    // task's hand-back through the same fragment (`editReviewHandBackLinesWhere`).
+    expect(store.bookingLedgerLine.aggregate).toHaveBeenCalledWith({
+      where: { bookingId: "booking-1", kind: "BANK_REFUND", anchorKind: "REVIEW_TASK", anchorId: { in: ["task-1"] }, reversesLineId: null },
+      _sum: { unitCents: true },
+    });
   });
 
   it("MUTATION: an internet-banking cancellation is re-tiered by its CREDIT tier", async () => {

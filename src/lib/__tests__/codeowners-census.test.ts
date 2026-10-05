@@ -31,7 +31,13 @@ const OWNER = "@thatskiff33";
  * room for new money modules and still reds a glob that starts sweeping in
  * unrelated code; raise it only with the modules that justify it.
  *
- * 15% -> 16% (#3829, epic #3813 composed with main at 185 of 1250, 14.8%): nine
+ * 16% from 5 Oct 2026, measured at 188-189 of about 1254 (15.0-15.1%), for new
+ * money modules: the booking ledger's back-post (#3583,
+ * `booking-ledger-back-post*.ts`), #3854's group-settlement poster
+ * (`booking-ledger-group-settlement-*.ts`, the census's `-group.ts`), and
+ * #3836's applied-credit allocation (`credit-only-card-payment.ts`,
+ * `xero-applied-credit-*.ts`, `xero-booking-repair-applied-credit.ts`).
+ * And (#3829, epic #3813 composed with main at 185 of 1250, 14.8%): nine
  * new money modules, each owned by an existing glob rather than a widened one -
  * the by-hand refund task and its refusal (`edit-refund-hand-back.ts`,
  * `manual-refund-task-settlement-refusal.ts`, `refund-event-outside-settlement.ts`),
