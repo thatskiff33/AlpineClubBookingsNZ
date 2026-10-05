@@ -178,7 +178,7 @@ function formPayload(form: OtherLodgeFormState): OtherLodgePayload {
  * cap can only ever disagree with the server by not being run.
  */
 function formProblem(form: OtherLodgeFormState): string | null {
-  if (!form.name.trim()) return "Lodge name is required.";
+  // No name check: the name is read-only and always the stored one (#52).
   const capacity = form.bedCapacity.trim();
   if (capacity !== "" && !/^\d+$/.test(capacity)) {
     return "Bed capacity must be a whole number.";
@@ -357,11 +357,15 @@ export function OtherLodgesPanel({
   }
 
   const showForm = editingId !== null;
-  // The label of each owned lodge's button, and of the dialog it opens: "Edit
-  // my Lodge" when the club owns one, the lodge's name when it owns several.
-  const editLabel = (name: string) =>
-    ownedOtherLodgeEditLabel(ownedNames ?? [], name);
-  const anyOwnedRow = lodges.some((l) => l.owned);
+  // The owned rows actually ON SCREEN. A name the server lists that has no
+  // local row yet (not downloaded) has no button, so the label counts what the
+  // administrator can see: "Edit my Lodge" when one row is theirs, the lodge's
+  // name on each when several are, and a note below when none is yet.
+  const localOwnedNames = lodges.filter((l) => l.owned).map((l) => l.name);
+  const editLabel = (name: string) => ownedOtherLodgeEditLabel(localOwnedNames, name);
+  const anyOwnedRow = localOwnedNames.length > 0;
+  const ownedButNotDownloaded =
+    !loading && ownedNames !== null && ownedNames.length > 0 && !anyOwnedRow;
 
   return (
     <div className="space-y-4">
@@ -652,6 +656,20 @@ export function OtherLodgesPanel({
               The central server has no lodge assigned to this site, so nothing
               here can be edited. Ask the central server&apos;s operator to
               assign your lodge.
+            </p>
+          ) : null}
+          {ownedButNotDownloaded ? (
+            <p className="text-sm text-muted-foreground" data-testid="owned-not-downloaded">
+              The central server names{" "}
+              {ownedNames?.length === 1 ? (
+                <strong>{ownedNames[0]}</strong>
+              ) : (
+                "your lodges"
+              )}{" "}
+              as yours, but {ownedNames?.length === 1 ? "it has" : "they have"}{" "}
+              not been downloaded to this site yet. Press <strong>Download</strong>{" "}
+              on the Alpine Central Server setup page; the Edit button appears
+              once the entry is here.
             </p>
           ) : null}
           {loading ? (
