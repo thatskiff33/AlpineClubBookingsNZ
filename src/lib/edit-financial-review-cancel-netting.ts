@@ -22,6 +22,7 @@ import {
   REVIEW_CANCELLATION_REFUND_UNREPRODUCIBLE_MESSAGE,
   reviewRefundOverPromisedMessage,
 } from "@/lib/edit-financial-review-refund-refusals";
+import { editReviewHandBackLinesWhere } from "@/lib/edit-financial-review-charge-shape";
 import { paidByOrganiserCard } from "@/lib/group-organiser-paid";
 import type { ClubFormat } from "@/lib/club-format";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -386,7 +387,7 @@ async function settledSinceCancellation({
     _sum: { amountCents: true },
   });
   const handedBack = await store.bookingLedgerLine.aggregate({
-    where: { bookingId, kind: "BANK_REFUND", anchorKind: "REVIEW_TASK", anchorId: { in: ids }, reversesLineId: null },
+    where: { bookingId, ...editReviewHandBackLinesWhere(ids) },
     _sum: { unitCents: true },
   });
   const anchors = siblings

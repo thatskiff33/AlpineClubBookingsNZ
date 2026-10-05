@@ -5,7 +5,7 @@
  * Code-bearing pull requests must ship their changelog entry as a fragment file
  * in `changelog.d/` rather than as a direct edit to `CHANGELOG.md`, because
  * every branch editing the top of the same file conflicted daily across
- * parallel lanes (AGENTS.md §5, "Housekeeping that bites parallel lanes").
+ * parallel lanes (AGENTS.md "Change discipline", the fragment-directory rule).
  *
  * A PR passes when any one of these holds:
  *   1. it is not code-bearing (nothing outside tests changed under `src/` or
