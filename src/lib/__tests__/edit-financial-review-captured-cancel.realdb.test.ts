@@ -108,6 +108,7 @@ let resolveManualRefundTask: (typeof import("@/lib/manual-refund-task-resolution
 let credit: typeof import("@/lib/member-credit");
 let previewEditReviewStillOwed: (typeof import("@/lib/edit-financial-review-still-owed"))["previewEditReviewStillOwed"];
 let payments: typeof import("@/lib/payment-transactions");
+let censusStore: typeof import("@/lib/booking-ledger-projection-census-store");
 /** When the refund ledger began, so a recorded refund is dated after it. */
 let ledgerStartSeconds = 0;
 
@@ -243,6 +244,18 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       (await handBacks()).reduce((sum, line) => sum + line.unitCents, 0) +
       (await credit.getMemberCreditBalance(MEMBER_ID));
 
+    /**
+     * #3907: the lines the cut-over census (#3583) finds no source for. These
+     * hand-built fixtures post no capture and key their nights by hand, so the
+     * census has other things to say about them; what it must not say is that
+     * a review's stand-in or hand-back is unexplained. The census-clean proof
+     * of every shape is the next describe.
+     */
+    async function censusDrift() {
+      const report = await censusStore.censusBookingLedgerProjection(prisma);
+      return report.integrity.findings.filter((finding) => finding.bookingId === BOOKING_ID && finding.kind === "SOURCE_DRIFT").map((finding) => finding.detail);
+    }
+
     beforeAll(async () => {
       assertSafeCapturedCancelRaceDbUrl(RACE_DB_URL);
       process.env.DATABASE_URL = RACE_DB_URL;
@@ -252,6 +265,7 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       credit = await import("@/lib/member-credit");
       ({ previewEditReviewStillOwed } = await import("@/lib/edit-financial-review-still-owed"));
       payments = await import("@/lib/payment-transactions");
+      censusStore = await import("@/lib/booking-ledger-projection-census-store");
       const startRows = await prisma.$queryRaw<Array<{ finished_at: Date }>>`
         SELECT "finished_at" FROM "_prisma_migrations"
         WHERE "migration_name" = '20260509090000_enrich_payment_refund_ledger' AND "finished_at" IS NOT NULL
@@ -377,6 +391,7 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
         expect(standIns.map((line) => line.amountCents)).toEqual(owedCents > 0 ? [-owedCents] : []);
         // Nothing is raised against the cancelled booking's invoice.
         expect(await prisma.xeroSyncOperation.count({ where: { localId: { in: [MODIFICATION_ID, BOOKING_ID] }, entityType: "CREDIT_NOTE" } })).toBe(0);
+        expect(await censusDrift(), "#3907: a review line the census cannot explain").toEqual([]);
       });
     }
 
@@ -403,6 +418,7 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
         const refunded = await prisma.bookingEvent.findMany({ where: { bookingId: BOOKING_ID, type: "REFUNDED", reason: "manual_refund_completed" }, select: { amountCents: true } });
         expect(refunded.map((event) => event.amountCents)).toEqual(owedCents > 0 ? [owedCents] : []);
         expect(await prisma.xeroSyncOperation.count({ where: { localId: { in: [MODIFICATION_ID, BOOKING_ID] }, entityType: "CREDIT_NOTE" } })).toBe(0);
+        expect(await censusDrift(), "#3907: a review line the census cannot explain").toEqual([]);
       });
     }
 
@@ -420,6 +436,7 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
 
       expect((await handBacks()).map((line) => line.unitCents)).toEqual([1_000, 1_000]);
       expect(await totalBackCents()).toBe(10_000);
+      expect(await censusDrift(), "#3907: a review line the census cannot explain").toEqual([]);
     });
 
     it("credit plus card at 50% less $20, a review raised before the card was paid takes the account-credit route and mints only the $25 still owed", async () => {
@@ -435,6 +452,7 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       expect(minted.map((row) => row.amountCents)).toEqual([2_500]);
       expect((await totalBackCents()) - backAfterCancelCents).toBe(2_500);
       expect(await totalBackCents()).toBe(10_500);
+      expect(await censusDrift(), "#3907: a review line the census cannot explain").toEqual([]);
     });
 
     /**
@@ -469,6 +487,7 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
 
       expect((await handBacks()).map((line) => line.unitCents)).toEqual([2_500]);
       expect(await totalBackCents()).toBe(15_000);
+      expect(await censusDrift(), "#3907: a review line the census cannot explain").toEqual([]);
     });
 
     it("review round 2 F2: the minted-credit route with a credit part takes the member's credit-ledger key before the Payment row", async () => {
@@ -480,6 +499,7 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       await expectMemberKeyBeforePaymentRow(raised.taskId, 10_000);
 
       expect(await totalBackCents()).toBe(15_000);
+      expect(await censusDrift(), "#3907: a review line the census cannot explain").toEqual([]);
     });
 
     it("#3809 then #3835: a credit-paid $200 booking reduced to $150 through the give-back ($5 back), cancelled at 50% less $20 on the cap ($55), then a $50 review: the re-tier reproduces on the cap and nets to $47.50 - what the review first would have left", async () => {
@@ -515,6 +535,7 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       expect(await credit.getMemberCreditBalance(MEMBER_ID) - balanceAfterCancel).toBe(4_750);
       const task = await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: raised.taskId }, select: { status: true } });
       expect(task.status).toBe("COMPLETED");
+      expect(await censusDrift(), "#3907: a review line the census cannot explain").toEqual([]);
     });
 
     it("integration review H: $100 card + $100 credit on a booking #3809's give-back reduced to $150, cancelled at 50% less $20 under the cap ($55), then a $30 review: $85 in all, the review-first figure", async () => {
@@ -538,6 +559,7 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
 
       expect(await totalBackCents()).toBe(8_500);
       expect((await cardDebts()).reduce((sum, debt) => sum + debt.amountCents, 0)).toBeLessThanOrEqual(await capture());
+      expect(await censusDrift(), "#3907: a review line the census cannot explain").toEqual([]);
     });
 
     it("review F1: $150 credit + $50 card, cancelled at 50% (no fee), a $100 share: $25 to the card and $25 given back as credit - the card never promised more than it took", async () => {
@@ -560,6 +582,7 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       await stripeRefundsWhatIsOwed();
       const refunded = await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { refundedAmountCents: true } });
       expect(refunded.refundedAmountCents).toBe(5_000);
+      expect(await censusDrift(), "#3907: a review line the census cannot explain").toEqual([]);
     });
 
     it("a $50 share settled BEFORE the cancel, then the cancel at 50% less $20, then another $50 share: $130 in all", async () => {
@@ -577,6 +600,7 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       await completeShare(after.taskId);
 
       expect(await totalBackCents()).toBe(13_000);
+      expect(await censusDrift(), "#3907: a review line the census cannot explain").toEqual([]);
     });
 
     /** The strand now sells for `cents` in exact SOLD nights, so a review's re-price moves the booking to it. */
@@ -613,6 +637,7 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
 
       expect(await totalBackCents()).toBe(expectedBackCents);
       expect((await cardDebts()).reduce((sum, debt) => sum + debt.amountCents, 0)).toBeLessThanOrEqual(await capture());
+      expect(await censusDrift(), "#3907: a review line the census cannot explain").toEqual([]);
     });
 
     it("a $150 share then a $40 share after the REAL card cancel at 50% less $20 net cumulatively: $75 then $35, $190 in all", async () => {
@@ -627,6 +652,7 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
 
       expect(await totalBackCents()).toBe(19_000);
       expect((await cardDebts()).reduce((sum, debt) => sum + debt.amountCents, 0)).toBeLessThanOrEqual(await capture());
+      expect(await censusDrift(), "#3907: a review line the census cannot explain").toEqual([]);
     });
 
     it("two $20 reviews after the REAL card cancel at 50% less $20 net cumulatively: $10 each, $100 in all", async () => {
@@ -642,6 +668,345 @@ async function dialogSays(taskId: string, shareCents = 5_000) {
       await completeShare(second.taskId, 2_000);
 
       expect(await totalBackCents()).toBe(10_000);
+      expect(await censusDrift(), "#3907: a review line the census cannot explain").toEqual([]);
     });
   },
 );
+
+/**
+ * #3907: the cut-over census (#3583, `INV-MONEY-037`) reads what these routes
+ * leave. Each booking is built only by the real writers - the settle's own
+ * confirmation and capture, the real credit apply, the real raise, the REAL
+ * `cancelBooking` and the REAL completion - so the census has nothing of the
+ * fixture's to say, and the card refunds are answered as Stripe would. A
+ * review's netted stand-in is borne out by its own refund (card or hand-back)
+ * plus its give-back and minted credit; then a corrupted line, refund or
+ * hand-back must still disagree.
+ */
+const CENSUS = "race-3907-";
+const OFFICER = `${CENSUS}officer`;
+const CENSUS_LODGE = `${CENSUS}lodge`;
+const NIGHT_2 = new Date("2026-08-02T00:00:00.000Z");
+const HALF_LESS_FEE = { refundPercentage: 50, fixedFeeCents: 2_000 };
+const FULL = { refundPercentage: 100, fixedFeeCents: 0 };
+
+(RUN ? describe : describe.skip)("the census reads a review completed after the REAL cancel of a captured payment as agreeing - real PostgreSQL (#3907)", { timeout: 120_000 }, () => {
+  let db: (typeof import("@/lib/prisma"))["prisma"];
+  let census: typeof import("@/lib/booking-ledger-projection-census-store");
+  const memberOf = (id: string) => `${id}-member`;
+  const paymentOf = async (id: string) => (await db.payment.findUniqueOrThrow({ where: { bookingId: id }, select: { id: true } })).id;
+
+  async function clean() {
+    const ids = (await db.booking.findMany({ where: { id: { startsWith: CENSUS } }, select: { id: true } })).map((row) => row.id);
+    const where = { bookingId: { in: ids } };
+    const paymentIds = (await db.payment.findMany({ where, select: { id: true } })).map((row) => row.id);
+    await db.xeroSyncOperation.deleteMany({ where: { localId: { in: [...ids, ...paymentIds, ...ids.map((id) => `${id}-mod`)] } } });
+    await db.bookingLedgerLine.deleteMany({ where });
+    await db.memberCredit.deleteMany({ where: { memberId: { in: ids.map(memberOf) } } });
+    await db.manualRefundTask.deleteMany({ where });
+    await db.paymentRecoveryOperation.deleteMany({ where });
+    await db.bookingEvent.deleteMany({ where });
+    await db.auditLog.deleteMany({ where: { OR: [{ targetId: { in: ids } }, { memberId: { in: ids.map(memberOf) } }, { actorMemberId: OFFICER }] } });
+    await db.bookingModification.deleteMany({ where });
+    await db.paymentRefund.deleteMany({ where: { paymentId: { in: paymentIds } } });
+    await db.paymentTransaction.deleteMany({ where: { paymentId: { in: paymentIds } } });
+    await db.payment.deleteMany({ where });
+    await db.bookingGuestNight.deleteMany({ where: { bookingGuest: where } });
+    await db.bookingGuest.deleteMany({ where });
+    await db.booking.deleteMany({ where: { id: { in: ids } } });
+    await db.member.deleteMany({ where: { id: { in: ids.map(memberOf) } } });
+  }
+
+  /**
+   * A $200 stay, two $100 nights, paid: the card or bank transfer for
+   * `cardCents` through the real settle (which confirms it on the ledger), the
+   * rest by account credit through the real apply. The parked edit then leaves
+   * the strand unpriced, so a closure posts its share as the stand-in.
+   */
+  async function paidBooking(name: string, { cardCents, appliedCents, source }: { cardCents: number; appliedCents: number; source: "STRIPE" | "INTERNET_BANKING" }) {
+    const id = `${CENSUS}${name}`;
+    const memberId = memberOf(id);
+    await db.member.create({ data: { id: memberId, email: `${memberId}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Census", lastName: "Captured", ageTier: "ADULT" } });
+    await db.booking.create({
+      data: {
+        id, memberId, lodgeId: CENSUS_LODGE, checkIn: CHECK_IN, checkOut: CHECK_OUT, status: "PAYMENT_PENDING", totalPriceCents: 20_000, finalPriceCents: 20_000,
+        capacityOverriddenAt: new Date("2026-06-01T00:00:00.000Z"), capacityOverriddenByMemberId: OFFICER,
+      },
+    });
+    await db.bookingGuest.create({
+      data: {
+        id: `${id}-guest`, bookingId: id, firstName: "Census", lastName: "Guest", ageTier: "ADULT", isMember: true, stayStart: CHECK_IN, stayEnd: CHECK_OUT, priceCents: 20_000,
+        nights: { create: [{ stayDate: CHECK_IN, priceCents: 10_000, priceSource: "SOLD" }, { stayDate: NIGHT_2, priceCents: 10_000, priceSource: "SOLD" }] },
+      },
+    });
+    await db.bookingModification.create({ data: { id: `${id}-mod`, bookingId: id, memberId, modificationType: "BATCH_MODIFY", previousData: {}, newData: {} } });
+    const memberCredit = await import("@/lib/member-credit");
+    if (appliedCents > 0) {
+      await db.memberCredit.create({ data: { memberId, amountCents: appliedCents, type: "ADMIN_ADJUSTMENT", description: "race 3907 opening balance" } });
+      await db.$transaction((tx) => memberCredit.applyCreditToBooking(memberId, appliedCents, id, tx, CLUB_FORMAT_TEST));
+    }
+    const reconciliation = await import("@/lib/payment-reconciliation");
+    if (source === "STRIPE") {
+      const settled = await reconciliation.markBookingPaymentSucceeded({ bookingId: id, paymentIntentId: `pi_${id}`, amountCents: cardCents, paymentMethodId: null, format: CLUB_FORMAT_TEST });
+      expect(settled.outcome).toBe("paid");
+    } else {
+      const existing = await db.payment.findUnique({ where: { bookingId: id }, select: { id: true } });
+      if (existing) await db.payment.update({ where: { id: existing.id }, data: { amountCents: cardCents, source } });
+      else await db.payment.create({ data: { id: `${id}-payment`, bookingId: id, amountCents: cardCents, source, status: "PENDING" } });
+      await reconciliation.markBookingPaymentManuallySettled({ bookingId: id, actingAdminMemberId: OFFICER, note: "paid by bank transfer", expectedAmountCents: cardCents, notifyMember: false, format: CLUB_FORMAT_TEST });
+    }
+    await db.bookingGuestNight.deleteMany({ where: { bookingGuestId: `${id}-guest` } });
+    return id;
+  }
+
+  const raiseOn = (id: string, night: string, withPayment = true) =>
+    db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      const payment = withPayment ? await tx.payment.findUniqueOrThrow({ where: { bookingId: id }, select: { id: true } }) : null;
+      const { raiseEditFinancialReviewTask } = await import("@/lib/edit-financial-review");
+      const raised = await raiseEditFinancialReviewTask({
+        occurrence: {
+          bookingId: id, bookingGuestId: `${id}-guest`, cause: "NO_STORED_NIGHT_PRICES", surrenderedNightDates: [night as CalendarDate], addedNightDates: [],
+          storedEvidence: { guestTotalCents: null, nightPrices: [] },
+        },
+        guestMemberId: memberOf(id), bookingCheckIn: "2026-08-01" as CalendarDate, bookingCheckOut: "2026-08-03" as CalendarDate,
+        bookingModificationId: `${id}-mod`, paymentId: payment?.id ?? null, guestsAddedByEdit: null, store: tx,
+      });
+      return raised.taskId;
+    });
+
+  async function cancelOn(id: string, rule: { refundPercentage: number; fixedFeeCents: number }) {
+    await db.cancellationPolicy.deleteMany({ where: { lodgeId: CENSUS_LODGE } });
+    await db.cancellationPolicy.create({ data: { lodgeId: CENSUS_LODGE, daysBeforeStay: 0, ...rule } });
+    const { cancelBooking } = await import("@/lib/booking-cancel");
+    expect((await cancelBooking(id, OFFICER, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card")).status).toBe(200);
+    // A bank transfer's cancellation refund is handed back by the officer, through the real resolver.
+    const handBack = await db.manualRefundTask.findFirst({ where: { bookingId: id, kind: "CANCELLED_BOOKING_HAND_BACK", status: "OPEN" }, select: { id: true } });
+    if (handBack) {
+      const { resolveManualRefundTask } = await import("@/lib/manual-refund-task-resolution");
+      await resolveManualRefundTask({ taskId: handBack.id, resolution: "completed", note: null, actingMemberId: OFFICER, confirmedAmountCents: null, direction: "REFUND_TO_MEMBER", recordedNightPrices: null }, CLUB_FORMAT_TEST);
+    }
+  }
+
+  async function complete(taskId: string, confirmedAmountCents: number) {
+    const { resolveManualRefundTask } = await import("@/lib/manual-refund-task-resolution");
+    const result = await resolveManualRefundTask({
+      taskId, resolution: "completed", note: "Priced from the booking's own payment history.", actingMemberId: OFFICER,
+      confirmedAmountCents, direction: "REFUND_TO_MEMBER", recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+    return result.settlementAmountCents;
+  }
+
+  /** Stripe answers every card refund the booking froze, as the inline call or a replay would. */
+  async function stripeAnswers(id: string) {
+    const paymentId = await paymentOf(id);
+    const capture = await db.paymentTransaction.findFirstOrThrow({ where: { paymentId, kind: "PRIMARY" }, select: { id: true } });
+    const { recordStripeRefundsAgainstTransaction } = await import("@/lib/payment-transactions");
+    for (const debt of await db.paymentRecoveryOperation.findMany({ where: { bookingId: id, status: { not: "SUCCEEDED" } }, orderBy: { id: "asc" } })) {
+      await recordStripeRefundsAgainstTransaction({
+        paymentId, paymentTransactionId: capture.id,
+        refunds: [{ id: `re_${debt.id}`, amount: debt.amountCents, currency: "nzd", status: "succeeded", created: null }],
+        store: db,
+      });
+      await db.paymentRecoveryOperation.update({ where: { id: debt.id }, data: { status: "SUCCEEDED" } });
+    }
+  }
+
+  async function says(id: string) {
+    const report = await census.censusBookingLedgerProjection(db);
+    const mine = <T extends { bookingId: string }>(rows: readonly T[]) => rows.filter((row) => row.bookingId === id);
+    return {
+      disagreements: mine(report.disagreements).map((row) => `${row.identity} ${row.deltaCents}`),
+      integrity: mine(report.integrity.findings).map((finding) => `${finding.kind}: ${finding.detail}`),
+      coverage: Object.entries(report.coverage).flatMap(([kind, ids]) => (ids.includes(id) ? [kind] : [])),
+      classes: Object.entries(report.classes).flatMap(([name, entry]) => mine(entry.instances).map((instance) => `${name} ${instance.identity} ${instance.cents}`)),
+    };
+  }
+  const NOTHING_TO_SAY = { disagreements: [], integrity: [], coverage: [], classes: [] };
+  /** #3913 (lens 2): what the PRICE and REFUNDED identities say of one booking, and the classes that explain them. */
+  async function priceAndRefunded(id: string) {
+    const evaluation = (await census.evaluateBookingLedgerPages(db)).find((entry) => entry.bookingId === id)!;
+    return Object.fromEntries(
+      evaluation.identities
+        .filter((result) => result.identity === "PRICE" || result.identity === "REFUNDED")
+        .map((result) => [result.identity, [result.status, ...result.explainedBy.filter((component) => component.cents !== 0).map((component) => component.name)].join(" ")]),
+    );
+  }
+  const reviewLine = (id: string, taskId: string, kind: "AGREED_ADJUSTMENT" | "BANK_REFUND") =>
+    db.bookingLedgerLine.findFirstOrThrow({ where: { bookingId: id, kind, anchorKind: "REVIEW_TASK", anchorId: taskId }, select: { id: true, amountCents: true } });
+  const setLine = (lineId: string, amountCents: number) =>
+    db.bookingLedgerLine.update({ where: { id: lineId }, data: { unitCents: Math.abs(amountCents), amountCents } });
+
+  const built: Record<string, { id: string; tasks: string[] }> = {};
+
+  beforeAll(async () => {
+    assertSafeCapturedCancelRaceDbUrl(RACE_DB_URL);
+    process.env.DATABASE_URL = RACE_DB_URL;
+    ({ prisma: db } = await import("@/lib/prisma"));
+    census = await import("@/lib/booking-ledger-projection-census-store");
+    await clean();
+    await db.cancellationPolicy.deleteMany({ where: { lodgeId: CENSUS_LODGE } });
+    await db.lodge.deleteMany({ where: { id: CENSUS_LODGE } });
+    await db.member.deleteMany({ where: { id: OFFICER } });
+    await db.member.create({ data: { id: OFFICER, email: `${OFFICER}@example.invalid`, passwordHash: "not-a-real-password", firstName: "Census", lastName: "Officer", role: "ADMIN", ageTier: "ADULT" } });
+    await db.lodge.create({ data: { id: CENSUS_LODGE, name: "Race 3907 Lodge", slug: "race-3907" } });
+  }, 60_000);
+
+  beforeEach(() => {
+    stripeKey.unconfigured = true;
+  });
+
+  afterAll(async () => {
+    stripeKey.unconfigured = false;
+    if (!db) return;
+    await clean();
+    await db.cancellationPolicy.deleteMany({ where: { lodgeId: CENSUS_LODGE } });
+    await db.lodge.deleteMany({ where: { id: CENSUS_LODGE } });
+    await db.member.deleteMany({ where: { id: OFFICER } });
+  }, 60_000);
+
+  const CARD = { cardCents: 20_000, appliedCents: 0, source: "STRIPE" as const };
+  const CREDIT_PLUS_CARD = { cardCents: 10_000, appliedCents: 10_000, source: "STRIPE" as const };
+  const BANK = { cardCents: 20_000, appliedCents: 0, source: "INTERNET_BANKING" as const };
+  const CREDIT_PLUS_BANK = { cardCents: 10_000, appliedCents: 10_000, source: "INTERNET_BANKING" as const };
+
+  it.each([
+    ["card-half", CARD, HALF_LESS_FEE, 2_500],
+    ["card-full", CARD, FULL, 0],
+    ["cc-half", CREDIT_PLUS_CARD, HALF_LESS_FEE, 2_500],
+    ["cc-full", CREDIT_PLUS_CARD, FULL, 0],
+  ] as const)("%s: the card route's netted refund is the stand-in's own evidence", async (name, paid, rule, owedCents) => {
+    const id = await paidBooking(name, paid);
+    const taskId = await raiseOn(id, "2026-08-01");
+    await cancelOn(id, rule);
+    expect(await complete(taskId, 5_000)).toBe(owedCents);
+    await stripeAnswers(id);
+    built[name] = { id, tasks: [taskId] };
+    expect(await says(id)).toEqual(NOTHING_TO_SAY);
+    expect(await priceAndRefunded(id)).toEqual({ PRICE: "AGREE", REFUNDED: "AGREE" });
+  });
+
+  it.each([
+    ["bank-half", BANK, HALF_LESS_FEE, 2_500],
+    ["bank-full", BANK, FULL, 0],
+    ["cb-half", CREDIT_PLUS_BANK, HALF_LESS_FEE, 2_500],
+    ["cb-full", CREDIT_PLUS_BANK, FULL, 0],
+  ] as const)("%s: the bank-transfer hand-back is the stand-in's own evidence, and its own line is borne out by it", async (name, paid, rule, owedCents) => {
+    const id = await paidBooking(name, paid);
+    const taskId = await raiseOn(id, "2026-08-01");
+    await cancelOn(id, rule);
+    expect(await complete(taskId, 5_000)).toBe(owedCents);
+    built[name] = { id, tasks: [taskId] };
+    const found = await says(id);
+    expect({ ...found, classes: [] }).toEqual(NOTHING_TO_SAY);
+    // What raised the refunded column without a card refund is named, never drift.
+    expect(found.classes.filter((entry) => !entry.startsWith("REFUND_MIRROR_"))).toEqual([]);
+    expect(await priceAndRefunded(id)).toEqual({ PRICE: "AGREE", REFUNDED: "CLASSIFIED REFUND_MIRROR_HAND_BACK" });
+  });
+
+  it("the captured account-credit route: the give-back and the credit minted against the payment make the stand-in", async () => {
+    const id = await paidBooking("acct", CREDIT_PLUS_CARD);
+    const taskId = await raiseOn(id, "2026-08-01", false);
+    await cancelOn(id, HALF_LESS_FEE);
+    await complete(taskId, 5_000);
+    expect((await reviewLine(id, taskId, "AGREED_ADJUSTMENT")).amountCents).toBe(-2_500);
+    await stripeAnswers(id);
+    built.acct = { id, tasks: [taskId] };
+    const found = await says(id);
+    expect({ ...found, classes: [] }).toEqual(NOTHING_TO_SAY);
+    expect(found.classes.filter((entry) => !entry.startsWith("REFUND_MIRROR_"))).toEqual([]);
+  });
+
+  it("$150 credit + $50 card at 50%, a $100 share: $25 to the card and $25 given back make the stand-in together", async () => {
+    const id = await paidBooking("split", { cardCents: 5_000, appliedCents: 15_000, source: "STRIPE" });
+    const taskId = await raiseOn(id, "2026-08-01");
+    await cancelOn(id, { refundPercentage: 50, fixedFeeCents: 0 });
+    expect(await complete(taskId, 10_000)).toBe(5_000);
+    await stripeAnswers(id);
+    built.split = { id, tasks: [taskId] };
+    expect(await says(id)).toEqual(NOTHING_TO_SAY);
+  });
+
+  it("$150 credit + $50 bank transfer at 0%, a $100 share: the whole share, $50 handed back and $50 given back", async () => {
+    const id = await paidBooking("split-bank", { cardCents: 5_000, appliedCents: 15_000, source: "INTERNET_BANKING" });
+    const taskId = await raiseOn(id, "2026-08-01");
+    await cancelOn(id, { refundPercentage: 0, fixedFeeCents: 0 });
+    expect(await complete(taskId, 10_000)).toBe(10_000);
+    expect((await reviewLine(id, taskId, "BANK_REFUND")).amountCents).toBe(-5_000);
+    built["split-bank"] = { id, tasks: [taskId] };
+    const found = await says(id);
+    expect({ ...found, classes: [] }).toEqual(NOTHING_TO_SAY);
+    expect(found.classes.filter((entry) => !entry.startsWith("REFUND_MIRROR_"))).toEqual([]);
+  });
+
+  it.each([
+    ["sib-card", CARD],
+    ["sib-bank", BANK],
+  ] as const)("%s: two 2,000-cent sibling reviews after the cancel at half less 2,000 net cumulatively, each made by its own refund", async (name, paid) => {
+    const id = await paidBooking(name, paid);
+    const tasks = [await raiseOn(id, "2026-08-01"), await raiseOn(id, "2026-08-02")];
+    await cancelOn(id, HALF_LESS_FEE);
+    expect([await complete(tasks[0]!, 2_000), await complete(tasks[1]!, 2_000)]).toEqual([1_000, 1_000]);
+    if (paid.source === "STRIPE") await stripeAnswers(id);
+    built[name] = { id, tasks };
+    const found = await says(id);
+    expect({ ...found, classes: [] }).toEqual(NOTHING_TO_SAY);
+    expect(found.classes.filter((entry) => !entry.startsWith("REFUND_MIRROR_"))).toEqual([]);
+  });
+
+  it("#3913 F2: two sibling reviews on credit plus card, both giving credit back - no row names its task, so the booking is AMBIGUOUS_REVIEW_GIVE_BACK, and with the give-backs swapped between the lines it is still never agreement", async () => {
+    const id = await paidBooking("sib-split", { cardCents: 5_000, appliedCents: 15_000, source: "STRIPE" });
+    const tasks = [await raiseOn(id, "2026-08-01"), await raiseOn(id, "2026-08-02")];
+    await cancelOn(id, { refundPercentage: 50, fixedFeeCents: 0 });
+    // $60: the $25 left on the card and $5 given back; $40: $20 given back.
+    expect([await complete(tasks[0]!, 6_000), await complete(tasks[1]!, 4_000)]).toEqual([3_000, 2_000]);
+    await stripeAnswers(id);
+    const AMBIGUOUS = ["AMBIGUOUS_REVIEW_GIVE_BACK null 5000", "AMBIGUOUS_REVIEW_GIVE_BACK null 2500", "AMBIGUOUS_REVIEW_GIVE_BACK null 2500"];
+    expect(await says(id)).toEqual({ ...NOTHING_TO_SAY, classes: AMBIGUOUS });
+    // The lines record the give-backs the other way round, $45 and $5, the total kept: the
+    // rows still make both, so nothing drifts - and the booking still is not agreement.
+    await setLine((await reviewLine(id, tasks[0]!, "AGREED_ADJUSTMENT")).id, -4_500);
+    await setLine((await reviewLine(id, tasks[1]!, "AGREED_ADJUSTMENT")).id, -500);
+    expect(await says(id)).toEqual({ ...NOTHING_TO_SAY, classes: AMBIGUOUS });
+    const report = await census.censusBookingLedgerProjection(db);
+    // This booking's own three, unacknowledged, of a class whose unacknowledged
+    // instance closes the gate - whatever else the shared database holds.
+    const mineUnsigned = report.classes.AMBIGUOUS_REVIEW_GIVE_BACK.instances.filter((instance) => instance.bookingId === id && !instance.acknowledged);
+    expect(mineUnsigned.map((instance) => instance.cents)).toEqual([5_000, 2_500, 2_500]);
+    expect(report.classes.AMBIGUOUS_REVIEW_GIVE_BACK).toMatchObject({ gateRule: "ACKNOWLEDGE", holdsGate: true });
+  });
+
+  it("a corrupted line, card refund or hand-back still disagrees", async () => {
+    const drifted = async (id: string) => (await says(id)).integrity.filter((entry) => entry.startsWith("SOURCE_DRIFT"));
+    // The card route's stand-in, a cent too large: its own refund no longer makes it.
+    const card = built["card-half"]!;
+    const cardLine = await reviewLine(card.id, card.tasks[0]!, "AGREED_ADJUSTMENT");
+    await setLine(cardLine.id, cardLine.amountCents - 1);
+    expect(await drifted(card.id)).toHaveLength(1);
+    expect((await says(card.id)).disagreements).toEqual(["PRICE 1"]);
+    // The card route's frozen refund, a cent short: the line it made is unexplained.
+    const ccTask = built["cc-half"]!.tasks[0]!;
+    await db.paymentRecoveryOperation.updateMany({ where: { bookingId: built["cc-half"]!.id, idempotencyKey: { contains: ccTask } }, data: { amountCents: 2_499 } });
+    expect(await drifted(built["cc-half"]!.id)).toHaveLength(1);
+    // The split's card refund removed: $25 of give-back cannot make $50.
+    await db.paymentRecoveryOperation.deleteMany({ where: { bookingId: built.split!.id, idempotencyKey: { contains: built.split!.tasks[0]! } } });
+    expect(await drifted(built.split!.id)).toHaveLength(1);
+    // A hand-back a cent larger: neither it nor the stand-in is borne out, and the refunded column says so.
+    const bank = built["bank-half"]!;
+    const handBack = await reviewLine(bank.id, bank.tasks[0]!, "BANK_REFUND");
+    await setLine(handBack.id, handBack.amountCents - 1);
+    expect(await drifted(bank.id)).toHaveLength(2);
+    expect((await says(bank.id)).disagreements).toEqual(expect.arrayContaining([expect.stringMatching(/^REFUNDED /)]));
+    // One sibling's netted stand-in, $5 too large.
+    const sibling = built["sib-bank"]!;
+    const sibLine = await reviewLine(sibling.id, sibling.tasks[1]!, "AGREED_ADJUSTMENT");
+    await setLine(sibLine.id, sibLine.amountCents - 500);
+    expect(await drifted(sibling.id)).toHaveLength(2);
+    // The account-credit route's minted credit, a cent less: the stand-in is unexplained.
+    // (Its own MEMBER_CREDIT line no longer matches the row either.)
+    await db.memberCredit.updateMany({ where: { sourceBookingModificationId: `${built.acct!.id}-mod` }, data: { amountCents: { decrement: 1 } } });
+    expect(await drifted(built.acct!.id)).toEqual(expect.arrayContaining([expect.stringContaining("after the cancellation")]));
+    expect(await drifted(built.acct!.id)).toHaveLength(2);
+    expect((await census.censusBookingLedgerProjection(db)).verdict).toBe("GATE_CLOSED");
+  });
+});

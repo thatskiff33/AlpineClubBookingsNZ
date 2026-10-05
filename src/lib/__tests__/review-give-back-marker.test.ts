@@ -7,8 +7,15 @@
  * A writer that set the marker on another applied row would make the census
  * count that row as a review's give-back, so every place one could is pinned
  * here: a source scan of each `memberCredit` write and `giveBackAppliedCredit`
- * call whose arguments mention both. A write that builds its `type` from a
- * variable is outside what a scan can see.
+ * call whose arguments mention both, named by the function it sits in. A
+ * write that builds its `type` from a variable is outside what a scan can see.
+ *
+ * #3835 added the third (#3907): `giveBackCancelledShareCredit`, the credit
+ * part of a review completed after a cancellation on a captured payment. Its
+ * rows ARE a review's give-back, and the census reads them so: on a cancelled
+ * booking a stand-in is made of its task's own refund (card debt or
+ * hand-back) plus a give-back row and any credit minted beside it, each row
+ * used once (`booking-ledger-projection-census-review-adjustments.ts`).
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -23,6 +30,12 @@ function sourceFiles(dir: string): string[] {
     if (statSync(path).isDirectory()) return name === "__tests__" ? [] : sourceFiles(path);
     return /\.tsx?$/.test(name) ? [path] : [];
   });
+}
+
+/** The name of the last function declared before `index`: the one a call sits in. */
+function enclosingFunction(text: string, index: number): string {
+  const declared = [...text.slice(0, index).matchAll(/function (\w+)/g)];
+  return declared[declared.length - 1]?.[1] ?? "(top level)";
 }
 
 /** The balanced `( … )` that opens at `start`. */
@@ -44,15 +57,17 @@ describe("only a review's give-back marks an applied-credit row with its source 
         const args = argumentsAt(text, (match.index ?? 0) + match[0].length - 1);
         const write = match[1] ?? "";
         if (args.includes("sourceBookingId") && (write === "giveBackAppliedCredit" || args.includes("BOOKING_APPLIED"))) {
-          marked.push(`${relative(ROOT, file)} ${write}`);
+          marked.push(`${relative(ROOT, file)} ${enclosingFunction(text, match.index ?? 0)} ${write}`);
         }
       }
     }
     expect(marked.sort()).toEqual([
-      // The review route's call (`writeEditReviewAccountCredit`).
-      "src/lib/edit-financial-review-account-credit.ts giveBackAppliedCredit",
+      // #3835: the credit part of a captured payment's share after a cancellation.
+      "src/lib/edit-financial-review-account-credit.ts giveBackCancelledShareCredit giveBackAppliedCredit",
+      // #3791: the account-credit route's give-back.
+      "src/lib/edit-financial-review-account-credit.ts writeEditReviewAccountCredit giveBackAppliedCredit",
       // The give-back writer itself, which sets it only when handed one.
-      "src/lib/member-credit.ts memberCredit.create",
+      "src/lib/member-credit.ts giveBackAppliedCredit memberCredit.create",
     ]);
   });
 });
