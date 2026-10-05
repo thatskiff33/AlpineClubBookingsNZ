@@ -307,7 +307,10 @@ describe("PATCH /api/admin/other-lodges/[id]", () => {
     expect(response.status).toBe(403);
     const data = await response.json();
     expect(data.code).toBe(OTHER_LODGE_NOT_OWNED_CODE);
-    expect(data.error).toMatch(/download/i);
+    // The UNKNOWN wording, not the not-owned one: the two refusals share a
+    // status and a code, and the message is what tells the administrator which
+    // it is (both happen to mention a download, so match the distinct phrase).
+    expect(data.error).toMatch(/not yet been told/i);
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
