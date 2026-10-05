@@ -30,8 +30,15 @@ const OWNER = "@thatskiff33";
  * refund and settlement functions — measured 137 of 1132 (12.1%). 15% leaves
  * room for new money modules and still reds a glob that starts sweeping in
  * unrelated code; raise it only with the modules that justify it.
+ *
+ * 16% from 5 Oct 2026, measured at 188-189 of about 1254 (15.0-15.1%), for new
+ * money modules: the booking ledger's back-post (#3583,
+ * `booking-ledger-back-post*.ts`), #3854's group-settlement poster
+ * (`booking-ledger-group-settlement-*.ts`, the census's `-group.ts`), and
+ * #3836's applied-credit allocation (`credit-only-card-payment.ts`,
+ * `xero-applied-credit-*.ts`, `xero-booking-repair-applied-credit.ts`).
  */
-const MAX_OWNED_SRC_LIB_SHARE = 0.15;
+const MAX_OWNED_SRC_LIB_SHARE = 0.16;
 
 /**
  * Outside `src/lib`, a share of one directory bounds nothing, so every pattern
