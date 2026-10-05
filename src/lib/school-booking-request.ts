@@ -238,11 +238,6 @@ function cleanNullableString(value?: string | null) {
   return cleanString(value) || null;
 }
 
-// The composition rule is shared with the admin queue panel, so it lives in
-// the client-safe constants module (#3486). Re-exported to keep this module's
-// import surface for the route and the corrections service.
-export { generateSchoolGuests };
-
 function parseSchoolTeachers(raw: unknown): StoredTeacher[] {
   const parsed = storedSchoolTeacherListSchema.safeParse(raw);
   if (!parsed.success) {
