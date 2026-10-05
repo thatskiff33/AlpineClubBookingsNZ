@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Building, Pencil, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,6 +11,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -208,8 +215,12 @@ export function OtherLodgesPanel({
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<OtherLodgeFormState>(emptyForm);
 
-  const loadLodges = useCallback(async () => {
-    setLoading(true);
+  // The spinner is for the FIRST load only. A refresh after a save keeps the
+  // table mounted: replacing it with "Loading..." would unmount the Edit button
+  // that opened the dialog, and focus could not return to it when the dialog
+  // closes (it would land on the page body).
+  const loadLodges = useCallback(async (showSpinner = false) => {
+    if (showSpinner) setLoading(true);
     setError(null);
     try {
       const response = await fetch("/api/admin/other-lodges");
@@ -228,17 +239,25 @@ export function OtherLodgesPanel({
   }, []);
 
   useEffect(() => {
-    void loadLodges();
+    void loadLodges(true);
   }, [loadLodges]);
 
-  function startCreate() {
+  // The button that opened the dialog. Radix returns focus on close only to a
+  // `DialogTrigger`, and this dialog is opened from the Add and Edit buttons
+  // instead, so without this the keyboard user lands on the page body after
+  // Save or Cancel and has to tab back to where they were.
+  const openerRef = useRef<HTMLElement | null>(null);
+
+  function startCreate(opener: HTMLElement) {
+    openerRef.current = opener;
     setCreating(true);
     setEditingId(null);
     setForm(emptyForm);
     setError(null);
   }
 
-  function startEdit(lodge: OtherLodgeRecord) {
+  function startEdit(lodge: OtherLodgeRecord, opener: HTMLElement) {
+    openerRef.current = opener;
     setEditingId(lodge.id);
     setCreating(false);
     setForm(formFromLodge(lodge));
@@ -291,6 +310,10 @@ export function OtherLodgesPanel({
         throw new Error(data?.error ?? "Failed to save lodge");
       }
       cancelEdit();
+      // The save is done: stop "saving" BEFORE the list refresh, not after it.
+      // Held open across the refresh, every Edit button stays disabled, and a
+      // disabled button cannot take focus back when the dialog closes.
+      setSaving(false);
       await loadLodges();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save lodge");
@@ -347,7 +370,7 @@ export function OtherLodgesPanel({
         <ViewOnlyActionButton
           canEdit={canEdit}
           describeReason={!ancestorRendersViewOnlyBanner}
-          onClick={startCreate}
+          onClick={(event) => startCreate(event.currentTarget)}
           disabled={saving || showForm}
         >
           <Plus className="mr-2 h-4 w-4" />
@@ -355,25 +378,51 @@ export function OtherLodgesPanel({
         </ViewOnlyActionButton>
       </div>
 
-      {error ? (
+      {/* While the dialog is open it covers the page, so a save or validation
+          error is shown inside it, next to Save. This one is for everything
+          outside it: a failed delete, or a list that could not load. */}
+      {error && !showForm ? (
         <p className="text-sm text-destructive" role="alert">
           {error}
         </p>
       ) : null}
 
-      {showForm ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>
+      <Dialog
+        open={showForm}
+        // Close is Escape, the close button or Cancel — never while a save is in
+        // flight, so the form cannot vanish under a request that may still land.
+        // This one guard covers Escape and the close button alike: Radix routes
+        // both through here.
+        onOpenChange={(next) => {
+          if (!next && !saving) cancelEdit();
+        }}
+      >
+        <DialogContent
+          className="max-h-[90vh] overflow-y-auto sm:max-w-3xl"
+          // A click on the dimmed background does NOT close it: the form is long
+          // and one stray click outside must not throw away what was typed.
+          onInteractOutside={(event) => event.preventDefault()}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            openerRef.current?.focus();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>
               {creating ? "Add other lodge" : "Edit other lodge"}
-            </CardTitle>
-            <CardDescription>
+            </DialogTitle>
+            <DialogDescription>
               Only the name is required. Everything else is optional detail that
               is shared with other clubs through the Alpine Central Server when
               that connection is on.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-6">
+            {error ? (
+              <p className="text-sm text-destructive" role="alert">
+                {error}
+              </p>
+            ) : null}
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="other-lodge-name">Name</Label>
@@ -557,9 +606,9 @@ export function OtherLodgesPanel({
                 Cancel
               </Button>
             </div>
-          </CardContent>
-        </Card>
-      ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Card>
         <CardHeader>
@@ -656,7 +705,7 @@ export function OtherLodgesPanel({
                             describeReason={!ancestorRendersViewOnlyBanner}
                             variant="outline"
                             size="sm"
-                            onClick={() => startEdit(lodge)}
+                            onClick={(event) => startEdit(lodge, event.currentTarget)}
                             disabled={saving}
                           >
                             <Pencil className="mr-2 h-4 w-4" />
