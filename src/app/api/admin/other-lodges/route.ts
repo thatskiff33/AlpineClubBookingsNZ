@@ -1,32 +1,22 @@
 import { NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
-import { z } from "zod";
 import {
-  buildStructuredAuditLogCreateArgs,
-  getAuditRequestContext,
-} from "@/lib/audit";
-import {
-  amenitiesInputSchema,
-  otherLodgeAmenityRows,
-  otherLodgeDataColumns,
-  otherLodgeDataShape,
-  otherLodgeNameSchema,
   otherLodgeOrderBy,
   otherLodgeSelect,
-  serializeOtherLodge,
+  serializeOtherLodgeForAdmin,
+  type AdminOtherLodgesResponse,
 } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
+import { loadServerNzSettings } from "@/lib/servernz-settings";
 import { requireAdmin } from "@/lib/session-guards";
 
-// Strict: an unknown key is a 400, so every data column has to be named in the
-// shared `otherLodgeDataShape` (the one field list) to be accepted here.
-const otherLodgeCreateSchema = z
-  .object({
-    name: otherLodgeNameSchema,
-    ...otherLodgeDataShape,
-    amenities: amenitiesInputSchema.optional(),
-  })
-  .strict();
+// READ ONLY. The create handler that lived here was removed by #52: a site
+// changes only the lodge(s) the central server says it owns, and those arrive
+// by download — nothing is created here. A POST now answers 405 from Next.js.
+//
+// The response carries the owned list in its three states (`null` = the server
+// has never said, `[]` = owns none) so the panel can explain itself, and each
+// row's `owned` flag is the route's own `ownsOtherLodge` answer. Another club's
+// booking officer PHONE is not sent at all (`serializeOtherLodgeForAdmin`).
 
 export async function GET() {
   const guard = await requireAdmin({
@@ -34,83 +24,18 @@ export async function GET() {
   });
   if (!guard.ok) return guard.response;
 
-  const otherLodges = await prisma.otherLodge.findMany({
-    orderBy: otherLodgeOrderBy(),
-    select: otherLodgeSelect,
-  });
-
-  return NextResponse.json({
-    otherLodges: otherLodges.map(serializeOtherLodge),
-  });
-}
-
-export async function POST(request: Request) {
-  const guard = await requireAdmin({
-    permission: { area: "lodge", level: "edit" },
-  });
-  if (!guard.ok) return guard.response;
-  const session = guard.session;
-
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-
-  const parsed = otherLodgeCreateSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 },
-    );
-  }
-
-  let created;
-  try {
-    // The nested amenity create is part of the same statement, so the lodge and
-    // its amenities land together or not at all.
-    created = await prisma.otherLodge.create({
-      data: {
-        name: parsed.data.name.trim(),
-        ...otherLodgeDataColumns(parsed.data),
-        ...(parsed.data.amenities
-          ? { amenities: { create: otherLodgeAmenityRows(parsed.data.amenities) } }
-          : {}),
-      },
+  const [otherLodges, settings] = await Promise.all([
+    prisma.otherLodge.findMany({
+      orderBy: otherLodgeOrderBy(),
       select: otherLodgeSelect,
-    });
-  } catch (error) {
-    // Unique(name): a concurrent create of the same name, or a duplicate typed
-    // by the admin, surfaces as a friendly 409 rather than a 500.
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
-    ) {
-      return NextResponse.json(
-        { error: "A lodge with that name already exists." },
-        { status: 409 },
-      );
-    }
-    throw error;
-  }
-
-  await prisma.auditLog.create(
-    buildStructuredAuditLogCreateArgs({
-      action: "OTHER_LODGE_CREATED",
-      actor: { memberId: session.user.id },
-      entity: { type: "OtherLodge", id: created.id },
-      category: "admin",
-      severity: "info",
-      outcome: "success",
-      summary: "Other lodge created",
-      metadata: { newOtherLodge: serializeOtherLodge(created) },
-      request: getAuditRequestContext(request),
     }),
-  );
+    loadServerNzSettings(),
+  ]);
+  const owned = settings.otherLodgesOwnedNames;
 
-  return NextResponse.json(
-    { otherLodge: serializeOtherLodge(created) },
-    { status: 201 },
-  );
+  const body: AdminOtherLodgesResponse = {
+    otherLodges: otherLodges.map((lodge) => serializeOtherLodgeForAdmin(lodge, owned)),
+    ownedLodgeNames: owned,
+  };
+  return NextResponse.json(body);
 }
