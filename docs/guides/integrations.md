@@ -135,20 +135,33 @@ club's booking officer by hand, each club maintains its own entry and the hub
 distributes it.
 
 **Read this before you turn it on.** This is the one integration that sends data
-*out* of your club. When you enable a shared item, everything recorded on each
-entry in your **Other lodges** panel is uploaded to the central server and
-redistributed to every other connected club, where it appears on those clubs'
-pages. That is the lodge's name, location and bed count; its **booking officer's
-name, email and phone**; and the lodge details added alongside them — website,
-how to book, cancellation period, the winter and summer season start dates, the
-nine yes/no facilities (requires a lodge custodian, free wifi, quiet room, drying
-room, shared kitchen, wheelchair accessible, breakfast / lunch / dinner included)
-and the list of amenities with their descriptions. The booking-officer email is
-the committee **role's** shared address (for example `bookings@yourclub.nz`),
-never a member's personal one, and a member's phone number is shared **only** if
-your club already publishes it on your own committee page. No other member data
-is sent. Everything in the panel is plain lodge description except the booking
-officer's contact details, so those are what to check before you enable the item.
+*out* of your club. When you enable a shared item, everything recorded on **your
+own lodge's** entry in the **Other lodges** panel is uploaded to the central
+server and redistributed to every other connected club, where it appears on
+those clubs' pages. That is the lodge's name, location and bed count; its
+**booking officer's name, email and phone**; and the lodge details added
+alongside them — website, how to book, cancellation period, the winter and
+summer season start dates, the nine yes/no facilities (requires a lodge
+custodian, free wifi, quiet room, drying room, shared kitchen, wheelchair
+accessible, breakfast / lunch / dinner included) and the list of amenities with
+their descriptions. The booking-officer email is the committee **role's** shared
+address (for example `bookings@yourclub.nz`), never a member's personal one,
+and a member's phone number is shared **only** if your club already publishes it
+on your own committee page. The central server keeps the phone number for its
+operator and **does not pass it on to other clubs**, and this site never shows a
+booking officer's phone number in the Other lodges list (your own lodge's is in
+its edit popup). No other member data is sent. Everything in the panel is plain
+lodge description except the booking officer's contact details, so those are
+what to check before you enable the item.
+
+**Which lodge is "your own" is decided on the central server**, where its
+operator maps one or more lodge names to the connection your site uses. The
+server sends that list with every download, this site records it, and from then
+on only those lodges are uploaded and only those can be edited in the Other
+lodges panel. Until the first download from a server that sends the list, the
+panel is read-only and the upload keeps its older behaviour of sending every
+changed entry (so a club on an older central server loses nothing). A server
+that does not send the list leaves the recorded one as it was.
 
 Downloading works the other way round: the central server's copy of every
 club's entry replaces yours, field by field and amenity list as a whole, unless
@@ -166,15 +179,18 @@ Season start dates travel as calendar dates and are never shifted by time zone.
    refused. **Changing the address clears the stored key**, because a key issued
    by one server means nothing to another.
 4. Paste the API key and save. It is stored encrypted and never shown again.
-5. Enable the **Other Clubs details** item, then press **Upload** to push your
-   entries and **Download** to pull the distributed set.
+5. Enable the **Other Clubs details** item, then press **Download** to pull the
+   distributed set — which also tells this site which lodge is yours and turns
+   on **Edit my Lodge** in the Other lodges panel — and **Upload** to push your
+   own lodge's entry.
 
 After that a nightly job at 3am syncs both directions on its own. It only sends
-entries that changed since last time and only writes entries that genuinely
-differ, so a quiet night costs almost nothing.
+your own lodge's entry, and only when it changed since last time, and only
+writes downloaded entries that genuinely differ, so a quiet night costs almost
+nothing.
 
 **Upgrade the central server before this site.** The upload sends every field
-the Other lodges panel holds, and the central server refuses an upload that
+your lodge's entry holds, and the central server refuses an upload that
 names a field it does not know. So if this site is upgraded to a release that
 carries the lodge details and amenities while the central server is still on an
 older release, every upload fails: pressing **Upload** shows **Central server

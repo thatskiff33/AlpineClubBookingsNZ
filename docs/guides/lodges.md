@@ -15,14 +15,19 @@ Lodges are a **lodge** permission area: lodge view to read, lodge **edit** to ad
 edit, or deactivate. Member-facing screens only change once a **second active
 lodge** exists — a single-lodge club sees no lodge pickers.
 
-The same page also carries an **Other lodges** panel — a separate registry of
-*other clubs'* lodges the club recognises (name, location, booking officer
-contact, bed capacity, website and booking details, season start dates, a
-facilities checklist and a list of amenities). These are **not** the club's own
-lodges: they take no bookings and have no configuration hub. When the
+The same page also carries an **Other lodges** panel — a registry of every
+club's lodges as the
 [Alpine Central Server](integrations.md#connect-to-the-alpine-central-server)
-connection is on, the whole entry is shared with every other connected club. Their names populate an **"Are you a
-member of another lodge?"** drop-down on the public
+distributes it (name, location, booking officer name and email, bed capacity,
+website and booking details, season start dates, a facilities checklist and a
+list of amenities). These are **not** the club's own lodges in the sense of the
+properties above: they take no bookings and have no configuration hub. The
+list arrives by download and is read-only, with one exception: **your own
+lodge**, which the central server names for your site, has an **Edit my
+Lodge** button that opens a popup for its details. Those are what every other
+connected club sees for you. Which lodge is yours is set on the central server
+by its operator, not here. Their names populate an **"Are you a member of
+another lodge?"** drop-down on the public
 [booking request form](booking-requests.md) (it defaults to **No**); the chosen
 lodge is saved with the request for use when it is reviewed. The panel uses the
 same **lodge edit** permission as the properties above.
@@ -78,28 +83,47 @@ same **lodge edit** permission as the properties above.
    asks you to confirm — deactivating stops new bookings but leaves those in place.
    At least one lodge must stay active.
 
-### Manage other lodges
+### Edit your own lodge's details
 
-1. Scroll to the **Other lodges** panel below the lodge properties. Click **Add
-   other lodge**. The form opens in a **popup over the page**, so the list stays
-   where it is. Enter at least a **Name** (the only required field), optionally
-   fill in **Location**, the **booking officer's** name/email/phone, a
+1. Scroll to the **Other lodges** panel below the lodge properties. Your own
+   lodge's row carries an **Edit my Lodge** button (if the central server has
+   given your site more than one lodge, each of those rows has its own button,
+   named **Edit ‹lodge name›**). Click it. The form opens in a **popup over
+   the page**, so the list stays where it is.
+2. The **Name** is shown but cannot be changed: the central server matches
+   lodges by name, so a new name would create a second lodge there. Fill in or
+   change the **Location**, the **booking officer's** name, email and phone, a
    **Bed capacity**, the lodge's **Website** and **How to book**, its
    **Cancellation period** and the dates its **winter** and **summer seasons
    start**, then **Save**.
-2. Tick whatever applies under **Facilities** (an unticked box means *no*, not
+3. Tick whatever applies under **Facilities** (an unticked box means *no*, not
    *unknown*), and add anything else the lodge offers under **Amenities** — one
    row per amenity, a name plus an optional description, up to fifty per lodge
-   with no two names the same.
-3. Use **Edit** to change a lodge (it opens the same popup), or **Delete** to
-   remove it from the list. Names must be unique — a duplicate is rejected with a
-   clear message, shown inside the popup next to **Save** so you can fix it
-   without losing what you typed.
+   with no two names the same. A problem is reported inside the popup next to
+   **Save**, so you can fix it without losing what you typed.
 4. Close the popup with **Cancel**, the **×**, or **Esc** — this discards what you
    have typed. Clicking the dimmed page behind it does *not* close it, so a stray
    click cannot throw your work away, and while **Save** is working the popup
    cannot be closed. When it closes, keyboard focus goes back to the button that
    opened it.
+
+Other clubs' lodges have no buttons: each club keeps its own entry up to date
+and the central server distributes it, so there is nothing to add, edit or
+delete here. The panel also shows **no booking officer phone numbers**, not even
+your own lodge's (its phone is still in the popup, where you edit it) — a phone
+number is private, and other clubs' numbers are not even sent to the browser.
+
+**Two cases make the whole panel read-only**, and the panel says which:
+
+- *"Which lodge is yours is set on the central server…"* — the central server
+  has not yet told this site which lodge is its own. That is so until the site
+  is connected and has downloaded at least once: open **Integrations → Alpine
+  Central Server**, connect, and press **Download**. (A club that never
+  connects can no longer change its Other lodges list at all.) It is also what
+  an older central server, which does not send the list, leaves you with.
+- *"The central server has no lodge assigned to this site…"* — the server has
+  answered, and the answer is none. Ask the central server's operator to assign
+  your lodge to your site's connection.
 
 ## Settings reference
 
@@ -119,11 +143,11 @@ same **lodge edit** permission as the properties above.
 
 | Field | What it controls | Default | Notes / constraints |
 | --- | --- | --- | --- |
-| Name | The other lodge's display name | — | Required; unique; up to 120 characters |
+| Name | The lodge's display name | — | Set on the central server; shown read-only, because the server matches lodges by name |
 | Location | Where the other lodge is | — | Optional; up to 300 characters |
 | Booking officer's name | Contact person at the other lodge | — | Optional; up to 200 characters |
 | Booking officer's email | Contact email | — | Optional; must be a valid email; up to 320 characters |
-| Booking officer's phone | Contact phone | — | Optional; up to 50 characters |
+| Booking officer's phone | Contact phone | — | Optional; up to 50 characters. Editable in the popup for your own lodge; never shown in the list, and other clubs' numbers are not sent to this site's browser at all |
 | Bed capacity | Informational bed count of the other lodge | — | Optional; whole number ≥ 0. Not this system's booking capacity |
 | Website | The other lodge's site | — | Optional; up to 500 characters; must start with `http://` or `https://` because it is shown as a link (anything else is refused) |
 | How to book | Free text on how a booking is made | — | Optional; up to 300 characters |
@@ -134,7 +158,8 @@ same **lodge edit** permission as the properties above.
 
 Every field in this table is shared with other clubs through the
 [Alpine Central Server](integrations.md#connect-to-the-alpine-central-server)
-when that connection is on; that page says what leaves the club. If that
+when that connection is on; that page says what leaves the club. Only your own
+lodge's entry is uploaded, and only your own lodge's entry can be edited here. If that
 connection is on, **the central server has to be upgraded before this site**:
 an older central server refuses an upload that names fields it does not know,
 so **Upload** (and the nightly sync, which also skips that night's download
@@ -145,7 +170,7 @@ The names recorded here are what the public booking-request form offers under
 *"Are you a member of another lodge?"*, and what a booking officer picks from
 when charging a visiting club's members at your member rate — see
 [Bookings → Charge a visiting club's members at your member rate](bookings.md#charge-a-visiting-clubs-members-at-your-member-rate).
-A lodge that a booking or a request already names cannot be deleted.
+Lodges are never deleted here: the list is the central server's.
 
 ## Troubleshooting
 
@@ -156,6 +181,9 @@ A lodge that a booking or a request already names cannot be deleted.
 | "At least one lodge must stay active" | You tried to deactivate the only active lodge | Keep one active, or activate another first |
 | Member screens don't show a lodge picker | The club has only one active lodge | Expected — pickers appear once a second active lodge exists |
 | Door code/travel note isn't in an email | The lodge's field is blank, or the email template omits the token | Fill the field here; check the [Booking Messages](booking-messages.md)/email template |
+| The Other lodges panel has no **Edit my Lodge** button and says which lodge is yours is set on the central server | The site has not yet downloaded from a central server that names its lodge (not connected, never downloaded, or an older server) | Connect on **Integrations → Alpine Central Server** and press **Download**; the button appears for the lodge the server names |
+| The Other lodges panel says no lodge is assigned to this site | The central server's operator has not mapped a lodge to your site's connection | Ask them to assign your lodge |
+| Saving your lodge is refused with "Only this site's own lodge can be changed here" | The central server's list changed since the page loaded | Reload the page; only the lodge(s) the server names for your site can be saved |
 
 ## Related links
 

@@ -5,6 +5,7 @@ import {
   otherLodgeAmenitiesSelect,
   otherLodgeDataColumns,
   otherLodgeDataDiffers,
+  ownsOtherLodge,
   replaceOtherLodgeAmenities,
   serializeOtherLodgeAmenities,
   serializeOtherLodgeData,
@@ -53,18 +54,32 @@ const LODGE_DATA_SELECT = {
  * watermark (`otherLodgesLastUploadAt`) are sent — new and edited rows, never
  * the whole table. On the first upload (no watermark) every row is sent. When
  * nothing has changed, no request is made and the watermark is left untouched.
+ *
+ * ONLY THE CLUB'S OWN LODGES ARE SENT once the central server has said which
+ * those are (#52): the stored owned list, through the one `ownsOtherLodge`
+ * rule the admin PATCH route and the panel also apply. Before #52 every changed
+ * row went up — including other clubs' lodges this site had just DOWNLOADED,
+ * whose server-stamped `updatedAt` sat above the watermark — so each night
+ * re-sent the whole registry for the server to refuse (#53). While the list is
+ * UNKNOWN (never received: not connected, or an older server) the upload keeps
+ * its pre-#52 behaviour and sends every changed row, so a club on an older
+ * central server loses nothing. A row the server then reports as `skipped` is
+ * still held below the watermark exactly as before (INV-INT-004).
  */
 export async function uploadOtherClubsToServer(): Promise<UploadSummary> {
   const settings = await loadServerNzSettings();
   const since = settings.otherLodgesLastUploadAt
     ? new Date(settings.otherLodgesLastUploadAt)
     : null;
+  const owned = settings.otherLodgesOwnedNames;
 
-  const lodges = await prisma.otherLodge.findMany({
+  const changed = await prisma.otherLodge.findMany({
     where: since ? { updatedAt: { gt: since } } : {},
     select: { name: true, updatedAt: true, ...LODGE_DATA_SELECT },
     orderBy: { name: "asc" },
   });
+  const lodges =
+    owned === null ? changed : changed.filter((l) => ownsOtherLodge(owned, l.name));
 
   if (lodges.length === 0) {
     // Nothing changed since the last upload — skip the round-trip entirely.
@@ -298,8 +313,14 @@ export async function downloadOtherClubsFromServer(): Promise<DownloadSummary> {
   // otherwise hand the overlapped value straight back. Reached only after every
   // row above merged, so a throw part-way leaves the old cursor standing and the
   // next run re-fetches.
+  //
+  // The owned list rides in the same write (#52), and only when the server sent
+  // one: `undefined` leaves the stored list alone, so an older server that does
+  // not send it cannot clear what a newer one recorded. A name in the list with
+  // no local row is simply absent locally until a download creates it.
   await recordOtherLodgesDownload(
     advancedDownloadCursor(settings.otherLodgesCursor, pull.cursor),
+    pull.ownLodgeNames,
   );
   return {
     fetched: pull.count,

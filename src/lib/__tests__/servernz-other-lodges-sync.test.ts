@@ -70,6 +70,9 @@ const SETTINGS = {
   otherLodgesLastUploadAt: null as string | null,
   otherLodgesLastDownloadAt: null as string | null,
   otherLodgesCursor: null as string | null,
+  // Unknown until a download from a server that sends the list records it (#52).
+  otherLodgesOwnedNames: null as string[] | null,
+  otherLodgesOwnedNamesAt: null as string | null,
 };
 
 /** A row as the central server sends it. */
@@ -205,7 +208,7 @@ describe("downloadOtherClubsFromServer", () => {
     const result = await downloadOtherClubsFromServer();
 
     expect(mockPullOtherLodges).toHaveBeenCalledWith("c-100");
-    expect(mockRecordDownload).toHaveBeenCalledWith("c-200");
+    expect(mockRecordDownload).toHaveBeenCalledWith("c-200", undefined);
     expect(result).toEqual({
       fetched: 0,
       created: 0,
@@ -454,7 +457,7 @@ describe("lodge details and amenities round trip", () => {
     expect(mockAmenityUpsert).not.toHaveBeenCalled();
     expect(result).toMatchObject({ updated: 0, keptLocal: 1 });
     // The cursor still advances: the row was handled, not failed.
-    expect(mockRecordDownload).toHaveBeenCalledWith("c-406");
+    expect(mockRecordDownload).toHaveBeenCalledWith("c-406", undefined);
   });
 
   it("writes the lodge row before its amenities, so the row lock orders concurrent replacements", async () => {
@@ -712,7 +715,7 @@ describe("download cursor overlap", () => {
 
     // The overlap widens the QUESTION; it must never move the stored ANSWER
     // backwards, which is what would turn a bounded re-ask into a slow rewind.
-    expect(mockRecordDownload).toHaveBeenCalledWith("2026-06-21T09:00:00.000Z");
+    expect(mockRecordDownload).toHaveBeenCalledWith("2026-06-21T09:00:00.000Z", undefined);
     expect(mockRecordDownload).not.toHaveBeenCalledWith("2026-06-20T10:04:30.000Z");
     expect(mockRecordDownload).not.toHaveBeenCalledWith(stored);
   });
@@ -800,7 +803,7 @@ describe("download cursor overlap", () => {
     // for unchanged, rather than for a window before an instant that has no
     // meaning yet.
     expect(mockPullOtherLodges).toHaveBeenCalledWith(null);
-    expect(mockRecordDownload).toHaveBeenCalledWith("2026-06-21T00:00:00.000Z");
+    expect(mockRecordDownload).toHaveBeenCalledWith("2026-06-21T00:00:00.000Z", undefined);
   });
 
   it("does not advance the durable cursor when the pull or the merge fails", async () => {
@@ -851,7 +854,7 @@ describe("download cursor overlap", () => {
     await downloadOtherClubsFromServer();
 
     expect(mockPullOtherLodges).toHaveBeenCalledWith("2026-06-20T10:04:30.000Z");
-    expect(mockRecordDownload).toHaveBeenCalledWith(stored);
+    expect(mockRecordDownload).toHaveBeenCalledWith(stored, undefined);
   });
 
   it("still advances to a server watermark that is genuinely later", async () => {
@@ -870,7 +873,7 @@ describe("download cursor overlap", () => {
 
     await downloadOtherClubsFromServer();
 
-    expect(mockRecordDownload).toHaveBeenCalledWith("2026-06-20T10:05:30.001Z");
+    expect(mockRecordDownload).toHaveBeenCalledWith("2026-06-20T10:05:30.001Z", undefined);
   });
 
   it("passes a cursor it cannot read as an instant through untouched, and says so", async () => {
@@ -907,12 +910,155 @@ describe("download cursor overlap", () => {
       expect(mockPullOtherLodges).toHaveBeenCalledWith(stored);
       // Unreadable on both sides, so the server's answer still stands: the
       // monotonic guard narrows nothing it cannot order.
-      expect(mockRecordDownload).toHaveBeenCalledWith("c-200");
+      expect(mockRecordDownload).toHaveBeenCalledWith("c-200", undefined);
       expect(mockLoggerWarn).toHaveBeenCalledTimes(1);
       expect(mockLoggerWarn).toHaveBeenCalledWith(
         { cursor: stored },
         expect.stringContaining("NOT being applied"),
       );
     }
+  });
+});
+
+// ── Own lodges only (#52) ──────────────────────────────────────────────────
+//
+// The central server says which lodges this club owns (`ownLodgeNames` on every
+// pull). The download records that list, and the upload sends ONLY those lodges
+// once it is known — through the one `ownsOtherLodge` rule the admin PATCH
+// route also applies. Before this, every row a download had just written
+// (server-stamped, so above the watermark) went straight back up each night for
+// the server to refuse (#53).
+
+describe("own lodges only (#52)", () => {
+  const ACCEPTED = { created: 0, updated: 1, unchanged: 0, skipped: 0, results: [] };
+
+  it("records the owned list the pull carried, with the cursor, after the merge", async () => {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [],
+      count: 0,
+      cursor: "c-500",
+      dropped: 0,
+      ownLodgeNames: ["Aorangi Ski Club"],
+    });
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordDownload).toHaveBeenCalledWith("c-500", ["Aorangi Ski Club"]);
+  });
+
+  it("records an EMPTY owned list as an answer, not as an omission", async () => {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [],
+      count: 0,
+      cursor: "c-501",
+      dropped: 0,
+      ownLodgeNames: [],
+    });
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordDownload).toHaveBeenCalledWith("c-501", []);
+  });
+
+  it("passes `undefined` when the server did not send the list, so a stored list is left alone", async () => {
+    // An older server. The recorder treats `undefined` as "do not touch".
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [],
+      count: 0,
+      cursor: "c-502",
+      dropped: 0,
+      ownLodgeNames: undefined,
+    });
+
+    await downloadOtherClubsFromServer();
+
+    expect(mockRecordDownload).toHaveBeenCalledWith("c-502", undefined);
+  });
+
+  it("does not record the owned list when the merge throws part-way", async () => {
+    mockPullOtherLodges.mockResolvedValue({
+      lodges: [remoteLodge("Aorangi Ski Club", { bedCapacity: 30 })],
+      count: 1,
+      cursor: "c-503",
+      dropped: 0,
+      ownLodgeNames: ["Aorangi Ski Club"],
+    });
+    mockFindUnique.mockRejectedValue(new Error("connection reset"));
+
+    await expect(downloadOtherClubsFromServer()).rejects.toThrow("connection reset");
+
+    expect(mockRecordDownload).not.toHaveBeenCalled();
+  });
+
+  it("uploads only the owned lodges when the list is known, and watermarks on those alone", async () => {
+    const ours = new Date("2026-08-10T00:00:00.000Z");
+    const theirs = new Date("2026-08-14T00:00:00.000Z");
+    mockLoadSettings.mockResolvedValue({
+      ...SETTINGS,
+      otherLodgesOwnedNames: ["Aorangi Ski Club"],
+    });
+    mockFindMany.mockResolvedValue([
+      { ...localCopyOf("ol_1", ours.toISOString()), name: "Aorangi Ski Club" },
+      // Another club's lodge, freshly downloaded and server-stamped NEWER than
+      // ours: before #52 this row went up every night (#53).
+      { ...localCopyOf("ol_2", theirs.toISOString()), name: "Arlberg Ski Club" },
+    ]);
+    mockUploadOtherLodges.mockResolvedValue(ACCEPTED);
+
+    const result = await uploadOtherClubsToServer();
+
+    const [sent] = mockUploadOtherLodges.mock.calls[0];
+    expect(sent.map((l: { name: string }) => l.name)).toEqual(["Aorangi Ski Club"]);
+    expect(result.sent).toBe(1);
+    // The watermark is the newest OWNED row that was accepted, not the other
+    // club's newer row that was never sent.
+    expect(mockRecordUpload).toHaveBeenCalledWith(ours);
+  });
+
+  it("sends nothing at all when the list is known and empty, even with changed rows", async () => {
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesOwnedNames: [] });
+    mockFindMany.mockResolvedValue([
+      { ...localCopyOf("ol_2", "2026-08-14T00:00:00.000Z"), name: "Arlberg Ski Club" },
+    ]);
+
+    const result = await uploadOtherClubsToServer();
+
+    expect(mockUploadOtherLodges).not.toHaveBeenCalled();
+    expect(mockRecordUpload).not.toHaveBeenCalled();
+    expect(result.sent).toBe(0);
+  });
+
+  it("keeps sending every changed row while the list is UNKNOWN", async () => {
+    // Not connected to a server that sends the list yet: pre-#52 behaviour, so
+    // a club on an older central server loses nothing.
+    mockLoadSettings.mockResolvedValue({ ...SETTINGS, otherLodgesOwnedNames: null });
+    mockFindMany.mockResolvedValue([
+      { ...localCopyOf("ol_1", "2026-08-10T00:00:00.000Z"), name: "Aorangi Ski Club" },
+      { ...localCopyOf("ol_2", "2026-08-14T00:00:00.000Z"), name: "Arlberg Ski Club" },
+    ]);
+    mockUploadOtherLodges.mockResolvedValue({ ...ACCEPTED, updated: 2 });
+
+    const result = await uploadOtherClubsToServer();
+
+    const [sent] = mockUploadOtherLodges.mock.calls[0];
+    expect(sent.map((l: { name: string }) => l.name)).toEqual([
+      "Aorangi Ski Club",
+      "Arlberg Ski Club",
+    ]);
+    expect(result.sent).toBe(2);
+  });
+
+  it("matches ownership by exact name, as the registry and the server key it", async () => {
+    mockLoadSettings.mockResolvedValue({
+      ...SETTINGS,
+      otherLodgesOwnedNames: ["aorangi ski club"],
+    });
+    mockFindMany.mockResolvedValue([
+      { ...localCopyOf("ol_1", "2026-08-10T00:00:00.000Z"), name: "Aorangi Ski Club" },
+    ]);
+
+    await uploadOtherClubsToServer();
+
+    expect(mockUploadOtherLodges).not.toHaveBeenCalled();
   });
 });

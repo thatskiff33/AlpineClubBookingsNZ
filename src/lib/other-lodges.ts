@@ -367,6 +367,91 @@ export function otherLodgeDataDiffers(
   });
 }
 
+// ── Ownership (#52) ────────────────────────────────────────────────────────
+//
+// Which lodges are THIS club's own is decided on the central server, mapped to
+// the API key this site uses, and handed back on every pull as `ownLodgeNames`.
+// The site stores that list on `ServerNzSettings.otherLodgesOwnedNames` and
+// everything that asks "may this lodge be changed here?" asks `ownsOtherLodge`
+// below — the admin PATCH route, the upload projection and the panel's buttons
+// — so there is one answer (INV-SSOT-001). By NAME, exactly as stored: the
+// server keys lodges by name and so does this registry (`name` is unique).
+
+/** Upper bound on the owned list, so a hostile server cannot stream forever. */
+export const OWNED_OTHER_LODGE_NAMES_MAX = 100;
+
+/**
+ * The owned list as it travels and as it is stored: bounded in count, each name
+ * held to the lodge-name bound (a longer or NUL-bearing name could never match
+ * a local row anyway). Used by the pull envelope AND by the settings loader, so
+ * a stored value that no longer parses reads back as unknown rather than as a
+ * list of something else.
+ */
+export const ownedOtherLodgeNamesSchema = z
+  .array(otherLodgeNameSchema)
+  .max(OWNED_OTHER_LODGE_NAMES_MAX);
+
+/**
+ * The owned list in its three states: `null` when the server has never said
+ * (not connected, never downloaded, or an older server that does not send it),
+ * `[]` when it said the club owns nothing, otherwise the editable names.
+ */
+export type OwnedOtherLodgeNames = string[] | null;
+
+/** True when the central server has said this lodge is the club's own. */
+export function ownsOtherLodge(
+  owned: ReadonlyArray<string> | null,
+  name: string,
+): boolean {
+  return owned !== null && owned.includes(name);
+}
+
+/**
+ * The label of the button that opens the editor for an owned lodge: "Edit my
+ * Lodge" when the club owns exactly one, otherwise the lodge is named so the
+ * buttons can be told apart.
+ */
+export function ownedOtherLodgeEditLabel(
+  owned: ReadonlyArray<string>,
+  name: string,
+): string {
+  return owned.length === 1 ? "Edit my Lodge" : `Edit ${name}`;
+}
+
+/**
+ * The `code` on the PATCH route's 403 when the refusal is about ownership
+ * rather than the administrator's permissions, so the panel can show the
+ * route's own explanation instead of the generic view-only message.
+ */
+export const OTHER_LODGE_NOT_OWNED_CODE = "OTHER_LODGE_NOT_OWNED";
+
+/**
+ * A lodge as the ADMIN list carries it: every serialized field, but the
+ * booking officer's PHONE only for a lodge this club owns — another club's
+ * officer's number is not sent to the browser at all (#52). `owned` is the
+ * route's answer from `ownsOtherLodge`, so the panel never re-derives it.
+ */
+export type AdminOtherLodge = Omit<SerializedOtherLodge, "bookingOfficerPhone"> & {
+  bookingOfficerPhone?: string | null;
+  owned: boolean;
+};
+
+/** The admin list response: the rows, and the owned list in its three states. */
+export interface AdminOtherLodgesResponse {
+  otherLodges: AdminOtherLodge[];
+  ownedLodgeNames: OwnedOtherLodgeNames;
+}
+
+export function serializeOtherLodgeForAdmin(
+  lodge: OtherLodgeRecord,
+  owned: ReadonlyArray<string> | null,
+): AdminOtherLodge {
+  const { bookingOfficerPhone, ...rest } = serializeOtherLodge(lodge);
+  return ownsOtherLodge(owned, lodge.name)
+    ? { ...rest, bookingOfficerPhone, owned: true }
+    : { ...rest, owned: false };
+}
+
 // ── Amenities ──────────────────────────────────────────────────────────────
 
 /** The rows to store for an amenity list (names already validated unique). */

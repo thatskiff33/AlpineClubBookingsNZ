@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Building, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Building, Pencil, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -37,18 +37,25 @@ import { isHttpUrl } from "@/lib/http-url";
 import {
   AMENITIES_PER_LODGE_MAX,
   OTHER_LODGE_BOUNDS,
+  OTHER_LODGE_NOT_OWNED_CODE,
   amenitiesInputSchema,
+  ownedOtherLodgeEditLabel,
+  type AdminOtherLodge,
+  type AdminOtherLodgesResponse,
   type OtherLodgeBooleanField,
   type OtherLodgeDateField,
   type OtherLodgeTextField,
+  type OwnedOtherLodgeNames,
   type SerializedOtherLodge,
 } from "@/lib/other-lodges";
 
 // The API's own shape, not a hand-copied one: a column added to the shared
 // field list in `@/lib/other-lodges` fails to compile here until the form
-// carries it, instead of being silently dropped from the editor (#50).
-type OtherLodgeRecord = SerializedOtherLodge;
-type OtherLodgePayload = Omit<OtherLodgeRecord, "id" | "createdAt" | "updatedAt">;
+// carries it, instead of being silently dropped from the editor (#50). The
+// list row is the ADMIN shape (#52): another club's officer phone is not in
+// it, and `owned` is the route's answer to whether this site may edit it.
+type OtherLodgeRecord = AdminOtherLodge;
+type OtherLodgePayload = Omit<SerializedOtherLodge, "id" | "createdAt" | "updatedAt">;
 
 // EVERY EDITOR LABEL IS A `Record` OVER THE SHARED FIELD TYPE, so a field that
 // is stored, serialized and uploaded but missing here is a compile error — the
@@ -204,15 +211,18 @@ export function OtherLodgesPanel({
 }: {
   ancestorRendersViewOnlyBanner?: boolean;
 }) {
-  // Same edit gate as the club's own lodges: the write routes enforce lodge:edit,
+  // Same edit gate as the club's own lodges: the write route enforces lodge:edit,
   // so a lodge:view admin sees this panel read-only.
   const canEdit = useAdminAreaEditAccess("lodge");
   const [lodges, setLodges] = useState<OtherLodgeRecord[]>([]);
+  // Which lodges are THIS club's own, as the central server last said (#52):
+  // `null` until it has said anything, `[]` when it said none. Only an owned
+  // lodge gets an Edit button; both read-only states are explained below.
+  const [ownedNames, setOwnedNames] = useState<OwnedOtherLodgeNames>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<OtherLodgeFormState>(emptyForm);
 
   // The spinner is for the FIRST load only. A refresh after a save keeps the
@@ -220,9 +230,9 @@ export function OtherLodgesPanel({
   // that opened the dialog, and focus could not return to it when the dialog
   // closes (it would land on the page body).
   //
-  // Only the NEWEST load may write the list. A save and a delete can each start
-  // a refresh a moment apart, and if the older response arrived last it would put
-  // back a row the newer one had already removed.
+  // Only the NEWEST load may write the list. Two refreshes can be in flight a
+  // moment apart, and if the older response arrived last it would put back
+  // what the newer one had already replaced.
   const loadSeqRef = useRef(0);
   const loadLodges = useCallback(async (showSpinner = false) => {
     const seq = ++loadSeqRef.current;
@@ -233,11 +243,10 @@ export function OtherLodgesPanel({
       if (!response.ok) {
         throw new Error("Failed to load other lodges");
       }
-      const data = (await response.json()) as {
-        otherLodges?: OtherLodgeRecord[];
-      };
+      const data = (await response.json()) as Partial<AdminOtherLodgesResponse>;
       if (seq !== loadSeqRef.current) return;
       setLodges(Array.isArray(data?.otherLodges) ? data.otherLodges : []);
+      setOwnedNames(Array.isArray(data?.ownedLodgeNames) ? data.ownedLodgeNames : null);
     } catch {
       if (seq !== loadSeqRef.current) return;
       setError("Could not load other lodges. Please try again.");
@@ -259,25 +268,15 @@ export function OtherLodgesPanel({
   // back to where they were.
   const openerRef = useRef<HTMLElement | null>(null);
 
-  function startCreate(opener: HTMLElement) {
-    openerRef.current = opener;
-    setCreating(true);
-    setEditingId(null);
-    setForm(emptyForm);
-    setError(null);
-  }
-
   function startEdit(lodge: OtherLodgeRecord, opener: HTMLElement) {
     openerRef.current = opener;
     setEditingId(lodge.id);
-    setCreating(false);
     setForm(formFromLodge(lodge));
     setError(null);
   }
 
   function cancelEdit() {
     setEditingId(null);
-    setCreating(false);
     setForm(emptyForm);
     // An error belongs to the edit it came from. Left in place, closing the
     // dialog would hand it to the page-level message, which would announce a
@@ -313,33 +312,33 @@ export function OtherLodgesPanel({
     setError(null);
     let saved = false;
     try {
-      const response = creating
-        ? await fetch("/api/admin/other-lodges", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(formPayload(form)),
-          })
-        : await fetch(`/api/admin/other-lodges/${editingId}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(formPayload(form)),
-          });
+      const response = await fetch(`/api/admin/other-lodges/${editingId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formPayload(form)),
+      });
+      const data = (await response.json().catch(() => null)) as {
+        error?: string;
+        code?: string;
+        otherLodge?: OtherLodgeRecord;
+      } | null;
       if (response.status === 403) {
-        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        // Two different refusals share the status: the administrator's role
+        // (the generic view-only message) and the central server's answer about
+        // whose lodge this is, which the route marks with a code and explains.
+        setError(
+          data?.code === OTHER_LODGE_NOT_OWNED_CODE && data.error
+            ? data.error
+            : ADMIN_FORBIDDEN_SAVE_REASON,
+        );
         return;
       }
       if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as {
-          error?: string;
-        } | null;
         throw new Error(data?.error ?? "Failed to save lodge");
       }
       // Show what was saved straight away, so the list is not stale (and an
       // Edit click on the old row cannot overwrite this save) while the
       // refresh below is still on its way.
-      const data = (await response.json().catch(() => null)) as {
-        otherLodge?: OtherLodgeRecord;
-      } | null;
       if (data?.otherLodge) applySaved(data.otherLodge);
       saved = true;
     } catch (err) {
@@ -357,67 +356,30 @@ export function OtherLodgesPanel({
     }
   }
 
-  async function deleteLodge(lodge: OtherLodgeRecord) {
-    if (
-      !window.confirm(
-        `Delete "${lodge.name}"? This removes it from the list for good.`,
-      )
-    ) {
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      const response = await fetch(`/api/admin/other-lodges/${lodge.id}`, {
-        method: "DELETE",
-      });
-      if (response.status === 403) {
-        setError(ADMIN_FORBIDDEN_SAVE_REASON);
-        return;
-      }
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        throw new Error(data?.error ?? "Failed to delete lodge");
-      }
-      await loadLodges();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete lodge");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const showForm = creating || editingId !== null;
+  const showForm = editingId !== null;
+  // The label of each owned lodge's button, and of the dialog it opens: "Edit
+  // my Lodge" when the club owns one, the lodge's name when it owns several.
+  const editLabel = (name: string) =>
+    ownedOtherLodgeEditLabel(ownedNames ?? [], name);
+  const anyOwnedRow = lodges.some((l) => l.owned);
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold">Other lodges</h2>
-          <p className="text-sm text-muted-foreground">
-            Details of other clubs&apos; lodges the club recognises. Their names
-            will be offered to non-members when they indicate they are a member
-            of another lodge.
-          </p>
-        </div>
-        <ViewOnlyActionButton
-          canEdit={canEdit}
-          describeReason={!ancestorRendersViewOnlyBanner}
-          onClick={(event) => startCreate(event.currentTarget)}
-          disabled={saving || showForm}
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          Add other lodge
-        </ViewOnlyActionButton>
+      <div>
+        <h2 className="text-xl font-semibold">Other lodges</h2>
+        <p className="text-sm text-muted-foreground">
+          Details of other clubs&apos; lodges the club recognises. Their names
+          will be offered to non-members when they indicate they are a member
+          of another lodge. The list comes from the Alpine Central Server; only
+          your own lodge can be changed here.
+        </p>
       </div>
 
       {/* While the dialog is open it covers the page, so a save or validation
           error is shown inside it, directly above Save and Cancel (the form is
           long, and Save is where the administrator's attention is when it
-          fails). This one is for everything outside it: a failed delete, or a
-          list that could not load. */}
+          fails). This one is for everything outside it: a list that could not
+          load. */}
       {error && !showForm ? (
         <p className="text-sm text-destructive" role="alert">
           {error}
@@ -427,9 +389,9 @@ export function OtherLodgesPanel({
       {/* The controls in the dialog pass `describeReason={!ancestorRendersViewOnlyBanner}`
           like the rest of the panel, although the page banner is hidden behind a
           modal. That is safe because a view-only admin can never open this
-          dialog: Add and Edit are themselves gated, so none of these controls is
-          ever shown to them disabled. (If a session's permissions narrowed while
-          the dialog was open, Save would go dead without a reason beside it.) */}
+          dialog: Edit is itself gated, so none of these controls is ever shown
+          to them disabled. (If a session's permissions narrowed while the
+          dialog was open, Save would go dead without a reason beside it.) */}
       <Dialog
         open={showForm}
         // Close is Escape, the close button or Cancel — never while a save is in
@@ -455,27 +417,32 @@ export function OtherLodgesPanel({
           }}
         >
           <DialogHeader>
-            <DialogTitle>
-              {creating ? "Add other lodge" : "Edit other lodge"}
-            </DialogTitle>
+            <DialogTitle>{editLabel(form.name)}</DialogTitle>
             <DialogDescription>
-              Only the name is required. Everything else is optional detail that
-              is shared with other clubs through the Alpine Central Server when
-              that connection is on.
+              Everything here is optional detail that is shared with other clubs
+              through the Alpine Central Server when that connection is on.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-6">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="other-lodge-name">Name</Label>
+                {/* READ-ONLY: the central server matches lodges by name, so a
+                    new name here would create a second lodge there and strand
+                    this one. The route refuses a change as well. */}
                 <Input
                   id="other-lodge-name"
                   value={form.name}
-                  maxLength={OTHER_LODGE_BOUNDS.name}
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, name: event.target.value }))
-                  }
+                  readOnly
+                  aria-describedby="other-lodge-name-note"
                 />
+                <p
+                  id="other-lodge-name-note"
+                  className="text-xs text-muted-foreground"
+                >
+                  The name is set on the central server and cannot be changed
+                  here.
+                </p>
               </div>
               {TEXT_FIELD_NAMES.map((field) => (
                 <div key={field} className="space-y-2">
@@ -665,17 +632,36 @@ export function OtherLodgesPanel({
           </CardTitle>
           <CardDescription>
             These names will be offered to non-members who indicate they are a
-            member of another lodge. Use Delete to remove one from the list.
+            member of another lodge. Each club keeps its own lodge up to date;
+            the rest arrive by download from the central server.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          {/* Why nothing here can be edited, in the two read-only states. Not
+              shown while loading: the owned list is not known yet either way. */}
+          {!loading && ownedNames === null ? (
+            <p className="text-sm text-muted-foreground" data-testid="owned-unknown">
+              Which lodge is yours is set on the central server. Connect this
+              site to it on the Alpine Central Server setup page and press{" "}
+              <strong>Download</strong>; the lodge it names for this site can
+              then be edited here.
+            </p>
+          ) : null}
+          {!loading && ownedNames !== null && ownedNames.length === 0 ? (
+            <p className="text-sm text-muted-foreground" data-testid="owned-none">
+              The central server has no lodge assigned to this site, so nothing
+              here can be edited. Ask the central server&apos;s operator to
+              assign your lodge.
+            </p>
+          ) : null}
           {loading ? (
             <p className="text-sm text-muted-foreground">
               Loading other lodges...
             </p>
           ) : lodges.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No other lodges yet. Use &ldquo;Add other lodge&rdquo; to add one.
+              No other lodges yet. They arrive when the site downloads from the
+              central server.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -687,7 +673,9 @@ export function OtherLodgesPanel({
                     <TableHead>Booking officer</TableHead>
                     <TableHead>Website</TableHead>
                     <TableHead className="text-right">Beds</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    {anyOwnedRow ? (
+                      <TableHead className="text-right">Actions</TableHead>
+                    ) : null}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -708,17 +696,15 @@ export function OtherLodgesPanel({
                         {lodge.location ?? "—"}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
+                        {/* Name and email only. The phone is private: it is
+                            not shown for any lodge, and for another club's
+                            lodge it is not sent to the browser at all (#52). */}
                         {lodge.bookingOfficerName ? (
                           <div>
                             <div>{lodge.bookingOfficerName}</div>
                             {lodge.bookingOfficerEmail ? (
                               <div className="text-xs">
                                 {lodge.bookingOfficerEmail}
-                              </div>
-                            ) : null}
-                            {lodge.bookingOfficerPhone ? (
-                              <div className="text-xs">
-                                {lodge.bookingOfficerPhone}
                               </div>
                             ) : null}
                           </div>
@@ -745,32 +731,27 @@ export function OtherLodgesPanel({
                       <TableCell className="text-right tabular-nums">
                         {lodge.bedCapacity ?? "—"}
                       </TableCell>
-                      <TableCell>
-                        <div className="flex justify-end gap-2">
-                          <ViewOnlyActionButton
-                            canEdit={canEdit}
-                            describeReason={!ancestorRendersViewOnlyBanner}
-                            variant="outline"
-                            size="sm"
-                            onClick={(event) => startEdit(lodge, event.currentTarget)}
-                            disabled={saving}
-                          >
-                            <Pencil className="mr-2 h-4 w-4" />
-                            Edit
-                          </ViewOnlyActionButton>
-                          <ViewOnlyActionButton
-                            canEdit={canEdit}
-                            describeReason={!ancestorRendersViewOnlyBanner}
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void deleteLodge(lodge)}
-                            disabled={saving}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
-                          </ViewOnlyActionButton>
-                        </div>
-                      </TableCell>
+                      {anyOwnedRow ? (
+                        <TableCell>
+                          {lodge.owned ? (
+                            <div className="flex justify-end">
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={!ancestorRendersViewOnlyBanner}
+                                variant="outline"
+                                size="sm"
+                                onClick={(event) =>
+                                  startEdit(lodge, event.currentTarget)
+                                }
+                                disabled={saving}
+                              >
+                                <Pencil className="mr-2 h-4 w-4" />
+                                {editLabel(lodge.name)}
+                              </ViewOnlyActionButton>
+                            </div>
+                          ) : null}
+                        </TableCell>
+                      ) : null}
                     </TableRow>
                   ))}
                 </TableBody>

@@ -801,8 +801,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
 
     // #2765's fifteen, plus #2749's three other-lodges sites classified under
     // the same rule on arrival (INV-PRIV-013), plus #2942's member-roster
-    // name-detail writer, classified the same way for the same reason.
-    expect(Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)).toHaveLength(19);
+    // name-detail writer, classified the same way for the same reason; minus
+    // the two other-lodges writers #52 removed with their handlers.
+    expect(Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)).toHaveLength(17);
     expect([
       ...new Set(Object.values(LODGE_GATED_ADMIN_CATEGORIES_2765)),
     ]).toEqual(["admin"]);
@@ -999,9 +1000,10 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
       "src/app/api/admin/lockers/bulk/route.ts",
       "src/app/api/admin/lockers/route.ts",
     ]);
-    // Eight files from #2765's fifteen sites, plus #2749's two other-lodges
-    // route files, plus #2942's roster-settings route file.
-    expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(11);
+    // Eight files from #2765's fifteen sites, plus #2749's other-lodges item
+    // route file (its list route lost its only writer in #52), plus #2942's
+    // roster-settings route file.
+    expect(files.filter((file) => gateOf(file) === "lodge")).toHaveLength(10);
     expect(files.filter((file) => gateOf(file) === "other")).toEqual([]);
 
     /*
@@ -1391,7 +1393,10 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 357 -> 358 (#3563): the club currency and locale record, likewise - a new
     // unpinned writer under `/api/admin/club-format/`, which no per-site map
     // covers. RE-MEASURED with `npm run audit:census`, not incremented.
-    ).toEqual({ pinned: 128, unpinned: 358 });
+    // 128 -> 126 pinned, 358 unchanged (#52): the other-lodges CREATE and DELETE
+    // writers leave the keep with their handlers; the unpinned population does
+    // not move. RE-MEASURED with `npm run audit:census`, not decremented.
+    ).toEqual({ pinned: 126, unpinned: 358 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {
