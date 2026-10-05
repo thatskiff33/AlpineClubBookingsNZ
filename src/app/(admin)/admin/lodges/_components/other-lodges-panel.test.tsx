@@ -34,6 +34,7 @@ vi.mock("next-auth/react", () => ({
   }),
 }));
 
+import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import type { SerializedOtherLodge } from "@/lib/other-lodges";
 import { OtherLodgesPanel } from "./other-lodges-panel";
 
@@ -245,8 +246,9 @@ describe("Other lodges add/edit popup (#51)", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
     await within(dialog).findByRole("button", { name: /saving/i });
 
+    // No clickable close button that does nothing: it is hidden while saving.
+    expect(within(dialog).queryByRole("button", { name: /^close$/i })).toBeNull();
     fireEvent.keyDown(dialog, { key: "Escape" });
-    fireEvent.click(within(dialog).getByRole("button", { name: /^close$/i }));
     expect(screen.getByRole("dialog")).toBeTruthy();
 
     // Once the save lands, the dialog closes.
@@ -258,7 +260,11 @@ describe("Other lodges add/edit popup (#51)", () => {
     stubFetch([lodge()]);
     await renderPanel();
     const editButton = screen.getByRole("button", { name: /^edit$/i });
-    editButton.focus();
+    // NOT focused first: a click does not focus a button in every browser
+    // (Safari, Firefox on macOS), and jsdom's fireEvent.click does not either.
+    // Radix would then restore focus to the page body, so only the panel's own
+    // return-to-opener can pass this.
+    expect(document.activeElement).not.toBe(editButton);
     fireEvent.click(editButton);
     const dialog = await screen.findByRole("dialog");
 
@@ -266,9 +272,22 @@ describe("Other lodges add/edit popup (#51)", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     // The same button is still mounted (a refresh keeps the table), so focus
-    // has somewhere to return to.
+    // has somewhere to return to, and it HOLDS it once everything has settled.
     expect(screen.getByRole("button", { name: /^edit$/i })).toBe(editButton);
-    await waitFor(() => expect(document.activeElement).toBe(editButton));
+    await expectRecoveryAlertToHoldFocus(editButton);
+  });
+
+  it("returns focus to the Add button that opened it", async () => {
+    stubFetch([lodge()]);
+    await renderPanel();
+    const addButton = screen.getByRole("button", { name: /add other lodge/i });
+    fireEvent.click(addButton);
+    const dialog = await screen.findByRole("dialog");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    await expectRecoveryAlertToHoldFocus(addButton);
   });
 
   it("keeps the table (and the Edit button's focus target) while the list refreshes after a SAVE", async () => {
@@ -279,7 +298,12 @@ describe("Other lodges add/edit popup (#51)", () => {
     let releaseRefresh: () => void = () => undefined;
     fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
       if (init?.method && init.method !== "GET") {
-        return { ok: true, status: 200, json: async () => ({}) };
+        // The server answers a save with the saved lodge.
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ otherLodge: lodge({ name: "Tararua Lodge (renamed)" }) }),
+        };
       }
       gets += 1;
       if (gets > 1) await new Promise<void>((resolve) => (releaseRefresh = resolve));
@@ -288,7 +312,6 @@ describe("Other lodges add/edit popup (#51)", () => {
     vi.stubGlobal("fetch", fetchMock);
     await renderPanel();
     const editButton = screen.getByRole("button", { name: /^edit$/i });
-    editButton.focus();
     fireEvent.click(editButton);
     const dialog = await screen.findByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("Name"), {
@@ -303,10 +326,100 @@ describe("Other lodges add/edit popup (#51)", () => {
     // unmounted this button, leaving focus nowhere to return to.
     expect(screen.queryByText(/loading other lodges/i)).toBeNull();
     expect(screen.getByRole("button", { name: /^edit$/i })).toBe(editButton);
-    await waitFor(() => expect(document.activeElement).toBe(editButton));
+    await expectRecoveryAlertToHoldFocus(editButton);
+    // And the saved name is on screen already, not the stale one: an Edit click
+    // on the old row during the refresh cannot overwrite this save.
+    expect(screen.getByText("Tararua Lodge (renamed)")).toBeTruthy();
+    expect(screen.queryByText("Tararua Lodge")).toBeNull();
 
     releaseRefresh();
     await waitFor(() => expect(screen.getByRole("button", { name: /^edit$/i })).toBe(editButton));
+  });
+
+  it("a discarded edit's error does not reappear on the page after the dialog closes", async () => {
+    stubFetch([lodge()]);
+    await renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: /add other lodge/i }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    await within(dialog).findByRole("alert");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^cancel$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    expect(screen.queryByRole("alert", { hidden: true })).toBeNull();
+
+    // Same for Escape.
+    fireEvent.click(screen.getByRole("button", { name: /add other lodge/i }));
+    const second = await screen.findByRole("dialog");
+    fireEvent.click(within(second).getByRole("button", { name: /^save$/i }));
+    await within(second).findByRole("alert");
+    fireEvent.keyDown(second, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.queryByRole("alert", { hidden: true })).toBeNull();
+  });
+
+  it("shows the error directly above Save and Cancel, after the fields", async () => {
+    stubFetch([lodge()]);
+    await renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: /add other lodge/i }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    const alert = await within(dialog).findByRole("alert");
+
+    const follows = (a: Element, b: Element) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    // After the last field of the form, before the buttons it explains.
+    expect(follows(within(dialog).getByLabelText("Name"), alert)).toBe(true);
+    expect(
+      follows(within(dialog).getByRole("button", { name: /add amenity/i }), alert),
+    ).toBe(true);
+    expect(follows(alert, within(dialog).getByRole("button", { name: /^save$/i }))).toBe(true);
+    expect(follows(alert, within(dialog).getByRole("button", { name: /^cancel$/i }))).toBe(true);
+  });
+
+  it("applies the results of overlapping refreshes newest-first, never letting an older one win", async () => {
+    // A save's refresh and a delete's refresh can be in flight together. If the
+    // older response arrived last it would put back the row the newer one removed.
+    const releases: Array<() => void> = [];
+    const answers: SerializedOtherLodge[][] = [[lodge()], [lodge()], []];
+    let get = 0;
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") {
+        return { ok: true, status: 200, json: async () => ({ otherLodge: lodge() }) };
+      }
+      if (init?.method === "DELETE") {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      const mine = get;
+      get += 1;
+      if (mine >= 1) await new Promise<void>((resolve) => releases.push(resolve));
+      return { ok: true, status: 200, json: async () => ({ otherLodges: answers[mine] }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", () => true);
+    await renderPanel();
+
+    // Save -> refresh #1 (held open).
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(releases).toHaveLength(1));
+
+    // Delete -> refresh #2 (held open), while #1 is still pending.
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+    await waitFor(() => expect(releases).toHaveLength(2));
+
+    // The NEWER refresh answers first (the lodge is gone), then the older one
+    // answers late with the stale list that still contains it.
+    releases[1]();
+    await screen.findByText(/no other lodges yet/i);
+    releases[0]();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Tararua Lodge")).toBeNull();
+    expect(screen.getByText(/no other lodges yet/i)).toBeTruthy();
   });
 
   it("a view-only admin cannot open the add or edit dialog", async () => {

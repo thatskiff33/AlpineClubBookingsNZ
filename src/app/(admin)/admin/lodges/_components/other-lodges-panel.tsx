@@ -219,7 +219,13 @@ export function OtherLodgesPanel({
   // table mounted: replacing it with "Loading..." would unmount the Edit button
   // that opened the dialog, and focus could not return to it when the dialog
   // closes (it would land on the page body).
+  //
+  // Only the NEWEST load may write the list. A save and a delete can each start
+  // a refresh a moment apart, and if the older response arrived last it would put
+  // back a row the newer one had already removed.
+  const loadSeqRef = useRef(0);
   const loadLodges = useCallback(async (showSpinner = false) => {
+    const seq = ++loadSeqRef.current;
     if (showSpinner) setLoading(true);
     setError(null);
     try {
@@ -230,11 +236,13 @@ export function OtherLodgesPanel({
       const data = (await response.json()) as {
         otherLodges?: OtherLodgeRecord[];
       };
+      if (seq !== loadSeqRef.current) return;
       setLodges(Array.isArray(data?.otherLodges) ? data.otherLodges : []);
     } catch {
+      if (seq !== loadSeqRef.current) return;
       setError("Could not load other lodges. Please try again.");
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, []);
 
@@ -242,10 +250,13 @@ export function OtherLodgesPanel({
     void loadLodges(true);
   }, [loadLodges]);
 
-  // The button that opened the dialog. Radix returns focus on close only to a
-  // `DialogTrigger`, and this dialog is opened from the Add and Edit buttons
-  // instead, so without this the keyboard user lands on the page body after
-  // Save or Cancel and has to tab back to where they were.
+  // The button that opened the dialog, so focus can go back to it on close.
+  // Radix restores focus to whatever was focused when the dialog mounted, but a
+  // button click does not focus the button in every browser (Safari, and Firefox
+  // on macOS), so that can be the page body; and the dialog's own close handler
+  // otherwise aims at a `DialogTrigger`, which this dialog does not have. Without
+  // this, a keyboard user lands on the page after Save or Cancel and has to tab
+  // back to where they were.
   const openerRef = useRef<HTMLElement | null>(null);
 
   function startCreate(opener: HTMLElement) {
@@ -268,6 +279,19 @@ export function OtherLodgesPanel({
     setEditingId(null);
     setCreating(false);
     setForm(emptyForm);
+    // An error belongs to the edit it came from. Left in place, closing the
+    // dialog would hand it to the page-level message, which would announce a
+    // validation error for an edit the administrator has just discarded.
+    setError(null);
+  }
+
+  /** Show a lodge the server has just saved, without waiting for the refresh. */
+  function applySaved(saved: OtherLodgeRecord) {
+    setLodges((prev) =>
+      [...prev.filter((l) => l.id !== saved.id), saved].sort((a, b) =>
+        a.name.localeCompare(b.name),
+      ),
+    );
   }
 
   function setAmenity(index: number, patch: Partial<AmenityFormRow>) {
@@ -287,6 +311,7 @@ export function OtherLodgesPanel({
     }
     setSaving(true);
     setError(null);
+    let saved = false;
     try {
       const response = creating
         ? await fetch("/api/admin/other-lodges", {
@@ -309,16 +334,26 @@ export function OtherLodgesPanel({
         } | null;
         throw new Error(data?.error ?? "Failed to save lodge");
       }
-      cancelEdit();
-      // The save is done: stop "saving" BEFORE the list refresh, not after it.
-      // Held open across the refresh, every Edit button stays disabled, and a
-      // disabled button cannot take focus back when the dialog closes.
-      setSaving(false);
-      await loadLodges();
+      // Show what was saved straight away, so the list is not stale (and an
+      // Edit click on the old row cannot overwrite this save) while the
+      // refresh below is still on its way.
+      const data = (await response.json().catch(() => null)) as {
+        otherLodge?: OtherLodgeRecord;
+      } | null;
+      if (data?.otherLodge) applySaved(data.otherLodge);
+      saved = true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save lodge");
     } finally {
       setSaving(false);
+    }
+    if (saved) {
+      // The save is done and `saving` is already cleared, so the refresh runs
+      // with the buttons enabled: held open across it, every Edit button would
+      // stay disabled and a disabled button cannot take focus back when the
+      // dialog closes. Closing and clearing `saving` land in one render.
+      cancelEdit();
+      await loadLodges();
     }
   }
 
@@ -379,30 +414,42 @@ export function OtherLodgesPanel({
       </div>
 
       {/* While the dialog is open it covers the page, so a save or validation
-          error is shown inside it, next to Save. This one is for everything
-          outside it: a failed delete, or a list that could not load. */}
+          error is shown inside it, directly above Save and Cancel (the form is
+          long, and Save is where the administrator's attention is when it
+          fails). This one is for everything outside it: a failed delete, or a
+          list that could not load. */}
       {error && !showForm ? (
         <p className="text-sm text-destructive" role="alert">
           {error}
         </p>
       ) : null}
 
+      {/* The controls in the dialog pass `describeReason={!ancestorRendersViewOnlyBanner}`
+          like the rest of the panel, although the page banner is hidden behind a
+          modal. That is safe because a view-only admin can never open this
+          dialog: Add and Edit are themselves gated, so none of these controls is
+          ever shown to them disabled. (If a session's permissions narrowed while
+          the dialog was open, Save would go dead without a reason beside it.) */}
       <Dialog
         open={showForm}
         // Close is Escape, the close button or Cancel — never while a save is in
         // flight, so the form cannot vanish under a request that may still land.
         // This one guard covers Escape and the close button alike: Radix routes
-        // both through here.
+        // both through here. The close button is also hidden while saving, so
+        // there is no clickable button that does nothing.
         onOpenChange={(next) => {
           if (!next && !saving) cancelEdit();
         }}
       >
         <DialogContent
           className="max-h-[90vh] overflow-y-auto sm:max-w-3xl"
+          showCloseButton={!saving}
           // A click on the dimmed background does NOT close it: the form is long
           // and one stray click outside must not throw away what was typed.
           onInteractOutside={(event) => event.preventDefault()}
           onCloseAutoFocus={(event) => {
+            // Back to the button that opened the dialog. (If a refresh has since
+            // removed that row there is nothing to focus and this is a no-op.)
             event.preventDefault();
             openerRef.current?.focus();
           }}
@@ -418,11 +465,6 @@ export function OtherLodgesPanel({
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-6">
-            {error ? (
-              <p className="text-sm text-destructive" role="alert">
-                {error}
-              </p>
-            ) : null}
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="other-lodge-name">Name</Label>
@@ -592,6 +634,11 @@ export function OtherLodgesPanel({
               </ViewOnlyActionButton>
             </fieldset>
 
+            {error ? (
+              <p className="text-sm text-destructive" role="alert">
+                {error}
+              </p>
+            ) : null}
             <div className="flex gap-2">
               <ViewOnlyActionButton
                 canEdit={canEdit}
