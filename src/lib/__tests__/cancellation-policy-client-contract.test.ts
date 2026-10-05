@@ -6,7 +6,7 @@
 // module-level one** → so a caller already inside `prisma.$transaction` MUST
 // pass its own `tx`. Every assertion below repeats that id in its failure
 // message, so whoever trips one is handed the rule instead of having to go and
-// find it (`AGENTS.md` → "Keeping the table usable"). The reasoning and the
+// find it (`AGENTS.md` → "Routing table"). The reasoning and the
 // writer inventory are in `docs/CONCURRENCY_AND_LOCKING.md` → "Which client
 // reads the cancellation and non-member-hold policy".
 //

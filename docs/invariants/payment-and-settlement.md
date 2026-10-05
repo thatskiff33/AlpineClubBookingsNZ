@@ -240,16 +240,11 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   the fenced `payment.updateMany` re-asserts the outstanding delta (on BOTH
   answers), the settle-from status, the zero refund history and the absence of
   Xero evidence as WHERE clauses, so a concurrent writer yields count 0 → 409;
-  and (3) AFTER THE FACT, NARROWLY — `auditIbAppliedCreditStrands` recomputes
-  `amountCents + creditAppliedCents - finalPriceCents` over committed data and
-  reports the uncollected addition beside it.
-  **(3) is not a safety net for this settle.** It enumerates a payment only when
-  the booking still carries UN-ALLOCATED applied credit
-  (`deriveIbAppliedCreditStrandFinding` returns null on
-  `ledgerAppliedCents <= 0`), scans INTERNET_BANKING payments only, and is an
-  operator-run script (`scripts/audit-ib-hold-clearing.ts`), not a scheduled job
-  or an alert. Within that population a NEGATIVE `mirrorInvariantDeltaCents`
-  equal-and-opposite to the payment's uncollected addition is not drift.
+  and (3) AFTER THE FACT — the booking-ledger census (`INV-MONEY-037`) checks
+  every booking's `amountCents`, `creditAppliedCents` and uncollected
+  addition against its ledger lines over committed data. **(3) is not a safety
+  net for this settle**: it is an operator-run command, not a scheduled job or
+  an alert.
   Either answer is recorded on the mark-paid audit row BOTH ways — with the
   settled figure written, the amount owing, and what was deliberately left
   uncollected. A covered extra also writes
@@ -413,9 +408,11 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   retried: the writer above, #1491's fold and `applyLocalRefundAllocation`, which
   refuses only when headroom is gone. All take the `Payment` row first
   (`lockPaymentForRefundedTotal`), then refund rows, then transaction rows.
-- The exception is group settlement (`INV-PAY-031`–`037`): it refunds child
-  payments that have no transaction rows and writes their `Payment` mirror
-  directly.
+- Two writers set an organiser-settled child's mirror directly, because the
+  child has no transaction rows: the pre-#3653 group-settlement path
+  (`INV-PAY-031`–`037`) and the organiser child refund executor
+  (`organiser-child-refund-executor.ts`, [`INV-PAY-114`](#inv-pay-114)), which
+  records each Stripe refund's row first.
 - Pinned by `payment-transactions-refunds.test.ts` and
   `card-refund-mirror-races.realdb.test.ts`. Totals the old formula left short
   are listed by `pnpm run payments:audit-refunded-total`, never repaired by code.
@@ -1212,6 +1209,8 @@ one, check the other.
 
 ## INV-PAY-034
 
+**Related: `INV-PAY-114`**, which supersedes this for a card settlement cancelled after #3653.
+
 - An organiser-cancel group cleanup must be re-drivable after a crash (#1236).
   Cancelling the organiser booking is single-flight, so a re-invoked cancel
   409s and cannot re-enter the joiner cleanup; the `group-settlement-reaper`
@@ -1247,6 +1246,8 @@ one, check the other.
 
 ## INV-PAY-036
 
+**Related: `INV-PAY-114`**, which supersedes this for a card settlement cancelled after #3653.
+
 - The group-cancel refund credit-note enqueue is **durable** (#1257/#1377).
   Each child's Xero refund credit-note outbox row (integer cents) is enqueued
   **inside the same transaction** as that child's cancel + `refundedAmountCents`
@@ -1261,6 +1262,8 @@ one, check the other.
 
 ## INV-PAY-037
 
+**Related: `INV-PAY-114`**, which supersedes this for a card settlement cancelled after #3653.
+
 - A failed settlement refund must stay durably owed (#1351): the frozen plan
   is never nulled, a payment-recovery operation persisted before the inline
   Stripe call retries the refund under the same
@@ -1269,6 +1272,44 @@ one, check the other.
   refund mirror twice — the replay only ever writes a mirror to an
   already-CANCELLED plan child whose `refundedAmountCents` is still zero,
   via a conditional update. Alerts fire on retry exhaustion only.
+
+## INV-PAY-114
+
+**Related: `INV-PAY-034`, `INV-PAY-036`, `INV-PAY-037`** (the legacy and
+Internet Banking path) and **`INV-PAY-103`** (the one card-refund writer).
+
+- **A child the organiser paid for by card is refunded out of the group's
+  combined payment, one Stripe refund per child, and nothing is called
+  refunded until Stripe answered** (#3653). An Internet Banking child keeps
+  the ordinary options.
+  - **The debt is written first**, under `lock(1)`: one
+    `PaymentRecoveryOperation` per refund, keyed `organiser_child_refund_*`,
+    amount frozen, counted against the child's payment and the combined
+    capture. An edit over it is refused; a cancellation
+    clamps.
+  - **One disposition, the organiser's card**: no account credit for an edit,
+    a joiner's own cancel or a consent lapse. Every edit door, quote and
+    review charge refuses a price increase.
+  - **The record waits for Stripe.** The `PaymentRefund` (no transaction),
+    mirror, Xero refund note, settlement status and close commit in one
+    `lock(1)` transaction; the edit door raises no modification note. A replay
+    first finds Stripe's refund by key.
+  - **What has gone back** is the larger of the mirror and the child's
+    refund rows (`organiserChildRefundedCents`). A cancellation, organiser's or joiner's,
+    tiers what remains less refunds owed through `cancelRefundableBaseCents`
+    ([INV-PAY-018]); the organiser's freezes `{ perChildRefunds }`. A joiner's
+    cancel after a reduction takes the paid path; behind the group's it (and
+    its preview) refunds nothing more; its frozen figures follow the final amount. A
+    pre-#3653 `{childId: cents}` plan and an Internet Banking settlement keep
+    `INV-PAY-034`-`037`.
+  - **Only Stripe evidence raises a child's mirror**: the Xero
+    credit-note repair never takes it past the child's recorded refunds.
+  - **A pending refund that fails** is taken back out by the payments cron
+    and its debt reopened, marked for the recovery audit, due after Stripe's
+    key window.
+  - `pnpm run payments:audit-organiser-child-refunds` lists unbacked mirrors,
+    read-only. Home: `organiser-child-refund.ts` and its executor; proven by
+    `organiser-child-refund.realdb.test.ts`.
 
 ## INV-PAY-105
 
@@ -1582,10 +1623,11 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   credit coming back, once** (#3791, owner decisions of 2 October 2026; Xero
   per the orchestrator's reading of decision 1).
   - **One give-back.** `giveBackAppliedCredit` (`member-credit.ts`) is the
-    clamp's mechanism and the share's: the credit-ledger lock, the
+    clamp's mechanism, the share's and, since #3809, a credit-paid booking's
+    price reduction's (`INV-MOD-011`): the credit-ledger lock, the
     deallocation fence, a positive `BOOKING_APPLIED` row (a review's names the
-    booking in `sourceBookingId`) and the deallocation of an internet-banking
-    invoice's excess credit. The share lowers the mirror a cancellation tiers.
+    booking in `sourceBookingId`) and the deallocation of an invoice's excess
+    allocated credit (bank transfer or card, #3809). The share lowers the mirror a cancellation tiers.
   - **Xero agrees with the app**, for an issued invoice: invoice less its
     reduction notes is the booking's price, Xero's due is the app's owed, and
     the member's Xero credit, counting noteless rows minted when spent, is the
@@ -1595,18 +1637,47 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     scoped to the review task and wait for the deallocation, failing for an
     operator retry when it FAILED. A captured payment's share keeps the
     document rule.
-  - **The ledger posts what was credited**, none at zero; on a covered booking
+  - **The ledger posts what was returned**, none at zero; on a covered booking
     the give-back beyond the re-price is an agreed reduction no re-price
     reverses (`agreedGiveBackKey`).
   - **Unpaid** - credit short of the price beyond earlier review give-backs:
     no more given back than the booking's review re-prices removed.
-  - **Cancelled first**: netted cumulatively against the restore from figures
-    frozen at the cancellation, the tier re-run and refused, task OPEN, where
-    it does not reproduce the restore. $200 credit-paid, $50 share: $200 back
-    at 100%, $105 at 50% less $20, either order.
+  - **Cancelled first**, every route (#3835): netted cumulatively against
+    the cancellation, by what its CANCELLED event froze (tier method, bases,
+    `INV-PAY-115`'s cap, earlier reviews); refused, task OPEN, where the tier
+    does not reproduce it. Untiered money goes first; the capture gets only
+    its part. $200, $50 share: $200, $105, $50 back at 100%, 50% less $20, 0%.
   - Home: `edit-financial-review-account-credit.ts`,
-    `dispatchEditReviewAccountCreditXero`; proven by
-    `edit-financial-review-races.realdb.test.ts`.
+    `edit-financial-review-cancel-netting.ts`; proven by
+    `edit-financial-review-{races,captured-cancel}.realdb.test.ts`.
+
+
+## INV-PAY-115
+
+- **A cancellation tiers applied credit capped at what the booking is now worth,
+  money paid first - for a booking reduced through #3809's settlement** (owner
+  decision A: credit-paid members are treated the same as card-paid ones). The
+  card slice's base caps money paid at price plus change fee
+  (`cancelRefundableBaseCents`); the credit slice is what the same cap leaves of
+  the applied credit (`cancelAppliedCreditBaseCents`), tiered by
+  `calculateAppliedCreditRestore`. $200 credit-paid, $5 back on a $50 reduction
+  at 50% less $20, then a cancel at the same tier restores $55: $60 in all, the
+  card-paid figure.
+  - **Only new reductions** (owner decision, 4 Oct 2026, "Cap new reductions
+    only"): the cap applies where an edit's history row records the settlement
+    of applied credit (`bookingReducedThroughCreditGiveBack`,
+    `BookingModification.newData`). A booking reduced before that release tiers
+    all the credit still applied, as before: never short, and up to about $20
+    more than an all-card member at partial tiers. No data change.
+  - **A captured payment the cancel cannot refund** - a reduction refunded the
+    card whole - has its credit tiered the same way, with no card slice, not
+    restored whole (`refundedPaymentCreditRestore`), on a booking reduced
+    through that settlement. Before it, or never captured, it is restored
+    whole, as on main.
+  - The executed cancel, the member's preview and the review's netting
+    (`INV-PAY-113`) use one base; the CANCELLED event freezes it
+    (`appliedCreditBaseCents`), capped or not. Credit kept above the cap counts
+    as kept beyond the policy (design §5.1).
 
 ## INV-PAY-069
 

@@ -98,6 +98,8 @@ vi.mock("@/lib/booking-modify", () => ({
   // #3531: the wrapper the route reaches the reader through; answers as the reader stub does.
   editedGuestPricingLocks: vi.fn().mockReturnValue({ lockedNightPrices: null }),
   calculateModificationSettlementOptions: vi.fn().mockResolvedValue(null),
+  // #3653: the organiser-card increase refusal; none of these is one.
+  organiserChildChargeRefusal: vi.fn().mockReturnValue(null),
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE: "quote-priced",
 }));
 vi.mock("@/lib/booking-guests", () => ({

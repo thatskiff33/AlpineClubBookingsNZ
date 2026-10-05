@@ -91,6 +91,7 @@ import {
 import { clubFormatValues } from "@/lib/club-format-server";
 import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
 import { intentCurrencyDiffers } from "@/lib/additional-intent-currency";
+import { organiserHasPaidSettlement } from "@/lib/group-organiser-paid";
 import {
   PAYMENT_PROCESSING_CODE,
   PAYMENT_PROCESSING_MESSAGE,
@@ -235,9 +236,13 @@ export async function createGroupSettlementIntent(
   const format = await clubFormatValues();
   const group = await requireOrganiserPaysGroup(rawCode, sessionUserId);
 
-  // SUCCEEDED alone, not `organiserHasPaidSettlement`: a refund-history
-  // settlement is re-minted below, never "already settled" (#3672 review).
-  if (group.settlement?.status === PaymentStatus.SUCCEEDED) {
+  // `organiserHasPaidSettlement`: SUCCEEDED, or PARTIALLY_REFUNDED. Since #3653
+  // a live group's settlement reads PARTIALLY_REFUNDED once a joiner's
+  // reduction is refunded out of it, and the group is still paid for: minting
+  // past it would overwrite the combined payment every child's refund comes
+  // out of. A fully REFUNDED settlement still owes, and is re-minted below
+  // (#1883, #3672 review).
+  if (group.settlement && organiserHasPaidSettlement(group.settlement)) {
     return {
       outcome: "already_settled",
       amountCents: group.settlement.amountCents,

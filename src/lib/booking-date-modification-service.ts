@@ -75,6 +75,7 @@ import {
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
+import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { markCrossFamilyGuestsOnBooking } from "@/lib/member-guest-add-policy";
 import {
@@ -102,6 +103,7 @@ import {
 } from "@/lib/date-only";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { sendBookingModifiedEmail } from "@/lib/email";
+import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import logger from "@/lib/logger";
 import {
   deletePromoRedemptionAndAdjustCount,
@@ -216,6 +218,7 @@ type DateModificationTransactionResult =
     paymentReference: string | null;
     xeroInvoiceNumber: string | null;
     xeroRefundAmountCents: number;
+    appliedCreditGivenBackCents: number;
     xeroAdditionalAmountCents: number;
     // F20 (#1887): the reprice landed the booking fully credit-covered and it
     // was auto-confirmed at $0, so the primary Xero invoice must be created.
@@ -228,6 +231,8 @@ export type DateModificationResponse = {
   changeFeeCents: number;
   refundAmountCents: number;
   accountCreditAmountCents: number;
+  /** #3809: applied credit the reduction gave back, as account credit. */
+  appliedCreditGivenBackCents: number;
   settlementMethod: BookingModificationSettlementMethod | null;
   policyRetainedAmountCents: number;
   additionalAmountCents: number;
@@ -921,6 +926,8 @@ export async function modifyBookingDates({
       changeFeeCents,
       settlementOptions,
       settlementMethod,
+      todayAtClub,
+      format,
     });
     const {
       refundAmountCents,
@@ -1332,6 +1339,7 @@ export async function modifyBookingDates({
           settlementMethod: payments.settlementMethod,
           accountCreditAmountCents: payments.accountCreditAmountCents,
           policyRetainedAmountCents: payments.policyRetainedAmountCents,
+          ...creditGiveBackHistory(payments.appliedCreditGiveBack),
           // #2390: the same sentence the member was shown at the edit, kept on
           // the booking's own history so the split has an answer later.
           ...(promoCoverage ? { promoCoverageNote: promoCoverage.message } : {}),
@@ -1399,6 +1407,13 @@ export async function modifyBookingDates({
         booking.payment?.id,
       );
     }
+    // #3653: an organiser-settled child's refund debt, before this edit commits.
+    await reserveOrganiserChildModificationRefund(tx, {
+      plan: payments.organiserChildRefund,
+      bookingId,
+      payment: booking.payment,
+      bookingModificationId: bookingModification.id,
+    });
 
     // Fire the deferred envelope constraint triggers here so a violation is
     // attributed to this service instead of the transaction's COMMIT.
@@ -1469,7 +1484,9 @@ export async function modifyBookingDates({
       paymentReference: booking.payment?.reference ?? null,
       xeroInvoiceNumber: booking.payment?.xeroInvoiceNumber ?? null,
       xeroRefundAmountCents,
+      appliedCreditGivenBackCents: payments.appliedCreditGivenBackCents,
       xeroAdditionalAmountCents,
+      organiserChildRefund: payments.organiserChildRefund,
       zeroDollarAutoPaid,
       paymentId: booking.payment?.id ?? null,
       paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
@@ -1536,6 +1553,7 @@ export async function modifyBookingDates({
     changeFeeCents: result.changeFeeCents,
     refundAmountCents: result.refundAmountCents,
     accountCreditAmountCents: result.accountCreditAmountCents,
+    appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
     settlementMethod: result.settlementMethod,
     policyRetainedAmountCents: result.policyRetainedAmountCents,
     additionalAmountCents: result.additionalAmountCents,
@@ -1650,6 +1668,9 @@ async function dispatchDatePostTransactionSideEffects({
     settlementAmountCents: result.xeroRefundAmountCents,
     settlementMethod: result.settlementMethod,
     refundedThroughStripe: result.hasSucceededPayment,
+    appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
+    // #3653: the organiser child refund raises the one note, after Stripe.
+    organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,
     // F20 (#1887): a reprice that landed the booking fully credit-covered
     // auto-confirmed it at $0, so create the primary invoice if none was issued
     // (mirrors the batch modify path).
@@ -1723,6 +1744,7 @@ async function dispatchDatePostTransactionSideEffects({
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
       accountCreditAmountCents: result.accountCreditAmountCents,
+      appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
       additionalAmountCents: result.additionalAmountCents,
       additionalPaymentMethod:
         result.additionalAmountCents > 0 &&
@@ -2293,6 +2315,7 @@ export async function adminShiftBookingDates({
       changeFeeCents: 0,
       refundAmountCents: 0,
       accountCreditAmountCents: 0,
+      appliedCreditGivenBackCents: 0,
       additionalAmountCents: 0,
       additionalPaymentMethod: undefined,
       paymentReference: result.paymentReference,
@@ -2325,6 +2348,7 @@ export async function adminShiftBookingDates({
     changeFeeCents: 0,
     refundAmountCents: 0,
     accountCreditAmountCents: 0,
+    appliedCreditGivenBackCents: 0,
     settlementMethod: null,
     policyRetainedAmountCents: 0,
     additionalAmountCents: 0,

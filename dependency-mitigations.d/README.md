@@ -20,7 +20,7 @@ implements those rules and every other document links here.
 
 Each record is **its own file**. That is not a local trick, it is a rule: **an
 artifact every lane adds an entry to is a directory of per-lane fragments,
-never one shared file.** It lives in `AGENTS.md` -> "Change Discipline", and
+never one shared file.** It lives in `AGENTS.md` -> "Change discipline", and
 [`changelog.d/README.md`](../changelog.d/README.md) carries the full statement
 and the other instances. Two lanes adding records never touch the same file.
 

@@ -17,6 +17,7 @@ import {
   recordSkippedXeroBookingInvoiceUpdateOperation,
   type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
+import { giveBackNoteScope } from "@/lib/xero-review-task-key";
 import {
   refundMethodForSettlementMethod,
   type RefundMethod,
@@ -41,11 +42,24 @@ type XeroBookingEditFinancialAction =
       refundAmountCents: number;
       /** `INV-PAY-101`: how the reduction went back, as the note will say. */
       refundMethod: RefundMethod;
+      /**
+       * #3809: applied credit given back - always an allocated note of its own,
+       * worded as account credit and scoped (`giveBackNoteScope`), beside the
+       * refund's note above or alone where the refund (`refundAmountCents`) is
+       * nothing, since one note may name only one method (`INV-PAY-101`).
+       */
+      allocatedGiveBackCents: number;
       reason: string;
     }
   | {
       type: "modification-account-credit-note";
       refundAmountCents: number;
+      /**
+       * #3809: applied credit the same edit gave back, which the deallocation
+       * reopened the invoice by: an invoice-ALLOCATED note of its own beside
+       * the unallocated one for the minted credit.
+       */
+      allocatedGiveBackCents: number;
       reason: string;
     };
 
@@ -107,6 +121,24 @@ export interface ClassifyXeroBookingEditSettlementInput {
    * when `refundMethod` is omitted.
    */
   refundedThroughStripe?: boolean | null;
+  /**
+   * #3809: applied credit a paid booking's reduction gave back
+   * (`appliedCreditGivenBackCents`). Its deallocation reopens the invoice by
+   * this much, so an invoice-allocated note takes it off again, as for a card
+   * refund: the edit's allocated note, worded as account credit, where it is
+   * all that came back; else an allocated note of its own, beside the card or
+   * bank refund's note or the credit election's unallocated one.
+   */
+  appliedCreditGiveBackCents?: number;
+  /**
+   * #3653 (`INV-PAY-114`): the reduction is an organiser-settled child's,
+   * returned to the organiser's card out of the group's combined payment. Its
+   * refund credit note is raised by `processOrganiserChildRefundOperation` in
+   * the transaction that records the refund Stripe made - AFTER the money moved
+   * - so this dispatcher raises no modification note of its own for it. Two
+   * notes would credit the joiner's invoice twice for one refund.
+   */
+  organiserChildRefundOwnsCreditNote?: boolean;
 }
 
 export interface QueueXeroBookingEditSettlementInput
@@ -165,25 +197,37 @@ export function classifyXeroBookingEditSettlement(
         : "Positive booking-edit delta needs an unpaid supplementary invoice; no confirmed additional Stripe payment exists.",
     };
   } else if (xeroNetAmountCents < 0) {
-    const refundAmountCents = input.settlementAmountCents ?? Math.abs(xeroNetAmountCents);
-    if (refundAmountCents <= 0) {
+    const refundAmountCents = Math.max(0, input.settlementAmountCents ?? Math.abs(xeroNetAmountCents));
+    const giveBackCents = Math.max(0, input.appliedCreditGiveBackCents ?? 0);
+    if (refundAmountCents <= 0 && giveBackCents <= 0) {
       financialAction = {
         type: "none",
         reason: "Booking edit reduction has no policy-returnable settlement amount.",
       };
-    } else if (input.settlementMethod === "credit") {
+    } else if (input.organiserChildRefundOwnsCreditNote) {
+      financialAction = {
+        type: "none",
+        reason:
+          "The reduction is refunded to the group organiser's card; its refund credit note is raised once Stripe has made the refund.",
+      };
+    } else if (input.settlementMethod === "credit" && refundAmountCents > 0) {
       financialAction = {
         type: "modification-account-credit-note",
         refundAmountCents,
+        allocatedGiveBackCents: giveBackCents,
         reason: "Negative booking-edit delta held as account credit needs an unapplied modification credit note.",
       };
     } else {
+      // #3809: the give-back is ALWAYS its own note, under its own scope, even
+      // where it is all that came back - one key identifies it everywhere, so
+      // the repair pass reads it there and can never mint a second.
       financialAction = {
         type: "modification-credit-note",
         refundAmountCents,
         refundMethod:
           input.refundMethod ??
           refundMethodForSettlementMethod(input.settlementMethod, input.refundedThroughStripe),
+        allocatedGiveBackCents: giveBackCents,
         reason: "Negative booking-edit delta needs a modification credit note instead of mutating the original invoice.",
       };
     }
@@ -229,6 +273,30 @@ async function kickQueuedXeroOperation(queued: { queueOperationId: string | null
   if (queued.queueOperationId) {
     await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
   }
+}
+
+/**
+ * #3809: the allocated note for applied credit given back beside another note
+ * on the same edit. Scoped by the existing per-share key slot
+ * (`reviewTaskKeyParts`, #3791) under `APPLIED_CREDIT_GIVE_BACK_NOTE_SCOPE`, so
+ * the edit's own note neither answers for it by its link nor folds an equal
+ * amount into one key, and an operator retry rebuilds the same keys.
+ */
+async function queueGiveBackNote(input: QueueXeroBookingEditSettlementInput, cents: number) {
+  if (cents <= 0) return;
+  const queued = await enqueueXeroModificationCreditNoteOperation(
+    {
+      bookingId: input.bookingId,
+      refundAmountCents: cents,
+      bookingModificationId: input.bookingModificationId,
+      refundMethod: "account-credit",
+      // Always distinct from the caller's own scope, so a review task's note and
+      // a give-back beside it can never share a key and dedupe one away.
+      reviewTaskId: giveBackNoteScope(input.reviewTaskId),
+    },
+    { createdByMemberId: input.createdByMemberId }
+  );
+  await kickQueuedXeroOperation(queued);
 }
 
 export async function queueXeroBookingEditSettlement(
@@ -279,19 +347,22 @@ export async function queueXeroBookingEditSettlement(
       await kickQueuedXeroOperation(queued);
     }
   } else if (decision.financialAction.type === "modification-credit-note") {
-    const queued = await enqueueXeroModificationCreditNoteOperation(
-      {
-        bookingId: input.bookingId,
-        refundAmountCents: decision.financialAction.refundAmountCents,
-        bookingModificationId: input.bookingModificationId,
-        refundMethod: decision.financialAction.refundMethod,
-        ...(input.reviewTaskId ? { reviewTaskId: input.reviewTaskId } : {}),
-      },
-      {
-        createdByMemberId: input.createdByMemberId,
-      }
-    );
-    await kickQueuedXeroOperation(queued);
+    if (decision.financialAction.refundAmountCents > 0) {
+      const queued = await enqueueXeroModificationCreditNoteOperation(
+        {
+          bookingId: input.bookingId,
+          refundAmountCents: decision.financialAction.refundAmountCents,
+          bookingModificationId: input.bookingModificationId,
+          refundMethod: decision.financialAction.refundMethod,
+          ...(input.reviewTaskId ? { reviewTaskId: input.reviewTaskId } : {}),
+        },
+        {
+          createdByMemberId: input.createdByMemberId,
+        }
+      );
+      await kickQueuedXeroOperation(queued);
+    }
+    await queueGiveBackNote(input, decision.financialAction.allocatedGiveBackCents);
   } else if (decision.financialAction.type === "modification-account-credit-note") {
     const queued = await enqueueXeroModificationAccountCreditNoteOperation(
       {
@@ -305,6 +376,7 @@ export async function queueXeroBookingEditSettlement(
       }
     );
     await kickQueuedXeroOperation(queued);
+    await queueGiveBackNote(input, decision.financialAction.allocatedGiveBackCents);
   }
 
   if (decision.primaryInvoiceUpdateAction.type === "queue") {

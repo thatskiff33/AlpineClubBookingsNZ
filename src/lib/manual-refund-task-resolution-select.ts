@@ -52,11 +52,16 @@ export const MANUAL_REFUND_TASK_RESOLUTION_SELECT = Prisma.validator<Prisma.Manu
         },
       },
       organisation: { select: { name: true, email: true } },
+      checkIn: true, // #3835: a cancelled booking's netting re-tiers by it
       // #3032: the booking's own status and its primary Xero invoice id,
       // for `hasIssuedPrimaryXeroInvoice`. A completion that moves money on
       // a booking whose invoice was issued has to correct that invoice, or
       // the ledger and Xero disagree permanently.
       status: true,
+      // #3653: a charge on a booking the group organiser paid for by card is
+      // refused (`chooseEditReviewChargeRoute`).
+      organiserSettled: true,
+      parentBookingId: true,
       payment: {
         select: {
           id: true,
