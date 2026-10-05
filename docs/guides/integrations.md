@@ -147,10 +147,14 @@ accessible, breakfast / lunch / dinner included) and the list of amenities with
 their descriptions. The booking-officer email is the committee **role's** shared
 address (for example `bookings@yourclub.nz`), never a member's personal one,
 and a member's phone number is shared **only** if your club already publishes it
-on your own committee page. The central server keeps the phone number for its
-operator and **does not pass it on to other clubs**, and this site never shows a
-booking officer's phone number in the Other lodges list (your own lodge's is in
-its edit popup). No other member data is sent. Everything in the panel is plain
+on your own committee page. Once the central server is on a release that
+withholds it, it keeps the phone number for its operator and **does not pass it
+on to other clubs**; this site, for its part, never stores another club's
+officer phone from a download (a number an older server still sends is dropped,
+and a number an earlier download stored is cleared when that lodge is next
+downloaded) and never shows any booking officer's phone number in the Other
+lodges list (your own lodge's is in its edit popup). No other member data is
+sent. Everything in the panel is plain
 lodge description except the booking officer's contact details, so those are
 what to check before you enable the item.
 
@@ -161,7 +165,28 @@ on only those lodges are uploaded and only those can be edited in the Other
 lodges panel. Until the first download from a server that sends the list, the
 panel is read-only and the upload keeps its older behaviour of sending every
 changed entry (so a club on an older central server loses nothing). A server
-that does not send the list leaves the recorded one as it was.
+that does not send the list leaves the recorded one as it was, and so does a
+server that sends a list this site cannot accept (too many names, or a name
+longer than a lodge name may be): the lodges still download and the sync
+continues, with a warning in the log. If the recorded list itself can no longer
+be read, the upload and the booking-officer sync below send and write
+**nothing** until the next download rewrites it, rather than falling back to
+treating every entry as yours. The list is forgotten when you disconnect,
+replace the API key or change the server address, because it belonged to that
+connection.
+
+The same list decides which entries your **Booking Officer** committee role is
+written into: when a member takes or leaves that role, the officer's name,
+role email and (if published) phone are written into the lodge entries the
+central server names as yours — and, until it has named any, into entries whose
+name exactly matches one of your own lodges.
+
+Two downloads can run at once (the nightly job and the **Download** button); if
+the one that finishes last carried an older list, the panel may briefly show the
+older answer until the next download records the current one. Likewise, an edit
+saved in the Other lodges popup is checked against the list recorded at that
+moment, so a download that changes the list while the popup is open can turn a
+Save into a refusal; reloading the page shows the current state.
 
 Downloading works the other way round: the central server's copy of every
 club's entry replaces yours, field by field and amenity list as a whole, unless

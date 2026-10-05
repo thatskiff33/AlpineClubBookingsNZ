@@ -717,6 +717,15 @@ by the same administrators who can already see those - so it widens nobody's
 readership. The row carries the actor and the before/after pair and nothing
 else: no request echo and no settings blob.
 
+#52 then REMOVED two (`admin` 108 -> 106, 486 -> 484, MEASURED with
+`npm run audit:census` on that branch rather than subtracted from the literal):
+`OTHER_LODGE_CREATED` and `OTHER_LODGE_DELETED` went with the create and delete
+handlers of the other-lodges registry, because a site now changes only the lodge
+the central server says it owns and never adds to or removes from the shared
+list. `OTHER_LODGE_UPDATED` stays, still `admin` under INV-PRIV-013's rule, so
+the lodge-gated keep shrinks from nineteen pinned sites to seventeen without
+anyone's readership changing.
+
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):
 `booking-payment.manual-refund-task.reopen`, the record that an officer put a
