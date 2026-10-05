@@ -9,14 +9,14 @@ criteria instead of vibes.
 
 ## Safety rules — read before anything else
 
-Quoted from [`AGENTS.md`](../AGENTS.md) → Safety Rules, which govern this
-harness exactly as they govern every other tool in the repo:
+Quoted from [`AGENTS.md`](../AGENTS.md) → Safety, which governs this
+harness exactly as it governs every other tool in the repo:
 
-> - Do not use production credentials, production databases, production
->   backups, live Stripe, live Xero, live SES, live Sentry, or live provider
->   webhooks for exploratory work.
-> - Do not run browser automation, DAST, load tests, or broad endpoint
->   scanning against a live deployment without a written test window.
+> - Never use production credentials, databases or backups, or live Stripe, Xero,
+>   SES, Sentry or provider webhooks, for exploratory work.
+> - No dev servers in shared, staging or production checkouts unless the owner
+>   asks; no browser automation, DAST, load tests or endpoint scanning against a
+>   live deployment without a written test window.
 
 In concrete terms for this harness:
 

@@ -1,9 +1,0 @@
-# Example only. Copy to ~/.codex/alpine-docs-medium.config.toml before use.
-# Documentation-only profile.
-
-model_reasoning_effort = "medium"
-approval_policy = "on-request"
-sandbox_mode = "workspace-write"
-
-[sandbox_workspace_write]
-network_access = false
