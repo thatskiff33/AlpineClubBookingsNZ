@@ -44,14 +44,13 @@ reason: the "Booking Modified" sender's flat body composes the credit-given-back
   `booking-credit-give-back-copy.ts`.
 
 file: src/lib/booking-cancel.ts
-lines: 2784
+lines: 2781
 reason: the paid path asks whether the booking was reduced through #3809's
   settlement before it caps the credit (owner decision of 4 Oct 2026) and
   freezes the base on its CANCELLED snapshot; the unpaid branch tiers a
   refunded-whole captured payment's credit (`refundedPaymentCreditRestore`)
   and posts and freezes what it kept. The rules live in their own modules; what
   stays here is the call inside each claim that already owns the restore.
-  Stacked #3836 adds the cancel's ledger-read applied credit (`cancelTieredAppliedCreditCents`), whose rule lives in `booking-payment-state.ts`.
 
 file: src/app/api/bookings/[id]/modify-quote/route.ts
 lines: 2450
@@ -64,21 +63,18 @@ reason: one line: the guest-add email passes 0 for the credit given back, which
   the sender now requires of every caller.
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 2301
+lines: 2299
 reason: the missing-modification-credit-note finding sizes a credit-paid
   booking's lost note from the give-back its edit's history row records, and
   expects none where the tier gave nothing back, and checks a give-back note
   raised beside the edit's own under its own scope, reading the edit's own
-  without it; the rules for that finding live only here. Stacked #3836 adds
-  two lines: the import and the call of its unallocated-credit arm, whose
-  rules live in `xero-booking-repair-applied-credit.ts`.
+  without it; the rules for that finding live only here.
 
 file: src/lib/xero-inbound/credit-note-repairs.ts
-lines: 1144
+lines: 1142
 reason: the fold of earlier modification notes into a payment's refunded total
   leaves out notes worded as account credit (no cash moved); the reader lives
   in `account-credit-modification-notes.ts`, the filter where the fold is.
-  Stacked #3836 writes the mirror as the ledger's figure, uncapped, where the card-amount cap was.
 
 file: src/lib/xero-applied-credit-deallocation.ts
 lines: 1026
