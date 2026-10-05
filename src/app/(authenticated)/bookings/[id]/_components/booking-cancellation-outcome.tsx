@@ -26,6 +26,7 @@ export function BookingCancellationOutcome({
     originalPaymentCaptured,
     cancellationSettlement,
     retainedAfterCancellationCents,
+    handBackOwedAfterCancellationCents,
     latestRefundAppeal,
   } = payment;
   return (
@@ -81,6 +82,14 @@ export function BookingCancellationOutcome({
                       Non-refundable amount retained:
                     </span>{" "}
                     {money.cents(retainedAfterCancellationCents)}
+                    {handBackOwedAfterCancellationCents > 0 && (
+                      <span className="text-muted-foreground">
+                        {" "}
+                        (after{" "}
+                        {money.cents(handBackOwedAfterCancellationCents)} still
+                        being paid back by hand)
+                      </span>
+                    )}
                   </div>
 
                   {cancellationSettlement.restoredAppliedCreditCents > 0 && (

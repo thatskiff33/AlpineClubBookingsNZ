@@ -1,4 +1,8 @@
 import { prisma } from "@/lib/prisma";
+import {
+  netCollectedBookingSelect,
+  netCollectedCaptureEvidenceSelect,
+} from "@/lib/additional-ledger-gap";
 import { isGroupSettlementBoundToInvoice } from "@/lib/group-settlement-invoice-binding";
 import {
   BOOKING_MONEY_RECONCILIATION_SELECT,
@@ -44,8 +48,14 @@ export async function loadBookingDetail(id: string) {
             orderBy: { createdAt: "desc" },
             take: 1,
           },
+          // #3811: the capture evidence Net Collected's cash rule reads, so the
+          // "Non-refundable amount retained" line is that rule's figure.
+          _count: netCollectedCaptureEvidenceSelect._count,
         },
       },
+      // #3811 (owner decision on #3372, 3 Oct 2026): an open hand-back refund
+      // comes off the retained line straight away, as it does Net Collected.
+      manualRefundTasks: netCollectedBookingSelect.manualRefundTasks,
       member: { select: { firstName: true, lastName: true } },
       // #3369: the owner may be an Organisation; bookingOwner() reads both.
       organisation: { select: { name: true, email: true } },

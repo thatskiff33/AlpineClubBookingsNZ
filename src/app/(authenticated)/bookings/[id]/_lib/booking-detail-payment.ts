@@ -8,6 +8,7 @@ import {
   hasCapturedPayment,
 } from "@/lib/booking-payment-state";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
+import { getNetCollectedCashParts } from "@/lib/payment-net-collected";
 import { savedPaymentMethodForBooking } from "@/lib/saved-payment-method";
 import type { BookingDetailRecord } from "./load-booking-detail";
 import type { BookingDetailViewer } from "./booking-detail-viewer";
@@ -70,12 +71,15 @@ export function resolveBookingDetailPayment({
     !booking.organiserSettled &&
     booking.finalPriceCents > 0;
   const originalPaymentCaptured = hasCapturedPayment(booking.payment);
-  const retainedAfterCancellationCents = booking.payment
-    ? Math.max(
-        booking.payment.amountCents - booking.payment.refundedAmountCents,
-        0
-      )
-    : 0;
+  // #3811: what the club kept of what was paid is this booking's cash part of
+  // Net Collected (`getNetCollectedCashParts`), so it can never read higher
+  // than Net Collected counts: an open hand-back refund is taken off straight
+  // away (owner decision on #3372, 3 Oct 2026), and shown beside the line.
+  const retainedCash = booking.payment
+    ? getNetCollectedCashParts({ ...booking.payment, booking })
+    : null;
+  const retainedAfterCancellationCents = retainedCash?.heldCashCents ?? 0;
+  const handBackOwedAfterCancellationCents = retainedCash?.handBackOwedCents ?? 0;
   const latestRefundAppeal = booking.refundRequests[0] ?? null;
   const maxRefundableCents = getRemainingRefundableCents(booking.payment);
   // #1967: once the member's own place is settled by Internet Banking there is
@@ -166,6 +170,7 @@ export function resolveBookingDetailPayment({
     canSwitchToInternetBanking,
     originalPaymentCaptured,
     retainedAfterCancellationCents,
+    handBackOwedAfterCancellationCents,
     latestRefundAppeal,
     maxRefundableCents,
     showGuestPaymentLinkStandalone,

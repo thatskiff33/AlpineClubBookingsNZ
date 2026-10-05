@@ -176,11 +176,44 @@ export interface NetCollectedPaymentParts {
  * not cash. A paid one has a captured ledger row, so its remainder still counts.
  */
 function netCollectedPaymentTookMoney(
-  payment: NetCollectedPaymentRow & { status: string },
+  payment: Omit<NetCollectedPaymentRow, "booking"> & { status: string },
 ): boolean {
   if (!isCapturedPaymentStatus(payment.status)) return false;
   if (payment.status === "SUCCEEDED") return true;
   return paymentShowsCaptureEvidence(payment, payment._count.transactions > 0);
+}
+
+/** A payment as the CASH half of the per-payment rule reads it: no credit rows. */
+export type NetCollectedCashRow = Omit<NetCollectedPaymentRow, "booking"> & {
+  booking: Pick<NetCollectedBookingFields, "status" | "manualRefundTasks">;
+};
+
+/**
+ * THE CASH HALF of the one per-payment rule (`getNetCollectedPaymentParts`):
+ * what the payment took, what of it the club still holds, and - on a CANCELLED
+ * booking - the open hand-back refund taken off straight away (owner decision
+ * on #3372, 3 Oct 2026). Exported for the booking detail's "Non-refundable
+ * amount retained" line, which is this booking's cash part of Net Collected
+ * and so can never read higher than what Net Collected counts for it.
+ */
+export function getNetCollectedCashParts(
+  payment: NetCollectedCashRow,
+): Omit<NetCollectedPaymentParts, "keptCreditCents"> {
+  const { status, booking } = payment;
+  const captured = status !== null && netCollectedPaymentTookMoney({ ...payment, status });
+  const remainingCents = captured
+    ? getRemainingRefundableCents({ ...payment, status })
+    : 0;
+  const capturedGrossCents = captured ? payment.amountCents : 0;
+  const handBackOwedCents =
+    booking.status === CANCELLED_BOOKING_STATUS
+      ? Math.min(openCancellationHandBackOwedCents(booking.manualRefundTasks), remainingCents)
+      : 0;
+  return {
+    capturedGrossCents,
+    heldCashCents: remainingCents - handBackOwedCents,
+    handBackOwedCents,
+  };
 }
 
 /**
@@ -188,42 +221,26 @@ function netCollectedPaymentTookMoney(
  * PR #3811 and the owner's decision on #3372, 3 Oct 2026). It does not apply the
  * booking scope; `summarizeCollectedCash` does, before calling it.
  *
- * - Cash: what the payment took and has not refunded or credited back
- *   (`getRemainingRefundableCents`): 0 if it never took money
- *   (`netCollectedPaymentTookMoney`), never below 0.
- * - On a CANCELLED booking, two more facts, each from its canonical reader:
- *   a hand-back refund still owed by hand is treated as gone straight away
- *   (`openCancellationHandBackOwedCents`), so only what the policy keeps
- *   counts; and applied account credit the cancellation kept counts
- *   (`cancelledBookingKeptCreditCents`). A live booking reads neither: its
- *   credit is spent on a stay, not kept, and it owes no hand-back.
+ * - Cash (`getNetCollectedCashParts`): what the payment took and has not
+ *   refunded or credited back (`getRemainingRefundableCents`): 0 if it never
+ *   took money (`netCollectedPaymentTookMoney`), never below 0. On a CANCELLED
+ *   booking a hand-back refund still owed by hand is treated as gone straight
+ *   away (`openCancellationHandBackOwedCents`), so only what the policy keeps
+ *   counts.
+ * - On a CANCELLED booking, applied account credit the cancellation kept
+ *   counts too (`cancelledBookingKeptCreditCents`). A live booking reads
+ *   neither: its credit is spent on a stay, not kept, and it owes no hand-back.
  */
 export function getNetCollectedPaymentParts(
   payment: NetCollectedPaymentRow,
 ): NetCollectedPaymentParts {
-  const { status, booking } = payment;
-  const captured = status !== null && netCollectedPaymentTookMoney({ ...payment, status });
-  const remainingCents = captured
-    ? getRemainingRefundableCents({ ...payment, status })
-    : 0;
-  const capturedGrossCents = captured ? payment.amountCents : 0;
-  if (booking.status !== CANCELLED_BOOKING_STATUS) {
-    return {
-      capturedGrossCents,
-      heldCashCents: remainingCents,
-      handBackOwedCents: 0,
-      keptCreditCents: 0,
-    };
-  }
-  const handBackOwedCents = Math.min(
-    openCancellationHandBackOwedCents(booking.manualRefundTasks),
-    remainingCents,
-  );
+  const cash = getNetCollectedCashParts(payment);
   return {
-    capturedGrossCents,
-    heldCashCents: remainingCents - handBackOwedCents,
-    handBackOwedCents,
-    keptCreditCents: cancelledBookingKeptCreditCents(booking),
+    ...cash,
+    keptCreditCents:
+      payment.booking.status === CANCELLED_BOOKING_STATUS
+        ? cancelledBookingKeptCreditCents(payment.booking)
+        : 0,
   };
 }
 
