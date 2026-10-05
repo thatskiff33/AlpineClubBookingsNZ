@@ -50,7 +50,7 @@ function loadIssues(inputPath) {
         body: [
           "Planning-only review issue.",
           "",
-          "Read `AGENTS.md`, `docs/agents/CODEX_WORKFLOW.md`, `docs/SECURITY-ATTACK-SURFACE.md`, and `docs/agents/REVIEW_SEVERITY.md`.",
+          "Read `AGENTS.md` and its matching routing rows, then `docs/agents/REVIEW_SEVERITY.md`. In `docs/SECURITY-ATTACK-SURFACE.md`, read the headings, then only the sections for the surfaces under review.",
           "",
           "Do not edit application code. Produce focused findings or issue splits with safe validation expectations.",
         ].join("\n"),
@@ -61,7 +61,7 @@ function loadIssues(inputPath) {
         body: [
           "Planning-only review issue.",
           "",
-          "Read `AGENTS.md`, then the `docs/DOMAIN_INVARIANTS.md` index and the `INV-*` files its routing table sends you to for the surfaces you touch, plus `docs/STATE_MACHINES.md` and `docs/END_TO_END_TEST_MATRIX.md`. Cite `INV-*` ids, never line numbers.",
+          "Read `AGENTS.md`, then the `INV-*` files its routing table sends you to for the surfaces you touch. In `docs/STATE_MACHINES.md` and `docs/END_TO_END_TEST_MATRIX.md`, read the headings, then only the matching sections. Cite `INV-*` ids, never line numbers.",
           "",
           "Do not edit application code. Verify state-machine assumptions and propose focused implementation issues.",
         ].join("\n"),
