@@ -56,6 +56,7 @@ import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
+import { wholeStayCapacityRanges } from "@/lib/whole-stay-capacity-ranges";
 import {
   sendAdminBookingRequestQuoteAcceptedEmail,
   sendBookingRequestQuoteAcceptedEmail,
@@ -1993,16 +1994,10 @@ export async function holdBookingRequestSlots(input: {
       // Named guests carry their linked member (#3789: a ticked custodian on the
       // booking counts once); the unnamed pending school adults (#3413) are
       // nobody in particular, so they carry none.
-      const capacityRanges = [
-        ...guests.map((_guest, index) => ({
-          stayStart: request.checkIn, stayEnd: request.checkOut,
-          memberId: linkedMembers.get(index) ?? null,
-        })),
-        ...Array.from({ length: pendingAdultCount }, () => ({
-          stayStart: request.checkIn, stayEnd: request.checkOut,
-          memberId: null,
-        })),
-      ];
+      const capacityRanges = wholeStayCapacityRanges(request.checkIn, request.checkOut, [
+        ...guests.map((_guest, index) => linkedMembers.get(index) ?? null),
+        ...Array.from({ length: pendingAdultCount }, () => null),
+      ]);
       const capacity = await checkCapacityForGuestRanges(
         bookingLodgeId,
         request.checkIn,

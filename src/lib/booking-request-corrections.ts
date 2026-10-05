@@ -147,6 +147,7 @@ import {
 } from "@/lib/booking-request-correction-hold";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { wholeStayCapacityRanges } from "@/lib/whole-stay-capacity-ranges";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -648,14 +649,8 @@ export async function correctBookingRequest(
     lodgeId,
     checkIn,
     checkOut,
-    guests.map((_guest, index) => ({
-      stayStart: checkIn,
-      stayEnd: checkOut,
-      // A changed party cleared its member links above.
-      memberId: partyChanged
-        ? null
-        : (storedLinks.find((link) => link.guestIndex === index)?.memberId ?? null),
-    })),
+    wholeStayCapacityRanges(checkIn, checkOut, guests.map((_guest, index) => // links cleared above
+      partyChanged ? null : (storedLinks.find((link) => link.guestIndex === index)?.memberId ?? null))),
   );
 
   return {
