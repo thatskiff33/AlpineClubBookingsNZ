@@ -425,6 +425,13 @@ you place them yourself.
 
 ## Troubleshooting
 
+An **Unnamed school adults have held beds** notice lists each affected booking
+and lodge night. These adults count toward lodge capacity but cannot be dragged
+onto individual beds until an officer records their real names on the accepted
+school booking request. The booking request's **Name one pending adult** action
+replaces one anonymous reservation with a named guest night without freeing the
+bed for another booking.
+
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | A view-only notice, drag disabled | Your admin role can inspect allocation state and removal previews but cannot write | Use **Remove**, **Remove allocation**, or **Reset allocations…** to review consequences; ask a full admin for bookings edit access to apply a removal, move, assign, approve, or save |
