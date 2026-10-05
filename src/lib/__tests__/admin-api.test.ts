@@ -510,9 +510,10 @@ describe("Admin Payments API", () => {
     // The refund tile is every matched row, as its hint says - the never-paid
     // cancelled booking's $30.00 mirror refund and the never-paid live
     // booking's $50.00 folded credit note included, though the Net Collected
-    // tile (owner review on #3811) gives both bookings nil.
-    expect(body.summary.refundedCents).toBe(23_000);
-    expect(body.summary.count).toBe(6);
+    // tile (owner review on #3811) gives both bookings nil, as it does the
+    // booking refunded its whole $120.00.
+    expect(body.summary.refundedCents).toBe(35_000);
+    expect(body.summary.count).toBe(7);
   });
 
   /*

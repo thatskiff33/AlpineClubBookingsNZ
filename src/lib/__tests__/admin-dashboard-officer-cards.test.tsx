@@ -406,10 +406,11 @@ describe("admin dashboard officer key cards", () => {
     expect(html).toContain(">$95.00</div>");
     // The breakdown is over the same in-scope payments: the deleted booking's
     // $70.00 is in no figure, the never-paid booking's $200.00 and its $30.00
-    // mirror refund in none either, and the line adds up to the headline:
-    // 300 - 150 - 75 + 20 = 95.
+    // mirror refund in none either, the fully refunded booking's $120.00 is
+    // paid and refunded alike, and the line adds up to the headline:
+    // 420 - 270 - 75 + 20 = 95.
     expect(html).toContain(
-      ">$300.00 paid, $150.00 refunded or credited, $75.00 owed back on cancellation, plus $20.00 account credit kept on cancellation</p>",
+      ">$420.00 paid, $270.00 refunded or credited, $75.00 owed back on cancellation, plus $20.00 account credit kept on cancellation</p>",
     );
   });
 

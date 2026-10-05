@@ -5,9 +5,12 @@
  * Finance dashboard's "Net Collected" (#3637) - so each surface's test
  * asserts the SAME expected amount from the SAME payments.
  *
- * Six payments:
+ * Seven payments:
  *  - a CANCELLED booking that paid $200.00 and was refunded $150.00, so the
  *    club kept $50.00 of money it received. It counts: $50.00.
+ *  - a CANCELLED booking that paid $120.00 and was refunded all of it (owner
+ *    review on PR #3811: money refunded when the booking was cancelled was not
+ *    kept). It adds nil.
  *  - a SOFT-DELETED booking's captured $70.00. It does not count.
  *  - a CANCELLED booking that was NEVER PAID (owner review on PR #3811): its
  *    payment never took money, so it adds nil, whatever its price or its
@@ -75,6 +78,17 @@ export const NET_COLLECTED_SCOPE_FIXTURE = {
     status: "PARTIALLY_REFUNDED",
     amountCents: 20_000,
     refundedAmountCents: 15_000,
+    source: "STRIPE",
+    capturedLedgerRows: 1,
+    deletedAt: null,
+    ...noCreditOrTask,
+  },
+  fullyRefunded: {
+    bookingId: "b-cancelled-fully-refunded",
+    bookingStatus: "CANCELLED",
+    status: "REFUNDED",
+    amountCents: 12_000,
+    refundedAmountCents: 12_000,
     source: "STRIPE",
     capturedLedgerRows: 1,
     deletedAt: null,
@@ -152,13 +166,14 @@ export const NET_COLLECTED_SCOPE_FIXTURE = {
     deletedAt: null,
     ...noCreditOrTask,
   },
-  /** What every Net Collected figure must read over the six payments above. */
+  /** What every Net Collected figure must read over the seven payments above. */
   expectedNetCollectedCents: 9_500,
 } as const satisfies Record<string, FixtureRow | number>;
 
-/** The fixture's six payments as a list. */
+/** The fixture's seven payments as a list. */
 export const NET_COLLECTED_SCOPE_PAYMENTS: ReadonlyArray<FixtureRow> = [
   NET_COLLECTED_SCOPE_FIXTURE.keptFee,
+  NET_COLLECTED_SCOPE_FIXTURE.fullyRefunded,
   NET_COLLECTED_SCOPE_FIXTURE.deleted,
   NET_COLLECTED_SCOPE_FIXTURE.unpaidCancelled,
   NET_COLLECTED_SCOPE_FIXTURE.creditKept,
