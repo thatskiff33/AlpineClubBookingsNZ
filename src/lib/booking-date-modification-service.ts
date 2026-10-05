@@ -1758,7 +1758,6 @@ async function dispatchDatePostTransactionSideEffects({
       // #2390: same words as the edit preview and the booking history.
       promoCoverageNote: result.promoCoverage?.message ?? null,
       financialReviewPending,
-      // #3916: where the reduction's refund went, as its settlement decided it.
       refundReturnedToOrganiser: result.organiserChildRefund !== null,
       lodgeId: result.booking.lodgeId,
     }, format).catch((err) =>
@@ -2323,7 +2322,6 @@ export async function adminShiftBookingDates({
       paymentReference: result.paymentReference,
       xeroInvoiceNumber: result.xeroInvoiceNumber,
       financialReviewPending,
-      // An officer's date shift moves no money (`refundAmountCents: 0` above).
       refundReturnedToOrganiser: false,
       lodgeId: result.lodgeId,
     }, format).catch((err) =>

@@ -484,14 +484,7 @@ export function bookingModifiedTemplate(params: {
    * review, the way `confirmedAmountCents` is asked for (`INV-SSOT`).
    */
   financialReviewPending: boolean;
-  /**
-   * #3916: the refund went back to the group organiser's card (#3653) because
-   * the organiser paid for this joiner's booking - the edit's own settlement
-   * answer, `organiserChildRefund !== null`. REQUIRED for the reason
-   * `financialReviewPending` is: a default of false tells every joiner whose
-   * reduction the organiser received that it went to their own card.
-   */
-  refundReturnedToOrganiser: boolean;
+  refundReturnedToOrganiser: boolean; // #3916: see `sendBookingModifiedEmail`
 },
   format: ClubFormat,
 ): string {
@@ -517,7 +510,6 @@ export function bookingModifiedTemplate(params: {
     promoCoverageNote,
     promoChangeNotAppliedNote,
     financialReviewPending,
-    refundReturnedToOrganiser,
   } = params;
 
   // The change rows come from the shared helper the flat {{changeSummary}}
@@ -577,7 +569,7 @@ export function bookingModifiedTemplate(params: {
   let settlementNote = "";
   if (refundAmountCents > 0) {
     settlementNote = alertBox(
-      editRefundNote(refundAmountCents, refundReturnedToOrganiser, format),
+      editRefundNote(refundAmountCents, params.refundReturnedToOrganiser, format),
       "success"
     );
   } else if (accountCreditAmountCents > 0) {

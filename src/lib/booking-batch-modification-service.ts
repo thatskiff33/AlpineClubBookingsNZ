@@ -2646,7 +2646,6 @@ async function dispatchBatchPostTransactionSideEffects({
     // who closed the panel without reading the banner still has this.
     promoChangeNotAppliedNote: result.promoChangeNotApplied?.message ?? null,
     financialReviewPending,
-    // #3916: where the reduction's refund went, as its settlement decided it.
     refundReturnedToOrganiser: result.organiserChildRefund !== null,
     lodgeId: result.booking.lodgeId,
   }, format).catch((err) =>

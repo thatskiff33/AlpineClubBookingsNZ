@@ -1417,13 +1417,8 @@ export async function sendBookingModifiedEmail(params: {
    * instead (`INV-SSOT`, "prefer unrepresentable over policed").
    */
   financialReviewPending: boolean;
-  /**
-   * #3916: the reduction was refunded to the group organiser's card (#3653),
-   * not the joiner's. Pass the settlement result's own answer,
-   * `result.organiserChildRefund !== null` - the same flag the Xero leg reads
-   * (`organiserChildRefundOwnsCreditNote`) - never a recomputation. REQUIRED,
-   * like `financialReviewPending`: false where no refund was made.
-   */
+  /** #3916: the refund went to the group organiser's card (#3653). REQUIRED, like `financialReviewPending`;
+   * the settlement's own `result.organiserChildRefund !== null`, never recomputed. */
   refundReturnedToOrganiser: boolean;
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null;
