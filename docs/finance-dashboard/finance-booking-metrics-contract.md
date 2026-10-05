@@ -50,7 +50,7 @@ The booking metrics response includes:
   counts as `PENDING`, not `NONE`, so the split cannot contradict
   `outstandingAdditionalCents` below it
 - `capturedGrossCents`, `refundedCents` and `netCollectedCents` are the three
-  fields of `summarizeCollectedCash` (`src/lib/booking-payment-state.ts`), the
+  fields of `summarizeCollectedCash` (`src/lib/payment-net-collected.ts`), the
   one net-collected derivation every officer "Net Collected" figure reads
   (#3637, epic #3372 owner decision A). They, and the two ledger-gap fields
   that warn about them, count a different set of bookings from every other

@@ -1,11 +1,6 @@
 import { PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
 
-import {
-  netCollectedScopedPayments,
-  summarizeCollectedCash,
-  type CollectedCashSummary,
-  type NetCollectedPaymentRow,
-} from "@/lib/booking-payment-state";
+import { netCollectedScopedPayments, summarizeCollectedCash, type CollectedCashSummary, type NetCollectedPaymentRow } from "@/lib/payment-net-collected";
 import {
   CAPTURED_TRANSACTION_STATUS_LIST,
   isCapturedTransactionStatus,
@@ -163,9 +158,9 @@ export const netCollectedPaymentSelect = Prisma.validator<Prisma.PaymentSelect>(
  * a payment its figure left out, or stay silent about one it counted. Reports,
  * the payments board and the finance dashboard all call it.
  *
- * It lives here, not beside `summarizeCollectedCash`, because
- * `booking-payment-state.ts` is an import-free leaf that this module already
- * imports: the reverse import would be a cycle.
+ * It lives here, not beside `summarizeCollectedCash` in
+ * `payment-net-collected.ts`, because this module already imports that one:
+ * the reverse import would be a cycle.
  */
 export function summarizeNetCollectedWithLedgerGap<
   T extends NetCollectedPaymentRow &

@@ -25,7 +25,7 @@ import {
 import { appendBookingMoneyReconciliationDashboardState } from "@/lib/finance-dashboard-page/money-reconciliation";
 import { SERIES_COLORS } from "@/lib/finance-dashboard-page/series-colors";
 import type { ClubFormat } from "@/lib/club-format";
-import { formatNetCollectedLedgerGapWarning } from "@/lib/booking-payment-state";
+import { formatNetCollectedLedgerGapWarning } from "@/lib/payment-net-collected";
 import { formatCents } from "@/lib/utils";
 
 // Compact day+month export label ("14 Jun"), deliberately year-less: it labels

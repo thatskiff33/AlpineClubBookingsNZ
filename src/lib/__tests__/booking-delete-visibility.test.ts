@@ -4,7 +4,7 @@ import {
   isBookingShownIn,
   type BookingDeletedVisibility,
 } from "@/lib/booking-delete-visibility";
-import { isInNetCollectedBookingScope } from "@/lib/booking-payment-state";
+import { isInNetCollectedBookingScope } from "@/lib/payment-net-collected";
 
 /** How PostgreSQL, through Prisma, applies the `deletedAt` filter to one row. */
 function databaseReturns(

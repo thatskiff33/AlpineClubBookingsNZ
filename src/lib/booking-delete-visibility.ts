@@ -21,7 +21,7 @@ export function parseBookingDeletedVisibility(
  * #3745 (INV-SSOT): the one definition of each view - whether it shows a live
  * booking and whether it shows a soft-deleted one. The query filter and the
  * row test below are both read off this table, so a database read and an
- * in-memory scope (Net Collected's, `booking-payment-state.ts`) cannot drift.
+ * in-memory scope (Net Collected's, `payment-net-collected.ts`) cannot drift.
  */
 const BOOKING_DELETED_VISIBILITY_SHOWS: Record<
   BookingDeletedVisibility,
