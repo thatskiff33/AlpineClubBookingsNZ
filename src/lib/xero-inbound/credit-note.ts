@@ -10,6 +10,7 @@ import { writeXeroInboundAuditLogs } from "./audit";
 import { repairAccountCreditAllocationBusinessState, repairRefundedPaymentBusinessState, resolveAccountCreditPaymentsFromMemberCredits, resolveAppliedCreditPaymentsFromLocalProvenance, resolvePaymentIdsByInvoiceTargets } from "./credit-note-repairs";
 import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
 import { accountCreditModificationNoteIds } from "./account-credit-modification-notes";
+import { mayRecordAsCanonicalRefundNote } from "@/lib/xero-refund-note-status";
 
 export async function reconcileXeroCreditNote(creditNoteId: string) {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
@@ -199,7 +200,12 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   const canApplyCanonicalRefundLink = paymentCandidates.length === 1;
   let updatedPayments = 0;
   for (const payment of paymentCandidates) {
-    if (!payment.xeroRefundCreditNoteId && canApplyCanonicalRefundLink) {
+    // #3880 F1: a per-refund note never becomes the payment's canonical one.
+    if (
+      !payment.xeroRefundCreditNoteId &&
+      canApplyCanonicalRefundLink &&
+      (await mayRecordAsCanonicalRefundNote(payment.id, creditNote.creditNoteID, prisma))
+    ) {
       await prisma.payment.update({
         where: {
           id: payment.id,

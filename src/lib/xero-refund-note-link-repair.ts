@@ -128,6 +128,8 @@ import {
   readRefundCreditNoteLinkStatus,
 } from "@/lib/xero-refund-note-status";
 import { recoverRefundCreditNoteLinkAmountCents } from "@/lib/xero-sync";
+import { XERO_REQUEUE_OPERATION_TYPE } from "@/lib/xero-hardening-shared";
+import { paymentCreditNoteOperationWhere } from "@/lib/xero-refund-note-in-flight";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 
@@ -519,7 +521,7 @@ const EXECUTOR_LIFECYCLE_CREATE_STATUSES = [
 const RETRYABLE_CREATE_STATUSES = ["FAILED", "PARTIAL"];
 
 /**
- * REQUEUE rows (`XERO_OPERATION_REQUEUE_TYPE`, `xero-operation-queue.ts`)
+ * REQUEUE rows (`XERO_REQUEUE_OPERATION_TYPE`, `xero-operation-queue.ts`)
  * carry the original operation's entityType/localModel/localId; the
  * background retry drain claims them PENDING→RUNNING and executes the
  * ORIGINAL operation via `retryXeroSyncOperation` — minting while the
@@ -542,10 +544,7 @@ async function findBlockingRefundCreditNoteOperationId(
 ): Promise<string | null> {
   const operation = await db.xeroSyncOperation.findFirst({
     where: {
-      direction: "OUTBOUND",
-      entityType: "CREDIT_NOTE",
-      localModel: "Payment",
-      localId: paymentId,
+      ...paymentCreditNoteOperationWhere(paymentId),
       OR: [
         {
           operationType: "CREATE",
@@ -559,7 +558,7 @@ async function findBlockingRefundCreditNoteOperationId(
           manuallyResolvedAt: null,
         },
         {
-          operationType: "REQUEUE",
+          operationType: XERO_REQUEUE_OPERATION_TYPE,
           status: { in: BLOCKING_REQUEUE_STATUSES },
         },
       ],

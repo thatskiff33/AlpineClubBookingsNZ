@@ -1404,6 +1404,8 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // `payment` rows. RE-MEASURED with `npm run audit:census`.
     // 364 -> 365 (#3639 review): the setting-change record, unpinned
     // `payment`. RE-MEASURED with `npm run audit:census`.
+    // 365 -> 364 (#3415): the accept-time capacity-block/revert writer retired.
+    // 364 -> 365 (#3413): pending-adult identity resolution is classified.
     // 365 -> 366 (#3462): the Xero operation Mark failed record, unpinned
     // `xero`. RE-MEASURED with `pnpm run audit:census`.
     // 366 -> 367 (#3454): the two-factor enrolment / erasure-clear record,

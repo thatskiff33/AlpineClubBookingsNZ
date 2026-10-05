@@ -7,7 +7,7 @@ import ts from "typescript";
  * `INV-MONEY-003`).
  *
  * `INV-MONEY-003` says a money box is `type="text"` with `inputMode="decimal"`
- * — `MONEY_INPUT_PROPS` from `@/lib/money-input` — because HTML's
+ * — through `MoneyInput` from `@/components/ui/money-input` — because HTML's
  * value-sanitization algorithm strips a `type="number"` control's value to `""`
  * the moment it does not parse as a floating-point number. `"50abc"`,
  * `"$45.00"` and `"1,000.00"` therefore reach the change handler as `""`,
@@ -200,7 +200,7 @@ export type MoneyNumberInput = {
  * It is EMPTY, and here is exactly what that proves and what it does not. It
  * proves that NO CONTROL THIS SCANNER READS AS MONEY IS A BROWSER NUMBER INPUT.
  * It does NOT prove that every money box in this tree is spelled
- * `MONEY_INPUT_PROPS`: a money box the classifier cannot identify is silence,
+ * `MoneyInput`: a money box the classifier cannot identify is silence,
  * not an exemption, and the limits in the docblock above say where that silence
  * lives. The weaker claim is the true one, and a guard sold as proving more than
  * it proves is a defect this repository has shipped before.

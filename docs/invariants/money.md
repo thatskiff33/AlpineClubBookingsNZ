@@ -68,8 +68,8 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   grammar, and **that `null` must reach the person as a validation error**: no
   caller may substitute a zero, a `null` payload field, or a previous value
   silently. A money box is therefore spelled `type="text"` with
-  `inputMode="decimal"` — `MONEY_INPUT_PROPS` from the same module (owner
-  decision 14 Aug 2026): a `type="number"` control's value-sanitization strips
+  `inputMode="decimal"` via shared `MoneyInput` (owner decision 13 Sep 2026):
+  a `type="number"` control's value-sanitization strips
   anything that is not a floating-point number to `""` before any handler runs,
   so the parser never saw `"50abc"`, `"$45.00"` or `"1,000.00"` and the box read
   as deliberately cleared. An amount an accounting provider has ALREADY parsed into a number —

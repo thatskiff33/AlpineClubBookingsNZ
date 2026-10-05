@@ -696,6 +696,82 @@ describe("runBookingXeroRepair", () => {
     expect(unsettledRefundNoteRows(operations as never, links)).toEqual([]);
   });
 
+  it("MUTATION (#3880 F1): a bank payment holding only per-refund notes is offered no backfill of its canonical field", async () => {
+    // Empty by design: a review's per-refund note is never the payment's one note.
+    const reviewNote = (id: string, creditNoteId: string) =>
+      paymentLink({ id, xeroObjectType: "CREDIT_NOTE", xeroObjectId: creditNoteId, role: "REFUND_CREDIT_NOTE", metadata: { amountCents: 1000, perDelta: true } });
+    const reviewRow = (id: string, creditNoteId: string) =>
+      makeOperation({
+        id, entityType: "CREDIT_NOTE", localModel: "Payment", localId: "payment_1", xeroObjectType: "CREDIT_NOTE", xeroObjectId: creditNoteId,
+        requestPayload: { allocation: { invoiceId: "inv_primary", amount: 10 }, refundMethod: "internet-banking", perDelta: true, reviewTaskId: "task_1" },
+        responsePayload: { refundPayment: { paymentID: `pay_${id}` } },
+      });
+    const links = [reviewNote("link_a", "cn_a"), reviewNote("link_b", "cn_b")];
+    const deps = createDependencies({ bookings: [makeBooking()], links, operations: [reviewRow("op_a", "cn_a"), reviewRow("op_b", "cn_b")] });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const booking = report.passes[0].bookings[0];
+    expect(booking.actions.map((action) => action.type)).not.toContain("SYNC_PAYMENT_REFUND_CREDIT_NOTE_FIELD");
+    expect(booking.findings.map((finding) => finding.summary)).not.toContain(
+      "Refund credit note references conflict across local fields, links, or past operations.",
+    );
+  });
+
+  describe("#3880 round 3: a CANCELLED bank booking whose refund notes are all per-refund", () => {
+    // $30 handed back by bank transfer on the cancelled booking, documented by
+    // the review's per-refund note cn_a - never the payment's canonical note.
+    const cancelledBank = () =>
+      makeBooking({
+        status: "CANCELLED",
+        payment: { ...makeBooking().payment, source: "INTERNET_BANKING", refundedAmountCents: 3000, status: "PARTIALLY_REFUNDED" },
+      });
+    const classify = async (uncoveredCents: number) => {
+      const links = [
+        paymentLink({ id: "link_a", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_a", role: "REFUND_CREDIT_NOTE", metadata: { amountCents: 3000 - uncoveredCents, perDelta: true } }),
+      ];
+      const deps = createDependencies({ bookings: [cancelledBank()], links });
+      // What the one gap reader answers: the per-refund note counts as cover.
+      deps.readRefundCreditNoteGap = vi.fn().mockResolvedValue({ cashRefundCents: 3000, coveredCents: 3000 - uncoveredCents, resolvedInXeroCents: 0, uncoveredCents });
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+      return { deps, booking: report.passes[0].bookings[0] };
+    };
+
+    it("MUTATION: fully covered - no queued note and no critical finding, and the gap is read for a bank payment", async () => {
+      const { deps, booking } = await classify(0);
+      expect(deps.readRefundCreditNoteGap).toHaveBeenCalledWith({ id: "payment_1", bookingId: "booking_1", refundedAmountCents: 3000 });
+      expect(booking.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
+      expect(booking.findings.map((finding) => finding.code)).not.toContain("CANCELLED_BOOKING_OPEN_INVOICE");
+      expect(booking.findings.map((finding) => finding.code)).not.toContain("MANUAL_REVIEW_REQUIRED");
+    });
+
+    it("MUTATION: partially covered - asks for the gap only", async () => {
+      const { booking } = await classify(1000);
+      const queued = booking.actions.filter((action) => action.type === "QUEUE_REFUND_CREDIT_NOTE");
+      expect(queued).toEqual([expect.objectContaining({ key: "queue:refund-credit-note:payment_1:1000", payload: { paymentId: "payment_1", refundAmountCents: 1000 } })]);
+    });
+
+    it("MUTATION: fully covered with cancellation credit beside it - no 'ambiguous' manual review", async () => {
+      const links = [
+        paymentLink({ id: "link_a", xeroObjectType: "CREDIT_NOTE", xeroObjectId: "cn_a", role: "REFUND_CREDIT_NOTE", metadata: { amountCents: 3000, perDelta: true } }),
+      ];
+      // A cancellation that also gave $50 of account credit (its own note
+      // recorded): the cash share cannot be derived from local history alone.
+      const withCredit = {
+        ...cancelledBank(),
+        creditsFromCancellation: [
+          { id: "credit_cancel", amountCents: 5000, type: "CANCELLATION_REFUND", description: "Cancellation refund for booking booking_", xeroCreditNoteId: "cn_account", createdAt: new Date("2026-05-03T00:00:00Z") },
+        ],
+      };
+      const deps = createDependencies({ bookings: [withCredit], links });
+      deps.readRefundCreditNoteGap = vi.fn().mockResolvedValue({ cashRefundCents: 3000, coveredCents: 3000, resolvedInXeroCents: 0, uncoveredCents: 0 });
+      const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+      expect(report.passes[0].bookings[0].findings.map((finding) => finding.summary)).not.toContain(
+        "The booking appears to have a cash cancellation refund, but the missing Xero refund note amount cannot be derived safely from local history.",
+      );
+    });
+  });
+
   it("classifies cancelled unpaid bookings with an open invoice", async () => {
     const booking = makeBooking({
       status: "CANCELLED",
