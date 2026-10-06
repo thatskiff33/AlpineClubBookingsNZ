@@ -38,6 +38,8 @@ const mocks = vi.hoisted(() => {
     // here, so every note in this suite renders its single line as before.
     bookingModification: {
       findUnique: vi.fn().mockResolvedValue(null),
+      // #3502: the primary invoice's change-fee read; none unless a test says so.
+      findMany: vi.fn().mockResolvedValue([]),
     },
     manualRefundTask: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -636,9 +638,7 @@ describe("createXeroInvoiceForBooking", () => {
           .filter((line) => line.description === "Late notice booking change fee");
 
       beforeEach(() => {
-        Object.assign(mocks.prisma.bookingModification, {
-          findMany: vi.fn().mockResolvedValue([{ id: "mod_1", changeFeeCents: 500 }]),
-        });
+        mocks.prisma.bookingModification.findMany.mockResolvedValue([{ id: "mod_1", changeFeeCents: 500 }]);
         mocks.prisma.xeroObjectLink.findMany.mockResolvedValue([]);
       });
 
