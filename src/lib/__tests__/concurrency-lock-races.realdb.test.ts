@@ -243,6 +243,13 @@ import "./xero-token-credential-store.realdb.test";
 // the executor's seam. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
 // cleans its own `race-3653-` fixtures.
 import "./organiser-child-refund.realdb.test";
+// #3750 reuses it to prove approving a locked-period change request on a
+// finished stay: the real executor and batch service add, remove, swap and
+// re-date the stay at the same-day tier, two racing approvals make one
+// modification and one ask, and an approval queues behind a cancel's lock(1).
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-3750-` fixtures.
+import "./booking-change-request-execution.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

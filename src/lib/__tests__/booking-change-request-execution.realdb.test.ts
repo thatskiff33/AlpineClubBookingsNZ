@@ -1,0 +1,520 @@
+/**
+ * Real-PostgreSQL proof for #3750: approving a LOCKED_PERIOD change request on a
+ * finished stay executes it exactly once, and serialises with a cancel.
+ *
+ * Every step is the REAL code — `approveAndExecuteLockedPeriodChangeRequest`,
+ * `prepareBatchModificationForCallerTransaction` and the canonical
+ * `modifyBookingBatch` it runs under `finishedStayCorrection` — against the real
+ * advisory locks, the real version CAS and the real pricing tables. Three claims:
+ *
+ *  1. An approved add-only request on a COMPLETED, internet-banking-paid stay
+ *     adds the guest, prices their past nights at the stay's season rate while
+ *     the existing guest's night rows stay byte-identical, raises the amount due
+ *     as the ordinary additional ask, charges no change fee, links the
+ *     modification and leaves the booking COMPLETED.
+ *  2. Two officers approving at once: exactly one modification and one ask. The
+ *     loser reports a lost claim and writes nothing.
+ *  3. Approve versus cancel: an approval that arrives while a cancel holds the
+ *     global lock(1) waits for it, then sees the cancelled booking and applies
+ *     nothing — the request stays REQUESTED at its old version.
+ *
+ * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
+ * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
+ * (#1881), which imports this file so CI reaches it; it cleans its own
+ * uniquely-namespaced `race-3750-` fixtures.
+ */
+import { Role, type PrismaClient } from "@prisma/client";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+
+const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
+const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
+
+const OWNER_ID = "race-3750-owner";
+const OFFICER_ID = "race-3750-officer";
+const OFFICER_2_ID = "race-3750-officer-2";
+const LODGE_ID = "race-3750-lodge";
+const SEASON_ID = "race-3750-season";
+const BOOKING_ID = "race-3750-booking";
+const GUEST_ID = "race-3750-guest";
+const GUEST_2_ID = "race-3750-guest-2";
+const PAYMENT_ID = "race-3750-payment";
+const REQUEST_ID = "race-3750-request";
+// Fully past against the frozen suite clock (1 July 2026).
+const CHECK_IN = new Date("2026-06-10T00:00:00.000Z");
+const NIGHT_2 = new Date("2026-06-11T00:00:00.000Z");
+const CHECK_OUT = new Date("2026-06-12T00:00:00.000Z");
+const NIGHT_CENTS = 5_000;
+const STORED_NIGHT_CENTS = 4_321; // deliberately NOT the season rate
+
+/** Standalone fail-closed copy: importing this file must not register another suite. */
+export function assertSafeChangeRequestExecutionRaceDbUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("Change-request execution proofs need a valid CONCURRENCY_RACE_DATABASE_URL.");
+  }
+  const port = Number.parseInt(parsed.port, 10);
+  if (!Number.isFinite(port) || port === 5432 || port < 55442) {
+    throw new Error(
+      `Refusing to run change-request execution proofs against port ${parsed.port || "(none)"}: use a throwaway PostgreSQL on 55442+ (never 5432).`,
+    );
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(host)) {
+    throw new Error("Change-request execution proof DB must be loopback-only.");
+  }
+  const databaseName = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
+  if (!databaseName.includes("concurrency_race_1881")) {
+    throw new Error("Change-request execution proof DB name must contain 'concurrency_race_1881'.");
+  }
+}
+
+let prisma: PrismaClient;
+let executor: typeof import("@/lib/booking-change-request-execution");
+let batchService: typeof import("@/lib/booking-batch-modification-service");
+let clubTimeServer: typeof import("@/lib/club-time/server");
+
+async function modificationIds(): Promise<string[]> {
+  const rows = await prisma.bookingModification.findMany({
+    where: { bookingId: BOOKING_ID },
+    select: { id: true },
+  });
+  return rows.map((row) => row.id);
+}
+
+/**
+ * The supplementary invoices queued for this booking's modifications. The Xero
+ * leg is queued post-commit without being awaited by the service, so this waits
+ * (on the real clock — the suite's `Date` is frozen) for the expected count.
+ */
+async function supplementaryInvoices(expected: number) {
+  const started = process.hrtime.bigint();
+  for (;;) {
+    const rows = await prisma.xeroSyncOperation.findMany({
+      where: {
+        localModel: "BookingModification",
+        localId: { in: await modificationIds() },
+        idempotencyKey: { contains: ":supplementary-invoice:" },
+      },
+      select: { localId: true, idempotencyKey: true },
+    });
+    if (rows.length >= expected || realElapsedMs(started) > 5_000) return rows;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+async function clean(): Promise<void> {
+  await prisma.xeroSyncOperation.deleteMany({
+    where: { localModel: "BookingModification", localId: { in: await modificationIds() } },
+  });
+  await prisma.auditLog.deleteMany({
+    where: {
+      OR: [
+        { targetId: { in: [BOOKING_ID, REQUEST_ID] } },
+        { memberId: { in: [OWNER_ID, OFFICER_ID, OFFICER_2_ID] } },
+        { subjectMemberId: OWNER_ID },
+      ],
+    },
+  });
+  await prisma.bookingChangeRequest.deleteMany({ where: { bookingId: BOOKING_ID } });
+  await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
+  await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
+  await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
+  await prisma.manualRefundTask.deleteMany({ where: { paymentId: PAYMENT_ID } });
+  await prisma.memberCredit.deleteMany({ where: { memberId: OWNER_ID } });
+  await prisma.bookingModification.deleteMany({ where: { bookingId: BOOKING_ID } });
+  await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [BOOKING_ID, PAYMENT_ID] } } });
+  await prisma.hostingCoverageReevaluation.deleteMany({ where: { memberId: OWNER_ID } });
+  await prisma.hostingCoverageIncident.deleteMany({ where: { bookingId: BOOKING_ID } });
+  await prisma.bedAllocation.deleteMany({ where: { bookingId: BOOKING_ID } });
+  await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
+  await prisma.payment.deleteMany({ where: { id: PAYMENT_ID } });
+  await prisma.bookingGuestNight.deleteMany({ where: { bookingGuest: { bookingId: BOOKING_ID } } });
+  await prisma.bookingGuest.deleteMany({ where: { bookingId: BOOKING_ID } });
+  await prisma.booking.deleteMany({ where: { id: BOOKING_ID } });
+}
+
+const ADD_LATE_FRIEND = {
+  checkIn: null,
+  checkOut: null,
+  addGuests: [{ firstName: "Late", lastName: "Friend", ageTier: "ADULT", isMember: false }],
+  removeGuests: [] as Array<{ id: string }>,
+  guestStayRanges: [] as Array<{ guestId: string; stayStart: string; stayEnd: string }>,
+  requestedEffectiveDate: null,
+  summary: "add Late Friend",
+};
+
+async function storedGuest(id: string, firstName: string) {
+  await prisma.bookingGuest.create({
+    data: {
+      id,
+      bookingId: BOOKING_ID,
+      firstName,
+      lastName: "Guest",
+      ageTier: "ADULT",
+      isMember: false,
+      stayStart: CHECK_IN,
+      stayEnd: CHECK_OUT,
+      priceCents: 2 * STORED_NIGHT_CENTS,
+      nights: {
+        create: [
+          { stayDate: CHECK_IN, priceCents: STORED_NIGHT_CENTS, priceSource: "SOLD" },
+          { stayDate: NIGHT_2, priceCents: STORED_NIGHT_CENTS, priceSource: "SOLD" },
+        ],
+      },
+    },
+  });
+}
+
+/**
+ * A COMPLETED two-night stay, paid in full by internet banking against an issued
+ * Xero invoice, and one LOCKED_PERIOD request about it (by default: add a guest).
+ */
+async function seed(
+  options: { secondGuest?: boolean; requested?: Record<string, unknown> } = {},
+): Promise<void> {
+  const guestIds = options.secondGuest ? [GUEST_ID, GUEST_2_ID] : [GUEST_ID];
+  const priceCents = guestIds.length * 2 * STORED_NIGHT_CENTS;
+  await prisma.booking.create({
+    data: {
+      id: BOOKING_ID,
+      memberId: OWNER_ID,
+      lodgeId: LODGE_ID,
+      checkIn: CHECK_IN,
+      checkOut: CHECK_OUT,
+      status: "COMPLETED",
+      totalPriceCents: priceCents,
+      finalPriceCents: priceCents,
+    },
+  });
+  await storedGuest(GUEST_ID, "Original");
+  if (options.secondGuest) await storedGuest(GUEST_2_ID, "Second");
+  await prisma.payment.create({
+    data: {
+      id: PAYMENT_ID,
+      bookingId: BOOKING_ID,
+      amountCents: priceCents,
+      source: "INTERNET_BANKING",
+      reference: "RACE3750",
+      status: "SUCCEEDED",
+      // An issued primary invoice: the edit's extra is billed by a supplementary
+      // invoice and asked for by internet banking.
+      xeroInvoiceId: "race-3750-xero-invoice",
+      xeroInvoiceNumber: "INV-3750",
+    },
+  });
+  await prisma.bookingChangeRequest.create({
+    data: {
+      id: REQUEST_ID,
+      bookingId: BOOKING_ID,
+      requestedByMemberId: OWNER_ID,
+      kind: "LOCKED_PERIOD",
+      status: "REQUESTED",
+      reason: "My friend stayed both nights too.",
+      requestedChanges: {
+        original: {
+          checkIn: "2026-06-10",
+          checkOut: "2026-06-12",
+          guests: guestIds.map((id) => ({ id })),
+        },
+        requested: { ...ADD_LATE_FRIEND, ...options.requested },
+      },
+    },
+  });
+}
+
+async function approve(officerId: string) {
+  return executor.approveAndExecuteLockedPeriodChangeRequest({
+    requestId: REQUEST_ID,
+    expectedVersion: 1,
+    actorMemberId: officerId,
+    adminNotes: "Added your friend to the stay.",
+    internalNotes: null,
+    confirmOverCapacity: false,
+    todayAtClub: (await clubTimeServer.clubTime()).today(),
+    format: CLUB_FORMAT_TEST,
+    preTransaction: await batchService.prepareBatchModificationForCallerTransaction({
+      audience: "admin",
+    }),
+    ipAddress: "127.0.0.1",
+  });
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+(RUN ? describe : describe.skip)("approving a finished-stay change request, on PostgreSQL (#3750)", () => {
+  beforeAll(async () => {
+    assertSafeChangeRequestExecutionRaceDbUrl(RACE_DB_URL);
+    process.env.DATABASE_URL = RACE_DB_URL;
+    ({ prisma } = (await import("@/lib/prisma")) as unknown as { prisma: PrismaClient });
+    executor = await import("@/lib/booking-change-request-execution");
+    batchService = await import("@/lib/booking-batch-modification-service");
+    clubTimeServer = await import("@/lib/club-time/server");
+
+    await clean();
+    await prisma.membershipTypeSeasonRate.deleteMany({ where: { seasonId: SEASON_ID } });
+    await prisma.season.deleteMany({ where: { id: SEASON_ID } });
+    await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE_ID } });
+    await prisma.lodgeSettings.deleteMany({ where: { id: LODGE_ID } });
+    await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
+    await prisma.memberAccessRole.deleteMany({ where: { memberId: { in: [OFFICER_ID, OFFICER_2_ID] } } });
+    await prisma.member.deleteMany({ where: { id: { in: [OWNER_ID, OFFICER_ID, OFFICER_2_ID] } } });
+
+    for (const [id, firstName] of [
+      [OWNER_ID, "Owner"],
+      [OFFICER_ID, "Officer"],
+      [OFFICER_2_ID, "Second"],
+    ] as const) {
+      await prisma.member.create({
+        data: {
+          id,
+          email: `${id}@example.invalid`,
+          passwordHash: "not-a-real-password",
+          firstName,
+          lastName: "Proof",
+          ageTier: "ADULT",
+          canLogin: true,
+          role: id === OWNER_ID ? Role.USER : Role.ADMIN,
+        },
+      });
+    }
+    for (const memberId of [OFFICER_ID, OFFICER_2_ID]) {
+      await prisma.memberAccessRole.create({ data: { memberId, role: "ADMIN" } });
+    }
+    await prisma.lodge.create({ data: { id: LODGE_ID, name: "Race 3750 Lodge", slug: "race-3750" } });
+    await prisma.lodgeSettings.create({ data: { id: LODGE_ID, lodgeId: LODGE_ID, capacity: 10 } });
+    // The lodge's own cancellation policy: a same-day (0-day) tier that keeps
+    // half, and a 14-day tier that refunds in full. A finished stay measured from
+    // the real today would fall below every tier and refund NOTHING; the owner's
+    // decision is the same-day tier, so a removal must refund half.
+    await prisma.cancellationPolicy.createMany({
+      data: [
+        { lodgeId: LODGE_ID, daysBeforeStay: 14, refundPercentage: 100, creditRefundPercentage: 100 },
+        { lodgeId: LODGE_ID, daysBeforeStay: 0, refundPercentage: 50, creditRefundPercentage: 80 },
+      ],
+    });
+    const nonMember = await prisma.membershipType.findUniqueOrThrow({ where: { key: "NON_MEMBER" } });
+    await prisma.season.create({
+      data: {
+        id: SEASON_ID,
+        name: "Race 3750 winter",
+        type: "WINTER",
+        startDate: new Date("2026-06-01T00:00:00.000Z"),
+        endDate: new Date("2026-06-30T00:00:00.000Z"),
+        active: true,
+        lodgeId: LODGE_ID,
+        membershipTypeRates: {
+          create: [
+            { membershipTypeId: nonMember.id, ageTier: "ADULT", pricePerNightCents: NIGHT_CENTS },
+            { membershipTypeId: nonMember.id, ageTier: null, pricePerNightCents: NIGHT_CENTS },
+          ],
+        },
+      },
+    });
+  }, 120_000);
+
+  beforeEach(async () => {
+    await clean();
+  });
+
+  afterAll(async () => {
+    if (!prisma) return;
+    await clean();
+    await prisma.membershipTypeSeasonRate.deleteMany({ where: { seasonId: SEASON_ID } });
+    await prisma.season.deleteMany({ where: { id: SEASON_ID } });
+    await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE_ID } });
+    await prisma.lodgeSettings.deleteMany({ where: { id: LODGE_ID } });
+    await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
+    await prisma.memberAccessRole.deleteMany({ where: { memberId: { in: [OFFICER_ID, OFFICER_2_ID] } } });
+    await prisma.member.deleteMany({ where: { id: { in: [OWNER_ID, OFFICER_ID, OFFICER_2_ID] } } });
+  });
+
+  it("adds the guest, prices only their nights, raises the amount due and charges no change fee", async () => {
+    await seed();
+    const result = await approve(OFFICER_ID);
+    expect(result, JSON.stringify(result)).toMatchObject({
+      outcome: "executed",
+      addedGuestCount: 1,
+      priceDiffCents: 2 * NIGHT_CENTS,
+      changeFeeCents: 0,
+    });
+
+    const booking = await prisma.booking.findUniqueOrThrow({
+      where: { id: BOOKING_ID },
+      include: {
+        guests: { include: { nights: { orderBy: { stayDate: "asc" } } }, orderBy: { createdAt: "asc" } },
+        payment: true,
+      },
+    });
+    expect(booking.status).toBe("COMPLETED");
+    expect(booking.finalPriceCents).toBe(2 * STORED_NIGHT_CENTS + 2 * NIGHT_CENTS);
+    expect(booking.guests).toHaveLength(2);
+    const original = booking.guests.find((guest) => guest.id === GUEST_ID)!;
+    // The existing guest's sold nights are untouched, byte for byte.
+    expect(original.nights.map((night) => [night.stayDate.toISOString(), night.priceCents, night.priceSource])).toEqual([
+      [CHECK_IN.toISOString(), STORED_NIGHT_CENTS, "SOLD"],
+      [NIGHT_2.toISOString(), STORED_NIGHT_CENTS, "SOLD"],
+    ]);
+    const added = booking.guests.find((guest) => guest.id !== GUEST_ID)!;
+    expect(added.nights.map((night) => night.priceCents)).toEqual([NIGHT_CENTS, NIGHT_CENTS]);
+
+    // The ordinary additional-payment ask for an internet-banking booking: the
+    // amount due, and the supplementary invoice that bills it (Xero is not
+    // connected here, so it waits in the outbox).
+    expect(result).toMatchObject({ additionalAmountCents: 2 * NIGHT_CENTS });
+
+    const modifications = await prisma.bookingModification.findMany({ where: { bookingId: BOOKING_ID } });
+    expect(modifications).toHaveLength(1);
+    expect(modifications[0]).toMatchObject({ changeFeeCents: 0, priceDiffCents: 2 * NIGHT_CENTS });
+    expect(modifications[0].newData).toMatchObject({
+      finishedStayCorrection: { changeRequestId: REQUEST_ID, changeFeeRule: "ADD_ONLY_NO_FEE" },
+    });
+    // Settlement: one supplementary invoice for exactly the extra, no fee.
+    const invoices = await supplementaryInvoices(1);
+    expect(invoices).toEqual([
+      {
+        localId: modifications[0].id,
+        idempotencyKey: `booking-mod:${modifications[0].id}:supplementary-invoice:${2 * NIGHT_CENTS}:0:v1`,
+      },
+    ]);
+
+    const request = await prisma.bookingChangeRequest.findUniqueOrThrow({ where: { id: REQUEST_ID } });
+    expect(request).toMatchObject({
+      status: "APPROVED",
+      version: 2,
+      reviewedByMemberId: OFFICER_ID,
+      adminNotes: "Added your friend to the stay.",
+      linkedModificationId: modifications[0].id,
+    });
+  }, 60_000);
+
+  it("two officers approving at once produce exactly one modification and one ask", async () => {
+    await seed();
+    const results = await Promise.all([approve(OFFICER_ID), approve(OFFICER_2_ID)]);
+    const outcomes = results.map((result) => result.outcome).sort();
+    expect(outcomes).toEqual(["claimLost", "executed"]);
+
+    expect(await prisma.bookingModification.count({ where: { bookingId: BOOKING_ID } })).toBe(1);
+    expect(await prisma.bookingGuest.count({ where: { bookingId: BOOKING_ID } })).toBe(2);
+    const winner = results.find((result) => result.outcome === "executed");
+    expect(winner).toMatchObject({ additionalAmountCents: 2 * NIGHT_CENTS });
+    // One ask: one supplementary invoice, whichever officer won.
+    expect(await supplementaryInvoices(1)).toHaveLength(1);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(await supplementaryInvoices(1)).toHaveLength(1);
+    const request = await prisma.bookingChangeRequest.findUniqueOrThrow({ where: { id: REQUEST_ID } });
+    expect(request.version).toBe(2);
+    expect(request.status).toBe("APPROVED");
+  }, 60_000);
+
+  it("a removal is priced as a same-day notice change: the 0-day tier, not the real (negative) notice", async () => {
+    await seed({
+      secondGuest: true,
+      requested: { addGuests: [], removeGuests: [{ id: GUEST_2_ID }], summary: "remove Second Guest" },
+    });
+    const result = await approve(OFFICER_ID);
+    expect(result, JSON.stringify(result)).toMatchObject({
+      outcome: "executed",
+      removedGuestCount: 1,
+      priceDiffCents: -2 * STORED_NIGHT_CENTS,
+      // Half of the reduction back the way it was paid — the same-day tier.
+      refundAmountCents: STORED_NIGHT_CENTS,
+    });
+    const [modification] = await prisma.bookingModification.findMany({ where: { bookingId: BOOKING_ID } });
+    expect(modification.newData).toMatchObject({
+      finishedStayCorrection: { changeRequestId: REQUEST_ID, changeFeeRule: "SAME_DAY_NOTICE" },
+      policyRetainedAmountCents: STORED_NIGHT_CENTS,
+    });
+    expect(await prisma.bookingGuest.count({ where: { bookingId: BOOKING_ID } })).toBe(1);
+  }, 60_000);
+
+  it("a swap is charged as a same-day change, and an add-only one is not", async () => {
+    await seed({
+      secondGuest: true,
+      requested: { removeGuests: [{ id: GUEST_2_ID }], summary: "swap Second Guest for Late Friend" },
+    });
+    const result = await approve(OFFICER_ID);
+    expect(result, JSON.stringify(result)).toMatchObject({
+      outcome: "executed",
+      addedGuestCount: 1,
+      removedGuestCount: 1,
+      // The added guest costs more than the removed one, so the net is owed.
+      priceDiffCents: 2 * NIGHT_CENTS - 2 * STORED_NIGHT_CENTS,
+    });
+    const [modification] = await prisma.bookingModification.findMany({ where: { bookingId: BOOKING_ID } });
+    expect(modification.newData).toMatchObject({
+      finishedStayCorrection: { changeFeeRule: "SAME_DAY_NOTICE" },
+    });
+  }, 60_000);
+
+  it("executes every part of a mixed request: a shorter stay, a removal and an add (decision 4)", async () => {
+    await seed({
+      secondGuest: true,
+      requested: {
+        checkOut: "2026-06-11",
+        removeGuests: [{ id: GUEST_2_ID }],
+        summary: "check-out to 2026-06-11; add Late Friend; remove Second Guest",
+      },
+    });
+    const result = await approve(OFFICER_ID);
+    expect(result, JSON.stringify(result)).toMatchObject({ outcome: "executed" });
+
+    const booking = await prisma.booking.findUniqueOrThrow({
+      where: { id: BOOKING_ID },
+      include: { guests: { include: { nights: true } } },
+    });
+    expect(booking.checkOut.toISOString()).toBe(NIGHT_2.toISOString());
+    expect(booking.guests.map((guest) => guest.firstName).sort()).toEqual(["Late", "Original"]);
+    const original = booking.guests.find((guest) => guest.id === GUEST_ID)!;
+    expect(original.nights.map((night) => [night.stayDate.toISOString(), night.priceCents])).toEqual([
+      [CHECK_IN.toISOString(), STORED_NIGHT_CENTS],
+    ]);
+    const added = booking.guests.find((guest) => guest.firstName === "Late")!;
+    expect(added.nights.map((night) => night.priceCents)).toEqual([NIGHT_CENTS]);
+    expect(booking.finalPriceCents).toBe(STORED_NIGHT_CENTS + NIGHT_CENTS);
+  }, 60_000);
+
+  it("an approval racing a cancel waits on lock(1), then applies nothing to the cancelled booking", async () => {
+    await seed();
+    const lockHeld = deferred();
+    const releaseCancel = deferred();
+    const cancel = prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        lockHeld.resolve();
+        await releaseCancel.promise;
+        await tx.booking.update({ where: { id: BOOKING_ID }, data: { status: "CANCELLED" } });
+      },
+      { timeout: 30_000 },
+    );
+    await lockHeld.promise;
+
+    let approvalSettled = false;
+    const approval = approve(OFFICER_ID).finally(() => {
+      approvalSettled = true;
+    });
+    // The approval is queued behind the cancel's global key, not racing it.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(approvalSettled).toBe(false);
+
+    releaseCancel.resolve();
+    await cancel;
+    const result = await approval;
+
+    expect(result).toMatchObject({ outcome: "keptPending" });
+    expect(await prisma.bookingModification.count({ where: { bookingId: BOOKING_ID } })).toBe(0);
+    expect(await prisma.bookingGuest.count({ where: { bookingId: BOOKING_ID } })).toBe(1);
+    const request = await prisma.bookingChangeRequest.findUniqueOrThrow({ where: { id: REQUEST_ID } });
+    expect(request).toMatchObject({ status: "REQUESTED", version: 1, linkedModificationId: null });
+  }, 60_000);
+});
