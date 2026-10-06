@@ -131,7 +131,7 @@ const EMPTY_SEASONAL_ASSIGNMENTS: SeasonalMembershipAssignmentSummary[] = [];
  * was wrong for one of them.
  */
 function formatCalendarDay(date: string | null, format: ClubDateFormat) {
-  return (formatStayDateOrNull(date, format) ?? "-");
+  return formatStayDateOrNull(date, format) ?? "-";
 }
 
 /** A real INSTANT, in the club's persisted zone (INV-CONFIG-002). */

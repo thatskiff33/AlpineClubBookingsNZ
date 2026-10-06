@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time"
+import { calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time";
 import { CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {

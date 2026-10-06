@@ -104,7 +104,7 @@ function formatMemberSince(
   member: Pick<Member, "joinedDate" | "createdAt">,
 ): string {
   return member.joinedDate
-    ? (formatStayDateOrNull(member.joinedDate, clubTime.format) ?? "—")
+    ? formatStayDateOrNull(member.joinedDate, clubTime.format) ?? "—"
     : clubTime.instantDate(requireInstant(member.createdAt))
 }
 

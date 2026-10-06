@@ -118,3 +118,12 @@ describe("the converged decoder reads every spelling to the stored day (#3511)",
     expect(formatStayDateOrNull("2026-07-04T13:45:00", CLUB_FORMAT_TEST)).toBe("4 Jul 2026");
   });
 });
+
+describe("a non-string payload value cannot throw out of a render (#3511 review)", () => {
+  it("answers null for a number, an object or a Date, where `.slice` would throw", () => {
+    for (const value of [20260704, {}, new Date(SERIALISED_STAY), true]) {
+      expect(calendarDateOfSerialisedDbDateOrNull(value as unknown as string)).toBeNull();
+      expect(formatStayDateOrNull(value as unknown as string, CLUB_FORMAT_TEST)).toBeNull();
+    }
+  });
+});

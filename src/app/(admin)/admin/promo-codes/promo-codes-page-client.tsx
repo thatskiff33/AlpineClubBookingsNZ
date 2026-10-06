@@ -146,7 +146,7 @@ function formatPromoDateInput(value: string | null) {
 }
 
 function formatPromoDateDisplay(value: string | null, format: ClubDateFormat) {
-  return (formatStayDateOrNull(value, format) ?? "");
+  return formatStayDateOrNull(value, format) ?? "";
 }
 
 export function PromoCodesPageClient({

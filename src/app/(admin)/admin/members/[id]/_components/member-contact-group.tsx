@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { formatStayDateOrNull } from "@/lib/club-time"
+import { formatStayDateOrNull } from "@/lib/club-time";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { FieldHint, describedByFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
@@ -483,7 +483,7 @@ export function MemberContactGroup({
                 projecting it through a zone is `INV-DATE-019`, and through a
                 zone behind UTC it names the day before the member was born. */}
             {member.dateOfBirth
-              ? (formatStayDateOrNull(member.dateOfBirth, clubTime.format) ?? "—")
+              ? formatStayDateOrNull(member.dateOfBirth, clubTime.format) ?? "—"
               : "Not set"}
           </dd>
         </div>
@@ -499,7 +499,7 @@ export function MemberContactGroup({
                 through one instant formatter is what made the branch you got
                 decide whether the day was right. */}
             {member.joinedDate
-              ? (formatStayDateOrNull(member.joinedDate, clubTime.format) ?? "—")
+              ? formatStayDateOrNull(member.joinedDate, clubTime.format) ?? "—"
               : formatPayloadInstantDate(clubTime, member.createdAt)}
             {member.joinedDate && (
               <span className="ml-1 text-xs text-muted-foreground">(from Xero)</span>

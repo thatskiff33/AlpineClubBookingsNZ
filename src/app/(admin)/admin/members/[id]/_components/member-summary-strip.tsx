@@ -110,7 +110,7 @@ export function MemberSummaryStrip({
           label="Last Stay"
           value={
             member.stats.lastStay
-              ? (formatStayDateOrNull(member.stats.lastStay, format) ?? "—")
+              ? formatStayDateOrNull(member.stats.lastStay, format) ?? "—"
               : "Never"
           }
         />

@@ -58,7 +58,7 @@
  * 2026 is 16 April 2026 for a viewer in London and one at the lodge.
  */
 
-import { calendarDateParts, parseCalendarDate } from "@/lib/club-time";
+import { calendarDateParts, parseCalendarDate } from "@/lib/club-time"
 
 /**
  * `null` for anything that is not a `yyyy-MM-dd` calendar day, so the caller

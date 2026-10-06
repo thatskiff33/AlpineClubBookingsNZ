@@ -45,6 +45,11 @@ import { stripComments } from "./support/strip-comments";
  * (`requireStoredCalendarDay`) goes INTO `formatStayDate`, whose `Instant` arm
  * takes it.
  *
+ * The structural rule (#3511 review): `parseCalendarDate` and `requireCalendarDate`
+ * count as decoders too, so a new helper cannot dodge the census by choosing a
+ * new name. There is NO allowlist today; a justified exception would be a named
+ * entry beside `HOME`.
+ *
  * The one file that legitimately holds a decoder and no formatter is any file
  * that decodes for a comparison or a value; the one that holds `formatClubDate`
  * and no decoder is any file formatting a `CalendarDate` reached another way.
@@ -63,7 +68,7 @@ const ROOT = path.resolve(__dirname, "../../..");
 const HOME = "src/lib/club-time/format.ts";
 
 const DECODER_CALL =
-  /\b(?:calendarDateOfSerialisedDbDate(?:OrNull)?|calendarDateOfDateOnlyInstant)\s*\(/;
+  /\b(?:calendarDateOfSerialisedDbDate(?:OrNull)?|calendarDateOfDateOnlyInstant|parseCalendarDate|requireCalendarDate)\s*\(/;
 const FORMATTER_CALL = /\bformatClubDate\s*\(/;
 /**
  * Every name a local copy of the stay-date helper has gone by: the kernel's own
@@ -168,6 +173,17 @@ describe("the scanner recognises what it refuses", () => {
     ].join("\n");
     expect(composesStayDateInline(guarded)).toBe(true);
     expect(composesStayDateInline("countClubNights(a, calendarDateOfDateOnlyInstant(b))")).toBe(false);
+  });
+
+  it("counts the bare-key spellings, whatever the helper is called (#3511 review)", () => {
+    const requireForm = "function anyName(v: string) { return formatClubDate(requireCalendarDate(v), f); }";
+    const parseForm = [
+      "const day = parseCalendarDate(value);",
+      "return day === null ? value : formatClubDate(day, format);",
+    ].join("\n");
+    expect(composesStayDateInline(requireForm)).toBe(true);
+    expect(composesStayDateInline(parseForm)).toBe(true);
+    expect(composesStayDateInline("const d = parseCalendarDate(x); return formatClubDayMonth(d, f);")).toBe(false);
   });
 
   it("counts a local helper under any name a copy went by (#3511)", () => {

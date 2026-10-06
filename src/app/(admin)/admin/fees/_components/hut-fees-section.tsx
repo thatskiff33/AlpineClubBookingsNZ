@@ -110,7 +110,7 @@ const FALLBACK_TIERS: AgeTierSetting[] = [
 // projection is the identity for every club. It used to be read through
 // APP_TIME_ZONE, which for a club behind UTC named the previous day.
 function formatSeasonEdge(value: string, format: ClubDateFormat): string {
-  return (formatStayDateOrNull(value, format) ?? value);
+  return formatStayDateOrNull(value, format) ?? value;
 }
 
 /*

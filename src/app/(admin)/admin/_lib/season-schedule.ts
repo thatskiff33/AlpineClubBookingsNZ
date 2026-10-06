@@ -39,7 +39,7 @@
  * host clock is not the club's day (`INV-DATE-019`).
  */
 
-import { CalendarDate, calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time";
+import { type CalendarDate, calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time"
 import {
   buildSeasonTimeline,
   type SeasonCoverageGap,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, use } from "react";
-import { formatStayDateOrNull } from "@/lib/club-time"
+import { formatStayDateOrNull } from "@/lib/club-time";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";

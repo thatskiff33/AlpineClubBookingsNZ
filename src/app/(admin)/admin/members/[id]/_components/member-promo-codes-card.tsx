@@ -72,13 +72,13 @@ export function MemberPromoCodesCard({ promoCodes, className }: { promoCodes: Me
                     <div className="space-y-1">
                       <p>Assigned {promo.assignedAt ? formatPayloadInstantDate(clubTime, promo.assignedAt) : "unknown"}</p>
                       <p>
-                        Valid {promo.validFrom ? (formatStayDateOrNull(promo.validFrom, format) ?? "—") : "now"} -{" "}
-                        {promo.validUntil ? (formatStayDateOrNull(promo.validUntil, format) ?? "—") : "no end"}
+                        Valid {promo.validFrom ? formatStayDateOrNull(promo.validFrom, format) ?? "—" : "now"} -{" "}
+                        {promo.validUntil ? formatStayDateOrNull(promo.validUntil, format) ?? "—" : "no end"}
                       </p>
                       {(promo.bookingStartFrom || promo.bookingStartUntil) && (
                         <p>
-                          Stay dates {promo.bookingStartFrom ? (formatStayDateOrNull(promo.bookingStartFrom, format) ?? "—") : "any"} -{" "}
-                          {promo.bookingStartUntil ? (formatStayDateOrNull(promo.bookingStartUntil, format) ?? "—") : "any"}
+                          Stay dates {promo.bookingStartFrom ? formatStayDateOrNull(promo.bookingStartFrom, format) ?? "—" : "any"} -{" "}
+                          {promo.bookingStartUntil ? formatStayDateOrNull(promo.bookingStartUntil, format) ?? "—" : "any"}
                         </p>
                       )}
                     </div>

@@ -317,11 +317,11 @@ export function emailClubDate(value: Instant): string {
 export function emailCalendarDay(value: Date): string {
   return formatStayDate(
     requireStoredCalendarDay(value, {
-        subject: "An email's calendar-day token",
-        instead:
-          "A real timestamp rendered as a bare day is a projection: use " +
-          "emailClubDate, which reads it in the club's persisted zone.",
-      }),
+      subject: "An email's calendar-day token",
+      instead:
+        "A real timestamp rendered as a bare day is a projection: use " +
+        "emailClubDate, which reads it in the club's persisted zone.",
+    }),
     emailClubTime().format,
   );
 }

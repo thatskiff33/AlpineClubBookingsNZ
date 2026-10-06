@@ -270,7 +270,8 @@ export function formatClubLongWeekdayDate(
  * `formatPayloadCalendarDay` and the member/family twins used to answer their
  * fallback for an offset-less timestamp such as `2026-07-04T13:45:00`; they are
  * gone and that one value now renders its prefix day. Every other fallback is
- * unchanged: a surface keeps its own `?? fallback` on {@link formatStayDateOrNull}.
+ * unchanged for every value a route actually emits: a surface keeps its own
+ * `?? fallback` on {@link formatStayDateOrNull}.
  */
 export function formatStayDate(
   value: string | Instant,

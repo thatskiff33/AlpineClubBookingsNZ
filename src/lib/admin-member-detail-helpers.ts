@@ -349,7 +349,7 @@ export function formatMemberHistoryPreview(input: {
     // `lastStay` is a `@db.Date` CALENDAR DAY, not an instant — see
     // `formatStayDateOrNull`. The summary strip on the same page renders it
     // the same way, so the two can no longer name different days.
-    input.lastStay ? `last stay ${(formatStayDateOrNull(input.lastStay, format) ?? "—")}` : null,
+    input.lastStay ? `last stay ${formatStayDateOrNull(input.lastStay, format) ?? "—"}` : null,
   ]
     .filter(Boolean)
     .join(PREVIEW_SEPARATOR)

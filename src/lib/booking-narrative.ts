@@ -176,11 +176,11 @@ function sortedByOccurredAt(events: NarrativeEvent[]): NarrativeEvent[] {
 function storedNight(value: Date, format: ClubFormat): string {
   return formatStayDate(
     requireStoredCalendarDay(value, {
-        subject: "A booking narrative's lodge night",
-        instead:
-          "A real timestamp rendered as a bare day is a projection: use club.instantDate, " +
-          "which reads it in the club's persisted zone.",
-      }),
+      subject: "A booking narrative's lodge night",
+      instead:
+        "A real timestamp rendered as a bare day is a projection: use club.instantDate, " +
+        "which reads it in the club's persisted zone.",
+    }),
     format,
   );
 }

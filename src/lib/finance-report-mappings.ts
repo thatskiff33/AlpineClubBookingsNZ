@@ -237,11 +237,11 @@ function snapshotEnd(snapshot: FinanceSnapshotRecord): Date {
 function formatSnapshotPeriodEnd(value: Date, format: ClubFormat): string {
   return formatStayDate(
     requireStoredCalendarDay(value, {
-        subject: "A finance snapshot's fallback period label",
-        instead:
-          "A real timestamp rendered as a bare day is a projection, and both " +
-          "FinanceSnapshot.periodEnd and FinanceSnapshot.asOfDate are @db.Date columns.",
-      }),
+      subject: "A finance snapshot's fallback period label",
+      instead:
+        "A real timestamp rendered as a bare day is a projection, and both " +
+        "FinanceSnapshot.periodEnd and FinanceSnapshot.asOfDate are @db.Date columns.",
+    }),
     format,
   );
 }

@@ -133,7 +133,7 @@ function formatInstant(clubTime: BoundClubTime, value: string | null) {
  * one of the mandatory regression anchors on #2870 for exactly that reason.
  */
 function formatDateOfBirth(value: string, format: ClubDateFormat) {
-  return (formatStayDateOrNull(value, format) ?? value);
+  return formatStayDateOrNull(value, format) ?? value;
 }
 
 function statusLabel(status: ApplicationStatus) {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useId } from "react";
-import { formatStayDateOrNull } from "@/lib/club-time"
+import { formatStayDateOrNull } from "@/lib/club-time";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";

@@ -319,11 +319,11 @@ function formatSnapshotWindow(
 function storedSnapshotDay(value: Date, format: ClubDateFormat): string {
   return formatStayDate(
     requireStoredCalendarDay(value, {
-        subject: "A cash snapshot's as-of or period date",
-        instead:
-          "A real timestamp rendered as a bare day is a projection, and " +
-          "FinanceSnapshot.asOfDate, .periodStart and .periodEnd are all @db.Date columns.",
-      }),
+      subject: "A cash snapshot's as-of or period date",
+      instead:
+        "A real timestamp rendered as a bare day is a projection, and " +
+        "FinanceSnapshot.asOfDate, .periodStart and .periodEnd are all @db.Date columns.",
+    }),
     format,
   );
 }

@@ -46,7 +46,7 @@
  */
 
 import type { BoundClubTime } from "@/lib/club-time";
-import { parseInstant } from "@/lib/club-time";
+import { parseInstant } from "@/lib/club-time"
 
 /**
  * A payload instant in the house medium shape — "16 Apr 2026" — read in the
