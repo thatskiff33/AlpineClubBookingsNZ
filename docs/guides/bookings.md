@@ -273,7 +273,9 @@ Things worth knowing:
 
 When a change increases a booking's price after the booking has been confirmed —
 adding a non-member guest to a paid booking, say — the difference becomes an
-**additional payment** the member has to make from their own booking page. It is
+**additional payment** the member has to make from their own booking page. That
+includes a booking the member paid for entirely with account credit: the extra
+is asked for by card, whether or not the club uses Xero. It is
 easy for that to be quietly forgotten by everybody.
 
 Only confirmed, paid and completed bookings are counted and chased. A cancelled

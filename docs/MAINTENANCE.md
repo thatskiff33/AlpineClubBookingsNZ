@@ -1960,6 +1960,17 @@ asking for it on an invoice. **Before acting on any positive residual, check the
 booking's payment source and its Xero supplementary invoices.** A card booking's
 positive residual is the real thing; an IB one almost never is.
 
+**A CREDIT-PAID ($0) BOOKING THAT GREW BEFORE #3502 IS USUALLY A REAL POSITIVE.**
+A booking paid wholly with account credit has a $0 captured payment and no card
+intent. Until #3502, three of the four edit doors sent its price increase to a
+Xero supplementary invoice, which exists only when Xero is connected and the
+primary invoice had already been raised — otherwise nobody was asked for the
+money. Every door now asks the member's card instead, so new rows should not
+appear. For rows that grew earlier: at a club without Xero the residual is
+genuinely unbilled; at a Xero club, check the booking's supplementary invoices
+first, because one may already be asking for it. The owner's decision for these
+is report only — list them for the owner and do not back-bill from the census.
+
 That gap is not closed in the arithmetic on purpose. A term reading the Xero
 outbox would make the identity depend on an external system's queue state, and a
 queued-but-unsent invoice, a failed one and a sent one are three different
