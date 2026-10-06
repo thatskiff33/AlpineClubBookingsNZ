@@ -5129,6 +5129,18 @@ model ServerNzSettings {
   commsPoisonChangeId String?  @db.VarChar(64)
   commsPoisonCount    Int      @default(0)
 
+  // The central server's API version as last reported by GET /api/v1/version
+  // (#49), and when it was asked. THREE states: NULL means never checked (no
+  // key stored, or the key was replaced and the old answer forgotten); the
+  // literal "unknown" means the server answered 404 - it predates versioning -
+  // which this site treats as a mismatch; otherwise a canonical `major.minor`.
+  // The MISMATCH itself is never stored: it is computed on every read from
+  // this value and `SERVERNZ_EXPECTED_SERVER_VERSION`, so upgrading this site
+  // clears it with no manual step. A failed check leaves both columns as they
+  // were (a network blip must not pause syncing).
+  serverVersion          String?   @db.VarChar(16)
+  serverVersionCheckedAt DateTime?
+
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @default(now()) @updatedAt
@@ -6817,6 +6829,12 @@ model NotificationPreference {
   // (ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT), so "the maintenance officer" is
   // whoever the club has given that area to — never a hard-coded address.
   adminMaintenanceReport     Boolean  @default(true)
+  // #49: the Alpine Central Server is on a different API version, so syncing
+  // is paused. Rides the Daily digest template; audience is Lodge Operations
+  // edit (ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT) in ADDITION to the
+  // digest's own audience, and a lodge-only recipient gets the version entry
+  // alone, never the cross-area counts.
+  adminServerVersion         Boolean  @default(true)
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 

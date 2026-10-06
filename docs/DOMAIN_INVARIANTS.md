@@ -843,6 +843,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-022` | The missing-contact census: read-only, cache-fresh, ambiguity handed back |
 | `INV-INT-023` | The seeding run: funnel-routed, plan-checked, authoritative-or-nothing |
 | `INV-INT-024` | Erasure leaves Xero alone; a read-only notice names what it left |
+| `INV-INT-025` | Central-server syncing pauses on any API version difference, integer-compared |
 
 ## Operations
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Building, Pencil, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -219,6 +220,10 @@ export function OtherLodgesPanel({
   // `null` until it has said anything, `[]` when it said none. Only an owned
   // lodge gets an Edit button; both read-only states are explained below.
   const [ownedNames, setOwnedNames] = useState<OwnedOtherLodgeNames>(null);
+  // Whether syncing with the central server is paused for version (#49): the
+  // list on screen may be stale while it is, so the panel says so and links
+  // to setup, where the two numbers are shown.
+  const [syncPaused, setSyncPaused] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -247,6 +252,7 @@ export function OtherLodgesPanel({
       if (seq !== loadSeqRef.current) return;
       setLodges(Array.isArray(data?.otherLodges) ? data.otherLodges : []);
       setOwnedNames(Array.isArray(data?.ownedLodgeNames) ? data.ownedLodgeNames : null);
+      setSyncPaused(data?.serverVersionStatus === "mismatch");
     } catch {
       if (seq !== loadSeqRef.current) return;
       setError("Could not load other lodges. Please try again.");
@@ -641,6 +647,20 @@ export function OtherLodgesPanel({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Syncing paused for version (#49): the rows below may be stale and
+              an edit saved here will not leave this site until it resumes. */}
+          {!loading && syncPaused ? (
+            <p className="text-sm text-destructive" role="status" data-testid="server-version-paused">
+              Syncing with the Alpine Central Server is paused because the server
+              is on a different software version from this site, so this list may
+              be out of date and changes made here are not sent until the two
+              match. See the{" "}
+              <Link href="/admin/alpine-server/setup" className="underline underline-offset-4">
+                Alpine Central Server setup page
+              </Link>{" "}
+              for both version numbers.
+            </p>
+          ) : null}
           {/* Why nothing here can be edited, in the two read-only states. Not
               shown while loading: the owned list is not known yet either way. */}
           {!loading && ownedNames === null ? (

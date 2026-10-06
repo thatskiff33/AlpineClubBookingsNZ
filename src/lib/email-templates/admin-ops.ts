@@ -22,10 +22,12 @@ import {
   paragraph,
 } from "./layout";
 import { emailPalette } from "@/lib/email-theme";
+import { describeServerVersionPause } from "@/lib/servernz-api-version";
 
 // ---- N-13: Admin Daily Digest ----
 
-export function adminDailyDigestTemplate(sections: {
+/** The six alert counts and their total, as `cron-admin-digest.ts` builds them. */
+export interface AdminDigestCounts {
   newBookings: number;
   paymentFailures: number;
   capacityWarnings: number;
@@ -33,7 +35,60 @@ export function adminDailyDigestTemplate(sections: {
   pendingDeadlines: number;
   xeroErrors: number;
   totalAlerts: number;
-}): string {
+}
+
+/**
+ * The "central server version" entry (#49): present only while syncing with
+ * the Alpine Central Server is paused because the versions differ. `server`
+ * is the server's reported version, or "unknown" for a release that predates
+ * version checks.
+ */
+export interface AdminDigestServerVersion {
+  expected: string;
+  server: string;
+}
+
+const ALPINE_SERVER_SETUP_PATH = "/admin/alpine-server/setup";
+
+function serverVersionEntry(version: AdminDigestServerVersion): string {
+  return (
+    alertBox(
+      "<strong>Central server version.</strong> " +
+        escapeHtml(describeServerVersionPause(version.expected, version.server)),
+      "warning",
+    ) + button("Open Alpine Central Server setup", BASE_URL + ALPINE_SERVER_SETUP_PATH)
+  );
+}
+
+/**
+ * The version-only notice (#49, owner decision "second template"): what a
+ * Lodge Operations editor who does NOT receive the Daily digest is sent while
+ * syncing is paused. Its OWN template, so a club's override of the digest can
+ * neither garble it into blank counts nor hide it; no count is rendered here,
+ * because the counts are cross-area alert data that role does not hold.
+ */
+export function adminServerVersionPausedTemplate(
+  version: AdminDigestServerVersion,
+): string {
+  return layout(`
+    ${heading("Central Server Version")}
+    ${paragraph("A daily notice while syncing with the Alpine Central Server is paused.")}
+    ${serverVersionEntry(version)}
+  `);
+}
+
+/**
+ * The digest body: byte-identical to what shipped before #49 when
+ * `serverVersion` is absent, plus the version entry after the total when it
+ * is present (the digest's own readers). The version-only notice for lodge
+ * editors is `adminServerVersionPausedTemplate`, deliberately not a shape of
+ * this one.
+ */
+export function adminDailyDigestTemplate(
+  sections: AdminDigestCounts & {
+    serverVersion?: AdminDigestServerVersion;
+  },
+): string {
   const p = emailPalette();
   const rows: Array<{ label: string; value: string; link: string }> = [];
 
@@ -72,7 +127,7 @@ export function adminDailyDigestTemplate(sections: {
       </tr>
       ${tableRowsHtml}
     </table>` : ""}
-    ${paragraph("<strong>Total alerts:</strong> " + sections.totalAlerts)}
+    ${paragraph("<strong>Total alerts:</strong> " + sections.totalAlerts) + (sections.serverVersion ? serverVersionEntry(sections.serverVersion) : "")}
     ${button("Open Admin Dashboard", BASE_URL + "/admin/dashboard")}
   `);
 }

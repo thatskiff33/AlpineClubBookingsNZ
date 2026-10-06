@@ -12,11 +12,11 @@ const mocks = vi.hoisted(() => ({
   getIntegrationCredentialValue: vi.fn(),
   setIntegrationCredential: vi.fn(),
   deleteIntegrationCredential: vi.fn(),
-  clearOtherLodgesOwnedNames: vi.fn(),
+  forgetServerConnectionAnswers: vi.fn(),
 }));
 
 vi.mock("@/lib/servernz-settings", () => ({
-  clearOtherLodgesOwnedNames: mocks.clearOtherLodgesOwnedNames,
+  forgetServerConnectionAnswers: mocks.forgetServerConnectionAnswers,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -98,9 +98,11 @@ describe("ServerNZ credential wiring", () => {
     // through this same helper, so it is covered too.)
     const actor = { kind: "admin", memberId: "member-1" } as const;
     await setServerNzApiKey("acs_new", actor);
-    expect(mocks.clearOtherLodgesOwnedNames).not.toHaveBeenCalled();
+    expect(mocks.forgetServerConnectionAnswers).not.toHaveBeenCalled();
     await clearServerNzApiKey(actor);
-    expect(mocks.clearOtherLodgesOwnedNames).toHaveBeenCalledTimes(1);
+    // #49: the server's last reported version was that connection's answer
+    // too, and both are forgotten in the one write.
+    expect(mocks.forgetServerConnectionAnswers).toHaveBeenCalledTimes(1);
   });
 });
 

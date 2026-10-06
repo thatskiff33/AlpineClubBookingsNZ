@@ -87,6 +87,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/alpine-server/other-lodges/download": "finance",
   "/api/admin/alpine-server/other-lodges/upload": "finance",
   "/api/admin/alpine-server/settings": "finance",
+  "/api/admin/alpine-server/version": "finance",
   "/api/admin/ai-assistant/settings": "support",
   "/api/admin/ai-assistant/usage": "support",
   // AI Diagnostics (AID-2, #2371): a separate admin-only paid capability. Its

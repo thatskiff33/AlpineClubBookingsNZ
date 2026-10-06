@@ -12,6 +12,13 @@ const mocks = vi.hoisted(() => ({
   amenityUpsert: vi.fn(),
   auditLogCreate: vi.fn(),
   loadServerNzSettings: vi.fn(),
+  readStoredServerVersion: vi.fn(),
+}));
+
+// #49: the list read reports the STORED version status; the check itself
+// (a network call) is never made from here, so only the reader is mocked.
+vi.mock("@/lib/servernz-version-check", () => ({
+  readStoredServerVersion: mocks.readStoredServerVersion,
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -141,6 +148,13 @@ beforeEach(() => {
   mocks.auth.mockResolvedValue(adminSession);
   mocks.requireActiveSessionUser.mockResolvedValue(null);
   mocks.auditLogCreate.mockResolvedValue(undefined);
+  mocks.readStoredServerVersion.mockResolvedValue({
+    status: "match",
+    serverVersion: "2.0",
+    expected: "2.0",
+    checkedAt: now.toISOString(),
+    couldNotCheck: false,
+  });
   owning(["Ruapehu Ski Club"]);
 });
 
@@ -234,6 +248,25 @@ describe("GET /api/admin/other-lodges", () => {
     const data = await (await GET()).json();
     expect(data.ownedLodgeNames).toEqual([]);
     expect(data.otherLodges[0].owned).toBe(false);
+  });
+
+  it("reports the STORED server-version status so the panel can say syncing is paused (#49)", async () => {
+    mocks.findMany.mockResolvedValue([record()]);
+    expect((await (await GET()).json()).serverVersionStatus).toBe("match");
+
+    mocks.readStoredServerVersion.mockResolvedValue({
+      status: "mismatch",
+      serverVersion: "2.1",
+      expected: "2.0",
+      checkedAt: now.toISOString(),
+      couldNotCheck: false,
+    });
+    const data = await (await GET()).json();
+    expect(data.serverVersionStatus).toBe("mismatch");
+    // The list itself is still served: the panel shows the rows AND the note.
+    expect(data.otherLodges).toHaveLength(1);
+    // Read, not checked: a list read must never contact the server.
+    expect(mocks.readStoredServerVersion).toHaveBeenCalledTimes(2);
   });
 });
 

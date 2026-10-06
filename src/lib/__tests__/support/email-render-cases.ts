@@ -105,6 +105,7 @@ import {
   adminEmailWithheldTemplate,
   adminIssueReportTemplate,
   adminMaintenanceReportTemplate,
+  adminServerVersionPausedTemplate,
   websiteContactTemplate,
 } from "@/lib/email-templates/admin-ops";
 import {
@@ -720,6 +721,12 @@ const GENERATED_CASES: EmailRenderCase[] = [
     noticePublishedTemplate("firstName-1", "noticeTitle-2", "noticeUrl-3") },
   { id: "adminDailyDigestTemplate:minimal", fn: "adminDailyDigestTemplate", render: () =>
     adminDailyDigestTemplate({ newBookings: 101, paymentFailures: 102, capacityWarnings: 103, bookingsBumped: 104, pendingDeadlines: 105, xeroErrors: 106, totalAlerts: 107 }) },
+  // #49: the digest with the central-server-version entry appended, and the
+  // version-only render a Lodge Operations editor without the digest receives.
+  { id: "adminDailyDigestTemplate:full", fn: "adminDailyDigestTemplate", render: () =>
+    adminDailyDigestTemplate({ newBookings: 101, paymentFailures: 102, capacityWarnings: 103, bookingsBumped: 104, pendingDeadlines: 105, xeroErrors: 106, totalAlerts: 107, serverVersion: { expected: "2.0", server: "2.1" } }) },
+  { id: "adminServerVersionPausedTemplate:minimal", fn: "adminServerVersionPausedTemplate", render: () =>
+    adminServerVersionPausedTemplate({ expected: "2.0", server: "unknown" }) },
   { id: "adminXeroReconciliationReportTemplate:minimal", fn: "adminXeroReconciliationReportTemplate", render: () =>
     adminXeroReconciliationReportTemplate(XERO_REPORT_MINIMAL) },
   { id: "adminXeroReconciliationReportTemplate:full", fn: "adminXeroReconciliationReportTemplate", render: () =>

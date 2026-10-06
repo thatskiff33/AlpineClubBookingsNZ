@@ -1238,6 +1238,7 @@ describe("AdminNotificationSettings view-only gating (#1940, support)", () => {
         adminBookingReviewRequired: true,
         adminMemberDeleteRequest: true,
         adminMaintenanceReport: true,
+        adminServerVersion: true,
       },
     },
   ];

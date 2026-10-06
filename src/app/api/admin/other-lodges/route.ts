@@ -7,6 +7,7 @@ import {
 } from "@/lib/other-lodges";
 import { prisma } from "@/lib/prisma";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
+import { readStoredServerVersion } from "@/lib/servernz-version-check";
 import { requireAdmin } from "@/lib/session-guards";
 
 // READ ONLY. The create handler that lived here was removed by #52: a site
@@ -24,18 +25,21 @@ export async function GET() {
   });
   if (!guard.ok) return guard.response;
 
-  const [otherLodges, settings] = await Promise.all([
+  const [otherLodges, settings, version] = await Promise.all([
     prisma.otherLodge.findMany({
       orderBy: otherLodgeOrderBy(),
       select: otherLodgeSelect,
     }),
     loadServerNzSettings(),
+    // The STORED answer (#49): no network call from a list read.
+    readStoredServerVersion(),
   ]);
   const owned = settings.otherLodgesOwnedNames;
 
   const body: AdminOtherLodgesResponse = {
     otherLodges: otherLodges.map((lodge) => serializeOtherLodgeForAdmin(lodge, owned)),
     ownedLodgeNames: owned,
+    serverVersionStatus: version.status,
   };
   return NextResponse.json(body);
 }

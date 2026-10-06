@@ -1,8 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { ArrowUpToLine, ArrowDownToLine, ExternalLink } from "lucide-react";
+import {
+  NO_KEY_SERVER_VERSION,
+  SERVERNZ_EXPECTED_SERVER_VERSION,
+  SERVER_VERSION_MISMATCH_CODE,
+  computeServerVersionStatus,
+  describeServerVersionPause,
+  type ServerVersionCheck,
+} from "@/lib/servernz-api-version";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +40,23 @@ interface InitialState {
   otherLodgesEnabled: boolean;
   otherLodgesLastUploadAt: string | null;
   otherLodgesLastDownloadAt: string | null;
+  /** The stored server version (#49): null until asked, "unknown" for a 404. */
+  serverVersion: string | null;
+  serverVersionCheckedAt: string | null;
+}
+
+/**
+ * What the page knows about the server's version (#49): the stored answer at
+ * render, then whatever the version route reports. `couldNotCheck` is the
+ * route's "the server could not be reached this time" - the last answer is
+ * kept and shown as such, and it is NOT a mismatch. `missingBaseUrl` is a key
+ * with no usable server address: nothing was asked.
+ */
+interface VersionView {
+  serverVersion: string | null;
+  checkedAt: string | null;
+  couldNotCheck: boolean;
+  missingBaseUrl: boolean;
 }
 
 // Upload/download stamps are real INSTANTS, shown in the club's persisted zone
@@ -39,6 +64,16 @@ interface InitialState {
 function fmt(clubTime: BoundClubTime, iso: string | null): string {
   if (!iso) return "never";
   return clubTime.instantDateTime(requireInstant(iso));
+}
+
+/**
+ * The server's number as shown: the route's own no-key value (`0`) with no
+ * key, "not checked yet" while a key is stored but the server has never been
+ * asked, otherwise the stored answer.
+ */
+function shownServerVersion(apiKeySet: boolean, stored: string | null): string {
+  if (!apiKeySet) return NO_KEY_SERVER_VERSION;
+  return stored ?? "not checked yet";
 }
 
 export function AlpineServerSetup({ initialState }: { initialState: InitialState }) {
@@ -72,6 +107,48 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
 
   const connectionReady = apiKeySet && savedBaseUrl.length > 0;
 
+  // The version check (#49): ONE call per page entry, from a mount effect,
+  // and again only after a key or address is saved - never on re-render and
+  // never on a timer, because the server rate-limits the version call per
+  // token. The stored answer is shown while the call is in flight.
+  const [version, setVersion] = useState<VersionView>({
+    serverVersion: initialState.serverVersion,
+    checkedAt: initialState.serverVersionCheckedAt,
+    couldNotCheck: false,
+    missingBaseUrl: false,
+  });
+  const [checkingVersion, setCheckingVersion] = useState(false);
+  const refreshVersion = useCallback(async () => {
+    setCheckingVersion(true);
+    try {
+      const res = await fetch("/api/admin/alpine-server/version", {
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error(`Version check failed (${res.status})`);
+      const data = (await res.json()) as ServerVersionCheck;
+      setVersion({
+        serverVersion: data.status === "no-key" ? null : data.serverVersion,
+        checkedAt: data.checkedAt,
+        couldNotCheck: data.couldNotCheck,
+        missingBaseUrl: data.missingBaseUrl,
+      });
+    } catch {
+      // The route itself could not be reached (a session that expired, a
+      // network error on the admin's side): keep the stored answer and say
+      // the check did not happen. Not a mismatch - and not worth a note
+      // beside `0` when no key is stored, because nothing would have been
+      // asked anyway.
+      setVersion((current) => ({ ...current, couldNotCheck: true }));
+    } finally {
+      setCheckingVersion(false);
+    }
+  }, []);
+  useEffect(() => {
+    void refreshVersion();
+  }, [refreshVersion]);
+
+  const versionStatus = computeServerVersionStatus(version.serverVersion, apiKeySet);
+
   async function saveBaseUrl() {
     setBusy("baseUrl");
     setMessage(null);
@@ -85,7 +162,11 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
       if (!res.ok) throw new Error(data?.error ?? "Failed to save base URL");
       setSavedBaseUrl(data.baseUrl ?? "");
       setBaseUrl(data.baseUrl ?? "");
+      if (data.apiKeyCleared) setApiKeySet(false);
       setMessage({ kind: "ok", text: "Base URL saved." });
+      // A moved address forgets the stored key and the stored version with
+      // it; ask again so the numbers shown match what is now stored.
+      void refreshVersion();
     } catch (e) {
       setMessage({ kind: "err", text: e instanceof Error ? e.message : "Failed" });
     } finally {
@@ -112,6 +193,8 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
       setApiKeySet(true);
       setApiKey("");
       setMessage({ kind: "ok", text: "API key stored securely." });
+      // A new key means a (possibly different) server can now be asked.
+      void refreshVersion();
     } catch (e) {
       setMessage({ kind: "err", text: e instanceof Error ? e.message : "Failed" });
     } finally {
@@ -148,7 +231,23 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
         { method: "POST" },
       );
       const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error ?? `Failed to ${direction}`);
+      if (!res.ok) {
+        // The route refused for version (#49): it hands back both numbers, so
+        // the page shows them in the status block below without a second
+        // server call - and the message points there rather than repeating
+        // the same sentence twice.
+        if (data?.code === SERVER_VERSION_MISMATCH_CODE && typeof data.serverVersion === "string") {
+          setVersion((current) => ({
+            ...current,
+            serverVersion: data.serverVersion,
+            couldNotCheck: false,
+          }));
+          throw new Error(
+            `${direction === "upload" ? "Upload" : "Download"} paused: the server is on a different software version - see Server software version above.`,
+          );
+        }
+        throw new Error(data?.error ?? `Failed to ${direction}`);
+      }
       if (direction === "upload") {
         setLastUpload(new Date().toISOString());
         setMessage({
@@ -272,6 +371,56 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
               <p className="text-xs text-muted-foreground">
                 Last updated {fmt(clubTime, initialState.apiKeyUpdatedAt)}. The key is stored
                 encrypted and never shown again.
+              </p>
+            ) : null}
+          </div>
+
+          {/* The two software versions (#49), beside the address and the key
+              they describe. Asked once on entry; `0` with no key stored. One
+              message inside this section on a mismatch - the section banner
+              above is the ONLY banner, and this is a status, not a permission. */}
+          <div
+            className="rounded-md border border-border bg-muted p-3 text-sm"
+            data-testid="server-version"
+          >
+            <p className="font-medium">Server software version</p>
+            <p className="mt-1 text-muted-foreground">
+              This site is built for server version{" "}
+              <strong data-testid="server-version-expected">
+                {SERVERNZ_EXPECTED_SERVER_VERSION}
+              </strong>
+              {" · "}Server:{" "}
+              <strong data-testid="server-version-actual">
+                {shownServerVersion(apiKeySet, version.serverVersion)}
+              </strong>
+              {checkingVersion ? <span> (checking…)</span> : null}
+            </p>
+            {apiKeySet && version.missingBaseUrl ? (
+              <p className="mt-1 text-xs text-muted-foreground" data-testid="server-version-no-address">
+                The server address is missing or not usable, so the server could
+                not be asked. Save a base URL above.
+              </p>
+            ) : apiKeySet && version.couldNotCheck ? (
+              <p className="mt-1 text-xs text-muted-foreground" data-testid="server-version-unchecked">
+                Could not check just now
+                {version.serverVersion
+                  ? ` — last known ${version.serverVersion}, checked ${fmt(clubTime, version.checkedAt)}`
+                  : ""}
+                . Syncing is not paused by a failed check.
+              </p>
+            ) : version.checkedAt && apiKeySet ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Last checked {fmt(clubTime, version.checkedAt)}.
+              </p>
+            ) : null}
+            {versionStatus === "mismatch" ? (
+              <p className="mt-2 text-destructive" role="status" data-testid="server-version-mismatch">
+                {describeServerVersionPause(
+                  SERVERNZ_EXPECTED_SERVER_VERSION,
+                  version.serverVersion as string,
+                )}{" "}
+                Upgrade whichever side is behind; syncing resumes on its own once
+                the two match.
               </p>
             ) : null}
           </div>

@@ -38,6 +38,14 @@ export interface ServerNzSettingsValues {
    * that was written and is now unreadable is a defect, not a fresh install.
    */
   otherLodgesOwnedNamesUnreadable: boolean;
+  /**
+   * The central server's API version as it last reported it (#49): `null`
+   * until asked, `"unknown"` when the server answered 404 (it predates
+   * versioning, a mismatch), otherwise a canonical `major.minor`. The mismatch
+   * is computed from this and `SERVERNZ_EXPECTED_SERVER_VERSION`, never stored.
+   */
+  serverVersion: string | null;
+  serverVersionCheckedAt: string | null;
 }
 
 const DEFAULTS: ServerNzSettingsValues = {
@@ -49,6 +57,8 @@ const DEFAULTS: ServerNzSettingsValues = {
   otherLodgesOwnedNames: null,
   otherLodgesOwnedNamesAt: null,
   otherLodgesOwnedNamesUnreadable: false,
+  serverVersion: null,
+  serverVersionCheckedAt: null,
 };
 
 /** The stored owned list as read back: its three states, plus "present but unreadable". */
@@ -111,6 +121,8 @@ export async function loadServerNzSettings(): Promise<ServerNzSettingsValues> {
       otherLodgesOwnedNames: owned.names,
       otherLodgesOwnedNamesAt: row.otherLodgesOwnedNamesAt?.toISOString() ?? null,
       otherLodgesOwnedNamesUnreadable: owned.unreadable,
+      serverVersion: row.serverVersion,
+      serverVersionCheckedAt: row.serverVersionCheckedAt?.toISOString() ?? null,
     };
   } catch {
     return { ...DEFAULTS };
@@ -278,6 +290,66 @@ export async function clearOtherLodgesOwnedNames(): Promise<void> {
     update: {
       otherLodgesOwnedNames: Prisma.DbNull,
       otherLodgesOwnedNamesAt: null,
+    },
+  });
+}
+
+/**
+ * Record what the central server said its API version is (#49): a canonical
+ * `major.minor`, or `SERVER_VERSION_UNKNOWN` when it answered 404. Written
+ * AFTER the HTTP call has completed and outside any transaction. A failed call
+ * never reaches here - the previous answer stays, so a network blip cannot
+ * pause syncing (`INV-INT-025`). Bounded to the column's VarChar(16) by the
+ * caller's schema, which caps the wire value at 16 characters.
+ */
+export async function recordServerVersionCheck(
+  version: string,
+  at: Date = new Date(),
+): Promise<void> {
+  await prisma.serverNzSettings.upsert({
+    where: { id: SERVERNZ_SETTINGS_ID },
+    create: {
+      id: SERVERNZ_SETTINGS_ID,
+      serverVersion: version,
+      serverVersionCheckedAt: at,
+    },
+    update: { serverVersion: version, serverVersionCheckedAt: at },
+  });
+}
+
+/**
+ * Forget the server's last reported version (#49): back to "never asked".
+ * Called wherever the owned-lodge list is forgotten - the API key is removed
+ * or replaced, or the server address moves - because the answer belonged to
+ * that connection, and a different server may be on a different version. The
+ * next server-bound request, or the next nightly sync, asks again.
+ */
+export async function clearServerVersionCheck(): Promise<void> {
+  await prisma.serverNzSettings.upsert({
+    where: { id: SERVERNZ_SETTINGS_ID },
+    create: { id: SERVERNZ_SETTINGS_ID },
+    update: { serverVersion: null, serverVersionCheckedAt: null },
+  });
+}
+
+/**
+ * Forget everything the central server told this connection, in ONE write:
+ * the owned-lodge list (#52) and the last reported version (#49). Called when
+ * the connection ends - the key is removed or replaced, or the address moves -
+ * because both answers belonged to it. One upsert rather than the two
+ * single-purpose writers above in sequence, so a crash between them cannot
+ * leave the row half-forgotten: a stale version pausing a new connection, or a
+ * stale owned list editable under a new key.
+ */
+export async function forgetServerConnectionAnswers(): Promise<void> {
+  await prisma.serverNzSettings.upsert({
+    where: { id: SERVERNZ_SETTINGS_ID },
+    create: { id: SERVERNZ_SETTINGS_ID },
+    update: {
+      otherLodgesOwnedNames: Prisma.DbNull,
+      otherLodgesOwnedNamesAt: null,
+      serverVersion: null,
+      serverVersionCheckedAt: null,
     },
   });
 }
