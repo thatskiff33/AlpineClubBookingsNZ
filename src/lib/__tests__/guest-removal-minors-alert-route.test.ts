@@ -40,6 +40,9 @@ const mocks = vi.hoisted(() => ({
   logAudit: vi.fn(),
   sendBookingModifiedEmail: vi.fn(),
   sendAdminMinorsOnlyReviewAlert: vi.fn(),
+  // #3502: REAL by default (#3341, below); one case replaces it to read what
+  // the removal door hands the minter.
+  createModificationAdditionalPaymentIntent: vi.fn(),
 }));
 
 // #3582: an edit's and a review closure's ledger lines are posted by one sync,
@@ -107,11 +110,18 @@ vi.mock("@/lib/membership-type-policy", () => ({
 // #3341 (`INV-OPS-015`): the minter stays REAL. This file asserts the edit's ask
 // (`additionalAmountCents`) and a stubbed minter would pass whatever it is handed;
 // a removal asks for nothing, so the real one returns before minting.
-vi.mock("@/lib/booking-modification-settlement", async (importOriginal) => ({
-  ...((await importOriginal()) as typeof import("@/lib/booking-modification-settlement")),
-  drainSupersededPrimaryIntents: mocks.drainSupersededPrimaryIntents,
-  executeBookingModificationRefund: mocks.executeBookingModificationRefund,
-}));
+vi.mock("@/lib/booking-modification-settlement", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/booking-modification-settlement");
+  mocks.createModificationAdditionalPaymentIntent.mockImplementation(
+    actual.createModificationAdditionalPaymentIntent,
+  );
+  return {
+    ...actual,
+    drainSupersededPrimaryIntents: mocks.drainSupersededPrimaryIntents,
+    executeBookingModificationRefund: mocks.executeBookingModificationRefund,
+    createModificationAdditionalPaymentIntent: mocks.createModificationAdditionalPaymentIntent,
+  };
+});
 vi.mock("@/lib/bed-allocation-lifecycle", () => ({
   reconcileBedAllocationsForBookingWithLodgeLockHeld:
     mocks.reconcileBedAllocationsForBooking,
@@ -768,6 +778,76 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
     expect(mocks.applyPaymentAdjustments).toHaveBeenCalled();
     const settled = mocks.applyPaymentAdjustments.mock.calls[0][1];
     expect(settled.priceDiffCents).not.toBe(0);
+  });
+});
+
+describe("DELETE guest removal - a credit-paid ($0) booking whose price RISES (#3502)", () => {
+  /*
+    #3502 (owner decision, 6 Oct 2026). A removal can RAISE the price - it can
+    break a group promotion the remaining party no longer qualifies for (#1042).
+    On a booking paid wholly with credit (`{ amountCents: 0, status: SUCCEEDED }`)
+    that increase used to be sent to a Xero supplementary invoice that, with Xero
+    off, does not exist. The REAL `applyPaymentAdjustments` runs here, so this
+    pins that the removal door now hands the minter a card ask.
+  */
+  const zeroDollarPayment = (xeroInvoiceId: string | null) => ({
+    id: "pay_1",
+    bookingId: "b1",
+    status: "SUCCEEDED",
+    source: "STRIPE",
+    amountCents: 0,
+    refundedAmountCents: 0,
+    creditAppliedCents: 8000,
+    stripePaymentIntentId: null,
+    stripeCustomerId: null,
+    xeroInvoiceId,
+    changeFeeCents: 0,
+    additionalPaymentIntentId: null,
+    additionalAmountCents: 0,
+    additionalPaymentStatus: null,
+  });
+
+  it.each([
+    { label: "with Xero off", xeroInvoiceId: null },
+    { label: "with an issued primary invoice", xeroInvoiceId: "INV-1" },
+  ])("hands the minter a card ask for the increase, $label", async ({ xeroInvoiceId }) => {
+    const realSettlement = (await vi.importActual(
+      "@/lib/booking-modify-settlement",
+    )) as typeof import("@/lib/booking-modify-settlement");
+    mocks.applyPaymentAdjustments.mockImplementation(realSettlement.applyPaymentAdjustments);
+    // The remaining adult, repriced without the group promotion: $100, against
+    // the $80 the booking stood at - a $20 rise.
+    mocks.priceBookingGuestsWithMembershipTypePolicy.mockResolvedValue({
+      totalPriceCents: 10000,
+      guests: [{ perNightCents: [10000], nightDates: [CHECK_IN], priceCents: 10000 }],
+    });
+    // ONCE, so the real minter is back for every case after this one (#3341).
+    mocks.createModificationAdditionalPaymentIntent.mockResolvedValueOnce({
+      additionalPaymentClientSecret: "pi_removal_secret",
+      additionalPaymentIntentId: "pi_removal",
+    });
+    const tx = {
+      ...buildTx([ADULT, CHILD], { payment: zeroDollarPayment(xeroInvoiceId) }),
+      payment: { update: vi.fn().mockResolvedValue({}) },
+    };
+    mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) => cb(tx));
+
+    const res = await DELETE(makeRequest(), {
+      params: Promise.resolve({ id: "b1", guestId: "g-child" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mocks.applyPaymentAdjustments.mock.calls[0][1].priceDiffCents).toBe(2000);
+    expect(mocks.createModificationAdditionalPaymentIntent).toHaveBeenCalledTimes(1);
+    const minted = mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
+    expect(minted.result.hasSucceededPayment).toBe(true);
+    expect(minted.result.paymentId).toBe("pay_1");
+    expect(minted.result.additionalAsk.amountCents).toBe(2000);
+    // With an invoice, the supplementary invoice waits for the card payment
+    // rather than billing the member a second time.
+    expect(mocks.queueXeroBookingEditSettlement).toHaveBeenCalledWith(
+      expect.objectContaining({ requiresAdditionalStripePayment: xeroInvoiceId !== null }),
+    );
   });
 });
 

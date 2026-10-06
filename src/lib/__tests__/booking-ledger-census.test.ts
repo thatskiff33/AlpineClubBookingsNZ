@@ -191,6 +191,32 @@ const SCENARIOS: Scenario[] = [
     expectedResidualCents: 0,
   },
   {
+    // #3502: a booking paid wholly with account credit ($0 captured) that
+    // grows. Before the fix three edit doors asked nothing here (no invoice at
+    // a club without Xero), which left +5000 `unasked`; the door now asks the
+    // card, sized by the same rule as any other increase.
+    label: "a credit-paid ($0) booking that grows, asked by card",
+    build: () =>
+      applyPriceIncrease(
+        { ...newBooking({ finalPriceCents: 20000, paidCents: 0 }), creditAppliedCents: 20000 },
+        { priceDiffCents: 5000, changeFeeCents: 500 },
+      ),
+    verdict: "balanced",
+    expectedResidualCents: 0,
+  },
+  {
+    label: "a credit-paid ($0) booking that grew, its card ask paid",
+    build: () =>
+      payOutstandingAsk(
+        applyPriceIncrease(
+          { ...newBooking({ finalPriceCents: 20000, paidCents: 0 }), creditAppliedCents: 20000 },
+          { priceDiffCents: 5000 },
+        ),
+      ),
+    verdict: "balanced",
+    expectedResidualCents: 0,
+  },
+  {
     label: "two consecutive increases, the first left unpaid",
     // THE #3340 SHAPE. Before the fix the second edit asked $70 and the first
     // $70 ceased to be owed, leaving +7000 here for ever.

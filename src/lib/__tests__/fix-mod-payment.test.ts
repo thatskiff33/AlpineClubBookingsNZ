@@ -844,6 +844,99 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     );
   });
 
+  /*
+    #3502 (owner decision, 6 Oct 2026): a booking paid wholly with credit is a
+    $0 SUCCEEDED card-source payment with no intent and, at a club without
+    Xero, no invoice. The date door used to ask `hasCapturedPayment` and send
+    the increase to a supplementary invoice that does not exist - nobody was
+    billed. It now asks the member's card, Xero or not.
+  */
+  function zeroDollarPayment(xeroInvoiceId: string | null) {
+    return {
+      id: "p1",
+      bookingId: "bk1",
+      amountCents: 0,
+      source: "STRIPE",
+      status: "SUCCEEDED",
+      stripePaymentIntentId: null,
+      stripeCustomerId: null,
+      xeroInvoiceId,
+      refundedAmountCents: 0,
+      creditAppliedCents: 10000,
+      changeFeeCents: 0,
+      additionalPaymentIntentId: null,
+      additionalAmountCents: 0,
+      additionalPaymentStatus: null,
+    };
+  }
+
+  async function growZeroDollarBooking(xeroInvoiceId: string | null) {
+    const booking = makeBooking({ status: "PAID", payment: zeroDollarPayment(xeroInvoiceId) });
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, availableBeds: 20 } as any);
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 15000,
+      guests: [{ priceCents: 15000, perNightCents: [7500, 7500] }],
+    } as any);
+    // A $10 change fee, so the fee half of the ask is pinned too.
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 1000, fromTierRefundPct: 50, toTierRefundPct: 100 });
+    mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_new" } as any);
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_zero_extra",
+      client_secret: "zero_extra_secret", currency: "nzd",
+    } as any);
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-08-05", checkOut: "2026-08-08" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+    return { res, data: await res.json(), tx };
+  }
+
+  it("asks a credit-paid ($0) booking's card for the increase with Xero off (#3502)", async () => {
+    const { res, data, tx } = await growZeroDollarBooking(null);
+
+    expect(res.status).toBe(200);
+    // +$50 price and the $10 fee: the figure, not merely "some intent".
+    expect(data.additionalAmountCents).toBe(6000);
+    expect(data.additionalPaymentClientSecret).toBe("zero_extra_secret");
+    // No original intent or customer to reuse: a fresh customer, a fresh intent.
+    expect(mockedFindOrCreateCustomer).toHaveBeenCalled();
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 6000, customerId: "cus_new" }),
+    );
+    expect(tx.payment.update).toHaveBeenCalledWith({
+      where: { id: "p1" },
+      data: { changeFeeCents: { increment: 1000 } },
+    });
+    await Promise.resolve();
+    // No invoice exists, so nothing goes to Xero as a supplementary invoice.
+    expect(mockEnqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("with an issued invoice, the supplementary invoice waits for that card payment (#3502)", async () => {
+    const { res, data } = await growZeroDollarBooking("inv_primary");
+
+    expect(res.status).toBe(200);
+    expect(data.additionalAmountCents).toBe(6000);
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 6000 }),
+    );
+    await Promise.resolve();
+    expect(mockEnqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "bk1", priceDiffCents: 5000, changeFeeCents: 1000 }),
+      expect.objectContaining({
+        paymentIntentId: "pi_zero_extra",
+        waitForConfirmedAdditionalPayment: true,
+        recordPayment: true,
+      }),
+    );
+  });
+
   it("processes refund for price decrease (no additional PI created)", async () => {
     const booking = makeBooking();
     const tx = makeTx(booking);
@@ -1610,6 +1703,60 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
     expect(data.additionalPaymentClientSecret).toBe("guest_extra_secret");
     expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(
       expect.objectContaining({ amountCents: 20000 }),
+    );
+  });
+
+  it("with an issued invoice, a ZERO-DOLLAR booking's supplementary invoice waits for the card payment (#3502)", async () => {
+    const booking = makeBooking({
+      totalPriceCents: 0,
+      finalPriceCents: 0,
+      payment: {
+        ...partlyRefundedPayment,
+        status: "SUCCEEDED",
+        amountCents: 0,
+        refundedAmountCents: 0,
+        stripePaymentIntentId: null,
+        xeroInvoiceId: "inv_primary",
+      },
+    });
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation((_ci, _co, guests) => ({
+      totalPriceCents: guests.length === 1 ? 10000 : 20000,
+      guests: guests.map(() => ({ priceCents: 10000, perNightCents: [5000, 5000] })),
+    } as any));
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_guest_extra",
+      client_secret: "guest_extra_secret", currency: "nzd",
+    } as any);
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.additionalAmountCents).toBe(20000);
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 20000 }),
+    );
+    await Promise.resolve();
+    // Billed once: the invoice records the card payment rather than billing
+    // the member a second time.
+    expect(mockEnqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "bk1", priceDiffCents: 20000 }),
+      expect.objectContaining({
+        paymentIntentId: "pi_guest_extra",
+        waitForConfirmedAdditionalPayment: true,
+        recordPayment: true,
+      }),
     );
   });
 });

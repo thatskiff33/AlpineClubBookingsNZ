@@ -1937,6 +1937,81 @@ describe("PUT /api/bookings/[id]/modify", () => {
     expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
   });
 
+  /*
+    #3502 (owner decision, 6 Oct 2026): a booking paid wholly with credit is a
+    $0 SUCCEEDED card-source payment. The batch door used to read
+    `hasCapturedPayment`, find "nothing captured", and send the increase to a
+    supplementary invoice - which, with Xero off, does not exist. It now asks
+    the member's card, with or without Xero.
+  */
+  it.each([
+    { label: "with Xero off (no primary invoice)", xeroInvoiceId: null },
+    { label: "with an issued primary invoice", xeroInvoiceId: "inv_primary" },
+  ])("asks a credit-paid ($0) booking's card when it grows, $label (#3502)", async ({ xeroInvoiceId }) => {
+    const base = makeBooking();
+    const booking = makeBooking({
+      payment: {
+        ...base.payment,
+        amountCents: 0,
+        creditAppliedCents: 5000,
+        stripePaymentIntentId: null,
+        xeroInvoiceId,
+      },
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) => fn(tx));
+    mockCalculateBookingPrice
+      .mockReturnValueOnce({
+        totalPriceCents: 15000,
+        guests: [
+          { priceCents: 5000, perNightCents: [2500, 2500] },
+          { priceCents: 10000, perNightCents: [5000, 5000] },
+        ],
+      })
+      .mockReturnValueOnce({
+        totalPriceCents: 5000,
+        guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+      })
+      .mockReturnValueOnce({
+        totalPriceCents: 10000,
+        guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
+      });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+    const response = await PUT(
+      new NextRequest("http://localhost/api/bookings/bk1/modify", {
+        method: "PUT",
+        body: JSON.stringify({
+          addGuests: [{ firstName: "Bob", lastName: "Guest", ageTier: "ADULT", isMember: false }],
+        }),
+      }),
+      { params: Promise.resolve({ id: "bk1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.additionalAmountCents).toBe(10000);
+    expect(data.additionalPaymentClientSecret).toBe("pi_batch_secret");
+    expect(mockCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 10000, customerId: "cus_new" }),
+    );
+
+    await Promise.resolve();
+    if (xeroInvoiceId) {
+      // Billed once: the supplementary invoice records the card payment.
+      expect(mockEnqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ bookingId: "bk1", priceDiffCents: 10000 }),
+        expect.objectContaining({
+          paymentIntentId: "pi_batch",
+          waitForConfirmedAdditionalPayment: true,
+          recordPayment: true,
+        }),
+      );
+    } else {
+      expect(mockEnqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+    }
+  });
+
   it("enqueues durable intent recovery when additional PaymentIntent creation fails (#1096)", async () => {
     const booking = makeBooking();
     const tx = makeTx(booking);
