@@ -39,6 +39,10 @@ Then work through these in order:
    builds something reusable, how to get it into the product instead of
    maintaining it forever in your own fork.
 
+The [project goals](../GOALS.md), whose canonical home is the
+[contributor index](../contributors/README.md#project-goals), describe the path
+to tested releases and a club getting live without the maintainer.
+
 ## Configuring the product
 
 - [Configure, don't fork](configure-or-fork.md) — module toggle, setting,
