@@ -39,6 +39,7 @@ const RESULT = {
   expected: "2.0",
   checkedAt: "2026-07-01T00:00:00.000Z",
   couldNotCheck: false,
+  missingBaseUrl: false,
 };
 
 beforeEach(() => {
@@ -62,7 +63,7 @@ describe("GET /api/admin/alpine-server/version", () => {
     expect(mocks.checkServerVersion).not.toHaveBeenCalled();
   });
 
-  it("runs the check and returns it for finance view and up", async () => {
+  it("runs the THROTTLED check and returns it for finance view and up", async () => {
     for (const session of [fullAdmin, treasurer]) {
       mocks.auth.mockResolvedValue(session);
       const res = await GET();
@@ -70,5 +71,8 @@ describe("GET /api/admin/alpine-server/version", () => {
       expect(await res.json()).toEqual(RESULT);
     }
     expect(mocks.checkServerVersion).toHaveBeenCalledTimes(2);
+    // Throttled: an answer recorded inside the recheck interval is returned
+    // without a call, so a reload cannot trip the server's rate limit.
+    expect(mocks.checkServerVersion).toHaveBeenCalledWith({ throttle: true });
   });
 });

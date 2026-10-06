@@ -4,15 +4,28 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * #49: the version check as a service. The fetch-and-record path is pinned in
  * servernz-api-version-gate.test.ts; here it is a seam, so these tests are
  * about what the service reports and when it makes no call at all.
+ *
+ * Clock frozen at 2026-07-01T00:00:00.000Z; the throttle fixtures are built
+ * relative to that instant.
  */
 
-const mocks = vi.hoisted(() => ({
-  refreshStoredServerVersion: vi.fn(),
-  getServerNzSetupState: vi.fn(),
-  loadServerNzSettings: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  class FakeNotConfigured extends Error {
+    constructor() {
+      super("The Alpine Central Server base URL is not set.");
+      this.name = "ServerNzNotConfiguredError";
+    }
+  }
+  return {
+    FakeNotConfigured,
+    refreshStoredServerVersion: vi.fn(),
+    getServerNzSetupState: vi.fn(),
+    loadServerNzSettings: vi.fn(),
+  };
+});
 
 vi.mock("@/lib/servernz-api", () => ({
+  ServerNzNotConfiguredError: mocks.FakeNotConfigured,
   refreshStoredServerVersion: mocks.refreshStoredServerVersion,
 }));
 vi.mock("@/lib/servernz-config", () => ({
@@ -27,8 +40,10 @@ import {
   isServerSyncPaused,
   readStoredServerVersion,
 } from "@/lib/servernz-version-check";
+import { SERVER_VERSION_RECHECK_INTERVAL_MS } from "@/lib/servernz-api-version";
 
-const CHECKED_AT = "2026-07-01T00:00:00.000Z";
+const NOW = new Date("2026-07-01T00:00:00.000Z");
+const CHECKED_AT = "2026-06-30T23:00:00.000Z";
 
 function stored(serverVersion: string | null, checkedAt: string | null = CHECKED_AT) {
   mocks.loadServerNzSettings.mockResolvedValue({
@@ -50,7 +65,7 @@ describe("checkServerVersion", () => {
     const result = await checkServerVersion();
 
     expect(mocks.refreshStoredServerVersion).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ status: "no-key", serverVersion: "0", expected: "2.0", couldNotCheck: false });
+    expect(result).toMatchObject({ status: "no-key", serverVersion: "0", expected: "2.0", couldNotCheck: false, missingBaseUrl: false });
   });
 
   it("asks, then reports the freshly stored answer as match or mismatch", async () => {
@@ -76,6 +91,44 @@ describe("checkServerVersion", () => {
     stored(null, null);
     const result = await checkServerVersion();
     expect(result).toMatchObject({ status: "unchecked", serverVersion: "0", couldNotCheck: true, checkedAt: null });
+  });
+
+  it("reports a key without a usable address as missingBaseUrl, not as could-not-check (item 9)", async () => {
+    mocks.refreshStoredServerVersion.mockRejectedValue(new mocks.FakeNotConfigured());
+    stored(null, null);
+    const result = await checkServerVersion();
+    expect(result).toMatchObject({ status: "unchecked", couldNotCheck: false, missingBaseUrl: true });
+  });
+
+  it("lets a failure to record propagate (item 2)", async () => {
+    mocks.refreshStoredServerVersion.mockRejectedValue(new Error("database unavailable"));
+    stored("2.0");
+    await expect(checkServerVersion()).rejects.toThrow(/database unavailable/);
+  });
+
+  describe("throttled (the setup page's route, item 5)", () => {
+    it("returns the stored answer without a call when it was recorded inside the interval", async () => {
+      stored("2.1", new Date(NOW.getTime() - SERVER_VERSION_RECHECK_INTERVAL_MS + 1000).toISOString());
+      const result = await checkServerVersion({ throttle: true, now: NOW });
+      expect(mocks.refreshStoredServerVersion).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ status: "mismatch", serverVersion: "2.1", couldNotCheck: false });
+    });
+
+    it("asks again once the interval has passed, or when never asked", async () => {
+      mocks.refreshStoredServerVersion.mockResolvedValue("2.0");
+      stored("2.0", new Date(NOW.getTime() - SERVER_VERSION_RECHECK_INTERVAL_MS).toISOString());
+      await checkServerVersion({ throttle: true, now: NOW });
+      stored(null, null);
+      await checkServerVersion({ throttle: true, now: NOW });
+      expect(mocks.refreshStoredServerVersion).toHaveBeenCalledTimes(2);
+    });
+
+    it("never throttles the untouched (cron/mirror) call", async () => {
+      mocks.refreshStoredServerVersion.mockResolvedValue("2.0");
+      stored("2.0", NOW.toISOString());
+      await checkServerVersion();
+      expect(mocks.refreshStoredServerVersion).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

@@ -28,10 +28,7 @@ import {
   deleteIntegrationCredential,
 } from "@/lib/integration-credentials";
 import type { CredentialActor } from "@/lib/integration-credential-actor";
-import {
-  clearOtherLodgesOwnedNames,
-  clearServerVersionCheck,
-} from "@/lib/servernz-settings";
+import { forgetServerConnectionAnswers } from "@/lib/servernz-settings";
 
 export const SERVERNZ_PROVIDER = "servernz";
 
@@ -84,7 +81,7 @@ export async function setServerNzApiKey(
  * answer, and a key issued later — or by a different server, which is the other
  * caller here — may own different lodges. The panel is read-only until the next
  * download records a fresh list. The server's last reported API version goes
- * for the same reason (#49): it was that server's answer.
+ * for the same reason (#49): it was that server's answer. Both in ONE write.
  */
 export async function clearServerNzApiKey(
   actor: CredentialActor,
@@ -95,8 +92,7 @@ export async function clearServerNzApiKey(
     actor,
     expect: { expect: "any" },
   });
-  await clearOtherLodgesOwnedNames();
-  await clearServerVersionCheck();
+  await forgetServerConnectionAnswers();
 }
 
 export interface ServerNzSetupState {

@@ -259,6 +259,16 @@ export async function retryPendingWithdrawals(): Promise<{
       });
       result.confirmed += 1;
     } catch (error) {
+      // The server's own 409 for version (recorded by the API client): the
+      // rest of the page would only be refused the same way. Not a failure -
+      // the rows stay for the pass after the versions match.
+      if (error instanceof ServerNzVersionMismatchError) {
+        logger.info(
+          { postId: post.id, expected: error.expected, serverVersion: error.serverVersion },
+          "Withdrawal sweep paused: the central server API version differs",
+        );
+        break;
+      }
       result.failed += 1;
       logger.warn(
         { postId: post.id, serverPostId: post.serverPostId, err: error },

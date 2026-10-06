@@ -1,11 +1,16 @@
 import "server-only";
 import {
+  NO_KEY_SERVER_VERSION,
   SERVERNZ_EXPECTED_SERVER_VERSION,
+  SERVER_VERSION_RECHECK_INTERVAL_MS,
   computeServerVersionStatus,
   isStoredServerVersionMismatch,
-  type ServerVersionStatus,
+  type ServerVersionCheck,
 } from "@/lib/servernz-api-version";
-import { refreshStoredServerVersion } from "@/lib/servernz-api";
+import {
+  ServerNzNotConfiguredError,
+  refreshStoredServerVersion,
+} from "@/lib/servernz-api";
 import { getServerNzSetupState } from "@/lib/servernz-config";
 import { loadServerNzSettings } from "@/lib/servernz-settings";
 
@@ -21,49 +26,67 @@ import { loadServerNzSettings } from "@/lib/servernz-settings";
  * refreshes the stored answer it gates on.
  */
 
-export interface ServerVersionCheck {
-  status: ServerVersionStatus;
-  /** The server's version as shown: `"0"` with no key, else the stored answer. */
-  serverVersion: string;
-  /** The version this site speaks. */
-  expected: string;
-  checkedAt: string | null;
-  /** True when this call could not reach or read the server; the stored answer stands. */
-  couldNotCheck: boolean;
-}
-
-/** The server version shown when no API key is stored: nothing was asked. */
-const NO_KEY_VERSION = "0";
+type Stored = { serverVersion: string | null; serverVersionCheckedAt: string | null };
 
 function describe(
-  stored: { serverVersion: string | null; serverVersionCheckedAt: string | null },
+  stored: Stored,
   apiKeySet: boolean,
-  couldNotCheck: boolean,
+  flags: { couldNotCheck?: boolean; missingBaseUrl?: boolean } = {},
 ): ServerVersionCheck {
   const status = computeServerVersionStatus(stored.serverVersion, apiKeySet);
   return {
     status,
     serverVersion:
-      status === "no-key" ? NO_KEY_VERSION : (stored.serverVersion ?? NO_KEY_VERSION),
+      status === "no-key"
+        ? NO_KEY_SERVER_VERSION
+        : (stored.serverVersion ?? NO_KEY_SERVER_VERSION),
     expected: SERVERNZ_EXPECTED_SERVER_VERSION,
     checkedAt: stored.serverVersionCheckedAt,
-    couldNotCheck,
+    couldNotCheck: flags.couldNotCheck ?? false,
+    missingBaseUrl: flags.missingBaseUrl ?? false,
   };
+}
+
+/** True when the stored answer was recorded inside the recheck interval. */
+function recentlyChecked(stored: Stored, now: Date): boolean {
+  if (!stored.serverVersionCheckedAt) return false;
+  const at = Date.parse(stored.serverVersionCheckedAt);
+  return Number.isFinite(at) && now.getTime() - at < SERVER_VERSION_RECHECK_INTERVAL_MS;
 }
 
 /**
  * Ask the server and record what it said. With no API key stored NO request is
  * made and the status is `no-key` (shown as `0`). When the call fails the
  * stored answer is kept and `couldNotCheck` says so - "could not check" is a
- * different thing from "mismatch", and only the second pauses syncing.
+ * different thing from "mismatch", and only the second pauses syncing. A key
+ * with no usable server address is reported as `missingBaseUrl`, quietly.
+ *
+ * `options.throttle` (the setup page's route) returns the stored answer
+ * without a call when one was recorded inside `SERVER_VERSION_RECHECK_INTERVAL_MS`,
+ * so a reload or a second tab cannot trip the server's per-token rate limit.
+ * The nightly sync and the mirror do not throttle: hours apart, and the whole
+ * point of their check is a fresh answer before a pass.
  */
-export async function checkServerVersion(): Promise<ServerVersionCheck> {
+export async function checkServerVersion(
+  options: { throttle?: boolean; now?: Date } = {},
+): Promise<ServerVersionCheck> {
   const setup = await getServerNzSetupState();
   if (!setup.apiKeySet) {
-    return describe(await loadServerNzSettings(), false, false);
+    return describe(await loadServerNzSettings(), false);
   }
-  const refreshed = await refreshStoredServerVersion();
-  return describe(await loadServerNzSettings(), true, refreshed === null);
+  if (options.throttle) {
+    const stored = await loadServerNzSettings();
+    if (recentlyChecked(stored, options.now ?? new Date())) return describe(stored, true);
+  }
+  try {
+    const refreshed = await refreshStoredServerVersion();
+    return describe(await loadServerNzSettings(), true, { couldNotCheck: refreshed === null });
+  } catch (error) {
+    if (error instanceof ServerNzNotConfiguredError) {
+      return describe(await loadServerNzSettings(), true, { missingBaseUrl: true });
+    }
+    throw error;
+  }
 }
 
 /**
@@ -75,7 +98,7 @@ export async function readStoredServerVersion(): Promise<ServerVersionCheck> {
     getServerNzSetupState(),
     loadServerNzSettings(),
   ]);
-  return describe(settings, setup.apiKeySet, false);
+  return describe(settings, setup.apiKeySet);
 }
 
 /**

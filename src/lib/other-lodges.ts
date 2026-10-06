@@ -2,6 +2,7 @@ import type { OtherLodge, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { isHttpUrl } from "@/lib/http-url";
+import type { ServerVersionStatus } from "@/lib/servernz-api-version";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 
 // Helpers for the external / partner lodge registry (Admin -> Lodges). These
@@ -445,7 +446,7 @@ export type AdminOtherLodge = Omit<SerializedOtherLodge, "bookingOfficerPhone"> 
 export interface AdminOtherLodgesResponse {
   otherLodges: AdminOtherLodge[];
   ownedLodgeNames: OwnedOtherLodgeNames;
-  serverVersionStatus: "no-key" | "unchecked" | "match" | "mismatch";
+  serverVersionStatus: ServerVersionStatus;
 }
 
 export function serializeOtherLodgeForAdmin(

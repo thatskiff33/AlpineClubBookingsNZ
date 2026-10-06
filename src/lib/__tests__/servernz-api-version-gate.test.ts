@@ -28,6 +28,8 @@ vi.mock("@/lib/servernz-settings", () => ({
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 
 import {
+  ServerNzApiError,
+  ServerNzNotConfiguredError,
   ServerNzVersionMismatchError,
   fetchServerVersion,
   fetchSharedPostImage,
@@ -119,12 +121,15 @@ describe("the gate refuses every server-bound call on a stored mismatch", () => 
     expect(error.message).toContain("1.10");
   });
 
-  it("is not fooled by the float trap: 1.10 stored against a 1.1 site would differ", () => {
-    // The gate compares through compareServerVersions, which the version
-    // module's own suite pins; this is the end-to-end reading of it.
-    expect(
-      new ServerNzVersionMismatchError("1.1", "1.10").message,
-    ).toContain("1.10");
+  it("refuses a stored 1.10 against this 2.0 site through the real comparison, not a string or float read", async () => {
+    // Float-equal to 1.1 and string-unequal to 2.0 either way; what this pins
+    // is that the GATE goes through compareServerVersions (the version module's
+    // own suite pins the 1.10-vs-1.1 case) and reports the stored spelling.
+    settings("1.10");
+    const error = (await pullOtherLodges(null).catch((e: unknown) => e)) as ServerNzVersionMismatchError;
+    expect(error).toBeInstanceOf(ServerNzVersionMismatchError);
+    expect(error.serverVersion).toBe("1.10");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -156,6 +161,56 @@ describe("the one opt-out is the version call", () => {
   });
 });
 
+describe("the server's own 409 refusal (review item 1)", () => {
+  const MISMATCH_409 = {
+    error: "This server is on a different API version, so nothing is transferred until your site is upgraded.",
+    code: "API_VERSION_MISMATCH",
+    serverVersion: "2.1",
+    clientVersion: "2.0",
+  };
+
+  it.each(SERVER_BOUND)("%s turns a 409 API_VERSION_MISMATCH into the version error and records the server's number", async (_name, call) => {
+    fetchMock.mockResolvedValue(respond(409, MISMATCH_409));
+    const error = await call().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ServerNzVersionMismatchError);
+    expect((error as ServerNzVersionMismatchError).serverVersion).toBe("2.1");
+    expect(mocks.recordServerVersionCheck).toHaveBeenCalledWith("2.1");
+  });
+
+  it("leaves a plain 409 (no code) as the ServerNzApiError it always was, recording nothing", async () => {
+    fetchMock.mockResolvedValue(respond(409, { error: "Other Clubs sync is disabled" }));
+    const error = await uploadOtherLodges([]).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ServerNzApiError);
+    expect((error as ServerNzApiError).status).toBe(409);
+    expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
+  });
+
+  it("ignores the code on any status but 409, and a serverVersion over the column bound", async () => {
+    fetchMock.mockResolvedValue(respond(400, { ...MISMATCH_409 }));
+    await expect(pullOtherLodges(null)).rejects.toBeInstanceOf(ServerNzApiError);
+    fetchMock.mockResolvedValue(respond(409, { ...MISMATCH_409, serverVersion: "9".repeat(17) }));
+    await expect(pullOtherLodges(null)).rejects.toBeInstanceOf(ServerNzApiError);
+    expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
+  });
+
+  it("stores a malformed serverVersion as the unknown marker, still a pause (item 3)", async () => {
+    fetchMock.mockResolvedValue(respond(409, { ...MISMATCH_409, serverVersion: "2.0.1" }));
+    const error = await withdrawClubPost("srv-1").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ServerNzVersionMismatchError);
+    expect((error as ServerNzVersionMismatchError).serverVersion).toBe(SERVER_VERSION_UNKNOWN);
+    expect(mocks.recordServerVersionCheck).toHaveBeenCalledWith(SERVER_VERSION_UNKNOWN);
+  });
+
+  it("still throws the version error, without recording, when the key changed while the request was in flight (item 4)", async () => {
+    mocks.getOperationalServerNzApiKey
+      .mockResolvedValueOnce("acs_key") // resolveConnection
+      .mockResolvedValueOnce("acs_replacement"); // the re-read before recording
+    fetchMock.mockResolvedValue(respond(409, MISMATCH_409));
+    await expect(registerPushTarget("https://club.test/hook")).rejects.toBeInstanceOf(ServerNzVersionMismatchError);
+    expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
+  });
+});
+
 describe("refreshStoredServerVersion: one path writes the column", () => {
   it("records what the server said, 'unknown' included", async () => {
     fetchMock.mockResolvedValue(respond(404));
@@ -168,6 +223,35 @@ describe("refreshStoredServerVersion: one path writes the column", () => {
     await expect(refreshStoredServerVersion()).resolves.toBeNull();
     expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
     expect(mocks.logger.warn).toHaveBeenCalled();
+  });
+
+  it("throws when a RECEIVED answer cannot be recorded, never reading it as could-not-check (item 2)", async () => {
+    fetchMock.mockResolvedValue(respond(200, { version: "2.1", match: false }));
+    mocks.recordServerVersionCheck.mockRejectedValue(new Error("database unavailable"));
+    await expect(refreshStoredServerVersion()).rejects.toThrow(/database unavailable/);
+    expect(mocks.logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("stores a malformed wire version as the unknown marker (item 3)", async () => {
+    fetchMock.mockResolvedValue(respond(200, { version: "v2", match: null }));
+    await expect(refreshStoredServerVersion()).resolves.toBe(SERVER_VERSION_UNKNOWN);
+    expect(mocks.recordServerVersionCheck).toHaveBeenCalledWith(SERVER_VERSION_UNKNOWN);
+  });
+
+  it("drops a late answer when the key changed while the call was in flight (item 4)", async () => {
+    mocks.getOperationalServerNzApiKey
+      .mockResolvedValueOnce("acs_key")
+      .mockResolvedValueOnce(undefined); // key removed meanwhile
+    fetchMock.mockResolvedValue(respond(200, { version: "2.1", match: false }));
+    await expect(refreshStoredServerVersion()).resolves.toBeNull();
+    expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
+  });
+
+  it("rethrows not-configured quietly: no 'could not check' warning for a key without an address (item 9)", async () => {
+    mocks.loadServerNzSettings.mockResolvedValue({ baseUrl: null, serverVersion: null, serverVersionCheckedAt: null });
+    await expect(refreshStoredServerVersion()).rejects.toBeInstanceOf(ServerNzNotConfiguredError);
+    expect(mocks.logger.warn).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("logs only the two numbers on a mismatch (INV-INT-005)", async () => {

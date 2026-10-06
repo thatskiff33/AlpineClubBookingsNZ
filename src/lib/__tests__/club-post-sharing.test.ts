@@ -325,6 +325,23 @@ describe("retryPendingShares", () => {
     expect(result).toMatchObject({ withdrawalsAttempted: 0 });
   });
 
+  it("stops the withdrawal sweep on the server's own version refusal without counting a failure (#49 review)", async () => {
+    mocks.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { id: "p9", serverPostId: "server-9" },
+        { id: "p10", serverPostId: "server-10" },
+      ]);
+    mocks.withdrawClubPost.mockRejectedValueOnce(new FakeVersionError());
+
+    const result = await retryPendingShares(REQUESTED);
+
+    expect(result).toMatchObject({ withdrawalsAttempted: 2, withdrawalsConfirmed: 0, withdrawalsFailed: 0 });
+    // The second row was not even asked: one refusal answers for the page.
+    expect(mocks.withdrawClubPost).toHaveBeenCalledTimes(1);
+    expect(mocks.logger.warn).not.toHaveBeenCalled();
+  });
+
   it("retries the takedown of a removed shared post and stamps the confirmation (#3091 r1)", async () => {
     mocks.findMany
       .mockResolvedValueOnce([])

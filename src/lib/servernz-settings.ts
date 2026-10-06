@@ -331,3 +331,25 @@ export async function clearServerVersionCheck(): Promise<void> {
     update: { serverVersion: null, serverVersionCheckedAt: null },
   });
 }
+
+/**
+ * Forget everything the central server told this connection, in ONE write:
+ * the owned-lodge list (#52) and the last reported version (#49). Called when
+ * the connection ends - the key is removed or replaced, or the address moves -
+ * because both answers belonged to it. One upsert rather than the two
+ * single-purpose writers above in sequence, so a crash between them cannot
+ * leave the row half-forgotten: a stale version pausing a new connection, or a
+ * stale owned list editable under a new key.
+ */
+export async function forgetServerConnectionAnswers(): Promise<void> {
+  await prisma.serverNzSettings.upsert({
+    where: { id: SERVERNZ_SETTINGS_ID },
+    create: { id: SERVERNZ_SETTINGS_ID },
+    update: {
+      otherLodgesOwnedNames: Prisma.DbNull,
+      otherLodgesOwnedNamesAt: null,
+      serverVersion: null,
+      serverVersionCheckedAt: null,
+    },
+  });
+}

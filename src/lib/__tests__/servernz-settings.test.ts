@@ -16,6 +16,7 @@ import {
   SERVERNZ_SETTINGS_ID,
   clearOtherLodgesOwnedNames,
   clearServerVersionCheck,
+  forgetServerConnectionAnswers,
   loadServerNzSettings,
   normalizeBaseUrl,
   recordOtherLodgesDownload,
@@ -172,6 +173,19 @@ describe("the server's reported API version (#49)", () => {
     await clearServerVersionCheck();
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.update).toEqual({ serverVersion: null, serverVersionCheckedAt: null });
+  });
+
+  it("forgets the owned list AND the version in ONE write when the connection ends", async () => {
+    await forgetServerConnectionAnswers();
+    expect(mocks.upsert).toHaveBeenCalledTimes(1);
+    const [args] = mocks.upsert.mock.calls[0];
+    expect(args.where).toEqual({ id: SERVERNZ_SETTINGS_ID });
+    expect(args.update).toEqual({
+      otherLodgesOwnedNames: Prisma.DbNull,
+      otherLodgesOwnedNamesAt: null,
+      serverVersion: null,
+      serverVersionCheckedAt: null,
+    });
   });
 });
 

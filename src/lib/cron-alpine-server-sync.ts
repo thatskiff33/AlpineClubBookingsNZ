@@ -12,6 +12,7 @@ import {
   ServerNzNotConfiguredError,
   ServerNzVersionMismatchError,
 } from "@/lib/servernz-api";
+import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
 import { checkServerVersion } from "@/lib/servernz-version-check";
 import logger from "@/lib/logger";
 
@@ -73,7 +74,8 @@ export async function syncOtherClubsWithServer(): Promise<AlpineServerSyncResult
       },
       "Alpine Central Server sync skipped: server API version differs",
     );
-    return { status: "skipped", reason: "server-version-mismatch" };
+    // The same fact the Upload/Download routes answer with, under one name.
+    return { status: "skipped", reason: SERVER_VERSION_MISMATCH_CODE };
   }
 
   // Only sync clubs that have opted in and pointed at a server. Missing API key
@@ -119,7 +121,7 @@ export async function syncOtherClubsWithServer(): Promise<AlpineServerSyncResult
     // a version recorded by another container between the two. Same answer:
     // a skip with its reason, never a red cron run an operator cannot act on.
     if (err instanceof ServerNzVersionMismatchError) {
-      return { status: "skipped", reason: "server-version-mismatch" };
+      return { status: "skipped", reason: SERVER_VERSION_MISMATCH_CODE };
     }
     throw err;
   }

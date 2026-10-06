@@ -22,10 +22,54 @@
 export const SERVERNZ_EXPECTED_SERVER_VERSION = "2.0";
 
 /**
- * What is stored when the server answered the version call with 404: it
- * predates versioning. Treated as a mismatch, never as "unchecked".
+ * What is stored when the server answered the version call with 404 (it
+ * predates versioning) or with a string that is not a canonical `major.minor`.
+ * Treated as a mismatch, never as "unchecked".
  */
 export const SERVER_VERSION_UNKNOWN = "unknown";
+
+/** The server version shown when no API key is stored: nothing was asked. */
+export const NO_KEY_SERVER_VERSION = "0";
+
+/**
+ * The ONE spelling of "paused for version" (#49, `INV-SSOT`): the machine
+ * code the Upload/Download routes answer with, the nightly sync's and the
+ * mirror's skip reason, and the setup page's refresh trigger. They are one
+ * fact - a server-bound transfer refused because the versions differ - so a
+ * reader finding any of them finds the same word.
+ */
+export const SERVER_VERSION_MISMATCH_CODE = "server-version-mismatch";
+
+/**
+ * How long a recorded answer is trusted before the setup page's version route
+ * asks the server again (#49 review). The page asks once on entry and after a
+ * save; this is what keeps a second tab, a reload or a quick re-save from
+ * tripping the server's per-token rate limit on the version call.
+ */
+export const SERVER_VERSION_RECHECK_INTERVAL_MS = 60_000;
+
+/**
+ * The server's answer as a value fit to store: a canonical `major.minor`
+ * verbatim, anything else - a 404, a malformed or over-long string - as the
+ * fixed unknown marker. One rule for every path that writes the column.
+ */
+export function storableServerVersion(raw: unknown): string {
+  return parseServerVersion(raw) ? (raw as string) : SERVER_VERSION_UNKNOWN;
+}
+
+/** What `checkServerVersion` and `GET /api/admin/alpine-server/version` report. */
+export interface ServerVersionCheck {
+  status: ServerVersionStatus;
+  /** The server's version as shown: `NO_KEY_SERVER_VERSION` with no key, else the stored answer. */
+  serverVersion: string;
+  /** The version this site speaks. */
+  expected: string;
+  checkedAt: string | null;
+  /** True when this call could not reach or read the server; the stored answer stands. */
+  couldNotCheck: boolean;
+  /** True when a key is stored but no usable server address is, so nothing was asked. */
+  missingBaseUrl: boolean;
+}
 
 /**
  * Canonical form only: no leading zeros, no sign, no whitespace, so one version

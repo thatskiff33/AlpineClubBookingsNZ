@@ -9,10 +9,8 @@ import {
   ServerNzNotConfiguredError,
   ServerNzVersionMismatchError,
 } from "@/lib/servernz-api";
-import {
-  SERVER_VERSION_MISMATCH_CODE,
-  respondToSyncError,
-} from "@/lib/servernz-sync-response";
+import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
+import { respondToSyncError } from "@/lib/servernz-sync-response";
 
 /**
  * The Upload/Download routes' one error mapper. #49 adds the version pause:

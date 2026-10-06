@@ -5,6 +5,7 @@ import { runMirrorSync, SERVERNZ_PUSH_SECRET_KEY } from "@/lib/club-post-mirror"
 import { getIntegrationCredentialValue } from "@/lib/integration-credentials";
 import logger from "@/lib/logger";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
 import {
   isWebhookBodyInvalidContentLengthError,
   isWebhookBodyTooLargeError,
@@ -113,7 +114,7 @@ export async function POST(request: NextRequest) {
       const result = await runMirrorSync();
       if (!result.skipped) {
         logger.info({ ...result }, "Mirror sync triggered by push");
-      } else if (result.skipped === "server-version-mismatch") {
+      } else if (result.skipped === SERVER_VERSION_MISMATCH_CODE) {
         logger.info(
           { skipped: result.skipped },
           "Push received but the mirror sync is paused: central server API version differs",

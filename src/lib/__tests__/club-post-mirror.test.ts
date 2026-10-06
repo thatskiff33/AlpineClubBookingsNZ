@@ -17,6 +17,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const mocks = vi.hoisted(() => ({
+  FakeVersionError: class FakeVersionError extends Error {
+    expected = "2.0";
+    serverVersion = "2.1";
+    constructor() {
+      super("paused");
+      this.name = "ServerNzVersionMismatchError";
+    }
+  },
   postFindUnique: vi.fn(),
   postCreate: vi.fn(),
   postUpdate: vi.fn(),
@@ -74,6 +82,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/servernz-api", () => ({
+  ServerNzVersionMismatchError: mocks.FakeVersionError,
   pullSharedPostSync: mocks.pullSharedPostSync,
   fetchSharedPostImage: mocks.fetchSharedPostImage,
   registerPushTarget: mocks.registerPushTarget,
@@ -176,6 +185,52 @@ describe("runMirrorSync", () => {
     expect(mocks.registerPushTarget).not.toHaveBeenCalled();
     expect(mocks.pullSharedPostSync).not.toHaveBeenCalled();
     expect(mocks.fetchSharedPostImage).not.toHaveBeenCalled();
+  });
+
+  it("reports PAUSED, not failed, and releases the claim when the server refuses mid-pass for version (#49 review)", async () => {
+    // The pre-check passed (a matching stored answer) and the server's own 409
+    // arrived on the pull - recorded by the API client, which throws the
+    // version error.
+    mocks.pullSharedPostSync.mockRejectedValue(new mocks.FakeVersionError());
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.skipped).toBe("server-version-mismatch");
+    // Released: the next matching pass must not find the claim held.
+    expect(mocks.settingsUpdate).toHaveBeenCalledWith({
+      where: { id: "default" },
+      data: { commsSyncStartedAt: null },
+    });
+  });
+
+  it("pauses on a version refusal from an image fetch without counting the change as poison", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(
+      envelope([visiblePost({ images: [{ url: `https://central.test/api/images/posts/${SERVER_IMAGE}`, width: 1, height: 1 }] })]),
+    );
+    mocks.fetchSharedPostImage.mockRejectedValue(new mocks.FakeVersionError());
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.skipped).toBe("server-version-mismatch");
+    expect(result.upserted).toBe(0);
+    const poisonWrites = mocks.settingsUpdate.mock.calls.filter(
+      ([args]) => args.data.commsPoisonChangeId !== undefined,
+    );
+    expect(poisonWrites).toHaveLength(0);
+  });
+
+  it("lets a version refusal on push registration pause the pass rather than hiding it as a registration warning", async () => {
+    mocks.getIntegrationCredentialValue.mockResolvedValue(null);
+    process.env.NEXTAUTH_URL = "https://club.example.nz";
+    mocks.registerPushTarget.mockRejectedValue(new mocks.FakeVersionError());
+    try {
+      const result = await runMirrorSync(NOW);
+      expect(result.skipped).toBe("server-version-mismatch");
+      expect(mocks.pullSharedPostSync).not.toHaveBeenCalled();
+      expect(mocks.loggerWarn).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.NEXTAUTH_URL;
+    }
   });
 
   it("runs the version check after the key check and before the claim (#49)", async () => {

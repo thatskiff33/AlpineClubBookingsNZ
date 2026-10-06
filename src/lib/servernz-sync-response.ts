@@ -6,13 +6,7 @@ import {
   ServerNzNotConfiguredError,
   ServerNzVersionMismatchError,
 } from "@/lib/servernz-api";
-
-/**
- * The machine-readable reason the Upload/Download routes answer with when the
- * central server is on a different API version (#49). The setup page reads it
- * to refresh the numbers it shows.
- */
-export const SERVER_VERSION_MISMATCH_CODE = "server-version-mismatch";
+import { SERVER_VERSION_MISMATCH_CODE } from "@/lib/servernz-api-version";
 
 /**
  * Map a ServerNZ sync failure to an audited HTTP response. Shared by the upload

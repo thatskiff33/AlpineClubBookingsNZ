@@ -14,6 +14,7 @@ import {
   SERVER_VERSION_UNKNOWN,
   describeServerVersionPause,
   isStoredServerVersionMismatch,
+  storableServerVersion,
 } from "@/lib/servernz-api-version";
 import { getOperationalServerNzApiKey } from "@/lib/servernz-config";
 import {
@@ -231,8 +232,10 @@ async function resolveConnection(
 
   let stored = settings.serverVersion;
   if (stored === null) {
-    // Self-heal: ask once, inline. `refreshStoredServerVersion` swallows a
-    // failed call and returns null, which allows the request (default 1).
+    // Self-heal: ask once, inline. `refreshStoredServerVersion` returns null
+    // for a call that FAILED, which allows the request (default 1); a record
+    // that fails after a received answer throws, like any other database
+    // failure on a server-bound path.
     stored = await refreshStoredServerVersion(connection);
   }
   if (isStoredServerVersionMismatch(stored)) {
@@ -260,8 +263,11 @@ function authHeaders(apiKey: string): HeadersInit {
   };
 }
 
+/** The column's VarChar(16): the bound on any version string taken off the wire. */
+const MAX_SERVER_VERSION_CHARS = 16;
+
 const versionResultSchema = z.object({
-  version: z.string().max(16),
+  version: z.string().max(MAX_SERVER_VERSION_CHARS),
   match: z.boolean().nullable(),
 });
 
@@ -289,38 +295,77 @@ export async function fetchServerVersion(connection?: {
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (res.status === 404) return SERVER_VERSION_UNKNOWN;
-  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
-  return versionResultSchema.parse(await res.json()).version;
+  if (!res.ok) await refuse(res, apiKey);
+  // Malformed or over-long on the wire reads as the unknown marker: still an
+  // ANSWER (and a mismatch), never a failed check.
+  return storableServerVersion(versionResultSchema.parse(await res.json()).version);
+}
+
+/**
+ * THE ONE PATH THAT WRITES THE VERSION COLUMN (#49 review items 3 and 4): the
+ * answer is normalised (`storableServerVersion`) and recorded only if the API
+ * key it was obtained with is STILL the stored key. A key saved while the call
+ * was in flight has already forgotten the old connection's answers, and the
+ * old server's late answer must not be written over that - it would pause, or
+ * clear a pause on, a connection it never described. Returns what was
+ * recorded, or null when the answer was dropped for that reason. A record that
+ * fails throws: a RECEIVED mismatch must never read as "could not check".
+ */
+async function recordServerAnswer(
+  raw: string,
+  apiKeyUsed: string,
+): Promise<string | null> {
+  const version = storableServerVersion(raw);
+  const currentKey = await getOperationalServerNzApiKey();
+  if (currentKey !== apiKeyUsed) {
+    logger.info(
+      { expected: SERVERNZ_EXPECTED_SERVER_VERSION, serverVersion: version },
+      "Dropped a late Alpine Central Server version answer: the API key changed while it was in flight",
+    );
+    return null;
+  }
+  await recordServerVersionCheck(version);
+  if (version !== SERVERNZ_EXPECTED_SERVER_VERSION) {
+    logger.info(
+      { expected: SERVERNZ_EXPECTED_SERVER_VERSION, serverVersion: version },
+      "Alpine Central Server reports a different API version; syncing is paused",
+    );
+  }
+  return version;
 }
 
 /**
  * Fetch the server's version and record it, returning what was recorded - or
- * `null` when the call failed, in which case NOTHING is recorded and the stored
- * answer (whatever it was) stands. Shared by the gate's self-heal above and by
- * `checkServerVersion` in `servernz-version-check.ts`, so there is one path
- * that writes the column. Logs only the two numbers (`INV-INT-005`).
+ * `null` when the call failed or the answer arrived late (see above), in which
+ * case NOTHING is recorded and the stored answer stands. Shared by the gate's
+ * self-heal above and by `checkServerVersion` in `servernz-version-check.ts`.
+ * Only the FETCH is guarded: a received answer that cannot be recorded throws.
+ * `ServerNzNotConfiguredError` is rethrown quietly, without the warning - a key
+ * with no usable address is a configuration state the caller names, not a
+ * failed check to warn about on every pass. Logs only the two numbers
+ * (`INV-INT-005`).
  */
 export async function refreshStoredServerVersion(connection?: {
   baseUrl: string;
   apiKey: string;
 }): Promise<string | null> {
+  const resolved =
+    connection ?? (await resolveConnection({ skipVersionGate: true }));
+  let version: string;
   try {
-    const version = await fetchServerVersion(connection);
-    await recordServerVersionCheck(version);
-    if (version !== SERVERNZ_EXPECTED_SERVER_VERSION) {
-      logger.info(
-        { expected: SERVERNZ_EXPECTED_SERVER_VERSION, serverVersion: version },
-        "Alpine Central Server reports a different API version; syncing is paused",
-      );
-    }
-    return version;
+    version = await fetchServerVersion(resolved);
   } catch (error) {
+    if (error instanceof ServerNzVersionMismatchError) {
+      // `refuse` already recorded the server's 409 answer.
+      return error.serverVersion;
+    }
     logger.warn(
       { err: error, expected: SERVERNZ_EXPECTED_SERVER_VERSION },
       "Could not check the Alpine Central Server API version; keeping the last known answer",
     );
     return null;
   }
+  return recordServerAnswer(version, resolved.apiKey);
 }
 
 /**
@@ -332,8 +377,11 @@ const SHARE_TIMEOUT_MS = 60_000;
 /** Longest remote-supplied error text we will carry into a message or audit row. */
 const MAX_REMOTE_ERROR_CHARS = 200;
 
+/** The server's refusal code for a request whose declared version differs from its own. */
+const SERVER_API_VERSION_MISMATCH_CODE = "API_VERSION_MISMATCH";
+
 /**
- * The remote's own error text, bounded and stripped of control characters.
+ * The server's own error text, bounded and stripped of control characters.
  *
  * This string travels: `respondToSyncError` writes it into the audit `details`
  * column and shows it in the admin UI. `sanitizeAuditDetails` catches `key=value`
@@ -341,21 +389,48 @@ const MAX_REMOTE_ERROR_CHARS = 200;
  * server matches none of those — so the honest fix is to stop treating the
  * remote's text as free-form. Bounded here, at the one place it enters.
  */
-async function readError(res: Response): Promise<string> {
-  const fallback = `Request failed (${res.status})`;
+function cleanRemoteError(status: number, raw: unknown): string {
+  const fallback = `Request failed (${status})`;
+  if (typeof raw !== "string" || !raw.trim()) return fallback;
+  const cleaned = raw
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_REMOTE_ERROR_CHARS);
+  return cleaned || fallback;
+}
+
+/**
+ * THE ONE WAY A FAILED RESPONSE BECOMES AN ERROR (#49 review item 1). The body
+ * is parsed once. A 409 carrying the server's `API_VERSION_MISMATCH` code is
+ * the server refusing the transfer for version - the same fact the local gate
+ * refuses for - so it RECORDS the server's number (through the one write path,
+ * with the same key-change guard) and throws `ServerNzVersionMismatchError`,
+ * which every caller already maps to its paused path. It used to surface as a
+ * plain 4xx `ServerNzApiError`, which `shareOnePost` reads as a refusal that
+ * will never change and retires the share for good. Every other failure is
+ * the `ServerNzApiError` it always was.
+ */
+async function refuse(res: Response, apiKeyUsed: string): Promise<never> {
+  let body: { error?: unknown; code?: unknown; serverVersion?: unknown } = {};
   try {
-    const body = (await res.json()) as { error?: unknown };
-    if (typeof body?.error !== "string" || !body.error.trim()) return fallback;
-    const cleaned = body.error
-      // eslint-disable-next-line no-control-regex -- stripping C0/C1 controls is the point
-      .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, MAX_REMOTE_ERROR_CHARS);
-    return cleaned || fallback;
+    body = (await res.json()) ?? {};
   } catch {
-    return fallback;
+    // No JSON body: the status is the whole message.
   }
+  if (
+    res.status === 409 &&
+    body.code === SERVER_API_VERSION_MISMATCH_CODE &&
+    typeof body.serverVersion === "string" &&
+    body.serverVersion.length <= MAX_SERVER_VERSION_CHARS
+  ) {
+    const stored = await recordServerAnswer(body.serverVersion, apiKeyUsed);
+    throw new ServerNzVersionMismatchError(
+      SERVERNZ_EXPECTED_SERVER_VERSION,
+      stored ?? storableServerVersion(body.serverVersion),
+    );
+  }
+  throw new ServerNzApiError(res.status, cleanRemoteError(res.status, body.error));
 }
 
 /**
@@ -436,7 +511,7 @@ export async function shareClubPost(input: {
     body: form,
     signal: AbortSignal.timeout(SHARE_TIMEOUT_MS),
   });
-  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  if (!res.ok) await refuse(res, apiKey);
   return sharedPostResultSchema.parse(await res.json());
 }
 
@@ -460,7 +535,7 @@ export async function withdrawClubPost(serverPostId: string): Promise<void> {
     },
   );
   if (res.status === 404) return;
-  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  if (!res.ok) await refuse(res, apiKey);
 }
 
 /**
@@ -535,7 +610,7 @@ export async function pullSharedPostSync(cursor: {
     headers: authHeaders(apiKey),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  if (!res.ok) await refuse(res, apiKey);
   return syncEnvelopeSchema.parse(await res.json());
 }
 
@@ -572,7 +647,13 @@ export async function fetchSharedPostImage(
     },
     signal: AbortSignal.timeout(SHARE_TIMEOUT_MS),
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    // A missing or refused picture is null (the words still arrive) - except
+    // the server's version refusal, which is the pass's answer, not the
+    // picture's, and must not be mirrored away as "no image".
+    if (res.status === 409) await refuse(res, apiKey);
+    return null;
+  }
   return new Uint8Array(await res.arrayBuffer());
 }
 
@@ -601,7 +682,7 @@ export async function registerPushTarget(
     body: JSON.stringify({ url: callbackUrl }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  if (!res.ok) await refuse(res, apiKey);
   return pushTargetResultSchema.parse(await res.json());
 }
 
@@ -617,7 +698,7 @@ export async function uploadOtherLodges(
     body: JSON.stringify({ lodges }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  if (!res.ok) await refuse(res, apiKey);
   return uploadResultSchema.parse(await res.json());
 }
 
@@ -634,7 +715,7 @@ export async function pullOtherLodges(
     headers: authHeaders(apiKey),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  if (!res.ok) await refuse(res, apiKey);
   const envelope = pullEnvelopeSchema.parse(await res.json());
 
   // Per-row validation: a row the server sends that breaks the bounds above is
