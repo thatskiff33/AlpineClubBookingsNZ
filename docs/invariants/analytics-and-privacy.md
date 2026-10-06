@@ -712,9 +712,9 @@ What one member may learn about another from the lodge roster (#2942).
   head count that concealment only made them the unexplained difference between
   two screens. A minor custodian is never named, and naming is all-or-nothing,
   so nobody is identified by elimination.
-- **A whole-lodge hold stays concealed, and this narrows that**: free beds
-  compared against people listed still distinguishes held from full. A property
-  of the pair, and why the module is off by default.
+- **Held nights are SHOWN too** (owner decision, 6 Oct 2026, #3474), from
+  `getLodgeHeldNights`, as "reserved for a private booking": nights only, never
+  whose. This reverses ADR-001 decision 6 for roster clubs only.
 - Pinned by `src/lib/__tests__/member-lodge-roster-privacy.test.ts`.
 
 ## INV-PRIV-018

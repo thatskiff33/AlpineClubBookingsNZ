@@ -50,6 +50,13 @@ custodian, they appear with the nights they are there, marked as the custodian.
 That is deliberate: you should be able to see at a glance whether someone is
 looking after the place, rather than having to work it out.
 
+**Nights the whole lodge is privately booked say so.** If somebody has hired
+the entire lodge, those nights appear as **Reserved for a private booking**.
+That row does not say who, or how many. The party may still appear on the list
+under its own group label once it has paid, like any other booking. This is
+why the booking calendar shows those nights as full even when the list has only
+a few names on them, or none at all.
+
 **School and club groups show as the organisation.** A school booking reads as
 the school's name, never as the teachers or the pupils.
 

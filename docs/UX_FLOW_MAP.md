@@ -1382,8 +1382,11 @@ unless the club turns it on.
   of eight or more that was alone on every one of its nights — appears as one
   labelled row with the size of its busiest night.
 - **What is never here** — contact details, dates of birth, addresses, money,
-  booking ids or notes, beds, group identity, dietary information, and any
-  signal of a whole-lodge or custodian hold. The rule is `INV-PRIV-017` and it
+  booking ids or notes, beds, group identity, dietary information, and which
+  booking holds the whole lodge. Custodians are listed outright, and a
+  whole-lodge hold's nights appear as one "Reserved for a private booking"
+  row naming nobody (#3474) — both so nothing is left to be deduced by
+  comparing this page with the calendar. The rule is `INV-PRIV-017` and it
   is enforced by what the server BUILDS, not by what the page renders: a
   withheld field is an absent key.
 - **Admin door** — **Admin → Lodges → the lodge → Member roster** sets the name

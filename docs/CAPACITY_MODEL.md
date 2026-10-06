@@ -628,7 +628,11 @@ Enforcement lives in `capacity.ts` (the `wholeLodgeHeld` flag) and
 - **Availability calendars** — `checkCapacityForGuestRanges` (day view) and
   `getMonthAvailability` (month calendar, `/api/availability`) both report a held
   night as full, so a held-but-not-full night is indistinguishable from a
-  genuinely full lodge on public surfaces (decision 6).
+  genuinely full lodge on public surfaces (decision 6). The one member surface
+  that says otherwise is the member lodge roster, where a club runs it: it lists
+  the held nights as "reserved for a private booking", naming nobody, so its
+  head count cannot be used to tell held from full by subtraction (#3474,
+  `INV-PRIV-017`).
 - **The capacity-warnings cron** — reports a held night as a full lodge, so the
   nightly fullness alert fires (#2681). Before that it had no hold handling at
   all, and a lodge under an exclusive whole-lodge hold never triggered a warning.

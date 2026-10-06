@@ -42,10 +42,19 @@ vi.mock("@/lib/custodian-occupancy", async (importOriginal) => {
   return { ...actual, findCustodianBedHolds: vi.fn(async () => []) };
 });
 
+vi.mock("@/lib/capacity", async (importOriginal) => {
+  // PARTIAL mock, for the same reason as the custodian read above: only the
+  // database read is replaced. `getLodgeHeldNights` would otherwise run its
+  // own `booking.findMany` against the roster's booking fixtures (#3474).
+  const actual = (await importOriginal()) as typeof import("@/lib/capacity");
+  return { ...actual, getLodgeHeldNights: vi.fn(async () => []) };
+});
+
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import { getLodgeHeldNights } from "@/lib/capacity";
 import { findCustodianBedHolds } from "@/lib/custodian-occupancy";
 import { prisma } from "@/lib/prisma";
 import {
@@ -56,6 +65,10 @@ import {
 } from "@/lib/member-lodge-roster";
 
 const mockFindCustodianBedHolds = findCustodianBedHolds as unknown as ReturnType<
+  typeof vi.fn
+>;
+
+const mockGetLodgeHeldNights = getLodgeHeldNights as unknown as ReturnType<
   typeof vi.fn
 >;
 
@@ -296,6 +309,7 @@ function organisationBookingRow(options: {
 beforeEach(() => {
   vi.clearAllMocks();
   mockFindCustodianBedHolds.mockResolvedValue([]);
+  mockGetLodgeHeldNights.mockResolvedValue([]);
   mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
   mockPrisma.lodge.findMany.mockResolvedValue([lodgeRow("lodge-a", "Alpha")]);
   mockPrisma.booking.findMany.mockResolvedValue([]);
@@ -1082,5 +1096,111 @@ describe("member lodge roster — the source fence", () => {
     // A template literal joining a first and last name would be a second
     // implementation of `reduceName` hiding in plain sight.
     expect(SOURCE).not.toMatch(/\$\{[^}]*firstName[^}]*\}\s*\$\{/);
+  });
+});
+
+describe("member lodge roster — whole-lodge held nights (#3474)", () => {
+  // Owner decision, 6 Oct 2026: "Show holds on roster". A held night is a full
+  // lodge on the booking calendar (ADR-001 decision 6); beside this page's head
+  // count that made a private party deducible by subtraction, so for a club
+  // running the roster the held nights are stated outright — the nights, and
+  // nothing that says whose.
+  const HELD = ["2026-07-12", "2026-07-13", "2026-07-14"];
+
+  it("states the nights a whole-lodge hold covers", async () => {
+    mockGetLodgeHeldNights.mockResolvedValue(HELD);
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    expect(
+      roster.lodges[0]?.heldNights,
+      "INV-PRIV-017 (#3474): a roster club states held nights, so held cannot be told from full only by arithmetic."
+    ).toEqual(HELD);
+  });
+
+  it("asks the capacity engine for exactly this lodge and this window", async () => {
+    await buildMemberLodgeRoster("viewer-1");
+    expect(mockGetLodgeHeldNights).toHaveBeenCalledTimes(1);
+    const [lodgeId, from, to] = mockGetLodgeHeldNights.mock.calls[0]!;
+    expect(lodgeId).toBe("lodge-a");
+    expect((from as Date).toISOString().slice(0, 10)).toBe(TODAY);
+    expect((to as Date).toISOString().slice(0, 10)).toBe(FIRST_NIGHT_OUTSIDE);
+  });
+
+  it("states a hold that has nobody on the roster yet — the calendar's held nights, not the paid party's", async () => {
+    // A CONFIRMED-but-unpaid hold pins the calendar to full while its party is
+    // absent from the roster (paid stays only). The held row is what keeps the
+    // two surfaces reconciling in that case too.
+    mockGetLodgeHeldNights.mockResolvedValue(HELD);
+    mockPrisma.booking.findMany.mockResolvedValue([]);
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    expect(roster.lodges[0]?.heldNights).toEqual(HELD);
+    expect(roster.lodges[0]?.people).toEqual([]);
+    expect(roster.lodges[0]?.groups).toEqual([]);
+  });
+
+  it("never discloses a held night beyond the window", async () => {
+    mockGetLodgeHeldNights.mockResolvedValue([LAST_NIGHT, FIRST_NIGHT_OUTSIDE]);
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    expect(
+      roster.lodges[0]?.heldNights,
+      "INV-PRIV-017: the window is bounded and a held night beyond it must not be disclosed."
+    ).toEqual([LAST_NIGHT]);
+  });
+
+  it("adds ONE key to the lodge shape, carrying bare night strings and nothing about the holder", async () => {
+    mockGetLodgeHeldNights.mockResolvedValue(HELD);
+    mockPrisma.booking.findMany.mockResolvedValue([
+      bookingRow({
+        lodgeId: "lodge-a",
+        organiser: { firstName: "Jane", lastName: "Smith", ageTier: "ADULT" },
+        guests: Array.from({ length: 5 }, (_, i) =>
+          guest(`Private${i}`, "Smith", "ADULT", HELD)
+        ),
+        checkIn: HELD[0],
+        checkOut: "2026-07-15",
+        wholeLodgeHold: true,
+      }),
+    ]);
+
+    const roster = await buildMemberLodgeRoster("viewer-1");
+    const lodge = roster.lodges[0]!;
+    expect(
+      Object.keys(lodge).sort(),
+      "INV-PRIV-017: the lodge shape is pinned; #3474 widened it by exactly `heldNights`."
+    ).toEqual([
+      "custodians",
+      "granularity",
+      "groups",
+      "heldNights",
+      "lodgeId",
+      "lodgeName",
+      "people",
+    ]);
+    for (const night of lodge.heldNights) {
+      expect(night).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+    const payload = JSON.stringify(roster);
+    // The per-booking flag still never reaches the payload: nothing ties a
+    // held night to the row of people who hold it.
+    expect(payload).not.toContain("wholeLodgeHold");
+    expect(payload).not.toContain("Private0");
+    for (const [label, value] of Object.entries(SECRETS)) {
+      if (label === "childFirstName" || label === "childLastName") continue;
+      expect(
+        payload,
+        `INV-PRIV-017: ${label} must be ABSENT from the roster payload.`
+      ).not.toContain(value);
+    }
+  });
+
+  it("reads no held night for a lodge the member cannot book", async () => {
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([
+      { lodgeId: "lodge-a" },
+    ]);
+    mockPrisma.lodge.findMany.mockResolvedValue([lodgeRow("lodge-a", "Alpha")]);
+    await buildMemberLodgeRoster("viewer-1");
+    expect(
+      mockGetLodgeHeldNights.mock.calls.map((call) => call[0]),
+      "INV-PRIV-017: held nights are read per reachable lodge only."
+    ).toEqual(["lodge-a"]);
   });
 });

@@ -9,6 +9,7 @@ import {
   bookingOwnerHasNoAgeTier,
 } from "./booking-owner";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "./booking-status";
+import { getLodgeHeldNights } from "./capacity";
 import {
   findCustodianBedHolds,
   holdCoversNight,
@@ -50,9 +51,12 @@ import { prisma } from "./prisma";
 // of birth, address, membership type or status, any monetary field, booking
 // ids, booking notes, arrival times, bed or room assignments, consent state,
 // dietary or allergy information (#3021 - the roster must never receive it),
-// group-booking identity of any kind, and whether a night is under a
-// whole-lodge or custodian hold. The selects below name none of them, so there
-// is nothing to strip later and nothing for a future edit to forget to strip.
+// group-booking identity of any kind, and WHICH booking holds the whole lodge.
+// The selects below name none of them, so there is nothing to strip later and
+// nothing for a future edit to forget to strip.
+//
+// WHAT IS STATED AT LODGE LEVEL, AND ONLY THERE: the nights a whole-lodge hold
+// covers (#3474, owner decision 6 Oct 2026). See `LodgeRoster.heldNights`.
 
 /**
  * The roster's own default name detail, deliberately NOT the lobby display's
@@ -182,6 +186,29 @@ export interface LodgeRoster {
   people: RosterPerson[];
   groups: RosterGroup[];
   custodians: RosterCustodian[];
+  /**
+   * Nights in the window that a whole-lodge hold covers, ascending
+   * `YYYY-MM-DD`. The page states them as "reserved for a private booking".
+   *
+   * SHOWN, NOT INFERRED (#3474, owner decision 6 Oct 2026: "Show holds on
+   * roster"). The booking calendar reports a held night as a full lodge
+   * (ADR-001 decision 6), so once this page gave a member a head count, a held
+   * night stood out as "nought free, six listed" and the member could deduce
+   * a private party by subtraction. The owner's answer, consistent with the
+   * custodian decision above, is to say so plainly. It reverses ADR-001
+   * decision 6 for clubs running the roster ONLY: the calendar is unchanged,
+   * and a club with the module off never reaches this builder.
+   *
+   * THE LEAST DISCLOSURE THE DECISION NEEDS, and nothing more: the NIGHTS, as
+   * one list for the lodge. Not which booking, not who holds it, not the party
+   * size, not the purpose, not how many holds there are. The per-booking
+   * `wholeLodgeHold` flag is still never serialized, so nothing here ties a
+   * held night to a row of people. Read through `getLodgeHeldNights`, the
+   * capacity engine's own held-night answer, so these are exactly the nights
+   * the calendar pins to full — including a hold not yet paid, which no other
+   * row on this page would show.
+   */
+  heldNights: string[];
 }
 
 export interface MemberLodgeRoster {
@@ -268,10 +295,10 @@ export async function buildMemberLodgeRoster(
   // grounds that under-disclosing is the safe direction for a privacy surface;
   // the member guide says the same thing in its own words.
   //
-  // Holds are absent by construction rather than by exclusion: a whole-lodge
-  // hold and a custodian bed hold are not guests on a PAID booking, so nothing
-  // below can reach one. Members already never see a held night - to them it
-  // is an ordinary full lodge - and the roster does not change that.
+  // Holds are not read here. The party on a paid whole-lodge booking is
+  // listed like any other (as a group, never by name — see `soleOccupancy`),
+  // and the lodge's held NIGHTS are read separately below, from the capacity
+  // engine, so they match the calendar whatever the holding booking's status.
   const bookings = await prisma.booking.findMany({
     where: {
       lodgeId: { in: lodgeIds },
@@ -286,17 +313,26 @@ export async function buildMemberLodgeRoster(
   // Custodian bed holds for the same window, per lodge. Read per lodge rather
   // than once unfiltered, so no row for a lodge this member cannot reach is
   // ever loaded — the same discipline the booking read follows.
+  //
+  // Whole-lodge held nights the same way, and for the same reason (#3474).
   const custodianHoldsByLodge = new Map<string, CustodianBedHold[]>();
+  const heldNightsByLodge = new Map<string, string[]>();
   await Promise.all(
     lodgeIds.map(async (lodgeId) => {
-      custodianHoldsByLodge.set(
-        lodgeId,
-        await findCustodianBedHolds({
+      const [custodianHolds, heldNights] = await Promise.all([
+        findCustodianBedHolds({
           lodgeId,
           from: dateOnlyInstantOf(from),
           toExclusive: dateOnlyInstantOf(to),
-        })
-      );
+        }),
+        getLodgeHeldNights(
+          lodgeId,
+          dateOnlyInstantOf(from),
+          dateOnlyInstantOf(to)
+        ),
+      ]);
+      custodianHoldsByLodge.set(lodgeId, custodianHolds);
+      heldNightsByLodge.set(lodgeId, heldNights);
     })
   );
 
@@ -315,6 +351,7 @@ export async function buildMemberLodgeRoster(
         lodge,
         byLodge.get(lodge.id) ?? [],
         custodianHoldsByLodge.get(lodge.id) ?? [],
+        heldNightsByLodge.get(lodge.id) ?? [],
         windowNights
       )
     ),
@@ -325,6 +362,7 @@ function buildOneLodgeRoster(
   lodge: { id: string; name: string; rosterNameGranularity: DisplayNameGranularity | null },
   bookings: readonly RosterBookingRow[],
   custodianHolds: readonly CustodianBedHold[],
+  heldNights: readonly string[],
   windowNights: readonly CalendarDate[]
 ): LodgeRoster {
   const granularity = lodge.rosterNameGranularity ?? DEFAULT_ROSTER_NAME_GRANULARITY;
@@ -482,5 +520,10 @@ function buildOneLodgeRoster(
     people,
     groups,
     custodians,
+    // Only nights inside the window, in window order. `getLodgeHeldNights` is
+    // asked for exactly this window already; filtering against it again means
+    // a later change to that helper's range handling cannot widen what this
+    // page discloses past `ROSTER_WINDOW_DAYS`.
+    heldNights: windowNights.filter((night) => heldNights.includes(night)),
   };
 }
