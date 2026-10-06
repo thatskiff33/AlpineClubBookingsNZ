@@ -292,6 +292,15 @@ Two consequences worth knowing before you edit one:
 - **Leave a block token on a line of its own.** Do not put a label of your own in
   front of it. When there is nothing to say the token comes through empty, and a
   label you added would be left stranded above nothing.
+- **The Daily digest's `{{serverVersionNote}}` is empty on an ordinary day.** It
+  carries the whole "syncing with the Alpine Central Server is paused" sentence
+  only while the server is on a different software version from this site, and
+  nothing at all otherwise. The two numbers behind it are also available on
+  their own as `{{serverVersionExpected}}` and `{{serverVersionActual}}`, empty
+  on the same days. A Lodge Operations editor who does not receive the digest is
+  sent this template with only those three tokens filled — the alert counts are
+  not supplied to them, so an override must not assume `{{totalAlerts}}` has a
+  value on every send.
 - **The party listing on the member-guest emails is one block, heading included.**
   `{{partyListNote}}` produces the "Everyone on this booking" heading and the list
   of names together. You can move that block or leave it out; you cannot change

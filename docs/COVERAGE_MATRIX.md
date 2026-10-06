@@ -50,7 +50,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `access-roles` | support | `ARCHITECTURE.md` (access roles / definitions) | [guide](guides/access-roles.md) | 4 |
 | `age-tier-settings` | bookings | `ARCHITECTURE.md`, `AUTHORITATIVE_FEES.md` | [guide](guides/age-tier-settings.md) | 1 |
 | `ai-diagnostics` | overview (page); support (API) | [architecture](ai-diagnostics/architecture.md), [deployment](ai-diagnostics/deployment.md), [ux](ai-diagnostics/ux.md), [e2e-matrix](ai-diagnostics/e2e-matrix.md), [hub](ai-diagnostics/README.md) | [deployment/operator guide](ai-diagnostics/deployment.md) | — (AID module, off by default; outside #2050) |
-| `alpine-server` | finance | [`guides/integrations.md`](guides/integrations.md), `DEPLOYMENT.md` (cron endpoint), `SECURITY-ATTACK-SURFACE.md` (provider list) | [guide](guides/integrations.md) | — (Alpine Central Server module, off by default) |
+| `alpine-server` | finance | [`guides/integrations.md`](guides/integrations.md), `DEPLOYMENT.md` (cron endpoint), `SECURITY-ATTACK-SURFACE.md` (provider list), `STATE_MACHINES.md` (version pause, #49; the `version` read route is finance view) | [guide](guides/integrations.md) | — (Alpine Central Server module, off by default) |
 | `appearance` | content | — | [guide](guides/appearance.md) (incl. `appearance/identity`) | 4 |
 | `audit-log` | support | `AUDIT_RETENTION_ARCHIVE_RUNBOOK.md` | [guide](guides/audit-log.md) | 4 |
 | `background-jobs` | support | `ARCHITECTURE.md` (Cron Jobs) | [guide](guides/background-jobs.md) | 4 |

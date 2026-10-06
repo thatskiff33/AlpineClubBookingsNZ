@@ -214,11 +214,43 @@ your own lodge's entry, and only when it changed since last time, and only
 writes downloaded entries that genuinely differ, so a quiet night costs almost
 nothing.
 
-**Upgrade the central server before this site.** The upload sends every field
-your lodge's entry holds, and the central server refuses an upload that
-names a field it does not know. So if this site is upgraded to a release that
-carries the lodge details and amenities while the central server is still on an
-older release, every upload fails: pressing **Upload** shows **Central server
+**The two sides must be on the same software version, and the page says
+whether they are.** The central server publishes one version number for
+everything it shares — the Other Clubs registry, the message board and the
+push registration — and this site is built for one particular number. The
+setup page shows both, beside the address and the key, under **Server
+software version** ("This site is built for server version 2.0 · Server:
+2.0"): it asks the server once each time you open the page, and again after
+you save a key or an address. With no API key stored nothing is asked and the
+server's number reads **0**, which is not a mismatch.
+
+While the two numbers differ — even by the second part, `2.1` against `2.0` —
+**all syncing with the central server is paused, in both directions**: the
+nightly Other Clubs sync, the **Upload** and **Download** buttons (which answer
+with the two numbers), sharing and withdrawing board posts, the message-board
+pull, push registration, and the central server's own pushes (which are still
+accepted and answered, but not acted on). Nothing is sent or received until the
+versions match. The page carries one message naming both numbers, the Other
+lodges panel on **Lodges** says the list may be out of date, and the
+[Daily digest](notification-recipients.md) carries a *Central server version*
+entry every day until the two match — to the digest's own readers and to
+everyone with Lodge Operations edit access. A central server from before
+version checks (it answers the version question with "not found") counts as a
+different version, so the pause applies to it too.
+
+Upgrade whichever side is behind. Syncing then **resumes on its own**: the
+nightly job asks the version first, records the new answer and carries on, and
+so does the next Upload, share or pull — there is nothing to reset and no
+button to press. A check that could not reach the server (a network blip, a
+rejected key) does **not** pause anything: the page says *Could not check* with
+the last known number, and the last answer stands. The last answer is forgotten
+when you remove or replace the API key or change the server address, because
+it belonged to that connection.
+
+**Upgrade the central server before this site** where you can. Besides the
+version pause above, the upload sends every field your lodge's entry holds,
+and a central server from before the version checks refuses an upload that
+names a field it does not know: pressing **Upload** shows **Central server
 error: Invalid upload payload**, and the nightly pass logs the same failure. In
 the nightly pass the upload runs first, so while the upload is failing that
 night's **download is skipped too** — the registry stops moving in both
@@ -271,7 +303,7 @@ between them they decide where a credential is sent.
 | --- | --- | --- |
 | Xero Setup | The Xero connection and accounting configuration (`/admin/xero/setup`) | The `xeroIntegration` module; Xero OAuth credentials and tenant tokens configured server-side |
 | Google Analytics | Its settings in place on the hub: GA4 measurement id, consent-banner mode, banner wording, and **Ask visitors to choose again** | The `analytics` module; finance **view** to see the status, finance **edit** to change anything |
-| Alpine Central Server | The ServerNZ connection and shared-data setup (`/admin/alpine-server/setup`) | The `alpineCentralServer` module; finance **edit** to enable an item or run a sync, **Full Admin** for the server address and API key |
+| Alpine Central Server | The ServerNZ connection and shared-data setup (`/admin/alpine-server/setup`), including the **Server software version** check that pauses syncing while the two sides differ | The `alpineCentralServer` module; finance **view** to see the versions, finance **edit** to enable an item or run a sync, **Full Admin** for the server address and API key |
 | Video meetings | The MiroTalk meeting server, join-link behaviour and host sign-in (`/admin/video-meetings/setup`) | Finance **view** to read where every value comes from, **Full Admin** to change any of it — including the three host sign-in secrets. See [Calendar and meetings](calendar.md) |
 | Database Backups | The guided backup setup wizard (`/admin/backups/setup`): S3 credentials, destination, nightly schedule, and a verification run | Support view; the S3 credentials and destination writes require Full Admin. See [Database Backups](backups.md) |
 

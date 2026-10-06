@@ -3084,6 +3084,27 @@ failure -> run/failure visible and retryable where business-critical
 To verify: which cron jobs record `CronJobRun`, exact statuses, stale queue
 health thresholds, and skipped-module reporting.
 
+### Alpine Central Server version pause (#49)
+
+```text
+alpine-server-other-lodges-sync (03:00) -> module on -> base URL set
+  -> checkServerVersion (one GET /api/v1/version; records the answer)
+     -> no key          -> SKIPPED central-server-not-configured
+     -> mismatch        -> SKIPPED server-version-mismatch   (before the claim)
+     -> could not check -> last answer stands; continues
+     -> match/unchecked -> item enabled? -> claim -> upload -> download -> SUCCESS
+club-post-mirror-sync / push webhook -> key set -> checkServerVersion
+     -> mismatch -> skipped server-version-mismatch          (before commsSyncStartedAt)
+club-post-share-retry -> isServerSyncPaused (stored answer, no call)
+     -> paused -> shares and withdrawals left pending, no attempt counted
+```
+
+The pause is computed, never stored (`INV-INT-025`): the row holds only the
+server's last answer, so the first run after either side is upgraded records a
+matching answer and resumes with no manual step. A SKIPPED run with reason
+`server-version-mismatch` is therefore the expected state while the two sides
+differ, not a failure to recover from; the setup page shows both numbers.
+
 ### Confirm-pending saved-card charge (#3268)
 
 `confirmPendingBookings` claims a hold-expired booking (PENDING -> CONFIRMED

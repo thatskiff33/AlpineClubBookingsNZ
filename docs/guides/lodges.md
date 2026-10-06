@@ -202,6 +202,7 @@ Lodges are never deleted here: the list is the central server's.
 | The Other lodges panel says no lodge is assigned to this site | The central server's operator has not mapped a lodge to your site's connection | Ask them to assign your lodge |
 | Saving your lodge is refused with "Only this site's own lodge can be changed here" | The central server's list changed since the page loaded, or a download that ran while you were editing recorded a list that no longer names it | Reload the page; only the lodge(s) the server names for your site can be saved |
 | The panel went read-only after a download, although the server names your lodge | Two downloads ran at once (the nightly job and the **Download** button) and the one that finished last carried an older list | Nothing to fix: the next download records the current list again |
+| The panel says syncing with the Alpine Central Server is paused and the list may be out of date | The central server is on a different software version from this site, so nothing is sent or received until the two match (an edit you save here stays local until then) | Open **Integrations → Alpine Central Server**, which shows both numbers, and upgrade whichever side is behind; syncing resumes on its own |
 
 ## Related links
 
