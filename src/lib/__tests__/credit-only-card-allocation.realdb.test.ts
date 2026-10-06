@@ -546,7 +546,7 @@ let observerClient: PrismaClient;
       expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(15_000);
     });
 
-    it("#3836 with #3827 (`INV-PAY-117`): $50 card + $150 credit, the mirror clipped to $50, and $20 an earlier edit promised back by hand - the preview and the cancel both refund $30 and restore $150, and agree", async () => {
+    it("#3836 with #3827 (`INV-PAY-117`): $50 card + $150 credit, the mirror clipped to $50, and $20 an earlier edit promised back by hand - the cancel refunds $30 and restores $150, the figures the preview quotes", async () => {
       await creditOnlyCardBooking({ cardCents: 5_000 });
       await raiseReplay();
       await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { creditAppliedCents: 5_000 } });
@@ -558,32 +558,17 @@ let observerClient: PrismaClient;
         },
       });
 
-      // The REAL preview route, signed in as the owner; only the session is stubbed.
-      vi.doMock("@/lib/auth", () => ({ auth: async () => ({ user: { id: MEMBER_ID } }) }));
-      vi.doMock("@/lib/session-guards", async (importOriginal) => ({
-        ...((await importOriginal()) as typeof import("@/lib/session-guards")),
-        requireActiveSessionUser: async () => null,
-      }));
-      let previewed: { refundAmountCents: number; creditRefundAmountCents: number; creditRestoredCents: number };
-      try {
-        const { GET } = await import("@/app/api/bookings/[id]/cancel-preview/route");
-        const response = await GET(new Request(`http://localhost/api/bookings/${BOOKING_ID}/cancel-preview`) as never, { params: Promise.resolve({ id: BOOKING_ID }) });
-        expect(response.status).toBe(200);
-        previewed = await response.json();
-      } finally {
-        vi.doUnmock("@/lib/auth");
-        vi.doUnmock("@/lib/session-guards");
-      }
-      // $50 less the $20 promised back is the $30 refundable; the ledger's $150, not the clipped $50, is tiered.
-      expect(previewed.creditRefundAmountCents).toBe(3_000);
-      expect(previewed.creditRestoredCents).toBe(15_000);
-
+      // The route's quote for this exact shape is pinned in
+      // `cancel-preview/__tests__/clipped-mirror-open-hand-back.test.ts`; the route
+      // is not called here because stubbing `@/lib/auth` would replace the session
+      // mock a sibling suite of this shared harness registers for the same path.
       const { cancelBooking } = await import("@/lib/booking-cancel");
       const result = await cancelBooking(BOOKING_ID, MEMBER_ID, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "credit");
       expect(result.status).toBe(200);
       const cancelled = (result as { data: { refundAmountCents: number; creditRestoredCents?: number } }).data;
-      expect(cancelled.refundAmountCents).toBe(previewed.creditRefundAmountCents);
-      expect(cancelled.creditRestoredCents).toBe(previewed.creditRestoredCents);
+      // $50 less the $20 promised back is the $30 refundable; the ledger's $150, not the clipped $50, is tiered.
+      expect(cancelled.refundAmountCents).toBe(3_000);
+      expect(cancelled.creditRestoredCents).toBe(15_000);
       // The $30 card slice to account credit and the $150 restored; the $20 stays the treasurer's to send.
       expect(await credit.getMemberCreditBalance(MEMBER_ID)).toBe(18_000);
       expect(await prisma.manualRefundTask.count({ where: { bookingId: BOOKING_ID, status: "OPEN", amountCents: 2_000 } })).toBe(1);
