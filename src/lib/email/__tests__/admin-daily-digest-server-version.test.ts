@@ -98,7 +98,7 @@ const TEAM = [
 
 function sendsTo(email: string) {
   return mocks.sendEmail.mock.calls
-    .map((call) => call[0] as { to: string; templateName: string; templateData: Record<string, unknown>; html: string })
+    .map((call) => call[0] as { to: string; subject: string; templateName: string; templateData: Record<string, unknown>; html: string })
     .filter((call) => call.to === email);
 }
 

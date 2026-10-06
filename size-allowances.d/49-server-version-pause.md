@@ -33,12 +33,14 @@ gate, the version call and `refuse()` still together where every request is
 built.
 
 file: src/lib/email-message-registry.ts
-lines: 2097
+lines: 2109
 reason: three approved tokens with the comment the approved list requires,
-  one EXTRA_TEMPLATE_TOKENS entry, and three preview samples - the editor's
-  single registry of what a template may carry, which is where every other
-  template's tokens are declared. The sample sentence is pinned equal to the
-  composer by `servernz-api-version.test.ts`, so it is not a second copy.
+  one EXTRA_TEMPLATE_TOKENS entry, three preview samples, and - owner decision
+  "second template" - the `admin-server-version-paused` entry in the admin
+  template list with its trigger metadata. The editor's single registry of
+  what a template may carry, which is where every other template is declared.
+  The sample sentence is pinned equal to the composer by
+  `servernz-api-version.test.ts`, so it is not a second copy.
 
 file: src/lib/email-message-token-contract.ts
 lines: 723
