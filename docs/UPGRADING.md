@@ -119,6 +119,23 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Count old audit entries with no severity before you upgrade (#3524)
+
+**What changes.** The nightly audit prune now deletes an unclassified entry whose
+severity was never set once its expiry date passes. The previous release kept
+those entries indefinitely by accident. No migration runs; this is a change to
+the prune's predicate only.
+
+**Before deployment.** Run the read-only count in
+[`AUDIT_RETENTION_ARCHIVE_RUNBOOK.md` → "Unclassified rows with no severity"](AUDIT_RETENTION_ARCHIVE_RUNBOOK.md#unclassified-rows-with-no-severity-3524)
+on a restored copy of your database, not on production. The first nightly run
+after cutover deletes exactly that population (plus anything whose expiry falls
+in between), once, and the rows are not archived first. There is no undo apart
+from your pre-upgrade backup.
+
+**Rollback.** Rolling the code back restores the old predicate and stops further
+deletions, but does not bring back rows the new release already pruned.
+
 ### Do not mark an edit's refund task paid back until cutover completes (#3827)
 
 **What changes.** When a change lowers the price of a booking paid by internet
