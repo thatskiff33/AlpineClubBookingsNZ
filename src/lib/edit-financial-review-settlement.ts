@@ -10,6 +10,7 @@ import {
 } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
+import { handsBackByHand } from "@/lib/manual-refund-hand-back-route";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { editReviewSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
 import {
@@ -306,7 +307,7 @@ export async function chooseEditReviewSettlementRoute({
     if (task.kind === ManualRefundTaskKind.DELETED_BOOKING_LATE_CAPTURE) {
       await assertLateCaptureHandBackStillOwed({ task, amountCents, store });
     }
-    return task.paymentId !== null
+    return handsBackByHand(task) && task.paymentId !== null
       ? {
           kind: "local-allocation",
           paymentId: task.paymentId,
