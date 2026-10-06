@@ -1,0 +1,2 @@
+- Update vulnerable source-map-js and smol-toml dependencies and re-seal the reviewed braces mitigation inputs without changing its coverage or expiry.
+- Restore the booking-ledger back-post after its promotion-delta helper moved, so repeated runs can correctly report nothing left to post.
