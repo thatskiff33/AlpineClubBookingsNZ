@@ -661,7 +661,7 @@ describe("createXeroInvoiceForBooking", () => {
 
       it("MUTATION: does not bill a fee a supplementary invoice already bills", async () => {
         mocks.prisma.booking.findUnique.mockResolvedValue(grownCreditPaidBooking());
-        mocks.prisma.xeroObjectLink.findMany.mockResolvedValue([{ localId: "mod_1" }]);
+        mocks.prisma.xeroObjectLink.findMany.mockResolvedValueOnce([{ localId: "mod_1" }]);
 
         await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
 

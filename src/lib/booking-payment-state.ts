@@ -183,8 +183,13 @@ const CARD_PAYMENT_SOURCE = "STRIPE" satisfies PaymentSource;
  * needs money actually captured; nothing here may be used to decide one.
  *
  * `source` is part of the question because a hand- or Internet-Banking-settled
- * payment has no card behind it. Zero-dollar rows take the schema default,
- * `STRIPE`.
+ * payment has no card behind it. A zero-dollar row CREATED by the $0 settles
+ * (`applyLifecycleTransitions`, `booking-credit-election.ts`, the date-change
+ * service) takes the schema default, `STRIPE`; one they UPDATE keeps the
+ * source it had, because none of their `upsert` updates writes it. So an
+ * Internet-Banking booking re-priced to $0 keeps `INTERNET_BANKING`, is not
+ * card-asked here, and a later increase goes to the Xero arm as before (#3502
+ * review).
  */
 export function canAskCardForIncrease(booking: {
   status: string;

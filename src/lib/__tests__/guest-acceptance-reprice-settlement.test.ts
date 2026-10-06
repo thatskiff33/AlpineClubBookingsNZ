@@ -296,6 +296,22 @@ describe("a settled booking's price is never raised by an acceptance (A3)", () =
     expect(result).toEqual({ repriced: false, reason: "INCREASE_NEEDS_COLLECTION" });
     expect(h.persistRepricedPromotions).not.toHaveBeenCalled();
   });
+
+  it("MUTATION (#3502): a credit-paid ($0) CONFIRMED booking - not paid-like, no invoice - is refused too", async () => {
+    // Neither `hasCapturedPayment` ($0) nor the paid-like status (CONFIRMED) nor
+    // an issued invoice catches this one; only `canAskCardForIncrease` does.
+    // Without it the increase would reach `applyPaymentAdjustments`, which now
+    // sizes a card ask for it, and this path never mints one.
+    decides(2000);
+    const result = await accept(
+      booking({
+        status: "CONFIRMED",
+        payment: { ...booking().payment, amountCents: 0, creditAppliedCents: 32000, xeroInvoiceId: null },
+      }),
+    );
+    expect(result).toEqual({ repriced: false, reason: "INCREASE_NEEDS_COLLECTION" });
+    expect(h.persistRepricedPromotions).not.toHaveBeenCalled();
+  });
 });
 
 describe("only the member edit door for a stay yet to start re-prices (A4)", () => {

@@ -17,7 +17,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
   before `confirm-draft`'s outbox raised the invoice, the increase was asked of
   nobody. These pin the shared machinery's answer; the per-door route tests in
   `fix-mod-payment.test.ts`, `batch-modify-payment.test.ts` and
-  `guest-removal-zero-dollar-increase.test.ts` pin that each door mints it.
+  `guest-removal-minors-alert-route.test.ts` pin that each door mints it.
 
   "Xero off" here is a payment with no `xeroInvoiceId`: the doors consult no
   module flag, so a club without Xero is exactly a booking whose primary

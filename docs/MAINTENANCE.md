@@ -1971,6 +1971,19 @@ genuinely unbilled; at a Xero club, check the booking's supplementary invoices
 first, because one may already be asking for it. The owner's decision for these
 is report only — list them for the owner and do not back-bill from the census.
 
+The fix asks the card only where the $0 payment is a card-source row. A booking
+that was paid by Internet Banking and later re-priced to $0 keeps its Internet
+Banking source, so its increases still go to the Xero arm as before. To see how
+many such rows exist, run this read-only count on a copy (never production):
+
+```sql
+SELECT count(*) FROM "Payment"
+WHERE "amountCents" = 0 AND "status" = 'SUCCEEDED' AND "source" <> 'STRIPE';
+```
+
+A non-zero count is for the owner to weigh; it does not mean anything is wrong
+by itself.
+
 That gap is not closed in the arithmetic on purpose. A term reading the Xero
 outbox would make the identity depend on an external system's queue state, and a
 queued-but-unsent invoice, a failed one and a sent one are three different
