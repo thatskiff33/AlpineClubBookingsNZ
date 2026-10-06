@@ -149,6 +149,12 @@ import {
   type BookingGuestDietarySeeding,
 } from "@/lib/member-dietary-booking-writes";
 import type { ClubFormat } from "@/lib/club-format";
+import {
+  classifyFinishedStayChangeFeeRule,
+  finishedStayNoticeDay,
+  type FinishedStayChangeFeeRule,
+  type FinishedStayCorrection,
+} from "@/lib/booking-finished-stay-correction";
 
 type ModifiedBooking = Booking & {
   guests: BookingGuest[];
@@ -224,6 +230,14 @@ type BatchModificationTransactionResult =
     choreWarnings: string[];
     datesChanged: boolean;
     adminOverride: boolean;
+    /**
+     * #3750: set only on a finished-stay correction — the change request it
+     * executed and which half of the owner's fee rule priced it — so the audit
+     * row says why a finished booking moved.
+     */
+    finishedStayCorrection:
+      | (FinishedStayCorrection & { changeFeeRule: FinishedStayChangeFeeRule })
+      | null;
     notifyMember: boolean;
     capacityOverridden: boolean;
     oldCheckIn: Date;
@@ -652,6 +666,7 @@ export async function modifyBookingBatch({
   hostingReconcile,
   waiveChangeFee,
   preTransaction,
+  finishedStayCorrection,
 }: {
   bookingId: string;
   actor: { id: string; role: Role };
@@ -810,7 +825,52 @@ export async function modifyBookingBatch({
    * only function that can mint one — see `EVERY_BOOKING_LOCK_FACTS`.
    */
   preTransaction?: BatchModificationPreTransaction;
+  /**
+   * #3750: execute an officer-approved LOCKED_PERIOD change request on a stay
+   * that has FINISHED (fully past, or `COMPLETED`).
+   *
+   * WHAT IT CHANGES, and it is deliberately little — everything else is the
+   * ordinary batch edit, so pricing, settlement, the additional-payment ask, the
+   * Xero supplementary documents, the ledger lines and the member email all have
+   * their one existing home:
+   *
+   *  - the edit policy admits the finished stay (`finished-stay-correction`
+   *    mode), with only the fields a change request can carry and every night
+   *    still before today (`resolveTargetDates`);
+   *  - an over-capacity past night warns and asks the officer to confirm, as the
+   *    #1668 date override does, and a whole-lodge hold still refuses;
+   *  - the owner's fee rule: an add-only correction carries no change fee, and
+   *    anything else is priced as a same-day (0-day) notice change
+   *    (`booking-finished-stay-correction.ts`);
+   *  - the Xero lock-date decision is taken over the RESOLVED envelope, because a
+   *    stay-range change can re-date the primary invoice without naming a date.
+   *
+   * WHY A SERVICE ARGUMENT AND NOT A FIELD ON `BatchModifyInput`: `input` is the
+   * parsed request body on both member-facing save routes, and this lifts the
+   * fully-past edit lock. It REQUIRES `tx` and `preTransaction` (the executor
+   * owns the approval transaction that claims the request) and an ADMIN actor,
+   * and it never combines with the date-only `adminOverride`.
+   * `finished-stay-correction-call-sites.test.ts` pins
+   * `booking-change-request-execution.ts` as the only caller.
+   */
+  finishedStayCorrection?: FinishedStayCorrection;
 }): Promise<BatchModificationResponse> {
+  if (finishedStayCorrection) {
+    if (!callerTx || !preTransaction) {
+      throw new Error(
+        "#3750: a finished-stay correction runs only inside the approval " +
+          "transaction that claims its change request (`tx` and `preTransaction`).",
+      );
+    }
+    if (actor.role !== "ADMIN") {
+      throw new ApiError("Finished-stay corrections are applied by an officer", 403);
+    }
+    if (input.adminOverride) {
+      throw new Error(
+        "#3750: a finished-stay correction is not a date-only admin override.",
+      );
+    }
+  }
   if (callerTx && !preTransaction) {
     throw new Error(
       "INV-LOCK-004: modifyBookingBatch in caller-transaction mode requires " +
@@ -1125,7 +1185,33 @@ export async function modifyBookingBatch({
       role: actor.role,
       input,
       today: clubTodayDateOnly,
+      finishedStayCorrection: Boolean(finishedStayCorrection),
     });
+    if (finishedStayCorrection) {
+      // The flag only ASKS for the mode. A stay that has not finished took its
+      // ordinary window above, and running that as an officer edit wearing the
+      // request's approval is exactly what must not happen.
+      if (!dates.isFinishedStayCorrection) {
+        throw new ApiError(
+          "This booking's stay has not finished, so the change request cannot be applied as a finished-stay correction.",
+          409,
+        );
+      }
+      // The lock-date decision over the envelope that will really be written.
+      // The call above judged the request's own `checkIn`/`checkOut`; a change
+      // request's stay ranges can move the envelope without naming either, and
+      // on an unpaid booking with an issued invoice that re-dates the
+      // check-in-dated primary invoice. Arithmetic over facts resolved before
+      // the transaction opened (`INV-LOCK-004`), so nothing is read here.
+      assertDateEditClearsXeroLockDateFromFacts(
+        booking,
+        {
+          checkIn: formatDateOnly(dates.newCheckIn),
+          checkOut: formatDateOnly(dates.newCheckOut),
+        },
+        preparation.xeroLockDates,
+      );
+    }
 
     // Lock the complete old and proposed booking envelopes before any
     // Booking/BookingGuest tuple write. This includes empty roster partitions,
@@ -1323,7 +1409,10 @@ export async function modifyBookingBatch({
           // Multi-lodge: season rates are resolved for the booking's lodge.
           seasonRateData: await loadActiveSeasonRates(tx, bookingLodgeId),
           // Issue #1668: over-capacity warns-and-confirms under admin override.
-          adminOverride,
+          // #3750: and on a finished-stay correction, by owner decision — the
+          // officer confirms past-night overbooking; a whole-lodge hold still
+          // refuses inside the pricing pass.
+          adminOverride: adminOverride || Boolean(finishedStayCorrection),
           confirmOverCapacity: input.confirmOverCapacity,
           // #1746: admin-flagged partner-sharers route capacity through the
           // #1745 reserved-slot check (gated to ADMIN actors above).
@@ -1532,10 +1621,34 @@ export async function modifyBookingBatch({
         : booking.finalPriceCents;
     const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
 
+    // #3750: the owner's fee rule for a finished-stay correction, decided from
+    // what this edit will WRITE (see `classifyFinishedStayChangeFeeRule`), and
+    // the day its money tiers are measured from. An ordinary edit measures them
+    // from the club's today; a correction measures them from its own check-in,
+    // so the notice period is 0 days rather than a negative one that no tier
+    // covers. Only the three money tiers read it — every date gate above read
+    // the real today.
+    const finishedStayChangeFeeRule: FinishedStayChangeFeeRule | null =
+      finishedStayCorrection
+        ? classifyFinishedStayChangeFeeRule({
+            addedGuestCount: guestPlan.normalizedAddGuests?.length ?? 0,
+            removedGuestCount: guestPlan.removedGuests.length,
+            remainingGuests: guestPlan.proposedRemainingGuests.map((entry) => ({
+              stored: entry.guest,
+              proposed: entry,
+            })),
+          })
+        : null;
+    const moneyTierDay = finishedStayCorrection
+      ? finishedStayNoticeDay(booking)
+      : todayAtClub;
+
     // #3232 D2: what this move WOULD attract, before the club's waiver is applied.
     // A parked edit is priced by nobody, so it is zero here for the reason it is
-    // zero everywhere else on that path.
-    const chargeableChangeFeeCents = parked
+    // zero everywhere else on that path. #3750: an add-only finished-stay
+    // correction owes no change fee by owner decision — not a waiver of one.
+    const chargeableChangeFeeCents =
+      parked || finishedStayChangeFeeRule === "ADD_ONLY_NO_FEE"
       ? 0
       : await calculateModificationChangeFee({
       booking,
@@ -1543,7 +1656,7 @@ export async function modifyBookingBatch({
       checkInChanged: dates.checkInChanged,
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
       db: tx, // locked transaction; see `CancellationPolicyDb`
-      todayAtClub,
+      todayAtClub: moneyTierDay,
     });
     // #3232 D2: `waiveChangeFee` takes the same zero branch a parked edit takes,
     // so the waived fee is genuinely absent from every downstream decision rather
@@ -1572,7 +1685,7 @@ export async function modifyBookingBatch({
       booking,
       netChargeCents: priceDiffCents + changeFeeCents,
       db: tx,
-      todayAtClub,
+      todayAtClub: moneyTierDay,
     });
     if (settlementOptions?.requiresSettlementMethod && !input.settlementMethod) {
       throw new BookingModificationSettlementMethodRequiredError();
@@ -1677,7 +1790,8 @@ export async function modifyBookingBatch({
       changeFeeCents,
       settlementOptions,
       settlementMethod: input.settlementMethod,
-      todayAtClub,
+      // #3750: the give-back tier is a refund tier too — the same 0-day frame.
+      todayAtClub: moneyTierDay,
       format,
     });
 
@@ -1936,6 +2050,17 @@ export async function modifyBookingBatch({
                 capacityOverridden: capacityOverridden,
               }
             : {}),
+          // #3750: which approved change request this executed, how its fee was
+          // decided, and whether an officer confirmed a past-night overbooking.
+          ...(finishedStayCorrection && finishedStayChangeFeeRule
+            ? {
+                finishedStayCorrection: {
+                  changeRequestId: finishedStayCorrection.changeRequestId,
+                  changeFeeRule: finishedStayChangeFeeRule,
+                  capacityOverridden,
+                },
+              }
+            : {}),
           // #3232 D2: the zero beside this is a WAIVER, and which waiver. Only
           // where a fee really was suppressed — see `changeFeeWaived` above.
           ...(changeFeeWaived
@@ -2140,6 +2265,13 @@ export async function modifyBookingBatch({
       choreWarnings,
       datesChanged: dates.datesChanged,
       adminOverride,
+      finishedStayCorrection:
+        finishedStayCorrection && finishedStayChangeFeeRule
+          ? {
+              changeRequestId: finishedStayCorrection.changeRequestId,
+              changeFeeRule: finishedStayChangeFeeRule,
+            }
+          : null,
       notifyMember,
       capacityOverridden: capacityOverridden,
       oldCheckIn: booking.checkIn,
@@ -2490,6 +2622,17 @@ async function dispatchBatchPostTransactionSideEffects({
     // Issue #1696: a non-override admin edit that suppressed the member email
     // records notifyMember: false too (notifyMember is false only when an admin
     // opted out — members always notify), so every suppressed edit is auditable.
+    // #3750: the change request this executed and its fee rule, so the audit
+    // trail answers "why did a finished stay change" on its own.
+    ...(result.finishedStayCorrection
+      ? {
+          finishedStayCorrection: {
+            changeRequestId: result.finishedStayCorrection.changeRequestId,
+            changeFeeRule: result.finishedStayCorrection.changeFeeRule,
+            capacityOverridden: result.capacityOverridden,
+          },
+        }
+      : {}),
     ...(result.adminOverride
       ? {
           adminOverride: true,

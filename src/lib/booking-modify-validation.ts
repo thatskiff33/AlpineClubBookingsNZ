@@ -293,6 +293,13 @@ export type ResolvedTargetDates = {
   skipBookingLifecycleRules: boolean;
   checkInChanged: boolean;
   datesChanged: boolean;
+  /**
+   * #3750: the edit policy really did admit this as a finished-stay correction.
+   * The flag a caller passes only ASKS for the mode; a booking whose stay has
+   * not finished falls through to its ordinary window, and the batch service
+   * refuses on this answer rather than quietly running an ordinary admin edit.
+   */
+  isFinishedStayCorrection: boolean;
 };
 
 /**
@@ -320,15 +327,50 @@ export type ResolvedTargetDates = {
 export const GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE =
   "Linking a placeholder guest to a member is not available once a booking has started. Remove the placeholder guest and add the member as a new guest to re-rate this stay.";
 
+/**
+ * #3750: what a finished-stay correction may carry. Exactly the structural parts
+ * a LOCKED_PERIOD change request can record (`requestedChanges.requested`), plus
+ * the three settlement answers the approving officer gives — and nothing a
+ * request never asked for. A promo-code change, a member link, a rename, a credit
+ * election or an other-lodge tick on a finished stay would be an officer edit
+ * nobody requested, wearing the request's approval.
+ */
+const FINISHED_STAY_CORRECTION_INPUT_KEYS: ReadonlySet<string> = new Set<
+  keyof BatchModifyInput
+>([
+  "checkIn",
+  "checkOut",
+  "addGuests",
+  "removeGuestIds",
+  "guestStayRanges",
+  "settlementMethod",
+  "confirmOverCapacity",
+  "notifyMember",
+]);
+
+export const FINISHED_STAY_CORRECTION_FIELD_MESSAGE =
+  "A finished-stay correction applies only the dates and guests its change request asked for.";
+
+export const FINISHED_STAY_CORRECTION_FUTURE_NIGHT_MESSAGE =
+  "A finished-stay correction can only change nights before today. Ask the member to make a new booking for later nights.";
+
 export function resolveTargetDates({
   booking,
   role,
   input,
   today,
+  finishedStayCorrection = false,
 }: {
   booking: LoadedBookingForModify;
   role: Role;
   input: BatchModifyInput;
+  /**
+   * #3750: this is the executor of an officer-approved LOCKED_PERIOD change
+   * request, applying it to a finished stay. Threaded into
+   * `getBookingEditPolicy`, which admits the fully-past booking only in that
+   * mode; never set by a route.
+   */
+  finishedStayCorrection?: boolean;
   /**
    * The club's today, threaded straight into `getBookingEditPolicy` — see it for
    * why this is a required value rather than a read (#3123). This function is
@@ -346,6 +388,7 @@ export function resolveTargetDates({
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     adminOverride: effectiveAdminOverride,
+    finishedStayCorrection,
     today,
   });
   if (!editPolicy.canModify) {
@@ -353,6 +396,16 @@ export function resolveTargetDates({
       editPolicy.reason ?? "This booking cannot be modified",
       400,
     );
+  }
+  const isFinishedStayCorrection = editPolicy.mode === "finished-stay-correction";
+  if (isFinishedStayCorrection) {
+    const extraneous = Object.entries(input).filter(
+      ([key, value]) =>
+        value !== undefined && !FINISHED_STAY_CORRECTION_INPUT_KEYS.has(key),
+    );
+    if (extraneous.length > 0) {
+      throw new ApiError(FINISHED_STAY_CORRECTION_FIELD_MESSAGE, 400);
+    }
   }
 
   const requestedCheckIn = input.checkIn
@@ -469,6 +522,17 @@ export function resolveTargetDates({
   if (newCheckOut <= newCheckIn) {
     throw new ApiError("Check-out must be after check-in", 400);
   }
+  // #3750: a correction stays a correction of the PAST. A night on or after
+  // today is bookable capacity that ordinary booking rules govern (minimum stay,
+  // the member's own edit window, a live hold), and an approval of a request
+  // filed about the past is not the door to it. `newCheckOut` is the departure
+  // day, so every night is before today exactly when it is on or before today.
+  if (
+    isFinishedStayCorrection &&
+    storedDateOnly(newCheckOut) > editPolicy.today
+  ) {
+    throw new ApiError(FINISHED_STAY_CORRECTION_FUTURE_NIGHT_MESSAGE, 400);
+  }
 
   const skipBookingLifecycleRules =
     role === "ADMIN" && !usesActiveBookingEditLifecycle(booking.status);
@@ -487,6 +551,7 @@ export function resolveTargetDates({
     skipBookingLifecycleRules,
     checkInChanged,
     datesChanged,
+    isFinishedStayCorrection,
   };
 }
 
