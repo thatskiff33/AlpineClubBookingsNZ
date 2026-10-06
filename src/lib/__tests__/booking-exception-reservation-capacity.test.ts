@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   bookingFindMany: vi.fn(),
   hutLeaderFindMany: vi.fn(),
   reservationFindMany: vi.fn(),
+  pendingAdultReservationFindMany: vi.fn(),
   getLodgeCapacity: vi.fn(),
 }));
 
@@ -17,6 +18,9 @@ vi.mock("@/lib/prisma", () => ({
     booking: { findMany: mocks.bookingFindMany },
     hutLeaderAssignment: { findMany: mocks.hutLeaderFindMany },
     policyExceptionReservationNight: { findMany: mocks.reservationFindMany },
+    bookingRequestPendingAdultReservationNight: {
+      findMany: mocks.pendingAdultReservationFindMany,
+    },
   },
 }));
 
@@ -35,6 +39,7 @@ beforeEach(() => {
   mocks.bookingFindMany.mockResolvedValue([]);
   mocks.hutLeaderFindMany.mockResolvedValue([]);
   mocks.reservationFindMany.mockResolvedValue([]);
+  mocks.pendingAdultReservationFindMany.mockResolvedValue([]);
   mocks.getLodgeCapacity.mockResolvedValue(CAPACITY);
 });
 
@@ -49,6 +54,21 @@ function oneGuestRange() {
 }
 
 describe("policy-exception reservations count as occupancy in capacity", () => {
+  it("counts pending school adults as occupancy without inventing BookingGuest rows", async () => {
+    mocks.pendingAdultReservationFindMany.mockResolvedValue([
+      { night: parseDateOnly("2026-07-01"), adultCount: 4 },
+    ]);
+    const result = await checkCapacity(
+      LODGE,
+      parseDateOnly("2026-07-01"),
+      parseDateOnly("2026-07-02"),
+      6,
+    );
+    expect(result.nightDetails[0].occupiedBeds).toBe(4);
+    expect(result.nightDetails[0].availableBeds).toBe(6);
+    expect(result.available).toBe(true);
+  });
+
   it("checkCapacityForGuestRanges subtracts a held reservation's beds", async () => {
     mocks.reservationFindMany.mockResolvedValue([
       { night: parseDateOnly("2026-07-01"), beds: 3 },

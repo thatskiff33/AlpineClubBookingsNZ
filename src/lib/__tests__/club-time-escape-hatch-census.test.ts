@@ -636,7 +636,9 @@ const CENSUS_CEILING = {
    * `@db.Date` day `checkLodgeAuth` already judged, the same window
    * `getKioskAccessTier` uses. Re-measured by RUNNING this suite on this tree.
    */
-  dateOnlyImporters: 227,
+  // #3413: booking-request-pending-adult-reservations uses only zone-free
+  // lodge-night helpers. Re-measured by this suite on the composed branch.
+  dateOnlyImporters: 228,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

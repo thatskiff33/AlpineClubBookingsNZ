@@ -31,6 +31,8 @@ const schoolRequest: CorrectableBookingRequest = {
   contactPhone: "0211111111",
   schoolName: "Tokoroa Primary School",
   teachers: [{ firstName: "Ann", lastName: "Baker", email: "ann@example.test" }],
+  pendingAdultCount: 0,
+  pendingAdultsWriteEnabled: true,
   cateringPreference: "QUOTE_BOTH",
   guests: [
     { firstName: "Ann", lastName: "Baker", ageTier: "ADULT" },
@@ -124,6 +126,14 @@ describe("opening the form", () => {
     expect(screen.getByLabelText("Teacher 1 first name")).toHaveValue("Ann");
     // The child counts are derived from the stored party, not stored separately.
     expect(screen.getByLabelText("Children")).toHaveValue(1);
+    expect(screen.getByLabelText("Adults whose names are pending")).toHaveValue(0);
+  });
+
+  it("keeps the pending-adult input closed before the maintenance cutover", async () => {
+    renderEditor({ ...schoolRequest, pendingAdultsWriteEnabled: false });
+    await openForm();
+    expect(screen.getByLabelText("Adults whose names are pending")).toBeDisabled();
+    expect(screen.getByText(/maintenance cutover/i)).toBeInTheDocument();
   });
 });
 
@@ -232,9 +242,32 @@ describe("saving", () => {
       outcome: "existing",
       schoolRecordId: "org-7",
     });
+    expect(body.school.pendingAdultCount).toBe(0);
     // A school correction never sends a hand-edited guest list: the party is
     // rebuilt server-side from the teachers and the counts.
     expect(body.guests).toBeUndefined();
+  });
+
+  it("posts a separate pending-adult count without inventing a teacher", async () => {
+    const onCorrected = vi.fn();
+    renderEditor(schoolRequest, { onCorrected });
+    await openForm();
+    fireEvent.change(screen.getByLabelText("Adults whose names are pending"), {
+      target: { value: "2" },
+    });
+    fireEvent.change(screen.getByLabelText("Why are you correcting it?"), {
+      target: { value: "Two adult names will follow." },
+    });
+    await waitFor(() => expect(screen.getByRole("checkbox")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
+    await waitFor(() => expect(onCorrected).toHaveBeenCalled());
+    const post = fetchMock.mock.calls.find(
+      ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+    )!;
+    const body = JSON.parse(String((post[1] as RequestInit).body));
+    expect(body.school.pendingAdultCount).toBe(2);
+    expect(body.school.teachers).toEqual(schoolRequest.teachers);
   });
 
   it("reports a correction that saved but could not free its beds as SAVED", async () => {

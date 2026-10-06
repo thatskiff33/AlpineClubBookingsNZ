@@ -37,6 +37,7 @@ import { reconcileAdultMemberHostingReviewWithSiblings } from "@/lib/adult-membe
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { logAudit } from "@/lib/audit";
 import { cancelBooking } from "@/lib/booking-cancel";
+import { isPendingSchoolAdultsWriteEnabled } from "@/lib/pending-school-adults-gate";
 import { recordBookingEvent } from "@/lib/booking-events";
 import {
   loadMemberGuestAddPolicy,
@@ -125,6 +126,7 @@ const DECLINABLE_BOOKING_REQUEST_STATUSES = [
   BookingRequestStatus.PRICED,
   BookingRequestStatus.QUOTED,
   BookingRequestStatus.QUOTE_SENT,
+  BookingRequestStatus.ACCEPTED,
   BookingRequestStatus.QUERY_PENDING,
   BookingRequestStatus.MODIFICATION_REQUESTED,
 ] as const;
@@ -371,6 +373,9 @@ export async function getBookingRequestSettings(db: Pick<typeof prisma, "booking
     quoteReminderLeadDays:
       record?.quoteReminderLeadDays ??
       DEFAULT_BOOKING_REQUEST_SETTINGS.quoteReminderLeadDays,
+    assignSchoolTeachersAsHutLeaders:
+      record?.assignSchoolTeachersAsHutLeaders ??
+      DEFAULT_BOOKING_REQUEST_SETTINGS.assignSchoolTeachersAsHutLeaders,
     attendeeConfirmationLeadDays:
       record?.attendeeConfirmationLeadDays ??
       DEFAULT_BOOKING_REQUEST_SETTINGS.attendeeConfirmationLeadDays,
@@ -489,6 +494,7 @@ export async function updateBookingRequestSettings(input: {
   showPricingToNonMembers: boolean;
   quoteResponseTtlDays: number;
   quoteReminderLeadDays: number;
+  assignSchoolTeachersAsHutLeaders: boolean;
   attendeeConfirmationLeadDays: number;
   attendeeConfirmationReminderDays: number;
   adminMemberId: string;
@@ -500,6 +506,7 @@ export async function updateBookingRequestSettings(input: {
       showPricingToNonMembers: input.showPricingToNonMembers,
       quoteResponseTtlDays: input.quoteResponseTtlDays,
       quoteReminderLeadDays: input.quoteReminderLeadDays,
+      assignSchoolTeachersAsHutLeaders: input.assignSchoolTeachersAsHutLeaders,
       attendeeConfirmationLeadDays: input.attendeeConfirmationLeadDays,
       attendeeConfirmationReminderDays: input.attendeeConfirmationReminderDays,
       updatedByMemberId: input.adminMemberId,
@@ -508,6 +515,7 @@ export async function updateBookingRequestSettings(input: {
       showPricingToNonMembers: input.showPricingToNonMembers,
       quoteResponseTtlDays: input.quoteResponseTtlDays,
       quoteReminderLeadDays: input.quoteReminderLeadDays,
+      assignSchoolTeachersAsHutLeaders: input.assignSchoolTeachersAsHutLeaders,
       attendeeConfirmationLeadDays: input.attendeeConfirmationLeadDays,
       attendeeConfirmationReminderDays: input.attendeeConfirmationReminderDays,
       updatedByMemberId: input.adminMemberId,
@@ -527,6 +535,7 @@ export async function updateBookingRequestSettings(input: {
       showPricingToNonMembers: input.showPricingToNonMembers,
       quoteResponseTtlDays: input.quoteResponseTtlDays,
       quoteReminderLeadDays: input.quoteReminderLeadDays,
+      assignSchoolTeachersAsHutLeaders: input.assignSchoolTeachersAsHutLeaders,
     },
   });
 
@@ -548,6 +557,7 @@ export async function updateBookingRequestSettings(input: {
     showPricingToNonMembers: settings.showPricingToNonMembers,
     quoteResponseTtlDays: settings.quoteResponseTtlDays,
     quoteReminderLeadDays: settings.quoteReminderLeadDays,
+    assignSchoolTeachersAsHutLeaders: settings.assignSchoolTeachersAsHutLeaders,
     attendeeConfirmationLeadDays: settings.attendeeConfirmationLeadDays,
     attendeeConfirmationReminderDays: settings.attendeeConfirmationReminderDays,
   };
@@ -1247,7 +1257,7 @@ export async function priceBookingRequest(input: {
 /**
  * Decline a held/editor booking request (any of
  * DECLINABLE_BOOKING_REQUEST_STATUSES — VERIFIED, PRICED, QUOTED, QUOTE_SENT,
- * QUERY_PENDING, MODIFICATION_REQUESTED), release any live capacity hold, and
+ * ACCEPTED, QUERY_PENDING, MODIFICATION_REQUESTED), release any live capacity hold, and
  * email the requester (#1423 broadened this from VERIFIED/PRICED only).
  */
 export async function declineBookingRequest(input: {
@@ -1308,6 +1318,7 @@ export async function declineBookingRequest(input: {
       },
       data: {
         status: BookingRequestStatus.DECLINED,
+        pendingAdultCount: 0,
         reviewedByMemberId: input.adminMemberId,
         reviewedAt,
         declineReason,
@@ -1405,21 +1416,13 @@ export async function declineBookingRequest(input: {
   // the request (count > 0). A wrong-state decline therefore 409s WITHOUT ever
   // touching the hold.
   //
-  // #1423: decline now covers all six held/editor states
-  // (DECLINABLE_BOOKING_REQUEST_STATUSES), including QUOTE_SENT which DOES carry
-  // a live SENT quote a requester could still accept. That reintroduces a
-  // decline-vs-accept race, closed on BOTH sides:
-  //   * accept-wins-first — the requester accept converts the held booking to a
-  //     live PENDING booking before this decline runs; `requireRequestHold: true`
-  //     (below, #1406) makes `cancelBooking` refuse (409, no side effect) rather
-  //     than clobber it, so decline never destroys a paid booking.
-  //   * decline-wins-first — this decline claims DECLINED and releases the hold
-  //     first; the concurrent accept's status-guarded re-arm
-  //     (booking-request-quotes.ts, notIn [DECLINED, CANCELLED]) then refuses to
-  //     resurrect the finalised request, so no new booking is ever created.
-  // Because the hold-release runs only after the request is claimed DECLINED,
-  // `cancelBooking` here can only ever act on a still-held AWAITING_REVIEW
-  // booking, never a booking a winning accept already converted. Releasing
+  // #3415: decline includes QUOTE_SENT and ACCEPTED. If acceptance wins first,
+  // the request is ACCEPTED and its hold remains AWAITING_REVIEW; an officer
+  // may still claim DECLINED before releasing it. Generic cancellation refuses
+  // an ACCEPTED linked request, so this retirement must precede hold release.
+  // If decline wins first, acceptance's exact QUOTE_SENT/SENT claims refuse
+  // resurrection (#1423). Only officer approval converts the hold; its winning
+  // version claim makes a stale decline fail before release. Releasing
   // reuses the shared `cancelBooking` path (mirroring the admin "Release hold"
   // route): it cancels the held booking, reconciles/frees the beds, detaches
   // `heldBookingId`, and audits. It self-locks on advisory key 1 and runs its
@@ -1453,22 +1456,18 @@ export async function declineBookingRequest(input: {
           // requester's "booking cancelled" email. The detach/reconcile/audit in
           // the shared cancel path still run.
           suppressCustomerNotification: true,
-          // #1406/#1423: a QUOTE_SENT request carries a live SENT quote whose
-          // AWAITING_REVIEW hold a concurrent requester accept could convert to a
-          // live PENDING booking. This opt-in guard makes the shared cancel path
-          // refuse (409, no side effect) rather than clobber that PENDING booking
-          // if the accept won the race — the accept-wins-first half of the
-          // decline-vs-accept race for the broadened declinable set (#1423).
+          // #1406: release only an AWAITING_REVIEW booking. Requester acceptance
+          // retains that status (#3415); officer approval owns conversion. The
+          // guard refuses a booking already moved out of the hold lifecycle.
           requireRequestHold: true,
         }
       );
       // Defensive: a 409 here means the held booking is no longer a releasable
       // AWAITING_REVIEW hold. Either a concurrent cancel of the SAME held booking
       // (a double-submitted decline, or a simultaneous admin "Release hold") won
-      // cancelBooking's single-flight (#1160/#1311), or — for a QUOTE_SENT
-      // request (#1423) — a requester accept already converted the hold to a live
-      // PENDING booking and `requireRequestHold` refused to clobber it. Either
-      // way this decline must NOT destroy that booking, so forward the 409.
+      // cancelBooking's single-flight (#1160/#1311), or the booking has otherwise
+      // left the hold lifecycle and `requireRequestHold` refused to clobber it.
+      // Either way this decline must NOT destroy that booking, so forward the 409.
       if (result.status === 409) {
         throw new BookingRequestDeclineCommittedError({
           message: result.error,
@@ -1711,6 +1710,8 @@ export interface ReassignHeldBookingGuestsResult {
   displacedMemberIds: string[];
 }
 
+export const HELD_BOOKING_GUEST_ORDER_BY = [{ createdAt: "asc" }, { id: "asc" }] satisfies Prisma.BookingGuestOrderByWithRelationInput[];
+
 export async function reassignHeldBookingGuests(
   tx: Prisma.TransactionClient,
   bookingId: string,
@@ -1741,7 +1742,7 @@ export async function reassignHeldBookingGuests(
       lastName: true,
       ageTier: true,
     },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    orderBy: HELD_BOOKING_GUEST_ORDER_BY,
   });
 
   // The consent decision for the INCOMING list, taken once for both branches so
@@ -2085,7 +2086,10 @@ export async function approveBookingRequest(input: {
     throw new BookingRequestError("Booking request not found", 404);
   }
   let request: BookingRequest = foundRequest;
-  if (request.status !== BookingRequestStatus.PRICED) {
+  if (request.type === BookingRequestType.SCHOOL && request.pendingAdultCount > 0) {
+    throw new BookingRequestError("Name every pending school adult before approving this request.", 409);
+  }
+  if (request.status !== BookingRequestStatus.PRICED && request.status !== BookingRequestStatus.ACCEPTED) {
     throw new BookingRequestError(
       "Only priced booking requests can be approved",
       409
@@ -2201,12 +2205,24 @@ export async function approveBookingRequest(input: {
       if (!lockedRequest) {
         throw new BookingRequestError("Booking request not found", 404);
       }
+      if (lockedRequest.type === BookingRequestType.SCHOOL) {
+        const residualPendingRows = typeof tx.bookingRequestPendingAdultReservationNight?.findMany === "function"
+          ? await tx.bookingRequestPendingAdultReservationNight.findMany({
+              where: { bookingRequestId: lockedRequest.id },
+              select: { id: true },
+              take: 1,
+            })
+          : [];
+        if (lockedRequest.pendingAdultCount > 0 || residualPendingRows.length > 0) {
+          throw new BookingRequestError("Name every pending school adult and reconcile the held beds before approving this request.", 409);
+        }
+      }
 
       // Idempotency (#1232 double-charge guard): a prior approve for this
-      // request — a concurrent double-accept, or a retry whose caller re-armed
-      // the request to PRICED after it had already converted (line ~729 of
-      // booking-request-quotes.ts overwrites CONVERTED->PRICED but never clears
-      // convertedBookingId) — already created the booking. Under the advisory
+      // request — a concurrent double-approve, or (before #3415) a requester
+      // accept retry that re-armed a converted request to PRICED without
+      // clearing convertedBookingId; acceptance no longer writes a converted
+      // request — already created the booking. Under the advisory
       // lock we now observe its committed convertedBookingId, so return that
       // booking instead of creating a second one.
       const alreadyConverted = await claimAlreadyConvertedBookingRequest(
@@ -2245,7 +2261,7 @@ export async function approveBookingRequest(input: {
       }
       request = lockedRequest;
 
-      if (request.status !== BookingRequestStatus.PRICED || request.priceCents == null) {
+      if ((request.status !== BookingRequestStatus.PRICED && request.status !== BookingRequestStatus.ACCEPTED) || request.priceCents == null) {
         throw new BookingRequestError(
           "This booking request has already been processed",
           409
@@ -2290,7 +2306,7 @@ export async function approveBookingRequest(input: {
           // overwritten by an approval built from the older snapshot. Fences on
           // the integer version, not updatedAt (millisecond-collidable).
           version: request.version,
-          status: BookingRequestStatus.PRICED,
+          status: { in: [BookingRequestStatus.PRICED, BookingRequestStatus.ACCEPTED] },
         },
         data: {
           status: BookingRequestStatus.APPROVED,
@@ -2889,6 +2905,7 @@ export function buildBookingRequestListWhere(
           BookingRequestStatus.PRICED,
           BookingRequestStatus.QUOTED,
           BookingRequestStatus.QUOTE_SENT,
+          BookingRequestStatus.ACCEPTED,
           BookingRequestStatus.QUERY_PENDING,
           BookingRequestStatus.MODIFICATION_REQUESTED,
         ],
@@ -2997,6 +3014,9 @@ export function serializeBookingRequestForAdmin(
     requestedByMemberId: request.requestedByMemberId,
     schoolName: request.schoolName,
     teachers: teacherDisplay.teachers,
+    // #3413: a SCHOOL-only capacity/quote count. No name is implied by it.
+    pendingAdultCount: request.pendingAdultCount,
+    pendingAdultsWriteEnabled: isPendingSchoolAdultsWriteEnabled(),
     cateringPreference: request.cateringPreference,
     linkedGuestMembers: linkedDisplay.links,
     contactFirstName: request.contactFirstName,

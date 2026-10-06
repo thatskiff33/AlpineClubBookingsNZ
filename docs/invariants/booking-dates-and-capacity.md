@@ -816,6 +816,15 @@ derivation).
   non-holding PENDING rows, an accepted-but-unpaid quote can no longer be bumped
   by a later member booking — this is the intended capacity-priority change.
 
+- A SCHOOL quote can hold adults whose names are pending (#3413). Each one
+  consumes one bed per NZ date-only lodge night through
+  `BookingRequestPendingAdultReservationNight`, in addition to named guest
+  nights. Every canonical occupancy and availability read counts both terms.
+  The rows exist only with the request's held `AWAITING_REVIEW` booking; cancelling
+  that hold removes them in the same locked transaction. Naming a real adult
+  under global then lodge locks replaces one count with one named guest-night
+  set atomically. Conversion refuses any unresolved count or reservation.
+
 ### INV-CAP-005
 
 - Split-booking guest portion always settles or is notified, never silently

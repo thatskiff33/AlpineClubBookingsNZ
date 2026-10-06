@@ -846,7 +846,7 @@ describe("Admin refund and credit review page", () => {
     render(<RefundRequestsPage />);
 
     const amountBox = () =>
-      screen.getByLabelText(/Refund Amount/i) as HTMLInputElement;
+      screen.getByRole("textbox", { name: /Refund Amount/i }) as HTMLInputElement;
 
     /*
       Only one review panel is open at a time, and the request being reviewed

@@ -7,10 +7,10 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint"
 import { Label } from "@/components/ui/label"
-import { Input } from "@/components/ui/input"
+import { MoneyInput } from "@/components/ui/money-input"
 import { Badge } from "@/components/ui/badge"
 import { useClubTime } from "@/components/club-time-provider";
-import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input"
+import { parseDecimalDollarsToCents } from "@/lib/money-input"
 import { formatCents } from "@/lib/utils"
 import { useClubFormat } from "@/components/club-format-provider"
 
@@ -226,11 +226,10 @@ export function RefundAppealButton({
               <Label htmlFor="amount">Requested amount (optional)</Label>
               <div className="flex items-center gap-2">
                 <span className="text-sm">$</span>
-                <Input
+                <MoneyInput
                   id="amount"
-                  {...MONEY_INPUT_PROPS}
                   value={requestedAmount}
-                  onChange={(e) => setRequestedAmount(e.target.value)}
+                  onValueChange={setRequestedAmount}
                   className="w-32"
                   {...amountHint.fieldProps}
                 />

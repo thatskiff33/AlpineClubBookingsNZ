@@ -327,4 +327,6 @@ implement → review → fix → verify-fix → validate → PR → CI-green →
 - **The code-owner rule — its one home** (#3341, applied 2 Oct 2026): a PR
   touching a `.github/CODEOWNERS` path needs the owner's Approve, and a later
   push dismisses it. The Approve is the lock; the comment stays the gate agents
-  check ([`CONTRIBUTING.md`](CONTRIBUTING.md#branch-protection)).
+  check ([`CONTRIBUTING.md`](CONTRIBUTING.md#branch-protection)). Ownership
+  includes CI workflows and `.npmrc` (#3853), including bot-opened epic-sync
+  PRs that touch workflows.

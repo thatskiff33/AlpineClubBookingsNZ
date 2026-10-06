@@ -265,6 +265,7 @@ const BOOKING_WRITES_IMPORTERS: Readonly<Record<string, CensusEntry>> = {
     side: "write",
   },
   "src/lib/school-booking-request.ts": { reason: "W8 school, W9 whole-lodge", ...WRITE_SIDE },
+  "src/lib/school-pending-adult-resolution.ts": { reason: "#3413 named non-member adults start with an empty snapshot", ...WRITE_SIDE },
   "src/lib/waitlist-cross-lodge.ts": { reason: "W18 cross-lodge offer carries", ...WRITE_SIDE },
   "src/lib/member-guest-consent-service.ts": {
     reason: "S5: a granted consent fills the member's empty row from their profile",
@@ -876,6 +877,7 @@ const BOOKING_GUEST_CREATE_SITES: Readonly<Record<string, string>> = {
   "src/lib/booking-request-quotes.ts": "W6 public/school held booking",
   "src/lib/booking-request.ts": "W7 approval without a hold, W13 held-party rebuild",
   "src/lib/school-booking-request.ts": "W8 school approval, W9 member whole-lodge",
+  "src/lib/school-pending-adult-resolution.ts": "#3413 accepted pending adult becomes a named non-member",
   "src/app/api/bookings/[id]/guests/route.ts": "W10 add a guest",
   "src/lib/booking-modify-plan.ts": "W11 in-progress add, W12 modification add",
 };

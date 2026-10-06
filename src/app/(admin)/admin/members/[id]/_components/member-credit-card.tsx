@@ -8,12 +8,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { MoneyInput } from "@/components/ui/money-input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { formatAdminName } from "@/lib/admin-member-detail-helpers"
 import { useClubTime } from "@/components/club-time-provider"
 import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
 import { formatPayloadInstantDate } from "../../../_lib/payload-instant"
-import { MONEY_INPUT_PROPS } from "@/lib/money-input"
 import { formatCents, formatSignedCents } from "@/lib/utils"
 import { useClubFormat } from "@/components/club-format-provider"
 import type {
@@ -110,11 +110,11 @@ export function MemberCreditCard({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label htmlFor="adj-amount">Amount ($)</Label>
-                <Input
+                <MoneyInput
                   id="adj-amount"
-                  {...MONEY_INPUT_PROPS}
                   value={adjustmentAmount}
-                  onChange={(e) => onChangeAdjustmentAmount(e.target.value)}
+                  onValueChange={onChangeAdjustmentAmount}
+                  allowNegative
                   {...adjustmentAmountHint.fieldProps}
                 />
                 <FieldHint {...adjustmentAmountHint.hintProps}>
