@@ -90,13 +90,13 @@ import {
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_QUEUE_TYPES,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
-  OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES,
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
   XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
   type QueuedOutboxExpectedOperation,
   type QueuedOutboxPayload,
 } from "@/lib/xero-operation-outbox-payload";
 import { queuedReviewTaskId, reviewTaskKeyParts } from "@/lib/xero-review-task-key";
+import { OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES } from "@/lib/xero-supplementary-invoice-statuses";
 import { formatDateOnly } from "@/lib/date-only";
 import { clubFormatValues } from "@/lib/club-format-server";
 
@@ -1135,9 +1135,7 @@ const RESTATABLE_SUPPLEMENTARY_INVOICE_STATUSES = [
   "WAITING_PAYMENT",
 ] as const;
 
-// #3502: moved to `xero-operation-outbox-payload.ts`, beside the queue type it
-// qualifies, so the primary invoice can read it without importing this module
-// (which imports the primary invoice); re-exported so no importer moved.
+// #3502: moved to its own leaf; re-exported so no importer moved.
 export { OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES };
 
 /**

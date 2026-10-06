@@ -21,11 +21,12 @@
  * (it skips when there is none), so that subtraction is a guard against a
  * future writer rather than a figure expected to be non-zero.
  */
+import type { LineItem } from "xero-node";
 import { prisma } from "@/lib/prisma";
-import {
-  OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES,
-  XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
-} from "@/lib/xero-operation-outbox-payload";
+import { XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
+import { OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES } from "@/lib/xero-supplementary-invoice-statuses";
+import { changeFeeLineItem } from "@/lib/xero-modification-line-items";
+import type { ResolvedAccountMapping } from "@/lib/xero-mappings";
 
 /** The fee left for the primary invoice, in integer cents; never negative. */
 export function primaryInvoiceChangeFeeCents(params: {
@@ -80,4 +81,17 @@ export async function loadPrimaryInvoiceChangeFeeCents(
       .filter((modification) => supplementary.has(modification.id))
       .reduce((sum, modification) => sum + modification.changeFeeCents, 0),
   });
+}
+
+/**
+ * The primary invoice's change-fee line: none, or the one shared fee line for
+ * `loadPrimaryInvoiceChangeFeeCents`, coded to the hut-fee income mapping.
+ */
+export async function primaryInvoiceChangeFeeLines(
+  bookingId: string,
+  paymentChangeFeeCents: number,
+  incomeMapping: ResolvedAccountMapping,
+): Promise<LineItem[]> {
+  const feeCents = await loadPrimaryInvoiceChangeFeeCents(bookingId, paymentChangeFeeCents);
+  return feeCents > 0 ? [changeFeeLineItem(feeCents, 1, incomeMapping)] : [];
 }

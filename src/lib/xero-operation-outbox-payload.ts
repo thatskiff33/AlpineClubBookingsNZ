@@ -15,17 +15,6 @@ export const XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE = "REFUND_CREDIT_NOTE";
 export const XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE = "ACCOUNT_CREDIT_NOTE";
 export const XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE =
   "SUPPLEMENTARY_INVOICE";
-/**
- * The states in which a supplementary invoice for this anchor is still going to
- * be sent, so a second one must not be queued behind it. Wider than the
- * restatable set by `RUNNING`: an operation the outbox is executing right now
- * cannot have its amount changed, but it is very much still an invoice.
- */
-export const OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES = [
-  "PENDING",
-  "RUNNING",
-  "WAITING_PAYMENT",
-] as const;
 export const XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE =
   "MODIFICATION_CREDIT_NOTE";
 export const XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE =
