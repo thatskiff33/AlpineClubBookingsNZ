@@ -54,16 +54,16 @@ SELECT count(*)              AS "willPrune",
 FROM "AuditLog"
 WHERE "retentionClass" IS NULL
   AND "severity" IS NULL
-  AND "expiresAt" < now();
+  AND "expiresAt" < timezone('UTC', now());
 
 -- The same rows, by category and event name, so you can see what they are.
-SELECT "category", "action", count(*)
+SELECT "category", "action", "incidentPreserved", count(*)
 FROM "AuditLog"
 WHERE "retentionClass" IS NULL
   AND "severity" IS NULL
-  AND "expiresAt" < now()
-GROUP BY 1, 2
-ORDER BY 3 DESC;
+  AND "expiresAt" < timezone('UTC', now())
+GROUP BY 1, 2, 3
+ORDER BY 4 DESC;
 
 ROLLBACK;
 ```
