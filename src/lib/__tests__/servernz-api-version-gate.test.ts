@@ -185,6 +185,15 @@ describe("the server's own 409 refusal (review item 1)", () => {
     expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
   });
 
+  it("is decided by the CODE, not by a serverVersion field happening to be present", async () => {
+    // A 409 for some other reason that also names a version (a future server
+    // echoing versions on every refusal) must not be read as the pause.
+    fetchMock.mockResolvedValue(respond(409, { error: "Conflict", code: "SOME_OTHER_CONFLICT", serverVersion: "2.1" }));
+    const error = await uploadOtherLodges([]).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ServerNzApiError);
+    expect(mocks.recordServerVersionCheck).not.toHaveBeenCalled();
+  });
+
   it("ignores the code on any status but 409, and a serverVersion over the column bound", async () => {
     fetchMock.mockResolvedValue(respond(400, { ...MISMATCH_409 }));
     await expect(pullOtherLodges(null)).rejects.toBeInstanceOf(ServerNzApiError);
