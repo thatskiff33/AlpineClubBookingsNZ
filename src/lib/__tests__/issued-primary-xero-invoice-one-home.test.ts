@@ -458,25 +458,31 @@ describe("no edit door states the rule a second time", () => {
     ).toEqual([]);
   });
 
-  it("the guest-add door reaches the captured-payment home directly", () => {
-    // It asks the STATUS half, `isCapturedPaymentStatus`, not the whole of
-    // `hasCapturedPayment` — deliberately, and this pin is where that is
-    // recorded. The full predicate also requires `amountCents > 0`, and a
-    // zero-dollar booking (credit, or a 100% promo) carries `amountCents: 0`
-    // with a SUCCEEDED status. Using it here would stop asking that member for
-    // an added guest's price, because the Xero arm cannot cover them when the
-    // integration is off — a NEW under-collection at the very door this issue
-    // exists to stop under-collecting at. Both #3244 reviews found it.
+  it("every edit door asks the one increase question (#3502)", () => {
+    // #3244 had the guest-add door ask the STATUS half, `isCapturedPaymentStatus`,
+    // rather than `hasCapturedPayment`, whose `amountCents > 0` clause stops a
+    // zero-dollar booking (credit, or a 100% promo: `{ amountCents: 0, SUCCEEDED }`)
+    // being asked for an added guest's price. #3502 (owner decision, 6 Oct 2026)
+    // named that answer `canAskCardForIncrease` and gave it to the other three
+    // doors through `applyPaymentAdjustments`, so the guest-add door now asks
+    // the helper instead of holding its own copy.
     const source = read(GUEST_ADD_ROUTE);
     expect(source).toMatch(
-      /import\s*\{[^}]*\bisCapturedPaymentStatus\b[^}]*\}\s*from\s*"@\/lib\/booking-payment-state"/,
+      /import\s*\{[^}]*\bcanAskCardForIncrease\b[^}]*\}\s*from\s*"@\/lib\/booking-payment-state"/,
     );
-    expect(source).toMatch(/isCapturedPaymentStatus\(booking\.payment\?\.status/);
+    expect(source).toMatch(/canAskCardForIncrease\(booking\)/);
     expect(
       source,
       `The guest-add door must not adopt the amount clause without a ` +
         `decision: it silently stops collecting from zero-dollar bookings.`,
     ).not.toMatch(/hasCapturedPayment\(/);
+    const settlement = read("src/lib/booking-modify-settlement.ts");
+    expect(
+      settlement,
+      `applyPaymentAdjustments must ask canAskCardForIncrease for an increase ` +
+        `(#3502), or a credit-paid booking that grows is billed to nobody ` +
+        `at the batch, date and removal doors.`,
+    ).toMatch(/canAskCardForIncrease\(booking\)/);
   });
 
   it("every file that reaches applyPaymentAdjustments is one of the doors above", () => {
