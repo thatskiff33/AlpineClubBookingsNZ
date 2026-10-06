@@ -21,9 +21,11 @@ reason: the net tile, its hints, the tolerant summary reader and the
   away from the list whose filters decide their figures.
 
 file: src/app/(admin)/admin/refund-requests/page.tsx
-lines: 884
-reason: three lines relabel "Paid" and "Remaining" in place and say which is
-  gross and which is refundable; there is no seam worth cutting for a label.
+lines: 888
+reason: the "Paid" and "Remaining" labels say which figure is gross and which
+  is refundable, and the credit rows are typed with the description the route
+  always selects so they reach main's refundAppealCeiling (#3827); there is no
+  seam worth cutting for a label and a type.
 
 file: src/app/api/admin/reports/route.ts
 lines: 367
