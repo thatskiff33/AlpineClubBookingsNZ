@@ -33,7 +33,14 @@ at the end.
    takes effect. When you can enter a promo code, any codes assigned to you are
    offered as **clickable chips** — the same ones the booking wizard shows —
    and codes that need you to pick which guests they cover walk you through
-   that selection here too.
+   that selection here too. Your guests' codes are offered too, under each
+   guest's name — for a guest from outside your family, once they are
+   confirmed (they accepted their place, your club only tells them, or an
+   officer added them). If your club allows several codes on one booking you
+   can add, remove and reorder them here; saving keeps the new order. If it
+   does not, a booking that already carries more than one promo code shows its
+   codes but cannot add, remove or swap them here; any other change you make
+   re-prices them.
 3. If the booking has not been paid yet, an **Account credit** card shows your
    current balance and lets you tick **Apply credit to this booking** (or untick
    it). Your choice is saved with the booking and applied when you confirm and

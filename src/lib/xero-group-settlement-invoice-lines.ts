@@ -10,6 +10,12 @@
  * plus that adjustment. The create worker compares both totals with the
  * settlement's before it asks Xero for anything, so an invoice whose total is
  * not the settlement's is never raised.
+ *
+ * #3828 (`INV-MONEY-040`): a child carrying several promo codes gets one
+ * promotion line per code, exactly as a per-booking invoice does, through the
+ * same planner; a split that cannot be trusted is that child's single
+ * aggregate line, and every several-code child's split is handed back for the
+ * operation to record.
  */
 import type { LineItem } from "xero-node";
 import { BookingStatus } from "@prisma/client";
@@ -21,7 +27,12 @@ import {
   getHutFeeSeasonType,
   getResolvedAccountMapping,
 } from "./xero-mappings";
-import { applyHutFeeLineCodes, resolvePromoLineCodes } from "./xero-hut-fee-line-codes";
+import {
+  planPromoAdjustmentLines,
+  promoAdjustmentLineItems,
+  promoAdjustmentLineRecord,
+  type PromoAdjustmentLineRecord,
+} from "@/lib/xero-promo-adjustment-lines";
 import { groupSettlementTotalCents } from "@/lib/group-settlement-invoice-binding";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { completeXeroSyncOperation } from "@/lib/xero-sync";
@@ -45,6 +56,13 @@ export interface GroupSettlementInvoiceLines {
   childrenCents: number;
   /** What the lines add up to. */
   lineCents: number;
+  /**
+   * #3828: what the CREATE operation records beside the invoice — how each
+   * child carrying several codes was split into promotion lines (or why it fell
+   * back to one aggregate line). `{}` when no child carries more than one code,
+   * so a one-code group's payload is exactly what it always was.
+   */
+  operationRecord: { promoLines?: Array<{ bookingId: string } & PromoAdjustmentLineRecord> };
 }
 
 /** Build the combined invoice's lines from the settlement's committed children. */
@@ -60,7 +78,8 @@ export async function buildGroupSettlementInvoiceLines(
     },
     include: {
       guests: { include: { nights: true } },
-      promoRedemption: { include: { promoCode: true } },
+      promoRedemptions: { include: { promoCode: true, allocations: true } },
+      nightAdjustments: true,
     },
   });
 
@@ -73,6 +92,7 @@ export async function buildGroupSettlementInvoiceLines(
   // Built per child (each child has its own date range and season), then
   // aggregated across the whole group into one invoice.
   const lineItems: LineItem[] = [];
+  const promoLines: Array<{ bookingId: string } & PromoAdjustmentLineRecord> = [];
   for (const child of children) {
     const checkIn = new Date(child.checkIn);
     const checkOut = new Date(child.checkOut);
@@ -105,27 +125,21 @@ export async function buildGroupSettlementInvoiceLines(
         seasonType
       )
     );
-    const promoAdjustmentCents = child.promoAdjustmentCents ?? 0;
-    if (promoAdjustmentCents !== 0) {
-      const promo = child.promoRedemption?.promoCode ?? null;
-      lineItems.push(
-        applyHutFeeLineCodes(
-          {
-            description: promo ? `Promo adjustment - ${promo.code}` : "Promo adjustment",
-            quantity: 1,
-            unitAmount: promoAdjustmentCents / 100,
-            taxType: "OUTPUT2",
-          },
-          resolvePromoLineCodes({
-            promo,
-            firstGuest: guests[0] ?? null,
-            itemCodeResolver: hutFeeItemCodeMap,
-            seasonType,
-            hutFeeMapping,
-          })
-        )
-      );
-    }
+    const promoLinePlan = planPromoAdjustmentLines({
+      aggregateCents: child.promoAdjustmentCents ?? 0,
+      redemptions: child.promoRedemptions,
+      adjustmentRows: child.nightAdjustments,
+    });
+    lineItems.push(
+      ...promoAdjustmentLineItems(promoLinePlan, {
+        firstGuest: guests[0] ?? null,
+        itemCodeResolver: hutFeeItemCodeMap,
+        seasonType,
+        hutFeeMapping,
+      })
+    );
+    const promoLineRecord = promoAdjustmentLineRecord(promoLinePlan);
+    if (promoLineRecord) promoLines.push({ bookingId: child.id, ...promoLineRecord });
   }
 
   return {
@@ -135,6 +149,7 @@ export async function buildGroupSettlementInvoiceLines(
       children.map((child) => ({ finalPriceCents: child.finalPriceCents ?? 0 }))
     ),
     lineCents: invoiceLineItemsTotalCents(lineItems),
+    operationRecord: promoLines.length > 0 ? { promoLines } : {},
   };
 }
 

@@ -32,6 +32,10 @@ import { type BookingPaymentDueCredit } from "@/lib/email-message-notes";
 import { PROMO_CHANGE_NOT_APPLIED_LABEL } from "@/lib/promo-change-not-applied";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
+import {
+  perCodePromoAdjustmentRows,
+  type PromoCodeAdjustment,
+} from "@/lib/booking-promo-redemptions";
 
 /**
  * #2267: the single source of truth for the signed promo adjustment behind a
@@ -71,16 +75,25 @@ export function promoAdjustmentSummaryRows(
   promoAdjustmentCents: number,
   format: ClubFormat,
   promoCode?: string,
+  /**
+   * #3828: each code's own adjustment, in application order, for a booking
+   * carrying several codes — one row per code, or the one row above, as
+   * `perCodePromoAdjustmentRows` decides (the booking page asks it too).
+   */
+  promoLines?: ReadonlyArray<PromoCodeAdjustment>,
 ): Array<{ label: string; value: string }> {
-  if (promoAdjustmentCents === 0) return [];
+  const perCodeRows = perCodePromoAdjustmentRows(promoLines, promoAdjustmentCents);
+  if (promoAdjustmentCents === 0 && !perCodeRows?.length) return [];
   const subtotalCents = totalCents - promoAdjustmentCents;
-  const adjustmentPrefix = promoAdjustmentCents > 0 ? "+" : "-";
+  const adjustmentRow = (code: string | undefined, cents: number) => ({
+    label: code ? `Promo adjustment (${code})` : "Promo adjustment",
+    value: `${cents > 0 ? "+" : "-"}${formatMoneyCents(Math.abs(cents), format)}`,
+  });
   return [
     { label: "Subtotal", value: formatMoneyCents(subtotalCents, format) },
-    {
-      label: promoCode ? `Promo adjustment (${promoCode})` : "Promo adjustment",
-      value: `${adjustmentPrefix}${formatMoneyCents(Math.abs(promoAdjustmentCents), format)}`,
-    },
+    ...(perCodeRows
+      ? perCodeRows.map((line) => adjustmentRow(line.code, line.amountCents))
+      : [adjustmentRow(promoCode, promoAdjustmentCents)]),
   ];
 }
 

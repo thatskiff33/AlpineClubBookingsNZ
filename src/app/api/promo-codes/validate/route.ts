@@ -25,15 +25,15 @@ import {
   handleMemberGuestAddRefusal,
   startMemberGuestRefusalClock,
 } from "@/lib/member-guest-probe-guard";
-import {
-  validateAndCalculatePromoDiscount,
-} from "@/lib/promo";
+import { applyBookingPromotions } from "@/lib/booking-promotions";
+import { validateSeveralPromoCodes } from "@/lib/promo-codes-preview";
 import { clubTime } from "@/lib/club-time/server";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
+import { refuseOnBehalfUnlessBookingOfficer } from "@/lib/on-behalf-booking";
 import {
   BookingGuestStayRangeValidationError,
   type NormalizedBookingGuestStayRange,
@@ -42,6 +42,12 @@ import {
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { workPartyWindowOverlapsStay } from "@/lib/work-party";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
+import { normalizePromoCodeInput } from "@/lib/promo-code-list-rules";
+import { computeMemberGuestBoundary } from "@/lib/booking-guests";
+import { loadMemberGuestAddPolicy, planMemberGuestConsentWrites } from "@/lib/member-guest-add-policy";
+import { guestConsentStatus } from "@/lib/member-guest-consent";
+import { bookingForPromoLookup } from "@/lib/promo-guest-codes";
+import type { MemberGuestConsentStatus } from "@prisma/client";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -64,11 +70,33 @@ const validateSchema = z
           memberId: z.string().min(1).optional(),
           stayStart: z.string().optional(),
           stayEnd: z.string().optional(),
+          // #3827 (D-3813-4): optional, and it can only make a guest MORE
+          // pending. Whether a guest awaits acceptance is decided server-side
+          // below, the way the create decides it; no client sends this today.
+          awaitingAcceptance: z.boolean().optional(),
+          // #3492: on an edit preview (`bookingId` below), the row this guest
+          // already is on that booking, so their STORED consent is used — the
+          // way `modify-quote` and the save judge them — instead of re-deciding
+          // it as a fresh add. Ignored without an owned `bookingId`.
+          bookingGuestId: z.string().min(1).max(64).optional(),
         })
       )
       .min(1),
     forMemberId: z.string().optional(),
     promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
+    // #3827: several codes, in the booker's order (D-3813-2), each with its own
+    // guest choice. Combines with a working bee (D-3813-3). The response then
+    // answers per code plus the booking's totals.
+    codes: z
+      .array(
+        z.object({
+          code: z.string().min(1).max(50),
+          promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
+        }),
+      )
+      .min(1)
+      .max(20)
+      .optional(),
     // Lodge the booking under quote is for (multi-lodge phase 8): promo
     // lodge restrictions and season pricing validate against this lodge.
     // Omitted resolves to the default lodge, so single-lodge clients keep
@@ -88,10 +116,21 @@ const validateSchema = z
     // pricing and the save path recomputes it again, so the money is decided
     // there, not here (#1095).
     forBookingEdit: z.boolean().optional(),
+    // #3492: the booking an EDIT preview is for. Read only for its guests'
+    // stored consent (above); the caller must own it or hold the
+    // booking-management role, and any other id answers exactly as a missing
+    // booking does (404), so it confirms nothing about an id.
+    bookingId: z.string().min(1).max(64).optional(),
   })
-  .refine((data) => Boolean(data.code) !== Boolean(data.workPartyEventId), {
-    message: "Provide either a promo code or a working bee event, not both",
-  })
+  .refine(
+    (data) =>
+      data.codes
+        ? !data.code
+        : Boolean(data.code) !== Boolean(data.workPartyEventId),
+    {
+      message: "Provide either a promo code or a working bee event, not both",
+    },
+  )
   .refine((data) => !data.workPartyEventId || Boolean(data.lodgeId), {
     message: "lodgeId is required for a working bee event",
     path: ["lodgeId"],
@@ -135,16 +174,49 @@ export async function POST(req: NextRequest) {
   // On-behalf promo validation follows the booking create/quote rule (#1442):
   // bookings:edit holders validate against the target member; an unauthorized
   // forMemberId is rejected rather than silently checked against the caller.
-  if (
-    parsed.data.forMemberId &&
-    bookingManagementAuthorizationRole(session.user) !== "ADMIN"
-  ) {
-    return NextResponse.json(
-      { error: "Only admins can book on behalf of another member" },
-      { status: 403 }
+  const onBehalfRefusal = refuseOnBehalfUnlessBookingOfficer(session.user, parsed.data.forMemberId);
+  if (onBehalfRefusal) return onBehalfRefusal;
+  const effectiveMemberId = parsed.data.forMemberId ?? session.user.id;
+  // #3492: an edit preview judges a guest already on the booking by the consent
+  // stored on their row (D-3492-4: a confirmed cross-family guest's code counts),
+  // exactly as `modify-quote` does. Unowned or missing: one 404, no difference.
+  //
+  // A row's stored consent belongs to the MEMBER on that row, never to whatever
+  // member the request names beside its id: it is used only when the row's
+  // member is the request guest's member. Otherwise — a borrowed booker or
+  // family row paired with a stranger's id, a row on another booking, an
+  // unknown id — the guest is judged as a fresh add, the same answer as sending
+  // no row id at all, so the pairing neither widens who counts as present
+  // (D-3492-3/4, D-3813-4) nor tells the caller anything.
+  let storedGuestById: Map<string, { memberId: string | null; consentStatus: MemberGuestConsentStatus | null }> | null =
+    null;
+  if (parsed.data.bookingId) {
+    const booking = await bookingForPromoLookup({
+      bookingId: parsed.data.bookingId,
+      actorMemberId: session.user.id,
+      isBookingOfficer: bookingManagementAuthorizationRole(session.user) === "ADMIN",
+    });
+    if (!booking) {
+      return NextResponse.json({ error: "Booking not found" }, { status: 404 });
+    }
+    const bookingGuestIds = guests.flatMap((guest) => (guest.bookingGuestId ? [guest.bookingGuestId] : []));
+    storedGuestById = new Map(
+      bookingGuestIds.length
+        ? (
+            await prisma.bookingGuest.findMany({
+              where: { bookingId: booking.id, id: { in: bookingGuestIds } },
+              select: { id: true, memberId: true, consentStatus: true },
+            })
+          ).map((row) => [row.id, { memberId: row.memberId, consentStatus: row.consentStatus }])
+        : [],
     );
   }
-  const effectiveMemberId = parsed.data.forMemberId ?? session.user.id;
+  /** The stored row for this guest, only when it is this guest's own member's row. */
+  const storedRowFor = (guest: { bookingGuestId?: string; memberId?: string }) => {
+    const row = guest.bookingGuestId ? storedGuestById?.get(guest.bookingGuestId) : undefined;
+    const memberId = guest.memberId?.trim();
+    return row && row.memberId && memberId && row.memberId === memberId ? row : undefined;
+  };
   // Finding 2 (privacy re-review of MG3 #2308). Taken here rather than at the
   // top of the handler because everything above is schema and authorization —
   // the collapsed refusal cannot be raised until the party is priced.
@@ -198,8 +270,8 @@ export async function POST(req: NextRequest) {
       name: event.name,
       discountPercent: event.discountPercent,
     };
-  } else if (code) {
-    const normalizedCode = code.toUpperCase().trim();
+  } else if (code && !parsed.data.codes) {
+    const normalizedCode = normalizePromoCodeInput(code);
     const found = await prisma.promoCode.findUnique({
       where: { code: normalizedCode },
       include: {
@@ -278,6 +350,31 @@ export async function POST(req: NextRequest) {
       groupDiscount,
     });
 
+    // D-3813-4, decided HERE exactly as the create decides it — the booker's
+    // family boundary, the club's member-guest policy and who is acting
+    // (`planMemberGuestConsentWrites`) — so the preview prices a guest awaiting
+    // acceptance the way the save will. The client's `awaitingAcceptance` can
+    // only add to that answer, never take a pending guest out of it.
+    // With the member-guest module off nobody awaits acceptance, so the family
+    // is not read at all.
+    const memberGuestPolicy = await loadMemberGuestAddPolicy();
+    const consentPlan = memberGuestPolicy.wideningEnabled
+      ? planMemberGuestConsentWrites({
+          guests,
+          boundary: await computeMemberGuestBoundary(
+            prisma,
+            effectiveMemberId,
+            [...new Set(guests.flatMap((guest) => (guest.memberId?.trim() ? [guest.memberId.trim()] : [])))],
+          ),
+          actor: isAuthorizedOnBehalf
+            ? { kind: "ADMIN", adminMemberId: session.user.id }
+            : { kind: "MEMBER" },
+          now: new Date(),
+          bookingCheckIn: checkIn,
+          policy: memberGuestPolicy,
+        })
+      : null;
+
     // Walked over the guests the pricing pass was GIVEN, each paired with the
     // row that priced it, rather than over the breakdown with the input read
     // back by position (#2801). The engine returns one row per input guest, but
@@ -291,6 +388,7 @@ export async function POST(req: NextRequest) {
           `Promo validation has no priced guest at breakdown position ${index} of ${price.guests.length} (#3031).`
         );
       }
+      const stored = storedRowFor(guest);
       return {
         memberId: guest.memberId ?? null,
         isMember: priced.isMember,
@@ -299,30 +397,68 @@ export async function POST(req: NextRequest) {
         // Dates the positional rates so internal work-party promos restrict
         // the discount to the event's night window.
         firstNight: guest.stayStart ?? checkIn,
+        consentStatus: guest.awaitingAcceptance
+          ? ("PENDING" as const)
+          : stored
+            ? stored.consentStatus
+            : consentPlan
+              ? guestConsentStatus(consentPlan.guests[index]!)
+              : null,
       };
     });
 
-    const application = await validateAndCalculatePromoDiscount(
-      promoCode,
-      {
-        memberId: effectiveMemberId,
-        bookingCheckIn: checkIn,
-        totalPriceCents: price.totalPriceCents,
-        guests: promoGuests,
-      },
-      assignedMemberIds,
-      {
-        db: prisma,
-        selectedGuestIndexes: parsed.data.promoGuestIndexes,
-        lodgeId: quoteLodgeId,
-        // #3123 — the CLUB's day, from its persisted zone (`INV-CONFIG-002`),
-        // and what the promotion's validity window is judged against. No
-        // transaction is open on this route, and it is not reachable from a CLI
-        // or from instrumentation, so the request-scoped `server-only` binding
-        // is the right reader.
-        todayAtClub: (await clubTime()).today(),
-      }
-    );
+    if (parsed.data.codes) {
+      return NextResponse.json(
+        await validateSeveralPromoCodes({
+          codes: parsed.data.codes,
+          workPartyPromo: workPartyEvent ? promoCode : null,
+          workPartyEvent,
+          memberId: effectiveMemberId,
+          checkIn,
+          totalPriceCents: price.totalPriceCents,
+          guests: promoGuests,
+          lodgeId: quoteLodgeId,
+          todayAtClub: (await clubTime()).today(),
+        }),
+      );
+    }
+
+    // #3827: through the one orchestrator, so the preview of a single code is
+    // priced exactly as the save prices it — a guest awaiting acceptance
+    // included (D-3813-4). One code in, the engine's own answer out.
+    const [outcome] = (
+      await applyBookingPromotions(
+        promoCode
+          ? [
+              {
+                code: promoCode.code,
+                promoCode,
+                assignedMemberIds,
+                selectedGuestIndexes: parsed.data.promoGuestIndexes,
+                capOverflow: "reject" as const,
+              },
+            ]
+          : [],
+        {
+          memberId: effectiveMemberId,
+          bookingCheckIn: checkIn,
+          totalPriceCents: price.totalPriceCents,
+          guests: promoGuests,
+          db: prisma,
+          lodgeId: quoteLodgeId,
+          // #3123 — the CLUB's day, from its persisted zone (`INV-CONFIG-002`),
+          // and what the promotion's validity window is judged against. No
+          // transaction is open on this route, and it is not reachable from a
+          // CLI or from instrumentation, so the request-scoped `server-only`
+          // binding is the right reader.
+          todayAtClub: (await clubTime()).today(),
+        },
+      )
+    ).outcomes;
+    const application = outcome?.result ?? {
+      error: "Promo code not found",
+      beneficiaryMemberIds: [],
+    };
     if (application.requiresGuestSelection) {
       return NextResponse.json({
         valid: false,
@@ -393,3 +529,4 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+

@@ -21,6 +21,7 @@ export const MODULE_KEYS = [
   "induction",
   "workParties",
   "promoCodes",
+  "multiPromoCodes",
   "hutLeaders",
   "communications",
   "memberNotices",
@@ -157,6 +158,12 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   induction: true,
   workParties: true,
   promoCodes: true,
+  // Default OFF, and not for the capability-module reason: this is a ROLLOUT
+  // SWITCH (#3826, epic #3813). While it is off no booking can hold a second
+  // promo code, which is what keeps the previously deployed release — that
+  // reads a booking's code as one-to-one — correct through a blue-green
+  // cut-over and a rollback. The operator turns it on after cut-over.
+  multiPromoCodes: false,
   hutLeaders: true,
   communications: true,
   memberNotices: true,
@@ -317,6 +324,18 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     description:
       "Discount codes members can apply to bookings, plus admin management.",
     dependencies: [],
+  },
+  multiPromoCodes: {
+    key: "multiPromoCodes",
+    label: "Several promo codes on one booking",
+    description:
+      "Let one booking carry more than one promo code, so members sharing a group booking can each use their own free nights. While this is off, a booking holds at most one code.",
+    dependencies: [
+      // Stated because the switch exists for the upgrade, not as a club
+      // preference, and an admin reading this card is the person who flips it.
+      "Turn this on only after the upgrade that introduced it has fully cut over. While it is off, the previous release can still be rolled back to safely.",
+      "Needs the Promo codes module.",
+    ],
   },
   hutLeaders: {
     key: "hutLeaders",

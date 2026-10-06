@@ -119,6 +119,59 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Do not mark an edit's refund task paid back until cutover completes (#3827)
+
+**What changes.** When a change lowers the price of a booking paid by internet
+banking or in cash, the new version raises a task in **Money to settle** on the
+Payments page so the treasurer sends the refund by bank transfer. Its reason
+reads "Booking … lowered by a … ; paid by internet banking or by hand, so the
+club refunds the difference by bank transfer". The change's own Xero credit
+note already corrects the invoice, so the new version records the refund when
+the task is marked paid back and sends Xero nothing more.
+
+**The window.** The previous version lists these tasks too, as ordinary
+hand-backs, and has no way to tell them apart. If an officer marks one paid
+back on the **old** colour while both colours are serving, the old colour also
+queues a bank-transfer refund credit note against the same invoice. Xero then
+shows the same refund twice. Nothing in the code can stop the old colour doing
+this.
+
+**What to do.** Until cutover completes and the old colour has drained, tell
+your treasurer not to mark these tasks paid back. Sending the money is fine:
+mark the task paid back after cutover. If a task was marked paid back during the
+window, open the booking's invoice in Xero. Look for two refund credit notes
+for that amount, the change's own note and a second one dated when the task was
+completed. Void the second one by hand.
+
+**The same applies to an approved refund appeal's task (D-3813-7).** Approving
+an appeal on a booking paid by internet banking now raises a task whose reason
+reads "Refund appeal approved on booking …; not paid by card, so the club
+refunds this by bank transfer". The new version queues that appeal's own Xero
+refund credit note when the task is marked paid back (D-3813-8), and none at
+approval. Marked paid back on the previous colour, the note is raised as the
+payment's one cancellation refund note instead: the right amount, but a later
+cancellation refund on the same payment would then be taken as already noted.
+So treat these tasks exactly like the edit tasks above, and mark them paid
+back after cutover. If one was marked paid back during the window, check in
+Xero that each paid-back appeal has one refund credit note for its amount.
+
+### Re-save a customised "refund appeal approved" email (#3827)
+
+**What changes.** The built-in "Refund appeal approved" email now says how the
+refund reaches the member through one token, `{{refundSentence}}`: back to
+their card, or by bank transfer from the club for a booking paid by internet
+banking. The old wording, "processed to your original payment method", is gone.
+
+**Who must act.** Only a club that saved its own copy of this email under
+**Admin → Email messages**. A saved copy keeps its own wording, so it still
+tells an internet-banking member their refund went back to a payment method
+that cannot take one.
+
+**What to do.** Open the email in **Email messages**. The editor marks it as
+needing attention because `{{refundSentence}}` is now required. Replace your
+sentence about the refund with `{{refundSentence}}`, or reset to the built-in
+wording, and save. The editor will not save a copy without the token.
+
 ### You must declare whether this deployment is the live site (#3034, epic #2986)
 
 **Do this before you deploy, or the deploy will refuse to run.** Add one line to

@@ -35,7 +35,7 @@ type Recorded = {
   adjustmentDeleteMany: ReturnType<typeof vi.fn>;
   adjustmentCreateMany: ReturnType<typeof vi.fn>;
   adjustmentFindMany: ReturnType<typeof vi.fn>;
-  redemptionFindUnique: ReturnType<typeof vi.fn>;
+  redemptionFindMany: ReturnType<typeof vi.fn>;
   nightFindMany: ReturnType<typeof vi.fn>;
   guestFindMany: ReturnType<typeof vi.fn>;
   order: string[];
@@ -67,7 +67,7 @@ function fakeTx(options: {
     adjustmentDeleteMany: track("adjustment.deleteMany", { count: 0 }),
     adjustmentCreateMany: track("adjustment.createMany", { count: 0 }),
     adjustmentFindMany: track("adjustment.findMany", options.adjustments ?? []),
-    redemptionFindUnique: track("redemption.findUnique", options.redemption ?? null),
+    redemptionFindMany: track("redemption.findMany", options.redemption ? [options.redemption] : []),
     nightFindMany: track(
       "night.findMany",
       (options.nights ?? []).map((night) => ({ adjustments: [], ...night })),
@@ -81,7 +81,7 @@ function fakeTx(options: {
       createMany: recorded.adjustmentCreateMany,
       findMany: recorded.adjustmentFindMany,
     },
-    promoRedemption: { findUnique: recorded.redemptionFindUnique },
+    promoRedemption: { findMany: recorded.redemptionFindMany },
     bookingGuestNight: { findMany: recorded.nightFindMany },
     bookingGuest: { findMany: recorded.guestFindMany },
   } as unknown as Prisma.TransactionClient;
@@ -314,7 +314,7 @@ describe("recordBookingNightAdjustments", () => {
     });
     // Refuse-before-mutate: every read precedes the first write.
     expect(recorded.order).toEqual([
-      "redemption.findUnique",
+      "redemption.findMany",
       "night.findMany",
       "adjustment.deleteMany",
       "adjustment.createMany",
@@ -420,7 +420,7 @@ describe("recordBookingNightAdjustments", () => {
         }),
       ).rejects.toThrow(new RegExp(NIGHT_ADJUSTMENT_INVARIANT));
       nothingWritten(recorded);
-      expect(recorded.redemptionFindUnique).not.toHaveBeenCalled();
+      expect(recorded.redemptionFindMany).not.toHaveBeenCalled();
     }
   });
 
