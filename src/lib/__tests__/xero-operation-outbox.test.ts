@@ -1455,6 +1455,33 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
       );
     });
 
+    it("MUTATION (#3935): the officer's cash answer rides the payload as words only - the same keys and amounts as the bank-transfer note", async () => {
+      bankTransferPayment(3500);
+      mocks.findCanonicalPaymentRefundCreditNote.mockResolvedValue({ xeroObjectId: "cn_existing", xeroObjectNumber: "CN-1", source: "payment" });
+      mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(1000);
+
+      await enqueueXeroRefundCreditNoteOperation("payment_1", 2500, {
+        refundMethod: "internet-banking",
+        noteWording: "cash",
+        reviewTaskId: "task_1",
+      });
+
+      expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          correlationKey: "payment:payment_1:refund-credit-note:3500:v2:review-task:task_1",
+          idempotencyKey: "payment:payment_1:refund-credit-note:3500:v2:review-task:task_1",
+          requestPayload: {
+            queueType: "REFUND_CREDIT_NOTE",
+            refundAmountCents: 2500,
+            watermarkCents: 3500,
+            refundMethod: "internet-banking",
+            noteWording: "cash",
+            reviewTaskId: "task_1",
+          },
+        })
+      );
+    });
+
     it("MUTATION: two sibling reviews' equal $10 refunds are a note each, not one folded into the other", async () => {
       bankTransferPayment(2000);
       await enqueueXeroRefundCreditNoteOperation("payment_1", 1000, { reviewTaskId: "task_1" });
@@ -2372,6 +2399,36 @@ describe("processQueuedXeroOutboxOperations", () => {
       refundMethod: "internet-banking",
       refundRequestId: "req_1",
     });
+  });
+
+  it("MUTATION (#3935): dispatches a review hand-back's cash wording to the builder", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_cash_note_1",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "REFUND_CREDIT_NOTE",
+          refundAmountCents: 2500,
+          watermarkCents: 3500,
+          refundMethod: "internet-banking",
+          noteWording: "cash",
+          reviewTaskId: "task_1",
+        },
+      },
+    ]);
+    mocks.createXeroCreditNote.mockResolvedValue("cn_cash_1");
+
+    await processQueuedXeroOutboxOperations({ limit: 5 });
+
+    expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("payment_1", 2500, expect.objectContaining({
+      syncOperationId: "op_cash_note_1",
+      watermarkCents: 3500,
+      refundMethod: "internet-banking",
+      noteWording: "cash",
+      reviewTaskId: "task_1",
+    }));
   });
 
   it("MUTATION (#3880): a refund-note row whose payment has another note mid-raise goes back to PENDING, reason kept, never FAILED", async () => {

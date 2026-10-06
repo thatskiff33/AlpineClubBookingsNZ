@@ -38,6 +38,7 @@ import {
   readModificationNoteWording,
   type CashRefundMethod,
   type ModificationNoteWording,
+  type RefundNoteWording,
 } from "@/lib/xero-refund-method";
 import { createXeroEntranceFeeInvoice } from "@/lib/xero-entrance-fee-invoices";
 import {
@@ -798,6 +799,11 @@ export async function enqueueXeroRefundCreditNoteOperation(
      */
     refundMethod?: CashRefundMethod;
     /**
+     * #3935 (`INV-PAY-116`): the officer's "In cash" answer on a review's
+     * hand-back. Words only - never in the key, never the settlement.
+     */
+    noteWording?: RefundNoteWording;
+    /**
      * #3635 round-3 R4: the late capture this note answers, recorded on the
      * note so its refunds are noted once per capture
      * (`sumLateCaptureNotedCents`), and the note names that capture's receipt.
@@ -1006,6 +1012,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
       refundAmountCents: noteAmountCents,
       watermarkCents,
       ...(options?.refundMethod ? { refundMethod: options.refundMethod } : {}),
+      ...(options?.noteWording ? { noteWording: options.noteWording } : {}),
       ...(options?.paymentIntentId ? { paymentIntentId: options.paymentIntentId } : {}),
       ...(options?.documentDate ? { documentDate: options.documentDate } : {}),
       ...(options?.reviewTaskId ? { reviewTaskId: options.reviewTaskId } : {}),
@@ -2995,6 +3002,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
             ...(payload.refundMethod && payload.refundMethod !== "account-credit"
               ? { refundMethod: payload.refundMethod }
               : {}),
+            ...(payload.noteWording ? { noteWording: payload.noteWording } : {}),
             ...(payload.paymentIntentId ? { paymentIntentId: payload.paymentIntentId } : {}),
             ...(payload.documentDate ? { documentDate: payload.documentDate } : {}),
             // #3827 (D-3813-8): a refund request's own note (`refund-request-credit-note.ts`).

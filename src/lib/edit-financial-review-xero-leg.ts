@@ -44,6 +44,16 @@ export function refundMethodForEditReviewRoute(
 }
 
 /**
+ * #3536 / #3935 (`INV-PAY-116`): the officer said this hand-back went back in
+ * cash. Words only - the route still settles as the internet-banking method -
+ * and read once for both notes a review can raise: the modification note, and
+ * on a since-cancelled booking the cancellation's refund note.
+ */
+function handedBackInCash(route: EditReviewSettlementRoute | null): boolean {
+  return route?.kind === "local-allocation" && route.handedBackInCash === true;
+}
+
+/**
  * #3880: THE INVOICE A REFUND ON A CANCELLED BOOKING IS NOTED AGAINST, or null.
  * A `CANCELLED_BOOKING_HAND_BACK` (#3529), and an edit financial review with its
  * `BookingModification` anchor on a booking already CANCELLED. Both read the
@@ -113,6 +123,8 @@ function enqueueCancelledReviewRefundNote(
   return enqueueXeroRefundCreditNoteOperation(route.paymentId, route.refundCents, {
     createdByMemberId: actingMemberId,
     refundMethod: refundMethodForEditReviewRoute(route) === "internet-banking" ? "internet-banking" : "card",
+    // #3935: the officer's "In cash" answer words this note too; nothing else moves.
+    ...(handedBackInCash(route) ? { noteWording: "cash" as const } : {}),
     reviewTaskId: taskId,
     ...(store ? { store } : {}),
   });
@@ -552,7 +564,7 @@ export async function dispatchEditReviewXeroSettlement({
     refundMethod: refundMethodForEditReviewRoute(route),
     // #3536: words only. The settlement above still reads the hand-back as the
     // internet-banking method; the note says it was handed back in cash.
-    handedBackInCash: route?.kind === "local-allocation" && route.handedBackInCash === true,
+    handedBackInCash: handedBackInCash(route),
     // Read only on the reduction branch (`settlementAmountCents ?? Math.abs`),
     // so a charge passes null and lets the positive delta speak for itself
     // rather than handing the credit-note arm an amount it must not use.
