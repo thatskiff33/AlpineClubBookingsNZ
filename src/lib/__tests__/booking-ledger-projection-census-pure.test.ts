@@ -19,7 +19,15 @@ describe("census purity (#3854)", () => {
     const plan = await import("@/lib/booking-ledger-group-child-plan");
     expect(typeof census.evaluateBookingLedgerIdentities).toBe("function");
     expect(typeof report.summarizeBookingLedgerCensus).toBe("function");
-    expect(plan.groupSettledChildKeptFrom({ amountCents: 4_500, refundedAmountCents: 0 }, { kind: "per-child", committedRefundCents: 5_000 })).toBe(0);
-    expect(plan.groupSettledChildKeptFrom({ amountCents: 4_500, refundedAmountCents: 0 }, { kind: "per-child", committedRefundCents: 1_500 })).toBe(3_000);
+    expect(plan.groupSettledChildKeptFrom({ amountCents: 4_500, refundedAmountCents: 0, openNonCancellationHandBackCents: 0 }, { kind: "per-child", committedRefundCents: 5_000 })).toBe(0);
+    expect(plan.groupSettledChildKeptFrom({ amountCents: 4_500, refundedAmountCents: 0, openNonCancellationHandBackCents: 0 }, { kind: "per-child", committedRefundCents: 1_500 })).toBe(3_000);
+    // #3827 (`INV-PAY-117`): an open edit hand-back is still owed back, so the club keeps none of it.
+    expect(plan.groupSettledChildKeptFrom({ amountCents: 4_500, refundedAmountCents: 0, openNonCancellationHandBackCents: 1_000 }, { kind: "per-child", committedRefundCents: 1_500 })).toBe(2_000);
+    expect(plan.openNonCancellationHandBackCentsFromRows("pay", [
+      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "OPEN", occurrenceKey: "edit-refund-hand-back:m1", paymentId: "pay", amountCents: 1_000 },
+      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "OPEN", occurrenceKey: null, paymentId: "pay", amountCents: 7_000 },
+      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "COMPLETED", occurrenceKey: "edit-refund-hand-back:m0", paymentId: "pay", amountCents: 500 },
+      { kind: "CANCELLED_BOOKING_HAND_BACK", status: "OPEN", occurrenceKey: "edit-refund-hand-back:m2", paymentId: "other", amountCents: 300 },
+    ])).toBe(1_000);
   });
 });

@@ -23,7 +23,7 @@ import type { PrismaClient } from "@prisma/client";
 import type Stripe from "stripe";
 import { expect, vi } from "vitest";
 
-import { postHistoryEdit, stripAllLines, type HistoryNames } from "@/lib/__tests__/support/booking-ledger-history";
+import { historyPromoCodePrefix, postHistoryEdit, stripAllLines, type HistoryNames } from "@/lib/__tests__/support/booking-ledger-history";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const D1 = new Date("2027-10-01T00:00:00.000Z");
@@ -107,9 +107,8 @@ export async function createGroupHistory(prisma: PrismaClient, names: HistoryNam
 }
 
 /** The real settle: the card webhook's door, or the paid combined invoice's inbound reconcile. */
-export async function settleGroupHistory(g: GroupHistory): Promise<void> {
+export async function settleGroupHistory(g: GroupHistory, amountCents = GROUP_CHILD_CENTS * g.children.length): Promise<void> {
   tick();
-  const amountCents = GROUP_CHILD_CENTS * g.children.length;
   if (g.pi) {
     const { applyGroupSettlementSucceeded } = await import("@/lib/group-settlement");
     expect(await applyGroupSettlementSucceeded({ id: g.pi, amount: amountCents }, CLUB_FORMAT_TEST)).toMatchObject({ outcome: "settled" });
@@ -197,6 +196,150 @@ export async function runGroupChildRefund(prisma: PrismaClient, operationId: str
   await processOrganiserChildRefundOperation(claimed, CLUB_FORMAT_TEST, stripe);
 }
 
+/**
+ * EPIC #3813'S SHAPE ON A GROUP CHILD: two promo codes — a free night, then $5
+ * off — priced and redeemed by the booking create's own writers
+ * (`resolvePromotionsInTransaction`, which runs every code through
+ * `applyBookingPromotions`; `redeemPromoCode` per code in the booker's order;
+ * `recordBookingNightAdjustments`), on a child created as the others are. The
+ * `multiPromoCodes` switch is on only for the write, as an operator turns it on
+ * after cut-over. Returns the child's final price.
+ */
+export async function priceGroupChildWithPromoCodes(prisma: PrismaClient, names: HistoryNames, g: GroupHistory, childId: string): Promise<number> {
+  const codes = [`${historyPromoCodePrefix(g.group)}FREE`, `${historyPromoCodePrefix(g.group)}FIVE`];
+  await prisma.promoCode.create({ data: { code: codes[0]!, type: "FREE_NIGHTS", freeNightsPerIndividual: 1 } });
+  await prisma.promoCode.create({ data: { code: codes[1]!, type: "FIXED_AMOUNT", valueCents: 500 } });
+  const { getPromoTargetBookingGuestIds, resolvePromotionsInTransaction } = await import("@/lib/booking-create-promo");
+  const { redeemPromoCode } = await import("@/lib/promo");
+  const { recordBookingNightAdjustments } = await import("@/lib/night-adjustment-write");
+  const { bookingDiscountCents, bookingFinalPriceCents } = await import("@/lib/booking-final-price");
+  const { clubToday } = await import("@/lib/club-time");
+  const { readClubTimeZoneOutsideRequest } = await import("@/lib/club-time-zone-runtime");
+  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
+  const switchBefore = await prisma.clubModuleSettings.findUnique({ where: { id: "default" }, select: { multiPromoCodes: true } });
+  await prisma.clubModuleSettings.upsert({ where: { id: "default" }, create: { id: "default", multiPromoCodes: true }, update: { multiPromoCodes: true }, select: { id: true } });
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      const booking = await tx.booking.findUniqueOrThrow({
+        where: { id: childId },
+        select: {
+          checkIn: true,
+          lodgeId: true,
+          totalPriceCents: true,
+          guests: {
+            orderBy: { id: "asc" },
+            select: { id: true, firstName: true, lastName: true, ageTier: true, isMember: true, stayStart: true, stayEnd: true, nights: { orderBy: { stayDate: "asc" }, select: { stayDate: true, priceCents: true } } },
+          },
+        },
+      });
+      const promotions = await resolvePromotionsInTransaction(tx, {
+        sources: codes.map((code) => ({ promoCodeStr: code, allowInternal: false })),
+        lockRows: true,
+        effectiveMemberId: names.memberId,
+        checkIn: booking.checkIn,
+        guests: booking.guests.map(({ firstName, lastName, ageTier, isMember, stayStart, stayEnd }) => ({ firstName, lastName, ageTier, isMember, stayStart, stayEnd })),
+        totalPriceCents: booking.totalPriceCents,
+        perNightCentsByGuest: booking.guests.map((guest) => guest.nights.map((night) => night.priceCents ?? 0)),
+        nightDatesByGuest: booking.guests.map((guest) => guest.nights.map((night) => night.stayDate)),
+        lodgeId: booking.lodgeId,
+        todayAtClub,
+      });
+      expect(promotions.redemptions.map((redemption) => redemption.applicationOrder)).toEqual([0, 1]);
+      for (const redemption of promotions.redemptions) {
+        await redeemPromoCode(
+          tx,
+          redemption.promoCodeId,
+          childId,
+          names.memberId,
+          redemption.discountCents,
+          redemption.priceAdjustmentCents,
+          redemption.freeNightsUsed || undefined,
+          redemption.eligibleGuestCount || undefined,
+          redemption.allocations,
+          getPromoTargetBookingGuestIds(booking.guests, redemption.selectedGuestIndexes),
+          booking.lodgeId,
+          redemption.applicationOrder,
+        );
+      }
+      await recordBookingNightAdjustments(tx, {
+        bookingId: childId,
+        guestIds: booking.guests.map((guest) => guest.id),
+        targets: promotions.promoAdjustmentTargets,
+        writer: "group history (#3854)",
+        format: CLUB_FORMAT_TEST,
+      });
+      const priced = { totalPriceCents: booking.totalPriceCents, promoAdjustmentCents: promotions.promoAdjustmentCents };
+      const finalPriceCents = bookingFinalPriceCents(priced);
+      await tx.booking.update({
+        where: { id: childId },
+        data: { promoAdjustmentCents: priced.promoAdjustmentCents, discountCents: bookingDiscountCents(priced), finalPriceCents },
+      });
+      return finalPriceCents;
+    });
+  } finally {
+    // Back as it was: a row this created goes again, so every default reads as before.
+    if (switchBefore) await prisma.clubModuleSettings.update({ where: { id: "default" }, data: { multiPromoCodes: switchBefore.multiPromoCodes }, select: { id: true } });
+    else await prisma.clubModuleSettings.delete({ where: { id: "default" }, select: { id: true } });
+  }
+}
+
+/**
+ * Epic #3813 on an Internet Banking group (#3854's sync with it): the first
+ * child carries two promo codes (`priceGroupChildWithPromoCodes`), so the
+ * settlement collects its promo-reduced price. With `handBack`, after the
+ * settle the second child's night is re-priced $15 down by the edit door's
+ * rows and posting and — paid by internet banking — the edit's refund is
+ * promised back by hand (`raiseEditRefundHandBackIfOwed`, the real raiser,
+ * #3827 `INV-PAY-117`), so the real organiser cancel sizes that child's refund
+ * net of the open hand-back. Returns that task's id (null without one).
+ *
+ * The hand-back stays OPEN: the real resolver cannot complete one on a child an
+ * Internet Banking settlement paid, whose payment holds no captured
+ * `PaymentTransaction` for `applyLocalRefundAllocation` to draw on (a main-side
+ * limit of #3827 on group children, reported with #3854's sync).
+ */
+export async function buildPromoHandBackGroup(
+  prisma: PrismaClient,
+  names: HistoryNames,
+  g: GroupHistory,
+  options: { handBack: boolean },
+): Promise<{ handBackTaskId: string | null; promoChildFinalCents: number }> {
+  const [promoChild, editedChild] = g.children;
+  await createGroupHistory(prisma, names, g);
+  const promoChildFinalCents = await priceGroupChildWithPromoCodes(prisma, names, g, promoChild!);
+  const amountCents = promoChildFinalCents + GROUP_CHILD_CENTS * (g.children.length - 1);
+  await prisma.groupBookingSettlement.update({ where: { id: g.settlement }, data: { amountCents } });
+  await settleGroupHistory(g, amountCents);
+  if (!options.handBack) {
+    await cancelGroupHistory(names, g);
+    return { handBackTaskId: null, promoChildFinalCents };
+  }
+
+  const modificationId = `${editedChild}-reduction`;
+  await postHistoryEdit(prisma, names, editedChild!, modificationId, {
+    reprice: { guestId: `${editedChild}-g1`, stayDate: D2, priceCents: GROUP_NIGHT_CENTS - 1_500 },
+    changeFeeCents: 0,
+  });
+  const { raiseEditRefundHandBackIfOwed } = await import("@/lib/edit-refund-hand-back");
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const payment = await tx.payment.findUniqueOrThrow({ where: { bookingId: editedChild! } });
+    expect(
+      await raiseEditRefundHandBackIfOwed(tx, {
+        bookingId: editedChild!,
+        paymentId: payment.id,
+        bookingModificationId: modificationId,
+        adjusted: { refundAmountCents: 1_500, hasSucceededPayment: false },
+        editLabel: "night re-price",
+      }),
+    ).toBe(true);
+  });
+  const handBack = await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: editedChild!, status: "OPEN" }, select: { id: true } });
+  await cancelGroupHistory(names, g);
+  return { handBackTaskId: handBack.id, promoChildFinalCents };
+}
+
 export const GROUP_HISTORIES = [
   "group-card",
   "group-bank",
@@ -204,6 +347,7 @@ export const GROUP_HISTORIES = [
   "group-bank-cancel",
   "group-refund",
   "group-pre3854-refund",
+  "group-bank-promo-cancel",
 ] as const;
 export type GroupHistoryName = (typeof GROUP_HISTORIES)[number];
 
@@ -220,8 +364,10 @@ export async function buildGroupLedgerHistories(prisma: PrismaClient, names: His
     "group-bank-cancel": groupHistory(prefix, "group-bank-cancel", "INTERNET_BANKING", 2),
     "group-refund": groupHistory(prefix, "group-refund", "STRIPE", 1),
     "group-pre3854-refund": groupHistory(prefix, "group-pre3854-refund", "STRIPE", 1),
+    "group-bank-promo-cancel": groupHistory(prefix, "group-bank-promo-cancel", "INTERNET_BANKING", 2),
   } satisfies Record<GroupHistoryName, GroupHistory>;
   for (const g of Object.values(groups)) {
+    if (g === groups["group-bank-promo-cancel"]) continue;
     await createGroupHistory(prisma, names, g);
     await settleGroupHistory(g);
   }
@@ -263,5 +409,12 @@ export async function buildGroupLedgerHistories(prisma: PrismaClient, names: His
   const pre = groups["group-pre3854-refund"];
   await stripGroupLines(prisma, pre);
   await runGroupChildRefund(prisma, (await reserveGroupChildReduction(prisma, names, pre, pre.children[0]!, 1_500)).id, stripe);
+
+  // Epic #3813: a child carrying two promo codes beside one with none, settled
+  // by Internet Banking and cancelled by the organiser (the mirror plan, half
+  // each), then every line stripped.
+  const promo = groups["group-bank-promo-cancel"];
+  await buildPromoHandBackGroup(prisma, names, promo, { handBack: false });
+  await stripGroupLines(prisma, promo);
   return groups;
 }

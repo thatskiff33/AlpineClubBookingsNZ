@@ -89,7 +89,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: mocks.prismaBookingFindUnique },
     payment: { upsert: vi.fn().mockResolvedValue({ id: "payment-1" }) },
-    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
+    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
     $transaction: mocks.prismaTransaction,
   },
 }));

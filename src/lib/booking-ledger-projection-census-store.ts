@@ -78,6 +78,7 @@ const CENSUS_SELECT = {
       settlementDirection: true,
       paymentId: true,
       lateCaptureApprovalIntentId: true,
+      occurrenceKey: true,
     },
   },
   modifications: {

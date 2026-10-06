@@ -95,9 +95,9 @@ import {
   writeBookingLedgerRows,
   type BookingLedgerPosting,
 } from "@/lib/booking-ledger-write";
+import { modificationPromoDeltaCents } from "@/lib/booking-modification-promo-delta";
 import {
   diffGuestNights,
-  modificationPromoDeltaCents,
   parseModificationLines,
   pricingSideFromWrittenGuests,
   sumModificationLines,

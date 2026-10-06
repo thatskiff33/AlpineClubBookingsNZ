@@ -43,6 +43,7 @@ import {
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import { groupSettledChildKeptFrom } from "@/lib/booking-ledger-group-child-plan";
 import { bookingHasConfirmationLines } from "@/lib/booking-ledger-read";
+import { openNonCancellationHandBackCents } from "@/lib/edit-refund-hand-back";
 import { groupSettlementShareKey } from "@/lib/booking-ledger-posting-keys";
 import {
   buildBookingLedgerRows,
@@ -216,9 +217,11 @@ type GroupCancelRefundPlan = { kind: "per-child"; paymentIntentId: string } | { 
 
 /**
  * The kept figure for a child the settlement paid, `payment` as it stood when
- * the organiser cancelled it: the per-child plan's committed refunds read from
- * the database, then the one formula the back-post and the census plan with
- * (`groupSettledChildKeptFrom`, #3854 F1), so history keeps what the live
+ * the organiser cancelled it: the per-child plan's committed refunds and the
+ * payment's open edit / refund-request hand-backs (#3827, `INV-PAY-117` — the
+ * same read the cancel's refund was sized net of) read from the database under
+ * the claim's `lock(1)`, then the one formula the back-post and the census plan
+ * with (`groupSettledChildKeptFrom`, #3854 F1), so history keeps what the live
  * cancel would have kept.
  */
 async function groupSettledChildKeptCents(
@@ -227,7 +230,7 @@ async function groupSettledChildKeptCents(
   plan: GroupCancelRefundPlan,
 ): Promise<number> {
   return groupSettledChildKeptFrom(
-    payment,
+    { ...payment, openNonCancellationHandBackCents: await openNonCancellationHandBackCents(db, payment.id) },
     plan.kind === "per-child"
       ? { kind: "per-child", committedRefundCents: await organiserChildCommittedRefundCents(db, payment, plan.paymentIntentId) }
       : plan,

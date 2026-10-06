@@ -12,7 +12,9 @@ appears under **Needs Attention** while requests are pending.
 
 Refunds & Credits is a **finance** permission area: finance view to read the
 queue, finance **edit** to approve, reject, or process. Amounts are integer cents;
-a refund is capped at the remaining refundable amount on the payment.
+a refund is capped at the remaining refundable amount on the payment, less any
+refund the club has already promised back by bank transfer for an earlier booking
+change and not yet sent ([Payments](payments.md)).
 
 ## When you'd use it
 
@@ -53,11 +55,38 @@ a refund is capped at the remaining refundable amount on the payment.
    the booking's payment was recorded with **Record manual payment** on the
    booking page, approving its appeal is refused (a 409 with the reason) —
    there is no card money to refund, so approving would silently refund $0
-   while telling the member money is coming. The refund is handed back by hand
-   instead: cancelling such a booking raises a **manual refund task** in the
-   queue on **Admin → Finance → Payments** (`/admin/payments`); complete the
-   task there once the club has actually paid the member back (or dismiss it,
-   with a note, if the member declined or it was settled another way).
+   while telling the member money is coming. The booking's cancellation
+   already raised a **manual refund task** in the queue on **Admin → Finance →
+   Payments** (`/admin/payments`) for what the cancellation policy returns;
+   complete the task there once the club has actually paid the member back (or
+   dismiss it, with a note, if the member declined or it was settled another
+   way). Settle any further refund with the treasurer.
+
+   **Internet banking bookings get a bank-transfer task (#3827).** When the
+   booking was paid by internet banking (reconciled in Xero), there is no card
+   to refund either, but approving works: the approved amount, or the part of
+   it a card refund cannot carry on such a booking paid partly by card, raises one
+   **refund task** in the queue on **Admin → Finance → Payments**, and the
+   member's email says the club **will** refund them by bank transfer. Send the
+   money, then mark the task paid back there; that is when the payment records
+   the refund, and when the app queues this appeal's own Xero refund credit
+   note for exactly the amount paid back. Approving queues no note for that
+   part (a card refund's note is still queued at approval). Each appeal gets
+   its own note, so a second appeal on the same booking gets one too. Until
+   the task is done its amount counts as already promised, so a second appeal
+   on the same booking can only be approved for what is left. See
+   [Payments](payments.md#pay-back-a-refund-for-a-cash-booking).
+
+   **Money already returned another way is not offered again.** The most you
+   can approve also leaves out any refund task still open on the booking's
+   payment (including one a cancellation raised, for example for an
+   organisation's late bank transfer), and any account credit the member
+   already received because their bank transfer arrived after the booking was
+   cancelled. The member's own appeal form uses the same limit.
+
+   A booking paid by **card** whose card ledger shows less refundable than the
+   amount you approve refunds what the card can carry and logs the difference
+   for investigation; it never turns into a bank-transfer task.
 3. The settlement shows how much went **to card** versus **as credit**, including
    any restored prior credit.
 
@@ -90,7 +119,7 @@ governed by the [cancellation policy](../CANCELLATIONS.md#refund-policy).
 | --- | --- | --- |
 | Everything is read-only ("… can view refund appeals and credit approvals but cannot approve, reject, or process them") | Your finance role is view-only | Ask a finance-edit admin |
 | A credit approval is disabled for me | You raised it — the two-person rule needs a different reviewer | Ask another admin to review it |
-| The refund amount won't go above a certain figure | It is capped at the remaining refundable amount (paid minus already refunded) | Refund up to that cap; the rest may already be refunded |
+| The refund amount won't go above a certain figure | It is capped at the remaining refundable amount (paid minus already refunded, minus any refund task still waiting to be sent by bank transfer, minus account credit already given for a bank transfer that arrived after the cancellation) | Refund up to that cap; the rest may already be refunded, credited or promised back |
 | The queue is empty | The status filter excludes the request | Switch to **All** to see approved/rejected items |
 
 ## Related links

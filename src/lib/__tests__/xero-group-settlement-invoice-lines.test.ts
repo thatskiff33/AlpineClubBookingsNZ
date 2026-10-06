@@ -41,7 +41,7 @@ function child(overrides: Record<string, unknown>) {
     checkIn: new Date("2026-07-01T00:00:00.000Z"),
     checkOut: new Date("2026-07-02T00:00:00.000Z"),
     promoAdjustmentCents: 0,
-    promoRedemption: null,
+    promoRedemptions: [],
     guests: [
       {
         firstName: "Jo",
@@ -68,7 +68,7 @@ describe("buildGroupSettlementInvoiceLines (#3642)", () => {
         id: "discounted",
         finalPriceCents: 4500,
         promoAdjustmentCents: -500,
-        promoRedemption: { promoCode: { code: "SAVE5", xeroItemCode: null, xeroAccountCode: null } },
+        promoRedemptions: [{ promoCode: { code: "SAVE5", xeroItemCode: null, xeroAccountCode: null } }],
       }),
       child({ id: "full-price", finalPriceCents: 5000 }),
     ]);
@@ -80,6 +80,103 @@ describe("buildGroupSettlementInvoiceLines (#3642)", () => {
     expect(lines.lineItems).toContainEqual(
       expect.objectContaining({ description: "Promo adjustment - SAVE5", unitAmount: -5 })
     );
+    // One code records nothing new on the operation.
+    expect(lines.operationRecord).toEqual({});
+  });
+
+  it("gives a several-code joiner one coded promotion line per code, totalling the settlement (#3828)", async () => {
+    mocks.bookingFindMany.mockResolvedValue([
+      child({
+        id: "two-codes",
+        finalPriceCents: 4200,
+        promoAdjustmentCents: -800,
+        promoRedemptions: [
+          {
+            id: "red-b",
+            applicationOrder: 1,
+            priceAdjustmentCents: -300,
+            allocations: [{ memberId: "m-1", priceAdjustmentCents: -300 }],
+            promoCode: { code: "GUESTFREE", xeroItemCode: "FREE-NIGHT", xeroAccountCode: "205" },
+          },
+          {
+            id: "red-a",
+            applicationOrder: 0,
+            priceAdjustmentCents: -500,
+            allocations: [{ memberId: "m-1", priceAdjustmentCents: -500 }],
+            promoCode: { code: "SAVE5", xeroItemCode: null, xeroAccountCode: null },
+          },
+        ],
+        nightAdjustments: [
+          { promoRedemptionId: "red-a", beneficiaryMemberId: "m-1", amountCents: -500 },
+          { promoRedemptionId: "red-b", beneficiaryMemberId: "m-1", amountCents: -300 },
+        ],
+      }),
+    ]);
+
+    const lines = await buildGroupSettlementInvoiceLines("organiser-booking-1");
+
+    const promotion = lines.lineItems.filter((line) =>
+      line.description?.startsWith("Promo adjustment"),
+    );
+    expect(promotion).toEqual([
+      expect.objectContaining({ description: "Promo adjustment - SAVE5", unitAmount: -5 }),
+      expect.objectContaining({
+        description: "Promo adjustment - GUESTFREE",
+        unitAmount: -3,
+        itemCode: "FREE-NIGHT",
+        accountCode: "205",
+      }),
+    ]);
+    expect(lines.lineCents).toBe(lines.childrenCents);
+    expect(lines.operationRecord.promoLines).toEqual([
+      expect.objectContaining({ bookingId: "two-codes", promoLineSource: "PER_CODE" }),
+    ]);
+  });
+
+  it("falls back to the child's one aggregate line when its codes do not add up, and says so (#3828)", async () => {
+    mocks.bookingFindMany.mockResolvedValue([
+      child({
+        id: "drifted",
+        finalPriceCents: 4200,
+        promoAdjustmentCents: -800,
+        promoRedemptions: [
+          {
+            id: "red-a",
+            applicationOrder: 0,
+            priceAdjustmentCents: -500,
+            allocations: [{ memberId: "m-1", priceAdjustmentCents: -500 }],
+            promoCode: { code: "SAVE5", xeroItemCode: null, xeroAccountCode: null },
+          },
+          {
+            id: "red-b",
+            applicationOrder: 1,
+            priceAdjustmentCents: -200,
+            allocations: [{ memberId: "m-1", priceAdjustmentCents: -200 }],
+            promoCode: { code: "GUESTFREE", xeroItemCode: null, xeroAccountCode: null },
+          },
+        ],
+        nightAdjustments: [
+          { promoRedemptionId: "red-a", beneficiaryMemberId: "m-1", amountCents: -500 },
+          { promoRedemptionId: "red-b", beneficiaryMemberId: "m-1", amountCents: -200 },
+        ],
+      }),
+    ]);
+
+    const lines = await buildGroupSettlementInvoiceLines("organiser-booking-1");
+
+    expect(
+      lines.lineItems.filter((line) => line.description?.startsWith("Promo adjustment")),
+    ).toEqual([
+      expect.objectContaining({ description: "Promo adjustment - SAVE5, GUESTFREE", unitAmount: -8 }),
+    ]);
+    expect(lines.lineCents).toBe(lines.childrenCents);
+    expect(lines.operationRecord.promoLines).toEqual([
+      expect.objectContaining({
+        bookingId: "drifted",
+        promoLineSource: "AGGREGATE_FALLBACK",
+        promoLineReason: "CODE_LINES_DO_NOT_SUM",
+      }),
+    ]);
   });
 
   it("reads only the CONFIRMED children the settlement committed", async () => {

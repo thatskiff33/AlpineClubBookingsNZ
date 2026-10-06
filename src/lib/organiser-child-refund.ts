@@ -50,6 +50,7 @@ import {
   getRemainingRefundableCents,
   hasCapturedPayment,
 } from "@/lib/booking-payment-state";
+import { openNonCancellationHandBackCents } from "@/lib/edit-refund-hand-back";
 import { organiserHasPaidSettlement, paidByOrganiserCard } from "@/lib/group-organiser-paid";
 import { calculateRefundAmount, type CancellationRule } from "@/lib/cancellation";
 import logger from "@/lib/logger";
@@ -95,6 +96,15 @@ export async function findCombinedCardSettlementForChild(
   return { ...settlement, stripePaymentIntentId: settlement.stripePaymentIntentId };
 }
 
+/** The combined card settlement, only while it still holds the organiser's money; the refusal test the plan below throws on. */
+async function findRefundableCombinedCardSettlement(
+  db: Db,
+  booking: { organiserSettled: boolean; parentBookingId: string | null },
+) {
+  const settlement = await findCombinedCardSettlementForChild(db, booking);
+  return settlement && organiserHasPaidSettlement(settlement) ? settlement : null;
+}
+
 /** The refusal an edit gets when its reduction cannot be returned from the combined payment. */
 export class OrganiserChildRefundRefusedError extends ApiError {
   constructor(message: string) {
@@ -120,8 +130,8 @@ export async function planOrganiserChildModificationRefund(
   pendingRefundAmountCents: number,
 ): Promise<{ settlement: CombinedCardSettlement; amountCents: number } | null> {
   if (!paidByOrganiserCard(booking) || pendingRefundAmountCents <= 0) return null;
-  const settlement = await findCombinedCardSettlementForChild(db, booking);
-  if (!settlement || !organiserHasPaidSettlement(settlement)) {
+  const settlement = await findRefundableCombinedCardSettlement(db, booking);
+  if (!settlement) {
     throw new OrganiserChildRefundRefusedError(
       "This booking was paid for by the group organiser, and the organiser's card payment can no longer be refunded, so this reduction cannot be saved. Contact the club to change it.",
     );
@@ -313,6 +323,51 @@ export function organiserChildRefundWasReopened(allocationPlan: Prisma.JsonValue
 }
 
 /**
+ * THE ONE ROOM a child refund debt may take (step 1's cap): what the combined
+ * payment still holds after refunds made and owed, and what the child's own
+ * payment can still return after its refunds and its open debts. Read under the
+ * caller's `lock(1)`, like the reservation that sizes from it.
+ */
+async function organiserChildRefundHeadroomCents(
+  db: Db,
+  settlement: CombinedCardSettlement,
+  childPayment: ChildPayment,
+): Promise<number> {
+  const [committed, childRefundedCents] = await Promise.all([
+    committedCents(db, settlement.stripePaymentIntentId, childPayment.id),
+    organiserChildRefundedCents(db, childPayment),
+  ]);
+  return Math.max(
+    0,
+    Math.min(
+      settlement.amountCents - committed.recordedCents - committed.owedCents,
+      getRemainingRefundableCents({ ...childPayment, refundedAmountCents: childRefundedCents }) -
+        committed.childOwedCents,
+    ),
+  );
+}
+
+/**
+ * #3829 (epic #3813, D-3813-5): can the organiser's card return `amountCents`
+ * for this child IN FULL - the plan's settlement test and the reservation's
+ * room, asked before a caller that must not be refused writes anything. A
+ * guest's acceptance re-price asks it, so a reduction the organiser's card
+ * cannot return moves no code instead of failing the acceptance. True for a
+ * booking the organiser did not pay for by card (nothing to ask).
+ */
+export async function organiserCardCanReturnInFull(
+  db: Db,
+  booking: { organiserSettled: boolean; parentBookingId: string | null; payment: { source: string } | null },
+  childPayment: ChildPayment,
+  amountCents: number,
+): Promise<boolean> {
+  if (!paidByOrganiserCard(booking) || amountCents <= 0) return true;
+  const settlement = await findRefundableCombinedCardSettlement(db, booking);
+  if (!settlement) return false;
+  return amountCents <= (await organiserChildRefundHeadroomCents(db, settlement, childPayment));
+}
+
+/**
  * Write one child refund's debt (step 1). The CALLER holds `lock(1)`, which is
  * what makes the headroom read and the insert one decision: every writer of a
  * child refund debt and every recorder of one take it. Idempotent on `key`: an
@@ -325,18 +380,7 @@ export async function reserveOrganiserChildRefund(
   const existing = await db.paymentRecoveryOperation.findUnique({ where: { idempotencyKey: input.key } });
   if (existing) return existing;
 
-  const [committed, childRefundedCents] = await Promise.all([
-    committedCents(db, input.settlement.stripePaymentIntentId, input.childPayment.id),
-    organiserChildRefundedCents(db, input.childPayment),
-  ]);
-  const headroomCents = Math.max(
-    0,
-    Math.min(
-      input.settlement.amountCents - committed.recordedCents - committed.owedCents,
-      getRemainingRefundableCents({ ...input.childPayment, refundedAmountCents: childRefundedCents }) -
-        committed.childOwedCents,
-    ),
-  );
+  const headroomCents = await organiserChildRefundHeadroomCents(db, input.settlement, input.childPayment);
   let amountCents = input.amountCents;
   if (amountCents > headroomCents) {
     if (input.overCap === "refuse") {
@@ -429,6 +473,8 @@ export async function planOrganiserCancelChildRefunds({
       const baseCents = cancelRefundableBaseCents({
         amountCents: payment.amountCents,
         refundedAmountCents: await organiserChildCommittedRefundCents(tx, payment, combined.stripePaymentIntentId),
+        // #3827 (`INV-PAY-117`): cash already promised back by hand is not refunded twice.
+        openNonCancellationHandBackCents: await openNonCancellationHandBackCents(tx, payment.id),
         finalPriceCents: child.finalPriceCents,
         changeFeeCents: payment.changeFeeCents,
       });

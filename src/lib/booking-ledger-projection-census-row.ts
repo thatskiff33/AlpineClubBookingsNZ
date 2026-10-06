@@ -106,6 +106,8 @@ export type BookingLedgerCensusRow = {
     settlementDirection: ManualRefundTaskDirection | null;
     paymentId: string | null;
     lateCaptureApprovalIntentId: string | null;
+    /** Marks an edit's or a refund request's hand-back (`isNonCancellationHandBackTask`, #3827). */
+    occurrenceKey: string | null;
   }>;
   modifications: ReadonlyArray<{
     id: string;

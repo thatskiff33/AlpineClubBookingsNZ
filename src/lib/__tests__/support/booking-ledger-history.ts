@@ -421,6 +421,14 @@ export async function seedHistoryFixtures(prisma: PrismaClient, prefix: string):
   await prisma.cancellationPolicy.create({ data: { lodgeId: names.lodgeId, daysBeforeStay: 0, refundPercentage: 50, fixedFeeCents: 0 } });
 }
 
+/**
+ * The promo codes a history under `prefix` creates start with this (#3854's
+ * multi-code group child, epic #3813): the prefix as a stored code spells it.
+ */
+export function historyPromoCodePrefix(prefix: string): string {
+  return prefix.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+}
+
 /** Everything under `prefix`, fixtures included. */
 export async function cleanHistories(prisma: PrismaClient, prefix: string): Promise<void> {
   const names = historyNames(prefix);
@@ -451,6 +459,8 @@ export async function cleanHistories(prisma: PrismaClient, prefix: string): Prom
   // A group's children before its organiser.
   await prisma.booking.deleteMany({ where: { id: { in: ids }, parentBookingId: { not: null } } });
   await prisma.booking.deleteMany({ where: { id: { in: ids } } });
+  // Its redemptions, allocations and night adjustments went with the bookings.
+  await prisma.promoCode.deleteMany({ where: { code: { startsWith: historyPromoCodePrefix(prefix) } } });
   await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: names.lodgeId } });
   await prisma.lodgeBed.deleteMany({ where: { roomId: names.roomId } });
   await prisma.lodgeRoom.deleteMany({ where: { id: names.roomId } });

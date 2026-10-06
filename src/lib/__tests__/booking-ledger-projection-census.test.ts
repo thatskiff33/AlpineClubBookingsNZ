@@ -287,7 +287,7 @@ function cashCancelled(task: "OPEN" | "COMPLETED" | "DISMISSED"): BookingLedgerC
     lines: ledger.lines,
     booking: { ...base.booking, status: "CANCELLED" },
     payment: payment({ source: "INTERNET_BANKING", refundedAmountCents: task === "COMPLETED" ? 9_500 : 0 }),
-    tasks: [{ id: "task-hb", kind: "CANCELLED_BOOKING_HAND_BACK", status: task, amountCents: 9_500, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null }],
+    tasks: [{ id: "task-hb", kind: "CANCELLED_BOOKING_HAND_BACK", status: task, amountCents: 9_500, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null, occurrenceKey: null }],
     cancellation: { refundMethod: "manual", settledAmountCents: 9_500, keptCents: 9_500 },
   };
 }
@@ -430,7 +430,7 @@ describe("the parts of an identity a plain booking does not exercise", () => {
       lines: ledger.lines,
       booking: { id: B, status: "PAID", deletedAt: null, organiserSettled: false, finalPriceCents: 16_000 },
       transactions: [txn("t1", 19_000)],
-      tasks: [{ id: "task-standin", kind: "EDIT_FINANCIAL_REVIEW", status: "COMPLETED", amountCents: 3_000, settlementDirection: "REFUND_TO_MEMBER", paymentId: "pay-3583", lateCaptureApprovalIntentId: null }],
+      tasks: [{ id: "task-standin", kind: "EDIT_FINANCIAL_REVIEW", status: "COMPLETED", amountCents: 3_000, settlementDirection: "REFUND_TO_MEMBER", paymentId: "pay-3583", lateCaptureApprovalIntentId: null, occurrenceKey: null }],
     });
     expect(identity(subject, "PRICE")).toMatchObject({ status: "AGREE", columnCents: 16_000, ledgerCents: 16_000 });
     expect(evaluateBookingLedgerIdentities(subject).integrity).toEqual([]);
@@ -544,7 +544,7 @@ describe("the review's two gate escapes are closed (fix round of #3583)", () => 
     const ledger = new Ledger();
     ledger.lines = [...(subject.lines as Line[])];
     ledger.post([planHandBackLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: "task-x", amountCents: 1_000, settlementMethod: "INTERNET_BANKING", officerMemberId: "officer" })]);
-    const rogue = { ...subject, lines: ledger.lines, tasks: [{ id: "task-x", kind: "CANCELLED_BOOKING_HAND_BACK" as const, status: "COMPLETED" as const, amountCents: 1_000, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null }] };
+    const rogue = { ...subject, lines: ledger.lines, tasks: [{ id: "task-x", kind: "CANCELLED_BOOKING_HAND_BACK" as const, status: "COMPLETED" as const, amountCents: 1_000, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null, occurrenceKey: null }] };
     expect(identity(rogue, "REFUNDED").status).toBe("AGREE");
     expect(identity(rogue, "OWED")).toMatchObject({ status: "DISAGREE", deltaCents: -1_000 });
   });
@@ -698,7 +698,7 @@ describe("the second review's gate escapes are closed (fix round 2 of #3583)", (
 
 describe("#3791's review closures: a line is judged by what the member was credited (#3583)", () => {
   const TASK = "task-3791";
-  const task = { id: TASK, kind: "EDIT_FINANCIAL_REVIEW" as const, status: "COMPLETED" as const, amountCents: 5_000, settlementDirection: "REFUND_TO_MEMBER" as const, paymentId: null, lateCaptureApprovalIntentId: null };
+  const task = { id: TASK, kind: "EDIT_FINANCIAL_REVIEW" as const, status: "COMPLETED" as const, amountCents: 5_000, settlementDirection: "REFUND_TO_MEMBER" as const, paymentId: null, lateCaptureApprovalIntentId: null, occurrenceKey: null };
   const giveBack = (cents: number, id = "c-give") => credit(id, "BOOKING_APPLIED", cents, { sourceBookingId: B });
   const share = (cents: number, key?: string) => ({
     ...planAgreedAdjustmentLine({ bookingId: B, lodgeId: LODGE, manualRefundTaskId: TASK, direction: "REFUND_TO_MEMBER", amountCents: cents, note: "agreed", officerMemberId: "officer" }),
@@ -1081,7 +1081,7 @@ describe("#3791's review closures: a line is judged by what the member was credi
 describe("AMBIGUOUS_REVIEW_GIVE_BACK: a live booking whose give-back rows no task can be told from fails closed (#3583 delta review)", () => {
   const K = "task-k";
   const completed = (id: string, amountCents: number) =>
-    ({ id, kind: "EDIT_FINANCIAL_REVIEW" as const, status: "COMPLETED" as const, amountCents, settlementDirection: "REFUND_TO_MEMBER" as const, paymentId: null, lateCaptureApprovalIntentId: null });
+    ({ id, kind: "EDIT_FINANCIAL_REVIEW" as const, status: "COMPLETED" as const, amountCents, settlementDirection: "REFUND_TO_MEMBER" as const, paymentId: null, lateCaptureApprovalIntentId: null, occurrenceKey: null });
   const dismissed = (id: string) => ({ ...completed(id, 0), status: "DISMISSED" as const, amountCents: null, settlementDirection: null });
   const giveBack = (id: string, cents: number) => credit(id, "BOOKING_APPLIED", cents, { sourceBookingId: B });
   const giveBackLine = (taskId: string, cents: number) => ({
@@ -1297,7 +1297,7 @@ function v3(): BookingLedgerCensusRow {
     ...base,
     lines: ledger.lines,
     payment: payment({ refundedAmountCents: 19_000 }),
-    tasks: [{ id: "task-v3", kind: "DELETED_BOOKING_LATE_CAPTURE", status: "COMPLETED", amountCents: 19_000, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null }],
+    tasks: [{ id: "task-v3", kind: "DELETED_BOOKING_LATE_CAPTURE", status: "COMPLETED", amountCents: 19_000, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null, occurrenceKey: null }],
   };
 }
 
@@ -1323,7 +1323,7 @@ function retainedShare(collected: boolean): BookingLedgerCensusRow {
     ...subject,
     lines: ledger.lines,
     transactions,
-    tasks: [{ id: "task-share", kind: "EDIT_FINANCIAL_REVIEW", status: "COMPLETED", amountCents: 2_500, settlementDirection: "CHARGE_TO_MEMBER", paymentId: "pay-3583", lateCaptureApprovalIntentId: null }],
+    tasks: [{ id: "task-share", kind: "EDIT_FINANCIAL_REVIEW", status: "COMPLETED", amountCents: 2_500, settlementDirection: "CHARGE_TO_MEMBER", paymentId: "pay-3583", lateCaptureApprovalIntentId: null, occurrenceKey: null }],
     payment: payment({ amountCents: collected ? 21_500 : 19_000, additionalAmountCents: 2_500, additionalPaymentStatus: collected ? "SUCCEEDED" : "PENDING" }),
   };
 }
@@ -1347,7 +1347,7 @@ function defect3791(restoredCents = 20_000): BookingLedgerCensusRow {
     booking: { id: B, status: "CANCELLED", deletedAt: null, organiserSettled: false, finalPriceCents: 20_000 },
     payment: payment({ amountCents: 0, creditAppliedCents: 20_000 }),
     credits: all,
-    tasks: [{ id: "task-3791", kind: "EDIT_FINANCIAL_REVIEW", status: "COMPLETED", amountCents: 5_000, settlementDirection: "REFUND_TO_MEMBER", paymentId: null, lateCaptureApprovalIntentId: null }],
+    tasks: [{ id: "task-3791", kind: "EDIT_FINANCIAL_REVIEW", status: "COMPLETED", amountCents: 5_000, settlementDirection: "REFUND_TO_MEMBER", paymentId: null, lateCaptureApprovalIntentId: null, occurrenceKey: null }],
     cancellation: { refundMethod: "credit", settledAmountCents: restoredCents, keptCents },
   });
 }
@@ -1890,5 +1890,66 @@ describe("the acknowledgement draft (--write-acknowledgement-draft)", () => {
     const moved = census(draft.entries.map((entry) => (entry.class === "IN_FLIGHT_HAND_BACK" ? { ...entry, cents: entry.cents - 500 } : entry)));
     expect(moved.acknowledged.stale).toEqual([expect.objectContaining({ class: "IN_FLIGHT_HAND_BACK", cents: 9_000, foundCents: [9_500] })]);
     expect(moved.gateClosedBecause.some((reason) => reason.includes("IN_FLIGHT_HAND_BACK"))).toBe(true);
+  });
+});
+
+/*
+  #3829 composed this census with epic #3813's by-hand refunds: an edit's
+  reduction on an internet-banking booking raises a CANCELLED_BOOKING_HAND_BACK
+  marked by its occurrence key (`INV-PAY-117`). On a cancelled booking that open
+  task is money still going back, exactly as the cancellation's own hand-back is,
+  and the ledger has not posted its bank refund yet - so it belongs in
+  IN_FLIGHT_HAND_BACK. Excluding it (as the cancellation-only readers must)
+  would leave its cents unexplained here.
+*/
+describe("an open edit refund hand-back on a cancelled internet-banking booking is in flight (#3829, INV-PAY-117)", () => {
+  /** $190 marked paid, an edit removes a $50 night ($50 hand-back open), cancelled at 50% of the $140 left: $70 kept, $70 handed back. */
+  function editedThenCancelled(): BookingLedgerCensusRow {
+    const ledger = confirmedLedger();
+    const base = row({ lines: [], transactions: [txn("t1", 19_000)], payment: payment({ source: "INTERNET_BANKING" }) });
+    settle(ledger, base, true);
+    const edit = planModificationChargeLines({
+      bookingId: B,
+      lodgeId: LODGE,
+      bookingModificationId: "m1",
+      before: { guests: [guestSide("g1", [[D1, 5_000], [D2, 5_000]]), guestSide("g2", [[D1, 5_000], [D2, 5_000]])], promoAdjustmentCents: -1_000 },
+      after: { guests: [guestSide("g1", [[D1, 5_000], [D2, 5_000]]), guestSide("g2", [[D1, 5_000]])], promoAdjustmentCents: -1_000 },
+      changeFeeCents: 0,
+      expectedCents: -5_000,
+      postedLines: ledger.reversible() as never,
+    });
+    if (edit.kind !== "lines") throw new Error(`edit plan refused: ${edit.reason}`);
+    ledger.post(edit.postings, LATER);
+    const cancel = planCancellationChargeLines({ bookingId: B, lodgeId: LODGE, keptCents: 7_000, chargeLines: ledger.reversible(), adjustmentLines: ledger.adjustments() });
+    if (cancel.kind !== "lines") throw new Error("cancel plan refused");
+    ledger.post(cancel.postings, LATER);
+    const handBack = { kind: "CANCELLED_BOOKING_HAND_BACK" as const, status: "OPEN" as const, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null, occurrenceKey: null };
+    return {
+      ...base,
+      lines: ledger.lines,
+      booking: { ...base.booking, status: "CANCELLED", finalPriceCents: 14_000 },
+      modifications: [{ id: "m1", modificationType: "BATCH_MODIFY", priceDiffCents: -5_000, changeFeeCents: 0, createdAt: LATER, reviewRebase: null }],
+      tasks: [
+        { ...handBack, id: "task-cancel", amountCents: 7_000 },
+        { ...handBack, id: "task-edit", amountCents: 5_000 },
+      ],
+      cancellation: { refundMethod: "manual", settledAmountCents: 7_000, keptCents: 7_000 },
+    };
+  }
+
+  it("both open hand-backs explain what the member is still owed", () => {
+    expect(identity(editedThenCancelled(), "PRICE")).toMatchObject({
+      status: "CLASSIFIED",
+      deltaCents: 12_000,
+      explainedBy: [{ name: "IN_FLIGHT_HAND_BACK", cents: 12_000 }],
+    });
+  });
+
+  it("MUTATION: without the edit's hand-back the same booking disagrees", () => {
+    const subject = editedThenCancelled();
+    expect(identity({ ...subject, tasks: subject.tasks.filter((task) => task.id !== "task-edit") }, "PRICE")).toMatchObject({
+      status: "DISAGREE",
+      explainedBy: [],
+    });
   });
 });

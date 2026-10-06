@@ -9,9 +9,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   postCancellationLedgerLines: vi.fn(async () => {}),
   organiserChildCommittedRefundCents: vi.fn(async () => 0),
+  openNonCancellationHandBackCents: vi.fn(async () => 0),
   createMany: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
   findFirst: vi.fn(async (): Promise<{ id: string } | null> => ({ id: "share-line" })),
 }));
+vi.mock("@/lib/edit-refund-hand-back", () => ({ openNonCancellationHandBackCents: mocks.openNonCancellationHandBackCents }));
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => ({ postCancellationLedgerLines: mocks.postCancellationLedgerLines }));
 vi.mock("@/lib/organiser-child-refund", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/organiser-child-refund")),
@@ -64,6 +66,18 @@ describe("postGroupCancelChildLedgerLines", () => {
     expect(mocks.createMany).not.toHaveBeenCalled();
     expect(mocks.organiserChildCommittedRefundCents).toHaveBeenCalledWith(tx, paidChild.payment, "pi_1");
     expect(kept()).toBe(1_500);
+  });
+
+  it("#3827 (INV-PAY-117): an open edit hand-back the cancel's refund was sized net of is not kept either, under either plan", async () => {
+    // $45 paid, a $10 edit refund promised back by hand; the mirror plan refunds 50% of the $35 left.
+    mocks.openNonCancellationHandBackCents.mockResolvedValue(1_000);
+    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: bank, mirrorPlan: true, refundForChild: 1_750, plannedRefundCents: 1_750 });
+    expect(mocks.openNonCancellationHandBackCents).toHaveBeenCalledWith(tx, "p1");
+    expect(kept()).toBe(1_750);
+    mocks.organiserChildCommittedRefundCents.mockResolvedValueOnce(1_750);
+    await postGroupCancelChildLedgerLines(tx, { child: paidChild, settlement: card, mirrorPlan: false, refundForChild: 1_750, plannedRefundCents: 0 });
+    expect(kept()).toBe(1_750);
+    mocks.openNonCancellationHandBackCents.mockResolvedValue(0);
   });
 
   it("keeps nothing for a child the settlement never paid, or with no settlement", async () => {

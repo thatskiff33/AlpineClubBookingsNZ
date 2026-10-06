@@ -17,6 +17,11 @@ import {
 } from "@/lib/booking-message-definitions";
 import { type PromoResult } from "@/components/promo-code-input";
 import {
+  appliedPromosFinalPriceCents,
+  createRequestPromoFields,
+} from "@/components/promo-code-list-client";
+import { useWorkingBeeDiscount } from "./use-working-bee-discount";
+import {
   getBookingErrorPaymentTargets,
   type BookingErrorPaymentTarget,
 } from "@/lib/booking-error-payment-targets";
@@ -396,7 +401,22 @@ export function useBookingWizard() {
   const [perGuestDatesEnabled, setPerGuestDatesEnabled] = useState(false);
   // Issue #713 — per-guest non-contiguous night grid.
   const [multiDateRangesEnabled, setMultiDateRangesEnabled] = useState(false);
-  const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
+  // #3492: every code on the booking, in the booker's order (D-3813-2); a
+  // working-bee discount, while it stands alone, is the list's one entry.
+  const [appliedPromos, setAppliedPromos] = useState<PromoResult[]>([]);
+  // The club's `multiPromoCodes` switch, as the review step's guest-code
+  // lookup reports it (null until it answers). On, a working bee and promo codes
+  // combine (D-3813-3); off or unknown, they stay exclusive exactly as before.
+  const [multiPromoCodes, setMultiPromoCodes] = useState<boolean | null>(null);
+  const combineWorkPartyWithCodes = multiPromoCodes === true;
+  // Read by the working-bee effect and the event-list refresh, which must see
+  // the latest list and switch without re-running on every change to them.
+  const combineWorkPartyWithCodesRef = useRef(combineWorkPartyWithCodes);
+  const appliedPromosRef = useRef(appliedPromos);
+  useLayoutEffect(() => {
+    combineWorkPartyWithCodesRef.current = combineWorkPartyWithCodes;
+    appliedPromosRef.current = appliedPromos;
+  });
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [requestedRoomId, setRequestedRoomId] = useState<string | null>(null);
   // "Only book if my guests can come" — opt into whole-booking cancellation
@@ -440,7 +460,6 @@ export function useBookingWizard() {
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
   const [availablePromoCodes, setAvailablePromoCodes] = useState<AvailablePromoCode[]>([]);
-  const [prefillPromoCode, setPrefillPromoCode] = useState<string | undefined>();
   // Promo codes module: the available-codes route 404s when the module is off,
   // so hide the code entry rather than show an input that can't validate.
   const [promoCodesEnabled, setPromoCodesEnabled] = useState(true);
@@ -489,7 +508,7 @@ export function useBookingWizard() {
     setCheckOut(null);
     setError("");
     setGuestProfileBlocks([]);
-    setAppliedPromo(null);
+    setAppliedPromos([]);
     setPriceQuote(null);
     setPriceLoading(false);
     setUseCredit(false);
@@ -557,7 +576,7 @@ export function useBookingWizard() {
 
   function handlePerGuestDatesEnabledChange(enabled: boolean) {
     setPerGuestDatesEnabled(enabled);
-    setAppliedPromo(null);
+    setAppliedPromos([]);
     setPriceQuote(null);
     setUseCredit(false);
     setMemberNightConflicts([]);
@@ -568,7 +587,7 @@ export function useBookingWizard() {
 
   function handleMultiDateRangesEnabledChange(enabled: boolean) {
     setMultiDateRangesEnabled(enabled);
-    setAppliedPromo(null);
+    setAppliedPromos([]);
     setPriceQuote(null);
     setUseCredit(false);
     setMemberNightConflicts([]);
@@ -583,7 +602,7 @@ export function useBookingWizard() {
 
   function handleGuestsChange(nextGuests: GuestData[]) {
     setGuests(nextGuests);
-    setAppliedPromo(null);
+    setAppliedPromos([]);
     setPriceQuote(null);
     setUseCredit(false);
     setMemberNightConflicts([]);
@@ -764,7 +783,7 @@ export function useBookingWizard() {
         memberId: self.id,
       },
     ]);
-    setAppliedPromo(null);
+    setAppliedPromos([]);
     setPriceQuote(null);
     setUseCredit(false);
     setMemberNightConflicts([]);
@@ -959,7 +978,7 @@ export function useBookingWizard() {
     if (partyAtCeiling(guests)) return;
     if (fm.canBeBooked === false) return;
     const dateStrings = getBookingDateStrings();
-    setAppliedPromo(null);
+    setAppliedPromos([]);
     setPriceQuote(null);
     setUseCredit(false);
     setMemberNightConflicts([]);
@@ -1020,7 +1039,7 @@ export function useBookingWizard() {
     );
     if (!next) return;
     setGuests(next);
-    setAppliedPromo(null);
+    setAppliedPromos([]);
     setPriceQuote(null);
     setUseCredit(false);
     setMemberNightConflicts([]);
@@ -1056,7 +1075,7 @@ export function useBookingWizard() {
     if (partyAtCeiling(guests)) return;
     const dateStrings = getBookingDateStrings();
     setMemberGuestAddError(null);
-    setAppliedPromo(null);
+    setAppliedPromos([]);
     setPriceQuote(null);
     setUseCredit(false);
     setMemberNightConflicts([]);
@@ -1346,7 +1365,7 @@ export function useBookingWizard() {
     setError("");
     setGuestProfileBlocks([]);
     setMemberNightConflicts([]);
-    setAppliedPromo(null);
+    setAppliedPromos([]);
     setPriceQuote(null);
     setUseCredit(false);
     setPerGuestDatesEnabled(false);
@@ -1554,8 +1573,12 @@ export function useBookingWizard() {
             if (previous) {
               setWorkPartyClearedNotice(previous.name);
             }
-            setAppliedPromo((current) =>
-              current?.workPartyEvent ? null : current
+            // Combined, the codes stay and the working-bee effect re-prices
+            // them without it; alone, the discount just goes.
+            setAppliedPromos((current) =>
+              current.some((promo) => promo.workPartyEvent) && !combineWorkPartyWithCodesRef.current
+                ? []
+                : current
             );
           }
         })
@@ -1637,8 +1660,7 @@ export function useBookingWizard() {
         // travel; see `declarationsPayload`.
         dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
         notes: notes || undefined,
-        promoCode: appliedPromo?.code || undefined,
-        promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
+        ...createRequestPromoFields(appliedPromos),
         workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
         requestedRoomId: requestedRoomId || undefined,
@@ -1767,8 +1789,7 @@ export function useBookingWizard() {
         // travel; see `declarationsPayload`.
         dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
         notes: notes || undefined,
-        promoCode: appliedPromo?.code || undefined,
-        promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
+        ...createRequestPromoFields(appliedPromos),
         workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
         requestedRoomId: requestedRoomId || undefined,
@@ -1849,8 +1870,7 @@ export function useBookingWizard() {
         // travel; see `declarationsPayload`.
         dependantIdentityDeclarations: dependantIdentity.declarationsPayload,
         notes: notes || undefined,
-        promoCode: appliedPromo?.code || undefined,
-        promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
+        ...createRequestPromoFields(appliedPromos),
         workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
         requestedRoomId: requestedRoomId || undefined,
@@ -2010,7 +2030,7 @@ export function useBookingWizard() {
 
   const availableCreditCents = priceQuote?.availableCreditCents ?? 0;
   const finalPriceBeforeCredit = priceQuote
-    ? (appliedPromo?.finalPriceCents ?? priceQuote.totalPriceCents)
+    ? appliedPromosFinalPriceCents(priceQuote.totalPriceCents, appliedPromos)
     : 0;
   const appliedCreditCents = useCredit
     ? Math.min(availableCreditCents, finalPriceBeforeCredit)
@@ -2151,70 +2171,20 @@ export function useBookingWizard() {
   ]);
 
   // Apply or refresh the working bee discount preview when a work party
-  // event is selected (or the booking changes while one is selected).
-  useEffect(() => {
-    if (
-      !scopedLodgeId ||
-      !selectedWorkPartyEventId ||
-      !checkIn ||
-      !checkOut ||
-      !priceQuote
-    ) {
-      return;
-    }
-
-    let cancelled = false;
-    const requestedLodgeId = scopedLodgeId;
-    setWorkPartyError("");
-
-    fetch("/api/promo-codes/validate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        lodgeId: requestedLodgeId,
-        workPartyEventId: selectedWorkPartyEventId,
-        checkIn,
-        checkOut,
-        guests: reviewGuestPayload.map((g) => ({
-          ageTier: g.ageTier,
-          isMember: g.isMember,
-          ...(g.memberId ? { memberId: g.memberId } : {}),
-          ...(g.stayStart ? { stayStart: g.stayStart } : {}),
-          ...(g.stayEnd ? { stayEnd: g.stayEnd } : {}),
-        })),
-      }),
-    })
-      .then(async (res) => {
-        const data = await res.json();
-        if (cancelled) return;
-        if (!res.ok || data.valid === false) {
-          setAppliedPromo(null);
-          setWorkPartyError(data.error || "This working bee event could not be applied");
-          return;
-        }
-        setAppliedPromo({
-          code: data.code,
-          description: data.description,
-          type: data.type,
-          discountCents: data.discountCents,
-          promoAdjustmentCents: data.promoAdjustmentCents,
-          totalPriceCents: data.totalPriceCents,
-          finalPriceCents: data.finalPriceCents,
-          workPartyEvent: data.workPartyEvent,
-        });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setAppliedPromo(null);
-          setWorkPartyError("Failed to apply the working bee discount");
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopedLodgeId, selectedWorkPartyEventId, checkIn, checkOut, priceQuote, JSON.stringify(reviewGuestPayload)]);
+  // event is selected (or the booking changes while one is selected); with the
+  // club's `multiPromoCodes` switch on it combines with the codes (D-3813-3).
+  useWorkingBeeDiscount({
+    scopedLodgeId,
+    selectedWorkPartyEventId,
+    checkIn,
+    checkOut,
+    priceQuote,
+    reviewGuestPayload,
+    combineWorkPartyWithCodes,
+    appliedPromosRef,
+    setAppliedPromos,
+    setWorkPartyError,
+  });
 
   const wizardSteps: Array<{ id: BookingWizardStep; label: string }> = [
     { id: "dates", label: "Select Dates" },
@@ -2254,8 +2224,10 @@ export function useBookingWizard() {
     handlePerGuestDatesEnabledChange,
     multiDateRangesEnabled,
     handleMultiDateRangesEnabledChange,
-    appliedPromo,
-    setAppliedPromo,
+    appliedPromos,
+    setAppliedPromos,
+    combineWorkPartyWithCodes,
+    setMultiPromoCodes,
     expectedArrivalTime,
     setExpectedArrivalTime,
     requestedRoomId,
@@ -2290,8 +2262,6 @@ export function useBookingWizard() {
     subscriptionLoading,
     availablePromoCodes,
     promoCodesEnabled,
-    prefillPromoCode,
-    setPrefillPromoCode,
     activeWorkPartyEvents,
     attendingWorkParty,
     setAttendingWorkParty,

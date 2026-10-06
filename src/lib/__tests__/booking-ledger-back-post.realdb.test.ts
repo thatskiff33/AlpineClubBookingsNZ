@@ -42,6 +42,7 @@ import {
 } from "@/lib/__tests__/support/booking-ledger-history";
 import {
   buildGroupLedgerHistories,
+  buildPromoHandBackGroup,
   cancelGroupHistory,
   createGroupHistory,
   GROUP_CHILD_CENTS,
@@ -496,7 +497,7 @@ async function lines(bookingId: string) {
         for (const id of groups[name].children) expect(about(report, id), `${name} ${id}`).toEqual({ ...NOTHING, classes: ["GROUP_SETTLEMENT_OFF_LEDGER:null"] });
       }
       // A refund mirror or a refund row is money of the child's own: coverage, which no acknowledgement signs.
-      for (const name of ["group-legacy-cancel", "group-bank-cancel", "group-refund"] as const) {
+      for (const name of ["group-legacy-cancel", "group-bank-cancel", "group-refund", "group-bank-promo-cancel"] as const) {
         for (const id of groups[name].children) expect(about(report, id), `${name} ${id}`).toEqual({ ...NOTHING, coverage: ["NO_LINES"] });
       }
       const [pre] = groups["group-pre3854-refund"].children;
@@ -546,6 +547,22 @@ async function lines(bookingId: string) {
           expect((await lines(id)).filter((line) => line.reversesLineId !== null).map((line) => line.amountCents)).toEqual([-GROUP_NIGHT_CENTS, -GROUP_NIGHT_CENTS]);
         }
       }
+      // Epic #3813: the two-code child's share is its promo price, one promotion
+      // line for both codes, and the plan hands back half of it.
+      const promo = groups["group-bank-promo-cancel"];
+      const [promoChild, plainChild] = promo.children;
+      const promoFinal = GROUP_CHILD_CENTS - GROUP_NIGHT_CENTS - 500;
+      expect(sorted((await kinds(promoChild!)).filter((row) => row[0] !== "GUEST_NIGHT")), promoChild).toEqual(
+        sorted([
+          ["PROMOTION", -(GROUP_NIGHT_CENTS + 500), `confirmation:${promoChild}:promotion`],
+          ["BANK_RECEIPT", promoFinal, `group-settlement:${promo.settlement}:child`],
+          ["BANK_REFUND", -promoFinal / 2, `group-settlement:${promo.settlement}:refund`],
+          ["CANCELLATION_FEE", promoFinal / 2, `cancellation:${promoChild}:fee`],
+        ]),
+      );
+      expect(sorted((await kinds(plainChild!)).filter((row) => row[0] !== "GUEST_NIGHT")), plainChild).toEqual(
+        sorted([share(promo, "BANK_RECEIPT"), ["BANK_REFUND", -GROUP_CHILD_CENTS / 2, `group-settlement:${promo.settlement}:refund`], ["CANCELLATION_FEE", GROUP_CHILD_CENTS / 2, `cancellation:${plainChild}:fee`]]),
+      );
       // #3653: the reduced night, the whole share, and the refund from its own row.
       for (const name of ["group-refund", "group-pre3854-refund"] as const) {
         const g = groups[name];
@@ -573,6 +590,60 @@ async function lines(bookingId: string) {
       expect(await count()).toBe(before);
       const report = await census();
       for (const id of children()) expect(about(report, id), id).toEqual(NOTHING);
+    }, 300_000);
+
+    it("epic #3813 live: a two-code child and one whose edit refund is owed back by hand; the organiser cancel keeps each net of what goes back, and the back-post plans the same", async () => {
+      const g = groupHistory(PREFIX, "promo-handback-live", "INTERNET_BANKING", 2);
+      const { promoChildFinalCents } = await buildPromoHandBackGroup(prisma, NAMES, g, { handBack: true });
+      const [promoChild, edited] = g.children;
+      // Two codes, priced together: the free night, then $5 off what is left.
+      const priced = await prisma.booking.findUniqueOrThrow({ where: { id: promoChild! }, select: { totalPriceCents: true, promoAdjustmentCents: true } });
+      expect(await prisma.promoRedemption.count({ where: { bookingId: promoChild! } })).toBe(2);
+      expect(priced).toEqual({ totalPriceCents: GROUP_CHILD_CENTS, promoAdjustmentCents: -(GROUP_NIGHT_CENTS + 500) });
+      expect(promoChildFinalCents).toBe(GROUP_CHILD_CENTS - GROUP_NIGHT_CENTS - 500);
+      // The plan: half of each child's refundable base, the edited child's net of the $15 promised back.
+      const plan = (await prisma.groupBookingSettlement.findUniqueOrThrow({ where: { id: g.settlement } })).refundPlan;
+      expect(plan).toEqual({ [promoChild!]: promoChildFinalCents / 2, [edited!]: (GROUP_CHILD_CENTS - 1_500) / 2 });
+      const posted = async (id: string) => (await lines(id)).filter((line) => line.reversesLineId === null).map((line) => [line.kind, line.amountCents]);
+      // The share is the child's payment — its promo price — and the club keeps it less the plan's refund.
+      expect(await posted(promoChild!)).toEqual(
+        expect.arrayContaining([
+          ["PROMOTION", -(GROUP_NIGHT_CENTS + 500)],
+          ["BANK_RECEIPT", promoChildFinalCents],
+          ["BANK_REFUND", -promoChildFinalCents / 2],
+          ["CANCELLATION_FEE", promoChildFinalCents / 2],
+        ]),
+      );
+      // The edited child keeps its share less the plan's refund and the open hand-back (#3827, INV-PAY-117).
+      expect(await posted(edited!)).toEqual(
+        expect.arrayContaining([
+          ["BANK_RECEIPT", GROUP_CHILD_CENTS],
+          ["BANK_REFUND", -(GROUP_CHILD_CENTS - 1_500) / 2],
+          ["CANCELLATION_FEE", GROUP_CHILD_CENTS - (GROUP_CHILD_CENTS - 1_500) / 2 - 1_500],
+        ]),
+      );
+      // The $15 still going back is in flight, to the cent (an acknowledgeable class, never a gap).
+      const live = await census();
+      expect(about(live, promoChild!)).toEqual(NOTHING);
+      expect(about(live, edited!)).toEqual({ ...NOTHING, classes: ["IN_FLIGHT_HAND_BACK:PRICE"] });
+      expect(live.classes.IN_FLIGHT_HAND_BACK?.instances.filter((instance) => instance.bookingId === edited)).toEqual([
+        expect.objectContaining({ cents: 1_500 }),
+      ]);
+      for (const id of g.children) expect(await runOne(id, true), id).toMatchObject({ kind: "NOTHING_TO_POST" });
+
+      // History: the same group with its lines gone. The back-post's planner
+      // (the census's own) posts the share, the plan refund and the kept figure
+      // the live cancel posted. (Its charges are the stay as it stands, not the
+      // edit's own lines: that is the back-post's rule for every booking.)
+      const money = async (id: string) =>
+        (await posted(id)).filter(([kind]) => ["BANK_RECEIPT", "BANK_REFUND", "CANCELLATION_FEE", "PROMOTION"].includes(kind as string)).map((row) => JSON.stringify(row)).sort();
+      const liveMoney = new Map(await Promise.all(g.children.map(async (id) => [id!, await money(id!)] as const)));
+      await stripGroupLines(prisma, g);
+      for (const id of g.children) expect(await runOne(id!, true), id).toMatchObject({ kind: "POSTED" });
+      for (const id of g.children) expect(await money(id!), id).toEqual(liveMoney.get(id!));
+      const after = await census();
+      expect(about(after, promoChild!)).toEqual(NOTHING);
+      expect(about(after, edited!)).toEqual({ ...NOTHING, classes: ["IN_FLIGHT_HAND_BACK:PRICE"] });
     }, 300_000);
 
     async function strippedGroup(key: string, source: "STRIPE" | "INTERNET_BANKING", size: number): Promise<GroupHistory> {

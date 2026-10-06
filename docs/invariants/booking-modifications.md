@@ -518,7 +518,9 @@ single-guest removal (`DELETE …/guests/[guestId]`), and date change
 tier for the days until check-in, folding any change fee into the net delta, and
 requires the member to elect a card refund or account credit whenever a captured
 payment makes a settlement returnable. No reduction path refunds the full price
-delta outside the policy. A request against a booking with a captured payment
+delta outside the policy. Not an edit, a guest's acceptance re-pricing promo
+codes returns its whole reduction as paid, credit included, untiered and
+unasked (`INV-MONEY-038`, D-3813-5; by hand via `INV-PAY-117`). A request against a booking with a captured payment
 that omits the settlement election is rejected rather than defaulted, so a
 body-less self-removal cannot silently settle the booking owner's money; the
 owner or an admin makes the election through the batch edit flow.
@@ -1441,7 +1443,7 @@ money genuinely did not move, NOT because 0 was chosen as the adjustment.
 
 **"No promotion is recalculated" includes one the member asked for in the same
 request, and they are told so** (#3179). A parked edit re-runs no promotion, so a
-`promoCode` or `removePromoCode` carried alongside the structural change is
+`promoCode`, `promoCodes` or `removePromoCode` carried alongside the structural change is
 dropped and the booking's stored discount figures are written back untouched.
 The edit still
 saves: the owner's decision on #3179 was to save what can be honoured and warn
@@ -1910,8 +1912,8 @@ of them reads the same rows** (#3530, programme #3527; owner direction, 20 Sep
 2026).
 
 `BookingModification.priceLines` holds the signed lines behind
-`priceDiffCents` — per guest category × rate × unit price × nights, plus one
-promotion delta — computed at edit time by `diffBookingPricing` in
+`priceDiffCents` — per guest category × rate × unit price × nights, plus
+promotion deltas — computed at edit time by `diffBookingPricing` in
 `booking-modification-lines.ts`, the one home for their shape, sum rule, parser
 and sentence. The audit row, the booking's history and the Xero supplementary
 invoice and credit notes read those rows; none derives its own. The member word
@@ -1921,7 +1923,7 @@ The lines are **narration**: `priceDiffCents` stays the figure settlement
 reads; no idempotency key or outbox payload carries a line; the row is
 immutable.
 
-Rules: night prices are gross; the promotion is one signed `PROMO_DELTA` line;
+Rules: night prices are gross; the promotion is a signed `PROMO_DELTA` line per code;
 a kept night at the same price and category cancels; a repriced night is one
 removed and one added, never netted; runs are cut by `splitNightsIntoPriceRuns`,
 as on the invoice. An unpriced night, or a line-leaving before-night whose stored price is

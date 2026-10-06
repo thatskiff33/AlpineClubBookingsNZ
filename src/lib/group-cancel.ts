@@ -81,6 +81,7 @@ import {
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "./bed-allocation-lifecycle";
 import { bookingOwner } from "@/lib/booking-owner";
 import { cancelRefundableBaseCents, hasCapturedPayment } from "@/lib/booking-payment-state";
+import { openNonCancellationHandBackCents } from "@/lib/edit-refund-hand-back";
 import { postGroupCancelChildLedgerLines, postGroupSettlementRefundLedgerLine } from "@/lib/booking-ledger-group-settlement-sync";
 import { formatCents } from "@/lib/utils";
 import { reconcileHostingReviewForSystemCancellation } from "@/lib/adult-member-hosting-system-cancellation";
@@ -343,7 +344,13 @@ export async function settleGroupBookingOnOrganiserCancel(
       // What remains of the child's payment, less its change fee (`INV-PAY-018`).
       if (child.status !== BookingStatus.PAID || !child.payment || !hasCapturedPayment(child.payment)) continue;
       const { refundAmountCents } = calculateRefundAmount(
-        cancelRefundableBaseCents({ ...child.payment, finalPriceCents: child.finalPriceCents }),
+        cancelRefundableBaseCents({
+          ...child.payment,
+          // #3827 (`INV-PAY-117`): cash an earlier edit or refund request already
+          // promised back by hand is not refunded a second time here.
+          openNonCancellationHandBackCents: await openNonCancellationHandBackCents(prisma, child.payment.id),
+          finalPriceCents: child.finalPriceCents,
+        }),
         days,
         policy,
         "card"

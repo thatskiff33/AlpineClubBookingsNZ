@@ -26,8 +26,12 @@
  *           only once the mirror is written (`refundedAmountCents > 0`, the
  *           replay's own test); an unmirrored plan is the replay's to post.
  *   kept    an organiser cancel froze no CANCELLED snapshot, so the kept figure
- *           is the live cancel's own (`groupSettledChildKeptFrom`), with the
- *           payment as it stood at the cancel: a written mirror came from zero.
+ *           is the live cancel's own (`groupSettledChildKeptFrom`), read from
+ *           the payment as it stands: its refunds (a written mirror among them)
+ *           and its open edit / refund-request hand-backs (#3827, `INV-PAY-117`)
+ *           together are what the cancel's refunds and the hand-backs it netted
+ *           out came to, since every such hand-back completed since moved
+ *           `refundedAmountCents` by what it closed.
  */
 import type { BookingStatus, PaymentSource } from "@prisma/client";
 
@@ -46,6 +50,10 @@ import {
   mirrorPlanRefundedCents,
   type OrganiserChildRefundEvidence,
 } from "@/lib/group-settlement-refund-plan";
+import {
+  isNonCancellationHandBackTask,
+  sumOpenNonCancellationHandBackCents,
+} from "@/lib/manual-refund-task-settlement-rules";
 import { isOrganiserChildRefundKey } from "@/lib/payment-recovery-keys";
 import { isRecordedRefundStatus } from "@/lib/payment-transaction-status";
 
@@ -89,17 +97,41 @@ export type GroupSettledChildKeptPlan =
  * it paid for the child less every refund made or still owed on it, so
  * `owed(b)` is zero once they post. `payment` as it stood when the organiser
  * cancelled it. The live cancel and the back-post share it.
+ *
+ * "Still owed" includes the payment's open edit and refund-request hand-backs
+ * (#3827, `INV-PAY-117`): the cancel's refund was sized net of them
+ * (`cancelRefundableBaseCents`), so the club does not keep them either — each
+ * posts its own bank refund when the treasurer pays it, as on any booking
+ * (`paidCancellationMoney`'s `paidAmountCents` nets them out the same way).
  */
-export function groupSettledChildKeptFrom(payment: { amountCents: number; refundedAmountCents: number }, plan: GroupSettledChildKeptPlan): number {
+export function groupSettledChildKeptFrom(
+  payment: { amountCents: number; refundedAmountCents: number; openNonCancellationHandBackCents: number },
+  plan: GroupSettledChildKeptPlan,
+): number {
   const committedRefundCents =
     plan.kind === "per-child" ? plan.committedRefundCents : mirrorPlanRefundedCents(payment, plan.plannedRefundCents);
   // No credit applied and none restored: the organiser paid in money, so the
   // kept figure is what it retained (never below zero).
   return cancellationKeptCents({
-    retainedAmountCents: Math.max(0, payment.amountCents - committedRefundCents),
+    retainedAmountCents: Math.max(0, payment.amountCents - committedRefundCents - payment.openNonCancellationHandBackCents),
     appliedCreditCents: 0,
     creditRestoredCents: 0,
   });
+}
+
+/**
+ * `openNonCancellationHandBackCents` (`edit-refund-hand-back.ts`) read from
+ * rows already in hand (the census's snapshot): the payment's OPEN edit and
+ * refund-request hand-backs (`isNonCancellationHandBackTask`), summed as that
+ * query's select is (`sumOpenNonCancellationHandBackCents`).
+ */
+export function openNonCancellationHandBackCentsFromRows(
+  paymentId: string,
+  tasks: ReadonlyArray<{ kind: string | null; status: string; occurrenceKey: string | null; paymentId: string | null; amountCents: number | null }>,
+): number {
+  return sumOpenNonCancellationHandBackCents(
+    tasks.filter((task) => task.paymentId === paymentId && task.status === "OPEN" && isNonCancellationHandBackTask(task)),
+  );
 }
 
 /**
@@ -154,6 +186,8 @@ export function planGroupChildLines(input: {
   /** Every child of the organiser's booking that the organiser settled, this one included. */
   siblings: readonly GroupChildSibling[];
   perChildCommittedRefundCents: number | null;
+  /** The child payment's open edit / refund-request hand-backs now (`openNonCancellationHandBackCents`, #3827). */
+  openNonCancellationHandBackCents: number;
 }): GroupChildPlan | null {
   const { child, payment, settlement } = input;
   if (!isPaidBySettlement(payment, settlement)) return null;
@@ -187,15 +221,21 @@ export function planGroupChildLines(input: {
 
   let cancellationKeptCents: number | null = null;
   if (child.status === "CANCELLED" && child.cancelledWithoutSnapshot) {
-    // The payment as the organiser cancel saw it: a mirror it (or its replay) wrote started at zero.
-    const atCancel = { amountCents: payment.amountCents, refundedAmountCents: mirror && mirrored ? 0 : payment.refundedAmountCents };
+    // The payment as it stands: a written mirror is already in its refunds, so
+    // the plan's share is added only while unwritten; a hand-back open at the
+    // cancel is either still open or, paid since, in `refundedAmountCents`.
+    const now = {
+      amountCents: payment.amountCents,
+      refundedAmountCents: payment.refundedAmountCents,
+      openNonCancellationHandBackCents: input.openNonCancellationHandBackCents,
+    };
     if (planKind === "per-child" && input.perChildCommittedRefundCents === null) {
       throw new Error(`planGroupChildLines: child ${child.id} needs its committed per-child refund (#3854)`);
     }
     cancellationKeptCents = groupSettledChildKeptFrom(
-      atCancel,
+      now,
       planKind === "mirror"
-        ? { kind: "mirror", plannedRefundCents }
+        ? { kind: "mirror", plannedRefundCents: mirror && mirrored ? 0 : plannedRefundCents }
         : { kind: "per-child", committedRefundCents: input.perChildCommittedRefundCents! },
     );
   }

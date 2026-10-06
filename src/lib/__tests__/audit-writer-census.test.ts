@@ -1414,7 +1414,10 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // record, unpinned `xero`. RE-MEASURED with `pnpm run audit:census`.
     // 368 -> 369 (#3653 fix round, composed onto #3792 by #3630): the organiser child refund recovery
     // record, unpinned `booking`. RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 128, unpinned: 369 });
+    // 369 -> 370 (#3827, composed by #3829): the guest-acceptance re-price record, unpinned
+    // `booking`. RE-MEASURED with `pnpm run audit:census`.
+    // 370 -> 371 (#3492, composed by #3829): the guest promo-code lookup, unpinned `privacy`.
+    ).toEqual({ pinned: 128, unpinned: 371 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

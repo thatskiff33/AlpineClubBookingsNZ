@@ -47,6 +47,7 @@ import {
 } from "@/lib/booking-guest-stay-range-input";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
+import { refuseOnBehalfUnlessBookingOfficer } from "@/lib/on-behalf-booking";
 import {
   findBookingMemberNightConflicts,
   getBookingMemberNightConflictResponse,
@@ -99,9 +100,7 @@ export async function POST(request: NextRequest) {
   }
   // bookings:edit holders (Full Admin, Booking Officer, custom roles) may
   // quote on-behalf — aligned with booking create and the modification path
-  // (#1313/#1442).
-  const canManageBookings =
-    bookingManagementAuthorizationRole(session.user) === "ADMIN";
+  // (#1313/#1442); `refuseOnBehalfUnlessBookingOfficer` below is the one check.
   const actorRole = bookingManagementAuthorizationRole(session.user);
 
   const json = await parseJsonRequestBody(request);
@@ -135,12 +134,8 @@ export async function POST(request: NextRequest) {
   // A quote with forMemberId must never silently price the caller instead of
   // the target: unauthorized callers are rejected, mirroring create (#1442).
   if (parsed.data.forMemberId) {
-    if (!canManageBookings) {
-      return NextResponse.json(
-        { error: "Only admins can book on behalf of another member" },
-        { status: 403 }
-      );
-    }
+    const onBehalfRefusal = refuseOnBehalfUnlessBookingOfficer(session.user, parsed.data.forMemberId);
+    if (onBehalfRefusal) return onBehalfRefusal;
     if (parsed.data.forMemberId === session.user.id) {
       return NextResponse.json(
         { error: "Booking managers cannot book for themselves — book your own stay through the member booking page" },

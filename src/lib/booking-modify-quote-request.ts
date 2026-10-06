@@ -19,6 +19,23 @@ import { nameField } from "@/lib/zod-helpers";
 // working but put the two halves of one contract where a reader can change one
 // without seeing the other.
 
+/**
+ * #3827: an edit's code list — every code the booking should carry afterwards,
+ * in the booker's order (D-3813-2). Shared by the preview and the save so the
+ * two parse it identically. `promoGuestIds` / `promoAddedGuestIndexes` bind a
+ * booker-picks-guests choice exactly as the legacy fields do (#2266).
+ */
+export const editPromoCodesSchema = z
+  .array(
+    z.object({
+      code: z.string().min(1).max(50),
+      promoGuestIds: z.array(z.string().min(1)).max(200).optional(),
+      promoAddedGuestIndexes: z.array(z.number().int().min(0)).max(200).optional(),
+    }),
+  )
+  .max(20)
+  .optional();
+
 export const modifyQuoteSchema = z.object({
   checkIn: z.string().optional(),
   checkOut: z.string().optional(),
@@ -89,6 +106,9 @@ export const modifyQuoteSchema = z.object({
   promoGuestIds: z.array(z.string().min(1)).max(200).optional(),
   promoAddedGuestIndexes: z.array(z.number().int().min(0)).max(200).optional(),
   removePromoCode: z.boolean().optional(),
+  // #3827: the complete list of codes after the edit, in the booker's order —
+  // the same field, and the same schema, the apply route takes.
+  promoCodes: editPromoCodesSchema,
   // #2266: the member's credit election, mirroring the create quote/create
   // routes. The preview never moves money — the apply route stores the election
   // on the booking (Booking.creditElectionCents, #2265) and the pay step
@@ -128,6 +148,7 @@ export const OVERRIDE_DATE_ONLY_QUOTE_FIELDS = [
   "promoGuestIds",
   "promoAddedGuestIndexes",
   "removePromoCode",
+  "promoCodes",
   // #1746: partner-shared flags ride guest changes, never a date override.
   "partnerSharedGuests",
 ] as const;

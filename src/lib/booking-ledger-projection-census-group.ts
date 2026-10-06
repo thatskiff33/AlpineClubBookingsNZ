@@ -15,6 +15,7 @@ import type { ReversibleChargeLine } from "@/lib/booking-ledger-charge-line";
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
 import {
   needsPerChildCommittedRefund,
+  openNonCancellationHandBackCentsFromRows,
   organiserChildRefundEvidenceFromRows,
   planGroupChildLines,
 } from "@/lib/booking-ledger-group-child-plan";
@@ -148,6 +149,7 @@ export function plannedGroupChildLines(row: BookingLedgerCensusRow): CensusLedge
             }),
           )
         : null,
+    openNonCancellationHandBackCents: openNonCancellationHandBackCentsFromRows(payment.id, row.tasks),
   });
   if (group === null || group.kind === "refuse") return null;
   // Posted after every edit the booking holds, as the back-post posts now.
