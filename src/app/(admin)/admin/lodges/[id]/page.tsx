@@ -494,10 +494,8 @@ export default function LodgeConfigurationHubPage() {
                 type="number"
                 min={MIN_CONFIGURED_LODGE_CAPACITY}
                 max={MAX_CONFIGURED_LODGE_CAPACITY}
-                // Both notes describe this field, so both are announced on
-                // focus — why a description and not a live region is on
-                // LodgeCapacityGuidance (#2724).
-                aria-describedby="lodge-capacity-fallback-hint lodge-capacity-guidance"
+                // Described, not a live region: see LodgeCapacityGuidance.
+                aria-describedby="lodge-capacity-fallback-hint lodge-capacity-guidance lodge-capacity-guidance-lowering"
                 value={capacityOverride}
                 onChange={(e) => setCapacityOverride(e.target.value)}
                 disabled={!canEdit}
@@ -522,6 +520,7 @@ export default function LodgeConfigurationHubPage() {
             <LodgeCapacityGuidance
               id="lodge-capacity-guidance"
               capacityInput={capacityOverride}
+              savedCapacityInput={savedCapacityOverride}
               activeBedCount={activeBedCount}
               activeDoubleBedCount={activeDoubleBedCount}
             />

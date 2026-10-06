@@ -526,3 +526,79 @@ describe("the not-set-up notice's link lands on this field (#3407 round 3, F2)",
     expect(document.getElementById(fragment)).toBe(field);
   });
 });
+
+/**
+ * #3440 — lowering a saved capacity warns how many partner spots it removes.
+ * 24 beds, 5 doubles: saved 30 gives 5 spots, 26 gives 2, 24 or below none.
+ */
+describe("lowering the capacity warns what it removes (#3440)", () => {
+  const LOWERING = /^Lowering the capacity/;
+  const lowering = (field: HTMLInputElement) =>
+    capacityNotices(field).find((text) => LOWERING.test(text));
+
+  const open = (doubles = 5, saved: number | null = 30) =>
+    openScreenWith({
+      activeBedCount: 24,
+      activeDoubleBedCount: doubles,
+      savedCapacity: saved,
+      resolvedCapacity: 24,
+      source: "configured_beds",
+    });
+
+  it("names the old and new figure and the spots lost, to the parity case", async () => {
+    const field = await open();
+    await waitFor(() => expect(field.value).toBe("30"));
+    await typeCapacity(field, "24");
+    expect(lowering(field)).toContain("from 30 to 24 removes 5 partner spots");
+  });
+
+  it("counts only the spots the lowering actually removes", async () => {
+    const field = await open();
+    await waitFor(() => expect(field.value).toBe("30"));
+    await typeCapacity(field, "26");
+    expect(lowering(field)).toContain("removes 3 partner spots");
+  });
+
+  it("singularises one spot", async () => {
+    const field = await open(5, 25);
+    await waitFor(() => expect(field.value).toBe("25"));
+    await typeCapacity(field, "24");
+    expect(lowering(field)).toContain("removes 1 partner spot ");
+  });
+
+  it("says nothing when raising or unchanged", async () => {
+    const field = await open(5, 26);
+    await waitFor(() => expect(field.value).toBe("26"));
+    expect(lowering(field)).toBeUndefined();
+    await typeCapacity(field, "30");
+    expect(lowering(field)).toBeUndefined();
+  });
+
+  it("says nothing without shareable doubles, a saved figure, or a valid figure", async () => {
+    let field = await open(0, 30);
+    await waitFor(() => expect(field.value).toBe("30"));
+    await typeCapacity(field, "24");
+    expect(lowering(field)).toBeUndefined();
+    cleanup();
+
+    field = await open(5, null);
+    await typeCapacity(field, "24");
+    expect(lowering(field)).toBeUndefined();
+    cleanup();
+
+    field = await open(5, 30);
+    await waitFor(() => expect(field.value).toBe("30"));
+    await typeCapacity(field, "");
+    expect(lowering(field)).toBeUndefined();
+  });
+
+  it("does not stop the save", async () => {
+    const field = await open();
+    await waitFor(() => expect(field.value).toBe("30"));
+    await typeCapacity(field, "24");
+    const save = screen
+      .getAllByRole("button", { name: /^Save$/ })
+      .find((button) => field.parentElement?.contains(button));
+    expect(save).toBeEnabled();
+  });
+});
