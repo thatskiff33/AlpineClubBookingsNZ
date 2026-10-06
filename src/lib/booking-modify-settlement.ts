@@ -27,6 +27,7 @@ import {
   type SupersededPrimaryPaymentIntent,
 } from "@/lib/booking-payment-cleanup";
 import {
+  canAskCardForIncrease,
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
   isSettledBookingStatus,
@@ -104,11 +105,9 @@ export function organiserChildChargeRefusal({
   booking: Pick<LoadedBookingForModify, "status" | "payment" | "organiserSettled" | "parentBookingId">;
   netChargeCents: number;
 }): string | null {
-  const hasSucceededPayment =
-    isSettledBookingStatus(booking.status) &&
-    hasCapturedPayment(booking.payment) &&
-    booking.payment?.source === PaymentSource.STRIPE;
-  return netChargeCents > 0 && hasSucceededPayment && paidByOrganiserCard(booking)
+  // #3502: the increase question, so a credit-paid ($0) child is refused here
+  // exactly as `applyPaymentAdjustments` now asks its card.
+  return netChargeCents > 0 && canAskCardForIncrease(booking) && paidByOrganiserCard(booking)
     ? ORGANISER_CHILD_CHARGE_REFUSAL
     : null;
 }
@@ -225,13 +224,24 @@ export async function applyPaymentAdjustments(
   const inSettledStatus = isSettledBookingStatus(booking.status);
   const hasSettledPayment =
     inSettledStatus && hasCapturedPayment(booking.payment);
+  const netAmountCents = priceDiffCents + changeFeeCents;
+  // #3502 (owner decision, 6 Oct 2026): a booking paid wholly with credit or a
+  // 100% promotion carries `{ amountCents: 0, status: SUCCEEDED }`, which
+  // `hasCapturedPayment` rightly reads as "nothing captured" - so every
+  // REDUCTION branch below keeps reading `hasSettledPayment` and #3809's
+  // give-back is untouched. An INCREASE on it is asked of the member's card,
+  // exactly as on a card-paid booking: before this it fell through to the Xero
+  // arm, which bills only when an invoice has been issued, so with Xero off (or
+  // before the primary invoice was raised) the extra was asked of nobody.
+  const zeroDollarCardIncrease =
+    netAmountCents > 0 && !hasSettledPayment && canAskCardForIncrease(booking);
   const hasSucceededPayment =
-    hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
+    (hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE) ||
+    zeroDollarCardIncrease;
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
   const remainingRefundableCents = await refundableCashNetOfOpenHandBacks(tx, booking.payment);
 
-  const netAmountCents = priceDiffCents + changeFeeCents;
   const selectedSettlement = resolveSelectedSettlementAmount({
     settlementOptions,
     settlementMethod,
@@ -277,7 +287,12 @@ export async function applyPaymentAdjustments(
   let additionalAsk: AdditionalAsk = NO_ADDITIONAL_ASK;
   let pendingRefundAmountCents = 0;
 
-  if (hasSettledPayment && booking.payment) {
+  // #3502: the zero-dollar increase joins the settled arm. It is an increase by
+  // construction, so it can reach only the `netAmountCents > 0` branch: the
+  // organiser refusal, `sizeAdditionalAsk`, and the change fee recorded on the
+  // payment in this transaction, without which `INV-PAY-047` reads the fee the
+  // ask collects as money retained.
+  if ((hasSettledPayment || zeroDollarCardIncrease) && booking.payment) {
     if (settlementOptions && netAmountCents < 0) {
       if (selectedSettlement.settlementMethod === "credit") {
         accountCreditAmountCents = selectedSettlement.amountCents;

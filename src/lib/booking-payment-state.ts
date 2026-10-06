@@ -1,3 +1,5 @@
+import type { PaymentSource } from "@prisma/client";
+
 /**
  * The `Payment.status` values that mean MONEY WAS TAKEN — captured, and possibly
  * refunded since. `REFUNDED` belongs here: the question is whether a capture
@@ -153,6 +155,46 @@ export function hasCapturedPayment(
   }
 
   return true;
+}
+
+/** The `Payment.source` a card ask is minted against, checked by the compiler. */
+const CARD_PAYMENT_SOURCE = "STRIPE" satisfies PaymentSource;
+
+/**
+ * #3502 (`INV-PAY-047`, `INV-MOD-018`): may an edit that RAISES this booking's
+ * price ask the member's card for the difference? THE ONE ANSWER, asked by every
+ * edit door — the three that settle through `applyPaymentAdjustments`, the
+ * guest-add route that settles for itself, and `organiserChildChargeRefusal`, so
+ * the quote and the save cannot disagree (`INV-PAY-114`).
+ *
+ * It is the STATUS half of `hasCapturedPayment` (`isCapturedPaymentStatus`),
+ * without the `amountCents > 0` clause, and that omission is the whole point. A
+ * booking paid wholly with account credit or a 100% promotion carries
+ * `{ amountCents: 0, status: SUCCEEDED }` and no PaymentIntent. Asking
+ * `hasCapturedPayment` here made three doors conclude there was no card to
+ * charge and fall through to a Xero supplementary invoice that exists only when
+ * the integration is on AND the primary invoice has been raised — otherwise the
+ * increase was billed to nobody. The owner decided on 6 Oct 2026 that such a
+ * booking is asked for a card payment for the extra, Xero or not. The money IS
+ * collectable: the additional-payment mint creates a fresh intent and only
+ * reuses the Stripe customer, creating one when there is none.
+ *
+ * INCREASES ONLY. A reduction still asks `hasCapturedPayment`, because a refund
+ * needs money actually captured; nothing here may be used to decide one.
+ *
+ * `source` is part of the question because a hand- or Internet-Banking-settled
+ * payment has no card behind it. Zero-dollar rows take the schema default,
+ * `STRIPE`.
+ */
+export function canAskCardForIncrease(booking: {
+  status: string;
+  payment: { status: string; source: PaymentSource } | null | undefined;
+}): boolean {
+  return (
+    isSettledBookingStatus(booking.status) &&
+    isCapturedPaymentStatus(booking.payment?.status ?? "") &&
+    booking.payment?.source === CARD_PAYMENT_SOURCE
+  );
 }
 
 export function getRemainingRefundableCents(
