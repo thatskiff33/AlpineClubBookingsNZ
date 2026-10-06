@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   bookingFindMany: vi.fn(),
   bookingUpdate: vi.fn(),
   paymentUpdate: vi.fn(),
+  paymentFindUniqueOrThrowLocked: vi.fn(),
   settlementUpdate: vi.fn(),
   settlementUpdateMany: vi.fn(),
   txExecuteRaw: vi.fn(),
@@ -51,7 +52,7 @@ const txClient = {
   $executeRaw: mocks.txExecuteRaw,
   groupBooking: { update: mocks.groupBookingUpdate },
   booking: { update: mocks.bookingUpdate, updateMany: mocks.bookingUpdate },
-  payment: { update: mocks.paymentUpdate, updateMany: mocks.paymentUpdateMany },
+  payment: { update: mocks.paymentUpdate, updateMany: mocks.paymentUpdateMany, findUniqueOrThrow: mocks.paymentFindUniqueOrThrowLocked },
   groupBookingSettlement: {
     updateMany: mocks.settlementUpdateMany,
     findUnique: mocks.settlementAtFenceFindUnique,
@@ -185,6 +186,14 @@ beforeEach(() => {
   );
   mocks.bookingUpdate.mockResolvedValue({ count: 1 });
   mocks.paymentUpdate.mockResolvedValue(undefined);
+  // #3854 sync lens F2: the child's payment re-read under the claim's lock(1);
+  // by default nothing moved it since the load.
+  mocks.paymentFindUniqueOrThrowLocked.mockImplementation(async ({ where }: { where: { id: string } }) => {
+    const loaded = (await mocks.bookingFindMany.mock.results.at(-1)?.value) as Array<{ payment: { id: string } | null }> | undefined;
+    const payment = loaded?.find((row) => row.payment?.id === where.id)?.payment;
+    if (!payment) throw new Error(`no payment ${where.id}`);
+    return payment;
+  });
   mocks.paymentUpdateMany.mockResolvedValue({ count: 1 });
   mocks.groupBookingUpdate.mockResolvedValue(undefined);
   mocks.settlementUpdate.mockResolvedValue(undefined);
@@ -883,6 +892,51 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
     });
     expect(mocks.processRefund).not.toHaveBeenCalled();
     expect(mocks.planOrganiserCancelChildRefunds).not.toHaveBeenCalled();
+  });
+
+  it("#3854 sync lens F2: an edit refund completed between the load and the claim is in the mirror and the kept figure, never overwritten", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: {
+        id: "settle-1",
+        status: PaymentStatus.SUCCEEDED,
+        amountCents: 4500,
+        stripePaymentIntentId: null,
+        source: PaymentSource.INTERNET_BANKING,
+        refundPlan: { "child-1": 1750 },
+      },
+    });
+    // Loaded before any lock with nothing refunded; by the claim's lock(1) the
+    // treasurer has paid a $10 edit refund back (the plan was sized net of it).
+    mocks.bookingFindMany.mockResolvedValue([paidChild("child-1", "pay-1")]);
+    const fresh = { id: "pay-1", amountCents: 4500, refundedAmountCents: 1000, status: PaymentStatus.PARTIALLY_REFUNDED };
+    mocks.paymentFindUniqueOrThrowLocked.mockResolvedValue(fresh);
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
+
+    // Read inside the claim: after its lock(1) and its status-guarded CANCELLED write.
+    expect(mocks.paymentFindUniqueOrThrowLocked).toHaveBeenCalledWith({
+      where: { id: "pay-1" },
+      select: { id: true, status: true, amountCents: true, refundedAmountCents: true },
+    });
+    const claimAt = mocks.bookingUpdate.mock.calls.findIndex(([args]) => (args as { where: { id: string } }).where.id === "child-1");
+    const readAt = mocks.paymentFindUniqueOrThrowLocked.mock.invocationCallOrder[0]!;
+    expect(mocks.bookingUpdate.mock.invocationCallOrder[claimAt]).toBeLessThan(readAt);
+    expect(mocks.txExecuteRaw.mock.invocationCallOrder.filter((at) => at < readAt).length).toBeGreaterThan(0);
+    // The mirror adds the plan's $17.50 to the $10 already back, not to the stale $0.
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay-1" },
+      data: { refundedAmountCents: 2750, status: PaymentStatus.PARTIALLY_REFUNDED },
+    });
+    // The kept figure reads the same fresh payment.
+    expect(groupLedger.postGroupCancelChildLedgerLines).toHaveBeenCalledWith(txClient, {
+      child: expect.objectContaining({ id: "child-1", payment: fresh }),
+      settlement: expect.objectContaining({ id: "settle-1" }),
+      mirrorPlan: true,
+      refundForChild: 1750,
+      plannedRefundCents: 1750,
+    });
   });
 
   it("re-drive after the flip applies the plan mirror without a new refund", async () => {

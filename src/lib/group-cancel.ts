@@ -540,20 +540,25 @@ export async function settleGroupBookingOnOrganiserCancel(
           previousRange: { checkIn: child.checkIn, checkOut: child.checkOut },
         });
         await revokePaymentLinksForBooking(child.id, tx);
+        // #3854 F2: the payment re-read under lock(1) (an edit refund's completion takes it too), so the
+        // mirror never overwrites a refund paid since the load, nor the kept figure over-state by it.
+        const payment = child.payment
+          ? await tx.payment.findUniqueOrThrow({ where: { id: child.payment.id }, select: { id: true, status: true, amountCents: true, refundedAmountCents: true } })
+          : null;
         // #3653: a per-child refund's mirror and note are its executor's.
-        if (mirrorPlan && refundForChild > 0 && child.payment) {
+        if (mirrorPlan && refundForChild > 0 && payment) {
           // Ledger bypass is acceptable here: these organiser-settled child
           // payments have no PaymentTransaction rows (they were paid via the
           // combined settlement PI, not per-child intents), so there is no
           // ledger to post against — the per-child refundedAmountCents is the
           // record of record for these refunds.
-          const nextRefunded = mirrorPlanRefundedCents(child.payment, refundForChild);
+          const nextRefunded = mirrorPlanRefundedCents(payment, refundForChild);
           await tx.payment.update({
-            where: { id: child.payment.id },
+            where: { id: payment.id },
             data: {
               refundedAmountCents: nextRefunded,
               status:
-                nextRefunded >= child.payment.amountCents
+                nextRefunded >= payment.amountCents
                   ? PaymentStatus.REFUNDED
                   : PaymentStatus.PARTIALLY_REFUNDED,
             },
@@ -581,7 +586,7 @@ export async function settleGroupBookingOnOrganiserCancel(
           // -active organiser-settled child, over the same status set this loop
           // claims. `GroupBooking.status` is not in that query at all.
           const queued = await enqueueXeroRefundCreditNoteOperation(
-            child.payment.id,
+            payment.id,
             refundForChild,
             { createdByMemberId: sessionUserId, store: tx }
           );
@@ -607,7 +612,7 @@ export async function settleGroupBookingOnOrganiserCancel(
         // Posts only for a child confirmed on the ledger, which the group
         // settle does since #3854.
         await postGroupCancelChildLedgerLines(tx, {
-          child,
+          child: { ...child, payment },
           settlement,
           mirrorPlan,
           refundForChild,
