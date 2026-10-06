@@ -8,9 +8,16 @@ import {
   type OtherLodgeAmenity,
   type SerializedOtherLodgeData,
 } from "@/lib/other-lodges";
+import logger from "@/lib/logger";
+import {
+  SERVERNZ_EXPECTED_SERVER_VERSION,
+  SERVER_VERSION_UNKNOWN,
+  isStoredServerVersionMismatch,
+} from "@/lib/servernz-api-version";
 import { getOperationalServerNzApiKey } from "@/lib/servernz-config";
 import {
   loadServerNzSettings,
+  recordServerVersionCheck,
   validateCentralServerBaseUrl,
 } from "@/lib/servernz-settings";
 
@@ -38,6 +45,27 @@ export class ServerNzApiError extends Error {
     super(message);
     this.name = "ServerNzApiError";
     this.status = status;
+  }
+}
+
+/**
+ * The central server is on a different API version from the one this site was
+ * built for, so nothing is transferred (#49, `INV-INT-025`). Thrown by
+ * `resolveConnection` BEFORE any request is built, so no caller can reach the
+ * server past it. Carries only the two numbers - never the key or the URL.
+ */
+export class ServerNzVersionMismatchError extends Error {
+  /** The version this site speaks. */
+  expected: string;
+  /** The server's last reported version, or "unknown" for a server that predates versioning. */
+  serverVersion: string;
+  constructor(expected: string, serverVersion: string) {
+    super(
+      `Syncing with the Alpine Central Server is paused: this site is built for server version ${expected} and the server reports ${serverVersion}.`,
+    );
+    this.name = "ServerNzVersionMismatchError";
+    this.expected = expected;
+    this.serverVersion = serverVersion;
   }
 }
 
@@ -157,7 +185,24 @@ export interface OtherLodgesPullResult {
   ownLodgeNamesRefused: boolean;
 }
 
-async function resolveConnection(): Promise<{ baseUrl: string; apiKey: string }> {
+/**
+ * The connection every request is built from, and THE ONE PLACE the version
+ * gate lives (#49, `INV-INT-025`). Every server-bound function in this module
+ * calls it, so a caller cannot reach the server past the gate; the only opt-out
+ * is `skipVersionGate`, used by `fetchServerVersion` alone, because the version
+ * call is how a paused site finds out it may resume.
+ *
+ * Gate order: base URL, key, URL shape (all unchanged), THEN the stored server
+ * version. A stored answer that differs from `SERVERNZ_EXPECTED_SERVER_VERSION`
+ * throws `ServerNzVersionMismatchError`; a stored `null` (never asked) runs one
+ * inline check first so a deployment that upgraded before its nightly sync, or a
+ * key saved a moment ago, learns the answer on its first request rather than
+ * syncing blind until 03:00. A check that FAILS leaves the row `null` and lets
+ * the request through: a failed check never pauses syncing.
+ */
+async function resolveConnection(
+  options: { skipVersionGate?: boolean } = {},
+): Promise<{ baseUrl: string; apiKey: string }> {
   const [apiKey, settings] = await Promise.all([
     getOperationalServerNzApiKey(),
     loadServerNzSettings(),
@@ -182,15 +227,101 @@ async function resolveConnection(): Promise<{ baseUrl: string; apiKey: string }>
       `The stored Alpine Central Server base URL is not usable: ${check.reason}`,
     );
   }
-  return { baseUrl: check.value as string, apiKey };
+  const connection = { baseUrl: check.value as string, apiKey };
+  if (options.skipVersionGate) return connection;
+
+  let stored = settings.serverVersion;
+  if (stored === null) {
+    // Self-heal: ask once, inline. `refreshStoredServerVersion` swallows a
+    // failed call and returns null, which allows the request (default 1).
+    stored = await refreshStoredServerVersion(connection);
+  }
+  if (isStoredServerVersionMismatch(stored)) {
+    throw new ServerNzVersionMismatchError(
+      SERVERNZ_EXPECTED_SERVER_VERSION,
+      stored as string,
+    );
+  }
+  return connection;
 }
+
+/**
+ * Every request names the version this site speaks, so the server can refuse
+ * a transfer on its side too (409 `API_VERSION_MISMATCH`) and list the club on
+ * its Issues screen. The header is the server's documented name.
+ */
+const CLIENT_API_VERSION_HEADER = "X-Client-Api-Version";
 
 function authHeaders(apiKey: string): HeadersInit {
   return {
     "Content-Type": "application/json",
     Accept: "application/json",
     Authorization: `Bearer ${apiKey}`,
+    [CLIENT_API_VERSION_HEADER]: SERVERNZ_EXPECTED_SERVER_VERSION,
   };
+}
+
+const versionResultSchema = z.object({
+  version: z.string().max(16),
+  match: z.boolean().nullable(),
+});
+
+/**
+ * Ask the central server its API version (#49).
+ *
+ * `GET /api/v1/version` always answers 200 with the server's number, even when
+ * the two differ - a 409 here would hide the very thing this asks for. A 404
+ * means the server predates versioning and is reported as
+ * `SERVER_VERSION_UNKNOWN`, which counts as a mismatch. Any other failure
+ * throws, and the CALLER decides what a failed check means (it keeps the
+ * stored answer; it never pauses syncing). The version gate is skipped here and
+ * nowhere else: this is the call that tells a paused site it may resume.
+ */
+export async function fetchServerVersion(connection?: {
+  baseUrl: string;
+  apiKey: string;
+}): Promise<string> {
+  const { baseUrl, apiKey } =
+    connection ?? (await resolveConnection({ skipVersionGate: true }));
+  const res = await fetch(`${baseUrl}/api/v1/version`, {
+    method: "GET",
+    cache: "no-store",
+    headers: authHeaders(apiKey),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (res.status === 404) return SERVER_VERSION_UNKNOWN;
+  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  return versionResultSchema.parse(await res.json()).version;
+}
+
+/**
+ * Fetch the server's version and record it, returning what was recorded - or
+ * `null` when the call failed, in which case NOTHING is recorded and the stored
+ * answer (whatever it was) stands. Shared by the gate's self-heal above and by
+ * `checkServerVersion` in `servernz-version-check.ts`, so there is one path
+ * that writes the column. Logs only the two numbers (`INV-INT-005`).
+ */
+export async function refreshStoredServerVersion(connection?: {
+  baseUrl: string;
+  apiKey: string;
+}): Promise<string | null> {
+  try {
+    const version = await fetchServerVersion(connection);
+    await recordServerVersionCheck(version);
+    if (version !== SERVERNZ_EXPECTED_SERVER_VERSION) {
+      logger.info(
+        { expected: SERVERNZ_EXPECTED_SERVER_VERSION, serverVersion: version },
+        "Alpine Central Server reports a different API version; syncing is paused",
+      );
+    }
+    return version;
+  } catch (error) {
+    logger.warn(
+      { err: error, expected: SERVERNZ_EXPECTED_SERVER_VERSION },
+      "Could not check the Alpine Central Server API version; keeping the last known answer",
+    );
+    return null;
+  }
 }
 
 /**
@@ -239,6 +370,7 @@ function multipartAuthHeaders(apiKey: string): HeadersInit {
   return {
     Accept: "application/json",
     Authorization: `Bearer ${apiKey}`,
+    [CLIENT_API_VERSION_HEADER]: SERVERNZ_EXPECTED_SERVER_VERSION,
   };
 }
 
@@ -435,7 +567,10 @@ export async function fetchSharedPostImage(
   const res = await fetch(target, {
     method: "GET",
     cache: "no-store",
-    headers: { Authorization: `Bearer ${apiKey}` },
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      [CLIENT_API_VERSION_HEADER]: SERVERNZ_EXPECTED_SERVER_VERSION,
+    },
     signal: AbortSignal.timeout(SHARE_TIMEOUT_MS),
   });
   if (!res.ok) return null;
