@@ -618,8 +618,8 @@ export async function archiveEligibleAuditLogs(
 // When NO archive is configured (`archiveActive` false), there is no archive to
 // outrun and nowhere for the data to go, so archivable rows are pruned on
 // `expiresAt` exactly as before — retaining them forever would break data
-// minimisation. `diagnostic_high_volume` and the unclassified/`critical` classes
-// are never archived, so they are always pruned purely on their own expiry.
+// minimisation. `diagnostic_high_volume`, `critical` and unclassified rows are never
+// archived and prune on their own expiry; a NULL severity is NOT critical (#3524).
 export async function pruneExpiredAuditLogs(
   db: AuditRetentionDbClient = prisma,
   now = new Date(),
@@ -653,7 +653,7 @@ export async function pruneExpiredAuditLogs(
         {
           retentionClass: null,
           expiresAt: { lt: now },
-          NOT: { severity: "critical" },
+          OR: [{ severity: null }, { severity: { not: "critical" } }],
         },
         {
           retentionClass: "critical",
