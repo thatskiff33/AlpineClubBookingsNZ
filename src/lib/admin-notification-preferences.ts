@@ -76,6 +76,11 @@ export const ADMIN_NOTIFICATION_PREFERENCE_META = {
     description:
       "Alerts when somebody reports a physical fault at a lodge, from the members' portal or from a QR code in the lodge.",
   },
+  adminServerVersion: {
+    label: "Central server version",
+    description:
+      "A daily notice, in the Daily digest, while syncing with the Alpine Central Server is paused because the server is on a different software version from this site. Sent to Lodge Operations editors as well as the digest's own readers; a recipient without the digest receives only this notice.",
+  },
 } as const;
 
 export type AdminNotificationPreferenceKey =
@@ -141,6 +146,14 @@ export const ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT: Record<
   // already live. A club whose maintenance officer is not otherwise a lodge
   // admin grants them that area, or builds a custom access role that does.
   adminMaintenanceReport: { area: "lodge", level: "edit" },
+  // #49 (owner decision on the issue): the "central server version" digest
+  // entry goes to BOTH the digest's own audience and Lodge Operations editors,
+  // because the Other lodges panel is where a stale list is felt. This key is
+  // the lodge half; the digest half rides `adminDailyDigest`. A member who
+  // holds only this key is sent the version entry alone - never the digest's
+  // cross-area counts (INV-PRIV masking) - and a member who holds both gets
+  // one email, the full digest.
+  adminServerVersion: { area: "lodge", level: "edit" },
 };
 
 export type AdminNotificationPreferences = Record<
@@ -169,6 +182,7 @@ export const ADMIN_NOTIFICATION_PREFERENCE_SELECT = {
   adminBookingReviewRequired: true,
   adminMemberDeleteRequest: true,
   adminMaintenanceReport: true,
+  adminServerVersion: true,
 } as const;
 
 export function resolveAdminNotificationPreferences(
@@ -191,6 +205,7 @@ export function resolveAdminNotificationPreferences(
     adminBookingReviewRequired: preferences?.adminBookingReviewRequired ?? true,
     adminMemberDeleteRequest: preferences?.adminMemberDeleteRequest ?? true,
     adminMaintenanceReport: preferences?.adminMaintenanceReport ?? true,
+    adminServerVersion: preferences?.adminServerVersion ?? true,
   };
 }
 

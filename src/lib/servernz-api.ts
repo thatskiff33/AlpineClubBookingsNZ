@@ -12,6 +12,7 @@ import logger from "@/lib/logger";
 import {
   SERVERNZ_EXPECTED_SERVER_VERSION,
   SERVER_VERSION_UNKNOWN,
+  describeServerVersionPause,
   isStoredServerVersionMismatch,
 } from "@/lib/servernz-api-version";
 import { getOperationalServerNzApiKey } from "@/lib/servernz-config";
@@ -60,9 +61,7 @@ export class ServerNzVersionMismatchError extends Error {
   /** The server's last reported version, or "unknown" for a server that predates versioning. */
   serverVersion: string;
   constructor(expected: string, serverVersion: string) {
-    super(
-      `Syncing with the Alpine Central Server is paused: this site is built for server version ${expected} and the server reports ${serverVersion}.`,
-    );
+    super(describeServerVersionPause(expected, serverVersion));
     this.name = "ServerNzVersionMismatchError";
     this.expected = expected;
     this.serverVersion = serverVersion;

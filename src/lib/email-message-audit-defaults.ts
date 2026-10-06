@@ -344,7 +344,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "admin-daily-digest": {
     "defaultSubject": "Admin Daily Digest - {{totalAlerts}} alert{{s}} in past 24h",
-    "defaultBody": "Admin Daily Digest\n\nSummary of admin alerts from the past 24 hours.\n\nAlert Type | Count | Action\nNew Bookings | {{count}} | View\nPayment Failures | {{count}} | View\nCapacity Warnings | {{count}} | View\nBookings Bumped | {{count}} | View\nPending Deadlines | {{count}} | View\nXero Errors | {{count}} | View\n\nTotal alerts: {{totalAlerts}}\n\nOpen Admin Dashboard: {{BASE_URL}}/admin/dashboard"
+    "defaultBody": "Admin Daily Digest\n\nSummary of admin alerts from the past 24 hours.\n\nAlert Type | Count | Action\nNew Bookings | {{count}} | View\nPayment Failures | {{count}} | View\nCapacity Warnings | {{count}} | View\nBookings Bumped | {{count}} | View\nPending Deadlines | {{count}} | View\nXero Errors | {{count}} | View\n\nTotal alerts: {{totalAlerts}}\n\n{{serverVersionNote}}\n\nOpen Admin Dashboard: {{BASE_URL}}/admin/dashboard"
   },
   "admin-xero-sync-error": {
     "defaultSubject": "Xero Sync Error — {{CLUB_BOOKINGS_NAME}}",

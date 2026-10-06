@@ -2,30 +2,102 @@ import {
   adminDailyDigestTemplate,
   adminIssueReportTemplate,
   adminMaintenanceReportTemplate,
+  type AdminDigestCounts,
+  type AdminDigestServerVersion,
 } from "@/lib/email-templates/admin-ops";
-import { sendToAdmins } from "./admin-alerts-shared";
+import {
+  getAdminAlertEmails,
+  sendAdminAlertTo,
+  sendToAdmins,
+} from "./admin-alerts-shared";
 import { renderEmailHtml } from "@/lib/email-theme";
+import { describeServerVersionPause } from "@/lib/servernz-api-version";
+import logger from "@/lib/logger";
+import { shouldSendAdminSystemEmail } from "@/lib/notification-delivery-policies";
 
-// N-13: Admin daily digest
-export async function sendAdminDailyDigestAlert(sections: {
-  newBookings: number;
-  paymentFailures: number;
-  capacityWarnings: number;
-  bookingsBumped: number;
-  pendingDeadlines: number;
-  xeroErrors: number;
-  totalAlerts: number;
+const DAILY_DIGEST_TEMPLATE = "admin-daily-digest";
+
+/**
+ * N-13: Admin daily digest - and, since #49, the "central server version"
+ * entry that rides it while syncing with the Alpine Central Server is paused.
+ *
+ * TWO AUDIENCES, TWO RENDERS, ONE TEMPLATE NAME. The digest's own readers
+ * (`adminDailyDigest`, Admin Overview edit) get the full digest: the counts and,
+ * when paused, the version entry. Lodge Operations editors (`adminServerVersion`)
+ * who are NOT digest readers get a second render that carries ONLY the version
+ * entry - the counts are cross-area alert data their role does not hold, so
+ * neither the HTML nor `templateData` (what an admin override renders from)
+ * carries a count key for them, not even a zero. A member in both audiences
+ * is in the first set and gets exactly one email. When the versions match the
+ * second audience is not resolved at all: the entry is absent, not empty.
+ */
+export async function sendAdminDailyDigestAlert(input: {
+  sections: AdminDigestCounts;
+  /** Set while the central server's API version differs; null when it matches. */
+  serverVersion: AdminDigestServerVersion | null;
 }) {
-  await sendToAdmins({
+  const { sections, serverVersion } = input;
+  const delivery = await shouldSendAdminSystemEmail({
+    templateName: DAILY_DIGEST_TEMPLATE,
+  });
+  if (!delivery.send) {
+    logger.info(
+      {
+        templateName: DAILY_DIGEST_TEMPLATE,
+        deliveryMode: delivery.mode,
+        reason: delivery.reason,
+      },
+      "Skipped admin email by delivery policy",
+    );
+    return;
+  }
+
+  // The composed sentence an override renders from; empty when the versions
+  // match, so a club's rewritten body says nothing on an ordinary day.
+  const versionTokens = {
+    serverVersionNote: serverVersion
+      ? describeServerVersionPause(serverVersion.expected, serverVersion.server)
+      : "",
+    serverVersionExpected: serverVersion?.expected ?? "",
+    serverVersionActual: serverVersion?.server ?? "",
+  };
+
+  const digestEmails = await getAdminAlertEmails("adminDailyDigest");
+  await sendAdminAlertTo({
+    emails: digestEmails,
     subject: `Admin Daily Digest - ${sections.totalAlerts} alert${sections.totalAlerts !== 1 ? "s" : ""} in past 24h`,
-    html: await renderEmailHtml(() => adminDailyDigestTemplate(sections)),
-    templateName: "admin-daily-digest",
+    html: await renderEmailHtml(() =>
+      adminDailyDigestTemplate({
+        ...sections,
+        ...(serverVersion ? { serverVersion } : {}),
+      }),
+    ),
+    templateName: DAILY_DIGEST_TEMPLATE,
     templateData: {
       ...sections,
       count: sections.totalAlerts,
       s: sections.totalAlerts === 1 ? "" : "s",
+      ...versionTokens,
     },
     preferenceKey: "adminDailyDigest",
+  });
+
+  if (!serverVersion) return;
+
+  const alreadySent = new Set(digestEmails);
+  const lodgeOnlyEmails = (await getAdminAlertEmails("adminServerVersion")).filter(
+    (email) => !alreadySent.has(email),
+  );
+  if (lodgeOnlyEmails.length === 0) return;
+
+  await sendAdminAlertTo({
+    emails: lodgeOnlyEmails,
+    subject: "Alpine Central Server version differs - syncing is paused",
+    // No counts spread here, on purpose: see the docblock.
+    html: await renderEmailHtml(() => adminDailyDigestTemplate({ serverVersion })),
+    templateName: DAILY_DIGEST_TEMPLATE,
+    templateData: versionTokens,
+    preferenceKey: "adminServerVersion",
   });
 }
 

@@ -89,6 +89,22 @@ export function computeServerVersionStatus(
 }
 
 /**
+ * The one sentence that explains a pause, used by the gate's error, the Daily
+ * digest, the setup page and the lodges panel so every surface says the same
+ * thing. Names only the two numbers.
+ */
+export function describeServerVersionPause(
+  expected: string,
+  serverVersion: string,
+): string {
+  const serverPart =
+    serverVersion === SERVER_VERSION_UNKNOWN
+      ? "the server does not report a version, so it is on a release from before version checks"
+      : `the server reports ${serverVersion}`;
+  return `Syncing with the Alpine Central Server is paused: this site is built for server version ${expected} and ${serverPart}. Nothing is sent or received until the two match.`;
+}
+
+/**
  * Whether a STORED version pauses syncing. Only a recorded answer can: NULL
  * (never asked) allows, and so does a key that is missing, because then
  * `resolveConnection` refuses the request for its own reason first.
