@@ -92,12 +92,12 @@ export const MEMBER_ROSTER_BOOKING_SELECT = {
   checkIn: true,
   checkOut: true,
   // CONSULTED, NEVER DISCLOSED, and the difference is the whole point. A
-  // whole-lodge hold is authoritative sole occupancy on the lobby display
-  // (`lodge-display-state.ts`), which suppresses the party's names whatever
-  // its size. The roster has to ask the same question or it names a party of
-  // five who hired the entire building. Reading the column is what PROTECTS
-  // them; what would leak is putting it in the payload, and the payload test
-  // asserts the key and the value are both absent from the built result.
+  // held booking gets NO row of its own (#3474): its nights are stated once,
+  // as `heldNights`, without naming or counting the party. Reading the column
+  // is what keeps the party off the list; what would leak is putting it in
+  // the payload, and the payload test asserts the key and the value are both
+  // absent from the built result. Its guests are still counted in the
+  // per-night totals, so no other booking reads as alone on a held night.
   wholeLodgeHold: true,
   member: {
     select: { firstName: true, lastName: true, ageTier: true },
@@ -201,9 +201,11 @@ export interface LodgeRoster {
    *
    * THE LEAST DISCLOSURE THE DECISION NEEDS, and nothing more: the NIGHTS, as
    * one list for the lodge. Not which booking, not who holds it, not the party
-   * size, not the purpose, not how many holds there are. The per-booking
-   * `wholeLodgeHold` flag is still never serialized, so nothing here ties a
-   * held night to a row of people. Read through `getLodgeHeldNights`, the
+   * size, not the purpose, not how many holds there are. The holding booking
+   * itself gets NO group or person row — this row stands for the whole party
+   * — and the per-booking `wholeLodgeHold` flag is never serialized, so
+   * nothing ties a held night to a name or a head count. Read through
+   * `getLodgeHeldNights`, the
    * capacity engine's own held-night answer, so these are exactly the nights
    * the calendar pins to full — including a hold not yet paid, which no other
    * row on this page would show.
@@ -400,6 +402,13 @@ function buildOneLodgeRoster(
   for (const { booking, present, nightCounts } of attending) {
     if (present.length === 0) continue;
 
+    // A WHOLE-LODGE HOLD GETS NO ROW (#3474, owner decision 6 Oct 2026: shown
+    // "without naming the party"). Its nights are stated once, as the lodge's
+    // `heldNights`; a group row beside them — "Jane Smith, up to 5" — would tie
+    // the hold to its holder's name and size. Its guests were still counted in
+    // pass one, so every other booking's sole-occupancy reading is unchanged.
+    if (booking.wholeLodgeHold) continue;
+
     // SOLE OCCUPANCY, the same question the lobby display asks and answered the
     // same way — deliberately, because `namesAllowedForBooking` is shared and a
     // second reading of its argument would be a second rule wearing one name.
@@ -417,23 +426,19 @@ function buildOneLodgeRoster(
     // suppressed a lone couple who should be named, and — the defect that
     // matters — it NAMED two fourteen-person school groups that never
     // overlapped, because the window held two bookings, even though each had
-    // the lodge entirely to itself for its whole stay.
-    // A whole-lodge hold is sole occupancy OUTRIGHT, at any party size, which
-    // is how the lobby display reads it. Without this a member who hires the
-    // entire building for five people is fully named the moment any second
-    // booking exists in the window, because five is under the group threshold.
+    // the lodge entirely to itself for its whole stay. (A whole-lodge hold,
+    // sole occupancy outright, never reaches here: it was skipped above.)
     const isGroup =
       // #3369: an organisation has no age tier and is a group outright — asked
       // through the one home of that rule (#3480), as the lobby display does.
       bookingOwnerHasNoAgeTier(booking) ||
       booking.guests.length >= WHOLE_LODGE_MIN_GUESTS;
     const soleOccupancy =
-      booking.wholeLodgeHold ||
-      (isGroup &&
-        nightCounts.size > 0 &&
-        [...nightCounts.entries()].every(
-          ([night, count]) => lodgeNightTotals.get(night) === count
-        ));
+      isGroup &&
+      nightCounts.size > 0 &&
+      [...nightCounts.entries()].every(
+        ([night, count]) => lodgeNightTotals.get(night) === count
+      );
 
     // Over the WHOLE booking, not merely the part of it inside the window.
     // Decision D1 is a property of the booking: "a booking containing a minor

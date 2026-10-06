@@ -698,7 +698,7 @@ What one member may learn about another from the lodge roster (#2942).
   set is pinned, because no denylist can safely forbid a bare `id`. No per-night
   occupancy total is returned.
 - **Consulting is not disclosing.** `wholeLodgeHold` is read, because it
-  decides whether a party is named; it never reaches the payload.
+  decides whether a party is listed; it never reaches the payload.
 - **Whose name may appear.** Individual names only where
   `namesAllowedForBooking` allows, reduced by `reduceName` at
   `Lodge.rosterNameGranularity` (null means `FULL_NAME`, decision D2 —
@@ -712,9 +712,9 @@ What one member may learn about another from the lodge roster (#2942).
   head count that concealment only made them the unexplained difference between
   two screens. A minor custodian is never named, and naming is all-or-nothing,
   so nobody is identified by elimination.
-- **Held nights are SHOWN too** (owner decision, 6 Oct 2026, #3474), from
-  `getLodgeHeldNights`, as "reserved for a private booking": nights only, never
-  whose. This reverses ADR-001 decision 6 for roster clubs only.
+- **Held nights are SHOWN** (owner decision, 6 Oct 2026, #3474), via
+  `getLodgeHeldNights`, as "reserved for a private booking"; the party gets no
+  row, neither named nor counted. Reverses ADR-001 decision 6, roster only.
 - Pinned by `src/lib/__tests__/member-lodge-roster-privacy.test.ts`.
 
 ## INV-PRIV-018

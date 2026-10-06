@@ -52,10 +52,10 @@ looking after the place, rather than having to work it out.
 
 **Nights the whole lodge is privately booked say so.** If somebody has hired
 the entire lodge, those nights appear as **Reserved for a private booking**.
-That row does not say who, or how many. The party may still appear on the list
-under its own group label once it has paid, like any other booking. This is
-why the booking calendar shows those nights as full even when the list has only
-a few names on them, or none at all.
+It does not say who the booking is for or how many people are on it, and the
+people on that booking are not listed separately. This is why the booking
+calendar shows those nights as full even when the list has few or no names on
+them.
 
 **School and club groups show as the organisation.** A school booking reads as
 the school's name, never as the teachers or the pupils.
@@ -75,9 +75,10 @@ finished. A booking somebody has made but not yet paid for does not appear, so
 the lodge may end up busier than the list suggests.
 
 **A group that had the lodge to itself shows as a group, not as people.** A
-booking that hired the whole lodge appears under its label rather than as a
-list of names, whatever its size. So does a party of eight or more that turned
-out to be the only booking in the building on every one of its nights. A
+party of eight or more that turned out to be the only booking in the building
+on every one of its nights appears under its label rather than as a list of
+names. (A booking that hired the whole lodge is not listed at all; its nights
+show as reserved, as above.) A
 smaller party that simply happened to be alone is still named — being the only
 people there on a quiet Tuesday is not the same as taking the place over.
 

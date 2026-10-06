@@ -727,13 +727,11 @@ describe("member lodge roster — findings from adversarial review", () => {
       payload,
       "INV-PRIV-017: a party that hired the whole lodge must not be named, whatever its size."
     ).not.toContain("Private0");
-    // The row collapses to the booking's own label. With no minor on the
-    // booking that label is the organiser at the lodge's granularity, which is
-    // the lobby display's behaviour too: the PARTY is what is protected here,
-    // not the fact that a booking exists under somebody's name.
-    expect(roster.lodges[0]?.groups.map((g) => g.label)).toEqual([
-      "Jane Smith",
-    ]);
+    // #3474: a held booking gets NO row at all — not even its organiser's
+    // label. Its nights are stated once as `heldNights`, without naming or
+    // counting the party.
+    expect(roster.lodges[0]?.groups).toEqual([]);
+    expect(roster.lodges[0]?.people.map((p) => p.name)).toEqual(["Ari Nikau"]);
     expect(roster.lodges[0]?.people.map((p) => p.name)).not.toContain(
       "Private0 Smith"
     );
@@ -1175,6 +1173,11 @@ describe("member lodge roster — whole-lodge held nights (#3474)", () => {
       "lodgeName",
       "people",
     ]);
+    expect(
+      lodge.groups,
+      "INV-PRIV-017 (#3474): a whole-lodge hold is shown without naming or counting the party, so its booking gets no group row."
+    ).toEqual([]);
+    expect(lodge.people).toEqual([]);
     for (const night of lodge.heldNights) {
       expect(night).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     }

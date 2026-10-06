@@ -1271,7 +1271,7 @@ capacity or double-booking violation.
   through (#2930) — while a member may join the waitlist over held nights and
   is never promoted while the hold applies; only admin surfaces are told a hold
   is in effect — with ONE exception: where the member lodge roster runs, it
-  states the held nights, naming nobody (`INV-PRIV-017`, owner decision
+  states the held nights without naming or counting the party (`INV-PRIV-017`, owner decision
   6 Oct 2026, #3474). Full scenario table in `docs/CAPACITY_MODEL.md`,
   "Exclusive whole-lodge hold — a non-bypassable block".
 

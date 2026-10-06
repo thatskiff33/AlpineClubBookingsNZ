@@ -67,7 +67,8 @@ concept (not display-only); the display reads it.
    as "no beds free, six people listed" and the hold was deducible by
    subtraction. The owner decided to show it rather than leave it to be
    inferred: the roster states the held nights as "reserved for a private
-   booking", naming nobody and not saying whose booking it is (`INV-PRIV-017`).
+   booking", without naming or counting the party: the holding booking gets
+   no row of its own on the roster (`INV-PRIV-017`).
    The calendar, the waitlist and every other member surface are unchanged,
    and a club without the roster module keeps this decision exactly as
    written.
