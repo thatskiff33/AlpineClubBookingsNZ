@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MoneyInput } from "@/components/ui/money-input";
 import { useClubFormat } from "@/components/club-format-provider";
-import { type ClubDateFormat } from "@/lib/club-time";
+import { type ClubDateFormat, formatStayDateOrNull, calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time";
 import { formatCents } from "@/lib/pricing";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import {
@@ -51,10 +51,6 @@ import {
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope";
-import {
-  calendarDayFromPayload,
-  formatPayloadCalendarDay,
-} from "../../_lib/calendar-day";
 import { readSeasonSchedule } from "../../_lib/season-schedule";
 import { MissingHutRatesNotice } from "./missing-hut-rates-notice";
 
@@ -114,7 +110,7 @@ const FALLBACK_TIERS: AgeTierSetting[] = [
 // projection is the identity for every club. It used to be read through
 // APP_TIME_ZONE, which for a club behind UTC named the previous day.
 function formatSeasonEdge(value: string, format: ClubDateFormat): string {
-  return formatPayloadCalendarDay(value, format, value);
+  return (formatStayDateOrNull(value, format) ?? value);
 }
 
 /*
@@ -389,7 +385,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     const byId = new Map<string, MembershipTypeRateGap[]>();
     if (rateTypes.length === 0 || bookableAgeTiers.length === 0) return byId;
     for (const season of seasons) {
-      const endDate = calendarDayFromPayload(season.endDate);
+      const endDate = calendarDateOfSerialisedDbDateOrNull(season.endDate);
       // An edge this screen cannot read is not evidence of a gap. Say nothing
       // rather than warn about a season whose scope is unknown.
       if (endDate === null) continue;
@@ -462,8 +458,8 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     setEditingId(season.id);
     setName(season.name);
     setType(season.type);
-    setStartDate(calendarDayFromPayload(season.startDate) ?? "");
-    setEndDate(calendarDayFromPayload(season.endDate) ?? "");
+    setStartDate(calendarDateOfSerialisedDbDateOrNull(season.startDate) ?? "");
+    setEndDate(calendarDateOfSerialisedDbDateOrNull(season.endDate) ?? "");
     setActive(season.active);
     setRates(seasonToRatesMap(season.membershipTypeRates, rateTypes, ageTiers));
     clearAmountDrafts();

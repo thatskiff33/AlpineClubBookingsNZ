@@ -16,6 +16,7 @@
 import { describe, expect, it } from "vitest";
 
 import { formatClubInstantDate, formatStayDate, formatStayDateOrNull } from "../format";
+import { calendarDateOfSerialisedDbDateOrNull } from "../instant";
 import { requireClubTimeZone } from "../zone";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
@@ -75,5 +76,45 @@ describe("formatStayDateOrNull is the client-render form", () => {
     expect(formatStayDateOrNull("not-a-date", CLUB_FORMAT_TEST)).toBeNull();
     expect(formatStayDateOrNull("2026-02-30", CLUB_FORMAT_TEST)).toBeNull();
     expect(formatStayDateOrNull("rubbish", CLUB_FORMAT_TEST) ?? "—").toBe("—");
+  });
+});
+
+/**
+ * #3511 — ONE stay-date decoder. `formatPayloadCalendarDay` / `calendarDayFromPayload`
+ * (`admin/_lib/calendar-day.ts`) and `formatMemberCalendarDay` were a second and
+ * third reading of the same rule, with a stricter rejection of a time-bearing
+ * string; they are gone, and the cases they pinned live here against the kernel.
+ *
+ * THE ONE BEHAVIOUR THAT CHANGED, decided by the owner on #3511 ("converge, keep
+ * fallbacks"): a malformed, offset-less timestamp such as `2026-07-04T13:45:00`
+ * used to render the surface's fallback ("—"); the kernel's prefix read
+ * (`INV-DATE-010`) names its day. The prefix read wins because a serialised
+ * `@db.Date` is always an instant string, so the case fires only on a bug, and
+ * rejecting it would add a rule to the kernel that INV-DATE-010 does not have.
+ */
+describe("the converged decoder reads every spelling to the stored day (#3511)", () => {
+  const HOSTILE_ZONES = ["UTC", "America/Denver", "Pacific/Kiritimati", "Pacific/Auckland"];
+
+  it.each(HOSTILE_ZONES)("decodes both spellings to 2026-04-01 on a %s host", (zone) => {
+    withTimeZone(zone, () => {
+      expect(calendarDateOfSerialisedDbDateOrNull("2026-04-01T00:00:00.000Z")).toBe("2026-04-01");
+      expect(calendarDateOfSerialisedDbDateOrNull("2026-04-01")).toBe("2026-04-01");
+      expect(formatStayDateOrNull("2026-04-01T00:00:00.000Z", CLUB_FORMAT_TEST)).toBe("1 Apr 2026");
+      expect(formatStayDateOrNull("2026-04-01", CLUB_FORMAT_TEST)).toBe("1 Apr 2026");
+    });
+  });
+
+  it("answers null for anything that names no day, so the surface picks its fallback", () => {
+    for (const value of [null, undefined, "", "not-a-date", "2026-02-30", "2026-13-01"]) {
+      expect(calendarDateOfSerialisedDbDateOrNull(value)).toBeNull();
+      expect(formatStayDateOrNull(value, CLUB_FORMAT_TEST) ?? "—").toBe("—");
+    }
+  });
+
+  it("reads a time-bearing string by its date prefix (the one behaviour #3511 changed)", () => {
+    // Before #3511 `formatPayloadCalendarDay` / `formatMemberCalendarDay` /
+    // `formatFamilyGroupCalendarDay` answered their fallback for this value.
+    expect(calendarDateOfSerialisedDbDateOrNull("2026-07-04T13:45:00")).toBe("2026-07-04");
+    expect(formatStayDateOrNull("2026-07-04T13:45:00", CLUB_FORMAT_TEST)).toBe("4 Jul 2026");
   });
 });

@@ -18,15 +18,11 @@ import {
   useLodgeOptions,
 } from "@/components/lodge-select"
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status"
-import {
-  calendarDayFromPayload,
-  formatPayloadCalendarDay,
-} from "../_lib/calendar-day";
 import { readSeasonSchedule } from "../_lib/season-schedule";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
 import { useClubTime } from "@/components/club-time-provider"
 import { useClubFormat } from "@/components/club-format-provider"
-import { type ClubDateFormat } from "@/lib/club-time"
+import { type ClubDateFormat, formatStayDateOrNull, calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time"
 import {
   SeasonCoverageGapNotice,
   SeasonCoverageGapSummary,
@@ -53,7 +49,7 @@ interface Season {
 // projection is the identity for every club. It used to be read through
 // APP_TIME_ZONE, which for a club behind UTC named the previous day.
 function formatSeasonEdge(value: string, format: ClubDateFormat): string {
-  return formatPayloadCalendarDay(value, format, value)
+  return formatStayDateOrNull(value, format) ?? value
 }
 
 export default function SeasonsPage() {
@@ -188,8 +184,8 @@ export default function SeasonsPage() {
     setEditingId(season.id)
     setName(season.name)
     setType(season.type)
-    setStartDate(calendarDayFromPayload(season.startDate) ?? "")
-    setEndDate(calendarDayFromPayload(season.endDate) ?? "")
+    setStartDate(calendarDateOfSerialisedDbDateOrNull(season.startDate) ?? "")
+    setEndDate(calendarDateOfSerialisedDbDateOrNull(season.endDate) ?? "")
     setActive(season.active)
   }
 

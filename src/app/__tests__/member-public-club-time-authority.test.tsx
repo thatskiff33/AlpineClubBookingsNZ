@@ -166,7 +166,7 @@ import type { MemberExceptionRequestItem } from "@/lib/member-exception-requests
  *   `clubTime.instantDate(new Date(value))`, and `instantDate` is one of the
  *   mechanisms paired here.
  * - `booking-request-respond-client` carries the same two formatters as the
- *   payment page — a fail-soft `formatStayDay` and a `club.instantDateTime`
+ *   payment page — a fail-soft `formatStayDateOrNull ?? value` and a `club.instantDateTime`
  *   expiry — and both are now discriminated there. It never had the payment
  *   page's straddle, because it already spelled its expiry as a date AND time.
  *

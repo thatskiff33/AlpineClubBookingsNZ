@@ -23,10 +23,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useClubFormat } from "@/components/club-format-provider";
-import {
-  calendarDayFromPayload,
-  formatPayloadCalendarDay,
-} from "../_lib/calendar-day";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
 import { useLodgeOptions } from "@/components/lodge-select";
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status";
@@ -39,7 +35,7 @@ import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope";
 import { PromoRedemptionsPanel } from "./promo-redemptions-panel";
-import { type ClubDateFormat } from "@/lib/club-time";
+import { type ClubDateFormat, formatStayDateOrNull, calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time";
 
 interface RedemptionsPromoSummary {
   id: string;
@@ -146,11 +142,11 @@ const TYPE_LABELS: Record<string, string> = {
   day is money. It agrees in New Zealand, which is why nothing caught it.
 */
 function formatPromoDateInput(value: string | null) {
-  return calendarDayFromPayload(value) ?? "";
+  return calendarDateOfSerialisedDbDateOrNull(value) ?? "";
 }
 
 function formatPromoDateDisplay(value: string | null, format: ClubDateFormat) {
-  return formatPayloadCalendarDay(value, format, "");
+  return (formatStayDateOrNull(value, format) ?? "");
 }
 
 export function PromoCodesPageClient({

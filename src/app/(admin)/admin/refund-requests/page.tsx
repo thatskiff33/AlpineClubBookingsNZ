@@ -31,8 +31,7 @@ import { getCancellationSettlementBreakdown } from "@/lib/payment-status-display
 import { refundAppealCeiling } from "@/lib/manual-refund-task-settlement-rules"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { useClubTime } from "@/components/club-time-provider"
-import { parseInstant, type BoundClubTime, type ClubDateFormat } from "@/lib/club-time"
-import { formatPayloadCalendarDay } from "../_lib/calendar-day"
+import { parseInstant, type BoundClubTime, formatStayDateOrNull } from "@/lib/club-time"
 import { MoneyInput } from "@/components/ui/money-input"
 import { parseDecimalDollarsToCents } from "@/lib/money-input"
 import { formatCents, formatCentsPlain } from "@/lib/utils"
@@ -129,13 +128,6 @@ function formatDateTime(clubTime: BoundClubTime, value: string | null) {
   }
 
   return clubTime.instantDateTime(instant)
-}
-
-// A booking's check-in/check-out is a CALENDAR DATE — a `@db.Date` column the
-// API serialises as UTC midnight. It takes no zone; reading it through one
-// named the night before for any club behind UTC (INV-DATE-019).
-function formatStayDay(value: string, format: ClubDateFormat) {
-  return formatPayloadCalendarDay(value, format)
 }
 
 export default function RefundRequestsPage() {
@@ -495,11 +487,11 @@ export default function RefundRequestsPage() {
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                           <div>
                             <span className="text-muted-foreground">Check-in:</span>{" "}
-                            {formatStayDay(req.booking.checkIn, format)}
+                            {formatStayDateOrNull(req.booking.checkIn, format) ?? "—"}
                           </div>
                           <div>
                             <span className="text-muted-foreground">Check-out:</span>{" "}
-                            {formatStayDay(req.booking.checkOut, format)}
+                            {formatStayDateOrNull(req.booking.checkOut, format) ?? "—"}
                           </div>
                           {payment && (
                             <>

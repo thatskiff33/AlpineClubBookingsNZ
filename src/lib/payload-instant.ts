@@ -19,7 +19,7 @@
  *
  * ## Why it lives in `src/lib` rather than under `src/app/(admin)/admin/_lib`
  *
- * It began there, beside `calendar-day.ts`, because every caller was an admin
+ * It began there, beside the admin calendar-day decoder (since folded into the kernel, #3511), because every caller was an admin
  * route. #3123 gave it callers in `src/components/admin/**` as well — the
  * environment-safety screens — and pulling an admin-route-scoped `_lib` into a
  * shared component tree is the wrong direction. So the decoders live here, on

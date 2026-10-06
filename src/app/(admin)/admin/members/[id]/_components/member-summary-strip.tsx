@@ -1,6 +1,7 @@
 "use client"
 
 import { Card, CardContent } from "@/components/ui/card"
+import { formatStayDateOrNull } from "@/lib/club-time"
 import { Calendar, Clock, CreditCard, IdCard, User, Wallet } from "lucide-react"
 import { formatCents } from "@/lib/utils"
 import { seasonSelectLabel } from "@/lib/season-label"
@@ -19,7 +20,6 @@ import { useClubTime } from "@/components/club-time-provider"
 // bookings — a `@db.Date` lodge night. Projecting either through a zone is
 // `INV-DATE-019`; for a club behind UTC it ages the member a day and moves
 // their last night off the one they stayed.
-import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
 import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import type { MemberDetail } from "../_types"
 import type { LucideIcon } from "lucide-react"
@@ -80,7 +80,7 @@ export function MemberSummaryStrip({
           value={formatAgeTierName(member.ageTier)}
           detail={
             member.dateOfBirth
-              ? `DOB: ${formatPayloadCalendarDay(member.dateOfBirth, format)}${memberExactAge ? ` (${memberExactAge})` : ""}`
+              ? `DOB: ${formatStayDateOrNull(member.dateOfBirth, format) ?? "—"}${memberExactAge ? ` (${memberExactAge})` : ""}`
               : null
           }
         />
@@ -110,7 +110,7 @@ export function MemberSummaryStrip({
           label="Last Stay"
           value={
             member.stats.lastStay
-              ? formatPayloadCalendarDay(member.stats.lastStay, format)
+              ? (formatStayDateOrNull(member.stats.lastStay, format) ?? "—")
               : "Never"
           }
         />

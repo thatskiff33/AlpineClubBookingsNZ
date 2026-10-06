@@ -2,20 +2,18 @@
  * A calendar day, as a `Date` whose HOST-LOCAL clock face reads that day
  * (CT-4, #2870; epic #2988).
  *
- * ## NOT `admin/_lib/calendar-day.ts`, and the file names now say so
+ * ## NOT the kernel's calendar-day decoders, and the names say so
  *
  * Two modules in this route tree decode a calendar day and they return OPPOSITE
- * encodings. `admin/_lib/calendar-day.ts` returns the kernel's `CalendarDate`,
+ * encodings. `calendarDateOfSerialisedDbDateOrNull` (`@/lib/club-time`) returns the kernel's `CalendarDate`,
  * which is UTC-encoded and is read back with UTC getters; this returns a plain
  * `Date` whose HOST-LOCAL clock face carries the day, because date-fns `format`
  * reads its argument with `getMonth()`/`getDate()`. Pair either one with the
  * other's reader and the label is a day out, silently, on exactly the
  * deployments this epic exists to protect.
  *
- * Both files were called `calendar-day.ts` until the CT-4 review pointed out
- * that nothing but the import path distinguished them — an autocomplete slip
- * would have compiled. This one is named for its encoding instead, which is the
- * property that actually differs.
+ * This one is named for its encoding, which is the property that actually
+ * differs from the kernel's.
  *
  * ## Why this exists rather than a kernel formatter
  *

@@ -26,8 +26,7 @@ import { getLifecycleStatusConfig } from "@/lib/admin-member-badges"
 import { CHIP_TONE_CLASSES, type ChipTone } from "@/lib/chip-tones"
 import { memberName } from "@/lib/member-serialization"
 import { useClubTime } from "@/components/club-time-provider"
-import { requireInstant } from "@/lib/club-time"
-import { formatPayloadCalendarDay } from "../../_lib/calendar-day"
+import { requireInstant, formatStayDateOrNull } from "@/lib/club-time"
 import { getXeroContactGroupTone } from "@/lib/xero-contact-group-tone"
 import { buildXeroContactUrl, buildXeroInvoiceUrl } from "@/lib/xero-links"
 import type { SubscriptionStatus } from "@prisma/client"
@@ -105,7 +104,7 @@ function formatMemberSince(
   member: Pick<Member, "joinedDate" | "createdAt">,
 ): string {
   return member.joinedDate
-    ? formatPayloadCalendarDay(member.joinedDate, clubTime.format)
+    ? (formatStayDateOrNull(member.joinedDate, clubTime.format) ?? "—")
     : clubTime.instantDate(requireInstant(member.createdAt))
 }
 

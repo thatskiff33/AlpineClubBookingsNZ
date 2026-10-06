@@ -1,6 +1,7 @@
 "use client";
 
 import { useId } from "react";
+import { formatStayDateOrNull } from "@/lib/club-time"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -31,7 +32,6 @@ import {
   dedupeParentOptions,
   parentLinkTypeLabel,
 } from "@/lib/admin-member-detail-helpers";
-import { formatPayloadCalendarDay } from "../../../_lib/calendar-day";
 import { useClubFormat } from "@/components/club-format-provider";
 import {
   DEPENDENT_PARENT_CREATE_ERRORS,
@@ -492,7 +492,7 @@ export function MemberDependentDialog({
                       <p className="mt-1 text-xs text-muted-foreground">
                         {linkSelected.canLogin ? "Can login" : "Non-login"}
                         {linkSelected.dateOfBirth
-                          ? ` · DOB ${formatPayloadCalendarDay(linkSelected.dateOfBirth, format)}`
+                          ? ` · DOB ${formatStayDateOrNull(linkSelected.dateOfBirth, format) ?? "—"}`
                           : ""}
                       </p>
                     </div>

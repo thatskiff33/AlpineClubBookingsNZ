@@ -1,11 +1,11 @@
 "use client"
 
 import { Badge } from "@/components/ui/badge"
+import { formatStayDateOrNull } from "@/lib/club-time"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { formatPromoBenefit } from "@/lib/admin-member-detail-helpers"
 import { useClubTime } from "@/components/club-time-provider"
-import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
 import { formatPayloadInstantDate } from "../../../_lib/payload-instant"
 import type { MemberPromoCode } from "../_types"
 import { useClubFormat } from "@/components/club-format-provider"
@@ -72,13 +72,13 @@ export function MemberPromoCodesCard({ promoCodes, className }: { promoCodes: Me
                     <div className="space-y-1">
                       <p>Assigned {promo.assignedAt ? formatPayloadInstantDate(clubTime, promo.assignedAt) : "unknown"}</p>
                       <p>
-                        Valid {promo.validFrom ? formatPayloadCalendarDay(promo.validFrom, format) : "now"} -{" "}
-                        {promo.validUntil ? formatPayloadCalendarDay(promo.validUntil, format) : "no end"}
+                        Valid {promo.validFrom ? (formatStayDateOrNull(promo.validFrom, format) ?? "—") : "now"} -{" "}
+                        {promo.validUntil ? (formatStayDateOrNull(promo.validUntil, format) ?? "—") : "no end"}
                       </p>
                       {(promo.bookingStartFrom || promo.bookingStartUntil) && (
                         <p>
-                          Stay dates {promo.bookingStartFrom ? formatPayloadCalendarDay(promo.bookingStartFrom, format) : "any"} -{" "}
-                          {promo.bookingStartUntil ? formatPayloadCalendarDay(promo.bookingStartUntil, format) : "any"}
+                          Stay dates {promo.bookingStartFrom ? (formatStayDateOrNull(promo.bookingStartFrom, format) ?? "—") : "any"} -{" "}
+                          {promo.bookingStartUntil ? (formatStayDateOrNull(promo.bookingStartUntil, format) ?? "—") : "any"}
                         </p>
                       )}
                     </div>

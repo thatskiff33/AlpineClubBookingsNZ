@@ -29,9 +29,8 @@
  *
  * `season-timeline.ts` holds the date arithmetic and knows nothing about
  * payloads. This is the seam where an admin API's wire encoding meets it, and
- * the decoder it composes (`calendar-day.ts`) is admin-scoped for a reason
- * written in its own docblock. Putting a `src/app` import into `src/lib` to
- * avoid one small module would invert that.
+ * the decoder it composes is the kernel's
+ * `calendarDateOfSerialisedDbDateOrNull` (#3511).
  *
  * ## It holds no clock
  *
@@ -40,14 +39,13 @@
  * host clock is not the club's day (`INV-DATE-019`).
  */
 
-import type { CalendarDate } from "@/lib/club-time";
+import { CalendarDate, calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time";
 import {
   buildSeasonTimeline,
   type SeasonCoverageGap,
   type SeasonTimelineEntry,
 } from "@/lib/season-timeline";
 
-import { calendarDayFromPayload } from "./calendar-day";
 
 /** What the schedule needs of a season, as the admin API spells it. */
 export interface SeasonSchedulePayload {
@@ -90,8 +88,8 @@ export function readSeasonSchedule<T extends SeasonSchedulePayload>(input: {
   const undatedSeasons: T[] = [];
 
   for (const season of input.seasons) {
-    const startDate = calendarDayFromPayload(season.startDate);
-    const endDate = calendarDayFromPayload(season.endDate);
+    const startDate = calendarDateOfSerialisedDbDateOrNull(season.startDate);
+    const endDate = calendarDateOfSerialisedDbDateOrNull(season.endDate);
     // An edge this screen cannot read is not evidence of a gap, and a season
     // built from a guessed edge would put a hole on screen that is not there.
     if (startDate === null || endDate === null) {

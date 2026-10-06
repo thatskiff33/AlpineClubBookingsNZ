@@ -1,6 +1,7 @@
 "use client"
 
 import { useId } from "react"
+import { formatStayDateOrNull } from "@/lib/club-time"
 import { useRouter } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -17,7 +18,6 @@ import { parentLinkTypeLabel } from "@/lib/admin-member-detail-helpers"
 // timezone, so it is rendered with none: reading it through one is
 // `INV-DATE-019`, and for a club behind UTC it dates a child a day early —
 // which on this screen decides which age tier they appear to be in.
-import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
 import { useClubFormat } from "@/components/club-format-provider"
 import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import {
@@ -161,7 +161,7 @@ export function MemberDependentsCard({
                       {dependent.active ? "Active" : "Inactive"}
                     </Badge>
                   </TableCell>
-                  <TableCell>{dependent.dateOfBirth ? formatPayloadCalendarDay(dependent.dateOfBirth, format) : "-"}</TableCell>
+                  <TableCell>{dependent.dateOfBirth ? (formatStayDateOrNull(dependent.dateOfBirth, format) ?? "—") : "-"}</TableCell>
                   <TableCell>
                     {dependent.canLogin ? (
                       <Badge variant="secondary" className="border-border bg-muted text-foreground">
