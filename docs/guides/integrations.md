@@ -243,9 +243,16 @@ nightly job asks the version first, records the new answer and carries on, and
 so does the next Upload, share or pull — there is nothing to reset and no
 button to press. A check that could not reach the server (a network blip, a
 rejected key) does **not** pause anything: the page says *Could not check* with
-the last known number, and the last answer stands. The last answer is forgotten
-when you remove or replace the API key or change the server address, because
-it belonged to that connection.
+the last known number, and the last answer stands. A key with no server address
+saved is told so rather than reported as a failed check. The last answer is
+forgotten when you remove or replace the API key or change the server address,
+because it belonged to that connection. The page re-asks the server at most
+once a minute; within that minute it shows the answer already recorded.
+
+The central server refuses a transfer for the same reason from its side, and
+this site reads that refusal as the same pause: the server's number is
+recorded and shown, and a board post whose share was refused this way simply
+waits — it is not counted as a failed attempt and is never given up on.
 
 **Upgrade the central server before this site** where you can. Besides the
 version pause above, the upload sends every field your lodge's entry holds,
