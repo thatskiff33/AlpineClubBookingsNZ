@@ -1518,19 +1518,19 @@ total at apply).
   hand (the `local-allocation` route) is worded *Refunded in cash* only when the
   officer resolving it says so: its modification note, or on a since-cancelled
   booking its refund note (#3935). The app never infers cash
-  from "marked paid by hand", which covers bank transfers recorded outside Xero
-  too; with no answer the note keeps the bank-transfer wording. The settle
+  from "marked paid by hand", which covers bank transfers recorded outside Xero;
+  with no answer the note keeps the bank-transfer wording. The settle
   screen asks only where that route applies, and the completion re-chooses the
   route under its lock. The applied-credit remainder note and the membership
   cancellation credit note keep their own wordings.
 - **Neither is a refund method, and neither moves a settlement.** A
-  modification credit note is allocated against the original invoice and never
-  settled by a payment. A cash hand-back keeps the internet-banking method for
-  the ledger line and everything else; only the words differ.
+  modification note is allocated against the original invoice; a refund note's
+  settling payment keeps the bank-transfer account and reference. A cash hand-back keeps the internet-banking method for
+  the ledger line and everything else.
 - **The wording travels with the decision.** It rides as `noteWording` beside
   the method in the outbox payload and recorded operation, read by
   `readModificationNoteWording` (a refund note: `readRefundNoteWording`, cash
-  beside internet banking only), so a retry or repair says what the first
+  beside internet banking only), so a retry or requeue says what the first
   attempt did. A row without the field keeps its old wording. A caller's own
   method, a Stripe refund, or a paid or unstated payment status is never an
   invoice correction.
