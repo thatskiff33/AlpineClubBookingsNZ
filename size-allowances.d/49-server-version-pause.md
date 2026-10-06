@@ -15,11 +15,22 @@ reason: one state flag read off the list response and one paragraph, rendered
   of its own, would be a component with one caller and no second reader.
 
 file: src/app/api/admin/integrations/credentials/route.ts
-lines: 309
+lines: 303
 reason: the stored server version is forgotten at the same verify-reset site
   that forgets the #52 owned-lodge list, because both were the replaced key's
-  answer; two awaited calls and the sentence saying so. The reset belongs in
-  `applyVerifyReset` with every other provider's, which is the file's shape.
+  answer - one awaited call to the combined forget writer and the sentence
+  saying so. The reset belongs in `applyVerifyReset` with every other
+  provider's, which is the file's shape.
+
+`src/lib/servernz-api.ts` is NOT here, deliberately: the version gate and the
+one refusal reader took it from 539 to 754 lines, over its ceiling for the
+first time, and the ratchet rightly refuses an allowance for that. The split
+taken instead is the wire shapes - the lodge row, the pull envelope, the upload
+result, the feed sync, the share and push results, the version answer, and the
+contract comments each carries - into `src/lib/servernz-api-schemas.ts`
+(declarative, no cycle), which puts the client back inside its budget with the
+gate, the version call and `refuse()` still together where every request is
+built.
 
 file: src/lib/email-message-registry.ts
 lines: 2097
