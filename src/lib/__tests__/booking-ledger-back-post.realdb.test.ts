@@ -743,6 +743,35 @@ async function lines(bookingId: string) {
       expect(await runOne(id!, true)).toMatchObject({ kind: "NOTHING_TO_POST" });
     }, 300_000);
 
+    it("#3854 sync lens F1: a refund appeal approved after the organiser cancel leaves the back-posted kept figure the cancel's, open or dismissed", async () => {
+      const g = await strippedGroup("appeal-after-cancel", "INTERNET_BANKING", 1);
+      const [id] = g.children;
+      // The live cancel mirrors the plan's half on a child settled before #3854 and posts nothing.
+      await cancelGroupHistory(NAMES, g);
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { bookingId: id! }, select: { id: true, refundedAmountCents: true } });
+      expect(payment.refundedAmountCents).toBe(GROUP_CHILD_CENTS / 2);
+      expect(await lines(id!)).toEqual([]);
+      // The member appeals and the admin approves $10, owed back by bank transfer (the real raise).
+      const { raiseRefundRequestHandBack } = await import("@/lib/edit-refund-hand-back");
+      expect(
+        await prisma.$transaction((tx) =>
+          raiseRefundRequestHandBack(tx, { bookingId: id!, paymentId: payment.id, refundRequestId: `${PREFIX}appeal`, amountCents: 1_000 }),
+        ),
+      ).toBe(1);
+
+      // Back-posted while the appeal is open: the cancel kept half, not half less the appeal.
+      expect(await runOne(id!, true)).toMatchObject({ kind: "POSTED", steps: expect.arrayContaining([`cancellation (kept ${GROUP_CHILD_CENTS / 2})`]) });
+      const kept = async () => (await lines(id!)).filter((line) => line.kind === "CANCELLATION_FEE" && line.reversesLineId === null).map((line) => line.amountCents);
+      expect(await kept()).toEqual([GROUP_CHILD_CENTS / 2]);
+      expect(about(await census(), id!)).toEqual(NOTHING);
+
+      // Dismissed later: nothing moved, and the line still records what the cancel kept.
+      await prisma.manualRefundTask.updateMany({ where: { bookingId: id! }, data: { status: "DISMISSED", note: "appeal reconsidered" } });
+      expect(await kept()).toEqual([GROUP_CHILD_CENTS / 2]);
+      expect(about(await census(), id!)).toEqual(NOTHING);
+      expect(await runOne(id!, true)).toMatchObject({ kind: "NOTHING_TO_POST" });
+    }, 300_000);
+
     it("a card organiser cancel since #3653 (per-child refunds): the back-post keeps each share less its child's refund", async () => {
       const g = await strippedGroup("per-child-cancel", "STRIPE", 2);
       // The cancel reserves each child's refund out of the combined payment; with no Stripe key

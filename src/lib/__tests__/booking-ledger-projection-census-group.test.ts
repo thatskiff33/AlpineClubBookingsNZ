@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 
 import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-posting";
+import { groupChildHandBacksFromRows, planGroupChildLines } from "@/lib/booking-ledger-group-child-plan";
 import { planGroupSettlementRefundLine, planGroupSettlementShareLines } from "@/lib/booking-ledger-group-settlement-posting";
 import { planCancellationChargeLines } from "@/lib/booking-ledger-cancellation-posting";
 import { refundKey } from "@/lib/booking-ledger-posting-keys";
@@ -15,6 +16,7 @@ import { isPaymentRecoveryOperationInFlight } from "@/lib/payment-recovery-const
 import { buildOrganiserChildCancellationRefundKey } from "@/lib/payment-recovery-keys";
 import { summarizeBookingLedgerCensus } from "@/lib/booking-ledger-projection-census-report";
 import { evaluateBookingLedgerIdentities } from "@/lib/booking-ledger-projection-census";
+import { plannedGroupChildLines } from "@/lib/booking-ledger-projection-census-group";
 import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
 import { ledgerLineAmountCents, type BookingLedgerPosting } from "@/lib/booking-ledger-write";
 
@@ -389,5 +391,82 @@ describe("K2: a share's evidence is that the settlement captured, a REFUNDED one
       groupChild: { pricing: PRICING, siblings: [{ id: B, lodgeId: "l1", payment: { amountCents: 4_500, status: "SUCCEEDED", source: "STRIPE" as const } }], cancelledWithoutSnapshot: false, snapshotKept: null },
     };
     expect(evaluateBookingLedgerIdentities(subject)).toMatchObject({ bookingClass: "GROUP_SETTLEMENT_OFF_LEDGER", coverage: [] });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3854 sync lens F1: an appeal after the organiser cancel is not the cancel's
+// ---------------------------------------------------------------------------
+
+describe("sync lens F1: a refund appeal approved after the organiser cancel leaves the planned kept figure alone (#3854)", () => {
+  // The lens's probe: a $45 Internet Banking child settled before #3854, its
+  // organiser cancel's 50% plan mirrored ($22.50 back, $22.50 kept). The member
+  // then appeals and the admin approves $10, which goes back by bank transfer.
+  const settlement = { id: "gs1", source: "INTERNET_BANKING" as const, amountCents: 4_500, stripePaymentIntentId: null, refundPlan: { [B]: 2_250 } };
+  const child = { id: B, lodgeId: "l1", status: "CANCELLED" as const, cancelledWithoutSnapshot: true };
+  const siblings = [{ id: B, lodgeId: "l1", payment: { amountCents: 4_500, status: "PARTIALLY_REFUNDED", source: "INTERNET_BANKING" as const } }];
+  const task = (status: "OPEN" | "COMPLETED" | "DISMISSED", occurrenceKey: string, amountCents: number) => ({
+    kind: "CANCELLED_BOOKING_HAND_BACK" as const,
+    status,
+    occurrenceKey,
+    paymentId: "pay-1",
+    amountCents,
+  });
+  const kept = (refundedAmountCents: number, tasks: ReturnType<typeof task>[]) => {
+    const plan = planGroupChildLines({
+      child,
+      settlement,
+      siblings,
+      perChildCommittedRefundCents: null,
+      payment: { status: "PARTIALLY_REFUNDED", source: "INTERNET_BANKING", amountCents: 4_500, refundedAmountCents },
+      handBacks: groupChildHandBacksFromRows("pay-1", tasks),
+    });
+    if (plan?.kind !== "plan") throw new Error("expected a plan");
+    return plan.cancellationKeptCents;
+  };
+  const appeal = "refund-request-hand-back:rr1";
+
+  it("kept stays the cancel's $22.50 with no appeal, the appeal open, the appeal paid, or the appeal dismissed", () => {
+    expect(kept(2_250, [])).toBe(2_250);
+    expect(kept(2_250, [task("OPEN", appeal, 1_000)])).toBe(2_250);
+    // Paid: the completion moved `refundedAmountCents` by the $10; it posts its own refund.
+    expect(kept(3_250, [task("COMPLETED", appeal, 1_000)])).toBe(2_250);
+    expect(kept(2_250, [task("DISMISSED", appeal, 1_000)])).toBe(2_250);
+  });
+
+  it("#3827 unchanged: an edit refund hand-back open at the cancel is netted, open or paid since", () => {
+    const edit = "edit-refund-hand-back:m1";
+    expect(kept(2_250, [task("OPEN", edit, 1_000)])).toBe(1_250);
+    expect(kept(3_250, [task("COMPLETED", edit, 1_000)])).toBe(1_250);
+    // Both at once: the edit's is the cancel's, the appeal's is not.
+    expect(kept(4_250, [task("COMPLETED", edit, 1_000), task("COMPLETED", appeal, 1_000)])).toBe(1_250);
+  });
+
+  it("a paid appeal never stands in for an unwritten mirror: the plan's share is still added", () => {
+    // Defensive: refunds made since the cancel that are the appeal's say nothing about the mirror.
+    expect(kept(1_000, [task("COMPLETED", appeal, 1_000)])).toBe(2_250);
+  });
+
+  it("the census plans the same, and once the back-post posts it the child agrees: no in-flight or dismissed hand-back to acknowledge", () => {
+    const { row } = settledChild("INTERNET_BANKING");
+    for (const status of ["OPEN", "DISMISSED"] as const) {
+      // A pre-#3854 child with its mirror written holds no line (`NO_LINES`, which the back-post clears).
+      const subject: BookingLedgerCensusRow = {
+        ...row,
+        booking: { ...row.booking, status: "CANCELLED" },
+        payment: { ...row.payment!, status: "PARTIALLY_REFUNDED", refundedAmountCents: 2_250 },
+        groupSettlement: { ...row.groupSettlement!, refundPlan: { [B]: 2_250 } },
+        tasks: [{ id: "t1", ...task(status, appeal, 1_000), settlementDirection: null, lateCaptureApprovalIntentId: null }],
+        groupChild: { pricing: PRICING, siblings, cancelledWithoutSnapshot: true, snapshotKept: null },
+        lines: [],
+      };
+      const planned = plannedGroupChildLines(subject);
+      expect(planned?.filter((line) => line.kind === "CANCELLATION_FEE").map((line) => line.amountCents), status).toEqual([2_250]);
+      const posted = evaluateBookingLedgerIdentities({ ...subject, lines: planned! });
+      expect(posted, status).toMatchObject({ coverage: [], integrity: [], bookingInstances: [] });
+      expect(posted.identities.map((identity) => [identity.identity, identity.status]), status).toEqual(
+        posted.identities.map((identity) => [identity.identity, identity.status === "NOT_APPLICABLE" ? "NOT_APPLICABLE" : "AGREE"]),
+      );
+    }
   });
 });

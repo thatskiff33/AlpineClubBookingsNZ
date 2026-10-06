@@ -301,7 +301,11 @@ less every refund made or still owed on it, the cancel's own plan included
 (`groupSettledChildCancellationKeptCents`): its #3653 per-child debts for a card
 settlement, its frozen mirror-plan share otherwise, counted whether or not the
 refund has gone through yet - and its open edit or refund-request hand-backs,
-which the cancel's refund was sized net of (#3827, `INV-PAY-117`). The CANCELLED snapshot freezes `ledger: { keptCents,
+which the cancel's refund was sized net of (#3827, `INV-PAY-117`). That cancel
+freezes no snapshot, so the back-post re-derives the figure from the payment as
+it stands, netting only open edit hand-backs and taking a paid refund appeal's
+hand-back back out of its refunds: an appeal exists only after the cancel, which
+never counted it (`booking-ledger-group-child-plan.ts`). The CANCELLED snapshot freezes `ledger: { keptCents,
 policyKeptCents, keptBeyondPolicyCents, appliedCreditCents, creditRestoredCents, appliedCreditBaseCents }`
 in the same claim, so #3583's
 back-post replays the figure instead of re-deriving it from a mirror that keeps
