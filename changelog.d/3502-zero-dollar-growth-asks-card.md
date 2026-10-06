@@ -11,7 +11,9 @@
   the same as the guest-add screen already did, whether or not Xero is
   connected. Where a Xero invoice already exists, the supplementary invoice
   waits for that card payment and records it, so the member is not billed
-  twice. No further account credit is taken for the extra, and price
+  twice. If the booking's first Xero invoice is only raised after the card
+  payment, that invoice now includes any change fee the card already paid, so
+  the card payment and the account credit settle it exactly. No further account credit is taken for the extra, and price
   reductions on these bookings work exactly as before.
 
   Bookings that grew before this fix are not charged retrospectively. The
