@@ -239,7 +239,23 @@ runs the next epic.
   (00:20, 06:20, 12:20 and 18:20 UTC):
   one long-lived `main` → `epic/**` pull request per live integration branch,
   auto-merge armed, so a clean sync needs nobody and a conflicted one waits for a
-  human — which is the correct division. **A red sync pull request is the branch
+  human — which is the correct division.
+
+  **Auto-merge is armed only after a cheap check of the composed tree** (#3513,
+  owner decision "Cheap narrow check", 6 Oct 2026). A clean sync used to merge
+  seconds after it opened, before any of its checks had started, so the merge
+  of `main` and the epic was first tested on the epic's next push. The workflow
+  now merges `origin/main` into each epic branch locally, never pushing it, and
+  runs `pnpm run ci:fast-censuses` there: the tree-wide censuses that two sides,
+  each green against its own base, can compose into a stale count. Only a pass on
+  exactly that pair of commits arms auto-merge, pinned to the tested head. A
+  failure leaves the pull request unarmed with a comment naming the failing
+  checks — hand-sync it (below), run the same command on your merge branch, and
+  re-derive each count ([`TESTING.md`](../TESTING.md) → "Census tests and the
+  merge hazard"). If `main` or the epic moved while the check ran, the sync
+  simply waits for the next run. This is deliberately not the full nine checks.
+
+  **A red sync pull request is the branch
   telling you `main` and the epic no longer compose**, so read it rather than
   re-running it. Resolve a conflict by hand on a merge branch, opened as a
   hand sync (below), never by force-pushing a shared branch and never by
@@ -258,7 +274,8 @@ runs the next epic.
 
   **A sync you open by hand gets the same description from a command.** Because
   `epic/**` takes no direct push, a hand sync is a merge branch: make it from
-  `origin/epic/…`, run `git merge origin/main`, resolve and commit, then run
+  `origin/epic/…`, run `git merge origin/main`, resolve and commit, run
+  `pnpm run ci:fast-censuses` and fix what it reports, then run
   `pnpm run epic:sync-body -- --branch epic/<n>-<slug> --out body.md`, check it
   with `pnpm run pr:check body.md --base origin/epic/<n>-<slug>`, and open the
   pull request with `--body-file body.md`. The command reads the merge commit
