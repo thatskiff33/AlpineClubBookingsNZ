@@ -5,7 +5,7 @@
  * Every step is the REAL code — `approveAndExecuteLockedPeriodChangeRequest`,
  * `prepareBatchModificationForCallerTransaction` and the canonical
  * `modifyBookingBatch` it runs under `finishedStayCorrection` — against the real
- * advisory locks, the real version CAS and the real pricing tables. Three claims:
+ * advisory locks, the real version CAS and the real pricing tables. The claims:
  *
  *  1. An approved add-only request on a COMPLETED, internet-banking-paid stay
  *     adds the guest, prices their past nights at the stay's season rate while
@@ -17,6 +17,10 @@
  *  3. Approve versus cancel: an approval that arrives while a cancel holds the
  *     global lock(1) waits for it, then sees the cancelled booking and applies
  *     nothing — the request stays REQUESTED at its old version.
+ *  4. The owner's fee rule: a removal refunds at the lodge's same-day tier, a
+ *     swap is a same-day change, and a mixed request executes every part.
+ *  5. Refusals roll the claim back: a switched-off season refuses, and an
+ *     over-capacity past night waits for the officer's confirmation.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -42,6 +46,7 @@ const GUEST_ID = "race-3750-guest";
 const GUEST_2_ID = "race-3750-guest-2";
 const PAYMENT_ID = "race-3750-payment";
 const REQUEST_ID = "race-3750-request";
+const OTHER_BOOKING_ID = "race-3750-other-booking";
 // Fully past against the frozen suite clock (1 July 2026).
 const CHECK_IN = new Date("2026-06-10T00:00:00.000Z");
 const NIGHT_2 = new Date("2026-06-11T00:00:00.000Z");
@@ -133,9 +138,15 @@ async function clean(): Promise<void> {
   await prisma.bedAllocation.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
   await prisma.payment.deleteMany({ where: { id: PAYMENT_ID } });
-  await prisma.bookingGuestNight.deleteMany({ where: { bookingGuest: { bookingId: BOOKING_ID } } });
-  await prisma.bookingGuest.deleteMany({ where: { bookingId: BOOKING_ID } });
-  await prisma.booking.deleteMany({ where: { id: BOOKING_ID } });
+  await prisma.bedAllocation.deleteMany({ where: { bookingId: OTHER_BOOKING_ID } });
+  await prisma.bookingGuestNight.deleteMany({
+    where: { bookingGuest: { bookingId: { in: [BOOKING_ID, OTHER_BOOKING_ID] } } },
+  });
+  await prisma.bookingGuest.deleteMany({ where: { bookingId: { in: [BOOKING_ID, OTHER_BOOKING_ID] } } });
+  await prisma.booking.deleteMany({ where: { id: { in: [BOOKING_ID, OTHER_BOOKING_ID] } } });
+  // Undo the per-case capacity and season changes (no-ops before the lodge exists).
+  await prisma.lodgeSettings.updateMany({ where: { id: LODGE_ID }, data: { capacity: 10 } });
+  await prisma.season.updateMany({ where: { id: SEASON_ID }, data: { active: true } });
 }
 
 const ADD_LATE_FRIEND = {
@@ -227,14 +238,14 @@ async function seed(
   });
 }
 
-async function approve(officerId: string) {
+async function approve(officerId: string, options: { confirmOverCapacity?: boolean } = {}) {
   return executor.approveAndExecuteLockedPeriodChangeRequest({
     requestId: REQUEST_ID,
     expectedVersion: 1,
     actorMemberId: officerId,
     adminNotes: "Added your friend to the stay.",
     internalNotes: null,
-    confirmOverCapacity: false,
+    confirmOverCapacity: options.confirmOverCapacity === true,
     todayAtClub: (await clubTimeServer.clubTime()).today(),
     format: CLUB_FORMAT_TEST,
     preTransaction: await batchService.prepareBatchModificationForCallerTransaction({
@@ -482,6 +493,56 @@ function deferred() {
     const added = booking.guests.find((guest) => guest.firstName === "Late")!;
     expect(added.nights.map((night) => night.priceCents)).toEqual([NIGHT_CENTS]);
     expect(booking.finalPriceCents).toBe(STORED_NIGHT_CENTS + NIGHT_CENTS);
+  }, 60_000);
+
+  it("refuses a stay whose season has been switched off, and keeps the request pending", async () => {
+    await seed();
+    await prisma.season.update({ where: { id: SEASON_ID }, data: { active: false } });
+    await expect(approve(OFFICER_ID)).rejects.toThrow("No season rate found for the requested dates");
+    // The claim rolled back with the refused edit.
+    const request = await prisma.bookingChangeRequest.findUniqueOrThrow({ where: { id: REQUEST_ID } });
+    expect(request).toMatchObject({ status: "REQUESTED", version: 1, linkedModificationId: null });
+    expect(await prisma.bookingModification.count({ where: { bookingId: BOOKING_ID } })).toBe(0);
+  }, 60_000);
+
+  it("warns on an over-capacity past night, and applies once the officer confirms (decision 3)", async () => {
+    await seed();
+    await prisma.lodgeSettings.update({ where: { id: LODGE_ID }, data: { capacity: 2 } });
+    // Somebody else filled the other bed on those nights.
+    await prisma.booking.create({
+      data: {
+        id: OTHER_BOOKING_ID,
+        memberId: OFFICER_2_ID,
+        lodgeId: LODGE_ID,
+        checkIn: CHECK_IN,
+        checkOut: CHECK_OUT,
+        status: "COMPLETED",
+        totalPriceCents: 0,
+        finalPriceCents: 0,
+        guests: {
+          create: {
+            firstName: "Other",
+            lastName: "Stayer",
+            ageTier: "ADULT",
+            isMember: false,
+            stayStart: CHECK_IN,
+            stayEnd: CHECK_OUT,
+            priceCents: 0,
+          },
+        },
+      },
+    });
+
+    const { OverCapacityConfirmationRequiredError } = await import("@/lib/over-capacity-confirmation");
+    await expect(approve(OFFICER_ID)).rejects.toBeInstanceOf(OverCapacityConfirmationRequiredError);
+    expect(
+      await prisma.bookingChangeRequest.findUniqueOrThrow({ where: { id: REQUEST_ID } }),
+    ).toMatchObject({ status: "REQUESTED", version: 1 });
+
+    const confirmed = await approve(OFFICER_ID, { confirmOverCapacity: true });
+    expect(confirmed).toMatchObject({ outcome: "executed", capacityOverridden: true });
+    const booking = await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID } });
+    expect(booking.capacityOverriddenByMemberId).toBe(OFFICER_ID);
   }, 60_000);
 
   it("an approval racing a cancel waits on lock(1), then applies nothing to the cancelled booking", async () => {
