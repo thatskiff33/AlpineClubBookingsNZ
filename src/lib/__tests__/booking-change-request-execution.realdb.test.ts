@@ -377,7 +377,12 @@ function deferred() {
       [NIGHT_2.toISOString(), STORED_NIGHT_CENTS, "SOLD"],
     ]);
     const added = booking.guests.find((guest) => guest.id !== GUEST_ID)!;
-    expect(added.nights.map((night) => night.priceCents)).toEqual([NIGHT_CENTS, NIGHT_CENTS]);
+    // Sold now, at the price now charged — the ordinary pipeline's provenance
+    // for an added guest's nights.
+    expect(added.nights.map((night) => [night.priceCents, night.priceSource])).toEqual([
+      [NIGHT_CENTS, "SOLD"],
+      [NIGHT_CENTS, "SOLD"],
+    ]);
 
     // The ordinary additional-payment ask for an internet-banking booking: the
     // amount due, and the supplementary invoice that bills it (Xero is not

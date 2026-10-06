@@ -24,8 +24,11 @@
  */
 
 import { ApiError } from "@/lib/api-error";
-import { calendarDateOfDateOnlyInstant, type CalendarDate } from "@/lib/club-time";
-import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
+import {
+  calendarDateOfDateOnlyInstant,
+  eachCalendarDate,
+  type CalendarDate,
+} from "@/lib/club-time";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 
 /**
@@ -105,19 +108,9 @@ function nightKeys(
   stayEnd: Date,
   nights: ReadonlyArray<Date> | undefined,
 ): string[] {
-  if (nights && nights.length > 0) {
-    return nights.map((night) => formatDateOnly(storedDateOnly(night))).sort();
-  }
-  const keys: string[] = [];
-  const end = storedDateOnly(stayEnd);
-  for (
-    let night = storedDateOnly(stayStart);
-    night < end;
-    night = addDaysDateOnly(night, 1)
-  ) {
-    keys.push(formatDateOnly(night));
-  }
-  return keys;
+  const day = (value: Date) => calendarDateOfDateOnlyInstant(storedDateOnly(value));
+  if (nights && nights.length > 0) return nights.map(day).sort();
+  return eachCalendarDate(day(stayStart), day(stayEnd));
 }
 
 /**
