@@ -311,7 +311,7 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   translated to a finer grain by a rule. It is a signed delta in integer cents
   like `priceAdjustmentCents`: negative for a discount, positive where a
   `SET_PRICE` code raised a night, and `0` where it set a night to exactly its
-  rate, which is a real value. A row's beneficiary is decided in the same
+  rate, a real value. A row's beneficiary is decided in the same
   function and branch that decides the allocation it decomposes
   (`calculatePromoDiscountForGuestRates`), so the two can never name different
   people. **The identity:** the rows of one redemption sum, per beneficiary, to
@@ -324,12 +324,12 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   precedes its first write, so a refusal rolls the edit back; the waitlist
   reprice, whose own catch degrades to the stored snapshot instead of rolling
   back, therefore calls the recorder outside that catch, where a refusal fails
-  the sweep like any other error. `amountCents = NULL` means NOT KNOWN and is
+  the sweep. `amountCents = NULL` means NOT KNOWN and is
   written only where the engine genuinely has no per-target figure — the
   per-member safety-cap rescale; unknown rows are excluded from the sums, and
   `?? 0` on the column is prohibited exactly as it is on
   `BookingGuestNight.priceCents`. **A reader asks `deriveNightAdjustmentState`
-  — the one home — and runs the same sum:** a booking with no redemption had
+  — the one home — over every redemption (#3826), or per code (`INV-MONEY-040`):** a booking with no redemption had
   nothing taken off (`NO_PROMOTION`); rows that reconcile are `KNOWN`; anything
   else — rows missing, rows that do not sum, a NULL amount — is `NOT_KNOWN`.
   No column stores that answer: a flag can be left asserting what a draining
@@ -357,6 +357,90 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   and changed no reader or member-visible figure (D3), pinned by
   `promo-money-byte-identical.test.ts`.
 
+
+## INV-MONEY-038
+
+**Related: `INV-MONEY-039`** (which nights each code may take) and
+**`INV-MONEY-024`** (the re-price rule each code keeps).
+
+- **Several promo codes on one booking are priced by ONE orchestrator, in the
+  booker's order, and only guests actually staying can benefit** (#3827; owner
+  decisions D-3813-1..4 on #3492). `applyBookingPromotions` in
+  `src/lib/booking-promotions.ts` runs the unchanged single-code engine
+  (`validateAndCalculatePromoDiscount`) once per code; there is no second
+  pricing engine, so single-code arithmetic cannot drift. The order is the
+  stored `PromoRedemption.applicationOrder`, which the booker sets and can
+  change, except that a work-party (internal) discount always applies first.
+  Any number of codes of any kind combine. A guest whose cross-family place is
+  still `PENDING` is shown to no code — a typed code included — and their
+  acceptance re-prices the booking's codes through the ordinary edit
+  machinery; a decline consumed nothing. A lower price on a paid booking goes
+  back in full, with no cancellation-policy tier, the way it was paid
+  (D-3813-5): refundable cash first — a card refund, or an officer's bank
+  transfer (`INV-PAY-117`) — then account credit for the rest; a re-price
+  that cannot return the whole reduction is not written, so no code is used
+  beyond what is returned. Each code keeps its own caps, its own allocations and its own
+  integer cents: `Booking.promoAdjustmentCents` is the sum of the redemptions'
+  adjustments, with no rounding across codes, and `discountCents` is
+  `bookingDiscountCents` of that sum (`INV-MONEY-031`). Every
+  write path — create, every edit and re-price, the waitlist offer, the review
+  re-base, a guest's acceptance — prices through this orchestrator, and a
+  re-price locks every code row in one sorted call before its first cap read
+  (`INV-MONEY-023`). While the `multiPromoCodes` switch is off a second code is
+  refused (#3826).
+
+## INV-MONEY-039
+
+**Related: `INV-MONEY-038`** (the order the codes run in) and
+**`INV-MONEY-029`** (the rows a claim is written as).
+
+- **A night is discounted by at most one promo code, and the earliest code
+  that reaches it claims it** (#3827, D-3813-2). Each code is priced over only
+  the nights no earlier code claimed. Any target an earlier code emitted claims
+  its night — a partial (`maxNightlyValueCents`) or zero-amount night included —
+  and a per-guest fixed amount claims that guest's remaining nights, at
+  `min(value, the guest's unclaimed total)`. Claims are recomputed from scratch
+  on every pricing; nothing is carried from the last one, so a reorder or a
+  removed code lands where a fresh application in that order would. A code
+  that would claim nothing is refused at application as "already covered by"
+  the code holding its nights, and on a re-price is released on its own, with
+  a notice naming why (`INV-MONEY-024`, per code). The database holds the
+  same promise: one promotion row per night
+  (`BookingGuestNightAdjustment(bookingGuestNightId, kind)`, #3826).
+
+## INV-MONEY-040
+
+**Related: `INV-MONEY-029`** (each code's rows), **`INV-MONEY-030`** (the
+verified aggregate) and **`INV-MOD-058`** (an edit's stored lines).
+
+- **A booking's promotion reaches Xero, an edit document and a member as one
+  line per promo code** (#3828; #3492). A booking invoice, and each child of a
+  combined group invoice, carries one `Promo adjustment - CODE` line per code
+  with a non-zero adjustment, in the booker's order, coded by
+  `resolvePromoLineCodes` for that code (`xero-promo-adjustment-lines.ts`).
+  A code's amount is its own redemption's rows, used only when
+  `deriveNightAdjustmentState` over that redemption alone is `KNOWN`; the
+  lines must sum to the verified aggregate. Otherwise the invoice carries one
+  aggregate line naming every code at the generic promotion coding, and the
+  operation records `promoLines` with the reason (`CODE_BUILDUP_NOT_KNOWN`,
+  `CODE_LINES_DO_NOT_SUM`); the total never depends on the split.
+
+  An edit stores one `PROMO_DELTA` per code that moved, plus `codesBefore`
+  where it held several; where the per-code changes do not sum to the aggregate
+  change, one line naming no code. Its document codes each line by the code it
+  names, generically for none; a lone line naming the booking's sole code, or
+  with no code left and no `codesBefore`, keeps its one-code coding. The one-code edit fields (`promoCode`,
+  `removePromoCode`) are refused on a booking holding several of the booker's
+  codes, since they would replace or release them all. Confirmation emails,
+  the booking page and the data export name each code with its amount, falling
+  back together to one row (`perCodePromoAdjustmentRows`).
+
+  A booking with one code is not split: its invoice line, coding, payload,
+  edit lines and emails are byte-identical to before. Pinned by
+  `xero-promo-adjustment-lines.test.ts`, `xero-booking-invoice.test.ts`,
+  `xero-group-settlement-invoice-lines.test.ts`,
+  `booking-modification-lines.test.ts`,
+  `xero-modification-line-items.test.ts` and `multi-promo-pricing.test.ts`.
 
 ## INV-MONEY-030
 
@@ -387,10 +471,11 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   and records the verdict in existing audit and `PRICE_REBASE` history. Credit
   election preserves its headline, clamp, shortfall, and ledger arithmetic and
   records the verdict with its atomic credit result. Per-booking Xero invoices
-  retain gross guest/night lines plus one promotion line and record that line's
-  source on the existing operation. Group-settlement totals and their omission
-  of a child promotion line remain unchanged unless a fixture proves a D3 defect
-  and the owner separately approves its correction.
+  retain gross guest/night lines plus the verified promotion, as one line per
+  code (`INV-MONEY-040`), and record its source on the existing operation.
+  **Correction (#3828):** group invoices carry each child's promotion line
+  (#3642, `INV-PAY-105`); the omission this rule once stated was the D3 defect
+  a fixture proved, a discounted joiner failing the settlement's cash check.
 
 ## INV-MONEY-031
 
@@ -419,8 +504,8 @@ records). Three facets, not three statements of one rule (#2707, owner decision
   named `WITHHELD` state replacing a nullable absence, and the wording. Behind
   it, booking detail and lists, officer history, finance metrics, reports,
   exports and per-booking Xero reconciliation input carry the same state and
-  ordered reasons; the Xero invoice shape and every displayed or settled amount
-  are unchanged. A read-only repeatable-read census
+  ordered reasons; every displayed or settled amount and, bar `INV-MONEY-040`,
+  the invoice shape are unchanged. A read-only repeatable-read census
   (`pnpm run booking-money:census`) reports state/reason counts, night rows by
   provenance and strands by `INV-MOD-028` verdict per booking month, and edit
   reviews by cause per task month (#3531 3c), from one snapshot, read-only. The mutation-verified `booking-money-writer-census.test.ts`

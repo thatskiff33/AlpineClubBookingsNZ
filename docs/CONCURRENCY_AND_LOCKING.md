@@ -1551,10 +1551,12 @@ it. A single `SELECT * … FOR UPDATE` could not do that: an unlocked row could
 never be in its result set. `$executeRaw` returns the affected-row count, so the
 zero-match case is detectable for free; treat it as **not found**, which is
 exactly what the single-statement form produced for that interleaving. This bites
-only where the lock key can change under you: `booking-create-promo.ts` locks on
-`PromoCode.code` and checks the count for this reason, while every other site
-below keys on an immutable cuid (or materialises its singleton before locking)
-and cannot see a row appear between the two statements.
+only where the lock key can change under you. Booking creation used to lock on
+`PromoCode.code` and check the count for this reason; since #3827 it resolves
+the code to its immutable id first and refuses a row whose code changed in
+between, so every site below keys on an immutable cuid (or materialises its
+singleton before locking) and cannot see a row appear between the two
+statements.
 
 The reason is not tidiness. `$queryRaw<SomeRow[]>` is an **unchecked cast**: raw
 SQL returns the *physical* column names and the generic declares whatever the
@@ -1696,16 +1698,27 @@ mispricing a booking.
   wider population or composes with writers before they touch
   `MemberInduction`.
 
-- `booking-create-promo.ts` locks the selected `PromoCode` row with `FOR UPDATE`
-  and then reads it through `tx.promoCode.findUnique` (lock raw, read typed —
-  #2289) before validating and consuming its use count. It is the only site that
-  locks on a **mutable** key (`PromoCode.code`), so it also checks the
-  affected-row count `$executeRaw` returns: a lock that matched nothing is
-  treated as "Promo code not found" rather than reading a row it does not hold —
-  see the zero-match exception under "Lock raw, read typed" above. Booking
-  creation has
-  already taken the per-lodge capacity lock, so the current order is lodge ->
-  promo row; no counterpart writer may take the promo row and then a lodge lock.
+- `booking-create-promo.ts` (`resolvePromotionsInTransaction`) takes every code
+  a create applies through the same id-keyed protocol as the modification paths
+  (#3827): it resolves the typed codes to ids UNLOCKED, locks the rows with
+  `lockPromoCodeRowsForUpdate` in ONE sorted-id call, and re-reads them by id
+  under that lock (lock raw, read typed — #2289). A row whose `code` no longer
+  reads as typed — renamed between the resolve and the lock — is refused as
+  "Promo code not found", and a code created or renamed TO the typed text after
+  the resolve is never locked, never read and likewise not found; that is the
+  outcome the former code-keyed `FOR UPDATE` gave its zero-match case. Booking
+  creation has already taken `pg_advisory_xact_lock(1)` and the per-lodge
+  capacity lock, so the order is lodge -> promo rows in sorted-id order, and a
+  two-code create orders its rows exactly as every other writer does
+  (`multi-promo-pricing.test.ts` pins it). No counterpart writer may take a
+  promo row and then a lodge lock. The waitlisted create prices before its
+  transaction, unlocked, as it always has; the offer re-prices under locks.
+  Inside its transaction it holds the lodge key but not `lock(1)`, and each
+  redemption's counter write row-locks its code, so it locks every code row
+  in one sorted call after the lodge key, before the first redemption (#3827):
+  two waitlisted creates naming the same codes in opposite orders would
+  otherwise deadlock. No cap is re-read there; the counter write is an atomic
+  increment and the offer decides the caps.
 - **Every booking-modification path that may write `currentRedemptions`** takes
   the same protocol via `lockPromoCodeRowsForUpdate` / the reprice wrapper
   `lockAndRefreshPromoCodeUsage` (both `src/lib/promo.ts`), *before* its first
@@ -1716,7 +1729,13 @@ mispricing a booking.
   `booking-date-modification-service.ts` (changing dates) and
   `booking-guest-removal-service.ts` (removing guests). Each of the four has
   already taken the per-lodge capacity lock, so the order is again
-  lodge -> promo row. The reprice wrapper also **re-reads
+  lodge -> promo row. Since #3827 the four share ONE re-price
+  (`repriceBookingPromotions`, `src/lib/booking-promotions.ts`): a booking
+  carrying several codes has every code row locked in one sorted call before the
+  first cap read, then each counter re-read under it; the batch path locks its
+  outgoing, kept and incoming codes in one sorted call. A guest's acceptance
+  (`booking-guest-acceptance-reprice.ts`) re-prices the same way inside the
+  consent transaction, after its `pg_advisory_xact_lock(1)` and lodge lock. The reprice wrapper also **re-reads
   `currentRedemptions` under the lock**, because a reprice carries a
   `PromoCode` snapshot loaded with the booking before the locks were taken;
   locking and then deciding against a number read outside the lock would leave
@@ -3239,7 +3258,26 @@ does too, and both would post. So `resolveManualRefundTask` takes
   claim (`edit-financial-review-races.realdb.test.ts`). The status-guarded
   `updateMany` still fences on `OPEN` for every kind, pinned with the lock
   mocked in `manual-refund-task.test.ts`. Legacy hand-back kinds take no key,
-  exactly as before.
+  exactly as before — **except an edit refund hand-back** (#3827,
+  `INV-PAY-117`) and an approved refund appeal's (`INV-PAY-118`), which take
+  the same key first, decided from its immutable
+  `kind` and `occurrenceKey`. Its completion moves the payment's
+  `refundedAmountCents` and closes the task in one commit, and every edit,
+  acceptance, paid cancel and by-hand edit-review refund (refused before its
+  claim) reads those two separately to size a refund net of
+  the cash already promised back (`refundableCashNetOfOpenHandBacks`); under
+  `lock(1)` the completion cannot commit between the two reads. A reopen of
+  one already holds `lock(1)` and is refused past that same net cash, and a
+  refund appeal's approval reads ITS net cash (`INV-PAY-118`: every open
+  hand-back and the late-cash credit, `refundAppealHandedBackCents`, read
+  BEFORE the payment so a cancellation hand-back's lock-free completion in
+  between errs the cap low) under `lock(1)` and claims
+  the request in that transaction, planning the card refund and raising the
+  bank-transfer task for the rest there too, before its Stripe refund and Xero
+  note (`PUT /api/admin/refund-requests/[id]#1`, `INV-LOCK-001`). A released
+  approval (Stripe and its recovery enqueue both failed) returns the request
+  to PENDING and deletes that OPEN task in one transaction under the same key
+  (`PUT /api/admin/refund-requests/[id]#2`, `INV-LOCK-001`).
 
 **#3791 adds the per-member credit-ledger lock to that completion, after
 `lock(1)`, the claim and the closure's re-price**, on the account-credit route

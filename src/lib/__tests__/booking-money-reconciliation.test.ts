@@ -38,10 +38,10 @@ function booking(
         ],
       },
     ],
-    promoRedemption: {
+    promoRedemptions: [{
       priceAdjustmentCents: -2_000,
       allocations: [{ memberId: "member-1", priceAdjustmentCents: -2_000 }],
-    },
+    }],
     nightAdjustments: [
       { beneficiaryMemberId: "member-1", amountCents: -2_000 },
     ],
@@ -278,12 +278,12 @@ describe("reconcileBookingMoney", () => {
         promoAdjustmentCents: 0,
         discountCents: 0,
         finalPriceCents: 10_000,
-        promoRedemption: {
+        promoRedemptions: [{
           priceAdjustmentCents: -2_000,
           allocations: [
             { memberId: "member-1", priceAdjustmentCents: -2_000 },
           ],
-        },
+        }],
         nightAdjustments: [
           { beneficiaryMemberId: "member-1", amountCents: null },
         ],
@@ -300,10 +300,10 @@ describe("reconcileBookingMoney", () => {
           promoAdjustmentCents: 0,
           discountCents: 0,
           finalPriceCents: 10_000,
-          promoRedemption: {
+          promoRedemptions: [{
             priceAdjustmentCents,
             allocations: [{ memberId: null, priceAdjustmentCents }],
-          },
+          }],
           nightAdjustments: [],
         }),
       );

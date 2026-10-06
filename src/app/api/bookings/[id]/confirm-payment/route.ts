@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { auth } from "@/lib/auth";
@@ -213,7 +214,7 @@ export async function POST(
             // #3369: the owner may be an Organisation; bookingOwner() reads both.
             organisation: { select: { name: true, email: true } },
             guests: true,
-            promoRedemption: { include: { promoCode: true } },
+            promoRedemptions: { include: { promoCode: true } },
           },
         });
         if (booking) {
@@ -235,13 +236,7 @@ export async function POST(
             {
               lodgeId: booking.lodgeId,
               ...(provisionalGuests ? { provisionalGuests } : {}),
-              ...(booking.promoRedemption?.promoCode
-                ? {
-                    discountCents: booking.discountCents,
-                    promoAdjustmentCents: booking.promoAdjustmentCents,
-                    promoCode: booking.promoRedemption.promoCode.code,
-                  }
-                : {}),
+              ...bookingPromoEmailFields(booking),
             }
           );
         }

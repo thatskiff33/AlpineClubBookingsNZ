@@ -91,7 +91,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: vi.fn() },
     payment: { upsert: vi.fn().mockResolvedValue({ id: "payment-2265" }) },
-    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
+    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
     memberCredit: { aggregate: vi.fn(aggregateLedger) },
     $transaction: vi.fn(),
   },
@@ -225,7 +225,7 @@ function makeDraft(creditElectionCents: number | null) {
         ],
       },
     ],
-    promoRedemption: null,
+    promoRedemptions: [],
     nightAdjustments: [],
     payment: null,
   };

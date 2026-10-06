@@ -247,7 +247,7 @@ function preEditBooking(guests: Guest[]) {
       firstName: "Pat",
       lastName: "Owner",
     },
-    promoRedemption: null,
+    promoRedemptions: [],
     nightAdjustments: [],
   };
 }
@@ -327,7 +327,7 @@ function buildTx(
       findMany: vi.fn().mockResolvedValue([]),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
-    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
+    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
     choreAssignment: {
       findMany: vi.fn().mockResolvedValue([]),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),

@@ -90,8 +90,9 @@ import {
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import {
+  orderedPromoCodeRequests,
   promoCodeRequestRefusal,
-  resolveEffectivePromoSource,
+  resolveEffectivePromoSources,
 } from "@/lib/booking-create-promo";
 import { resolveBookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes";
 import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
@@ -141,6 +142,7 @@ import {
   hasAdminAccess,
 } from "@/lib/access-roles";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
+import { refuseOnBehalfUnlessBookingOfficer } from "@/lib/on-behalf-booking";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
@@ -182,6 +184,19 @@ const createBookingSchema = z.object({
   notes: z.string().max(500).optional(),
   promoCode: z.string().max(50).optional(),
   promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
+  // #3827: several codes, each opted in by the booker, in the booker's order
+  // (D-3813-2). `order` sorts the list; omitted, the list's own order stands.
+  // The legacy single `promoCode` stays accepted; sending both is refused.
+  promoCodes: z
+    .array(
+      z.object({
+        code: z.string().min(1).max(50),
+        promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
+        order: z.number().int().min(0).optional(),
+      }),
+    )
+    .max(20)
+    .optional(),
   workPartyEventId: z.string().min(1).optional(),
   draft: z.boolean().optional(),
   waitlist: z.boolean().optional(),
@@ -250,9 +265,8 @@ export async function POST(request: NextRequest) {
   // books for itself through the member flow under full member rules (#1442).
   const isMember = hasAccessRole(session.user, "USER");
   // bookings:edit holders (Full Admin, Booking Officer, custom roles) may
-  // create on-behalf bookings — aligned with the modification path (#1313).
-  const canManageBookings =
-    bookingManagementAuthorizationRole(session.user) === "ADMIN";
+  // create on-behalf bookings — aligned with the modification path (#1313);
+  // `refuseOnBehalfUnlessBookingOfficer` below is the one check.
   const actorRole = bookingManagementAuthorizationRole(session.user);
 
   const json = await parseJsonRequestBody(request);
@@ -347,9 +361,8 @@ export async function POST(request: NextRequest) {
   }
 
   if (parsed.data.forMemberId) {
-    if (!canManageBookings) {
-      return NextResponse.json({ error: "Only admins can book on behalf of another member" }, { status: 403 });
-    }
+    const onBehalfRefusal = refuseOnBehalfUnlessBookingOfficer(session.user, parsed.data.forMemberId);
+    if (onBehalfRefusal) return onBehalfRefusal;
     // Separation of duties: no on-behalf actor may target themselves — their
     // own bookings go through the member flow and normal payment paths.
     if (parsed.data.forMemberId === session.user.id) {
@@ -397,6 +410,7 @@ export async function POST(request: NextRequest) {
     notes,
     promoCode: promoCodeStr,
     promoGuestIndexes,
+    promoCodes: requestedPromoCodes,
     workPartyEventId,
     draft,
     waitlist,
@@ -778,27 +792,42 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // #3827: the codes this request carries, in the booker's order.
+  if (requestedPromoCodes && promoCodeStr) {
+    return NextResponse.json(
+      { error: "Send promoCode or promoCodes, not both" },
+      { status: 400 },
+    );
+  }
+  const promoCodes = orderedPromoCodeRequests({
+    promoCodes: requestedPromoCodes,
+    promoCodeStr,
+    promoGuestIndexes,
+  });
+
   // A working-bee id or promo code that cannot apply to this request (#3770).
   // The create services re-run all of this authoritatively, under their lock;
   // this only answers the refusals that read the request and the booker, so
   // none of them waits for the member lookup. Usage caps and the guest-selection
   // refusals read the priced party and stay in the services.
   try {
-    const promoSource = await resolveEffectivePromoSource(prisma, {
-      promoCodeStr,
+    const promoSources = await resolveEffectivePromoSources(prisma, {
+      promoCodes,
       workPartyEventId,
       checkIn: requestEnvelope.checkIn,
       checkOut: requestEnvelope.checkOut,
       lodgeId: bookingLodgeId,
     });
-    if (promoSource) {
+    // Every code, in order, answers the same request-and-booker refusals the
+    // single code always did — still before the member lookup (#3770).
+    for (const promoSource of promoSources) {
       const promoRefusal = await promoCodeRequestRefusal({
         promoCodeStr: promoSource.promoCodeStr,
         allowInternal: promoSource.allowInternal,
         memberId: effectiveMemberId,
         checkIn: requestEnvelope.checkIn,
         lodgeId: bookingLodgeId,
-        promoGuestIndexes,
+        promoGuestIndexes: promoSource.promoGuestIndexes,
         todayAtClub,
       });
       if (promoRefusal) throw new BookingPromoError(promoRefusal);
@@ -1494,8 +1523,7 @@ export async function POST(request: NextRequest) {
         checkOut,
         guests: guestInputs,
         notes,
-        promoCodeStr,
-        promoGuestIndexes,
+        promoCodes,
         workPartyEventId,
         expectedArrivalTime,
         requestedRoomId,
@@ -1627,8 +1655,7 @@ export async function POST(request: NextRequest) {
       checkOut,
       guests: guestInputs,
       notes,
-      promoCodeStr,
-      promoGuestIndexes,
+      promoCodes,
       workPartyEventId,
       expectedArrivalTime,
       requestedRoomId,
@@ -1674,8 +1701,7 @@ export async function POST(request: NextRequest) {
         checkOut,
         guests: guestInputs,
         notes,
-        promoCodeStr,
-        promoGuestIndexes,
+        promoCodes,
         workPartyEventId,
         expectedArrivalTime,
         requestedRoomId,

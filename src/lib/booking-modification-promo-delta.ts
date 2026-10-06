@@ -1,0 +1,118 @@
+/**
+ * ONE PROMOTION-DELTA LINE PER CODE ON AN EDIT'S STORED LINES (#3828, epic
+ * #3813 C3; `INV-MONEY-040`).
+ *
+ * A booking may carry several promo codes (#3492). An edit that moves more than
+ * one of them stores one `PROMO_DELTA` line per code whose adjustment changed,
+ * each naming its code, so the supplementary invoice or credit note the edit
+ * raises codes each code's change to that code (`xero-modification-line-items.ts`).
+ * The stored line's shape is unchanged — `v, kind, sign, promoCode,
+ * amountCents`, plus an optional `codesBefore` a reader that predates it
+ * ignores — so such a reader accepts several lines as it accepts one.
+ *
+ * Split only when BOTH sides state their codes' figures and at least one side
+ * carries more than one code, and only when the per-code changes add up to the
+ * aggregate change the lines must explain. Otherwise `null`, and the caller
+ * writes the single aggregate line it always wrote — which is every one-code
+ * booking, byte for byte.
+ *
+ * The home of an edit's promotion figures — the normalised side, the aggregate
+ * change, and the per-code split. Pure; its own module because
+ * `booking-modification-lines.ts` is at its size budget.
+ */
+
+import type { PromoCodeAdjustment } from "@/lib/booking-promo-redemptions";
+
+export function splitPromoDeltaByCode(
+  before: { promoByCode?: ReadonlyArray<PromoCodeAdjustment> | null },
+  after: { promoByCode?: ReadonlyArray<PromoCodeAdjustment> | null },
+  aggregateDeltaCents: number,
+): Array<{ promoCode: string; amountCents: number }> | null {
+  const beforeCodes = before.promoByCode;
+  const afterCodes = after.promoByCode;
+  if (!beforeCodes || !afterCodes) return null;
+  if (beforeCodes.length <= 1 && afterCodes.length <= 1) return null;
+
+  const beforeByCode = new Map(beforeCodes.map((entry) => [entry.code, entry.amountCents]));
+  const afterByCode = new Map(afterCodes.map((entry) => [entry.code, entry.amountCents]));
+  // The codes the booking carries after the edit in their order, then any it
+  // no longer carries in theirs.
+  const codes = [
+    ...afterCodes.map((entry) => entry.code),
+    ...beforeCodes.map((entry) => entry.code).filter((code) => !afterByCode.has(code)),
+  ];
+  const deltas = codes
+    .map((code) => ({
+      promoCode: code,
+      amountCents: (afterByCode.get(code) ?? 0) - (beforeByCode.get(code) ?? 0),
+    }))
+    .filter((delta) => delta.amountCents !== 0);
+  const sum = deltas.reduce((total, delta) => total + delta.amountCents, 0);
+  return sum === aggregateDeltaCents ? deltas : null;
+}
+
+/** A side as the promotion figures read it. */
+type PromoSide = {
+  promoAdjustmentCents: number;
+  promoCode?: string | null;
+  promoByCode?: ReadonlyArray<PromoCodeAdjustment> | null;
+};
+
+/**
+ * A side's promotion figure; a non-number (a legacy row read without the column)
+ * counts as zero. Every caller's sum still holds against its real delta.
+ */
+export function normalisedPromoCents(promoAdjustmentCents: number): number {
+  return Number.isFinite(promoAdjustmentCents) ? promoAdjustmentCents : 0;
+}
+
+/** The signed change in the promotion adjustment, each side normalised. */
+export function modificationPromoDeltaCents(
+  before: Pick<PromoSide, "promoAdjustmentCents">,
+  after: Pick<PromoSide, "promoAdjustmentCents">,
+): number {
+  return normalisedPromoCents(after.promoAdjustmentCents) - normalisedPromoCents(before.promoAdjustmentCents);
+}
+
+/**
+ * The promotion deltas an edit stores: one per code that moved where the split
+ * holds, else the one aggregate delta — or none when nothing moved.
+ *
+ * The aggregate delta names the after side's code (the before side's when none
+ * remain) on a one-code edit, byte for byte as always. Where either side
+ * carried several codes the split failed for, it names NO code: the change is
+ * not one code's, and a line naming one would be coded to that code's account
+ * (`INV-MONEY-040`) — the edit-document counterpart of the invoice's aggregate
+ * fallback line.
+ */
+export function modificationPromoDeltas(
+  before: PromoSide,
+  after: PromoSide,
+): Array<{ promoCode: string | null; amountCents: number; codesBefore?: string[] }> {
+  const deltas = promoDeltasWithoutBeforeCodes(before, after);
+  // The codes the booking carried before the edit, recorded on each line ONLY
+  // where it carried several: by the time the document is built a released
+  // code's redemption is deleted, so without this a several-code booking that
+  // lost every code, with one of them moving, would read as a one-code booking
+  // losing its code. A one-code edit's lines carry no such field, byte for byte.
+  const codesBefore = before.promoByCode?.map((entry) => entry.code) ?? [];
+  return codesBefore.length > 1 ? deltas.map((delta) => ({ ...delta, codesBefore })) : deltas;
+}
+
+function promoDeltasWithoutBeforeCodes(
+  before: PromoSide,
+  after: PromoSide,
+): Array<{ promoCode: string | null; amountCents: number }> {
+  const deltaCents = modificationPromoDeltaCents(before, after);
+  const split = splitPromoDeltaByCode(before, after, deltaCents);
+  if (split) return split;
+  if (deltaCents === 0) return [];
+  const severalCodes =
+    (before.promoByCode?.length ?? 0) > 1 || (after.promoByCode?.length ?? 0) > 1;
+  return [
+    {
+      promoCode: severalCodes ? null : (after.promoCode ?? before.promoCode ?? null),
+      amountCents: deltaCents,
+    },
+  ];
+}

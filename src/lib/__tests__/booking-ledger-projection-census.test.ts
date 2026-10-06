@@ -1857,3 +1857,64 @@ describe("the acknowledgement draft (--write-acknowledgement-draft)", () => {
     expect(moved.gateClosedBecause.some((reason) => reason.includes("IN_FLIGHT_HAND_BACK"))).toBe(true);
   });
 });
+
+/*
+  #3829 composed this census with epic #3813's by-hand refunds: an edit's
+  reduction on an internet-banking booking raises a CANCELLED_BOOKING_HAND_BACK
+  marked by its occurrence key (`INV-PAY-117`). On a cancelled booking that open
+  task is money still going back, exactly as the cancellation's own hand-back is,
+  and the ledger has not posted its bank refund yet - so it belongs in
+  IN_FLIGHT_HAND_BACK. Excluding it (as the cancellation-only readers must)
+  would leave its cents unexplained here.
+*/
+describe("an open edit refund hand-back on a cancelled internet-banking booking is in flight (#3829, INV-PAY-117)", () => {
+  /** $190 marked paid, an edit removes a $50 night ($50 hand-back open), cancelled at 50% of the $140 left: $70 kept, $70 handed back. */
+  function editedThenCancelled(): BookingLedgerCensusRow {
+    const ledger = confirmedLedger();
+    const base = row({ lines: [], transactions: [txn("t1", 19_000)], payment: payment({ source: "INTERNET_BANKING" }) });
+    settle(ledger, base, true);
+    const edit = planModificationChargeLines({
+      bookingId: B,
+      lodgeId: LODGE,
+      bookingModificationId: "m1",
+      before: { guests: [guestSide("g1", [[D1, 5_000], [D2, 5_000]]), guestSide("g2", [[D1, 5_000], [D2, 5_000]])], promoAdjustmentCents: -1_000 },
+      after: { guests: [guestSide("g1", [[D1, 5_000], [D2, 5_000]]), guestSide("g2", [[D1, 5_000]])], promoAdjustmentCents: -1_000 },
+      changeFeeCents: 0,
+      expectedCents: -5_000,
+      postedLines: ledger.reversible() as never,
+    });
+    if (edit.kind !== "lines") throw new Error(`edit plan refused: ${edit.reason}`);
+    ledger.post(edit.postings, LATER);
+    const cancel = planCancellationChargeLines({ bookingId: B, lodgeId: LODGE, keptCents: 7_000, chargeLines: ledger.reversible(), adjustmentLines: ledger.adjustments() });
+    if (cancel.kind !== "lines") throw new Error("cancel plan refused");
+    ledger.post(cancel.postings, LATER);
+    const handBack = { kind: "CANCELLED_BOOKING_HAND_BACK" as const, status: "OPEN" as const, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null };
+    return {
+      ...base,
+      lines: ledger.lines,
+      booking: { ...base.booking, status: "CANCELLED", finalPriceCents: 14_000 },
+      modifications: [{ id: "m1", modificationType: "BATCH_MODIFY", priceDiffCents: -5_000, changeFeeCents: 0, createdAt: LATER, reviewRebase: null }],
+      tasks: [
+        { ...handBack, id: "task-cancel", amountCents: 7_000 },
+        { ...handBack, id: "task-edit", amountCents: 5_000 },
+      ],
+      cancellation: { refundMethod: "manual", settledAmountCents: 7_000, keptCents: 7_000 },
+    };
+  }
+
+  it("both open hand-backs explain what the member is still owed", () => {
+    expect(identity(editedThenCancelled(), "PRICE")).toMatchObject({
+      status: "CLASSIFIED",
+      deltaCents: 12_000,
+      explainedBy: [{ name: "IN_FLIGHT_HAND_BACK", cents: 12_000 }],
+    });
+  });
+
+  it("MUTATION: without the edit's hand-back the same booking disagrees", () => {
+    const subject = editedThenCancelled();
+    expect(identity({ ...subject, tasks: subject.tasks.filter((task) => task.id !== "task-edit") }, "PRICE")).toMatchObject({
+      status: "DISAGREE",
+      explainedBy: [],
+    });
+  });
+});
