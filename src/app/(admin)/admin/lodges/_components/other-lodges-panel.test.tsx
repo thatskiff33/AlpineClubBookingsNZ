@@ -121,7 +121,11 @@ function stubFetch(
 
 /** The common case: one owned lodge (ours) and one other club's. */
 function oneOwned(): AdminOtherLodgesResponse {
-  return { otherLodges: [lodge(), theirs()], ownedLodgeNames: ["Tararua Lodge"] };
+  return {
+    otherLodges: [lodge(), theirs()],
+    ownedLodgeNames: ["Tararua Lodge"],
+    serverVersionStatus: "match",
+  };
 }
 
 async function renderPanel() {
@@ -165,6 +169,7 @@ describe("Other lodges: only the site's own lodge is editable (#52)", () => {
         theirs(),
       ],
       ownedLodgeNames: ["Tararua Lodge", "Tararua Annex"],
+      serverVersionStatus: "match",
     });
     await renderPanel();
 
@@ -208,7 +213,11 @@ describe("Other lodges: only the site's own lodge is editable (#52)", () => {
   });
 
   it("is read-only with a note, and no buttons, while the owned list is UNKNOWN", async () => {
-    stubFetch({ otherLodges: [lodge({ owned: false }), theirs()], ownedLodgeNames: null });
+    stubFetch({
+      otherLodges: [lodge({ owned: false }), theirs()],
+      ownedLodgeNames: null,
+      serverVersionStatus: "match",
+    });
     await renderPanel();
 
     expect(screen.queryByRole("button", { name: /^edit/i })).toBeNull();
@@ -220,13 +229,41 @@ describe("Other lodges: only the site's own lodge is editable (#52)", () => {
   });
 
   it("is read-only with a different note while the owned list is known but EMPTY", async () => {
-    stubFetch({ otherLodges: [lodge({ owned: false }), theirs()], ownedLodgeNames: [] });
+    stubFetch({
+      otherLodges: [lodge({ owned: false }), theirs()],
+      ownedLodgeNames: [],
+      serverVersionStatus: "match",
+    });
     await renderPanel();
 
     expect(screen.queryByRole("button", { name: /^edit/i })).toBeNull();
     const note = screen.getByTestId("owned-none");
     expect(note.textContent).toMatch(/no lodge assigned to this site/i);
     expect(screen.queryByTestId("owned-unknown")).toBeNull();
+  });
+
+  it("says syncing is paused, linking to setup, while the server version differs (#49)", async () => {
+    stubFetch({ ...oneOwned(), serverVersionStatus: "mismatch" });
+    await renderPanel();
+
+    const note = screen.getByTestId("server-version-paused");
+    expect(note.textContent).toMatch(/paused/i);
+    expect(note.textContent).toMatch(/different software version/i);
+    const link = within(note).getByRole("link", { name: /setup page/i });
+    expect(link.getAttribute("href")).toBe("/admin/alpine-server/setup");
+    // The list is still shown, and the owned lodge is still editable: a pause
+    // stops the transfer, not the local edit.
+    expect(screen.getByText("Tararua Lodge")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^edit/i })).toBeTruthy();
+  });
+
+  it("shows no paused note while the versions match, are unchecked, or no key is stored (#49)", async () => {
+    for (const status of ["match", "unchecked", "no-key"] as const) {
+      cleanup();
+      stubFetch({ ...oneOwned(), serverVersionStatus: status });
+      await renderPanel();
+      expect(screen.queryByTestId("server-version-paused")).toBeNull();
+    }
   });
 
   it("shows no note once the owned list is known and an owned row is on screen", async () => {
@@ -239,7 +276,11 @@ describe("Other lodges: only the site's own lodge is editable (#52)", () => {
 
   it("explains, with no button, when the server names a lodge that has not been downloaded yet", async () => {
     // The list says "Tararua Lodge" but no local row carries that name.
-    stubFetch({ otherLodges: [theirs()], ownedLodgeNames: ["Tararua Lodge"] });
+    stubFetch({
+      otherLodges: [theirs()],
+      ownedLodgeNames: ["Tararua Lodge"],
+      serverVersionStatus: "match",
+    });
     render(<OtherLodgesPanel ancestorRendersViewOnlyBanner />);
     await screen.findByText("Ruapehu Hut");
 
@@ -259,6 +300,7 @@ describe("Other lodges: only the site's own lodge is editable (#52)", () => {
     stubFetch({
       otherLodges: [lodge(), theirs()],
       ownedLodgeNames: ["Tararua Lodge", "Tararua Annex"],
+      serverVersionStatus: "match",
     });
     await renderPanel();
 
