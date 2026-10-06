@@ -96,6 +96,8 @@ import {
 import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
 import { asRecord } from "@/lib/xero-json";
 import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
+import { changeFeeLineItem } from "@/lib/xero-modification-line-items";
+import { loadPrimaryInvoiceChangeFeeCents } from "@/lib/xero-primary-invoice-change-fee";
 
 export interface CreateXeroBookingInvoiceOptions
   extends FindOrCreateXeroContactOptions {
@@ -623,6 +625,17 @@ export async function createXeroInvoiceForBooking(
     }),
   );
   const promoLineRecord = promoAdjustmentLineRecord(promoLinePlan);
+  // #3502: a change fee the card already collected before this invoice was
+  // raised, which no supplementary invoice bills. Without it the invoice totals
+  // less than the cash recorded against it plus the applied credit allocated
+  // below, and Xero refuses the allocation on every replay.
+  const unbilledChangeFeeCents = await loadPrimaryInvoiceChangeFeeCents(
+    bookingId,
+    booking.payment.changeFeeCents ?? 0,
+  );
+  if (unbilledChangeFeeCents > 0) {
+    lineItems.push(changeFeeLineItem(unbilledChangeFeeCents, 1, hutFeeMapping));
+  }
 
   // Read once, outside the closure: `buildInvoice` runs for the recorded
   // request payload and again on every contact-repair attempt, and both must

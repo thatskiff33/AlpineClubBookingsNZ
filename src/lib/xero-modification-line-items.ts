@@ -72,6 +72,32 @@ export type ModificationDocumentKind = "SUPPLEMENTARY_INVOICE" | "MODIFICATION_C
 /** The change-fee line's words, on every document that carries one. */
 export const CHANGE_FEE_LINE_DESCRIPTION = "Late notice booking change fee";
 
+/**
+ * THE change-fee line, on every document that bills or returns one: a
+ * supplementary invoice, a modification credit note, and (#3502) a primary
+ * booking invoice raised after a fee was already taken by card. Coded to the
+ * hut-fee income mapping; `orientation` is +1 on an invoice and -1 on a note.
+ */
+export function changeFeeLineItem(
+  changeFeeCents: number,
+  orientation: 1 | -1,
+  incomeMapping: Pick<ResolvedAccountMapping, "code" | "itemCode" | "codeExplicitlyConfigured">,
+): LineItem {
+  return applyHutFeeLineCodes(
+    {
+      description: CHANGE_FEE_LINE_DESCRIPTION,
+      quantity: 1,
+      unitAmount: (orientation * changeFeeCents) / 100,
+      taxType: "OUTPUT2",
+    },
+    {
+      itemCode: incomeMapping.itemCode,
+      accountCode: incomeMapping.code ?? "200",
+      accountCodeExplicitlyConfigured: incomeMapping.codeExplicitlyConfigured,
+    },
+  );
+}
+
 /** A settled review share's words: the officer's note, or the bare sentence. */
 export function renderEditReviewShareDescription(share: Pick<EditReviewSettledShare, "note">): string {
   const note = share.note?.trim();
@@ -290,21 +316,7 @@ export function buildModificationDocumentLineItems(args: {
   }
 
   if (changeFeeCents > 0) {
-    items.push(
-      applyHutFeeLineCodes(
-        {
-          description: CHANGE_FEE_LINE_DESCRIPTION,
-          quantity: 1,
-          unitAmount: (orientation * changeFeeCents) / 100,
-          taxType: "OUTPUT2",
-        },
-        {
-          itemCode: context.incomeMapping.itemCode,
-          accountCode: incomeCode,
-          accountCodeExplicitlyConfigured: context.incomeMapping.codeExplicitlyConfigured,
-        },
-      ),
-    );
+    items.push(changeFeeLineItem(changeFeeCents, orientation, context.incomeMapping));
   }
   return items;
 }

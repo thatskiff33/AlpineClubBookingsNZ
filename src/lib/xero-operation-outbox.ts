@@ -90,6 +90,7 @@ import {
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_QUEUE_TYPES,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
+  OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES,
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
   XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
   type QueuedOutboxExpectedOperation,
@@ -1134,17 +1135,10 @@ const RESTATABLE_SUPPLEMENTARY_INVOICE_STATUSES = [
   "WAITING_PAYMENT",
 ] as const;
 
-/**
- * The states in which a supplementary invoice for this anchor is still going to
- * be sent, so a second one must not be queued behind it. Wider than the
- * restatable set by `RUNNING`: an operation the outbox is executing right now
- * cannot have its amount changed, but it is very much still an invoice.
- */
-export const OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES = [
-  "PENDING",
-  "RUNNING",
-  "WAITING_PAYMENT",
-] as const;
+// #3502: moved to `xero-operation-outbox-payload.ts`, beside the queue type it
+// qualifies, so the primary invoice can read it without importing this module
+// (which imports the primary invoice); re-exported so no importer moved.
+export { OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES };
 
 /**
  * #3170 fix round (F2): the advisory key that makes "one supplementary invoice
