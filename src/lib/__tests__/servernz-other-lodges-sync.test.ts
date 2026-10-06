@@ -79,10 +79,15 @@ const SETTINGS = {
 /** A row as the central server sends it. */
 const REMOTE_UPDATED_AT = "2026-08-14T00:00:00.000Z";
 
-/** The #50 detail fields as they travel: dates as `YYYY-MM-DD`, no amenities. */
+/** The #50 and API 2.1 detail fields as they travel: dates as `YYYY-MM-DD`, no amenities. */
 const WIRE_DETAILS = {
   siteUrl: "https://club.test",
-  bookingPath: "Email the booking officer",
+  doubleBeds: 4,
+  singleBeds: 16,
+  minutesWalkToLodge: 20,
+  roomType: "DORMITORY" as const,
+  skiWorkshopArea: true,
+  gamesRoom: false,
   requiresLodgeCustodian: true,
   freeWifi: false,
   quietRoom: true,
@@ -346,7 +351,11 @@ describe("lodge details and amenities round trip", () => {
     mockFindUnique.mockResolvedValue({
       ...localCopyOf("ol_1", "2026-08-01T00:00:00.000Z"),
       siteUrl: null,
-      bookingPath: null,
+      doubleBeds: null,
+      singleBeds: null,
+      minutesWalkToLodge: null,
+      roomType: null,
+      skiWorkshopArea: false,
       requiresLodgeCustodian: false,
       quietRoom: false,
       dryingRoom: false,

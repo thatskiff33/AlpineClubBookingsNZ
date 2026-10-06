@@ -65,7 +65,12 @@ function lodge(over: Partial<AdminOtherLodge> = {}): AdminOtherLodge {
     bookingOfficerPhone: "021 555 0000",
     bedCapacity: 24,
     siteUrl: null,
-    bookingPath: null,
+    doubleBeds: null,
+    singleBeds: null,
+    minutesWalkToLodge: null,
+    roomType: null,
+    skiWorkshopArea: false,
+    gamesRoom: false,
     cancellationPeriod: null,
     requiresLodgeCustodian: false,
     freeWifi: false,
@@ -422,6 +427,62 @@ describe("Other lodges edit popup (#51, opened through Edit my Lodge)", () => {
     // The list was loaded again after the save (GET twice: first load + refresh).
     const gets = fetchMock.mock.calls.filter(([, init]) => !init?.method || init.method === "GET");
     expect(gets.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("edits the API 2.1 fields: bed counts, walk, room type and the two new facilities", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    // The booking path is gone; the URL carries the server's new label.
+    expect(within(dialog).queryByLabelText("How to book")).toBeNull();
+    expect(within(dialog).getByLabelText("Non-member booking page URL")).toBeTruthy();
+    fireEvent.change(within(dialog).getByLabelText("Double beds"), { target: { value: "4" } });
+    fireEvent.change(within(dialog).getByLabelText("Single beds"), { target: { value: "12" } });
+    fireEvent.change(within(dialog).getByLabelText("Minutes' walk to the lodge"), {
+      target: { value: "25" },
+    });
+    fireEvent.click(within(dialog).getByLabelText("Dormitory"));
+    fireEvent.click(within(dialog).getByLabelText("Ski workshop area"));
+    fireEvent.click(within(dialog).getByLabelText("Games room"));
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [write] = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    const body = JSON.parse(write[1].body);
+    expect(body).toMatchObject({
+      doubleBeds: 4,
+      singleBeds: 12,
+      minutesWalkToLodge: 25,
+      roomType: "DORMITORY",
+      skiWorkshopArea: true,
+      gamesRoom: true,
+    });
+    expect(body).not.toHaveProperty("bookingPath");
+  });
+
+  it("clears a stored room type with 'Not stated' and refuses a fractional bed count", async () => {
+    stubFetch(oneOwned());
+    await renderPanel();
+    fireEvent.click(editMyLodge());
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByLabelText("Room"));
+    fireEvent.change(within(dialog).getByLabelText("Single beds"), { target: { value: "2.5" } });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    const alert = await within(dialog).findByRole("alert");
+    expect(alert.textContent).toBe("Single beds must be a whole number.");
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+
+    fireEvent.change(within(dialog).getByLabelText("Single beds"), { target: { value: "" } });
+    fireEvent.click(within(dialog).getByLabelText("Not stated"));
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [write] = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(JSON.parse(write[1].body)).toMatchObject({ roomType: null, singleBeds: null });
   });
 
   it("does NOT close when the dimmed background is clicked", async () => {

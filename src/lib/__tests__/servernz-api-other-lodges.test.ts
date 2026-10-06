@@ -28,7 +28,7 @@ function respondWith(body: unknown) {
   });
 }
 
-/** A valid row as the central server sends it at API version 1.1 and later. */
+/** A valid row as the central server sends it at API version 2.1. */
 function remoteRow(over: Record<string, unknown> = {}) {
   return {
     id: "srv_1",
@@ -39,7 +39,12 @@ function remoteRow(over: Record<string, unknown> = {}) {
     bookingOfficerPhone: "+64 27 422 4115",
     bedCapacity: 24,
     siteUrl: "https://club.test",
-    bookingPath: "Email the booking officer",
+    doubleBeds: 4,
+    singleBeds: 16,
+    minutesWalkToLodge: 20,
+    roomType: "DORMITORY",
+    skiWorkshopArea: true,
+    gamesRoom: false,
     requiresLodgeCustodian: true,
     freeWifi: false,
     quietRoom: true,
@@ -132,7 +137,13 @@ describe("pullOtherLodges — lodge details and amenities (#50)", () => {
     ["a site URL that is not http(s)", { siteUrl: "ftp://club.test" }],
     ["a site URL that is a bare word", { siteUrl: "club.test" }],
     ["a site URL over 500 characters", { siteUrl: `https://club.test/${"a".repeat(500)}` }],
-    ["a booking path over 300 characters", { bookingPath: "b".repeat(301) }],
+    ["a negative double-bed count", { doubleBeds: -1 }],
+    ["a single-bed count over 100000", { singleBeds: 100_001 }],
+    ["a walking time that is not a whole number", { minutesWalkToLodge: 7.5 }],
+    ["a walking time sent as a string", { minutesWalkToLodge: "20" }],
+    ["a room type the contract does not name", { roomType: "CHALET" }],
+    ["a room type in the wrong case", { roomType: "room" }],
+    ["a games room that is not a boolean", { gamesRoom: "yes" }],
     ["a cancellation period over 200 characters", { cancellationPeriod: "c".repeat(201) }],
     ["a facility that is not a boolean", { freeWifi: "yes" }],
     ["a season start that is not a real calendar date", { winterSeasonStart: "2026-02-30" }],
@@ -174,6 +185,23 @@ describe("pullOtherLodges — lodge details and amenities (#50)", () => {
     expect(result.cursor).toBe("c-2");
   });
 
+  it("keeps a row still carrying the removed `bookingPath`, without the key", async () => {
+    // API 2.1 removed it. The row is otherwise valid, so it must not be
+    // dropped, and the key must not survive to the merge or a later upload,
+    // where the server's strict item schema would refuse the whole batch.
+    respondWith({
+      lodges: [remoteRow({ bookingPath: "Email the booking officer" })],
+      cursor: "c-1",
+      count: 1,
+    });
+
+    const result = await pullOtherLodges(null);
+
+    expect(result.dropped).toBe(0);
+    expect(result.lodges[0]).not.toHaveProperty("bookingPath");
+    expect(result.lodges[0]).toMatchObject({ roomType: "DORMITORY", doubleBeds: 4 });
+  });
+
   it("accepts an envelope that also carries keys this client does not read yet", async () => {
     // A later server release adds to the envelope (the owned-lodge list, #52);
     // a pull must not reject the whole page for a key it has no opinion on.
@@ -196,7 +224,8 @@ describe("pullOtherLodges — lodge details and amenities (#50)", () => {
 /**
  * The keys the central server's `.strict()` upload item schema accepts, copied
  * from its contract (`otherLodgeUploadItemSchema` in the server's
- * `src/lib/other-lodges.ts`, API version 1.1). ONE key outside this set rejects
+ * `src/lib/other-lodges.ts`, API version 2.1, which removed `bookingPath`). ONE
+ * key outside this set rejects
  * the WHOLE upload with 400, so the client's item type is pinned to exactly it.
  * This is a deliberate second copy: deriving it from this repository's own field
  * list would prove the client agrees with itself, not with the server.
@@ -209,7 +238,12 @@ const SERVER_UPLOAD_ITEM_KEYS = [
   "bookingOfficerPhone",
   "bedCapacity",
   "siteUrl",
-  "bookingPath",
+  "doubleBeds",
+  "singleBeds",
+  "minutesWalkToLodge",
+  "roomType",
+  "skiWorkshopArea",
+  "gamesRoom",
   "requiresLodgeCustodian",
   "freeWifi",
   "quietRoom",
@@ -239,7 +273,12 @@ describe("uploadOtherLodges — payload shape (#50)", () => {
       bookingOfficerPhone: null,
       bedCapacity: null,
       siteUrl: null,
-      bookingPath: null,
+      doubleBeds: null,
+      singleBeds: null,
+      minutesWalkToLodge: null,
+      roomType: null,
+      skiWorkshopArea: false,
+      gamesRoom: false,
       requiresLodgeCustodian: false,
       freeWifi: false,
       quietRoom: false,
@@ -272,7 +311,12 @@ describe("uploadOtherLodges — payload shape (#50)", () => {
       bookingOfficerPhone: "+64 27 422 4115",
       bedCapacity: 24,
       siteUrl: "https://club.test",
-      bookingPath: null,
+      doubleBeds: 4,
+      singleBeds: 16,
+      minutesWalkToLodge: 20,
+      roomType: "ROOM" as const,
+      skiWorkshopArea: true,
+      gamesRoom: true,
       requiresLodgeCustodian: true,
       freeWifi: false,
       quietRoom: true,

@@ -19,7 +19,7 @@
  */
 
 /** The server API version this release speaks. Bump it when the server does. */
-export const SERVERNZ_EXPECTED_SERVER_VERSION = "2.0";
+export const SERVERNZ_EXPECTED_SERVER_VERSION = "2.1";
 
 /**
  * What is stored when the server answered the version call with 404 (it

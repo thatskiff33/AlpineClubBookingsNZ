@@ -1,4 +1,4 @@
-import type { OtherLodge, Prisma } from "@prisma/client";
+import type { OtherLodge, OtherLodgeRoomType, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { isHttpUrl } from "@/lib/http-url";
@@ -28,7 +28,6 @@ export const OTHER_LODGE_TEXT_FIELDS = [
   "bookingOfficerEmail",
   "bookingOfficerPhone",
   "siteUrl",
-  "bookingPath",
   "cancellationPeriod",
 ] as const;
 
@@ -43,7 +42,23 @@ export const OTHER_LODGE_BOOLEAN_FIELDS = [
   "breakfastIncluded",
   "lunchIncluded",
   "dinnerIncluded",
+  "skiWorkshopArea",
+  "gamesRoom",
 ] as const;
+
+/** The whole-number columns: each null or 0..`wholeNumberMax`. */
+export const OTHER_LODGE_WHOLE_NUMBER_FIELDS = [
+  "bedCapacity",
+  "doubleBeds",
+  "singleBeds",
+  "minutesWalkToLodge",
+] as const;
+
+/** Whether guests sleep in private rooms or dormitories (server API 2.1). */
+export const OTHER_LODGE_ROOM_TYPES = [
+  "ROOM",
+  "DORMITORY",
+] as const satisfies readonly OtherLodgeRoomType[];
 
 /** The `@db.Date` season starts: calendar dates, never instants (`INV-DATE-026`). */
 export const OTHER_LODGE_DATE_FIELDS = [
@@ -54,13 +69,15 @@ export const OTHER_LODGE_DATE_FIELDS = [
 /** Every data column a lodge carries besides its id, name and timestamps. */
 export const OTHER_LODGE_DATA_FIELDS = [
   ...OTHER_LODGE_TEXT_FIELDS,
-  "bedCapacity",
+  ...OTHER_LODGE_WHOLE_NUMBER_FIELDS,
+  "roomType",
   ...OTHER_LODGE_BOOLEAN_FIELDS,
   ...OTHER_LODGE_DATE_FIELDS,
 ] as const;
 
 export type OtherLodgeTextField = (typeof OTHER_LODGE_TEXT_FIELDS)[number];
 export type OtherLodgeBooleanField = (typeof OTHER_LODGE_BOOLEAN_FIELDS)[number];
+export type OtherLodgeWholeNumberField = (typeof OTHER_LODGE_WHOLE_NUMBER_FIELDS)[number];
 export type OtherLodgeDateField = (typeof OTHER_LODGE_DATE_FIELDS)[number];
 export type OtherLodgeDataField = (typeof OTHER_LODGE_DATA_FIELDS)[number];
 
@@ -95,9 +112,9 @@ export const OTHER_LODGE_BOUNDS = {
   bookingOfficerName: 200,
   bookingOfficerEmail: 320,
   bookingOfficerPhone: 50,
-  bedCapacityMax: 100_000,
+  /** Every whole-number field: bed counts and the walk in, in minutes. */
+  wholeNumberMax: 100_000,
   siteUrl: 500,
-  bookingPath: 300,
   cancellationPeriod: 200,
   amenityName: 120,
   amenityDescription: 1000,
@@ -144,8 +161,10 @@ export type OtherLodgeRecord = Pick<
  * `YYYY-MM-DD` strings so a calendar day crosses JSON without a time zone.
  */
 export type SerializedOtherLodgeData = { [K in OtherLodgeTextField]: string | null } & {
-  bedCapacity: number | null;
-} & { [K in OtherLodgeBooleanField]: boolean } & {
+  [K in OtherLodgeWholeNumberField]: number | null;
+} & { roomType: OtherLodgeRoomType | null } & {
+  [K in OtherLodgeBooleanField]: boolean;
+} & {
   [K in OtherLodgeDateField]: string | null;
 };
 
@@ -162,7 +181,8 @@ export function serializeOtherLodgeData(
 ): SerializedOtherLodgeData {
   const data: Record<string, unknown> = {};
   for (const field of OTHER_LODGE_TEXT_FIELDS) data[field] = lodge[field];
-  data.bedCapacity = lodge.bedCapacity;
+  for (const field of OTHER_LODGE_WHOLE_NUMBER_FIELDS) data[field] = lodge[field];
+  data.roomType = lodge.roomType;
   for (const field of OTHER_LODGE_BOOLEAN_FIELDS) data[field] = lodge[field];
   for (const field of OTHER_LODGE_DATE_FIELDS) {
     // A `@db.Date` read is a date-only value, which is `formatDateOnly`'s
@@ -274,6 +294,18 @@ export const amenitiesInputSchema = z
 
 export type OtherLodgeAmenityInput = z.infer<typeof amenityInputSchema>;
 
+// Informational counts about the partner lodge (beds, and the walk in, in
+// minutes); non-negative, capped well above any real lodge so a fat-fingered
+// value is caught but real ones pass. The central server holds the same bound.
+const wholeNumberShape = Object.fromEntries(
+  OTHER_LODGE_WHOLE_NUMBER_FIELDS.map((field) => [
+    field,
+    z.number().int().min(0).max(OTHER_LODGE_BOUNDS.wholeNumberMax).nullable().optional(),
+  ]),
+) as {
+  [K in OtherLodgeWholeNumberField]: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+};
+
 const booleanShape = Object.fromEntries(
   OTHER_LODGE_BOOLEAN_FIELDS.map((field) => [field, z.boolean().optional()]),
 ) as { [K in OtherLodgeBooleanField]: z.ZodOptional<z.ZodBoolean> };
@@ -292,23 +324,15 @@ export const otherLodgeDataShape = {
   bookingOfficerPhone: boundedText(OTHER_LODGE_BOUNDS.bookingOfficerPhone)
     .nullable()
     .optional(),
-  // Informational bed count of the partner lodge; non-negative, capped well
-  // above any real lodge so a fat-fingered value is caught but real ones pass.
-  bedCapacity: z
-    .number()
-    .int()
-    .min(0)
-    .max(OTHER_LODGE_BOUNDS.bedCapacityMax)
-    .nullable()
-    .optional(),
+  ...wholeNumberShape,
+  roomType: z.enum(OTHER_LODGE_ROOM_TYPES).nullable().optional(),
   siteUrl: z.preprocess(
     blankToNull,
     boundedText(OTHER_LODGE_BOUNDS.siteUrl)
-      .refine(isHttpUrl, "Site URL must start with http:// or https://")
+      .refine(isHttpUrl, "Booking page URL must start with http:// or https://")
       .nullable()
       .optional(),
   ),
-  bookingPath: boundedText(OTHER_LODGE_BOUNDS.bookingPath).nullable().optional(),
   cancellationPeriod: boundedText(OTHER_LODGE_BOUNDS.cancellationPeriod)
     .nullable()
     .optional(),
@@ -335,7 +359,10 @@ export function otherLodgeDataColumns(
   for (const field of OTHER_LODGE_TEXT_FIELDS) {
     if (input[field] !== undefined) data[field] = normalizeOtherLodgeText(input[field]);
   }
-  if (input.bedCapacity !== undefined) data.bedCapacity = input.bedCapacity;
+  for (const field of OTHER_LODGE_WHOLE_NUMBER_FIELDS) {
+    if (input[field] !== undefined) data[field] = input[field];
+  }
+  if (input.roomType !== undefined) data.roomType = input.roomType;
   for (const field of OTHER_LODGE_BOOLEAN_FIELDS) {
     if (input[field] !== undefined) data[field] = input[field];
   }

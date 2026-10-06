@@ -92,10 +92,12 @@ same **lodge edit** permission as the properties above.
    the page**, so the list stays where it is.
 2. The **Name** is shown but cannot be changed: the central server matches
    lodges by name, so a new name would create a second lodge there. Fill in or
-   change the **Location**, the **booking officer's** name, email and phone, a
-   **Bed capacity**, the lodge's **Website** and **How to book**, its
-   **Cancellation period** and the dates its **winter** and **summer seasons
-   start**, then **Save**.
+   change the **Location**, the **booking officer's** name, email and phone,
+   the **Non-member booking page URL**, the **Bed capacity**, **Double beds**,
+   **Single beds** and **Minutes' walk to the lodge**, whether guests sleep in
+   a **Room** or a **Dormitory** (or **Not stated**), the **Cancellation
+   period** and the dates its **winter** and **summer seasons start**, then
+   **Save**.
 3. Tick whatever applies under **Facilities** (an unticked box means *no*, not
    *unknown*), and add anything else the lodge offers under **Amenities** — one
    row per amenity, a name plus an optional description, up to fifty per lodge
@@ -165,12 +167,14 @@ answer; the panel is read-only again until the next download.
 | Booking officer's name | Contact person at the other lodge | — | Optional; up to 200 characters |
 | Booking officer's email | Contact email | — | Optional; must be a valid email; up to 320 characters |
 | Booking officer's phone | Contact phone | — | Optional; up to 50 characters. Editable in the popup for your own lodge; never shown in the list, and other clubs' numbers are not sent to this site's browser at all |
-| Bed capacity | Informational bed count of the other lodge | — | Optional; whole number ≥ 0. Not this system's booking capacity |
-| Website | The other lodge's site | — | Optional; up to 500 characters; must start with `http://` or `https://` because it is shown as a link (anything else is refused) |
-| How to book | Free text on how a booking is made | — | Optional; up to 300 characters |
+| Bed capacity | Informational bed count of the other lodge | — | Optional; whole number 0–100000. Not this system's booking capacity |
+| Double beds / Single beds | Informational counts of each kind of bed | — | Optional; whole number 0–100000 each |
+| Minutes' walk to the lodge | How long the walk in takes, in minutes | — | Optional; whole number 0–100000 |
+| Room or dormitory | Whether guests sleep in private rooms or a dormitory | Not stated | A choice of **Room**, **Dormitory** or **Not stated** |
+| Non-member booking page URL | Where a non-member books the other lodge (the list's **Booking page** column) | — | Optional; up to 500 characters; must start with `http://` or `https://` because it is shown as a link (anything else is refused). Server API 2.1 replaced the old free-text **How to book** field with this one link |
 | Cancellation period | Free text, e.g. "14 days" | — | Optional; up to 200 characters |
 | Winter season starts / Summer season starts | The calendar date each season opens | — | Optional; a real date, stored and shared as a date with no time, so it is never shifted by time zone |
-| Facilities | Requires a lodge custodian, free wifi, quiet room, drying room, shared kitchen, wheelchair accessible, breakfast / lunch / dinner included | all off | Yes/no each; *off* means **no**, and existing lodges start with every box off |
+| Facilities | Requires a lodge custodian, free wifi, quiet room, drying room, shared kitchen, wheelchair accessible, breakfast / lunch / dinner included, ski workshop area, games room | all off | Yes/no each; *off* means **no**, and existing lodges start with every box off |
 | Amenities | Anything else the lodge offers | none | Up to 50 per lodge; each has a name (up to 120 characters, unique within the lodge ignoring case) and an optional description (up to 1000 characters). Saving replaces the whole list |
 
 Every field in this table is shared with other clubs through the

@@ -65,13 +65,13 @@ describe("checkServerVersion", () => {
     const result = await checkServerVersion();
 
     expect(mocks.refreshStoredServerVersion).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ status: "no-key", serverVersion: "0", expected: "2.0", couldNotCheck: false, missingBaseUrl: false });
+    expect(result).toMatchObject({ status: "no-key", serverVersion: "0", expected: "2.1", couldNotCheck: false, missingBaseUrl: false });
   });
 
   it("asks, then reports the freshly stored answer as match or mismatch", async () => {
-    mocks.refreshStoredServerVersion.mockResolvedValue("2.0");
-    stored("2.0");
-    expect(await checkServerVersion()).toMatchObject({ status: "match", serverVersion: "2.0", checkedAt: CHECKED_AT });
+    mocks.refreshStoredServerVersion.mockResolvedValue("2.1");
+    stored("2.1");
+    expect(await checkServerVersion()).toMatchObject({ status: "match", serverVersion: "2.1", checkedAt: CHECKED_AT });
 
     mocks.refreshStoredServerVersion.mockResolvedValue("unknown");
     stored("unknown");
@@ -80,10 +80,10 @@ describe("checkServerVersion", () => {
 
   it("keeps the last known answer and says couldNotCheck when the call fails", async () => {
     mocks.refreshStoredServerVersion.mockResolvedValue(null);
-    stored("2.0");
+    stored("2.1");
     const result = await checkServerVersion();
     // Still a match on the stored answer: a failed check is not a mismatch.
-    expect(result).toMatchObject({ status: "match", serverVersion: "2.0", couldNotCheck: true });
+    expect(result).toMatchObject({ status: "match", serverVersion: "2.1", couldNotCheck: true });
   });
 
   it("reports unchecked, and allows, when a failed first check leaves the row NULL", async () => {
@@ -102,21 +102,21 @@ describe("checkServerVersion", () => {
 
   it("lets a failure to record propagate (item 2)", async () => {
     mocks.refreshStoredServerVersion.mockRejectedValue(new Error("database unavailable"));
-    stored("2.0");
+    stored("2.1");
     await expect(checkServerVersion()).rejects.toThrow(/database unavailable/);
   });
 
   describe("throttled (the setup page's route, item 5)", () => {
     it("returns the stored answer without a call when it was recorded inside the interval", async () => {
-      stored("2.1", new Date(NOW.getTime() - SERVER_VERSION_RECHECK_INTERVAL_MS + 1000).toISOString());
+      stored("2.2", new Date(NOW.getTime() - SERVER_VERSION_RECHECK_INTERVAL_MS + 1000).toISOString());
       const result = await checkServerVersion({ throttle: true, now: NOW });
       expect(mocks.refreshStoredServerVersion).not.toHaveBeenCalled();
-      expect(result).toMatchObject({ status: "mismatch", serverVersion: "2.1", couldNotCheck: false });
+      expect(result).toMatchObject({ status: "mismatch", serverVersion: "2.2", couldNotCheck: false });
     });
 
     it("asks again once the interval has passed, or when never asked", async () => {
-      mocks.refreshStoredServerVersion.mockResolvedValue("2.0");
-      stored("2.0", new Date(NOW.getTime() - SERVER_VERSION_RECHECK_INTERVAL_MS).toISOString());
+      mocks.refreshStoredServerVersion.mockResolvedValue("2.1");
+      stored("2.1", new Date(NOW.getTime() - SERVER_VERSION_RECHECK_INTERVAL_MS).toISOString());
       await checkServerVersion({ throttle: true, now: NOW });
       stored(null, null);
       await checkServerVersion({ throttle: true, now: NOW });
@@ -124,8 +124,8 @@ describe("checkServerVersion", () => {
     });
 
     it("never throttles the untouched (cron/mirror) call", async () => {
-      mocks.refreshStoredServerVersion.mockResolvedValue("2.0");
-      stored("2.0", NOW.toISOString());
+      mocks.refreshStoredServerVersion.mockResolvedValue("2.1");
+      stored("2.1", NOW.toISOString());
       await checkServerVersion();
       expect(mocks.refreshStoredServerVersion).toHaveBeenCalledTimes(1);
     });
@@ -134,8 +134,8 @@ describe("checkServerVersion", () => {
 
 describe("readStoredServerVersion (no network)", () => {
   it("never refreshes, and reads the stored answer against the key state", async () => {
-    stored("2.1");
-    expect(await readStoredServerVersion()).toMatchObject({ status: "mismatch", serverVersion: "2.1" });
+    stored("2.2");
+    expect(await readStoredServerVersion()).toMatchObject({ status: "mismatch", serverVersion: "2.2" });
     mocks.getServerNzSetupState.mockResolvedValue({ apiKeySet: false, apiKeyUpdatedAt: null });
     expect(await readStoredServerVersion()).toMatchObject({ status: "no-key", serverVersion: "0" });
     expect(mocks.refreshStoredServerVersion).not.toHaveBeenCalled();
@@ -146,9 +146,9 @@ describe("isServerSyncPaused", () => {
   it("pauses only on a recorded, differing answer", async () => {
     stored(null);
     expect(await isServerSyncPaused()).toBe(false);
-    stored("2.0");
-    expect(await isServerSyncPaused()).toBe(false);
     stored("2.1");
+    expect(await isServerSyncPaused()).toBe(false);
+    stored("2.2");
     expect(await isServerSyncPaused()).toBe(true);
     stored("unknown");
     expect(await isServerSyncPaused()).toBe(true);

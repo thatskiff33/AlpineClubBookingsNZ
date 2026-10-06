@@ -52,10 +52,11 @@ export type OtherLodgesUploadResult = z.infer<typeof uploadResultSchema>;
  * A lodge as the central server sends it, held to the SAME bounds the club's own
  * officer is held to in `PATCH /api/admin/other-lodges/[id]` — literally the same
  * `otherLodgeDataShape` (name 120, location 300, officer name 200, email 320,
- * phone 50, capacity 0..100000, site URL 500 and `http(s)` only, booking path
- * 300, cancellation period 200, season starts a real `YYYY-MM-DD` calendar
- * date, at most 50 amenities of name 120 / description 1000 with names unique
- * ignoring case).
+ * phone 50, bed capacity, double and single beds and minutes' walk each
+ * 0..100000, room type `ROOM` or `DORMITORY`, booking page URL 500 and
+ * `http(s)` only, cancellation period 200, season starts a real `YYYY-MM-DD`
+ * calendar date, at most 50 amenities of name 120 / description 1000 with names
+ * unique ignoring case).
  *
  * Matching those bounds is the point. `getPublicOtherLodges()` serves `id + name`
  * on the UNAUTHENTICATED booking-request settings endpoint, which renders on the

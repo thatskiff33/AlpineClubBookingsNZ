@@ -39,168 +39,28 @@ import {
   AMENITIES_PER_LODGE_MAX,
   OTHER_LODGE_BOUNDS,
   OTHER_LODGE_NOT_OWNED_CODE,
-  amenitiesInputSchema,
   ownedOtherLodgeEditLabel,
-  type AdminOtherLodge,
   type AdminOtherLodgesResponse,
-  type OtherLodgeBooleanField,
-  type OtherLodgeDateField,
-  type OtherLodgeTextField,
   type OwnedOtherLodgeNames,
-  type SerializedOtherLodge,
 } from "@/lib/other-lodges";
-
-// The API's own shape, not a hand-copied one: a column added to the shared
-// field list in `@/lib/other-lodges` fails to compile here until the form
-// carries it, instead of being silently dropped from the editor (#50). The
-// list row is the ADMIN shape (#52): another club's officer phone is not in
-// it, and `owned` is the route's answer to whether this site may edit it.
-type OtherLodgeRecord = AdminOtherLodge;
-type OtherLodgePayload = Omit<SerializedOtherLodge, "id" | "createdAt" | "updatedAt">;
-
-// EVERY EDITOR LABEL IS A `Record` OVER THE SHARED FIELD TYPE, so a field that
-// is stored, serialized and uploaded but missing here is a compile error — the
-// one list cannot gain a 15th field that the editor silently has no input for.
-// Lengths come from the same `OTHER_LODGE_BOUNDS` the API validates with.
-type TextInputSpec = {
-  label: string;
-  maxLength: number;
-  type?: "email" | "url";
-  placeholder?: string;
-};
-const TEXT_FIELDS: Record<OtherLodgeTextField, TextInputSpec> = {
-  location: { label: "Location", maxLength: OTHER_LODGE_BOUNDS.location },
-  bookingOfficerName: {
-    label: "Booking officer's name",
-    maxLength: OTHER_LODGE_BOUNDS.bookingOfficerName,
-  },
-  bookingOfficerEmail: {
-    label: "Booking officer's email",
-    maxLength: OTHER_LODGE_BOUNDS.bookingOfficerEmail,
-    type: "email",
-  },
-  bookingOfficerPhone: {
-    label: "Booking officer's phone",
-    maxLength: OTHER_LODGE_BOUNDS.bookingOfficerPhone,
-  },
-  siteUrl: {
-    label: "Website",
-    maxLength: OTHER_LODGE_BOUNDS.siteUrl,
-    type: "url",
-    placeholder: "https://",
-  },
-  bookingPath: { label: "How to book", maxLength: OTHER_LODGE_BOUNDS.bookingPath },
-  cancellationPeriod: {
-    label: "Cancellation period",
-    maxLength: OTHER_LODGE_BOUNDS.cancellationPeriod,
-  },
-};
-const DATE_FIELDS: Record<OtherLodgeDateField, string> = {
-  winterSeasonStart: "Winter season starts",
-  summerSeasonStart: "Summer season starts",
-};
-const FACILITY_LABELS: Record<OtherLodgeBooleanField, string> = {
-  requiresLodgeCustodian: "Requires a lodge custodian",
-  freeWifi: "Free wifi",
-  quietRoom: "Quiet room",
-  dryingRoom: "Drying room",
-  sharedKitchen: "Shared kitchen",
-  wheelchairAccessible: "Wheelchair accessible",
-  breakfastIncluded: "Breakfast included",
-  lunchIncluded: "Lunch included",
-  dinnerIncluded: "Dinner included",
-};
-const TEXT_FIELD_NAMES = Object.keys(TEXT_FIELDS) as OtherLodgeTextField[];
-const DATE_FIELD_NAMES = Object.keys(DATE_FIELDS) as OtherLodgeDateField[];
-const FACILITY_FIELDS = Object.keys(FACILITY_LABELS) as OtherLodgeBooleanField[];
-
-type AmenityFormRow = { name: string; description: string };
-
-type OtherLodgeFormState = {
-  name: string;
-  bedCapacity: string;
-  text: Record<OtherLodgeTextField, string>;
-  /** `YYYY-MM-DD` from a date input, or "" — never a `Date`. */
-  dates: Record<OtherLodgeDateField, string>;
-  facilities: Record<OtherLodgeBooleanField, boolean>;
-  amenities: AmenityFormRow[];
-};
-
-/** `{ [field]: value(field) }` typed over the field union, for the records above. */
-function recordOf<K extends string, V>(keys: readonly K[], value: (key: K) => V) {
-  return Object.fromEntries(keys.map((key) => [key, value(key)])) as Record<K, V>;
-}
-
-const emptyForm: OtherLodgeFormState = {
-  name: "",
-  bedCapacity: "",
-  text: recordOf(TEXT_FIELD_NAMES, () => ""),
-  dates: recordOf(DATE_FIELD_NAMES, () => ""),
-  facilities: recordOf(FACILITY_FIELDS, () => false),
-  amenities: [],
-};
-
-function formFromLodge(lodge: OtherLodgeRecord): OtherLodgeFormState {
-  return {
-    name: lodge.name,
-    bedCapacity: lodge.bedCapacity === null ? "" : String(lodge.bedCapacity),
-    text: recordOf(TEXT_FIELD_NAMES, (field) => lodge[field] ?? ""),
-    dates: recordOf(DATE_FIELD_NAMES, (field) => lodge[field] ?? ""),
-    facilities: recordOf(FACILITY_FIELDS, (field) => lodge[field]),
-    amenities: lodge.amenities.map((a) => ({
-      name: a.name,
-      description: a.description ?? "",
-    })),
-  };
-}
-
-// Blank text fields save as null; bed capacity parses to an integer or null;
-// dates travel as the `YYYY-MM-DD` string the input holds. The return type is
-// the API's shape, so a missing field is a compile error.
-function formPayload(form: OtherLodgeFormState): OtherLodgePayload {
-  const capacity = form.bedCapacity.trim();
-  return {
-    name: form.name.trim(),
-    bedCapacity: capacity === "" ? null : Number(capacity),
-    ...recordOf(TEXT_FIELD_NAMES, (field) => form.text[field].trim() || null),
-    ...recordOf(DATE_FIELD_NAMES, (field) => form.dates[field].trim() || null),
-    ...form.facilities,
-    amenities: form.amenities.map((a) => ({
-      name: a.name.trim(),
-      description: a.description.trim() || null,
-    })),
-  };
-}
-
-/**
- * The inline message for a form the API would refuse, or null when it is fine.
- * The amenity list is checked with the API's OWN schema rather than a re-typed
- * copy of its rules, so "needs a name", "unique ignoring case" and the per-lodge
- * cap can only ever disagree with the server by not being run.
- */
-function formProblem(form: OtherLodgeFormState): string | null {
-  // No name check: the name is read-only and always the stored one (#52).
-  const capacity = form.bedCapacity.trim();
-  if (capacity !== "" && !/^\d+$/.test(capacity)) {
-    return "Bed capacity must be a whole number.";
-  }
-  // Mirror the server's upper bound so an unrealistic value gets a clear
-  // inline message instead of a generic "Invalid input" from the API.
-  if (capacity !== "" && Number(capacity) > OTHER_LODGE_BOUNDS.bedCapacityMax) {
-    return "Bed capacity looks too large. Enter a realistic number.";
-  }
-  const siteUrl = form.text.siteUrl.trim();
-  if (siteUrl && !isHttpUrl(siteUrl)) {
-    return "The site URL must start with http:// or https://.";
-  }
-  const amenities = amenitiesInputSchema.safeParse(formPayload(form).amenities);
-  if (!amenities.success) {
-    const [issue] = amenities.error.issues;
-    const row = typeof issue?.path[0] === "number" ? ` (amenity ${issue.path[0] + 1})` : "";
-    return `${issue?.message ?? "Check the amenities."}${row}`;
-  }
-  return null;
-}
+import {
+  DATE_FIELDS,
+  DATE_FIELD_NAMES,
+  FACILITY_FIELDS,
+  FACILITY_LABELS,
+  ROOM_TYPE_CHOICES,
+  TEXT_FIELDS,
+  TEXT_FIELD_NAMES,
+  WHOLE_NUMBER_FIELDS,
+  WHOLE_NUMBER_FIELD_NAMES,
+  emptyForm,
+  formFromLodge,
+  formPayload,
+  formProblem,
+  type AmenityFormRow,
+  type OtherLodgeFormState,
+  type OtherLodgeRecord,
+} from "./other-lodge-form";
 
 export function OtherLodgesPanel({
   // #2160/#2168 vouch: the Lodges page renders one lodge-area
@@ -474,23 +334,47 @@ export function OtherLodgesPanel({
                   />
                 </div>
               ))}
-              <div className="space-y-2">
-                <Label htmlFor="other-lodge-bedCapacity">Bed capacity</Label>
-                <Input
-                  id="other-lodge-bedCapacity"
-                  type="number"
-                  min={0}
-                  max={OTHER_LODGE_BOUNDS.bedCapacityMax}
-                  inputMode="numeric"
-                  value={form.bedCapacity}
-                  onChange={(event) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      bedCapacity: event.target.value,
-                    }))
-                  }
-                />
-              </div>
+              {WHOLE_NUMBER_FIELD_NAMES.map((field) => (
+                <div key={field} className="space-y-2">
+                  <Label htmlFor={`other-lodge-${field}`}>
+                    {WHOLE_NUMBER_FIELDS[field]}
+                  </Label>
+                  <Input
+                    id={`other-lodge-${field}`}
+                    type="number"
+                    min={0}
+                    max={OTHER_LODGE_BOUNDS.wholeNumberMax}
+                    inputMode="numeric"
+                    value={form.numbers[field]}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        numbers: { ...prev.numbers, [field]: event.target.value },
+                      }))
+                    }
+                  />
+                </div>
+              ))}
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium">Room or dormitory</legend>
+                <div className="flex flex-wrap gap-4 pt-1 text-sm">
+                  {ROOM_TYPE_CHOICES.map(([value, label]) => (
+                    <label key={value || "unset"} className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="other-lodge-roomType"
+                        className="h-4 w-4"
+                        value={value}
+                        checked={form.roomType === value}
+                        onChange={() =>
+                          setForm((prev) => ({ ...prev, roomType: value }))
+                        }
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
               {DATE_FIELD_NAMES.map((field) => (
                 <div key={field} className="space-y-2">
                   <Label htmlFor={`other-lodge-${field}`}>{DATE_FIELDS[field]}</Label>
@@ -709,7 +593,7 @@ export function OtherLodgesPanel({
                     <TableHead>Name</TableHead>
                     <TableHead>Location</TableHead>
                     <TableHead>Booking officer</TableHead>
-                    <TableHead>Website</TableHead>
+                    <TableHead>Booking page</TableHead>
                     <TableHead className="text-right">Beds</TableHead>
                     {anyOwnedRow ? (
                       <TableHead className="text-right">Actions</TableHead>

@@ -94,7 +94,7 @@ describe("computeServerVersionStatus / isStoredServerVersionMismatch", () => {
     // The constant IS the upgrade lever: changing it is how a site upgrade
     // clears a mismatch with nothing stored to reset.
     expect(parseServerVersion(SERVERNZ_EXPECTED_SERVER_VERSION)).not.toBeNull();
-    expect(SERVERNZ_EXPECTED_SERVER_VERSION).toBe("2.0");
+    expect(SERVERNZ_EXPECTED_SERVER_VERSION).toBe("2.1");
   });
 });
 

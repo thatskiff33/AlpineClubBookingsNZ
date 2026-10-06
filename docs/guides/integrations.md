@@ -219,8 +219,8 @@ whether they are.** The central server publishes one version number for
 everything it shares — the Other Clubs registry, the message board and the
 push registration — and this site is built for one particular number. The
 setup page shows both, beside the address and the key, under **Server
-software version** ("This site is built for server version 2.0 · Server:
-2.0"): it asks the server once each time you open the page, and again after
+software version** ("This site is built for server version 2.1 · Server:
+2.1"): it asks the server once each time you open the page, and again after
 you save a key or an address. With no API key stored nothing is asked and the
 server's number reads **0**, which is not a mismatch.
 
