@@ -948,5 +948,9 @@ describe("Admin refund and credit review page", () => {
 
     expect((screen.getByRole("textbox", { name: /Refund Amount/i }) as HTMLInputElement).value).toBe("75.00");
     expect(screen.getByText("Max refundable: $75.00")).toBeTruthy();
+    // #3372 x #3827: the card's net figure is that same ceiling, beside the
+    // gross capture labelled as gross.
+    expect(screen.getByText("Remaining refundable:").parentElement).toHaveTextContent("Remaining refundable: $75.00");
+    expect(screen.getByText("Gross paid:").parentElement).toHaveTextContent("Gross paid: $200.00");
   });
 });

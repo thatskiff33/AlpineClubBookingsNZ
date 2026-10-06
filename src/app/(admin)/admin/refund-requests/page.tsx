@@ -27,10 +27,7 @@ import {
   useAdminAreaEditAccess,
 } from "@/hooks/use-admin-area-edit-access"
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice"
-import {
-  getCancellationSettlementBreakdown,
-  type CancellationCreditEntry,
-} from "@/lib/payment-status-display"
+import { getCancellationSettlementBreakdown, type CancellationCreditEntry } from "@/lib/payment-status-display"
 import { refundAppealCeiling } from "@/lib/manual-refund-task-settlement-rules"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { useClubTime } from "@/components/club-time-provider"
@@ -70,8 +67,6 @@ interface RefundRequestData {
     // so the mailer withholds it while the switch is on — the notify prompt
     // stops offering the choice.
     noEmails: boolean
-    // The route selects `description`, and `refundAppealCeiling` (#3827)
-    // requires it present, so it is not left optional here.
     creditsFromCancellation: Array<CancellationCreditEntry & { description: string | null }>
     payment: {
       status: string
@@ -505,10 +500,9 @@ export default function RefundRequestsPage() {
                           </div>
                           {payment && (
                             <>
-                              {/* #3372: GROSS - what was captured before any
-                                  refund - so the label says so. "Remaining
-                                  refundable" is `refundAppealCeiling` (#3827: net
-                                  of open hand-backs and late-cash credit). */}
+                              {/* #3372: GROSS - captured before any refund - so
+                                  the label says so. "Remaining refundable" is
+                                  `refundAppealCeiling` (#3827). */}
                               <div>
                                 <span className="text-muted-foreground">Gross paid:</span>{" "}
                                 {formatCents(payment.amountCents, format)}

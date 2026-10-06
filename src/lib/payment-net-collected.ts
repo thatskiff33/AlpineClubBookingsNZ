@@ -196,7 +196,10 @@ function netCollectedPaymentTookMoney(
  *   (`openCancellationHandBackOwedCents`), so only what the policy keeps
  *   counts; and applied account credit the cancellation kept counts
  *   (`cancelledBookingKeptCreditCents`). A live booking reads neither: its
- *   credit is spent on a stay, not kept, and it owes no hand-back.
+ *   credit is spent on a stay, not kept. Since #3827 a live booking CAN have
+ *   an open hand-back (an edit's refund owed by bank transfer, `INV-PAY-117`);
+ *   it is not taken off here, because the owner's 3 Oct 2026 decision covers
+ *   cancelled bookings only. It counts as refunded when the task is completed.
  */
 export function getNetCollectedPaymentParts(
   payment: NetCollectedPaymentRow,
