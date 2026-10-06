@@ -13,14 +13,26 @@ name: Epic branch sync
 #
 # WHY IT OPENS A PULL REQUEST RATHER THAN PUSHING. The first draft of this
 # workflow merged locally and pushed to the epic branch, and that would have
-# failed on its first run: `epic/**` carries the same nine required status checks
-# as `main`, required checks gate pushes as well as merges, a freshly-created
-# merge commit has no checks on it yet, and `github-actions[bot]` is not an
-# administrator so `enforce_admins: false` does not rescue it. Opening a pull
-# request from `main` into the epic branch is both the thing that works and the
-# better design: the sync itself gets the full nine checks before it lands, and a
-# conflict shows up as an ordinary un-mergeable pull request instead of something
-# this workflow has to resolve.
+# failed on its first run if `epic/**` carries `main`'s required status checks:
+# required checks gate pushes as well as merges, a freshly-created merge commit
+# has no checks on it yet, and `github-actions[bot]` is not an administrator so
+# `enforce_admins: false` does not rescue it. A pull request also turns a
+# conflict into an ordinary un-mergeable pull request instead of something this
+# workflow has to resolve.
+#
+# WHAT THE PULL REQUEST DID NOT BUY, AND WHAT NOW CHECKS IT (#3513). This header
+# used to say the sync "gets the full nine checks before it lands". Observed on
+# #3482 and recorded on #3513: a clean sync merged seconds after auto-merge was
+# armed, before its `pull_request` runs had started, and those runs then failed
+# at startup with zero jobs. So the composed `main` + epic tree was never checked
+# before it landed; the epic learned on its next push. The class that bites is
+# the tree-wide census — two sides each green against their own base, composing
+# into a stale count — and the owner chose "Cheap narrow check" on #3513: run
+# only those censuses on the composed tree, and arm auto-merge only when they
+# pass. That is the `censuses` job below, and `pnpm run ci:fast-censuses`
+# (`scripts/ci/run-fast-censuses.mjs`, the one list of what runs) is the check.
+# It is deliberately not the full nine: a full cycle per sync per epic was the
+# declined option. It is not a required check either, and adds none.
 #
 # WHY THE DESCRIPTION IT WRITES CARRIES A CONCURRENCY DECLARATION (#3142).
 # The `## Concurrency And Lock Impact` gate is the FIRST step of `verify`, and
@@ -35,9 +47,10 @@ name: Epic branch sync
 # in its own words that this workflow wrote it, so nobody mistakes it for a
 # declaration a person made after reading 1,226 files.
 #
-# It never resolves a conflict itself, never force-pushes, and never merges in
-# the `epic -> main` direction. Auto-merge means a clean sync needs no human at
-# all; a conflicted one waits for one, which is correct.
+# It never resolves a conflict itself, never force-pushes, never pushes the
+# composed tree it checks, and never merges in the `epic -> main` direction.
+# Auto-merge means a clean sync whose censuses pass needs no human at all; a
+# conflicted one, or one whose censuses fail, waits for one, which is correct.
 
 on:
   schedule:
@@ -69,18 +82,136 @@ on:
         required: false
         type: string
 
+# Read-only by default. Only the `sync` job, which opens pull requests and arms
+# auto-merge, is granted write — and it runs no code from the composed tree.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: epic-branch-sync
   cancel-in-progress: false
 
 jobs:
+  # THE CHEAP NARROW CHECK (#3513). For every epic branch that is behind `main`,
+  # merge `origin/main` into it LOCALLY — never pushed — install that composed
+  # tree's own dependencies and run the fast tree-wide censuses on it. The
+  # result per branch is handed to `sync` as a JSON output keyed by branch, with
+  # the two SHAs it tested, so `sync` arms auto-merge on exactly the tree that
+  # was checked and nothing newer.
+  #
+  # WHY A SEPARATE JOB. This one executes the composed tree's code (`pnpm
+  # install`, vitest, tsx), so it holds a read-only token and checks out with
+  # `persist-credentials: false`; the job that can write to the repository runs
+  # none of it. A census FAILURE does not fail this job — it is a result, and
+  # `sync` reports it on the pull request. A crash here leaves branches with no
+  # result, which `sync` treats as unchecked and does not arm: it fails closed.
+  censuses:
+    name: Fast censuses on each composed main + epic tree
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      results: ${{ steps.check.outputs.results }}
+    steps:
+      # Full history: the merge needs both sides, and `quality:budget` and
+      # `docs:indexcheck` both compare against `origin/main`.
+      - name: Check out full history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The pnpm version comes from `packageManager` in package.json (#3673).
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Run the fast censuses on each composed tree
+        id: check
+        env:
+          SINGLE_BRANCH: ${{ inputs.branch }}
+        run: |
+          set -uo pipefail
+
+          if [ -n "${SINGLE_BRANCH}" ]; then
+            branches="${SINGLE_BRANCH}"
+          else
+            branches="$(git for-each-ref --format='%(refname:short)' 'refs/remotes/origin/epic/*' \
+              | sed 's|^origin/||')"
+          fi
+
+          main_sha="$(git rev-parse origin/main)"
+          results='{}'
+          summary="${RUNNER_TEMP}/fast-censuses.json"
+
+          for branch in ${branches}; do
+            echo "::group::${branch}"
+
+            # A dispatch input is free text; only an epic branch name is checked.
+            if ! printf '%s' "${branch}" | grep -Eq '^epic/[A-Za-z0-9._/-]+$' \
+              || ! epic_sha="$(git rev-parse --verify --quiet "origin/${branch}^{commit}")"; then
+              echo "${branch}: not an existing epic/** branch; not checked."
+              echo "::endgroup::"
+              continue
+            fi
+
+            if git merge-base --is-ancestor "${main_sha}" "${epic_sha}"; then
+              echo "${branch} already contains origin/main. Nothing to check."
+              echo "::endgroup::"
+              continue
+            fi
+
+            failed='[]'
+            git checkout --quiet --force --detach "${epic_sha}"
+            git clean -fdq
+            if ! git -c user.name="epic-branch-sync" \
+                -c user.email="epic-branch-sync@users.noreply.github.com" \
+                merge --no-edit --quiet "${main_sha}"; then
+              git merge --abort || true
+              status="conflict"
+            elif ! pnpm install --frozen-lockfile; then
+              status="error"
+            else
+              rm -f "${summary}"
+              if pnpm run ci:fast-censuses --summary "${summary}"; then
+                status="pass"
+              else
+                status="fail"
+              fi
+              if [ -s "${summary}" ]; then
+                failed="$(jq -c '.failed' "${summary}")" || failed='["(unreadable summary)"]'
+              elif [ "${status}" = "fail" ]; then
+                failed='["(the census runner wrote no summary)"]'
+              fi
+            fi
+
+            echo "${branch}: ${status} (main ${main_sha}, epic ${epic_sha})"
+            results="$(jq -c --arg b "${branch}" --arg s "${status}" \
+              --arg m "${main_sha}" --arg e "${epic_sha}" --argjson f "${failed}" \
+              '.[$b] = {status: $s, main: $m, epic: $e, failed: $f}' <<<"${results}")"
+            echo "::endgroup::"
+          done
+
+          echo "results=${results}" >> "${GITHUB_OUTPUT}"
+
   sync:
     name: Open a main -> epic sync pull request per epic branch
     runs-on: ubuntu-latest
+    needs: censuses
+    # Runs even when `censuses` crashed, so pull requests are still opened and
+    # refreshed; every branch without a result is then left unarmed. This job is
+    # not a required check, so the AGENTS.md rule against a job-level `if:` or
+    # `needs:` on a required check does not reach it.
+    if: ${{ !cancelled() }}
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Check out full history
         uses: actions/checkout@v7
@@ -92,6 +223,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SINGLE_BRANCH: ${{ inputs.branch }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CENSUS_RESULTS: ${{ needs.censuses.outputs.results }}
         run: |
           set -uo pipefail
 
@@ -110,6 +242,13 @@ jobs:
           fi
 
           needs_a_human=""
+
+          # The `censuses` job's per-branch results. Empty when that job crashed,
+          # which leaves every branch unchecked and therefore unarmed.
+          results_json="${CENSUS_RESULTS:-}"
+          if [ -z "${results_json}" ]; then
+            results_json='{}'
+          fi
 
           for branch in ${branches}; do
             echo "::group::${branch}"
@@ -194,21 +333,83 @@ jobs:
               continue
             fi
 
-            # Arm auto-merge so a clean sync needs nobody. A merge commit, never a
-            # squash: the epic branch must keep main's real history or the final
-            # epic -> main merge re-resolves everything.
-            # stdout only is discarded, never stderr — the same reason the create
-            # above keeps its own. "Could not be armed" is usually "already is",
-            # but it is equally what a repository with auto-merge disabled looks
-            # like, and only gh's own message tells the two apart.
-            gh pr merge "${existing}" --auto --merge >/dev/null \
-              || echo "${branch}: auto-merge could not be armed on #${existing} (it may already be)."
-
             state="$(gh pr view "${existing}" --json mergeable --jq .mergeable || echo UNKNOWN)"
             echo "${branch}: sync pull request #${existing}, mergeable=${state}"
 
             if [ "${state}" = "CONFLICTING" ]; then
               needs_a_human="${needs_a_human} ${branch}(#${existing})"
+            fi
+
+            # THE CENSUS GATE (#3513). Arm auto-merge only when the `censuses`
+            # job passed on EXACTLY the tree this pull request would land: the
+            # same `main` (the pull request's head) and the same epic tip. If
+            # either moved since the check, the composed tree is one nobody
+            # checked, so leave it for the next run rather than arm on a guess.
+            # `--match-head-commit` pins the arm to the tested head, so a `main`
+            # commit landing between this read and the arm cannot ride along.
+            census_status="$(printf '%s' "${results_json}" \
+              | jq -r --arg b "${branch}" '.[$b].status // "unchecked"')" || census_status="unchecked"
+            tested_main="$(printf '%s' "${results_json}" | jq -r --arg b "${branch}" '.[$b].main // ""')" || tested_main=""
+            tested_epic="$(printf '%s' "${results_json}" | jq -r --arg b "${branch}" '.[$b].epic // ""')" || tested_epic=""
+            head_now="$(gh pr view "${existing}" --json headRefOid --jq .headRefOid)" || head_now=""
+            epic_now="$(git rev-parse "origin/${branch}")" || epic_now=""
+
+            if [ "${census_status}" = "pass" ] && [ -n "${tested_main}" ] \
+              && [ "${head_now}" = "${tested_main}" ] && [ "${epic_now}" = "${tested_epic}" ]; then
+              # A merge commit, never a squash: the epic branch must keep main's
+              # real history or the final epic -> main merge re-resolves
+              # everything. stdout only is discarded, never stderr — "could not
+              # be armed" is usually "already is", but it is equally what a
+              # repository with auto-merge disabled looks like, and only gh's
+              # own message tells the two apart.
+              echo "${branch}: the fast censuses passed on the composed tree; arming auto-merge."
+              gh pr merge "${existing}" --auto --merge --match-head-commit "${tested_main}" >/dev/null \
+                || echo "${branch}: auto-merge could not be armed on #${existing} (it may already be)."
+            else
+              # Anything short of a pass on this exact tree disarms an earlier
+              # run's auto-merge: the tree it approved is no longer the one that
+              # would land. "Not armed" is the usual reply, hence the message.
+              gh pr merge "${existing}" --disable-auto >/dev/null \
+                || echo "${branch}: auto-merge was not armed on #${existing}; nothing to disable."
+
+              case "${census_status}" in
+                pass)
+                  echo "${branch}: main or the epic moved after the censuses ran; #${existing} is left unarmed and the next run re-checks."
+                  ;;
+                fail)
+                  failed_list="$(printf '%s' "${results_json}" \
+                    | jq -r --arg b "${branch}" '.[$b].failed[]? | "- `" + . + "`"')" || failed_list=""
+                  echo "${branch}: the fast censuses FAILED on the composed tree:"
+                  printf '%s\n' "${failed_list}"
+                  # One comment per tested pair of SHAs, not one every six hours.
+                  marker="<!-- epic-sync-censuses main=${tested_main} epic=${tested_epic} -->"
+                  if ! gh pr view "${existing}" --json comments --jq '.comments[].body' \
+                      | grep -qF "${marker}"; then
+                    printf '%s\n' \
+                      "${marker}" \
+                      "**The fast tree-wide censuses fail on the composed tree**, so this workflow has NOT armed auto-merge (#3513)." \
+                      "" \
+                      "Tested: \`main\` at ${tested_main} merged into \`${branch}\` at ${tested_epic}. Failing:" \
+                      "" \
+                      "${failed_list}" \
+                      "" \
+                      "Each side was green against its own base; together they disagree, usually a census count both sides re-measured. Hand-sync per \`docs/agents/EPIC_PLAYBOOK.md\`: merge \`origin/main\` into a merge branch off the epic, run \`pnpm run ci:fast-censuses\`, re-derive each count against that tree (never increment it), and open the hand sync. Run: ${RUN_URL}" \
+                      | gh pr comment "${existing}" --body-file - >/dev/null \
+                      || echo "${branch}: could not comment the census failure on #${existing}."
+                  fi
+                  needs_a_human="${needs_a_human} ${branch}(#${existing}-censuses)"
+                  ;;
+                conflict)
+                  # Already reported above when GitHub agrees it conflicts.
+                  if [ "${state}" != "CONFLICTING" ]; then
+                    needs_a_human="${needs_a_human} ${branch}(#${existing}-local-conflict)"
+                  fi
+                  ;;
+                *)
+                  echo "${branch}: no census result (${census_status}); #${existing} is left unarmed."
+                  needs_a_human="${needs_a_human} ${branch}(#${existing}-unchecked)"
+                  ;;
+              esac
             fi
 
             echo "::endgroup::"
@@ -219,4 +420,4 @@ jobs:
             exit 1
           fi
 
-          echo "All epic branches are in step with main, or have a green sync pull request in flight."
+          echo "All epic branches are in step with main, or have a sync pull request whose censuses passed, or are waiting for the next run to re-check a moved tree."
