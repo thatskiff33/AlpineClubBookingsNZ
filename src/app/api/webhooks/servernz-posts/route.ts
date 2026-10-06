@@ -102,11 +102,22 @@ export async function POST(request: NextRequest) {
   // Scheduled after the response so the server's delivery worker gets its 200
   // without waiting for a full sync pass; the pass's single-flight claim makes
   // a doorbell ringing during a poll harmless.
+  //
+  // A version pause (#49) changes nothing here on purpose: the signature is
+  // still verified, the answer is still a plain 200 (the server retries a
+  // failure with backoff, and a club mid-upgrade should not be hammered), and
+  // the pull inside `runMirrorSync` is what declines - logged at info, since it
+  // is expected rather than a fault. Nothing in the body is acted on either way.
   after(async () => {
     try {
       const result = await runMirrorSync();
       if (!result.skipped) {
         logger.info({ ...result }, "Mirror sync triggered by push");
+      } else if (result.skipped === "server-version-mismatch") {
+        logger.info(
+          { skipped: result.skipped },
+          "Push received but the mirror sync is paused: central server API version differs",
+        );
       }
     } catch (error) {
       // Polling carries the change regardless; the push only bought latency.

@@ -436,10 +436,16 @@ export type AdminOtherLodge = Omit<SerializedOtherLodge, "bookingOfficerPhone"> 
   owned: boolean;
 };
 
-/** The admin list response: the rows, and the owned list in its three states. */
+/**
+ * The admin list response: the rows, the owned list in its three states, and
+ * whether syncing with the central server is paused for version (#49) - the
+ * panel shows a note linking to setup while it is. Read from the stored
+ * answer; this route never contacts the server.
+ */
 export interface AdminOtherLodgesResponse {
   otherLodges: AdminOtherLodge[];
   ownedLodgeNames: OwnedOtherLodgeNames;
+  serverVersionStatus: "no-key" | "unchecked" | "match" | "mismatch";
 }
 
 export function serializeOtherLodgeForAdmin(

@@ -3,7 +3,13 @@ import "server-only";
 import logger from "@/lib/logger";
 import { readPostImage } from "@/lib/post-image-storage";
 import { prisma } from "@/lib/prisma";
-import { ServerNzApiError, shareClubPost, withdrawClubPost } from "@/lib/servernz-api";
+import {
+  ServerNzApiError,
+  ServerNzVersionMismatchError,
+  shareClubPost,
+  withdrawClubPost,
+} from "@/lib/servernz-api";
+import { isServerSyncPaused } from "@/lib/servernz-version-check";
 
 /**
  * Sending a board post to the central server (epic #2992).
@@ -35,7 +41,13 @@ export const SHARE_SWEEP_PAGE_SIZE = 8;
 export type ShareOutcome =
   | { status: "shared"; serverPostId: string }
   | { status: "failed"; error: string; retryable: boolean }
-  | { status: "skipped"; reason: "already-shared" | "not-requested" | "gone" };
+  | { status: "skipped"; reason: "already-shared" | "not-requested" | "gone" }
+  /**
+   * The central server is on a different API version (#49): nothing was sent,
+   * the request stays pending and NO attempt is counted, so a pause that lasts
+   * longer than the cap's worth of cron cycles cannot retire the share.
+   */
+  | { status: "paused" };
 
 /**
  * Decide whether a failure is worth trying again.
@@ -92,6 +104,11 @@ export async function shareOnePost(postId: string): Promise<ShareOutcome> {
     return { status: "skipped", reason: "not-requested" };
   }
 
+  // Paused BEFORE the images are read and before any attempt is counted. The
+  // gate in resolveConnection would refuse the send anyway; asking first is
+  // what keeps the attempt counter and the error column untouched.
+  if (await isServerSyncPaused()) return { status: "paused" };
+
   // Read in the SAME ORDER the body's image URLs will be rewritten against.
   // The server maps `image_ids[n]` onto the nth attached file, so a different
   // order here silently attaches every picture to the wrong place.
@@ -142,6 +159,17 @@ export async function shareOnePost(postId: string): Promise<ShareOutcome> {
 
     return { status: "shared", serverPostId: result.id };
   } catch (error) {
+    // The gate can still refuse between the pre-check and the send (a version
+    // recorded by another container, or the inline self-heal on a never-asked
+    // row). A pause is not an attempt: the counter and the row stay as they
+    // are, and the next pass asks again.
+    if (error instanceof ServerNzVersionMismatchError) {
+      logger.info(
+        { postId: post.id, expected: error.expected, serverVersion: error.serverVersion },
+        "Sharing a club post is paused: the central server API version differs",
+      );
+      return { status: "paused" };
+    }
     const attempts = post.shareAttempts + 1;
     // Retryable by ERROR KIND and still under the cap. A refusal that will
     // never succeed stops at once; a transient failure stops at the cap
@@ -178,6 +206,8 @@ export interface ShareSweepResult {
   attempted: number;
   shared: number;
   failed: number;
+  /** Shares left pending, untouched, because the server version differs (#49). */
+  paused: number;
   /** The takedown half (#3091 review 1): withdrawals retried this pass. */
   withdrawalsAttempted: number;
   withdrawalsConfirmed: number;
@@ -203,6 +233,10 @@ export async function retryPendingWithdrawals(): Promise<{
   confirmed: number;
   failed: number;
 }> {
+  // Same pre-check as a share (#49): a paused server is asked nothing, and the
+  // rows stay exactly as they are for the pass after the versions match again.
+  if (await isServerSyncPaused()) return { attempted: 0, confirmed: 0, failed: 0 };
+
   const pending = await prisma.clubPost.findMany({
     where: {
       removedAt: { not: null },
@@ -263,6 +297,7 @@ export async function retryPendingShares(
     attempted: pending.length,
     shared: 0,
     failed: 0,
+    paused: 0,
     withdrawalsAttempted: 0,
     withdrawalsConfirmed: 0,
     withdrawalsFailed: 0,
@@ -272,6 +307,12 @@ export async function retryPendingShares(
     const outcome = await shareOnePost(post.id);
     if (outcome.status === "shared") result.shared += 1;
     else if (outcome.status === "failed") result.failed += 1;
+    else if (outcome.status === "paused") {
+      // One pause answers for the whole page: the version is the server's,
+      // not the post's, so the rest of the page would only be re-asked.
+      result.paused = pending.length - result.shared - result.failed;
+      break;
+    }
   }
 
   // The takedown half rides the same cycle: a removal must come down

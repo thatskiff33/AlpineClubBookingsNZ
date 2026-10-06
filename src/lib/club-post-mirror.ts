@@ -15,6 +15,7 @@ import {
   advancedDownloadCursor,
   overlappedRequestCursor,
 } from "@/lib/servernz-cursor-overlap";
+import { checkServerVersion } from "@/lib/servernz-version-check";
 import {
   getIntegrationCredentialValue,
   setIntegrationCredential,
@@ -61,7 +62,12 @@ const MAX_MIRROR_IMAGES = 6;
 const OVERLAP_SYNC_LABEL = "shared-post mirror";
 
 export interface MirrorSyncResult {
-  skipped?: "not-configured" | "busy";
+  /**
+   * `server-version-mismatch` (#49): the central server is on a different API
+   * version, so nothing was pulled, no push target was registered and no image
+   * was fetched. Decided BEFORE the claim, so a paused pass holds nothing.
+   */
+  skipped?: "not-configured" | "busy" | "server-version-mismatch";
   /** Visible changes that created or altered a mirror row. */
   upserted: number;
   /**
@@ -447,6 +453,28 @@ export async function runMirrorSync(
   if (!setup.apiKeySet) {
     return {
       skipped: "not-configured",
+      upserted: 0,
+      unchanged: 0,
+      removed: 0,
+      pages: 0,
+    };
+  }
+
+  // The version check, BEFORE the claim (#49, `INV-INT-025`): every call this
+  // pass would make - registerPushTarget, pullSharedPostSync,
+  // fetchSharedPostImage - goes through the gate in resolveConnection, so a
+  // mismatch would refuse the first of them anyway; asking here is what keeps
+  // a paused pass from taking `commsSyncStartedAt` and holding it until the
+  // stale window reaps it. A check that could not reach the server keeps the
+  // last answer and the pass continues (the pull will fail on its own terms).
+  const version = await checkServerVersion();
+  if (version.status === "mismatch") {
+    logger.info(
+      { expected: version.expected, serverVersion: version.serverVersion },
+      "Shared-post mirror sync skipped: central server API version differs",
+    );
+    return {
+      skipped: "server-version-mismatch",
       upserted: 0,
       unchanged: 0,
       removed: 0,
