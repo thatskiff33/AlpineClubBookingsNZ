@@ -3,7 +3,9 @@
   or one combined internet-banking invoice, each joiner's booking is now
   confirmed on the ledger and records its own share of that payment, anchored
   on the group's settlement. A group cancellation records the refund it plans
-  for each joiner and what the club keeps, and a refund to the organiser's card
+  for each joiner and what the club keeps — less any edit refund the club
+  has promised to send back by bank transfer, so that money is not counted
+  twice — and a refund to the organiser's card
   for one joiner (an edit's reduction or a cancellation) is recorded against
   that joiner, and taken back off if Stripe later fails it. Nothing anyone sees
   changes yet: every screen, email and report still reads the existing figures.
