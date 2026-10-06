@@ -56,8 +56,13 @@ import {
 import {
   applyHutFeeLineCodes,
   resolveHutFeeLineItemCode,
-  resolvePromoLineCodes,
 } from "@/lib/xero-hut-fee-line-codes";
+import {
+  isPromoAdjustmentLineDescription,
+  planPromoAdjustmentLines,
+  promoAdjustmentLineItems,
+  promoAdjustmentLineRecord,
+} from "@/lib/xero-promo-adjustment-lines";
 import {
   retryXeroWriteWithContactRepair,
   type FindOrCreateXeroContactOptions,
@@ -366,7 +371,7 @@ export async function createXeroInvoiceForBooking(
       // item per contiguous run.
       guests: { include: { nights: true } },
       payment: true,
-      promoRedemption: { include: { promoCode: true, allocations: true } },
+      promoRedemptions: { include: { promoCode: true, allocations: true } },
       nightAdjustments: true,
       // #2258: recipient for the withheld-send audit row when the booking's
       // "No emails" switch stops Xero emailing the invoice.
@@ -597,31 +602,27 @@ export async function createXeroInvoiceForBooking(
     bookingSeasonType,
   );
 
-  // Add signed promo adjustment line if applicable. Negative values behave
-  // like discounts; positive values are extra revenue.
-  if (xeroPromoAdjustmentCents !== 0) {
-    const promo = booking.promoRedemption?.promoCode ?? null;
-    const firstGuest = booking.guests[0];
-
-    // The promo line's codes (#1930, E4) - shared with the promotion-delta line
-    // of an itemised modification document (#3530).
-    const discountLineItem = applyHutFeeLineCodes(
-      {
-        description: promo ? `Promo adjustment - ${promo.code}` : "Promo adjustment",
-        quantity: 1,
-        unitAmount: xeroPromoAdjustmentCents / 100,
-        taxType: "OUTPUT2",
-      },
-      resolvePromoLineCodes({
-        promo,
-        firstGuest: firstGuest ?? null,
-        itemCodeResolver: hutFeeItemCodeMap,
-        seasonType: bookingSeasonType,
-        hutFeeMapping,
-      }),
-    );
-    lineItems.push(discountLineItem);
-  }
+  // Add signed promo adjustment lines if applicable. Negative values behave
+  // like discounts; positive values are extra revenue. One line per code
+  // (#3828, `INV-MONEY-040`); a booking with one code keeps its one line, and a
+  // several-code split that cannot be trusted falls back to the aggregate line
+  // and is recorded on the operation below.
+  const promoLinePlan = planPromoAdjustmentLines({
+    aggregateCents: xeroPromoAdjustmentCents,
+    redemptions: booking.promoRedemptions,
+    adjustmentRows: booking.nightAdjustments,
+  });
+  // The promo line's codes (#1930, E4) - shared with the promotion-delta line
+  // of an itemised modification document (#3530).
+  lineItems.push(
+    ...promoAdjustmentLineItems(promoLinePlan, {
+      firstGuest: booking.guests[0] ?? null,
+      itemCodeResolver: hutFeeItemCodeMap,
+      seasonType: bookingSeasonType,
+      hutFeeMapping,
+    }),
+  );
+  const promoLineRecord = promoAdjustmentLineRecord(promoLinePlan);
 
   // Read once, outside the closure: `buildInvoice` runs for the recorded
   // request payload and again on every contact-repair attempt, and both must
@@ -649,6 +650,7 @@ export async function createXeroInvoiceForBooking(
     invoices: [buildInvoice(contactId)],
     moneyBuildUp: promoMoneyBuildUpSelection.historyMetadata,
     moneyReconciliation,
+    ...(promoLineRecord ? { promoLines: promoLineRecord } : {}),
   };
 
   if (operationId) {
@@ -736,6 +738,7 @@ export async function createXeroInvoiceForBooking(
         // changes this payload.
         moneyBuildUp: promoMoneyBuildUpSelection.historyMetadata,
         moneyReconciliation,
+        ...(promoLineRecord ? { promoLines: promoLineRecord } : {}),
       }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(
@@ -1228,8 +1231,7 @@ function mergeBookingInvoiceLineItemDescriptions(
     if (
       normalizedDescription === "discount" ||
       normalizedDescription.startsWith("discount -") ||
-      normalizedDescription === "promo adjustment" ||
-      normalizedDescription.startsWith("promo adjustment -")
+      isPromoAdjustmentLineDescription(description)
     ) {
       return nextLineItem;
     }

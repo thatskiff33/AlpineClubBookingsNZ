@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { requireAdmin } from "@/lib/session-guards";
@@ -76,7 +77,7 @@ export async function POST(
       const booking = await tx.booking.findUnique({
         where: { id: bookingId },
         // #3369: the owner may be an Organisation; bookingOwner() reads both.
-        include: { guests: { include: { nights: true } }, member: true, organisation: { select: { name: true, email: true } }, promoRedemption: { include: { promoCode: true } } },
+        include: { guests: { include: { nights: true } }, member: true, organisation: { select: { name: true, email: true } }, promoRedemptions: { include: { promoCode: true } } },
       });
 
       if (!booking) {
@@ -341,13 +342,7 @@ export async function POST(
         {
           lodgeId: booking.lodgeId,
           ...(provisionalGuests ? { provisionalGuests } : {}),
-          ...(booking.promoRedemption?.promoCode
-            ? {
-                discountCents: booking.discountCents,
-                promoAdjustmentCents: booking.promoAdjustmentCents,
-                promoCode: booking.promoRedemption.promoCode.code,
-              }
-            : {}),
+          ...bookingPromoEmailFields(booking),
         },
       ).catch((err) => logger.error({ err, bookingId }, "Failed to send confirmation after force-confirm"));
     }

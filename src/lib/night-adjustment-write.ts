@@ -61,6 +61,13 @@ export const NIGHT_ADJUSTMENT_INVARIANT = "INV-MONEY-029";
  * defect the writer refuses (a caller that priced without dates).
  */
 export type PromoAdjustmentTarget = {
+  /**
+   * The code whose application decided this adjustment (#3826, epic #3813).
+   * Optional while every booking carries at most one code: a target that names
+   * none belongs to the booking's sole redemption, and the writer refuses one
+   * that names none on a booking carrying several.
+   */
+  promoCodeId?: string;
   guestIndex: number;
   scope: "night" | "guest";
   stayDate: Date | null;
@@ -101,6 +108,56 @@ export function memberBenefitAllocations<T extends { memberId: string | null }>(
   return allocations.filter(
     (allocation): allocation is T & { memberId: string } => allocation.memberId !== null,
   );
+}
+
+/**
+ * The recorded promo totals a booking's rows reconcile to, across EVERY
+ * redemption it carries (#3826, epic #3813): the redemptions' adjustments
+ * summed, and each member's allocations summed across codes. `null` when the
+ * booking carries no redemption — `deriveNightAdjustmentState`'s
+ * `NO_PROMOTION`.
+ *
+ * A reader's derived check, and deliberately the weaker one: the writer
+ * enforces the identity PER redemption, and a reader's rows do not say which
+ * redemption each belongs to. With one redemption the two are the same check,
+ * and this returns exactly what the former one-to-one read produced.
+ */
+export function combinedPromoRedemptionEvidence(
+  redemptions: ReadonlyArray<{
+    priceAdjustmentCents: number;
+    allocations: ReadonlyArray<{ memberId: string | null; priceAdjustmentCents: number }>;
+  }>,
+): {
+  priceAdjustmentCents: number;
+  allocations: Array<{ memberId: string; priceAdjustmentCents: number }>;
+} | null {
+  if (redemptions.length === 0) return null;
+  const only = redemptions.length === 1 ? redemptions[0] : undefined;
+  if (only) {
+    return {
+      priceAdjustmentCents: only.priceAdjustmentCents,
+      allocations: memberBenefitAllocations(only.allocations),
+    };
+  }
+  const byMember = new Map<string, number>();
+  for (const redemption of redemptions) {
+    for (const allocation of memberBenefitAllocations(redemption.allocations)) {
+      byMember.set(
+        allocation.memberId,
+        (byMember.get(allocation.memberId) ?? 0) + allocation.priceAdjustmentCents,
+      );
+    }
+  }
+  return {
+    priceAdjustmentCents: redemptions.reduce(
+      (sum, redemption) => sum + redemption.priceAdjustmentCents,
+      0,
+    ),
+    allocations: [...byMember].map(([memberId, priceAdjustmentCents]) => ({
+      memberId,
+      priceAdjustmentCents,
+    })),
+  };
 }
 
 /**
@@ -235,6 +292,7 @@ export function deriveNightAdjustmentState(params: {
 }
 
 type ResolvedTarget = {
+  promoCodeId?: string;
   scope: "night" | "guest";
   bookingGuestId: string;
   stayDate: Date | null;
@@ -260,6 +318,7 @@ function resolveTargets(
       refuse(`${context}: a guest-scope target for guest #${target.guestIndex} carries a stay date`);
     }
     return {
+      ...(target.promoCodeId ? { promoCodeId: target.promoCodeId } : {}),
       scope: target.scope,
       bookingGuestId,
       stayDate: target.scope === "night" ? target.stayDate : null,
@@ -304,8 +363,10 @@ export async function recordBookingNightAdjustments(
   }
   const resolved = resolveTargets(targets, guestIds, writer);
 
-  const redemption = await tx.promoRedemption.findUnique({
+  // Every redemption the booking carries (#3826, epic #3813): one per code.
+  const redemptions = await tx.promoRedemption.findMany({
     where: { bookingId },
+    orderBy: [{ applicationOrder: "asc" }, { id: "asc" }],
     select: {
       id: true,
       promoCodeId: true,
@@ -313,18 +374,51 @@ export async function recordBookingNightAdjustments(
       allocations: { select: { memberId: true, priceAdjustmentCents: true } },
     },
   });
-  if (!redemption && resolved.length > 0) {
+  if (redemptions.length === 0 && resolved.length > 0) {
     refuse(`${writer}: the engine attributed a promotion but the booking has no stored redemption`);
   }
 
   let rows: Prisma.BookingGuestNightAdjustmentCreateManyInput[] = [];
-  if (redemption) {
-    reconcilePromoAdjustmentTargets({
-      targets,
-      allocations: memberBenefitAllocations(redemption.allocations),
-      priceAdjustmentCents: redemption.priceAdjustmentCents,
-      context: writer,
-    }, format);
+  if (redemptions.length > 0) {
+    // Each target belongs to the redemption of the code that decided it. A
+    // target naming no code belongs to the booking's sole redemption — every
+    // booking while the `multiPromoCodes` switch is off.
+    const redemptionByCode = new Map(
+      redemptions.map((redemption) => [redemption.promoCodeId, redemption]),
+    );
+    const targetsByRedemption = new Map(
+      redemptions.map((redemption) => [redemption.id, [] as typeof resolved]),
+    );
+    const redemptionOfTarget = (target: { promoCodeId?: string }) => {
+      if (target.promoCodeId !== undefined) {
+        const named = redemptionByCode.get(target.promoCodeId);
+        if (!named) {
+          refuse(`${writer}: a target names promo code ${target.promoCodeId}, which this booking has not redeemed`);
+        }
+        return named;
+      }
+      if (redemptions.length > 1) {
+        refuse(`${writer}: the booking carries ${redemptions.length} promo codes and a target names none of them`);
+      }
+      return redemptions[0]!;
+    };
+    const resolvedWithRedemption = resolved.map((target) => {
+      const redemption = redemptionOfTarget(target);
+      targetsByRedemption.get(redemption.id)!.push(target);
+      return { target, redemption };
+    });
+
+    // The INV-MONEY-029 identity, per redemption: each code's rows reconcile
+    // to that code's own recorded totals. Every redemption is checked, including
+    // one no target names, exactly as the single redemption always was.
+    for (const redemption of redemptions) {
+      reconcilePromoAdjustmentTargets({
+        targets: targetsByRedemption.get(redemption.id)!,
+        allocations: memberBenefitAllocations(redemption.allocations),
+        priceAdjustmentCents: redemption.priceAdjustmentCents,
+        context: writer,
+      }, format);
+    }
 
     const nights =
       engineGuestIds.length > 0
@@ -339,7 +433,7 @@ export async function recordBookingNightAdjustments(
     const guestsHoldingNights = new Set(nights.map((night) => night.bookingGuestId));
     const guestsWithoutNights = new Set<string>();
 
-    for (const target of resolved) {
+    for (const { target, redemption } of resolvedWithRedemption) {
       const base = {
         kind: "PROMO" as const,
         amountCents: target.amountCents,

@@ -1948,6 +1948,29 @@ DISMISSED -> OPEN   (#3643, orchestrator decision 3: the inbound Xero sync,
                      See `INV-PAY-108`.)
 ```
 
+**#3827 (owner decision D-3813-6): an edit's refund hand-back follows this
+lifecycle unchanged.** A price reduction on a booking not paid through Stripe
+raises the task OPEN, inside the edit's transaction, keyed one per
+`BookingModification`; it is completed or dismissed exactly as a cancellation's
+hand-back, except that its completion queues no Xero document, because the
+edit's own credit note already corrects the invoice, and its `REFUNDED` event
+is marked so the narrative never reads it as a cancellation's settlement. While
+it is OPEN its amount is cash already promised back: later edits, acceptances
+and cancellations refund only what is left, and a DISMISSED one cannot be
+reopened past that. See
+[`INV-PAY-117`](invariants/payment-and-settlement.md#inv-pay-117).
+
+**#3827 (owner decision D-3813-7): so does an approved refund appeal's.**
+Approving a refund request raises the task OPEN for the part of the approved
+amount no card refund carries, inside the approval's transaction under
+`lock(1)`, keyed one per `RefundRequest`, and nets it as above. Its completion
+queues that request's own Xero refund credit note for the amount paid back
+(owner decision D-3813-8; the approval queues none for this part), and its
+`REFUNDED` event is marked the same way. It may be DISMISSED with a note even
+though the booking is cancelled, because the cancel came first and never
+counted it. See
+[`INV-PAY-118`](invariants/payment-and-settlement.md#inv-pay-118).
+
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED
 row can be put back OPEN by an officer, which is the arm above; a COMPLETED row
 cannot. Nothing about the RAISE changed with it - the raise still never reopens,
@@ -2278,6 +2301,7 @@ Known refund request statuses: `PENDING`, `APPROVED`, `REJECTED`.
 
 ```text
 refund requested -> approved/rejected -> Stripe refund or Xero credit/member credit
+approved, not by card -> OPEN officer refund task -> COMPLETED records the refund (#3827, D-3813-7)
 admin credit requested -> approved/rejected -> MemberCredit created/applied
 MemberCredit available -> applied to booking -> ledger remains linked
 ```
@@ -2751,7 +2775,7 @@ add, family scope, or module OFF
 booking copy of an existing cross-family guest
     -> re-stamped against the copying admin; consent is NOT transitive across bookings
 
-PENDING -> CONFIRMED   the target, or a delegate the resolver accepts (D-5/D-10); respondedAt + respondedBy recorded; bed allocations reconciled post-commit
+PENDING -> CONFIRMED   the target, or a delegate the resolver accepts (D-5/D-10); respondedAt + respondedBy recorded; bed allocations reconciled post-commit; the booking's promo codes re-priced in the same transaction, a paid reduction returned in full the way it was paid (#3827, D-3813-5)
 PENDING -> DECLINED    same actors; then the SHARED removal path (never a second delete)
 PENDING -> EXPIRED     the nightly sweep, when now >= consentExpiresAt; then the shared removal path, electing account credit (D-15); respondedBy stays NULL because nobody decided
 CONFIRMED              terminal. D-13: no later modification of the booking re-opens it, in either policy mode

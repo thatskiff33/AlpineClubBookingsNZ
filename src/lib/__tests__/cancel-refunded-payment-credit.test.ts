@@ -28,6 +28,7 @@ function restore(creditAppliedCents: number) {
       finalPriceCents: 15_000,
       payment: { amountCents: 5_000, refundedAmountCents: 5_000, changeFeeCents: 0, creditAppliedCents },
     },
+    openNonCancellationHandBackCents: 0,
     todayAtClub: "2026-07-01" as never,
   });
 }

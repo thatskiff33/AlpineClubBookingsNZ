@@ -428,6 +428,7 @@ let observerClient: PrismaClient;
       expect(capped).toBe(false);
       const preview = calculateCancellationPreview({
         payment: { amountCents: 0, refundedAmountCents: 0, changeFeeCents: 0, creditAppliedCents: 20_000 },
+        openNonCancellationHandBackCents: 0,
         finalPriceCents: 15_000,
         checkIn: CHECK_IN,
         policyRules: [{ daysBeforeStay: 0, ...rule }],
@@ -458,7 +459,7 @@ let observerClient: PrismaClient;
       const { refundedPaymentCreditRestore } = await import("@/lib/cancel-refunded-payment-credit");
       await prisma.cancellationPolicy.updateMany({ where: { lodgeId: LODGE_ID }, data: rule });
       const booking = await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
-      const previewed = await refundedPaymentCreditRestore(prisma, { bookingId: BOOKING_ID, booking: { ...booking, payment: booking.payment! }, todayAtClub: "2026-07-01" as never });
+      const previewed = await refundedPaymentCreditRestore(prisma, { bookingId: BOOKING_ID, booking: { ...booking, payment: booking.payment! }, openNonCancellationHandBackCents: 0, todayAtClub: "2026-07-01" as never });
 
       await cancelAt(rule);
 
@@ -479,7 +480,7 @@ let observerClient: PrismaClient;
       await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: 10_000, status: "REFUNDED" } });
       const { refundedPaymentCreditRestore } = await import("@/lib/cancel-refunded-payment-credit");
       const booking = await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
-      expect(await refundedPaymentCreditRestore(prisma, { bookingId: BOOKING_ID, booking: { ...booking, payment: booking.payment! }, todayAtClub: "2026-07-01" as never })).toBeNull();
+      expect(await refundedPaymentCreditRestore(prisma, { bookingId: BOOKING_ID, booking: { ...booking, payment: booking.payment! }, openNonCancellationHandBackCents: 0, todayAtClub: "2026-07-01" as never })).toBeNull();
 
       await cancelAt(FIFTY_LESS_TWENTY);
 

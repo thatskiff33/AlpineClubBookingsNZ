@@ -12,6 +12,10 @@ import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-b
 import { cancelTieredAppliedCreditCents } from "@/lib/booking-payment-state";
 import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 import { refundedPaymentCreditRestore } from "@/lib/cancel-refunded-payment-credit";
+import {
+  OPEN_NON_CANCELLATION_HAND_BACKS_SELECT,
+  sumOpenNonCancellationHandBackCents,
+} from "@/lib/manual-refund-task-settlement-rules";
 import { memberCancelRefusal } from "@/lib/booking-cancel-eligibility";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
@@ -52,7 +56,14 @@ export async function GET(
 
     const booking = await prisma.booking.findUnique({
       where: { id },
-      include: { payment: true },
+      // #3827 (`INV-PAY-117`): the open edit refunds ride on the SAME read as
+      // the payment rather than a second query after it, so a completion that
+      // moves `refundedAmountCents` and closes its task in one commit is seen
+      // either wholly or not at all - not as money neither refunded nor
+      // promised. Stated limit: Prisma may still issue the relation as a
+      // separate statement under its relation-load strategy. The preview is
+      // advisory; the cancel recomputes both under `lock(1)`.
+      include: { payment: { include: { manualRefundTasks: OPEN_NON_CANCELLATION_HAND_BACKS_SELECT } } },
     });
 
     if (!booking) {
@@ -135,7 +146,8 @@ export async function GET(
       const todayAtClub = (await clubTime()).today();
       const tiered =
         booking.payment && bookingOwner(booking).memberId && (await paymentHasCaptureEvidence(booking.payment))
-          ? await refundedPaymentCreditRestore(prisma, { bookingId: booking.id, booking: { ...booking, payment: booking.payment }, todayAtClub })
+          ? await refundedPaymentCreditRestore(prisma, { bookingId: booking.id, booking: { ...booking, payment: booking.payment },
+              openNonCancellationHandBackCents: sumOpenNonCancellationHandBackCents(booking.payment.manualRefundTasks), todayAtClub })
           : null;
       const creditRestoredCents = tiered ? Math.min(tiered.creditToRestoreCents, appliedCents) : appliedCents;
 
@@ -175,6 +187,8 @@ export async function GET(
             // #3836: as the cancel tiers it - a mirror clamped to the card amount reads the ledger.
             creditAppliedCents: cancelTieredAppliedCreditCents(booking.payment, await deriveBookingAppliedCreditCents(booking.id)),
           },
+      // #3827 (`INV-PAY-117`): cash an earlier edit already promised back by hand.
+      openNonCancellationHandBackCents: sumOpenNonCancellationHandBackCents(booking.payment.manualRefundTasks),
       finalPriceCents: booking.finalPriceCents,
       checkIn: booking.checkIn,
       policyRules: policy,

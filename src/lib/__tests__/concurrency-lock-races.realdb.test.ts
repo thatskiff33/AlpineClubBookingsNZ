@@ -170,6 +170,13 @@ import "./booking-ledger-cancellation.realdb.test";
 // all agree, and one rogue line through the write door is named. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3583-` fixtures.
 import "./booking-ledger-projection-census.realdb.test";
+// #3583 PR 2 reuses it to prove the back-post: histories built by the REAL
+// writers with their lines deleted are posted so the census agrees, an
+// un-postable booking is listed and left alone, a second --apply posts nothing,
+// and a live date shift or card refund racing it leaves one set of lines.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-3583b-` fixtures.
+import "./booking-ledger-back-post.realdb.test";
 // #3640 reuses it to prove the one card-refund writer adds each refund exactly
 // once: two writers recording the SAME refund meet at `ON CONFLICT DO NOTHING`
 // and add it once, and two recording DIFFERENT refunds both survive the mirror's

@@ -539,7 +539,7 @@ let observerClient: PrismaClient;
       await prisma.paymentTransaction.updateMany({ where: { paymentId: PAYMENT_ID }, data: { refundedAmountCents: 5_000, status: "REFUNDED" } });
       const { refundedPaymentCreditRestore } = await import("@/lib/cancel-refunded-payment-credit");
       const booking = await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
-      const previewed = await refundedPaymentCreditRestore(prisma, { bookingId: BOOKING_ID, booking: { ...booking, payment: booking.payment! }, todayAtClub: "2026-07-01" as never });
+      const previewed = await refundedPaymentCreditRestore(prisma, { bookingId: BOOKING_ID, booking: { ...booking, payment: booking.payment! }, openNonCancellationHandBackCents: 0, todayAtClub: "2026-07-01" as never });
       expect(previewed?.creditToRestoreCents).toBe(15_000);
 
       await cancel();

@@ -54,6 +54,9 @@ export const MODIFICATION_LABELS: Record<string, string> = {
   // re-base can reduce what a later cancellation refunds, and "why did I only
   // get $120 back?" has to be answerable from the booking.
   PRICE_REBASE: "Price Recalculated",
+  // #3827 (D-3813-4): a guest accepted their place, so the codes the booking
+  // already carried were applied again over their nights.
+  PROMO_REPRICE: "Promo Codes Re-applied",
 };
 
 function isRemovedGuest(
@@ -204,6 +207,14 @@ export function describeModification(modification: BookingHistoryModification, f
         parts.push("The promotion no longer applies and was removed.");
       }
       return parts.join(" ");
+    }
+    case "PROMO_REPRICE": {
+      const moved =
+        typeof previous.finalPriceCents === "number" &&
+        typeof next.finalPriceCents === "number"
+          ? ` The price went from ${formatCents(previous.finalPriceCents, format)} to ${formatCents(next.finalPriceCents, format)}.`
+          : "";
+      return `A guest accepted their place, so the booking's promo codes were applied again.${moved}`;
     }
     default:
       return "Booking details were updated.";

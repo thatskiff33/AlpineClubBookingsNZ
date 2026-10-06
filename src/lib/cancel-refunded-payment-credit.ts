@@ -39,6 +39,7 @@ export async function refundedPaymentCreditRestore(
   {
     bookingId,
     booking,
+    openNonCancellationHandBackCents,
     todayAtClub,
   }: {
     bookingId: string;
@@ -48,6 +49,11 @@ export async function refundedPaymentCreditRestore(
       finalPriceCents: number;
       payment: { amountCents: number; refundedAmountCents: number; changeFeeCents: number; creditAppliedCents: number };
     };
+    /**
+     * The payment's open edit / refund-request hand-backs (#3827, `INV-PAY-117`),
+     * which the cap counts as paid no more than the paid path does.
+     */
+    openNonCancellationHandBackCents: number;
     /** The club's day, resolved before the transaction (`INV-LOCK-004`): the tier boundary. */
     todayAtClub: CalendarDate;
   },
@@ -59,6 +65,7 @@ export async function refundedPaymentCreditRestore(
   const appliedCreditBaseCents = cancelAppliedCreditBaseCents({
     ...booking.payment,
     creditAppliedCents,
+    openNonCancellationHandBackCents,
     finalPriceCents: booking.finalPriceCents,
     capAtWorth: true,
   });

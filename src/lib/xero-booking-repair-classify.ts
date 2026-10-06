@@ -61,9 +61,11 @@ import {
 import {
   getOperationQueueTypeHint,
   isSuccessfulXeroOperation,
+  readJsonRecord,
   toIsoDate,
 } from "./xero-booking-repair-utils";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import { readModificationNoteWording } from "@/lib/xero-refund-method";
 import { isCancellationRefundDecisionRecorded } from "@/lib/cancellation-settled-money";
 import { recordedCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
 import { scopedGiveBackNote, withoutGiveBackNote } from "@/lib/xero-booking-repair-give-back";
@@ -1013,6 +1015,14 @@ export function classifyBookingContext(
                 bookingId: booking.id,
                 bookingModificationId: modification.id,
                 refundAmountCents: expectedCreditNoteCents,
+                // #3536 (`INV-PAY-116`): the wording the original attempt
+                // recorded - its refund method and any owner-added wording,
+                // such as the officer's "Refunded in cash" - read from the
+                // same stored request the amount came from, so the repair
+                // says what the original would have said.
+                ...(storedSettlement?.source === "operation-request"
+                  ? readModificationNoteWording(readJsonRecord(storedSettlement.requestPayload))
+                  : {}),
               },
             });
             addFinding(findings, {
@@ -1384,7 +1394,7 @@ export function classifyBookingContext(
   if (payment) addUnsettledRefundCreditNoteFindings(findings, actionMap, booking.id, context.paymentRefundPaymentLinks, paymentOperations);
   addUnallocatedCardAppliedCreditFindings(findings, actionMap, context);
   if (payment && refundCreditNote) {
-    const refundAmountCents = getCashCancellationRefundCandidateCents(booking);
+    const refundAmountCents = getCashCancellationRefundCandidateCents(booking, paymentOperations, paymentLinks);
     if (refundAmountCents !== null && refundAmountCents > 0) {
       addXeroAmountMismatchFinding({
         findings,
@@ -2212,7 +2222,7 @@ export function classifyBookingContext(
     // per-refund ones - already answer every cent a note may: nothing is
     // missing, and nothing is ambiguous.
     if (primaryInvoice && !refundCreditNote && context.refundNoteUncoveredCents !== 0) {
-      const cashCancellationRefundCents = getCashCancellationRefundCandidateCents(booking);
+      const cashCancellationRefundCents = getCashCancellationRefundCandidateCents(booking, paymentOperations, paymentLinks);
       if (cashCancellationRefundCents === null) {
         const action = addAction(
           actionMap,
