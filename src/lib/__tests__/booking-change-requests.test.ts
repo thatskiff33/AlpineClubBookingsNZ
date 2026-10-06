@@ -369,7 +369,16 @@ describe("booking change requests", () => {
 
   it("lists pending requests for admins", async () => {
     mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
-    mocks.bookingChangeRequestFindMany.mockResolvedValue([{ id: "request-1" }]);
+    mocks.bookingChangeRequestFindMany.mockResolvedValue([
+      {
+        id: "request-1",
+        booking: { checkOut: new Date("2026-05-27T00:00:00.000Z"), status: "PAID" },
+      },
+      {
+        id: "request-2",
+        booking: { checkOut: new Date("2026-05-20T00:00:00.000Z"), status: "COMPLETED" },
+      },
+    ]);
     mocks.bookingChangeRequestCount.mockResolvedValue(1);
 
     const request = new NextRequest(
@@ -380,6 +389,12 @@ describe("booking change requests", () => {
 
     expect(response.status).toBe(200);
     expect(body.total).toBe(1);
+    // #3750: the panel is told which approvals EXECUTE (a finished stay) from
+    // the same `isFinishedStay` the decision route asks.
+    expect(body.data.map((row: { executesOnApproval: boolean }) => row.executesOnApproval)).toEqual([
+      false,
+      true,
+    ]);
     expect(mocks.bookingChangeRequestFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         // #2524: the legacy locked-period queue now also filters kind, so
@@ -396,7 +411,12 @@ describe("booking change requests", () => {
     // inflate the REQUESTED count and 409 on a legacy Approve). status=ALL
     // exercises the branch that previously used an unscoped `{}` where.
     mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
-    mocks.bookingChangeRequestFindMany.mockResolvedValue([{ id: "locked-1" }]);
+    mocks.bookingChangeRequestFindMany.mockResolvedValue([
+      {
+        id: "locked-1",
+        booking: { checkOut: new Date("2026-05-27T00:00:00.000Z"), status: "PAID" },
+      },
+    ]);
     mocks.bookingChangeRequestCount.mockResolvedValue(1);
 
     const request = new NextRequest(
@@ -422,12 +442,12 @@ describe("booking change requests", () => {
       .mockResolvedValueOnce({
         id: "request-1",
         status: "REQUESTED",
-        booking: { id: "booking-1", memberId: "member-1" },
+        booking: { id: "booking-1", memberId: "member-1", checkOut: new Date("2026-05-27T00:00:00.000Z"), status: "PAID" },
       })
       .mockResolvedValueOnce({
         id: "request-1",
         status: "APPROVED",
-        booking: { id: "booking-1", memberId: "member-1" },
+        booking: { id: "booking-1", memberId: "member-1", checkOut: new Date("2026-05-27T00:00:00.000Z"), status: "PAID" },
       });
     mocks.bookingChangeRequestUpdateMany.mockResolvedValue({ count: 1 });
 
@@ -478,13 +498,13 @@ describe("booking change requests", () => {
       .mockResolvedValueOnce({
         id: "request-1",
         status: "REQUESTED",
-        booking: { id: "booking-1", memberId: "member-1" },
+        booking: { id: "booking-1", memberId: "member-1", checkOut: new Date("2026-05-27T00:00:00.000Z"), status: "PAID" },
       })
       .mockResolvedValueOnce({
         id: "request-1",
         status: "APPROVED",
         linkedModificationId: "mod-7",
-        booking: { id: "booking-1", memberId: "member-1" },
+        booking: { id: "booking-1", memberId: "member-1", checkOut: new Date("2026-05-27T00:00:00.000Z"), status: "PAID" },
       });
     mocks.bookingChangeRequestUpdateMany.mockResolvedValue({ count: 1 });
     mocks.bookingModificationFindUnique.mockResolvedValue({
@@ -530,7 +550,7 @@ describe("booking change requests", () => {
     mocks.bookingChangeRequestFindUnique.mockResolvedValueOnce({
       id: "request-1",
       status: "REQUESTED",
-      booking: { id: "booking-1", memberId: "member-1" },
+      booking: { id: "booking-1", memberId: "member-1", checkOut: new Date("2026-05-27T00:00:00.000Z"), status: "PAID" },
     });
     mocks.bookingModificationFindUnique.mockResolvedValue({
       id: "mod-9",
@@ -576,12 +596,12 @@ describe("booking change requests", () => {
         id: "request-1",
         status: "REQUESTED",
         kind: "LOCKED_PERIOD",
-        booking: { id: "booking-1", memberId: "member-1" },
+        booking: { id: "booking-1", memberId: "member-1", checkOut: new Date("2026-05-27T00:00:00.000Z"), status: "PAID" },
       })
       .mockResolvedValueOnce({
         id: "request-1",
         status: "REJECTED",
-        booking: { id: "booking-1", memberId: "member-1" },
+        booking: { id: "booking-1", memberId: "member-1", checkOut: new Date("2026-05-27T00:00:00.000Z"), status: "PAID" },
       });
     mocks.bookingChangeRequestUpdateMany.mockResolvedValue({ count: 1 });
 
@@ -628,12 +648,12 @@ describe("booking change requests", () => {
         id: "request-1",
         status: "REQUESTED",
         kind: "LOCKED_PERIOD",
-        booking: { id: "booking-1", memberId: "member-1" },
+        booking: { id: "booking-1", memberId: "member-1", checkOut: new Date("2026-05-27T00:00:00.000Z"), status: "PAID" },
       })
       .mockResolvedValueOnce({
         id: "request-1",
         status: "REJECTED",
-        booking: { id: "booking-1", memberId: "member-1" },
+        booking: { id: "booking-1", memberId: "member-1", checkOut: new Date("2026-05-27T00:00:00.000Z"), status: "PAID" },
       });
     mocks.bookingChangeRequestUpdateMany.mockResolvedValue({ count: 1 });
 
@@ -669,7 +689,7 @@ describe("booking change requests", () => {
     mocks.bookingChangeRequestFindUnique.mockResolvedValueOnce({
       id: "request-1",
       status: "REQUESTED",
-      booking: { id: "booking-1", memberId: "member-1" },
+      booking: { id: "booking-1", memberId: "member-1", checkOut: new Date("2026-05-27T00:00:00.000Z"), status: "PAID" },
     });
     mocks.bookingModificationFindUnique.mockResolvedValue(null);
 
@@ -700,7 +720,7 @@ describe("booking change requests", () => {
       id: "request-1",
       status: "REQUESTED",
       kind: "POLICY_EXCEPTION",
-      booking: { id: "booking-1", memberId: "member-1" },
+      booking: { id: "booking-1", memberId: "member-1", checkOut: new Date("2026-05-27T00:00:00.000Z"), status: "PAID" },
     });
 
     const request = new NextRequest(

@@ -280,6 +280,12 @@ type BatchModificationTransactionResult =
 
 export type BatchModificationResponse = {
   booking: ModifiedBooking;
+  /**
+   * The `BookingModification` row this edit wrote (#3750), so a caller that
+   * owns the transaction can link it — the finished-stay change-request
+   * executor writes it onto the request it approved, in the same transaction.
+   */
+  bookingModificationId: string;
   priceDiffCents: number;
   changeFeeCents: number;
   refundAmountCents: number;
@@ -2491,6 +2497,7 @@ export async function modifyBookingBatch({
 
     return {
       booking: result.booking,
+      bookingModificationId: result.bookingModificationId,
       priceDiffCents: result.priceDiffCents,
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
@@ -2532,6 +2539,7 @@ export async function modifyBookingBatch({
     // (`formatLinkedMoveMoneySentence`), rather than implying one payment step.
     return {
       booking: result.booking,
+      bookingModificationId: result.bookingModificationId,
       ...(result.pendingHostingReconcile
         ? { pendingHostingReconcile: result.pendingHostingReconcile }
         : {}),
