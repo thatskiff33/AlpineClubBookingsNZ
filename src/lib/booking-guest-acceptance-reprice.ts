@@ -23,6 +23,7 @@ import {
 } from "@/lib/booking-modify";
 import { bookingOwner } from "@/lib/booking-owner";
 import {
+  canAskCardForIncrease,
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
 } from "@/lib/booking-payment-state";
@@ -261,8 +262,13 @@ export async function repriceBookingAfterGuestAcceptance(
   });
   const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
   const loaded = booking as unknown as LoadedBookingForModify;
+  // #3502: `canAskCardForIncrease` too, so a credit-paid ($0) booking in any
+  // settled status is refused here rather than handed to
+  // `applyPaymentAdjustments`, which would now size a card ask this path never
+  // mints.
   const priceSettled =
     hasCapturedPayment(booking.payment) ||
+    canAskCardForIncrease(booking) ||
     isPaidLikeBookingStatus(booking.status) ||
     hasIssuedPrimaryXeroInvoice(loaded);
   if (priceDiffCents > 0 && priceSettled) {

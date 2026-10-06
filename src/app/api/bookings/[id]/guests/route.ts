@@ -118,9 +118,8 @@ import {
   getBookingEditPolicy,
 } from "@/lib/booking-edit-policy";
 import {
+  canAskCardForIncrease,
   hasIssuedPrimaryXeroInvoice,
-  isCapturedPaymentStatus,
-  isSettledBookingStatus,
 } from "@/lib/booking-payment-state";
 import { clubTime } from "@/lib/club-time/server";
 import { dateOnlyInstantOf } from "@/lib/club-time";
@@ -1020,28 +1019,16 @@ export async function POST(
        * count as paid, so the difference is charged instead of collected from
        * nobody — the reachable defect this issue was filed for.
        *
-       * It asks `isCapturedPaymentStatus`, the STATUS half, rather than the
-       * full `hasCapturedPayment` the other three doors use. That is deliberate
-       * and it is the one place this door differs from them. The full predicate
-       * also requires `amountCents > 0`, and a ZERO-DOLLAR booking — a stay
-       * fully covered by credit or a 100% promo — carries
-       * `{ amountCents: 0, status: SUCCEEDED }`. Using it here would have made
-       * this door stop asking that member for the added guest's price, because
-       * the Xero arm below cannot cover them at a club with the integration off.
-       * That is a NEW under-collection, at the very door this issue exists to
-       * stop under-collecting at, and it was never put to the owner.
-       *
-       * The money IS collectable: the additional-payment mint creates a FRESH
-       * intent and only reuses the Stripe customer (`findOrCreateCustomer` when
-       * there is none), so a null `stripePaymentIntentId` on the zero-dollar row
-       * is no obstacle. The other three doors share that hole; converging onto
-       * it would have been converging onto a defect. Filed separately.
+       * A guest add only ever raises the price, so this door asks the
+       * INCREASE question, `canAskCardForIncrease` — the status half of
+       * `hasCapturedPayment`, without its `amountCents > 0` clause, so a
+       * ZERO-DOLLAR booking (a stay fully covered by credit or a 100% promo,
+       * `{ amountCents: 0, status: SUCCEEDED }`) is still asked for the added
+       * guest's price whether or not Xero is connected. #3502 (owner decision,
+       * 6 Oct 2026) moved the other three doors onto the same answer through
+       * `applyPaymentAdjustments`; this door used to hold its own copy of it.
        */
-      const hasSettledPayment =
-        isSettledBookingStatus(booking.status) &&
-        isCapturedPaymentStatus(booking.payment?.status ?? "");
-      const hasSucceededPayment =
-        hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
+      const hasSucceededPayment = canAskCardForIncrease(booking);
       const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
 
       /**

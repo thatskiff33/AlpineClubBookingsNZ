@@ -222,7 +222,6 @@ function unexplainedCapturedStatusCopies(files: readonly SourceFile[]): string[]
  * claim that its reader is an aggregate `Payment` row (#3503, #3632).
  */
 const AGGREGATE_CAPTURED_STATUS_AUTHORITY_READERS = new Map([
-  ["src/app/api/bookings/[id]/guests/route.ts", "booking.payment.status (guest-add collection)"],
   ["src/lib/additional-payment-ask.ts", "census SQL over payment.status"],
   ["src/lib/admin-reports.ts", "payment.status in summarizeNetCollectedCash"],
   ["src/lib/booking-delete.ts", "payment.status in hasCapturedOrCreditedPayment"],
