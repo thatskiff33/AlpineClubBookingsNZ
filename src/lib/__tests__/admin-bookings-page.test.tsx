@@ -127,6 +127,7 @@ const effectiveModulesOn = {
   alpineCentralServer: false,
   commsPortal: false,
   memberLodgeRoster: false,
+  multiPromoCodes: false,
 };
 
 describe("AdminBookingsPage", () => {
@@ -193,7 +194,7 @@ describe("AdminBookingsPage", () => {
           ],
         },
       ],
-      promoRedemption: null,
+      promoRedemptions: [],
       nightAdjustments: [],
       payment: null,
       bedAllocations: [],

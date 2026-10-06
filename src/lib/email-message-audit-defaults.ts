@@ -392,7 +392,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "refund-request-approved": {
     "defaultSubject": "Refund Appeal Approved — {{CLUB_BOOKINGS_NAME}}",
-    "defaultBody": "Refund Appeal Approved\n\nHi {{firstName}},\n\nYour refund appeal for your booking ({{checkIn}} - {{checkOut}}) has been approved. A refund of {{amount}} will be processed to your original payment method.\n\n{{adminNotesLine}}If you have questions, contact the club at {{SUPPORT_EMAIL}}."
+    "defaultBody": "Refund Appeal Approved\n\nHi {{firstName}},\n\nYour refund appeal for your booking ({{checkIn}} - {{checkOut}}) has been approved. {{refundSentence}}\n\n{{adminNotesLine}}If you have questions, contact the club at {{SUPPORT_EMAIL}}."
   },
   "refund-request-declined": {
     "defaultSubject": "Refund Appeal Update — {{CLUB_BOOKINGS_NAME}}",

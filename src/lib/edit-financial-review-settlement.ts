@@ -5,13 +5,13 @@ import {
   BookingStatus,
   ManualRefundTaskDirection,
   ManualRefundTaskKind,
-  PaymentSource,
   Prisma,
 } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
+import { handsBackByHand } from "@/lib/manual-refund-hand-back-route";
 import { recordBookingEvent } from "@/lib/booking-events";
-import { editReviewSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
+import { editReviewRefundGoesBackOnCard, editReviewRefundSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
 import {
   chooseEditReviewChargeRoute,
   executeEditReviewCharge,
@@ -23,6 +23,7 @@ import {
   REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE,
   REVIEW_SETTLEMENT_ANCHOR_MISSING_MESSAGE,
 } from "@/lib/edit-financial-review-refund-refusals";
+import { assertByHandReviewRefundWithinUnpromisedCash } from "@/lib/edit-refund-hand-back";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -36,7 +37,7 @@ import {
   refundPaymentTransactions,
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
-import { dispatchEditReviewXeroSettlement } from "@/lib/edit-financial-review-xero-leg";
+import { dispatchEditReviewXeroSettlement, type EditReviewHandBackXeroFacts } from "@/lib/edit-financial-review-xero-leg";
 import {
   finishEditReviewAccountCredit,
   type EditReviewAccountCreditOutcome,
@@ -193,6 +194,9 @@ export type EditReviewSettlementRoute =
       refundCents: number;
       /** #3835: the applied-credit part of what is still owed, given back as credit. */
       creditBackCents: number;
+      /** #3536 (`INV-PAY-116`): the officer said this went back in cash, never inferred from
+       * "marked paid by hand". Words on the Xero note only; settlement and ledger unchanged. */
+      handedBackInCash?: true;
     }
   | {
       kind: "account-credit";
@@ -256,6 +260,7 @@ export async function chooseEditReviewSettlementRoute({
   amountCents,
   hasIssuedXeroInvoice,
   direction,
+  handedBackInCash = false,
   club,
   store,
 }: {
@@ -288,6 +293,9 @@ export async function chooseEditReviewSettlementRoute({
    * the member's card.
    */
   direction: ManualRefundTaskDirection;
+  /** #3536 (`INV-PAY-116`): the officer's cash answer, read only on the `local-allocation` route;
+   * absent or false keeps the bank-transfer wording. */
+  handedBackInCash?: boolean;
   /** #3835: the club's zone (`INV-LOCK-004`) and format, resolved before the transaction. */
   club: { zone: ClubTimeZone; format: ClubFormat };
   store: Prisma.TransactionClient;
@@ -306,7 +314,7 @@ export async function chooseEditReviewSettlementRoute({
     if (task.kind === ManualRefundTaskKind.DELETED_BOOKING_LATE_CAPTURE) {
       await assertLateCaptureHandBackStillOwed({ task, amountCents, store });
     }
-    return task.paymentId !== null
+    return handsBackByHand(task) && task.paymentId !== null
       ? {
           kind: "local-allocation",
           paymentId: task.paymentId,
@@ -379,15 +387,10 @@ export async function chooseEditReviewSettlementRoute({
    * claim, and a capture or webhook replay cannot duplicate a backfill that does
    * not exist.
    */
-  const backfilledPayment =
-    task.paymentId === null
-      ? editReviewSettlementPayment(task.booking)
-      : null;
-  const settlementPaymentId = task.paymentId ?? backfilledPayment?.id ?? null;
-  const settlementPaymentSource =
-    task.paymentId !== null
-      ? (task.payment?.source ?? null)
-      : (backfilledPayment?.source ?? null);
+  // #3536 (`INV-SSOT`): this payment and the card-or-by-hand test are shared with
+  // `editReviewRefundIsPaidBackByHand`, which decides whether the settle queue asks cash-or-bank.
+  const settlementPayment = editReviewRefundSettlementPayment(task);
+  const settlementPaymentId = settlementPayment?.id ?? null;
 
   // #3835: on a cancelled booking a captured payment's share - by card or by
   // hand - is netted against what the cancellation returned (owner decision 2
@@ -399,10 +402,7 @@ export async function chooseEditReviewSettlementRoute({
         })
       : Promise.resolve({ captureCents: amountCents, creditCents: 0 });
 
-  if (
-    settlementPaymentId !== null &&
-    settlementPaymentSource === PaymentSource.STRIPE
-  ) {
+  if (settlementPayment !== null && editReviewRefundGoesBackOnCard(settlementPayment)) {
     if (!bookingModificationId) {
       throw new ManualBookingPaymentError(
         REVIEW_SETTLEMENT_ANCHOR_MISSING_MESSAGE,
@@ -415,7 +415,7 @@ export async function chooseEditReviewSettlementRoute({
     // cannot be short of it: the planner allocates newest-first across exactly
     // the transactions the cap totalled.
     const { slices, totalRefundableCents } = await planStripeRefundAllocation({
-      paymentId: settlementPaymentId,
+      paymentId: settlementPayment.id,
       amountCents: refundCents,
       store,
     });
@@ -423,11 +423,11 @@ export async function chooseEditReviewSettlementRoute({
       throw new ManualBookingPaymentError(REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE, 400);
     }
     // #3835: and less the card refunds already promised and not yet made.
-    const capped = { paymentId: settlementPaymentId, bookingId: task.bookingId, refundCents, totalRefundableCents };
+    const capped = { paymentId: settlementPayment.id, bookingId: task.bookingId, refundCents, totalRefundableCents };
     await assertCardRefundNotOverPromised({ ...capped, format: club.format, store });
     return {
       kind: "stripe-refund",
-      paymentId: settlementPaymentId,
+      paymentId: settlementPayment.id,
       bookingModificationId,
       allocation: slices,
       refundCents,
@@ -443,12 +443,16 @@ export async function chooseEditReviewSettlementRoute({
     // the task OPEN, which is the guarantee the pre-claim card cap above has to
     // buy by hand.
     const handBack = await owed();
+    // #3827 (`INV-PAY-117`): and, before the claim, the cash that actually goes
+    // back is net of open hand-backs. (#3835's netting can only shrink it.)
+    await assertByHandReviewRefundWithinUnpromisedCash(store, settlementPaymentId, handBack.captureCents);
     return {
       kind: "local-allocation",
       paymentId: settlementPaymentId,
       bookingModificationId,
       refundCents: handBack.captureCents,
       creditBackCents: handBack.creditCents,
+      ...(handedBackInCash ? { handedBackInCash: true as const } : {}),
     };
   }
 
@@ -513,8 +517,8 @@ export async function executeEditReviewSettlement({
   hasIssuedXeroInvoice,
   bookingPaymentStatus,
   bookingXeroInvoiceId = null,
-  cancellationHandBackInvoiceId,
   format,
+  ...handBackXero
 }: {
   bookingId: string;
   taskId: string;
@@ -527,11 +531,9 @@ export async function executeEditReviewSettlement({
   bookingXeroInvoiceId?: string | null;
   hasIssuedXeroInvoice: boolean;
   bookingPaymentStatus: string | null;
-  /** `INV-PAY-101` (#3529): see `dispatchEditReviewXeroSettlement`. */
-  cancellationHandBackInvoiceId: string | null;
   /** The club's format (#3565), resolved once by the caller, before its transaction. */
   format: ClubFormat;
-}): Promise<{
+} & EditReviewHandBackXeroFacts): Promise<{
   stripeRefundId: string | null;
   additionalPaymentIntentId: string | null;
 }> {
@@ -690,7 +692,7 @@ export async function executeEditReviewSettlement({
     chargeTotalCents,
     hasIssuedXeroInvoice,
     bookingPaymentStatus,
-    cancellationHandBackInvoiceId,
+    ...handBackXero,
     additionalPaymentIntentId,
   });
 

@@ -56,8 +56,10 @@ export default function BookPage() {
     handlePerGuestDatesEnabledChange,
     multiDateRangesEnabled,
     handleMultiDateRangesEnabledChange,
-    appliedPromo,
-    setAppliedPromo,
+    appliedPromos,
+    setAppliedPromos,
+    combineWorkPartyWithCodes,
+    setMultiPromoCodes,
     expectedArrivalTime,
     setExpectedArrivalTime,
     requestedRoomId,
@@ -88,8 +90,6 @@ export default function BookPage() {
     subscriptionLoading,
     availablePromoCodes,
     promoCodesEnabled,
-    prefillPromoCode,
-    setPrefillPromoCode,
     activeWorkPartyEvents,
     attendingWorkParty,
     setAttendingWorkParty,
@@ -631,8 +631,10 @@ export default function BookPage() {
           reviewGuestPayload={reviewGuestPayload}
           bookingDateStrings={bookingDateStrings}
           perGuestDatesEnabled={perGuestDatesEnabled}
-          appliedPromo={appliedPromo}
-          setAppliedPromo={setAppliedPromo}
+          appliedPromos={appliedPromos}
+          setAppliedPromos={setAppliedPromos}
+          combineWorkPartyWithCodes={combineWorkPartyWithCodes}
+          setMultiPromoCodes={setMultiPromoCodes}
           availableCreditCents={availableCreditCents}
           appliedCreditCents={appliedCreditCents}
           remainingToPay={remainingToPay}
@@ -672,8 +674,6 @@ export default function BookPage() {
           setWorkPartyClearedNotice={setWorkPartyClearedNotice}
           availablePromoCodes={availablePromoCodes}
           promoCodesEnabled={promoCodesEnabled}
-          prefillPromoCode={prefillPromoCode}
-          setPrefillPromoCode={setPrefillPromoCode}
           cancelIfGuestsBumped={cancelIfGuestsBumped}
           setCancelIfGuestsBumped={setCancelIfGuestsBumped}
           setStep={setStep}

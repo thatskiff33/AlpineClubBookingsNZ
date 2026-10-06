@@ -8,10 +8,10 @@ import {
 import {
   assertSchoolGuestsWithinLodgeCapacity,
   createSchoolBookingRequest,
-  generateSchoolGuests,
   schoolChildCountsSchema,
   schoolTeacherSchema,
 } from "@/lib/school-booking-request";
+import { generateSchoolGuests } from "@/lib/school-booking-constants";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";

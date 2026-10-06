@@ -1,9 +1,10 @@
 import type { BookingGuestNightPriceSource, Prisma } from "@prisma/client";
 
+import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import type { EditFinancialReviewCause } from "@/lib/edit-financial-review-context";
 import {
   deriveNightAdjustmentState,
-  memberBenefitAllocations,
+  combinedPromoRedemptionEvidence,
 } from "@/lib/night-adjustment-write";
 import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
 import { formatCents } from "@/lib/utils";
@@ -134,13 +135,14 @@ export type BookingMoneyBuildUpProjection = {
       priceSource: BookingGuestNightPriceSource;
     }>;
   }>;
-  promoRedemption: {
+  // Every redemption the booking carries (#3826, epic #3813): one per code.
+  promoRedemptions: Array<{
     priceAdjustmentCents: number;
     // The column as it is since #3369: a school's booker-slot allocation names
     // no member. `bookingMoneyBuildUpFromProjection` narrows it through the
     // writer's own rule, so `LoadedBookingMoneyBuildUp` stays member-keyed.
     allocations: Array<{ memberId: string | null; priceAdjustmentCents: number }>;
-  } | null;
+  }>;
   nightAdjustments: Array<{
     bookingGuestId: string | null;
     bookingGuestNightId: string | null;
@@ -227,7 +229,7 @@ export async function readBookingMoneyBuildUp(
           },
         },
       },
-      promoRedemption: {
+      promoRedemptions: {
         select: {
           priceAdjustmentCents: true,
           allocations: { select: { memberId: true, priceAdjustmentCents: true } },
@@ -290,10 +292,7 @@ export function bookingMoneyBuildUpFromProjection(
       args.bookingGuestId,
     ),
     rows,
-    redemption: booking.promoRedemption && {
-      priceAdjustmentCents: booking.promoRedemption.priceAdjustmentCents,
-      allocations: memberBenefitAllocations(booking.promoRedemption.allocations),
-    },
+    redemption: combinedPromoRedemptionEvidence(bookingPromoRedemptions(booking)),
   };
 }
 

@@ -204,9 +204,13 @@ vi.mock("@/lib/payment-link-split-guest", async (importOriginal) => ({
 
 // Mock promo cleanup used by the whole-bump path.
 const mockDeletePromoRedemption = vi.fn().mockResolvedValue(undefined);
+const mockReleaseBookingPromoRedemptions = vi.fn().mockResolvedValue(0);
 vi.mock("../promo", () => ({
   deletePromoRedemptionAndAdjustCount: (...args: unknown[]) =>
     mockDeletePromoRedemption(...args),
+  // #3826: the bump paths release every code the booking carries.
+  releaseBookingPromoRedemptions: (...args: unknown[]) =>
+    mockReleaseBookingPromoRedemptions(...args),
 }));
 
 // Mock capacity
@@ -253,7 +257,7 @@ const paymentTransactionMocks = {
   findUnique: (...args: unknown[]) => mockPaymentTransactionFindUnique(...args),
   deleteMany: (...args: unknown[]) => mockPaymentTransactionDeleteMany(...args),
 };
-const mockPromoRedemptionFindUnique = vi.fn();
+const mockPromoRedemptionFindMany = vi.fn();
 // #1993 Part A: the terminal branch records a CANCELLED booking event in-tx.
 const mockBookingEventCreate = vi.fn().mockResolvedValue({ id: "evt_1" });
 const mockEmailLogFindFirst = vi.fn().mockResolvedValue(null);
@@ -303,7 +307,7 @@ vi.mock("../prisma", () => ({
     },
     paymentTransaction: paymentTransactionMocks,
     promoRedemption: {
-      findUnique: (...args: unknown[]) => mockPromoRedemptionFindUnique(...args),
+      findMany: (...args: unknown[]) => mockPromoRedemptionFindMany(...args),
     },
     // #1993 Part A: the CANCELLED narrative event is now recorded POST-COMMIT
     // on the base client (recordBookingEvent's documented contract), not inside
@@ -473,7 +477,7 @@ function makePendingBooking(
     parentBooking: resolvedParentBooking,
     groupBookingJoin,
     originBookingRequest,
-    promoRedemption: null,
+    promoRedemptions: [],
     createdAt: new Date("2026-03-01"),
     member: {
       id: `member_${id}`,
@@ -597,7 +601,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
     mockSendSavedCardChargeFailedEmail.mockResolvedValue(undefined);
     mockClubTimeSettingsFindUnique.mockResolvedValue(null);
-    mockPromoRedemptionFindUnique.mockResolvedValue(null);
+    mockPromoRedemptionFindMany.mockResolvedValue([]);
     mockDeletePromoRedemption.mockResolvedValue(undefined);
     mockRevokePaymentLinksForBooking.mockResolvedValue(0);
     mockMintSplitGuestPaymentLinkIfAbsent.mockResolvedValue({
@@ -645,8 +649,8 @@ describe("Cron: Confirm Pending Bookings", () => {
           // release records Stripe's answer on it in-tx.
           paymentTransaction: paymentTransactionMocks,
           promoRedemption: {
-            findUnique: (...args: unknown[]) =>
-              mockPromoRedemptionFindUnique(...args),
+            findMany: (...args: unknown[]) =>
+              mockPromoRedemptionFindMany(...args),
           },
           // #1993 Part A: the terminal branch records the CANCELLED event
           // inside the lock transaction.

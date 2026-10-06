@@ -138,3 +138,47 @@ export async function describePromoCapCoverage(
     }),
   };
 }
+
+/**
+ * The sentence a member reads when a re-price RELEASES one of several codes on
+ * their booking (#3827) — its holder left, its nights are now another code's,
+ * its window closed. The reason is the engine's own refusal, so the notice and
+ * the price cannot tell different stories. A lone code's removal keeps the
+ * signal it always had (`promoRemoved`); this is for the code that went while
+ * others stayed.
+ */
+export function promoReleasedNotice(promoCode: string, reason: string): PromoCoverageNotice {
+  const because = reason.trim().replace(/[.\s]+$/, "");
+  return {
+    promoCode,
+    coveredNames: [],
+    retainedNames: [],
+    excludedNames: [],
+    message:
+      `Promo code ${promoCode} no longer applies to this booking (${because}), so it has been removed. ` +
+      "The total shown already includes this.",
+  };
+}
+
+/**
+ * Every notice one re-price produced, as the ONE notice each surface already
+ * shows (#3827). One notice in, the same notice out — byte for byte, so a
+ * single-code booking reads exactly as before; several are joined in the
+ * booker's order of the codes, names de-duplicated.
+ */
+export function mergePromoCoverageNotices(
+  notices: ReadonlyArray<PromoCoverageNotice | null>,
+): PromoCoverageNotice | null {
+  const present = notices.filter((notice): notice is PromoCoverageNotice => notice !== null);
+  if (present.length <= 1) return present[0] ?? null;
+  const union = (pick: (notice: PromoCoverageNotice) => string[]) => [
+    ...new Set(present.flatMap(pick)),
+  ];
+  return {
+    promoCode: present.map((notice) => notice.promoCode).join(", "),
+    coveredNames: union((notice) => notice.coveredNames),
+    retainedNames: union((notice) => notice.retainedNames),
+    excludedNames: union((notice) => notice.excludedNames),
+    message: present.map((notice) => notice.message).join(" "),
+  };
+}
