@@ -143,6 +143,34 @@ describe("epic-branch-sync.yml gates auto-merge on the composed-tree censuses", 
     expect(censuses).not.toMatch(/\bgit push\b|\bgh /);
   });
 
+  it("restores no dependency cache, so epic code never writes main's cache scope", () => {
+    expect(censuses).not.toMatch(/^\s*cache:/m);
+    expect(censuses).not.toContain("actions/cache");
+  });
+
+  it("runs every command from the composed tree with the runner's command files unset", () => {
+    expect(censuses).toContain(
+      'env -u GITHUB_OUTPUT -u GITHUB_ENV -u GITHUB_PATH -u GITHUB_STEP_SUMMARY "$@"',
+    );
+    const pnpmLines = censuses.split("\n").filter((line) => /\bpnpm (install|run|exec)\b/.test(line));
+    expect(pnpmLines.length).toBeGreaterThanOrEqual(2);
+    for (const line of pnpmLines) expect(line, line).toMatch(/\buntrusted pnpm /);
+  });
+
+  it("starts every branch from a fully clean tree and fails closed when it cannot", () => {
+    expect(censuses).toContain(
+      'if ! git checkout --quiet --force --detach "${epic_sha}" || ! git clean -ffdxq; then\n              status="error"',
+    );
+  });
+
+  it("re-checks once in the same run when main or the epic moved", () => {
+    const fetch = censuses.indexOf("git fetch --quiet origin");
+    const recheck = censuses.indexOf('check_branch "${branch}" "${new_main}"');
+    expect(fetch).toBeGreaterThan(0);
+    expect(recheck).toBeGreaterThan(fetch);
+    expect(censuses.indexOf('echo "results=${results}" >> "${GITHUB_OUTPUT}"')).toBeGreaterThan(recheck);
+  });
+
   it("merges main into the epic locally and runs pnpm run ci:fast-censuses on it", () => {
     const merge = censuses.indexOf('merge --no-edit --quiet "${main_sha}"');
     const install = censuses.indexOf("pnpm install --frozen-lockfile");
@@ -158,26 +186,79 @@ describe("epic-branch-sync.yml gates auto-merge on the composed-tree censuses", 
     expect(sync).toContain("CENSUS_RESULTS: ${{ needs.censuses.outputs.results }}");
   });
 
-  it("arms auto-merge only inside the census-passed branch, pinned to the tested head", () => {
-    const arms = [...sync.matchAll(/gh pr merge [^\n]*--auto\b[^\n]*/g)];
-    expect(arms).toHaveLength(1);
-    const arm = arms[0];
-    expect(arm[0]).toContain('--match-head-commit "${tested_main}"');
-    expect(arm[0]).toContain("--merge");
+  it("merges or arms only inside the census-passed branch, pinned to the tested head", () => {
+    const merges = [...sync.matchAll(/gh pr merge [^\n]*--merge\b[^\n]*/g)];
+    // One immediate merge (already CLEAN) and one auto-merge arm, nothing else.
+    expect(merges).toHaveLength(2);
+    expect(merges.filter((m) => /--auto\b/.test(m[0]))).toHaveLength(1);
 
     const gate = sync.indexOf('if [ "${census_status}" = "pass" ]');
     const disarm = sync.indexOf("--disable-auto");
     expect(gate).toBeGreaterThan(0);
-    expect(arm.index).toBeGreaterThan(gate);
-    expect(disarm).toBeGreaterThan(arm.index);
+    for (const merge of merges) {
+      expect(merge[0]).toContain('--match-head-commit "${tested_main}"');
+      expect(merge.index).toBeGreaterThan(gate);
+      expect(disarm).toBeGreaterThan(merge.index);
+    }
     // The gate compares the tested SHAs with what would land now.
-    const condition = sync.slice(gate, arm.index);
+    const condition = sync.slice(gate, merges[0].index);
     expect(condition).toContain('"${head_now}" = "${tested_main}"');
     expect(condition).toContain('"${epic_now}" = "${tested_epic}"');
   });
 
+  it("re-reads the epic tip from the remote right before the gate, since the head pin cannot cover it", () => {
+    const reread = sync.indexOf('epic_now="$(git ls-remote origin "refs/heads/${branch}" | cut -f1)"');
+    const gate = sync.indexOf('if [ "${census_status}" = "pass" ]');
+    expect(reread).toBeGreaterThan(0);
+    expect(gate).toBeGreaterThan(reread);
+    // Nothing between the re-read and the gate re-assigns it from a stale ref.
+    expect(sync.slice(sync.indexOf("\n", reread), gate)).not.toMatch(/\bepic_now="\$\(/);
+  });
+
+  it("merges at once only when GitHub reports the pull request CLEAN", () => {
+    const direct = [...sync.matchAll(/gh pr merge [^\n]*--merge\b[^\n]*/g)].find(
+      (m) => !/--auto\b/.test(m[0]),
+    );
+    expect(direct).toBeDefined();
+    const before = sync.slice(0, direct.index);
+    const clean = before.lastIndexOf('if [ "${merge_state}" = "CLEAN" ]; then');
+    expect(clean).toBeGreaterThan(0);
+    expect(sync.slice(clean, direct.index)).not.toMatch(/\n\s*(else|fi)\b/);
+  });
+
   it("treats a branch with no census result as unchecked, never as a pass", () => {
     expect(sync).toContain(`'.[$b].status // "unchecked"'`);
+  });
+
+  it("treats a branch that already contained the tested main as waiting, not unchecked", () => {
+    expect(censuses).toContain("record \"${branch}\" current");
+    expect(sync).toMatch(/\n\s*pass\|current\)\n/);
+  });
+
+  it("checks the epic-branch name in sync before touching GitHub for it", () => {
+    const loop = sync.indexOf('for branch in ${branches}; do');
+    const nameCheck = sync.indexOf("grep -Eq '^epic/[A-Za-z0-9._/-]+$'", loop);
+    const firstGh = sync.indexOf("gh pr ", loop);
+    expect(nameCheck).toBeGreaterThan(loop);
+    expect(firstGh).toBeGreaterThan(nameCheck);
+  });
+
+  it("reads every comment into a variable before looking for the marker", () => {
+    expect(sync).toContain('comments="$(gh api --paginate');
+    expect(sync).toContain('grep -qF -- "${marker}" <<<"${comments}"');
+    expect(sync).not.toMatch(/gh pr view [^\n]*--json comments/);
+  });
+
+  it("pastes failing names only sanitised, capped and fenced", () => {
+    expect(sync).toContain('gsub("[`\\u0000-\\u001f\\u007f]"; "")');
+    expect(sync).toContain("$f[:10][]");
+    expect(sync).toContain(".[:200]");
+    const fenceOpen = sync.indexOf('"${fence}text"');
+    const list = sync.indexOf('"${failed_list}"', fenceOpen);
+    const fenceClose = sync.indexOf('"${fence}"', list);
+    expect(fenceOpen).toBeGreaterThan(0);
+    expect(list).toBeGreaterThan(fenceOpen);
+    expect(fenceClose).toBeGreaterThan(list);
   });
 
   it("never force-pushes and never pushes", () => {

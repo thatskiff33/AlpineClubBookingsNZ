@@ -1236,7 +1236,7 @@ On a child of an epic, pass `--base origin/epic/<n>-<slug>` so the file-size
 ratchet judges against the branch you will merge into.
 
 It is a convenience for a lane and the gate `epic-branch-sync.yml` applies
-before it arms auto-merge (#3513, [`agents/EPIC_PLAYBOOK.md`](agents/EPIC_PLAYBOOK.md)).
+before it lets a sync land (#3513, [`agents/EPIC_PLAYBOOK.md`](agents/EPIC_PLAYBOOK.md)).
 It is **not** a required check, it does not select the censuses a particular
 diff can reach (the next subsection does), and it never replaces `verify`. Add a
 suite to its list when a composition has broken one; leave out the
