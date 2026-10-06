@@ -721,7 +721,9 @@ still subject to the minimum — deferred as scope B on #2124.)
 on a finished stay (fully past, or `COMPLETED`) applies every part of it through
 `modifyBookingBatch`'s `finishedStayCorrection` mode — reachable only from that
 approval's executor, never from a request body. Add-only carries no change fee;
-anything else is priced at the same-day (0-day) notice tier. Member self-service
+a swap is charged the same-day (0-day) tier's retention on the removed portion,
+never netted against the added guests; anything else is priced at that tier.
+Member self-service
 on a finished stay stays refused.
 
 ## INV-MOD-025

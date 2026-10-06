@@ -10,9 +10,11 @@
   guests already on the booking keep exactly what they paid, and any extra is
   asked for through the ordinary additional payment (card, or internet banking
   against a supplementary Xero invoice) with the usual booking-change email.
-  Adding guests carries no change fee; a removal or swap is charged as a
-  same-day change under the cancellation policy, and the member can still ask
-  for that fee back through a refund request.
+  Adding guests carries no change fee. A removal is refunded at the
+  cancellation policy's same-day tier. A swap is charged that tier's share of
+  the removed guests as a change fee, exactly as if they had been removed on
+  their own, while the added guests are charged in full — the two are not
+  netted. The member can still ask for a fee back through a refund request.
 
   If a night was already full, the officer is asked to confirm the overbooking;
   a whole-lodge hold still refuses. If the booking has changed since the member

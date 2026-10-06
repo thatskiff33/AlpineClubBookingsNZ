@@ -83,9 +83,13 @@ are listed on the booking for you to relay.
      exactly what they paid. Any extra is asked for in the usual way (card, or
      internet banking against a supplementary invoice), and the member gets the
      ordinary booking-change email with the amount due. Adding guests carries no
-     change fee; a removal or swap is charged as a same-day change under the
-     cancellation policy, and the member can still ask the committee to refund
-     that fee through a refund request. Choose under **If the change lowers the
+     change fee. A removal is refunded at the cancellation policy's same-day
+     tier, so the club keeps that tier's share. A swap is charged the same
+     share of the removed guests' portion as a change fee, exactly as if they
+     had been removed on their own, and the added guests are charged in full —
+     the two are not netted against each other. A date or stay-range change is
+     priced at the same-day tier. The member can still ask the committee to
+     refund a fee through a refund request. Choose under **If the change lowers the
      price** whether a refund goes back the way it was paid or to account credit.
      If the booking has changed since the member asked, the season for those
      nights has been switched off, or a night is locked in Xero, nothing is

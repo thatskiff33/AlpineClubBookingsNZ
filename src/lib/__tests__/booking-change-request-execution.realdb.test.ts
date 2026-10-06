@@ -18,7 +18,8 @@
  *     global lock(1) waits for it, then sees the cancelled booking and applies
  *     nothing — the request stays REQUESTED at its old version.
  *  4. The owner's fee rule: a removal refunds at the lodge's same-day tier, a
- *     swap is a same-day change, and a mixed request executes every part.
+ *     swap is charged that tier's retention on the removed portion as its
+ *     change fee (never netted away), and a mixed request executes every part.
  *  5. Refusals roll the claim back: a switched-off season refuses, and an
  *     over-capacity past night waits for the officer's confirmation.
  *
@@ -454,22 +455,64 @@ function deferred() {
     expect(await prisma.bookingGuest.count({ where: { bookingId: BOOKING_ID } })).toBe(1);
   }, 60_000);
 
-  it("a swap is charged as a same-day change, and an add-only one is not", async () => {
+  it("a swap is charged the same-day fee on the removed guest's portion, not netted away", async () => {
     await seed({
       secondGuest: true,
       requested: { removeGuests: [{ id: GUEST_2_ID }], summary: "swap Second Guest for Late Friend" },
     });
     const result = await approve(OFFICER_ID);
+    // The removed guest's portion is 2 x 4,321; the same-day tier refunds half,
+    // so the fee is the half it keeps — exactly what removing them alone keeps.
+    const swapFee = STORED_NIGHT_CENTS;
+    const priceDiff = 2 * NIGHT_CENTS - 2 * STORED_NIGHT_CENTS;
     expect(result, JSON.stringify(result)).toMatchObject({
       outcome: "executed",
       addedGuestCount: 1,
       removedGuestCount: 1,
-      // The added guest costs more than the removed one, so the net is owed.
-      priceDiffCents: 2 * NIGHT_CENTS - 2 * STORED_NIGHT_CENTS,
+      priceDiffCents: priceDiff,
+      changeFeeCents: swapFee,
+      additionalAmountCents: priceDiff + swapFee,
     });
     const [modification] = await prisma.bookingModification.findMany({ where: { bookingId: BOOKING_ID } });
+    expect(modification).toMatchObject({ changeFeeCents: swapFee });
     expect(modification.newData).toMatchObject({
-      finishedStayCorrection: { changeFeeRule: "SAME_DAY_NOTICE" },
+      finishedStayCorrection: { changeFeeRule: "SWAP_SAME_DAY_NOTICE" },
+    });
+    // The supplementary invoice bills the price difference AND the fee.
+    const invoices = await supplementaryInvoices(1);
+    expect(invoices.map((row) => row.idempotencyKey)).toEqual([
+      `booking-mod:${modification.id}:supplementary-invoice:${priceDiff}:${swapFee}:v1`,
+    ]);
+  }, 60_000);
+
+  it("a swap that lowers the price keeps the tier once, on the removed portion, and refunds the rest in full", async () => {
+    await seed({
+      secondGuest: true,
+      requested: {
+        addGuests: [
+          {
+            firstName: "Late",
+            lastName: "Friend",
+            ageTier: "ADULT",
+            isMember: false,
+            stayStart: "2026-06-10",
+            stayEnd: "2026-06-11",
+          },
+        ],
+        removeGuests: [{ id: GUEST_ID }, { id: GUEST_2_ID }],
+        summary: "swap both guests for one night of Late Friend",
+      },
+    });
+    const result = await approve(OFFICER_ID);
+    const removedPortion = 4 * STORED_NIGHT_CENTS;
+    const swapFee = removedPortion / 2; // what the same-day tier keeps of it
+    const priceDiff = NIGHT_CENTS - removedPortion;
+    expect(result, JSON.stringify(result)).toMatchObject({
+      outcome: "executed",
+      changeFeeCents: swapFee,
+      priceDiffCents: priceDiff,
+      // Not tiered a second time: the remaining reduction comes back whole.
+      refundAmountCents: -(priceDiff + swapFee),
     });
   }, 60_000);
 

@@ -30,6 +30,7 @@ import {
   type CalendarDate,
 } from "@/lib/club-time";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
+import { calculateDualRefundAmounts, type CancellationRule } from "@/lib/policies/cancellation";
 
 /**
  * The service argument that turns a batch edit into a finished-stay correction.
@@ -87,7 +88,10 @@ export function assertFinishedStayCorrectionCall(call: {
  * fees can tell "no fee because the officer only added guests" from "a same-day
  * tier that happened to come to nothing".
  */
-export type FinishedStayChangeFeeRule = "ADD_ONLY_NO_FEE" | "SAME_DAY_NOTICE";
+export type FinishedStayChangeFeeRule =
+  | "ADD_ONLY_NO_FEE"
+  | "SAME_DAY_NOTICE"
+  | "SWAP_SAME_DAY_NOTICE";
 
 /** A guest the correction keeps, before and after. */
 export interface FinishedStayRemainingGuest {
@@ -125,18 +129,25 @@ function nightKeys(
  * added, nobody is removed, and every guest already on the booking keeps exactly
  * the nights they had.
  *
- * Anything else — a removal, a swap (a removal with an add), a stay-range or
- * date change — is `SAME_DAY_NOTICE`, and the ordinary fee machinery prices it at
- * {@link finishedStayNoticeDay}.
+ * A swap — a removal with an add — is `SWAP_SAME_DAY_NOTICE`: the removed
+ * guests' portion is charged the same-day tier's retention exactly as a removal
+ * would be ({@link finishedStaySwapFeeCents}), and is NOT netted away against
+ * the added guests' price (owner, 6 Oct 2026: "charged fairly").
+ *
+ * Anything else — a removal, a stay-range or date change — is
+ * `SAME_DAY_NOTICE`, and the ordinary fee machinery prices it at
+ * {@link finishedStayNoticeDay}: a removal's reduction is refunded at the
+ * same-day tier, so the tier keeps its share.
  */
 export function classifyFinishedStayChangeFeeRule(plan: {
   readonly addedGuestCount: number;
   readonly removedGuestCount: number;
   readonly remainingGuests: ReadonlyArray<FinishedStayRemainingGuest>;
 }): FinishedStayChangeFeeRule {
-  if (plan.addedGuestCount === 0 || plan.removedGuestCount > 0) {
-    return "SAME_DAY_NOTICE";
+  if (plan.removedGuestCount > 0) {
+    return plan.addedGuestCount > 0 ? "SWAP_SAME_DAY_NOTICE" : "SAME_DAY_NOTICE";
   }
+  if (plan.addedGuestCount === 0) return "SAME_DAY_NOTICE";
   const everyKeptGuestUnchanged = plan.remainingGuests.every(({ stored, proposed }) => {
     const before = nightKeys(
       stored.stayStart,
@@ -147,6 +158,29 @@ export function classifyFinishedStayChangeFeeRule(plan: {
     return before.length === after.length && before.every((key, i) => key === after[i]);
   });
   return everyKeptGuestUnchanged ? "ADD_ONLY_NO_FEE" : "SAME_DAY_NOTICE";
+}
+
+/**
+ * The change fee a swap owes: what the club's same-day (0-day) tier would KEEP
+ * of the removed guests' portion had they simply been removed — the portion
+ * less the tier's refund for the chosen method (percentage and fixed fee, card
+ * or credit), exactly `calculateDualRefundAmounts`' rule for a same-day
+ * removal. Charged as the edit's change fee; the batch service then settles any
+ * remaining reduction in full, so the tier is applied once, to the removed
+ * portion, and never netted against the guests added in its place.
+ */
+export function finishedStaySwapFeeCents(args: {
+  readonly removedPortionCents: number;
+  readonly policyRules: CancellationRule[];
+  readonly settlementMethod: "card" | "credit";
+}): number {
+  const portion = Math.max(0, args.removedPortionCents);
+  const refunds = calculateDualRefundAmounts(portion, 0, args.policyRules);
+  const refunded =
+    args.settlementMethod === "credit"
+      ? refunds.creditRefundAmountCents
+      : refunds.cardRefundAmountCents;
+  return Math.max(0, portion - Math.min(portion, refunded));
 }
 
 /**

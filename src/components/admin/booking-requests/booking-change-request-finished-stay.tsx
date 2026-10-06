@@ -31,9 +31,11 @@ export function FinishedStayApprovalNotice() {
       the guests and dates it asks for are changed, added guests are priced at
       the stay&rsquo;s season rates, and the member is emailed the change with
       any amount due (card or internet banking). Adding guests carries no change
-      fee; a removal or swap is charged as a same-day change under the
-      cancellation policy, and any refund goes back the way it was paid unless
-      you choose account credit below. If the booking has changed since the
+      fee. A removal is refunded at the cancellation policy&rsquo;s same-day
+      tier; a swap is charged that tier&rsquo;s share of the removed guests as a
+      change fee, as if they had been removed on their own, and the added guests
+      in full. Any refund goes back the way it was paid unless you choose
+      account credit below. If the booking has changed since the
       request was made, nothing is applied and the request stays pending.
     </p>
   );

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyFinishedStayChangeFeeRule,
   finishedStayNoticeDay,
+  finishedStaySwapFeeCents,
 } from "@/lib/booking-finished-stay-correction";
 import {
   FINISHED_STAY_CORRECTION_FIELD_MESSAGE,
@@ -96,14 +97,35 @@ describe("finished-stay change-fee rule (#3750 owner decision)", () => {
     ).toBe("SAME_DAY_NOTICE");
   });
 
-  it("a swap (a removal with an add) is charged as a same-day notice change", () => {
+  it("a swap (a removal with an add) is charged the same-day fee on the removed portion", () => {
     expect(
       classifyFinishedStayChangeFeeRule({
         addedGuestCount: 1,
         removedGuestCount: 1,
         remainingGuests: [unchanged],
       }),
-    ).toBe("SAME_DAY_NOTICE");
+    ).toBe("SWAP_SAME_DAY_NOTICE");
+  });
+
+  it("charges a swap what the same-day tier keeps of the removed portion, by refund method", () => {
+    const policyRules = [
+      { daysBeforeStay: 14, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0, creditFixedFeeCents: 0 },
+      { daysBeforeStay: 0, refundPercentage: 50, creditRefundPercentage: 80, fixedFeeCents: 500, creditFixedFeeCents: 0 },
+    ];
+    // Card: 50% of 10,000 back, less the $5 fixed fee -> 4,500 back, 5,500 kept.
+    expect(finishedStaySwapFeeCents({ removedPortionCents: 10_000, policyRules, settlementMethod: "card" })).toBe(5_500);
+    // Credit: 80% back -> 2,000 kept.
+    expect(finishedStaySwapFeeCents({ removedPortionCents: 10_000, policyRules, settlementMethod: "credit" })).toBe(2_000);
+    // A club with no tiers keeps it all, as a same-day removal would.
+    expect(finishedStaySwapFeeCents({ removedPortionCents: 10_000, policyRules: [], settlementMethod: "card" })).toBe(10_000);
+    // A full-refund same-day tier charges nothing.
+    expect(
+      finishedStaySwapFeeCents({
+        removedPortionCents: 10_000,
+        policyRules: [{ daysBeforeStay: 0, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0, creditFixedFeeCents: 0 }],
+        settlementMethod: "card",
+      }),
+    ).toBe(0);
   });
 
   it("an add that also moves a kept guest's nights is not add-only", () => {

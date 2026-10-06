@@ -102,6 +102,7 @@ import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import {
   editRefundGoesBackByHand,
   raiseEditRefundHandBackIfOwed,
+  refundableCashNetOfOpenHandBacks,
 } from "@/lib/edit-refund-hand-back";
 import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import { prisma } from "@/lib/prisma";
@@ -136,6 +137,8 @@ import {
   rosterOperationalDayRange,
 } from "@/lib/roster-lock";
 import { formatDateOnly } from "@/lib/date-only";
+import { loadCancellationPolicy } from "@/lib/cancellation";
+import { calculateFullReductionSettlementOptions } from "@/lib/booking-modify-settlement-options";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
@@ -153,6 +156,7 @@ import {
   assertFinishedStayCorrectionCall,
   classifyFinishedStayChangeFeeRule,
   finishedStayNoticeDay,
+  finishedStaySwapFeeCents,
   type FinishedStayChangeFeeRule,
   type FinishedStayCorrection,
 } from "@/lib/booking-finished-stay-correction";
@@ -1620,6 +1624,20 @@ export async function modifyBookingBatch({
     const moneyTierDay = finishedStayCorrection
       ? finishedStayNoticeDay(booking)
       : todayAtClub;
+    // #3750: a swap's change fee — the same-day tier's retention on the removed
+    // guests' portion, never netted against the guests added in their place.
+    const isFinishedStaySwap =
+      !parked && finishedStayChangeFeeRule === "SWAP_SAME_DAY_NOTICE";
+    const swapFeeCents = isFinishedStaySwap
+      ? finishedStaySwapFeeCents({
+          removedPortionCents: guestPlan.removedGuests.reduce(
+            (sum, guest) => sum + guest.priceCents,
+            0,
+          ),
+          policyRules: await loadCancellationPolicy(booking.checkIn, booking.lodgeId, tx),
+          settlementMethod: input.settlementMethod ?? "card",
+        })
+      : 0;
 
     // #3232 D2: what this move WOULD attract, before the club's waiver is applied.
     // A parked edit is priced by nobody, so it is zero here for the reason it is
@@ -1635,7 +1653,7 @@ export async function modifyBookingBatch({
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
       db: tx, // locked transaction; see `CancellationPolicyDb`
       todayAtClub: moneyTierDay,
-    });
+    }) + swapFeeCents;
     // #3232 D2: `waiveChangeFee` takes the same zero branch a parked edit takes,
     // so the waived fee is genuinely absent from every downstream decision rather
     // than subtracted back out somewhere later.
@@ -1657,9 +1675,18 @@ export async function modifyBookingBatch({
     // payment row, and returns zeros for both Xero legs. The existing machinery
     // is what proves nothing moved, rather than a parallel hand-built result
     // that could drift from it.
+    // #3750: a swap already paid the tier in its fee, so what remains of a
+    // reduction comes back in full — the tier applies once, to the removed portion.
     const settlementOptions = parked
       ? null
-      : await calculateModificationSettlementOptions({
+      : isFinishedStaySwap
+        ? calculateFullReductionSettlementOptions({
+            booking,
+            netChargeCents: priceDiffCents + changeFeeCents,
+            refundableCashCents: await refundableCashNetOfOpenHandBacks(tx, booking.payment),
+            todayAtClub: moneyTierDay,
+          })
+        : await calculateModificationSettlementOptions({
       booking,
       netChargeCents: priceDiffCents + changeFeeCents,
       db: tx,

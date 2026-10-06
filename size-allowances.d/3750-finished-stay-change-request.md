@@ -8,10 +8,11 @@ fee rule, its call guard and the officer's decision handling live in new modules
 decision points they change are added to the two files below.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2796
+lines: 2823
 reason: the finished-stay mode changes four decisions inside the one
   transaction - the edit-policy window, the capacity confirm, the change fee and
-  refund tier day, and the Xero lock-date envelope - each at the line that
+  refund tier day (including a swap's same-day fee on the removed portion,
+  settled once), and the Xero lock-date envelope - each at the line that
   already makes that decision for every other edit. Moving them out would put
   the rule and its exception in different files, which is how a second pricing
   home starts; the guard and the fee rule themselves already live in
