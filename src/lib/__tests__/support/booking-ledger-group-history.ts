@@ -257,7 +257,8 @@ export async function priceGroupChildWithPromoCodes(prisma: PrismaClient, names:
           redemption.freeNightsUsed || undefined,
           redemption.eligibleGuestCount || undefined,
           redemption.allocations,
-          getPromoTargetBookingGuestIds(booking.guests, redemption.selectedGuestIndexes),
+          // The helper reads only each guest's id; the fixture's rows carry what this test selects.
+          getPromoTargetBookingGuestIds(booking.guests as unknown as Parameters<typeof getPromoTargetBookingGuestIds>[0], redemption.selectedGuestIndexes),
           booking.lodgeId,
           redemption.applicationOrder,
         );
