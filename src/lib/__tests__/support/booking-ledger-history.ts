@@ -448,6 +448,7 @@ export async function cleanHistories(prisma: PrismaClient, prefix: string): Prom
   await prisma.bedAllocation.deleteMany({ where });
   await prisma.memberCredit.deleteMany({ where: { memberId: { in: [names.memberId, names.officerId] } } });
   await prisma.manualRefundTask.deleteMany({ where });
+  await prisma.refundRequest.deleteMany({ where });
   await prisma.paymentRecoveryOperation.deleteMany({ where });
   await prisma.bookingEvent.deleteMany({ where });
   await prisma.auditLog.deleteMany({ where: { targetId: { in: ids } } });
