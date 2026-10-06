@@ -36,6 +36,13 @@ const mocks = vi.hoisted(() => ({
   writePostImage: vi.fn(),
   deletePostImage: vi.fn(),
   loggerWarn: vi.fn(),
+  checkServerVersion: vi.fn(),
+}));
+
+// #49: the version check runs before the comms claim. Matching by default so
+// every existing pass is unchanged; the pause test below flips it.
+vi.mock("@/lib/servernz-version-check", () => ({
+  checkServerVersion: mocks.checkServerVersion,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -115,6 +122,13 @@ function envelope(changes: unknown[], cursor = { since: "2026-06-30T01:00:00.000
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getServerNzSetupState.mockResolvedValue({ apiKeySet: true });
+  mocks.checkServerVersion.mockResolvedValue({
+    status: "match",
+    serverVersion: "2.0",
+    expected: "2.0",
+    checkedAt: NOW.toISOString(),
+    couldNotCheck: false,
+  });
   mocks.getIntegrationCredentialValue.mockResolvedValue("stored-secret");
   mocks.settingsUpsert.mockResolvedValue({});
   mocks.settingsUpdateMany.mockResolvedValue({ count: 1 });
@@ -141,6 +155,42 @@ describe("runMirrorSync", () => {
     const result = await runMirrorSync(NOW);
     expect(result.skipped).toBe("busy");
     expect(mocks.pullSharedPostSync).not.toHaveBeenCalled();
+  });
+
+  it("skips BEFORE taking the claim, registering a push target or pulling, while the server version differs (#49)", async () => {
+    mocks.checkServerVersion.mockResolvedValue({
+      status: "mismatch",
+      serverVersion: "2.1",
+      expected: "2.0",
+      checkedAt: NOW.toISOString(),
+      couldNotCheck: false,
+    });
+    mocks.getIntegrationCredentialValue.mockResolvedValue(null); // would register
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result).toEqual({ skipped: "server-version-mismatch", upserted: 0, unchanged: 0, removed: 0, pages: 0 });
+    // No claim taken (and therefore none to release), nothing sent or pulled.
+    expect(mocks.settingsUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.settingsUpdate).not.toHaveBeenCalled();
+    expect(mocks.registerPushTarget).not.toHaveBeenCalled();
+    expect(mocks.pullSharedPostSync).not.toHaveBeenCalled();
+    expect(mocks.fetchSharedPostImage).not.toHaveBeenCalled();
+  });
+
+  it("runs the version check after the key check and before the claim (#49)", async () => {
+    const order: string[] = [];
+    mocks.checkServerVersion.mockImplementation(async () => {
+      order.push("version");
+      return { status: "match", serverVersion: "2.0", expected: "2.0", checkedAt: null, couldNotCheck: false };
+    });
+    mocks.settingsUpdateMany.mockImplementation(async () => {
+      order.push("claim");
+      return { count: 1 };
+    });
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([]));
+    await runMirrorSync(NOW);
+    expect(order).toEqual(["version", "claim"]);
   });
 
   it("creates a mirror row for another club's post", async () => {

@@ -15,9 +15,11 @@ import { Prisma } from "@prisma/client";
 import {
   SERVERNZ_SETTINGS_ID,
   clearOtherLodgesOwnedNames,
+  clearServerVersionCheck,
   loadServerNzSettings,
   normalizeBaseUrl,
   recordOtherLodgesDownload,
+  recordServerVersionCheck,
   validateCentralServerBaseUrl,
 } from "@/lib/servernz-settings";
 
@@ -38,6 +40,8 @@ describe("loadServerNzSettings", () => {
       otherLodgesOwnedNames: null,
       otherLodgesOwnedNamesAt: null,
       otherLodgesOwnedNamesUnreadable: false,
+      serverVersion: null,
+      serverVersionCheckedAt: null,
     });
   });
 
@@ -136,6 +140,38 @@ describe("recordOtherLodgesDownload", () => {
     await recordOtherLodgesDownload("c-900");
     const [args] = mocks.upsert.mock.calls[0];
     expect(args.update.otherLodgesCursor).toBe("c-900");
+  });
+});
+
+describe("the server's reported API version (#49)", () => {
+  it("reads the stored answer and when it was asked", async () => {
+    mocks.findUnique.mockResolvedValue({
+      otherLodgesEnabled: false,
+      serverVersion: "2.1",
+      serverVersionCheckedAt: new Date("2026-06-30T15:00:00.000Z"),
+    });
+    const settings = await loadServerNzSettings();
+    expect(settings.serverVersion).toBe("2.1");
+    expect(settings.serverVersionCheckedAt).toBe("2026-06-30T15:00:00.000Z");
+  });
+
+  it("records an answer with its instant and touches nothing else on the row", async () => {
+    const at = new Date("2026-07-01T00:00:00.000Z");
+    await recordServerVersionCheck("unknown", at);
+    const [args] = mocks.upsert.mock.calls[0];
+    expect(args.where).toEqual({ id: SERVERNZ_SETTINGS_ID });
+    expect(args.update).toEqual({ serverVersion: "unknown", serverVersionCheckedAt: at });
+    expect(args.create).toEqual({
+      id: SERVERNZ_SETTINGS_ID,
+      serverVersion: "unknown",
+      serverVersionCheckedAt: at,
+    });
+  });
+
+  it("forgets the answer back to NULL (never asked), not to a mismatch", async () => {
+    await clearServerVersionCheck();
+    const [args] = mocks.upsert.mock.calls[0];
+    expect(args.update).toEqual({ serverVersion: null, serverVersionCheckedAt: null });
   });
 });
 

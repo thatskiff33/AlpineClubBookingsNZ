@@ -12,10 +12,12 @@ const mocks = vi.hoisted(() => ({
   loggerError: vi.fn(),
   findMany: vi.fn(),
   clearOtherLodgesOwnedNames: vi.fn(),
+  clearServerVersionCheck: vi.fn(),
 }));
 
 vi.mock("@/lib/servernz-settings", () => ({
   clearOtherLodgesOwnedNames: mocks.clearOtherLodgesOwnedNames,
+  clearServerVersionCheck: mocks.clearServerVersionCheck,
 }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
@@ -200,12 +202,15 @@ describe("POST /api/admin/integrations/credentials", () => {
     const res = await POST(makeRequest({ provider: "servernz", key: "api_key", value: "acs_replacement" }));
     expect(res.status).toBe(200);
     expect(mocks.clearOtherLodgesOwnedNames).toHaveBeenCalledTimes(1);
+    // #49: so is the server's last reported version - the next request asks again.
+    expect(mocks.clearServerVersionCheck).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT forget the owned-lodge list on another provider's write", async () => {
     asFullAdmin();
     await POST(makeRequest({ provider: "xero", key: "client_secret", value: SECRET_VALUE }));
     expect(mocks.clearOtherLodgesOwnedNames).not.toHaveBeenCalled();
+    expect(mocks.clearServerVersionCheck).not.toHaveBeenCalled();
   });
 
   it("accepts the Stripe secret key via the extended allowlist", async () => {

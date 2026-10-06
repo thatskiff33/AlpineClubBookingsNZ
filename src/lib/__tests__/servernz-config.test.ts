@@ -13,10 +13,12 @@ const mocks = vi.hoisted(() => ({
   setIntegrationCredential: vi.fn(),
   deleteIntegrationCredential: vi.fn(),
   clearOtherLodgesOwnedNames: vi.fn(),
+  clearServerVersionCheck: vi.fn(),
 }));
 
 vi.mock("@/lib/servernz-settings", () => ({
   clearOtherLodgesOwnedNames: mocks.clearOtherLodgesOwnedNames,
+  clearServerVersionCheck: mocks.clearServerVersionCheck,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -99,8 +101,11 @@ describe("ServerNZ credential wiring", () => {
     const actor = { kind: "admin", memberId: "member-1" } as const;
     await setServerNzApiKey("acs_new", actor);
     expect(mocks.clearOtherLodgesOwnedNames).not.toHaveBeenCalled();
+    expect(mocks.clearServerVersionCheck).not.toHaveBeenCalled();
     await clearServerNzApiKey(actor);
     expect(mocks.clearOtherLodgesOwnedNames).toHaveBeenCalledTimes(1);
+    // #49: the server's last reported version was that connection's answer too.
+    expect(mocks.clearServerVersionCheck).toHaveBeenCalledTimes(1);
   });
 });
 
