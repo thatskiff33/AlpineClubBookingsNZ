@@ -1470,6 +1470,19 @@ export default function AdminBedAllocationPage() {
         step a month. Assigning a guest to a bed is not limited to the window:
         use <strong>Assign range…</strong> for a stay of any length.
       </p>
+      {(payload?.pendingAdultReservations?.length ?? 0) > 0 ? (
+        <div className="rounded-md border border-warning-6 bg-warning-3/30 p-3 text-sm">
+          <p className="font-medium">Unnamed school adults have held beds</p>
+          <p className="text-muted-foreground">These reservations count toward lodge capacity. Name the adults on their booking request before assigning individual beds.</p>
+          <ul className="mt-2 list-inside list-disc">
+            {payload!.pendingAdultReservations!.map((row) => (
+              <li key={`${row.bookingId}:${row.night}`}>
+                {row.adultCount} {row.adultCount === 1 ? "adult" : "adults"} on {row.night} in booking {row.bookingId}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {windowError ? (
         <Alert variant="error" title="The board window is out of range">

@@ -642,8 +642,12 @@ const CENSUS_CEILING = {
    * club-time kernel (`addCalendarDays`), as does the new stay check in
    * `hut-leader-stayed-nights.ts`; neither imports this adapter. Re-measured by
    * RUNNING this suite on this tree.
+   *
+   * 226 -> 227 (#3413, composed with #3817): `booking-request-pending-adult-reservations.ts`
+   * uses only zone-free lodge-night helpers. Re-measured by RUNNING this suite
+   * on the composed tree.
    */
-  dateOnlyImporters: 226,
+  dateOnlyImporters: 227,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

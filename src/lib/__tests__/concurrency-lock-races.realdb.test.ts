@@ -63,6 +63,11 @@ import "./bed-allocation-removal-races.realdb.test";
 // issue exactly one credit. Its own describe stays skipped unless the shared race
 // flag is set, and its uniquely-namespaced fixtures are cleaned independently.
 import "./edit-financial-review-races.realdb.test";
+// #3809 reuses it to prove a credit-paid booking's price reduction gives back
+// like a card refund through the REAL guest removal and cancel, and that the
+// removal takes the member's credit-ledger key before any Payment row lock.
+// Its describe stays skipped unless the shared race flag is set.
+import "./credit-paid-reduction.realdb.test";
 // #2595 reuses the same guarded disposable PostgreSQL to prove that a member
 // merge cannot leave two people sharing a double bed with no confirmed
 // partnership, driving the real `executeMemberMerge` and the real
@@ -153,6 +158,12 @@ import "./booking-ledger-modification.realdb.test";
 // the hand-back posts. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
 // cleans its own `race-3611-` fixtures.
 import "./booking-ledger-cancellation.realdb.test";
+// #3583 reuses it to prove the booking-ledger projection census against what
+// the REAL writers leave: a card booking settled, re-dated and part-refunded, a
+// booking paid partly by credit, and a cash booking cancelled and handed back
+// all agree, and one rogue line through the write door is named. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3583-` fixtures.
+import "./booking-ledger-projection-census.realdb.test";
 // #3640 reuses it to prove the one card-refund writer adds each refund exactly
 // once: two writers recording the SAME refund meet at `ON CONFLICT DO NOTHING`
 // and add it once, and two recording DIFFERENT refunds both survive the mirror's
@@ -192,6 +203,25 @@ import "./edit-financial-review-charge-raise-claim.realdb.test";
 // orphan heal add nothing, and a cash-only booking is unchanged. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3792-` fixtures.
 import "./ib-capacity-cancel-credit-restore.realdb.test";
+// #3864 reuses it to prove an edit's stored credit election is never spent on top
+// of an old full-price card intent: the REAL edit, pay-step route and webhook,
+// with the old intent captured and its webhook delivered at each point, end with
+// the price paid once. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and
+// cleans its own `race-3864-` fixtures, and its Stripe and session doubles pass
+// through for every other suite.
+import "./election-double-pay-race.realdb.test";
+// #3835 reuses it to prove a review completed after the REAL cancel of a
+// captured payment gives back only what the cancellation's refund left owed,
+// by card and by credit plus card at three tiers, on both captured routes and
+// across sibling reviews. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns
+// and cleans its own `race-3835-` fixtures.
+import "./edit-financial-review-captured-cancel.realdb.test";
+// #3880 reuses it to prove a review's card refund or bank-transfer hand-back on
+// a booking the REAL cancel already closed queues the cancellation's own kind
+// of Xero refund note, sized to the netted figure, keyed on the review task and
+// never touching the cancelled invoice. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3880-` fixtures.
+import "./edit-financial-review-cancelled-refund-xero.realdb.test";
 // #3454 reuses it to prove the Xero token store's two fences against real row
 // locks: simultaneous refresh-lease claims (this code against itself, and
 // against an older colour's own claim statement) let exactly one through, and a

@@ -449,7 +449,7 @@ describe("#1765 repay-after-refund: create-payment-intent", () => {
     );
   });
 
-  it("keeps the non-repay idempotency key scheme unchanged for ordinary mints", async () => {
+  it("keys an ordinary mint by pointer, amount and currency (#3864)", async () => {
     mockPrisma.booking.findUnique.mockResolvedValue({
       ...makeRepayBooking(),
       payment: null,
@@ -459,7 +459,9 @@ describe("#1765 repay-after-refund: create-payment-intent", () => {
 
     expect(res.status).toBe(200);
     expect(mockStripeCreatePaymentIntent).toHaveBeenCalledWith(
-      expect.objectContaining({ idempotencyKey: "pi_booking-1_initial" })
+      expect.objectContaining({
+        idempotencyKey: expect.stringMatching(/^pi_booking-1_initial_\d+_[a-z]{3}$/),
+      })
     );
   });
 });

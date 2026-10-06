@@ -1140,6 +1140,37 @@ describe("review finding source/schema contracts", () => {
     }
   });
 
+  it("runs the page-content delete race against a real PostgreSQL in CI (#3852)", () => {
+    // The suite describe.skip's itself without the harness env vars, so an
+    // unwired step would turn the only proof that PostgreSQL gives the loser of
+    // two deletes a P2025 (and the winner the concurrently edited row) into a
+    // file that can never fail. Pins the step, its env and its ordering.
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const migrateStep = workflow.indexOf(
+      "name: Migrate dedicated advisory-lock race database"
+    );
+    const raceStep = workflow.indexOf(
+      "name: Test page-content delete race against dedicated PostgreSQL"
+    );
+    expect(migrateStep).toBeGreaterThan(-1);
+    expect(raceStep).toBeGreaterThan(migrateStep);
+    const stepBlock = workflow.slice(
+      raceStep,
+      workflow.indexOf("      - name:", raceStep + 1)
+    );
+    expect(stepBlock).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(stepBlock).toContain(
+      "CONCURRENCY_RACE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881"
+    );
+    expect(stepBlock).toContain(
+      "pnpm exec vitest run src/lib/__tests__/page-content-delete-race.realdb.test.ts"
+    );
+    const suite = readRepoFile(
+      "src/lib/__tests__/page-content-delete-race.realdb.test.ts"
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+  });
+
   it("proves the SELECT-only diagnostics role against a real PostgreSQL in CI (#2374)", () => {
     // AID-5's privilege proof is MANDATORY (issue #2374): ADR-007's claims —
     // no INSERT/UPDATE/DELETE, no DDL, no TEMP, no credential-store read, a

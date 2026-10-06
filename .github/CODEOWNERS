@@ -1,9 +1,10 @@
-# CODEOWNERS — the money surface (#3341, owner decision 26 Sep 2026) and the
+# CODEOWNERS — the money surface (#3341, owner decision 26 Sep 2026), the
 # dependency-audit security gate (#3843, owner decision 3 Oct 2026:
-# https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3843#issuecomment-5967784861).
+# https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3843#issuecomment-5967784861),
+# and CI configuration security boundary (#3853).
 #
 # What an entry here means for a pull request: AGENTS.md -> "Pre-authorisation
-# and attributability" (the rule's one home). Do not add paths outside those two
+# and attributability" (the rule's one home). Do not add paths outside those three
 # surfaces without an owner decision; the owned surface is bounded by
 # codeowners-census.test.ts.
 #
@@ -101,3 +102,10 @@
 /patches/**                                    @thatskiff33
 /scripts/ci/dependency-mitigation.mjs          @thatskiff33
 /scripts/ci/audit-dependencies.mjs             @thatskiff33
+
+# CI configuration security boundary (#3853). Workflows and npm configuration
+# control the required CI gates and install behaviour. `package.json`,
+# `pnpm-workspace.yaml`, and `pnpm-lock.yaml` deliberately remain unowned so
+# ordinary dependency updates need no Approve.
+/.github/workflows/**                           @thatskiff33
+/.npmrc                                         @thatskiff33

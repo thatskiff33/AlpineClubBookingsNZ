@@ -37,7 +37,7 @@ reason: the owner's refusal offers "Change last night to …", so the page has t
   speaks of a bed depends on whether one is in play).
 
 file: src/lib/capacity.ts
-lines: 1165
+lines: 1179
 reason: one person is one space (owner decision on #3820) has to reach the
   booking being admitted, and the only place that sees both the night's
   counted guests and the party is THE occupancy calculation every engine
@@ -48,10 +48,17 @@ reason: one person is one space (owner decision on #3820) has to reach the
   the same client.
 
 file: src/lib/booking-request.ts
-lines: 3058
+lines: 3078
 reason: the review round found that approving a held request swapped its guest
   rows with no capacity re-check, and a guest's member link now decides whether
   a ticked custodian's space is waived. The re-check has to run inside the
   approval's own locked transaction, between the owner re-validation and the
   guest swap, exactly as the school path's does; both branches now share one
   party list, so the growth is the call, its refusal and its reason.
+
+file: src/lib/booking-request-quotes.ts
+lines: 2232
+reason: holding a request's beds now passes each named guest's linked member
+  to the capacity check (a ticked custodian counts once, #3789); the ranges
+  come from the shared `wholeStayCapacityRanges`, so only its call and import
+  live here.

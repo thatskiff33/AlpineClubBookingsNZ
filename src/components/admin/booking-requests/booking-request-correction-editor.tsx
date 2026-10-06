@@ -71,6 +71,8 @@ export type CorrectableBookingRequest = {
   schoolName: string | null;
   teachers: Array<{ firstName: string; lastName: string; email: string | null }>;
   cateringPreference: "CATERED" | "NON_CATERED" | "QUOTE_BOTH" | null;
+  pendingAdultCount: number;
+  pendingAdultsWriteEnabled?: boolean;
   guests: Array<{ firstName: string; lastName: string; ageTier: string }>;
   heldBookingId: string | null;
   /**
@@ -102,12 +104,12 @@ export function BookingRequestCorrectionEditor(props: {
   const isSchool = request.type === "SCHOOL";
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-
   const [checkIn, setCheckIn] = useState("");
   const [checkOut, setCheckOut] = useState("");
   const [contact, setContact] = useState({ first: "", last: "", email: "", phone: "" });
   const [schoolName, setSchoolName] = useState("");
   const [teachers, setTeachers] = useState<TeacherDraft[]>([]);
+  const [pendingAdultCount, setPendingAdultCount] = useState(0);
   const [childCounts, setChildCounts] = useState<Record<string, number>>({});
   const [catering, setCatering] = useState("QUOTE_BOTH");
   const [guests, setGuests] = useState<GuestDraft[]>([]);
@@ -151,6 +153,7 @@ export function BookingRequestCorrectionEditor(props: {
         email: teacher.email ?? "",
       })),
     );
+    setPendingAdultCount(request.pendingAdultCount);
     setChildCounts(childCountsOf(request.guests));
     setCatering(request.cateringPreference ?? "QUOTE_BOTH");
     setGuests(request.guests.map((guest) => ({ ...guest })));
@@ -222,6 +225,7 @@ export function BookingRequestCorrectionEditor(props: {
               lastName: teacher.lastName.trim(),
               email: teacher.email.trim() || null,
             })),
+          pendingAdultCount,
           childCounts: CHILD_TIERS.reduce<Record<string, number>>((counts, tier) => {
             counts[tier] = Number(childCounts[tier] ?? 0);
             return counts;
@@ -444,6 +448,28 @@ export function BookingRequestCorrectionEditor(props: {
             </Button>
           </div>
 
+          <div className="space-y-1">
+            <Label htmlFor={`correct-pending-adults-${request.id}`}>
+              Adults whose names are pending
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {request.pendingAdultsWriteEnabled ? "Unnamed adults reserve beds without creating contacts." : "Available after the maintenance cutover."}
+            </p>
+            <Input
+              id={`correct-pending-adults-${request.id}`}
+              type="number"
+              min={0}
+              step={1}
+              className="w-24"
+              value={String(pendingAdultCount)}
+              disabled={!request.pendingAdultsWriteEnabled}
+              onChange={(event) =>
+                setPendingAdultCount(
+                  Math.max(0, Math.floor(Number(event.target.value) || 0)),
+                )
+              }
+            />
+          </div>
           <div className="space-y-1">
             <Label>Children attending</Label>
             <p className="text-xs text-muted-foreground">

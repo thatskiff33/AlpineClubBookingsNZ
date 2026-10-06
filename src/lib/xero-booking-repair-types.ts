@@ -473,9 +473,10 @@ export interface BookingClassificationContext {
    */
   cancelledBookingHandBackPaymentIds: Set<string>;
   /**
-   * #3635: the refund cents a note may still answer for a cancelled Stripe
-   * payment (`readRefundCreditNoteGap`), or null when not read. The
-   * missing-refund-note arm asks for no more than this.
+   * #3635: the refund cents a note may still answer for a cancelled booking's
+   * payment, any source (#3880 round 3), through `readRefundCreditNoteGap`, or
+   * null when not read. The missing-refund-note arm asks for no more than
+   * this, and nothing at all when it is zero.
    */
   refundNoteUncoveredCents: number | null;
   /**

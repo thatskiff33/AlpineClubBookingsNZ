@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
+  buildStoredMetadata,
+  type AuditMetadataOptions,
 } from "@/lib/audit";
 import {
   canDeletePage,
@@ -25,6 +28,14 @@ import {
   sanitizePageContentHtml,
 } from "@/lib/page-content-html";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
+
+// The one answer for a page that does not exist, including the loser of two
+// simultaneous deletes (#3852).
+// Named once: the audit write and the "will the stored copy be whole?" check
+// below must hand `buildStoredMetadata` the same action.
+const PAGE_CONTENT_DELETED_ACTION = "PAGE_CONTENT_DELETED";
+
+const PAGE_NOT_FOUND = "Page not found";
 
 const createSchema = z
   .object({
@@ -265,7 +276,7 @@ export async function PUT(request: NextRequest) {
   });
 
   if (!existing) {
-    return NextResponse.json({ error: "Page not found" }, { status: 404 });
+    return NextResponse.json({ error: PAGE_NOT_FOUND }, { status: 404 });
   }
 
   // The reserved-slug rule gates admin-CREATED pages, so a BUILT-IN row keeping
@@ -418,7 +429,7 @@ export async function PATCH(request: NextRequest) {
   });
 
   if (!existing) {
-    return NextResponse.json({ error: "Page not found" }, { status: 404 });
+    return NextResponse.json({ error: PAGE_NOT_FOUND }, { status: 404 });
   }
 
   // System pages (home, 404) and built-in design pages are linked from code
@@ -479,6 +490,51 @@ export async function PATCH(request: NextRequest) {
 }
 
 /**
+ * Raised inside the DELETE transaction when the row is already gone (#3852).
+ *
+ * The existence check runs before the transaction, so two officers deleting the
+ * same page both pass it and the loser's `delete` raises P2025. Thrown as its own
+ * type rather than answered in place so the whole transaction rolls back — the
+ * Book Now repoint must not outlive a delete that did not happen — and mapped to
+ * the same `404 "Page not found"` the existence check gives.
+ */
+class PageAlreadyDeletedError extends Error {
+  constructor() {
+    super("Page already deleted");
+    this.name = "PageAlreadyDeletedError";
+  }
+}
+
+/**
+ * Did the archived `before` row survive the audit sanitiser exactly (#3852)?
+ *
+ * Three things in the sanitiser can leave the officer's only recovery copy
+ * incomplete while the delete still succeeds: `SECRET_VALUE_PATTERN` replaces a
+ * whole string with `[REDACTED]` on one match, key-value and card-number
+ * redaction rewrite part of one, and a payload over the JSON budget is reduced
+ * to the fields that fit (#2704) — and `before`, the largest field and not a
+ * string, is dropped by name rather than clipped. Each is the protection working
+ * as designed, so this does not fight them; it reports them. Compared field by
+ * field against the row the DELETE returned.
+ */
+function isArchivedSnapshotComplete(
+  stored: unknown,
+  before: Record<string, string | number | boolean | null>,
+): boolean {
+  if (typeof stored !== "object" || stored === null || Array.isArray(stored)) {
+    return false;
+  }
+  const kept = (stored as { before?: unknown }).before;
+  if (typeof kept !== "object" || kept === null || Array.isArray(kept)) {
+    return false;
+  }
+  const keptFields = kept as Record<string, unknown>;
+  return Object.entries(before).every(
+    ([key, value]) => keptFields[key] === value,
+  );
+}
+
+/**
  * Deletes an admin-created content page for good (#2352 MC-03D, Option B).
  *
  * **Why this method exists at all.** Every other way public page content can
@@ -496,9 +552,10 @@ export async function PATCH(request: NextRequest) {
  * visitor and every officer, and would leave a soft-deleted row inside
  * `listPublishedCmsPagePaths()` — the pre-cutover warm-up plan — demanding a 200
  * for an address that must 404. The complete `before` row in the audit entry is
- * the recovery route, which is why the snapshot below is the whole row and is
- * archived at this route's own `contentHtml` cap rather than the audit log's
- * default 1,000-character string clip.
+ * the recovery route, which is why the snapshot below is the whole row, is taken
+ * from the row the DELETE itself removed, is archived at the stored length of its
+ * text rather than the audit log's default 1,000-character string clip, and is
+ * reported as incomplete when the sanitiser could not keep it whole (#3852).
  *
  * **Route shape (D-B7(a)).** `DELETE` on the collection with the id in the body,
  * not a new `[id]/route.ts`. Both mutating methods here already address a page
@@ -526,10 +583,11 @@ export async function PATCH(request: NextRequest) {
  * `400 "Select a published page for the Book Now target."` — so the officer could
  * not save ANY change in that sibling panel (fee/policy visibility, committee
  * photo, `showBookNow`) until they noticed and moved the radio. The transaction
- * below sets the target back to the booking flow itself, so the row it leaves
- * behind is always one its own writer would accept. Doing that SILENTLY is the
- * surprise an audit row cannot prevent, which is what the flag in the response is
- * for.
+ * below sets the target back to the booking flow itself — before the delete for
+ * a row that points here, and again after it for the `PAGE` + null pair the FK's
+ * own `SetNull` can still leave (#3852) — so the row it leaves behind is always
+ * one its own writer would accept. Doing that SILENTLY is the surprise an audit
+ * row cannot prevent, which is what the two flags in the response are for.
  */
 export async function DELETE(request: NextRequest) {
   // Same gate as editing and hiding (D-B5(a)): `content:edit` already permits
@@ -564,7 +622,7 @@ export async function DELETE(request: NextRequest) {
   });
 
   if (!existing) {
-    return NextResponse.json({ error: "Page not found" }, { status: 404 });
+    return NextResponse.json({ error: PAGE_NOT_FOUND }, { status: 404 });
   }
 
   // Never wider than hiding: system pages (home, 404) and the built-in design
@@ -619,10 +677,6 @@ export async function DELETE(request: NextRequest) {
     }),
   ]);
 
-  // Was the public header's Book Now button pointing here? Answered by the same
-  // statement that moves it, inside the transaction below, rather than by a read
-  // taken out here and hoped to still be true when the delete lands.
-  let wasBookNowTarget = false;
   const referencedBySlugs = referencingPages.map((page) => page.slug);
   const referencedByFooterSections = referencingFooterSections.map(
     (section) => section.key,
@@ -630,128 +684,179 @@ export async function DELETE(request: NextRequest) {
 
   // Delete the row and record what was removed atomically, so a page can never
   // vanish without the audit entry that is its only recovery route.
-  await prisma.$transaction(async (tx) => {
-    // Repoint the Book Now button BEFORE the delete, in the same transaction
-    // (first review, finding 1). `onDelete: SetNull` would clear the id and leave
-    // the target reading "PAGE", and that pair is one the settings panel's own PUT
-    // refuses to save — wedging every unrelated control in that panel (fee and
-    // policy visibility, the committee photo, `showBookNow`) until the officer
-    // noticed the empty selector and moved the radio by hand. Writing it here
-    // means the only states this route can leave behind are states that panel
-    // accepts.
-    //
-    // ONE scoped statement, and the same statement answers whether the button
-    // pointed here: `updateMany` touches only a row that still points at this
-    // page with the target still on `PAGE`, so `count` is the fact at delete
-    // time rather than a read taken earlier. That closes the window in both
-    // directions — a second officer who repoints AT this page between the
-    // confirmation and the delete cannot leave the wedged pair behind, and one
-    // who repoints at ANOTHER page keeps their choice, because the where-clause
-    // no longer matches their row and the FK then has nothing to null. Gated on
-    // the target as well as the id for the same reason the warning is: the
-    // settings PUT never persists a stray page id while the target is the
-    // booking flow, and a legacy row that did is already sending visitors to
-    // the booking flow and will keep doing so.
-    //
-    // Recorded, not silent: `wasBookNowTarget` goes into the audit metadata
-    // below and into the response, which is what the confirmation warned about
-    // and what the post-delete message repeats. No second
-    // PUBLIC_CONTENT_SETTINGS_UPDATED row is written for it on purpose — the
-    // deletion entry is the one that explains WHY the target moved, and the page
-    // id it moved off is the entity that entry is already about.
-    const repointed = await tx.publicContentSettings.updateMany({
-      where: { bookNowPageId: existing.id, bookNowTarget: "PAGE" },
-      data: {
-        bookNowTarget: "BOOKING_FLOW",
-        bookNowPageId: null,
-        updatedByMemberId: guard.session.user.id,
-      },
-    });
-    wasBookNowTarget = repointed.count > 0;
-
-    await tx.pageContent.delete({ where: { id: existing.id } });
-
-    await tx.auditLog.create(
-      buildStructuredAuditLogCreateArgs(
-        {
-          action: "PAGE_CONTENT_DELETED",
-          actor: { memberId: guard.session.user.id },
-          entity: { type: "PageContent", id: existing.id },
-          category: "admin",
-          severity: "important",
-          outcome: "success",
-          summary: `Page deleted for ${existing.slug}`,
-          // No `retentionClass` here on purpose: `classifyAuditRetention()` maps
-          // an "admin" + "important" + non-access action to `critical`, which is
-          // the seven-year class this snapshot needs. Hand-setting it would be
-          // exactly the drift that classifier exists to prevent.
-          metadata: {
-            before: {
-              id: existing.id,
-              slug: existing.slug,
-              path: existing.path,
-              caption: existing.caption,
-              menuTitle: existing.menuTitle,
-              title: existing.title,
-              headerText: existing.headerText,
-              sortOrder: existing.sortOrder,
-              contentHtml: existing.contentHtml,
-              published: existing.published,
-              updatedByMemberId: existing.updatedByMemberId,
-              createdAt: existing.createdAt.toISOString(),
-              updatedAt: existing.updatedAt.toISOString(),
-            },
-            referencedBySlugs,
-            referencedByFooterSections,
-            wasBookNowTarget,
-          },
-          request: getAuditRequestContext(request),
+  let outcome: {
+    removed: { id: string; slug: string; path: string; title: string; published: boolean };
+    // Was the public header's Book Now button pointing here? Answered by the
+    // statement that moves it, not by a read taken earlier.
+    wasBookNowTarget: boolean;
+    // Did the stored pair need correcting AFTER the delete (#3852)? A different
+    // question from the one above, which the pre-delete statement cannot see.
+    bookNowPairRepaired: boolean;
+    // Did the archived `before` row survive the audit sanitiser whole (#3852)?
+    snapshotComplete: boolean;
+  };
+  try {
+    outcome = await prisma.$transaction(async (tx) => {
+      // Repoint the Book Now button BEFORE the delete, in the same transaction
+      // (first review, finding 1). `onDelete: SetNull` would clear the id and
+      // leave the target reading "PAGE", and that pair is one the settings
+      // panel's own PUT refuses to save — wedging every unrelated control in that
+      // panel until the officer moved the radio by hand.
+      //
+      // Scoped to a row that still points here with the target on `PAGE`, so
+      // `count` is the fact at delete time. An officer who repoints at ANOTHER
+      // page keeps their choice: the where-clause no longer matches their row.
+      // It does not close the other direction on its own (#3852): when the
+      // setting points elsewhere this matches no row and so locks nothing, and a
+      // settings PUT can still point AT this page before the delete runs. The
+      // repair after the delete covers that.
+      //
+      // Recorded, not silent: `wasBookNowTarget` goes into the audit metadata
+      // below and into the response. No second PUBLIC_CONTENT_SETTINGS_UPDATED
+      // row is written for it on purpose — the deletion entry explains WHY the
+      // target moved.
+      const repointed = await tx.publicContentSettings.updateMany({
+        where: { bookNowPageId: existing.id, bookNowTarget: "PAGE" },
+        data: {
+          bookNowTarget: "BOOKING_FLOW",
+          bookNowPageId: null,
+          updatedByMemberId: guard.session.user.id,
         },
-        // Archive mode, bounded by this route's OWN caps, following the
-        // email-template reset (`email-templates/reset/route.ts`). Without it the
-        // audit log's default clips every string at 1,000 characters, so the
-        // "complete before row" this decision rests on would in practice be the
-        // first paragraph of the page.
-        //
-        // The bound is the SUM of the two archived text fields rather than the
-        // body's cap alone, and that is not padding: `archiveText` sets the
-        // whole-metadata JSON budget to `24,000 + maxStringLength * 2`, so a page
-        // sitting at both caps at once (200,000 of body plus 20,000 of intro,
-        // each of which can double under JSON escaping) would overflow a budget
-        // sized for the body alone, where the over-budget reduction (#2704; a
-        // stub before it) loses the entire snapshot, not part of it. It does not
-        // let either field exceed its own limit: the write schemas above already
-        // bound them, and this only bounds one string.
-        //
-        // THREE honest caveats survive. The operator guide states all three
-        // rather than leaving them as surprises:
-        //
-        //  1. key-value redaction still fires on body text shaped like
-        //     `password: value`, and it takes the whole matched value, not a
-        //     fragment — the same caveat the email-template route documents.
-        //  2. `SECRET_VALUE_PATTERN` replaces the ENTIRE field with
-        //     `[REDACTED]` on a single match, not just the match. One
-        //     `/membership-cancellation/<token>` URL, Stripe key or JWT pasted
-        //     into a help page therefore costs the whole body snapshot, not a
-        //     line of it (first review, finding 4).
-        //  3. the caps below bound the INPUT, not the stored value. `PUT` parses
-        //     with zod and THEN entity-escapes through
-        //     `sanitizePageContentHtml` (`&` → `&amp;`), and the column is
-        //     unbounded, so an entity-dense body accepted at 200,000 characters
-        //     can be stored longer than that. Past the sum below the archived
-        //     string is clipped with `...[TRUNCATED]` — degraded, but visible in
-        //     the row rather than silent, and it needs a page within ~10% of the
-        //     cap AND entity-dense text to reach.
-        {
-          archiveText: {
-            maxStringLength:
-              PAGE_CONTENT_LIMITS.contentHtmlMax +
+      });
+
+      // The row actually destroyed, not the one read before the transaction
+      // (#3852). Nothing locks the page between that read and this statement, so
+      // a concurrent PUT on this route can commit a new body in the window; the
+      // DELETE returns the row it removed, so archiving it keeps that edit where
+      // archiving the earlier read would lose it for good.
+      let removed: Awaited<ReturnType<typeof tx.pageContent.delete>>;
+      try {
+        removed = await tx.pageContent.delete({ where: { id: existing.id } });
+      } catch (err) {
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === "P2025"
+        ) {
+          throw new PageAlreadyDeletedError();
+        }
+        throw err;
+      }
+
+      // The other half of the Book Now repoint (#3852). By here the FK's
+      // `SetNull` has fired, so if a settings PUT pointed at this page after the
+      // statement above, the stored pair is now `PAGE` + null. Scoped to the null
+      // id, which a saved choice of another page can never have, so it cannot
+      // move an officer's real choice; it matches nothing on the ordinary path.
+      const repaired = await tx.publicContentSettings.updateMany({
+        where: { bookNowTarget: "PAGE", bookNowPageId: null },
+        data: {
+          bookNowTarget: "BOOKING_FLOW",
+          updatedByMemberId: guard.session.user.id,
+        },
+      });
+
+      // Archive mode, following the email-template reset
+      // (`email-templates/reset/route.ts`). Without it the audit log's default
+      // clips every string at 1,000 characters, so the "complete before row" this
+      // decision rests on would be the first paragraph of the page.
+      //
+      // Sized from the STORED text, floored at this route's input caps (#3852).
+      // The caps bound the input, not the column: `PUT` entity-escapes after zod
+      // (`&` → `&amp;`), so an `&`-dense body accepted under the cap is stored
+      // several times longer, and a payload over the JSON budget
+      // (`24,000 + maxStringLength * 2`) is reduced by dropping `before` whole
+      // (#2704). The floor keeps a short page's other strings from being clipped,
+      // and the sum covers both text fields because the budget is shared.
+      const archiveOptions: AuditMetadataOptions = {
+        archiveText: {
+          maxStringLength: Math.max(
+            PAGE_CONTENT_LIMITS.contentHtmlMax +
               PAGE_CONTENT_LIMITS.headerTextMax,
-          },
+            removed.contentHtml.length + removed.headerText.length,
+          ),
         },
-      ),
-    );
-  });
+      };
+
+      const before = {
+        id: removed.id,
+        slug: removed.slug,
+        path: removed.path,
+        caption: removed.caption,
+        menuTitle: removed.menuTitle,
+        title: removed.title,
+        headerText: removed.headerText,
+        sortOrder: removed.sortOrder,
+        contentHtml: removed.contentHtml,
+        published: removed.published,
+        updatedByMemberId: removed.updatedByMemberId,
+        createdAt: removed.createdAt.toISOString(),
+        updatedAt: removed.updatedAt.toISOString(),
+      };
+      const metadata = {
+        before,
+        referencedBySlugs,
+        referencedByFooterSections,
+        wasBookNowTarget: repointed.count > 0,
+        bookNowPairRepaired: repaired.count > 0,
+        // So a reader of the row knows whether `before` is the page or a
+        // redacted or reduced stand-in for it.
+        snapshotComplete: false,
+      };
+
+      // What the row will actually hold, measured with the sanitiser the write
+      // below runs, so the officer is told while they may still have the text
+      // open elsewhere. Measured with `snapshotComplete: false`, the longer of
+      // the two values, so the real write is never larger than what was checked.
+      // Two caveats this reports rather than prevents: `password: value`-shaped
+      // text loses that value, and one secret-shaped match (a
+      // `/membership-cancellation/<token>` link, a provider key, a JWT) replaces
+      // the whole field with `[REDACTED]` (first review, finding 4).
+      metadata.snapshotComplete = isArchivedSnapshotComplete(
+        buildStoredMetadata({
+          action: PAGE_CONTENT_DELETED_ACTION,
+          metadata,
+          options: archiveOptions,
+        }),
+        before,
+      );
+
+      await tx.auditLog.create(
+        buildStructuredAuditLogCreateArgs(
+          {
+            action: PAGE_CONTENT_DELETED_ACTION,
+            actor: { memberId: guard.session.user.id },
+            entity: { type: "PageContent", id: removed.id },
+            category: "admin",
+            severity: "important",
+            outcome: "success",
+            summary: `Page deleted for ${removed.slug}`,
+            // No `retentionClass` here on purpose: `classifyAuditRetention()`
+            // maps an "admin" + "important" + non-access action to `critical`,
+            // which is the seven-year class this snapshot needs. Hand-setting it
+            // would be exactly the drift that classifier exists to prevent.
+            metadata,
+            request: getAuditRequestContext(request),
+          },
+          archiveOptions,
+        ),
+      );
+
+      return {
+        removed,
+        wasBookNowTarget: metadata.wasBookNowTarget,
+        bookNowPairRepaired: metadata.bookNowPairRepaired,
+        snapshotComplete: metadata.snapshotComplete,
+      };
+    });
+  } catch (err) {
+    // The loser of two simultaneous deletes (#3852): the whole transaction rolled
+    // back, so nothing moved and no audit row was written, and the honest answer
+    // is the 404 the existence check would have given.
+    if (err instanceof PageAlreadyDeletedError) {
+      return NextResponse.json({ error: PAGE_NOT_FOUND }, { status: 404 });
+    }
+    throw err;
+  }
 
   // AFTER the transaction, on the success path only. Ordering is load-bearing in
   // one direction: invalidating before a rollback costs a needless cold render,
@@ -766,10 +871,12 @@ export async function DELETE(request: NextRequest) {
   // the row on screen, the officer retries, and the retry answers
   // `404 "Page not found"` — two failures for one completed delete, on the one
   // method that cannot be repeated. So the response tells the truth instead: the
-  // delete happened, the flush did not, and the address may keep answering until
-  // the 300-second backstop lapses. The failure is logged distinctly because
-  // nothing else in the request records it — the audit row cannot, it is already
-  // committed.
+  // delete happened and the flush did not. That is not "up to 300 seconds" (see
+  // above): the stored copy keeps answering until something clears it, and every
+  // page save, hide or publish on this route calls the same invalidator, so that
+  // is the remedy the panel names (#3852). The failure is logged distinctly
+  // because nothing else in the request records it — the audit row cannot, it is
+  // already committed.
   let publicCacheCleared = true;
   try {
     revalidatePublicPageContent();
@@ -781,18 +888,23 @@ export async function DELETE(request: NextRequest) {
     );
   }
 
+  // The reference lists come from the pre-transaction read, so a concurrent edit
+  // can leave them one edit stale; they are a best-effort warning either way. The
+  // page itself is described from the row the delete removed.
   return NextResponse.json({
     ok: true,
     page: {
-      id: existing.id,
-      slug: existing.slug,
-      path: existing.path,
-      title: existing.title,
-      published: existing.published,
+      id: outcome.removed.id,
+      slug: outcome.removed.slug,
+      path: outcome.removed.path,
+      title: outcome.removed.title,
+      published: outcome.removed.published,
     },
     referencedBySlugs,
     referencedByFooterSections,
-    wasBookNowTarget,
+    wasBookNowTarget: outcome.wasBookNowTarget,
+    bookNowPairRepaired: outcome.bookNowPairRepaired,
+    snapshotComplete: outcome.snapshotComplete,
     publicCacheCleared,
   });
 }

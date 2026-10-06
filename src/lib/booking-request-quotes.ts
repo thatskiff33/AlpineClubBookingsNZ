@@ -20,7 +20,6 @@ import { lockActiveBookingRequestLinkedMembers } from "@/lib/adult-member-hostin
 import { reconcileAdultMemberHostingReviewWithSiblings } from "@/lib/adult-member-hosting-review";
 import { logAudit } from "@/lib/audit";
 import {
-  approveBookingRequest,
   assertMappableOwnerContact,
   BookingRequestError,
   getBookingRequestSettings,
@@ -57,7 +56,12 @@ import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
-import { sendBookingRequestQuoteEmail } from "@/lib/email";
+import { wholeStayCapacityRanges } from "@/lib/whole-stay-capacity-ranges";
+import {
+  sendAdminBookingRequestQuoteAcceptedEmail,
+  sendBookingRequestQuoteAcceptedEmail,
+  sendBookingRequestQuoteEmail,
+} from "@/lib/email";
 import logger from "@/lib/logger";
 import {
   resolveBookingGuestDietary,
@@ -67,14 +71,16 @@ import { countActiveLodges, getDefaultLodgeId } from "@/lib/lodges";
 import { resolveGuestRateMembershipTypes } from "@/lib/membership-type-policy";
 import { prisma } from "@/lib/prisma";
 import {
-  approveSchoolBookingRequest,
   resolveSchoolGuestOverride,
   schoolChildCountsSchema,
   type SchoolChildCounts,
+  type SchoolPartyParticipant,
 } from "@/lib/school-booking-request";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { isPendingSchoolAdultsWriteEnabled } from "@/lib/pending-school-adults-gate";
+import { pendingAdultReservationNightsMatch, releasePendingAdultNights, reservePendingAdultNights } from "@/lib/booking-request-pending-adult-reservations";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -188,8 +194,9 @@ interface NormalizedQuoteOption {
   }>;
   guestBreakdown: Array<{
     guestIndex: number;
-    firstName: string;
-    lastName: string;
+    kind?: "NAMED" | "PENDING_ADULT";
+    firstName?: string;
+    lastName?: string;
     ageTier: AgeTier;
     isMember: boolean;
     memberId: string | null;
@@ -210,14 +217,23 @@ const quoteOptionsSchema = z.array(
     guestBreakdown: z.array(
       z.object({
         guestIndex: z.number().int().min(0),
-        firstName: z.string(),
-        lastName: z.string(),
+        kind: z.enum(["NAMED", "PENDING_ADULT"]).optional(),
+        firstName: z.string().optional(),
+        lastName: z.string().optional(),
         ageTier: z.enum(AgeTier),
         isMember: z.boolean(),
         memberId: z.string().nullable(),
         nightCount: z.number().int().min(0),
         rateCents: z.number().int().min(0).nullable(),
         totalCents: z.number().int().min(0),
+      }).superRefine((entry, ctx) => {
+        if (entry.kind === "PENDING_ADULT") {
+          if (entry.ageTier !== AgeTier.ADULT || entry.isMember || entry.memberId || entry.firstName || entry.lastName) {
+            ctx.addIssue({ code: "custom", message: "Pending adults cannot carry an identity or member price" });
+          }
+        } else if (entry.firstName === undefined || entry.lastName === undefined) {
+          ctx.addIssue({ code: "custom", message: "Named quote guests require names" });
+        }
       })
     ),
   })
@@ -443,12 +459,12 @@ function normalizeQuoteOptions(input: {
    * about to persist, and a second read of the stored column here would price
    * the group that is being replaced.
    */
-  guests: BookingRequestGuest[];
+  party: SchoolPartyParticipant[];
   pricingMode: BookingRequestPricingMode;
   options: BookingRequestQuoteInput["options"];
   linkedGuestMembers: BookingRequestLinkedGuestMember[];
 }): NormalizedQuoteOption[] {
-  const guests = input.guests;
+  const party = input.party;
   const nightCount = getNightCount(input.request.checkIn, input.request.checkOut);
   const linkedMembers = new Map(
     input.linkedGuestMembers.map((link) => [link.guestIndex, link.memberId])
@@ -494,20 +510,21 @@ function normalizeQuoteOptions(input: {
       if (option.totalCents == null) {
         throw new BookingRequestQuoteError("Overall quote options require a total", 422);
       }
-      const split = splitPriceAcrossGuests(option.totalCents, guests.length);
+      const split = splitPriceAcrossGuests(option.totalCents, party.length);
       return {
         id,
         label: optionLabel(cateringOption),
         cateringOption,
         totalCents: option.totalCents,
         pricingMode: input.pricingMode,
-        guestBreakdown: guests.map((guest, guestIndex) => {
-          const memberId = linkedMembers.get(guestIndex) ?? null;
+        guestBreakdown: party.map((participant, guestIndex) => {
+          const guest = participant.kind === "NAMED" ? participant.guest : null;
+          const memberId = guest ? linkedMembers.get(guestIndex) ?? null : null;
           return {
             guestIndex,
-            firstName: guest.firstName,
-            lastName: guest.lastName,
-            ageTier: guest.ageTier,
+            kind: participant.kind,
+            ...(guest ? { firstName: guest.firstName, lastName: guest.lastName } : {}),
+            ageTier: participant.ageTier,
             isMember: Boolean(memberId),
             memberId,
             nightCount,
@@ -528,21 +545,22 @@ function normalizeQuoteOptions(input: {
     const rateByKey = new Map(
       rates.map((rate) => [rateKey(rate.ageTier, rate.isMember), rate.rateCents])
     );
-    const guestBreakdown = guests.map((guest, guestIndex) => {
-      const memberId = linkedMembers.get(guestIndex) ?? null;
+    const guestBreakdown = party.map((participant, guestIndex) => {
+      const guest = participant.kind === "NAMED" ? participant.guest : null;
+      const memberId = guest ? linkedMembers.get(guestIndex) ?? null : null;
       const isMember = Boolean(memberId);
-      const rateCents = rateByKey.get(rateKey(guest.ageTier, isMember));
+      const rateCents = rateByKey.get(rateKey(participant.ageTier, isMember));
       if (rateCents == null) {
         throw new BookingRequestQuoteError(
-          `Missing ${guest.ageTier} ${isMember ? "member" : "non-member"} rate`,
+          `Missing ${participant.ageTier} ${isMember ? "member" : "non-member"} rate`,
           422
         );
       }
       return {
         guestIndex,
-        firstName: guest.firstName,
-        lastName: guest.lastName,
-        ageTier: guest.ageTier,
+        kind: participant.kind,
+        ...(guest ? { firstName: guest.firstName, lastName: guest.lastName } : {}),
+        ageTier: participant.ageTier,
         isMember,
         memberId,
         nightCount,
@@ -594,6 +612,7 @@ async function resolveSchoolCountAdjustment(input: {
     type: BookingRequestType;
     teachers: Prisma.JsonValue;
     guests: Prisma.JsonValue;
+    pendingAdultCount: number;
     lodgeId: string | null;
     heldBookingId: string | null;
   };
@@ -601,6 +620,7 @@ async function resolveSchoolCountAdjustment(input: {
   linkedGuestMembers: BookingRequestQuoteInput["linkedGuestMembers"];
 }): Promise<{
   guests: BookingRequestGuest[];
+  party: SchoolPartyParticipant[];
   /**
    * How many people the request held BEFORE this save. Carried so the audit row
    * records the party that was overwritten (#3412 review, F11): on the first
@@ -620,6 +640,7 @@ async function resolveSchoolCountAdjustment(input: {
 
   const resolution = await resolveSchoolGuestOverride({
     request: input.request,
+    pendingAdultCount: input.request.pendingAdultCount,
     childCounts: input.childCounts,
     // The request's own lodge selector: a count change is refused below while a
     // hold exists, so there is no held booking whose concrete lodge could
@@ -637,6 +658,7 @@ async function resolveSchoolCountAdjustment(input: {
     // nothing to refuse — a re-save under a live hold must keep working.
     return {
       guests: resolution.guests,
+      party: resolution.party ?? resolution.guests.map((guest: BookingRequestGuest) => ({ kind: "NAMED" as const, ageTier: guest.ageTier, guest })),
       storedGuestCount: resolution.storedGuests.length,
       persist: false,
     };
@@ -660,6 +682,7 @@ async function resolveSchoolCountAdjustment(input: {
 
   return {
     guests: resolution.guests,
+    party: resolution.party ?? resolution.guests.map((guest: BookingRequestGuest) => ({ kind: "NAMED" as const, ageTier: guest.ageTier, guest })),
     storedGuestCount: resolution.storedGuests.length,
     persist: true,
   };
@@ -710,6 +733,14 @@ export async function createBookingRequestQuote(input: {
   const guests = schoolCountAdjustment
     ? schoolCountAdjustment.guests
     : parseBookingRequestGuests(request.guests);
+  const party = schoolCountAdjustment
+    ? schoolCountAdjustment.party
+    : guests.map((guest): SchoolPartyParticipant => ({ kind: "NAMED", ageTier: guest.ageTier, guest }));
+  if (!schoolCountAdjustment && request.type === BookingRequestType.SCHOOL) {
+    for (let index = 0; index < request.pendingAdultCount; index += 1) {
+      party.push({ kind: "PENDING_ADULT", ageTier: "ADULT" });
+    }
+  }
   const persistGuests = schoolCountAdjustment?.persist ?? false;
   const linkedGuestMembers = normalizeLinkedGuestMembers(
     input.quote.linkedGuestMembers,
@@ -719,7 +750,7 @@ export async function createBookingRequestQuote(input: {
 
   const options = normalizeQuoteOptions({
     request,
-    guests,
+    party,
     pricingMode: input.quote.pricingMode,
     options: input.quote.options,
     linkedGuestMembers,
@@ -943,6 +974,7 @@ export async function sendBookingRequestQuote(input: {
     }
     const pending = await resolveSchoolGuestOverride({
       request: quote.bookingRequest,
+      pendingAdultCount: quote.bookingRequest.pendingAdultCount,
       childCounts: input.childCounts,
       lodgeId: quote.bookingRequest.lodgeId,
       // Nothing is written and nothing is renumbered here: this asks only
@@ -1092,12 +1124,12 @@ export async function sendBookingRequestQuote(input: {
     });
     const claimedRequest = await tx.bookingRequest.findUniqueOrThrow({
       where: { id: quote.bookingRequestId },
-      select: { guests: true },
+      select: { guests: true, pendingAdultCount: true },
     });
 
     return {
       updated: saved,
-      heldGuestCount: parseBookingRequestGuests(claimedRequest.guests).length,
+      heldGuestCount: parseBookingRequestGuests(claimedRequest.guests).length + (claimedRequest.pendingAdultCount ?? 0),
     };
   });
 
@@ -1175,7 +1207,7 @@ export async function sendBookingRequestQuote(input: {
   return { ...updated, options, responseTokenExpiresAt: expiresAt, emailDelivered };
 }
 
-async function loadSentQuoteByToken(token: string) {
+async function loadQuoteByToken(token: string) {
   const tokenHash = hashActionToken(token);
   const quote = await prisma.bookingRequestQuote.findUnique({
     where: { responseTokenHash: tokenHash },
@@ -1189,20 +1221,25 @@ async function loadSentQuoteByToken(token: string) {
   if (!quote) {
     throw new BookingRequestQuoteError("This quote is not valid.", 404);
   }
-  if (quote.status !== BookingRequestQuoteStatus.SENT) {
-    // Cancelled, accepted, or superseded by a newer quote: the requester should
-    // use the most recent quote email rather than this stale link.
-    throw new BookingRequestQuoteError("This quote is no longer active.", 409);
-  }
-  if (!quote.responseTokenExpiresAt || quote.responseTokenExpiresAt < new Date()) {
-    throw new BookingRequestQuoteError("This quote has expired.", 410);
-  }
-
   return quote;
 }
 
 export async function getBookingRequestQuoteContext(token: string) {
-  const quote = await loadSentQuoteByToken(token);
+  const quote = await loadQuoteByToken(token);
+  const isAccepted = quote.status === BookingRequestQuoteStatus.ACCEPTED;
+  const isDeclinedAfterAcceptance =
+    isAccepted && quote.bookingRequest.status === BookingRequestStatus.DECLINED;
+  if (!isAccepted && quote.status !== BookingRequestQuoteStatus.SENT) {
+    throw new BookingRequestQuoteError(
+      quote.status === BookingRequestQuoteStatus.CANCELLED
+        ? "This booking request was cancelled."
+        : "This quote was replaced. Please use the most recent quote email.",
+      409,
+    );
+  }
+  if (!isAccepted && (!quote.responseTokenExpiresAt || quote.responseTokenExpiresAt < new Date())) {
+    throw new BookingRequestQuoteError("This quote has expired.", 410);
+  }
   const options = parseBookingRequestQuoteOptions(quote.options);
   const request = quote.bookingRequest;
 
@@ -1220,12 +1257,18 @@ export async function getBookingRequestQuoteContext(token: string) {
     version: quote.version,
     status: quote.status,
     requestStatus: request.status,
+    accepted: isAccepted,
+    acceptedQuoteOptionId: isAccepted ? request.acceptedQuoteOptionId : null,
+    acceptedPriceCents: isAccepted ? request.acceptedPriceCents : null,
+    declinedAfterAcceptance: isDeclinedAfterAcceptance,
+    declineReason: isDeclinedAfterAcceptance ? request.declineReason : null,
+    declinedAt: isDeclinedAfterAcceptance ? request.reviewedAt?.toISOString() ?? null : null,
     type: request.type,
     schoolName: request.schoolName,
     contactFirstName: request.contactFirstName,
     checkIn: request.checkIn.toISOString(),
     checkOut: request.checkOut.toISOString(),
-    guestCount: parseBookingRequestGuests(request.guests).length,
+    guestCount: parseBookingRequestGuests(request.guests).length + (request.pendingAdultCount ?? 0),
     message: quote.message,
     expiresAt: quote.responseTokenExpiresAt!.toISOString(),
     options,
@@ -1244,7 +1287,38 @@ export async function respondToBookingRequestQuote(input: {
   optionId?: string | null;
   message?: string | null;
 }) {
-  const quote = await loadSentQuoteByToken(input.token);
+  const loadedQuote = await loadQuoteByToken(input.token);
+  // A retry after the winner committed is a read-only confirmation. The request
+  // and quote pointers must agree so a stale token cannot impersonate acceptance.
+  if (input.action === "ACCEPT" && loadedQuote.status === BookingRequestQuoteStatus.ACCEPTED) {
+    const acceptedOptionId = loadedQuote.bookingRequest.acceptedQuoteOptionId;
+    if (
+      input.optionId && input.optionId !== acceptedOptionId ||
+      loadedQuote.bookingRequest.acceptedQuoteId !== loadedQuote.id ||
+      (loadedQuote.bookingRequest.status !== BookingRequestStatus.ACCEPTED &&
+        loadedQuote.bookingRequest.status !== BookingRequestStatus.APPROVED &&
+        loadedQuote.bookingRequest.status !== BookingRequestStatus.CONVERTED)
+    ) {
+      throw new BookingRequestQuoteError(
+        "This quote was already accepted with a different response or the booking request has since changed.",
+        409,
+      );
+    }
+    const acceptedOption = firstQuoteOption(parseBookingRequestQuoteOptions(loadedQuote.options), acceptedOptionId);
+    return {
+      outcome: "accepted" as const,
+      acceptedQuoteOptionId: acceptedOptionId,
+      priceCents: acceptedOption?.totalCents ?? loadedQuote.bookingRequest.acceptedPriceCents,
+      type: loadedQuote.bookingRequest.type,
+    };
+  }
+  if (loadedQuote.status !== BookingRequestQuoteStatus.SENT) {
+    throw new BookingRequestQuoteError("This quote is no longer active.", 409);
+  }
+  if (!loadedQuote.responseTokenExpiresAt || loadedQuote.responseTokenExpiresAt < new Date()) {
+    throw new BookingRequestQuoteError("This quote has expired.", 410);
+  }
+  const quote = loadedQuote;
   const options = parseBookingRequestQuoteOptions(quote.options);
   const selectedOption = firstQuoteOption(options, input.optionId);
   if (input.action === "ACCEPT" && !selectedOption) {
@@ -1265,59 +1339,77 @@ export async function respondToBookingRequestQuote(input: {
     // and touches neither the quote nor the hold.
     const cancelled = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      // #3415: both the quote and request must still be the exact sent pair
+      // observed by the token load. Acceptance owns the held booking once either
+      // side changes, so stale cancellation stops before every side effect.
+      const liveRequest = await tx.bookingRequest.findUnique({
+        where: { id: quote.bookingRequestId },
+        select: { version: true, status: true, heldBookingId: true, acceptedQuoteId: true },
+      });
+      const liveQuote = await tx.bookingRequestQuote.findUnique({
+        where: { id: quote.id },
+        select: { status: true },
+      });
+      if (
+        !liveRequest ||
+        liveRequest.version !== quote.bookingRequest.version ||
+        liveRequest.status !== BookingRequestStatus.QUOTE_SENT ||
+        liveRequest.acceptedQuoteId !== null ||
+        liveQuote?.status !== BookingRequestQuoteStatus.SENT
+      ) return { finalised: true as const, withdrawnMemberGuestIds: [] as string[], releasedHeldBookingId: null };
       const claimed = await tx.bookingRequest.updateMany({
         where: {
           id: quote.bookingRequestId,
-          status: {
-            notIn: [
-              BookingRequestStatus.DECLINED,
-              BookingRequestStatus.CANCELLED,
-              BookingRequestStatus.CONVERTED,
-              BookingRequestStatus.APPROVED,
-            ],
-          },
+          version: liveRequest.version,
+          status: BookingRequestStatus.QUOTE_SENT,
+          acceptedQuoteId: null,
         },
         data: {
           status: BookingRequestStatus.CANCELLED,
+          pendingAdultCount: 0,
           responseMessage: message,
           responseMessageAt: respondedAt,
           version: { increment: 1 },
         },
       });
       if (claimed.count === 0) {
-        return { finalised: true as const, withdrawnMemberGuestIds: [] as string[] };
+        return { finalised: true as const, withdrawnMemberGuestIds: [] as string[], releasedHeldBookingId: null };
       }
-      await tx.bookingRequestQuote.update({
-        where: { id: quote.id },
+      const cancelledQuote = await tx.bookingRequestQuote.updateMany({
+        where: { id: quote.id, status: BookingRequestQuoteStatus.SENT },
         data: {
           status: BookingRequestQuoteStatus.CANCELLED,
           cancelledAt: respondedAt,
         },
       });
+      if (cancelledQuote.count !== 1) {
+        throw new BookingRequestQuoteError("This quote changed while it was being cancelled.", 409);
+      }
       // MG4 (#2309): who was told they were on the hold that is about to go.
       // Read BEFORE the cancellation, so this is the population as it stood
       // when the requester pressed cancel.
-      const withdrawnMemberGuestIds = quote.bookingRequest.heldBookingId
-        ? await collectNotifiedMemberGuestIds(tx, quote.bookingRequest.heldBookingId)
+      const withdrawnMemberGuestIds = liveRequest.heldBookingId
+        ? await collectNotifiedMemberGuestIds(tx, liveRequest.heldBookingId)
         : [];
-      if (quote.bookingRequest.heldBookingId) {
-        const heldBookingId = quote.bookingRequest.heldBookingId;
+      if (liveRequest.heldBookingId) {
+        const heldBookingId = liveRequest.heldBookingId;
         await tx.booking.update({
           where: { id: heldBookingId },
           data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
         });
+        await releasePendingAdultNights({ db: tx, bookingId: heldBookingId });
         // Release the reserved beds and detach the pointer so the hold no longer
         // consumes capacity and a later re-hold can never reuse a cancelled row
         // (issue #1254). Locking the Booking row after the BookingRequest row
         // adds no new cycle — decline releases its hold in a SEPARATE self-locked
         // cancelBooking tx, outside decline's claim transaction.
         await reconcileBedAllocationsForBookingWithGlobalLockHeld({ bookingId: heldBookingId, db: tx });
-        await tx.bookingRequest.update({
-          where: { id: quote.bookingRequestId },
+        await tx.bookingRequest.updateMany({
+          where: { id: quote.bookingRequestId, heldBookingId, status: BookingRequestStatus.CANCELLED },
           data: { heldBookingId: null, version: { increment: 1 } },
         });
       }
-      return { finalised: false as const, withdrawnMemberGuestIds };
+      return { finalised: false as const, withdrawnMemberGuestIds, releasedHeldBookingId: liveRequest.heldBookingId };
     });
     if (cancelled.finalised) {
       // A concurrent admin decline (or a prior cancel) already finalised the
@@ -1333,9 +1425,9 @@ export async function respondToBookingRequestQuote(input: {
     // they were on a booking has to be told they are not. Without this the
     // member is left holding "the club has put you on a lodge booking" for a
     // booking that no longer exists, and only finds out if they ask.
-    if (quote.bookingRequest.heldBookingId) {
+    if (cancelled.releasedHeldBookingId) {
       await notifyMemberGuestsHoldReleased({
-        bookingId: quote.bookingRequest.heldBookingId,
+        bookingId: cancelled.releasedHeldBookingId,
         targetMemberIds: cancelled.withdrawnMemberGuestIds,
         logContext: { bookingRequestId: quote.bookingRequestId, quoteId: quote.id },
       });
@@ -1361,6 +1453,30 @@ export async function respondToBookingRequestQuote(input: {
 
   if (input.action === "MODIFY" || input.action === "QUERY") {
     await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      // #3415: requester messages are preserved while the quote is live, but a
+      // stale response cannot replace an accepted lifecycle state or expose its
+      // hold to the modification-hold expiry sweep.
+      const liveRequest = await tx.bookingRequest.findUnique({
+        where: { id: quote.bookingRequestId },
+        select: { version: true, status: true, acceptedQuoteId: true },
+      });
+      const liveQuote = await tx.bookingRequestQuote.findUnique({
+        where: { id: quote.id },
+        select: { status: true },
+      });
+      if (
+        !liveRequest ||
+        liveRequest.version !== quote.bookingRequest.version ||
+        liveRequest.status !== BookingRequestStatus.QUOTE_SENT ||
+        liveRequest.acceptedQuoteId !== null ||
+        liveQuote?.status !== BookingRequestQuoteStatus.SENT
+      ) {
+        throw new BookingRequestQuoteError(
+          "This quote can no longer be updated because it has already been accepted or changed.",
+          409,
+        );
+      }
       // #1423 lock-ordering invariant + resurrection guard: acquire the
       // BookingRequest row lock FIRST (matching decline's claim-first order, so a
       // concurrent decline + modify/query cannot deadlock), and status-guard it.
@@ -1375,12 +1491,9 @@ export async function respondToBookingRequestQuote(input: {
       const restated = await tx.bookingRequest.updateMany({
         where: {
           id: quote.bookingRequestId,
-          status: {
-            notIn: [
-              BookingRequestStatus.DECLINED,
-              BookingRequestStatus.CANCELLED,
-            ],
-          },
+          version: liveRequest.version,
+          status: BookingRequestStatus.QUOTE_SENT,
+          acceptedQuoteId: null,
         },
         data: {
           status:
@@ -1398,36 +1511,15 @@ export async function respondToBookingRequestQuote(input: {
           409
         );
       }
-      // #2936: THE FOURTH WRITER A CORRECTION RE-OPENS PAST, and the one that is
-      // deliberately NOT lock-fenced. The claim above has the defect shape this
-      // issue named — it excludes only DECLINED and CANCELLED, and a corrected
-      // request is VERIFIED — so a requester pressing "ask for changes" on a
-      // quote link that was live a moment ago still flips a freshly corrected
-      // request to MODIFICATION_REQUESTED/QUERY_PENDING.
-      //
-      // That is allowed to stand, and the reason is what it writes: a status and
-      // the requester's own words. No price, no accepted snapshot, no hold, no
-      // conversion — nothing the accept re-arm had to be fenced for. Refusing it
-      // would throw away a message from the person whose booking it is, and both
-      // statuses it can reach are correctable and swept exactly as VERIFIED is.
-      // If a future version of this branch ever writes a price or converts, it
-      // joins the fenced set and takes the key; until then the honest answer is
-      // this comment rather than a lock. Registered as a deliberate omission in
-      // `docs/CONCURRENCY_AND_LOCKING.md` and `INV-REQ-009`.
-      //
-      // The QUOTE write is narrowed, though, because that part is not cosmetic:
-      // a bare update by id re-stamps a quote the correction already SUPERSEDED
-      // (overwriting the officer's mark with the requester's timestamp) and
-      // would flip a CANCELLED quote to SUPERSEDED. Claiming DRAFT/SENT is what
-      // every other supersede writer in this tree already does — the quote save
-      // above, the withdraw and the decline in `booking-request.ts` — so a
-      // retired quote is simply left as the writer that retired it left it.
+      // #3415 supersedes #2936's deliberately unfenced message writer. The
+      // global lock and loaded-version QUOTE_SENT claim above exclude stale
+      // messages after acceptance, correction, decline or cancellation. Only
+      // the still-SENT quote is superseded; a retired quote keeps its existing
+      // mark. The request and quote writes commit together (INV-REQ-009).
       await tx.bookingRequestQuote.updateMany({
         where: {
           id: quote.id,
-          status: {
-            in: [BookingRequestQuoteStatus.DRAFT, BookingRequestQuoteStatus.SENT],
-          },
+          status: BookingRequestQuoteStatus.SENT,
         },
         data: {
           status: BookingRequestQuoteStatus.SUPERSEDED,
@@ -1465,75 +1557,49 @@ export async function respondToBookingRequestQuote(input: {
   }
 
   const option = selectedOption!;
-  const createdByMemberId = quote.createdByMemberId;
-  if (!createdByMemberId) {
-    throw new BookingRequestQuoteError(
-      "This quote is missing its admin owner and cannot be accepted.",
-      409
-    );
-  }
-
-  // Re-arm the request to PRICED so approve can convert it. This is a
-  // status-guarded `updateMany`, NOT a plain `update`, to close the
-  // decline-wins-first resurrection race (#1423): an admin decline (or a
-  // requester quote-cancel) may have finalised this request to DECLINED/CANCELLED
-  // and released its capacity hold AFTER this accept passed the SENT-token check.
-  // A plain overwrite to PRICED would resurrect that finalised request — approve
-  // would see a null convertedBookingId, so its #1232 idempotency replay would
-  // NOT fire and it would mint a brand-new PENDING booking + Payment + PaymentLink
-  // off a declined request (money/capacity correctness bug). We therefore refuse
-  // to re-arm only when the request is already DECLINED/CANCELLED.
-  //
-  // We deliberately use `notIn [DECLINED, CANCELLED]` rather than
-  // `status = QUOTE_SENT`: a request already CONVERTED/APPROVED (the #1232
-  // double-accept case) must STILL re-arm to PRICED so approve's idempotency
-  // replay (booking-request.ts ~900-919 — reads the still-set convertedBookingId
-  // and returns the existing booking) keeps returning the one real booking. Only
-  // a decline/cancel finalisation blocks the re-arm.
-  //
-  // #2936: the request-status guard above cannot see a CORRECTION. Correcting a
-  // request drops it back to VERIFIED — neither DECLINED nor CANCELLED — while
-  // SUPERSEDING every DRAFT/SENT quote in the same transaction. Left as a bare
-  // update this accept would write the RETIRED quote's price and snapshot onto
-  // the corrected envelope and then convert it: a booking for the corrected
-  // dates and party at yesterday's price, resolved to the corrected school's
-  // organisation, with that organisation's invoice queued to Xero. Money and
-  // the provider. So the re-arm now runs in a transaction that takes the global
-  // key the correction holds — as the CANCEL branch above already does — and
-  // re-reads the quote under it. The quote's own status is the exact evidence: a
-  // correction retires it, and nothing else moves a SENT quote out of the live
-  // set beneath a token that loaded it as SENT.
-  //
-  // The MODIFY/QUERY branch takes no key and is not fenced against a correction
-  // at all: see the note there for what it writes and why that is deliberate.
-  // "Every branch is fenced" would be the overclaim — three of the four are.
-  //
-  // The live set is deliberately "not retired" rather than "still SENT": a
-  // double-accept (#1232) finds the quote already ACCEPTED and must STILL
-  // re-arm, so approve's idempotency replay keeps returning the one real
-  // booking. Only SUPERSEDED and CANCELLED block it.
-  const rearmed = await prisma.$transaction(async (tx) => {
+  // Acceptance is request-then-quote in ONE global-lock transaction. The old
+  // two-commit shape exposed accepted request data while its token still named a
+  // live SENT quote. Keep this lock with corrections and cancellation (INV-LOCK-002).
+  // #3415: require SENT, QUOTE_SENT, no accepted/converted pointer and a live
+  // request-owned AWAITING_REVIEW hold. Claim ACCEPTED on request then quote;
+  // either lost claim rolls both writes back. Exact states prevent the old
+  // decline/cancel resurrection (#1423) and retired-price restoration after a
+  // correction (#2936). Acceptance retains the hold and creates no payment or
+  // conversion; those belong to officer approval. A matching accepted retry
+  // returns read-only above, including after approval, without re-arming PRICED.
+  const accepted = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const live = await tx.bookingRequestQuote.findUnique({
       where: { id: quote.id },
       select: { status: true },
     });
-    if (
-      !live ||
-      live.status === BookingRequestQuoteStatus.SUPERSEDED ||
-      live.status === BookingRequestQuoteStatus.CANCELLED
-    ) {
+    if (!live || live.status !== BookingRequestQuoteStatus.SENT) {
       return { count: 0, retired: true as const };
+    }
+    const liveRequest = await tx.bookingRequest.findUnique({
+      where: { id: quote.bookingRequestId },
+      select: { id: true, version: true, status: true, heldBookingId: true, acceptedQuoteId: true, convertedBookingId: true },
+    });
+    if (!liveRequest?.heldBookingId || liveRequest.convertedBookingId || liveRequest.acceptedQuoteId) {
+      return { count: 0, retired: false as const };
+    }
+    const hold = await tx.booking.findUnique({
+      where: { id: liveRequest.heldBookingId },
+      select: { status: true, heldForBookingRequest: { select: { id: true } } },
+    });
+    if (hold?.status !== BookingStatus.AWAITING_REVIEW || hold.heldForBookingRequest?.id !== liveRequest.id) {
+      return { count: 0, retired: false as const };
     }
     const claimed = await tx.bookingRequest.updateMany({
       where: {
         id: quote.bookingRequestId,
-        status: {
-          notIn: [BookingRequestStatus.DECLINED, BookingRequestStatus.CANCELLED],
-        },
+        version: liveRequest.version,
+        status: BookingRequestStatus.QUOTE_SENT,
+        acceptedQuoteId: null,
+        convertedBookingId: null,
       },
       data: {
-        status: BookingRequestStatus.PRICED,
+        status: BookingRequestStatus.ACCEPTED,
         priceCents: option.totalCents,
         acceptedQuoteId: quote.id,
         acceptedQuoteOptionId: option.id,
@@ -1545,83 +1611,24 @@ export async function respondToBookingRequestQuote(input: {
         version: { increment: 1 },
       },
     });
-    return { count: claimed.count, retired: false as const };
+    if (claimed.count !== 1) return { count: 0, retired: false as const };
+    const acceptedQuote = await tx.bookingRequestQuote.updateMany({
+      where: { id: quote.id, status: BookingRequestQuoteStatus.SENT },
+      data: { status: BookingRequestQuoteStatus.ACCEPTED, acceptedAt: respondedAt },
+    });
+    if (acceptedQuote.count !== 1) {
+      throw new BookingRequestQuoteError("The quote changed while it was being accepted.", 409);
+    }
+    return { count: 1, retired: false as const };
   });
-  if (rearmed.count === 0) {
+  if (accepted.count === 0) {
     throw new BookingRequestQuoteError(
-      rearmed.retired
+      accepted.retired
         ? "This quote can no longer be accepted — the booking team changed this request and withdrew it. They will send you a new one."
         : "This quote can no longer be accepted — the booking request has been declined or cancelled.",
       409
     );
   }
-
-  const conversion =
-    quote.bookingRequest.type === BookingRequestType.SCHOOL
-      ? await approveSchoolBookingRequest({
-          requestId: quote.bookingRequestId,
-          adminMemberId: createdByMemberId,
-        })
-      : await approveBookingRequest({
-          requestId: quote.bookingRequestId,
-          adminMemberId: createdByMemberId,
-        });
-
-  if (conversion.type === "capacityExceeded") {
-    // #1423: revert the losing accept to QUOTE_SENT, but ONLY if the request is
-    // not already finalised — a concurrent admin decline (or requester cancel)
-    // may have moved it to DECLINED/CANCELLED. Guard with updateMany + notIn so
-    // the revert can never un-decline a finalised request; if it was finalised
-    // we simply do not revert (the accept already 409s below via capacityExceeded).
-    await prisma.bookingRequest.updateMany({
-      where: {
-        id: quote.bookingRequestId,
-        status: {
-          notIn: [BookingRequestStatus.DECLINED, BookingRequestStatus.CANCELLED],
-        },
-      },
-      data: {
-        status: BookingRequestStatus.QUOTE_SENT,
-        acceptedQuoteId: null,
-        acceptedQuoteOptionId: null,
-        acceptedQuoteSnapshot: Prisma.JsonNull,
-        acceptedPriceCents: null,
-        acceptedAt: null,
-        version: { increment: 1 },
-      },
-    });
-    logAudit({
-      action: "booking_request.quote_accept_capacity_blocked",
-      targetId: quote.bookingRequestId,
-      entityType: "BookingRequest",
-      entityId: quote.bookingRequestId,
-      category: "booking",
-      outcome: "blocked",
-      summary:
-        "Quote acceptance reverted because the lodge filled before confirmation",
-      metadata: {
-        actor: "requester",
-        quoteId: quote.id,
-        optionId: option.id,
-        fullNights: conversion.fullNights,
-      },
-    });
-    const nights = conversion.fullNights.join(", ");
-    throw new BookingRequestQuoteError(
-      nights
-        ? `The lodge filled up before your acceptance could be confirmed. These nights are now full: ${nights}. Your quote link is still active — reply to the booking team to discuss alternative dates.`
-        : "The lodge filled up before your acceptance could be confirmed. Your quote link is still active — reply to the booking team to discuss alternative dates.",
-      409
-    );
-  }
-
-  await prisma.bookingRequestQuote.update({
-    where: { id: quote.id },
-    data: {
-      status: BookingRequestQuoteStatus.ACCEPTED,
-      acceptedAt: respondedAt,
-    },
-  });
 
   logAudit({
     action: "booking_request.quote_accepted",
@@ -1630,23 +1637,29 @@ export async function respondToBookingRequestQuote(input: {
     entityId: quote.bookingRequestId,
     category: "booking",
     outcome: "success",
-    summary: "Requester accepted the quote",
-    metadata: {
-      actor: "requester",
-      quoteId: quote.id,
-      version: quote.version,
-      optionId: option.id,
-      priceCents: option.totalCents,
-      bookingId: conversion.bookingId,
-    },
+    summary: "Requester accepted the quote; officer review is required",
+    metadata: { actor: "requester", quoteId: quote.id, version: quote.version, optionId: option.id, priceCents: option.totalCents },
   });
-
-  return {
-    outcome: "accepted" as const,
-    bookingId: conversion.bookingId,
-    priceCents: option.totalCents,
-    type: quote.bookingRequest.type,
-  };
+  const format = await clubFormatValues();
+  await Promise.allSettled([
+    sendBookingRequestQuoteAcceptedEmail({
+      bookingContext: "none",
+      email: quote.bookingRequest.contactEmail,
+      firstName: quote.bookingRequest.contactFirstName,
+      checkIn: quote.bookingRequest.checkIn,
+      checkOut: quote.bookingRequest.checkOut,
+      guestCount: parseBookingRequestGuests(quote.bookingRequest.guests).length + (quote.bookingRequest.pendingAdultCount ?? 0),
+      priceCents: option.totalCents,
+      lodgeId: quote.bookingRequest.lodgeId,
+    }, format),
+    sendAdminBookingRequestQuoteAcceptedEmail({
+      requesterName: `${quote.bookingRequest.contactFirstName} ${quote.bookingRequest.contactLastName}`.trim(),
+      checkIn: quote.bookingRequest.checkIn,
+      checkOut: quote.bookingRequest.checkOut,
+      guestCount: parseBookingRequestGuests(quote.bookingRequest.guests).length + (quote.bookingRequest.pendingAdultCount ?? 0),
+    }),
+  ]);
+  return { outcome: "accepted" as const, priceCents: option.totalCents, type: quote.bookingRequest.type };
 }
 
 export async function holdBookingRequestSlots(input: {
@@ -1696,6 +1709,9 @@ export async function holdBookingRequestSlots(input: {
   if (!holdableStatuses.includes(request.status as never)) {
     throw new BookingRequestError("This booking request cannot be held", 409);
   }
+  if (request.pendingAdultCount > 0 && !isPendingSchoolAdultsWriteEnabled()) {
+    throw new BookingRequestError("Pending adult reservations are disabled until the maintenance-window cutover is complete", 409);
+  }
   // MG4 (#2309): members a previous, now-dead hold over THIS request had
   // already told. Empty on every first hold, which is nearly all of them.
   let staleHoldNotifiedMemberIds: string[] = [];
@@ -1708,9 +1724,35 @@ export async function holdBookingRequestSlots(input: {
     // detach it and fall through to create a fresh hold.
     const existingHold = await prisma.booking.findUnique({
       where: { id: request.heldBookingId },
-      select: { status: true },
+      select: { status: true, lodgeId: true, checkIn: true, checkOut: true },
     });
     if (existingHold?.status === BookingStatus.AWAITING_REVIEW) {
+      if (request.pendingAdultCount > 0) {
+        await prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+          await acquireLodgeCapacityLock(tx, existingHold.lodgeId);
+          const liveRequest = await tx.bookingRequest.findUnique({ where: { id: request.id } });
+          const liveHold = await tx.booking.findUnique({ where: { id: request.heldBookingId! } });
+          if (!liveRequest || liveRequest.version !== request.version ||
+              liveRequest.heldBookingId !== request.heldBookingId ||
+              !holdableStatuses.includes(liveRequest.status as never) ||
+              !liveHold || liveHold.status !== BookingStatus.AWAITING_REVIEW ||
+              liveHold.lodgeId !== existingHold.lodgeId ||
+              liveHold.checkIn.getTime() !== request.checkIn.getTime() ||
+              liveHold.checkOut.getTime() !== request.checkOut.getTime() ||
+              !await pendingAdultReservationNightsMatch({
+                db: tx,
+                bookingRequestId: request.id,
+                bookingId: liveHold.id,
+                lodgeId: liveHold.lodgeId,
+                checkIn: liveHold.checkIn,
+                checkOut: liveHold.checkOut,
+                adultCount: liveRequest.pendingAdultCount,
+              })) {
+            throw new BookingRequestError("The held unnamed bed reservations changed. Reload and reconcile this request before sending a quote.", 409);
+          }
+        });
+      }
       return {
         type: "held" as const,
         bookingId: request.heldBookingId,
@@ -1755,6 +1797,9 @@ export async function holdBookingRequestSlots(input: {
   }
 
   const guests = parseBookingRequestGuests(request.guests);
+  const pendingAdultCount = request.type === BookingRequestType.SCHOOL
+    ? (request.pendingAdultCount ?? 0)
+    : 0;
   const latestQuote = request.quotes[0] ?? null;
   const quoteOptions = latestQuote
     ? parseBookingRequestQuoteOptions(latestQuote.options)
@@ -1786,7 +1831,16 @@ export async function holdBookingRequestSlots(input: {
     adminMemberId: input.adminMemberId,
   };
   const linkedMembers = linkedGuestMemberMap(request.linkedGuestMembers);
-  const guestPriceCents = splitPriceAcrossGuests(option.totalCents, guests.length);
+  if (pendingAdultCount > 0 && (
+    option.guestBreakdown.length !== guests.length + pendingAdultCount ||
+    option.guestBreakdown.slice(0, guests.length).some((entry) => entry.kind === "PENDING_ADULT") ||
+    option.guestBreakdown.slice(guests.length).some((entry) => entry.kind !== "PENDING_ADULT")
+  )) {
+    throw new BookingRequestQuoteError("This quote no longer matches the pending adults. Save a fresh quote before holding beds.", 409);
+  }
+  const guestPriceCents = pendingAdultCount > 0
+    ? option.guestBreakdown.slice(0, guests.length).map((entry) => entry.totalCents)
+    : splitPriceAcrossGuests(option.totalCents, guests.length);
   // Persist the rate-membership-type snapshot (#1930, E4, D3) on the held
   // booking's guest rows, resolved at the request's check-in season year: an
   // admin-linked member of a custom MEMBER_RATE type records that type,
@@ -1857,6 +1911,9 @@ export async function holdBookingRequestSlots(input: {
 
   try {
     const booking = await prisma.$transaction(async (tx) => {
+      if (pendingAdultCount > 0) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      }
       // A null lodgeId means the club's default lodge.
       const bookingLodgeId = request.lodgeId ?? (await getDefaultLodgeId(tx));
       await acquireLodgeCapacityLock(tx, bookingLodgeId);
@@ -1919,6 +1976,9 @@ export async function holdBookingRequestSlots(input: {
           select: { heldBookingId: true },
         });
         if (current?.heldBookingId) {
+          if (pendingAdultCount > 0) {
+            throw new BookingRequestError("Another hold changed the unnamed bed reservations. Reload and try again.", 409);
+          }
           // A concurrent hold already created the rows and already owes (or has
           // already sent) their notifications: this call created nothing, so it
           // notifies nobody. Sending here would double-mail the targets.
@@ -1931,10 +1991,13 @@ export async function holdBookingRequestSlots(input: {
         throw new BookingRequestError("This booking request cannot be held", 409);
       }
 
-      const capacityRanges = guests.map((_guest, index) => ({
-        stayStart: request.checkIn, stayEnd: request.checkOut,
-        memberId: linkedMembers.get(index) ?? null,
-      }));
+      // Named guests carry their linked member (#3789: a ticked custodian on the
+      // booking counts once); the unnamed pending school adults (#3413) are
+      // nobody in particular, so they carry none.
+      const capacityRanges = wholeStayCapacityRanges(request.checkIn, request.checkOut, [
+        ...guests.map((_guest, index) => linkedMembers.get(index) ?? null),
+        ...Array.from({ length: pendingAdultCount }, () => null),
+      ]);
       const capacity = await checkCapacityForGuestRanges(
         bookingLodgeId,
         request.checkIn,
@@ -2050,6 +2113,15 @@ export async function holdBookingRequestSlots(input: {
         // The created rows' ids are needed to match the notification plan, and
         // this is the only moment they exist in hand.
         select: { id: true, guests: { select: { id: true, memberId: true } } },
+      });
+      await reservePendingAdultNights({
+        db: tx,
+        bookingRequestId: request.id,
+        bookingId: held.id,
+        lodgeId: bookingLodgeId,
+        checkIn: request.checkIn,
+        checkOut: request.checkOut,
+        adultCount: pendingAdultCount,
       });
 
       // #2364. The hold is a capacity-holding booking carrying the requested

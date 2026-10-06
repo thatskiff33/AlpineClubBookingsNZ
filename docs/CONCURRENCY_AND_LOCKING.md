@@ -81,7 +81,7 @@ is what CI enforces and this page is the defect.
 
 Many writers do both tiers at once: a Stripe capture claims capacity **and**
 moves money; a date modification reprices/refunds **and** re-checks capacity; a
-quote-accept flips booking status **and** holds a bed. Every such writer:
+request approval converts a held booking **and** claims its beds. Every such writer:
 
 1. takes the **global `lock(1)` FIRST**, then
 2. takes the **per-lodge lock**.
@@ -123,6 +123,28 @@ The additive `EmailLog` authority columns introduce no advisory-lock key or
 transaction participant; provider delivery remains outside a database
 transaction. New booking rows keep `htmlBody` null and retain retry HTML only in
 `bookingRetryHtmlBody`, which the old worker cannot select after rollback.
+
+### One refund credit note in flight per payment, by claim order (#3880)
+
+A delta refund note sizes itself off the notes already recorded on its payment
+and keys its Xero create on the resulting watermark, so two runs that read
+before either records get Xero's one deduped note for two refunds. No lock is
+held across that Xero call. Instead every run already holds a RUNNING row on
+the payment before it reads - the outbox row its worker claimed, or the
+operator's `REQUEUE` row - and `assertNoRefundCreditNoteInFlight`
+(`xero-refund-note-in-flight.ts`, called by `createXeroCreditNote` in delta
+mode) refuses while any other live (younger than the stale threshold)
+refund-note create or credit-note requeue on the payment is RUNNING. Each run
+commits its claim and then reads, so of two concurrent runs at least one sees
+the other; both seeing each other is safe. The refusal is a busy error, and the
+outbox and the retry queue return the row to PENDING with the reason kept. It
+adds no advisory key and no row lock. Since #3880 a bank-transfer hand-back on
+a cancelled booking - a review's, and a `CANCELLED_BOOKING_HAND_BACK` - also
+queues its refund note INSIDE the completion transaction: an outbox row insert,
+after the completion's
+`lock(1)`, its member-ledger key and the `Payment` row
+(`lockPaymentForRefundedTotal`), with no provider call. Proven against real
+PostgreSQL by `edit-financial-review-cancelled-refund-xero.realdb.test.ts`.
 
 ### The Xero token refresh uses a row lease, shared across colours (#3454)
 
@@ -168,7 +190,7 @@ are the literal `1`.
 | **Per-member night footprint** | `hashtext("booking-member-night"), hashtext(<memberId>)` | `lockBookingMemberNights(tx, guests)` (`booking-member-night-conflicts.ts`) | cross-lodge | Serialises the person-night guard ACROSS lodges (see below). |
 | **Per-trip hosting coverage** | `hashtext("hosting-coverage-group"), hashtext(<GroupBooking.id>)` | `lockHostingCoverageGroup` / `lockHostingCoverageGroups`, with `tryLockHostingCoverageGroup(s)` tried first (`adult-member-hosting-coverage-lock.ts`) | cross-account | Serialises `SAME_GROUP_TRIP` coverage (#3039, epic #2943). The owner key cannot do this job: it is `Booking.memberId`, the DEPENDENT's own account, while every Group Trip source belongs to somebody else — so two writers changing two bookings in one trip hold two DIFFERENT owner keys and are not serialised at all. Not the lodge key either: one lodge holds many unrelated trips. Taken immediately BEFORE the sorted owner keys, because the trip's membership is what decides which owners the reconciliation fan-out will name. Several trips are taken in sorted order, and EVERY acquisition is tried with `pg_try_advisory_xact_lock` before the blocking form — one transaction can discover two trip keys (a booking in one trip whose same-owner dependent sits in another), so sorting within a call cannot order keys discovered in two, and a conflict rolls the whole outer transaction back with the stable `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409 rather than waiting inside a booking transaction. Taken only where the lodge has `SAME_GROUP_TRIP` enabled AND the booking is in a trip. |
 | **Per-owner hosting coverage** | `hashtext("hosting-coverage-owner"), hashtext(<Booking.memberId>)` | `lockHostingCoverageOwner` / `lockHostingCoverageOwners` (`adult-member-hosting-coverage-lock.ts`) | cross-booking | Serialises `SAME_BOOKING_OWNER` coverage (#2576 §9): one booking's compliance depends on another booking of the SAME owner, so the key remains authoritative even though #2600 made allocation-participating confirmation and cancellation compose global → lodge. Taken LAST among the application lock families a caller composes, EXCEPT that since #3039 the per-TRIP hosting coverage key above sits immediately before it — so it is the second of the last two rather than the last. Roster-aware modification paths take global → lodge → roster-date → any applicable member keys → sorted queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-group → coverage-owner; queued incident reconciliation takes hosting policy-set → sorted claimed member-lifecycle keys → sorted claimed `Member FOR KEY SHARE` rows → coverage-group (only where the reconciled booking is in a Group Trip at a lodge with `SAME_GROUP_TRIP` on; the evaluator takes it fail-fast before it reads a sibling as cover) → coverage-owner. Paths that do not use roster or member keys omit those tiers. Ordinary producers try sorted owner keys before re-entering the blocking helper, while merge takes its sorted owner keys only after its one sorted participant `FOR UPDATE` statement. The key is taken only when the lodge actually has the scope enabled. |
-| **Per-member credit ledger** | `hashtext("member-credit-ledger"), hashtext(<memberId>)` | `lockMemberCreditLedger(memberId, tx)` (`member-credit.ts`) | — | A member's credit-ledger balance operations (spend, negative-adjustment validation, orphan-restore repair, every applied-credit restore (`restoreCreditFromBooking`, taken inside the caller's transaction after its `lock(1)` and lodge locks, #3792), the Xero inbound applied-credit repair, and the F20 pre-payment-reduction applied-credit clamp `clampAppliedCreditToBookingPrice`, taken inside the modification transaction only when the booking carries applied credit, through its give-back `giveBackAppliedCredit`, which a credit-paid booking's review share also goes through (#3791), taken inside an `EDIT_FINANCIAL_REVIEW` completion after its `lock(1)`, its claim and its re-price, only on the account-credit route with no captured payment, and the #2265 stored-election consumption `consumeStoredCreditElection`, taken inside the `create-payment-intent` pay transaction and the Internet Banking switch transaction only when the booking carries an outstanding election). |
+| **Per-member credit ledger** | `hashtext("member-credit-ledger"), hashtext(<memberId>)` | `lockMemberCreditLedger(memberId, tx)` (`member-credit.ts`) | — | A member's credit-ledger balance operations (spend, negative-adjustment validation, orphan-restore repair, every applied-credit restore (`restoreCreditFromBooking`, taken inside the caller's transaction after its `lock(1)` and lodge locks, #3792), the Xero inbound applied-credit repair, and the F20 pre-payment-reduction applied-credit clamp `clampAppliedCreditToBookingPrice`, taken inside the modification transaction only when the booking carries applied credit, through its give-back `giveBackAppliedCredit`, which a credit-paid booking's review share also goes through (#3791), taken inside an `EDIT_FINANCIAL_REVIEW` completion after its `lock(1)`, its claim and its re-price, only on the account-credit route with no captured payment, and by a paid booking's price reduction (#3809, `giveBackPaidReductionCredit`), taken inside the batch, date-change and guest-removal transactions (the consent decline and expiry included) in `applyPaymentAdjustments`, after `lock(1)`, the lodge key and any roster-date keys and before any `Payment` row write, only on a PAID or COMPLETED booking with credit applied and a reduction the captured money's basis cannot return, and the #2265 stored-election consumption `consumeStoredCreditElection`, taken inside the `create-payment-intent` pay transaction and the Internet Banking switch transaction only when the booking carries an outstanding election). |
 | **Member lifecycle** | `hashtext("member-lifecycle:<memberId>")` | inline (`member-lifecycle-actions.ts`, `app/api/admin/deletion-requests/[id]/route.ts`, `nomination.ts` approval mapping, `admin-family-group-requests-service.ts`, `member-merge.ts`, `adult-member-hosting-coverage-drain.ts`) | — | Archive/delete of one member; account-deletion approval (the #1756 partner-share prefix — global cohort `lock(1)` + every affected lodge, sorted — and only then member lifecycle → shared standing-subject `Member FOR UPDATE NOWAIT` → exact queue-participant `Member FOR KEY SHARE NOWAIT` rows → coverage-owner before deactivation and guest unlink); overwrite of one member by application-approval mapping (E10, #1936); linking/removing one member into/from a family group on admin request review; **member merge** (dual-lock on master + loser, E11 #1937, see below — merge takes the merge-only partner-share prefix, so every affected lodge key is held BEFORE this tier while the global cohort key is deliberately NOT taken at all, and the two `member-partner-link:` keys immediately AFTER it, #2595); and the queue-drain handshake that prevents a claimed hosting item from using identities while merge re-points them. |
 | **Membership application** | `hashtext(<application key>)` | `membershipApplicationLockKey` (`nomination.ts`) | — | State transitions of one membership application. |
 | **Membership applicant** | `hashtext(<applicant-email key>)` | `membershipApplicationApplicantLockKey` (`nomination.ts`) | — | Per-email applicant dedup at submit time. |
@@ -3220,6 +3242,24 @@ or queued after the commit; the worker calls Xero later, so no provider call
 runs under either key (`edit-financial-review-races.realdb.test.ts` forces the
 ledger-key interleaving).
 
+**#3835 adds no key.** On a captured payment's card, bank-transfer hand-back
+and minted-credit routes, a cancelled booking's share is netted from rows
+written under `lock(1)` - the cancel's CANCELLED event, the sibling reviews'
+claims, their refund debts, `BANK_REFUND` lines and minted credit - read under
+the completion's own `lock(1)`: before the claim on the card and hand-back
+routes, which plan, cap and record the netted figure there, and after the
+re-price on the minted-credit route. The applied-credit part of that figure
+goes back through `giveBackAppliedCredit` on every one of those routes, FIRST:
+the full order is `lock(1)`, the claim, the per-member credit-ledger key, then
+the `Payment` row (`applyLocalRefundAllocation`'s row lock on the hand-back,
+the minted credit's allocation, the give-back's own mirror update). That is the
+order the Xero inbound applied-credit repair takes the member key and the
+`Payment` row in, so the two cannot deadlock; a review with no credit part
+takes no member key at all. The card cap also counts the cancellation's and
+earlier reviews' card refunds not yet made, leaving out one that FAILED for
+good (a person settles it, and a hand refund already lowers the headroom). The Stripe call stays after the commit
+(`edit-financial-review-captured-cancel.realdb.test.ts`).
+
 Registered in `advisory-lock-guard.test.ts` as `resolveManualRefundTask#1`
 (`INV-LOCK-002`). The four edit doors and the batch path post their own lines
 under the `lock(1)` they already take first; no other writer changes.
@@ -3679,17 +3719,16 @@ writers in `src/lib/booking-request-quotes.ts`, and they are the ones this
 writer actually had to be reconciled against. A **decline** sets a TERMINAL
 status, so a guard reading "not declined, not cancelled" was a complete fence
 against it. A **correction sets a LIVE one** — `VERIFIED`, still quoteable,
-still acceptable, still correctable — so that same guard sees nothing. Three are
-reconciled at the writer, per the checklist in `AGENTS.md`; the fourth is
-deliberately left, and the row says so rather than the table quietly listing
-three:
+still correctable — so that same guard sees nothing. All four are reconciled at
+the writer, per the checklist in `AGENTS.md`; #3415 replaced the deliberately
+unfenced MODIFY/QUERY message writer with a global-lock response claim:
 
 | Writer | What a correction did to it | How it is fenced now |
 | --- | --- | --- |
 | `createBookingRequestQuote` | a plain update restored the retired price, option totals and stale positional member links over the corrected row | claims on `version: request.version`, and throws before any quote row is touched |
 | `sendBookingRequestQuote` | an unguarded quote flip turned a `SUPERSEDED` quote back into a live `SENT` one with a fresh response token — priced on the pre-correction party, against the post-correction dates, with no beds held, because the correction's release runs afterwards | claims the quote row while it is still `DRAFT`/`SENT`; count 0 rolls the whole transaction back, and the email is outside it |
-| `respondToBookingRequestQuote` (the accept re-arm) | a bare unlocked update wrote the retired quote's price and snapshot and then converted — the corrected school resolved to an organisation and that organisation's invoice queued to Xero at yesterday's price | takes `lock(1)` itself and re-reads the quote's status under it; only `SUPERSEDED`/`CANCELLED` block the re-arm, so #1232's double-accept replay still works |
-| `respondToBookingRequestQuote` (the MODIFY/QUERY branch) | it flips a freshly corrected request to `MODIFICATION_REQUESTED`/`QUERY_PENDING` from a quote link that was live a moment ago, and its bare quote update re-stamped a quote the correction had already `SUPERSEDED` | **deliberately NOT lock-fenced, and not in `GLOBAL_LOCK_SITE_REGISTRY`.** It writes a status and the requester's own message and nothing else — no price, no accepted snapshot, no hold, no conversion — and both states it can reach are correctable and swept exactly as `VERIFIED` is, so a fence would buy a cosmetic status by discarding a message from the person whose booking it is. Only the quote write was narrowed, to `DRAFT`/`SENT`, which is what every other supersede writer in the tree already claims on. A future version that writes a price or converts takes the key and joins the registry |
+| `respondToBookingRequestQuote` (accept) | a split request/quote write could expose accepted request data while its token still named a live quote, and a correction could otherwise restore a retired price and snapshot | takes `lock(1)`, re-reads the quote and request-owned hold, then claims `QUOTE_SENT -> ACCEPTED` on the request and `SENT -> ACCEPTED` on the quote in request-then-quote order in one transaction; either lost claim rolls both back. A matching retry is read-only. |
+| `respondToBookingRequestQuote` (the MODIFY/QUERY branch) | a stale message could re-status a corrected or accepted request and re-stamp a quote already `SUPERSEDED` | takes `lock(1)`, re-reads the request and quote, requires the loaded-version `QUOTE_SENT` request with no accepted pointer and the `SENT` quote, then claims the request before superseding only that `SENT` quote; stale responses return `409` before either write (#3415) |
 
 It joins no capacity tier because it creates no booking and claims no bed. The
 `AWAITING_REVIEW` hold a corrected request may still be carrying is released
@@ -3700,19 +3739,24 @@ is `declineBookingRequest`'s, deliberately: its worst case is a request still
 pointing at a hold covering more than it needs, visible on the officer's screen
 with its own Release button, rather than a request that has silently lost beds.
 
+The stale-hold cron independently refuses any request with an accepted quote
+pointer (#3415). Acceptance retains its `AWAITING_REVIEW` hold for officer
+approval or decline; generic cancellation refuses an `ACCEPTED` linked request
+under the global lock. Officer decline claims `DECLINED` before releasing it.
+
 ### Writer doing both → `lock(1)` first, then per-lodge
 
 The Stripe capture (`markBookingPaymentSucceeded`), the confirm-pending-guests
 zero-dollar and charge branches, the `charge-saved-method` claim and release
 (#3267), the waitlist-confirm $0 PAID claim, the admin
 return-to-waitlist repair (#2649), the
-switch-to-internet-banking hold, the quote-accept conversion
+switch-to-internet-banking hold, the officer's held-request conversion
 (`approveBookingRequest`), and every booking modification service
 (batch/date/guest-removal) take **`lock(1)` first, then the per-lodge lock**.
 `xero-inbound/invoice-paid-effects.ts` is the in-tree precedent for this
 composition.
 
-Generic quote acceptance pre-reads only the held booking's immutable concrete
+Officer approval of a held generic request pre-reads only the held booking's immutable concrete
 `lodgeId`, then takes global -> that lodge and fully re-reads both request and
 hold. It rejects an explicit request/hold lodge mismatch and carries the same
 concrete lodge into policy and email context. A null request lodge is never
@@ -4069,6 +4113,46 @@ serialising against a claim is a momentarily conservative capacity view that
 self-corrects — but a release that also flips booking status or moves money
 (cancel, hold-expiry) takes `lock(1)` for the status/money reason, not the
 capacity reason.
+
+### Pending school-adult beds (#3413)
+
+An unnamed adult on a SCHOOL request is a count, never a guest identity.
+`holdBookingRequestSlots` takes `lock(1)` before the immutable lodge key when
+the pending count is positive, re-reads and version-claims the request, then
+creates the `AWAITING_REVIEW` hold and its per-night anonymous reservation in
+one transaction. The canonical occupancy reader adds those counts to named
+guest nights. Generic hold cancellation and requester quote cancellation delete
+the reservation in the same transaction as the status flip. Reusing an existing
+unnamed-adult hold takes the same global-then-lodge locks and rechecks the live
+request, held booking and exact reservation nights before returning it. The
+quote-expiry worker's two direct hold-release paths also delete it under their existing
+global lifecycle lock. `resolveAcceptedSchoolPendingAdults` takes global then
+lodge in the same order,
+checks the accepted snapshot, hold and reservation after locking, and proves a
+unique mapping from original named/pending ordinals to the current party,
+including previously named adults. After claiming the request version, it
+reconciles provisional held guest/night and booking cents to the accepted
+snapshot before replacing anonymous slots (#3794). Existing guest/night ids,
+member links, consent, dietary and bed identities stay intact. A lost claim
+writes nothing; any failure rolls back prices, names and reservations together.
+Night updates group exact proven ids by cents and provenance and require every
+row to be affected; statement count depends on distinct prices, not stay length.
+The shared naming/approval proof refuses any held night with a NULL price
+(`INV-MOD-028`, `INV-MOD-036`); the naming update also excludes NULL rows and
+rolls back if its affected count falls short. Accepted terms never fill a blank.
+Accepted terms and settlement remain unchanged; this writer adds no lock tier
+or provider call. Active matching identities use canonical seasonal membership
+policy, so login-disabled member-rate adults still require terms review.
+Terminal decline and requester-cancel claims clear the pending adult count;
+quote snapshots remain unchanged. A generic hold release retains the request's
+count so that an open request can be held again. School and general approval
+both refuse a nonzero pending count or residual
+reservation under their own global-then-lodge locks. School approval reuses the
+accepted-party proof before claiming conversion, retaining per-person cents
+and pairing rewrites with proven held guest ids after naming shifts request
+positions. Missing or inconsistent accepted snapshots refuse conversion before
+effects. Provider calls are outside
+these transactions.
 
 ### Provisional reservations for held policy-exception requests (#2365)
 

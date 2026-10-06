@@ -147,6 +147,7 @@ import {
 } from "@/lib/booking-request-correction-hold";
 import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-queue-participants";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { wholeStayCapacityRanges } from "@/lib/whole-stay-capacity-ranges";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -160,6 +161,7 @@ import {
 } from "@/lib/school-organisation-preview";
 import { generateSchoolGuests } from "@/lib/school-booking-request";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { isPendingSchoolAdultsWriteEnabled } from "@/lib/pending-school-adults-gate";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 
 /**
@@ -169,9 +171,10 @@ import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
  * NEW is excluded because the requester has not confirmed their own email
  * address yet, so there is no one to have asked for the correction; every
  * terminal and converted state is excluded because there is nothing left to
- * correct. That this is the same six states a request can be DECLINED in is a
- * consequence of both rules meaning "live and undecided", not a shared list —
- * so it is written out rather than borrowed.
+ * correct. ACCEPTED is excluded because the requester has agreed the quote:
+ * the officer approves or declines it instead (#3415). Decline therefore takes
+ * these six states plus ACCEPTED — the two lists differ, so this one is
+ * written out rather than borrowed.
  */
 export const CORRECTABLE_BOOKING_REQUEST_STATUSES = [
   BookingRequestStatus.VERIFIED,
@@ -334,6 +337,16 @@ export async function correctBookingRequest(
   const guests: BookingRequestGuest[] = school
     ? generateSchoolGuests({ teachers, childCounts: school.childCounts })
     : (input.guests ?? []);
+  const pendingAdultCount = school?.pendingAdultCount ?? 0;
+  if (!Number.isSafeInteger(pendingAdultCount) || pendingAdultCount < 0) {
+    throw new BookingRequestError(
+      "Pending adult count must be a whole number of zero or more.",
+      422,
+    );
+  }
+  if (pendingAdultCount > 0 && !isPendingSchoolAdultsWriteEnabled()) {
+    throw new BookingRequestError("Pending adult reservations are disabled until the maintenance-window cutover is complete.", 409);
+  }
   if (guests.length === 0) {
     throw new BookingRequestError("A request needs at least one guest.", 422);
   }
@@ -341,7 +354,7 @@ export async function correctBookingRequest(
   const lodgeCapacity = request.lodgeId
     ? await getLodgeCapacity(request.lodgeId)
     : await getDefaultLodgeCapacity();
-  if (guests.length > lodgeCapacity) {
+  if (guests.length + pendingAdultCount > lodgeCapacity) {
     throw new BookingRequestError(
       lodgeGuestLimitMessage(lodgeCapacity, (limit) => `That party is larger than the lodge capacity of ${limit} guests.`),
       422,
@@ -371,6 +384,9 @@ export async function correctBookingRequest(
   mark("checkIn", request.checkIn.getTime() !== checkIn.getTime());
   mark("checkOut", request.checkOut.getTime() !== checkOut.getTime());
   mark("guests", guestListKey(storedGuests) !== guestListKey(guests));
+  if (school) {
+    mark("pendingAdultCount", request.pendingAdultCount !== pendingAdultCount);
+  }
   mark("contactFirstName", request.contactFirstName !== contactFirstName);
   mark("contactLastName", request.contactLastName !== contactLastName);
   mark("contactEmail", request.contactEmail.toLowerCase() !== contactEmail);
@@ -472,6 +488,7 @@ export async function correctBookingRequest(
           ? {
               schoolName,
               teachers: teachers as unknown as Prisma.InputJsonValue,
+              pendingAdultCount,
               cateringPreference: school.cateringPreference,
             }
           : {}),
@@ -632,14 +649,8 @@ export async function correctBookingRequest(
     lodgeId,
     checkIn,
     checkOut,
-    guests.map((_guest, index) => ({
-      stayStart: checkIn,
-      stayEnd: checkOut,
-      // A changed party cleared its member links above.
-      memberId: partyChanged
-        ? null
-        : (storedLinks.find((link) => link.guestIndex === index)?.memberId ?? null),
-    })),
+    wholeStayCapacityRanges(checkIn, checkOut, guests.map((_guest, index) => // links cleared above
+      partyChanged ? null : (storedLinks.find((link) => link.guestIndex === index)?.memberId ?? null))),
   );
 
   return {

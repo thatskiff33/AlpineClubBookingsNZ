@@ -72,6 +72,8 @@ const correctionSchema = z.object({
         .max(200)
         .refine(noCrlf, "School name cannot contain line breaks"),
       teachers: z.array(schoolTeacherSchema).min(1).max(50),
+      // #3413: a count only. No anonymous teacher/guest identity is accepted.
+      pendingAdultCount: z.number().int().min(0).max(200),
       childCounts: schoolChildCountsSchema,
       cateringPreference: z.enum(["CATERED", "NON_CATERED", "QUOTE_BOTH"]),
       schoolRecord: schoolRecordAcknowledgementSchema,
@@ -126,6 +128,7 @@ export async function POST(
               lastName: teacher.lastName,
               email: teacher.email ?? null,
             })),
+            pendingAdultCount: input.school.pendingAdultCount,
             childCounts: input.school.childCounts,
             cateringPreference: input.school.cateringPreference,
             schoolRecord: input.school.schoolRecord,

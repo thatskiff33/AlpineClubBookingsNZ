@@ -7,7 +7,7 @@
  * shape that has changed, never leaves beds held for the old one, and — since
  * #3367 — never quietly moves a school onto a different Xero customer.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BookingRequestQuoteStatus,
   BookingRequestStatus,
@@ -123,6 +123,7 @@ function schoolRequestRow(overrides: Record<string, unknown> = {}) {
     ],
     schoolName: "Tokora Primary School",
     teachers: [{ firstName: "Ann", lastName: "Baker", email: "ann@example.test" }],
+    pendingAdultCount: 0,
     cateringPreference: SchoolCateringPreference.QUOTE_BOTH,
     linkedGuestMembers: [],
     message: null,
@@ -157,6 +158,7 @@ function schoolInput(
       teachers: [
         { firstName: "Ann", lastName: "Baker", email: "ann@example.test" },
       ],
+      pendingAdultCount: 0,
       childCounts: { CHILD: 3 },
       cateringPreference: SchoolCateringPreference.QUOTE_BOTH,
       schoolRecord: { outcome: "new" },
@@ -306,6 +308,7 @@ describe("corrupt stored data is refused rather than guessed", () => {
 });
 
 describe("the corrected values themselves", () => {
+  afterEach(() => vi.unstubAllEnvs());
   it("refuses a stay that ends before it starts", async () => {
     stubRequest(schoolRequestRow());
     await expect(
@@ -333,6 +336,40 @@ describe("the corrected values themselves", () => {
         }),
       ),
     ).rejects.toThrow(/larger than the lodge capacity/i);
+  });
+
+  it("counts unnamed adults for capacity and writes their count through the guarded correction", async () => {
+    vi.stubEnv("PENDING_SCHOOL_ADULTS_ENABLED", "1");
+    vi.stubEnv("BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED", "1");
+    stubRequest(schoolRequestRow());
+    await correctBookingRequest(
+      schoolInput({
+        school: { ...schoolInput().school!, pendingAdultCount: 2 },
+      }),
+    );
+    expect(claimData()).toMatchObject({ pendingAdultCount: 2 });
+  });
+
+  it("refuses pending-adult writes before the old web and workers are stopped", async () => {
+    stubRequest(schoolRequestRow());
+    await expect(correctBookingRequest(schoolInput({
+      school: { ...schoolInput().school!, pendingAdultCount: 1 },
+    }))).rejects.toThrow(/maintenance-window cutover/);
+    expect(prisma.bookingRequest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses unnamed adults that make the party exceed lodge capacity", async () => {
+    vi.stubEnv("PENDING_SCHOOL_ADULTS_ENABLED", "1");
+    vi.stubEnv("BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED", "1");
+    stubRequest(schoolRequestRow());
+    await expect(
+      correctBookingRequest(
+        schoolInput({
+          school: { ...schoolInput().school!, pendingAdultCount: 200 },
+        }),
+      ),
+    ).rejects.toThrow(/larger than the lodge capacity/i);
+    expect(prisma.bookingRequest.updateMany).not.toHaveBeenCalled();
   });
 
   it("refuses a school correction with no teacher attending", async () => {

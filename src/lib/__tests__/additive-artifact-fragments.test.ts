@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
  *
  * ## The rule this enforces
  *
- * `AGENTS.md` -> "Change Discipline": an artifact every lane adds an entry to is
+ * `AGENTS.md` -> "Change discipline": an artifact every lane adds an entry to is
  * a directory of per-lane fragments, never one shared file - a lane adds a file
  * rather than editing a shared list, so two lanes cannot collide. A flat list
  * whose entries never relate to each other may instead be declared `merge=union`,
@@ -122,7 +122,7 @@ const ADDITIVE_ARTIFACTS: readonly AdditiveArtifact[] = [
  */
 const BLIND_SPOT = [
   "",
-  "The rule (AGENTS.md -> Change Discipline): an artifact every lane adds an",
+  "The rule (AGENTS.md -> Change discipline): an artifact every lane adds an",
   "entry to is a directory of per-lane fragments, never one shared file. A lane",
   "adds a file rather than editing a shared list, so two lanes cannot collide.",
   "A flat list of unrelated lines may instead be declared `merge=union`.",
