@@ -150,6 +150,7 @@ import {
 } from "@/lib/member-dietary-booking-writes";
 import type { ClubFormat } from "@/lib/club-format";
 import {
+  assertFinishedStayCorrectionCall,
   classifyFinishedStayChangeFeeRule,
   finishedStayNoticeDay,
   type FinishedStayChangeFeeRule,
@@ -832,50 +833,21 @@ export async function modifyBookingBatch({
    */
   preTransaction?: BatchModificationPreTransaction;
   /**
-   * #3750: execute an officer-approved LOCKED_PERIOD change request on a stay
-   * that has FINISHED (fully past, or `COMPLETED`).
-   *
-   * WHAT IT CHANGES, and it is deliberately little — everything else is the
-   * ordinary batch edit, so pricing, settlement, the additional-payment ask, the
-   * Xero supplementary documents, the ledger lines and the member email all have
-   * their one existing home:
-   *
-   *  - the edit policy admits the finished stay (`finished-stay-correction`
-   *    mode), with only the fields a change request can carry and every night
-   *    still before today (`resolveTargetDates`);
-   *  - an over-capacity past night warns and asks the officer to confirm, as the
-   *    #1668 date override does, and a whole-lodge hold still refuses;
-   *  - the owner's fee rule: an add-only correction carries no change fee, and
-   *    anything else is priced as a same-day (0-day) notice change
-   *    (`booking-finished-stay-correction.ts`);
-   *  - the Xero lock-date decision is taken over the RESOLVED envelope, because a
-   *    stay-range change can re-date the primary invoice without naming a date.
-   *
-   * WHY A SERVICE ARGUMENT AND NOT A FIELD ON `BatchModifyInput`: `input` is the
-   * parsed request body on both member-facing save routes, and this lifts the
-   * fully-past edit lock. It REQUIRES `tx` and `preTransaction` (the executor
-   * owns the approval transaction that claims the request) and an ADMIN actor,
-   * and it never combines with the date-only `adminOverride`.
-   * `finished-stay-correction-call-sites.test.ts` pins
-   * `booking-change-request-execution.ts` as the only caller.
+   * #3750: execute an officer-approved LOCKED_PERIOD change request on a
+   * FINISHED stay. A service argument, never a body field; requires `tx`,
+   * `preTransaction` and an ADMIN actor, and never combines with
+   * `adminOverride`. What it changes, and why so little, is
+   * `booking-finished-stay-correction.ts`; the executor is its only caller
+   * (`finished-stay-correction-call-sites.test.ts`).
    */
   finishedStayCorrection?: FinishedStayCorrection;
 }): Promise<BatchModificationResponse> {
   if (finishedStayCorrection) {
-    if (!callerTx || !preTransaction) {
-      throw new Error(
-        "#3750: a finished-stay correction runs only inside the approval " +
-          "transaction that claims its change request (`tx` and `preTransaction`).",
-      );
-    }
-    if (actor.role !== "ADMIN") {
-      throw new ApiError("Finished-stay corrections are applied by an officer", 403);
-    }
-    if (input.adminOverride) {
-      throw new Error(
-        "#3750: a finished-stay correction is not a date-only admin override.",
-      );
-    }
+    assertFinishedStayCorrectionCall({
+      hasCallerTransaction: Boolean(callerTx && preTransaction),
+      actorRole: actor.role,
+      adminOverride: Boolean(input.adminOverride),
+    });
   }
   if (callerTx && !preTransaction) {
     throw new Error(

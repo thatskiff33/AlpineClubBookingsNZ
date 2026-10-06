@@ -23,6 +23,20 @@ import { useClubTime } from "@/components/club-time-provider";
 import { formatStayDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
+import {
+  decisionToastMessage,
+  FinishedStayApprovalNotice,
+  FinishedStaySettlementField,
+  FinishedStayUnlinkedNote,
+  OverCapacityConfirmation,
+  type OverCapacityNight,
+} from "@/components/admin/booking-requests/booking-change-request-finished-stay";
+import {
+  EMPTY_DECISION_DRAFT,
+  statusBadgeClass,
+  type BookingChangeRequestData,
+  type DecisionDraft,
+} from "@/components/admin/booking-requests/booking-change-request-panel-model";
 
 type RequestFilter = "REQUESTED" | "APPROVED" | "REJECTED" | "ALL";
 
@@ -37,89 +51,6 @@ function isRequestFilter(value: string | null): value is RequestFilter {
   return requestFilters.has(value as RequestFilter);
 }
 
-interface BookingChangeRequestData {
-  id: string;
-  bookingId: string;
-  requestedByMemberId: string;
-  status: "REQUESTED" | "APPROVED" | "REJECTED";
-  /** The optimistic token the decision is checked against (#3750). */
-  version?: number;
-  /**
-   * #3750: the booking's stay has finished, so approving APPLIES the request
-   * (owner decision, 6 Oct 2026) rather than acknowledging it. Answered by the
-   * list route from the same rule the decision route uses.
-   */
-  executesOnApproval?: boolean;
-  requestedChanges: {
-    requested?: {
-      summary?: string | null;
-    };
-    payment?: {
-      id?: string;
-      amountCents?: number;
-      refundedAmountCents?: number;
-      status?: string;
-      xeroInvoiceId?: string | null;
-      xeroInvoiceNumber?: string | null;
-    } | null;
-  };
-  reason: string | null;
-  /**
-   * MEMBER-VISIBLE (#2562). Rendered to the member verbatim on their booking page
-   * under "Change Requests", so the field below is labelled for that audience
-   * before a decision is submitted.
-   */
-  adminNotes: string | null;
-  /** The officer's PRIVATE note (#2562) — admin surfaces only, never the member. */
-  internalNotes: string | null;
-  reviewedAt: string | null;
-  createdAt: string;
-  requestedBy: {
-    id: string;
-    firstName: string;
-    lastName: string;
-    email: string;
-  };
-  reviewedBy: {
-    id: string;
-    firstName: string;
-    lastName: string;
-  } | null;
-  linkedModification: {
-    id: string;
-    createdAt: string;
-    modificationType: string;
-    priceDiffCents: number;
-    changeFeeCents: number;
-  } | null;
-  booking: {
-    id: string;
-    checkIn: string;
-    checkOut: string;
-    status: string;
-    finalPriceCents: number;
-    // #3369: NULLABLE — a school booking has no member, and an officer can
-    // raise a locked-period change request on one. Declared non-null here, a
-    // hand-written copy of an API shape that was right, it satisfied the
-    // compiler while the render threw inside the `.map()`.
-    member: {
-      id: string;
-      firstName: string;
-      lastName: string;
-      email: string;
-    } | null;
-    organisation: { name: string; email: string | null } | null;
-    payment: {
-      id: string;
-      amountCents: number;
-      refundedAmountCents: number;
-      status: string;
-      xeroInvoiceId: string | null;
-      xeroInvoiceNumber: string | null;
-    } | null;
-  };
-}
-
 /**
  * A real INSTANT, in the club's PERSISTED timezone (CT-4, #2870;
  * INV-CONFIG-002) rather than the container's `TZ`. A hook because that setting
@@ -131,11 +62,6 @@ function useInstantFormatter() {
     value ? clubTime.instantDateTime(new Date(value)) : null;
 }
 
-function statusBadgeClass(status: BookingChangeRequestData["status"]) {
-  if (status === "REQUESTED") return "border-warning-6 bg-warning-3 text-warning-11";
-  if (status === "APPROVED") return "border-success-6 bg-success-3 text-success-11";
-  return "border-border bg-muted text-muted-foreground";
-}
 
 interface BookingChangeRequestsPanelProps {
   basePath?: string;
@@ -144,46 +70,7 @@ interface BookingChangeRequestsPanelProps {
   canEdit?: boolean;
 }
 
-/**
- * One request's un-submitted decision, as the officer has typed it so far.
- *
- * A DRAFT PER REQUEST, keyed by request id, and that is the whole design (#2562
- * review). The three fields used to share one state slot with a `reviewingId`
- * marker naming their owner, and every field's onChange moved the marker — so a
- * keystroke in the internal note or the modification id on one row claimed
- * ownership of the OTHER row's half-written member-facing explanation: the second
- * card displayed it, its decision buttons unlocked on it, and submitting posted
- * one member a sentence written about somebody else's request. On this table
- * `adminNotes` is read verbatim by the member on their own booking page, so that
- * was a privacy failure, not a cosmetic one. Keyed state makes the row-isolation
- * invariant structural: there is no shared slot left for a draft to leak through,
- * whichever field is typed in and in whatever order.
- */
-interface DecisionDraft {
-  /** The MEMBER-FACING decision explanation (`adminNotes`). */
-  adminNotes: string;
-  /** The officer's PRIVATE note. Never shown to the member. */
-  internalNotes: string;
-  linkedModificationId: string;
-  /**
-   * #3750: where a reduction goes when an executed approval lowers the price
-   * and the club's policy offers a choice. "card" is back the way it was paid.
-   */
-  settlementMethod: "card" | "credit";
-}
 
-const EMPTY_DECISION_DRAFT: DecisionDraft = {
-  adminNotes: "",
-  internalNotes: "",
-  linkedModificationId: "",
-  settlementMethod: "card",
-};
-
-/** #3750: the nights an executed approval would overbook, awaiting confirmation. */
-type OverCapacityNight = { date: string; availableBeds: number };
-
-const selectClasses =
-  "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
 
 const EMPTY_SEARCH_PARAMS: Record<string, string> = {};
 
@@ -379,15 +266,11 @@ export function BookingChangeRequestsPanel({
       // decision's business.
       clearDecisionDraft(request.id);
       toast.success(
-        status !== "APPROVED"
-          ? "Request rejected"
-          : data.execution?.executed
-            ? data.execution.followUpFailed
-              ? "Request approved and applied to the booking, but some follow-up work (the payment request, the member's email or Xero) did not complete. Check the booking."
-              : "Request approved and applied to the booking. The member is emailed the change and any amount due."
-            : trimmedModificationId
-              ? "Request approved and linked to the booking modification."
-              : "Request acknowledged as approved. Apply the actual change on the booking page if it is still required."
+        decisionToastMessage({
+          status,
+          execution: data.execution,
+          linkedModificationId: trimmedModificationId,
+        }),
       );
       await fetchRequests();
     } catch (err) {
@@ -560,20 +443,7 @@ export function BookingChangeRequestsPanel({
                   {request.status === "REQUESTED" ? (
                     <div className="space-y-3 rounded-md border border-border p-3">
                       {request.executesOnApproval ? (
-                        <p className="text-xs text-muted-foreground">
-                          This stay has finished, so approving applies the
-                          request to the booking: the guests and dates it asks
-                          for are changed, added guests are priced at the
-                          stay&rsquo;s season rates, and the member is emailed
-                          the change with any amount due (card or internet
-                          banking). Adding guests carries no change fee; a
-                          removal or swap is charged as a same-day change under
-                          the cancellation policy, and any refund goes back the
-                          way it was paid unless you choose account credit
-                          below. If the booking has changed since the request
-                          was made, nothing is applied and the request stays
-                          pending.
-                        </p>
+                        <FinishedStayApprovalNotice />
                       ) : (
                       <p className="text-xs text-muted-foreground">
                         Marking a request approved only acknowledges the review.
@@ -648,27 +518,14 @@ export function BookingChangeRequestsPanel({
                         />
                       </div>
                       {request.executesOnApproval ? (
-                        <div className="space-y-1">
-                          <Label htmlFor={`settlement-method-${request.id}`}>
-                            If the change lowers the price
-                          </Label>
-                          <select
-                            id={`settlement-method-${request.id}`}
-                            className={selectClasses}
-                            value={decisionDraftFor(request.id).settlementMethod}
-                            disabled={!canEdit}
-                            title={canEdit === false ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
-                            onChange={(event) =>
-                              updateDecisionDraft(request.id, {
-                                settlementMethod:
-                                  event.target.value === "credit" ? "credit" : "card",
-                              })
-                            }
-                          >
-                            <option value="card">Refund the way it was paid</option>
-                            <option value="credit">Hold it as account credit</option>
-                          </select>
-                        </div>
+                        <FinishedStaySettlementField
+                          requestId={request.id}
+                          value={decisionDraftFor(request.id).settlementMethod}
+                          canEdit={canEdit}
+                          onChange={(settlementMethod) =>
+                            updateDecisionDraft(request.id, { settlementMethod })
+                          }
+                        />
                       ) : (
                       <div className="space-y-1">
                         <Label htmlFor={`linked-modification-${request.id}`}>
@@ -689,37 +546,26 @@ export function BookingChangeRequestsPanel({
                       </div>
                       )}
                       {overCapacityNights ? (
-                        <div
-                          role="alert"
-                          className="space-y-2 rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11"
-                        >
-                          <p>
-                            Applying this change puts the lodge over capacity
-                            {overCapacityNights.length > 0
-                              ? ` on ${overCapacityNights
-                                  .map((night) => formatStayDate(night.date, format))
-                                  .join(", ")}`
-                              : ""}
-                            . Confirm only if these guests really stayed those
-                            nights.
-                          </p>
-                          <ViewOnlyActionButton
-                            canEdit={canEdit}
-                            describeReason={false}
-                            size="sm"
-                            onClick={() =>
-                              reviewRequest(request, "APPROVED", {
-                                confirmOverCapacity: true,
-                              })
-                            }
-                            disabled={
-                              decisionInFlight.has(request.id) ||
-                              !decisionDraftFor(request.id).adminNotes.trim()
-                            }
-                          >
-                            Confirm overbooking and apply
-                          </ViewOnlyActionButton>
-                        </div>
+                        <OverCapacityConfirmation
+                          nights={overCapacityNights}
+                          format={format}
+                          confirmButton={
+                            <ViewOnlyActionButton
+                              canEdit={canEdit}
+                              describeReason={false}
+                              size="sm"
+                              onClick={() =>
+                                reviewRequest(request, "APPROVED", { confirmOverCapacity: true })
+                              }
+                              disabled={
+                                decisionInFlight.has(request.id) ||
+                                !decisionDraftFor(request.id).adminNotes.trim()
+                              }
+                            >
+                              Confirm overbooking and apply
+                            </ViewOnlyActionButton>
+                          }
+                        />
                       ) : null}
                       {/* Gated on THIS row's own draft (#2562 review). The original
                           rule was `reviewingId === request.id && !adminNotes.trim()`,
@@ -808,16 +654,8 @@ export function BookingChangeRequestsPanel({
                         </p>
                       ) : request.status === "APPROVED" &&
                         request.executesOnApproval ? (
-                        // #3750: a finished stay cannot be edited from the
-                        // booking page, so never point the officer there. An
-                        // approval with no link on a finished stay predates
-                        // approvals that apply the change.
-                        <p className="mt-2 text-warning-11">
-                          No booking modification linked. This request was
-                          acknowledged without changing the booking, and the stay
-                          has finished, so the booking page cannot apply it. A
-                          correction now has to be handled outside this queue.
-                        </p>
+                        // #3750: never point at the booking page for a finished stay.
+                        <FinishedStayUnlinkedNote />
                       ) : request.status === "APPROVED" ? (
                         <p className="mt-2 text-warning-11">
                           No booking modification linked. The booking edit may

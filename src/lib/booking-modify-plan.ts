@@ -1388,12 +1388,7 @@ function resolveModifyReviewUpdate({
   };
 }
 
-/**
- * The refusal when no ACTIVE season prices a night the edit has to price.
- * Exported (#3750) so the finished-stay change-request executor can recognise
- * it and explain the likely cause — a past season switched off since the stay —
- * rather than match the sentence by hand (`INV-SSOT-001`).
- */
+/** No ACTIVE season prices a night; exported so #3750's approval can explain it (`INV-SSOT-001`). */
 export const NO_SEASON_RATE_MESSAGE = "No season rate found for the requested dates";
 
 export async function loadActiveSeasonRates(

@@ -88,12 +88,13 @@ describe("finishedStayCorrection call sites (#3750)", () => {
 
   it("the service refuses it outside a caller transaction, from a non-officer, or with the date override", () => {
     const service = read(SERVICE);
-    expect(service).toContain("if (!callerTx || !preTransaction) {");
-    expect(service).toContain('if (actor.role !== "ADMIN") {');
-    expect(service).toContain(
-      '"#3750: a finished-stay correction is not a date-only admin override."',
-    );
+    expect(service).toContain("assertFinishedStayCorrectionCall({");
+    expect(service).toContain("hasCallerTransaction: Boolean(callerTx && preTransaction),");
     // And refuses when the policy did not actually engage the mode.
     expect(service).toContain("if (!dates.isFinishedStayCorrection) {");
+    const guard = read("src/lib/booking-finished-stay-correction.ts");
+    expect(guard).toContain("if (!call.hasCallerTransaction) {");
+    expect(guard).toContain('if (call.actorRole !== "ADMIN") {');
+    expect(guard).toContain("if (call.adminOverride) {");
   });
 });

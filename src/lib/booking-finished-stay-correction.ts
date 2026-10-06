@@ -23,6 +23,7 @@
  *    than the club's own same-day tier, and not what the owner decided.
  */
 
+import { ApiError } from "@/lib/api-error";
 import { calendarDateOfDateOnlyInstant, type CalendarDate } from "@/lib/club-time";
 import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
@@ -35,6 +36,46 @@ import { storedDateOnly } from "@/lib/stored-calendar-day";
  */
 export interface FinishedStayCorrection {
   readonly changeRequestId: string;
+}
+
+/**
+ * The three conditions `modifyBookingBatch` holds a finished-stay correction to.
+ *
+ * WHAT IT CHANGES in the batch edit, and it is deliberately little — everything
+ * else is the ordinary edit, so pricing, settlement, the additional-payment ask,
+ * the Xero documents, the ledger lines and the member email keep their one home:
+ * the edit policy admits the finished stay with only the fields a change request
+ * carries (`resolveTargetDates`); an over-capacity past night warns and asks the
+ * officer to confirm, as the #1668 date override does, while a whole-lodge hold
+ * still refuses; the fee rule below; and the Xero lock-date decision is taken
+ * over the RESOLVED envelope, because a stay-range change can re-date the
+ * primary invoice without naming a date.
+ *
+ * WHY THESE CONDITIONS. `input` is the parsed request body on the member-facing
+ * save routes, and this lifts the fully-past edit lock, so it is a service
+ * argument instead. It runs only inside the executor's approval transaction
+ * (which claims the request in the same commit, so it needs `tx` and the
+ * pre-transaction reads, `INV-LOCK-004`), only for an officer, and never with
+ * the date-only `adminOverride`, whose conservative Xero guard has no
+ * pre-resolved form.
+ */
+export function assertFinishedStayCorrectionCall(call: {
+  readonly hasCallerTransaction: boolean;
+  readonly actorRole: string;
+  readonly adminOverride: boolean;
+}): void {
+  if (!call.hasCallerTransaction) {
+    throw new Error(
+      "#3750: a finished-stay correction runs only inside the approval " +
+        "transaction that claims its change request (`tx` and `preTransaction`).",
+    );
+  }
+  if (call.actorRole !== "ADMIN") {
+    throw new ApiError("Finished-stay corrections are applied by an officer", 403);
+  }
+  if (call.adminOverride) {
+    throw new Error("#3750: a finished-stay correction is not a date-only admin override.");
+  }
 }
 
 /**
