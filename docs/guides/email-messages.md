@@ -295,12 +295,16 @@ Two consequences worth knowing before you edit one:
 - **The Daily digest's `{{serverVersionNote}}` is empty on an ordinary day.** It
   carries the whole "syncing with the Alpine Central Server is paused" sentence
   only while the server is on a different software version from this site, and
-  nothing at all otherwise. The two numbers behind it are also available on
-  their own as `{{serverVersionExpected}}` and `{{serverVersionActual}}`, empty
-  on the same days. A Lodge Operations editor who does not receive the digest is
-  sent this template with only those three tokens filled — the alert counts are
-  not supplied to them, so an override must not assume `{{totalAlerts}}` has a
-  value on every send.
+  nothing at all otherwise — so it is optional in a digest override: leave it
+  out and the digest simply never mentions the server. The two numbers behind
+  it are also available on their own as `{{serverVersionExpected}}` and
+  `{{serverVersionActual}}`, empty on the same days.
+- **The version-only notice is a separate message, *Admin Server Version
+  Paused*.** A Lodge Operations editor who does not receive the Daily digest is
+  sent this template instead, carrying only the three tokens above and no alert
+  counts. It has its own subject and wording, which the club edits (and can
+  mute under Delivery Rules) on its own: nothing done to the Daily digest's
+  wording changes it, and nothing done to it changes the digest.
 - **The party listing on the member-guest emails is one block, heading included.**
   `{{partyListNote}}` produces the "Everyone on this booking" heading and the list
   of names together. You can move that block or leave it out; you cannot change

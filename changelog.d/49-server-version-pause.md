@@ -21,7 +21,10 @@
   entry every day until the two match — to the digest's own readers and to
   everyone with Lodge Operations edit access, who can switch that entry off
   under **Notification recipients**. Someone who holds Lodge Operations but
-  not the digest receives only that entry, never the digest's alert counts.
+  not the digest receives a separate message, *Admin Server Version Paused*,
+  carrying only that entry and never the digest's alert counts; it has its
+  own wording under **Email Messages**, so editing the digest cannot change
+  or hide it.
 
   Upgrade whichever side is behind and syncing resumes by itself: the next
   nightly run, Upload, share or pull records the new answer and carries on.

@@ -90,7 +90,7 @@ offered to them at all:
 | Booking review required | Bookings | A booking needs admin review before confirmation |
 | Member delete requests | Membership | A hard-delete of a member is requested (two-admin rule) |
 | Maintenance reports | Lodge Operations | Somebody reports a physical fault at a lodge |
-| Central server version | Lodge Operations | Every day, inside the Daily digest, while syncing with the Alpine Central Server is paused because the server is on a different software version from this site. This is the one entry that reaches two audiences: the digest's own readers get it inside their digest, and a Lodge Operations editor who does not receive the digest gets a message carrying **only** this entry — never the digest's alert counts. Somebody in both groups gets one email, the digest |
+| Central server version | Lodge Operations | Every day, inside the Daily digest, while syncing with the Alpine Central Server is paused because the server is on a different software version from this site. This is the one entry that reaches two audiences: the digest's own readers get it inside their digest, and a Lodge Operations editor who does not receive the digest gets a separate message, *Admin Server Version Paused* under [Email Messages](email-messages.md), carrying **only** this entry — never the digest's alert counts — with its own wording and its own delivery rule. Somebody in both groups gets one email, the digest |
 
 ### Always-on alerts
 

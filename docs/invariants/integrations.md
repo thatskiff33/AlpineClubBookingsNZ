@@ -503,8 +503,8 @@ server-bound transfer, both ways, is refused locally.
 - **Shown, and resumes by itself.** The nightly sync checks before its claim,
   so a matching answer resumes syncing with no manual step; the setup page,
   the lodges panel and the Daily digest show the two numbers while they
-  differ, and the digest's lodge-only recipients get only that entry
-  (`INV-PRIV` masking).
+  differ, and a lodge-only recipient gets only that entry, as its own
+  template (`INV-PRIV` masking).
 
 Pinned by `servernz-api-version.test.ts`, `servernz-api-version-gate.test.ts`,
 `servernz-version-check.test.ts`, `cron-alpine-server-sync.test.ts`,

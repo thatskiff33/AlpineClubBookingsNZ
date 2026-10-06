@@ -2,6 +2,7 @@ import {
   adminDailyDigestTemplate,
   adminIssueReportTemplate,
   adminMaintenanceReportTemplate,
+  adminServerVersionPausedTemplate,
   type AdminDigestCounts,
   type AdminDigestServerVersion,
 } from "@/lib/email-templates/admin-ops";
@@ -16,20 +17,24 @@ import logger from "@/lib/logger";
 import { shouldSendAdminSystemEmail } from "@/lib/notification-delivery-policies";
 
 const DAILY_DIGEST_TEMPLATE = "admin-daily-digest";
+const SERVER_VERSION_PAUSED_TEMPLATE = "admin-server-version-paused";
 
 /**
  * N-13: Admin daily digest - and, since #49, the "central server version"
  * entry that rides it while syncing with the Alpine Central Server is paused.
  *
- * TWO AUDIENCES, TWO RENDERS, ONE TEMPLATE NAME. The digest's own readers
- * (`adminDailyDigest`, Admin Overview edit) get the full digest: the counts and,
- * when paused, the version entry. Lodge Operations editors (`adminServerVersion`)
- * who are NOT digest readers get a second render that carries ONLY the version
- * entry - the counts are cross-area alert data their role does not hold, so
- * neither the HTML nor `templateData` (what an admin override renders from)
- * carries a count key for them, not even a zero. A member in both audiences
- * is in the first set and gets exactly one email. When the versions match the
- * second audience is not resolved at all: the entry is absent, not empty.
+ * TWO AUDIENCES, TWO TEMPLATES (owner decision "second template"). The
+ * digest's own readers (`adminDailyDigest`, Admin Overview edit) get the full
+ * digest, `admin-daily-digest`: the counts and, when paused, the version entry.
+ * Lodge Operations editors (`adminServerVersion`) who are NOT digest readers
+ * get `admin-server-version-paused`, a separate message with its own default
+ * subject and body: the counts are cross-area alert data their role does not
+ * hold, so neither its HTML nor its `templateData` (what an admin override
+ * renders from) carries a count key, not even a zero - and because it is its
+ * own template, a club's override of the digest can neither garble it into
+ * blank counts nor hide it; the club edits and mutes it on its own. A member in
+ * both audiences is in the first set and gets exactly one email. When the
+ * versions match the second audience is not resolved at all.
  */
 export async function sendAdminDailyDigestAlert(input: {
   sections: AdminDigestCounts;
@@ -84,6 +89,22 @@ export async function sendAdminDailyDigestAlert(input: {
 
   if (!serverVersion) return;
 
+  // Its own delivery rule: a club mutes or keeps this message on its own.
+  const pausedDelivery = await shouldSendAdminSystemEmail({
+    templateName: SERVER_VERSION_PAUSED_TEMPLATE,
+  });
+  if (!pausedDelivery.send) {
+    logger.info(
+      {
+        templateName: SERVER_VERSION_PAUSED_TEMPLATE,
+        deliveryMode: pausedDelivery.mode,
+        reason: pausedDelivery.reason,
+      },
+      "Skipped admin email by delivery policy",
+    );
+    return;
+  }
+
   const alreadySent = new Set(digestEmails);
   const lodgeOnlyEmails = (await getAdminAlertEmails("adminServerVersion")).filter(
     (email) => !alreadySent.has(email),
@@ -92,10 +113,11 @@ export async function sendAdminDailyDigestAlert(input: {
 
   await sendAdminAlertTo({
     emails: lodgeOnlyEmails,
+    // Static, purpose-written: no count and no number in the subject.
     subject: "Alpine Central Server version differs - syncing is paused",
-    // No counts spread here, on purpose: see the docblock.
-    html: await renderEmailHtml(() => adminDailyDigestTemplate({ serverVersion })),
-    templateName: DAILY_DIGEST_TEMPLATE,
+    html: await renderEmailHtml(() => adminServerVersionPausedTemplate(serverVersion)),
+    templateName: SERVER_VERSION_PAUSED_TEMPLATE,
+    // Exactly the three version tokens: see the docblock.
     templateData: versionTokens,
     preferenceKey: "adminServerVersion",
   });

@@ -104,6 +104,13 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // LOCKED_DELIVERY_TEMPLATE_NAMES: no money moves, and a club that would rather
   // read the queue than the mail must be allowed to mute it.
   "admin-maintenance-report",
+  // #49 (owner decision "second template"): the version-only notice a Lodge
+  // Operations editor who does not receive the Daily digest is sent while
+  // syncing with the Alpine Central Server is paused. Its own template so a
+  // club's override of the digest cannot garble or hide it; sendAdminAlertTo
+  // under the adminServerVersion preference and the club-wide delivery rules.
+  // Not delivery-locked: no money moves.
+  "admin-server-version-paused",
   "admin-membership-cancellation-request",
   "admin-account-deletion-requested",
   "admin-member-archive-requested",
@@ -728,6 +735,11 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   "admin-xero-reconciliation-report": {
     triggerSummary: "Scheduled Xero reconciliation report",
     frequency: "When the Xero reconciliation cron runs",
+  },
+  "admin-server-version-paused": {
+    triggerSummary:
+      "Syncing with the Alpine Central Server is paused because the server is on a different software version from this site; sent to Lodge Operations editors who do not receive the Daily digest (digest readers get the same entry inside their digest)",
+    frequency: "Daily, with the digest, while the two versions differ",
   },
   "admin-credit-sync-drift": {
     triggerSummary:

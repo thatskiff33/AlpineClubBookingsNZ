@@ -61,38 +61,43 @@ function serverVersionEntry(version: AdminDigestServerVersion): string {
 }
 
 /**
- * The digest body. Two shapes (#49):
- *
- *  - with the counts: the ordinary digest, byte-identical to what shipped
- *    before #49 when `serverVersion` is absent, plus the version entry after
- *    the total when it is present;
- *  - WITHOUT the counts (`totalAlerts` absent): the version entry alone, for a
- *    Lodge Operations editor who does not receive the digest. No count, not
- *    even a zero, is rendered on that path, because the counts are cross-area
- *    alert data their role does not hold.
+ * The version-only notice (#49, owner decision "second template"): what a
+ * Lodge Operations editor who does NOT receive the Daily digest is sent while
+ * syncing is paused. Its OWN template, so a club's override of the digest can
+ * neither garble it into blank counts nor hide it; no count is rendered here,
+ * because the counts are cross-area alert data that role does not hold.
+ */
+export function adminServerVersionPausedTemplate(
+  version: AdminDigestServerVersion,
+): string {
+  return layout(`
+    ${heading("Central Server Version")}
+    ${paragraph("A daily notice while syncing with the Alpine Central Server is paused.")}
+    ${serverVersionEntry(version)}
+  `);
+}
+
+/**
+ * The digest body: byte-identical to what shipped before #49 when
+ * `serverVersion` is absent, plus the version entry after the total when it
+ * is present (the digest's own readers). The version-only notice for lodge
+ * editors is `adminServerVersionPausedTemplate`, deliberately not a shape of
+ * this one.
  */
 export function adminDailyDigestTemplate(
-  sections: Partial<AdminDigestCounts> & {
+  sections: AdminDigestCounts & {
     serverVersion?: AdminDigestServerVersion;
   },
 ): string {
-  if (typeof sections.totalAlerts !== "number") {
-    return layout(`
-    ${heading("Central Server Version")}
-    ${paragraph("A daily notice while syncing with the Alpine Central Server is paused.")}
-    ${sections.serverVersion ? serverVersionEntry(sections.serverVersion) : ""}
-  `);
-  }
-
   const p = emailPalette();
   const rows: Array<{ label: string; value: string; link: string }> = [];
 
-  if ((sections.newBookings ?? 0) > 0) rows.push({ label: "New Bookings", value: String(sections.newBookings), link: "/admin/bookings" });
-  if ((sections.paymentFailures ?? 0) > 0) rows.push({ label: "Payment Failures", value: String(sections.paymentFailures), link: "/admin/payments" });
-  if ((sections.capacityWarnings ?? 0) > 0) rows.push({ label: "Capacity Warnings", value: String(sections.capacityWarnings), link: "/admin/bookings" });
-  if ((sections.bookingsBumped ?? 0) > 0) rows.push({ label: "Bookings Bumped", value: String(sections.bookingsBumped), link: "/admin/bookings" });
-  if ((sections.pendingDeadlines ?? 0) > 0) rows.push({ label: "Pending Deadlines", value: String(sections.pendingDeadlines), link: "/admin/bookings" });
-  if ((sections.xeroErrors ?? 0) > 0) rows.push({ label: "Xero Errors", value: String(sections.xeroErrors), link: "/admin/xero" });
+  if (sections.newBookings > 0) rows.push({ label: "New Bookings", value: String(sections.newBookings), link: "/admin/bookings" });
+  if (sections.paymentFailures > 0) rows.push({ label: "Payment Failures", value: String(sections.paymentFailures), link: "/admin/payments" });
+  if (sections.capacityWarnings > 0) rows.push({ label: "Capacity Warnings", value: String(sections.capacityWarnings), link: "/admin/bookings" });
+  if (sections.bookingsBumped > 0) rows.push({ label: "Bookings Bumped", value: String(sections.bookingsBumped), link: "/admin/bookings" });
+  if (sections.pendingDeadlines > 0) rows.push({ label: "Pending Deadlines", value: String(sections.pendingDeadlines), link: "/admin/bookings" });
+  if (sections.xeroErrors > 0) rows.push({ label: "Xero Errors", value: String(sections.xeroErrors), link: "/admin/xero" });
 
   const tableRowsHtml = rows
     .map(

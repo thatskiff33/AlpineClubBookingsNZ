@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   shouldSendAdminSystemEmail: vi.fn(),
   recordEscalation: vi.fn(),
   template: vi.fn(),
+  pausedTemplate: vi.fn(),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
@@ -36,6 +37,7 @@ vi.mock("@/lib/email-theme", () => ({
 }));
 vi.mock("@/lib/email-templates/admin-ops", () => ({
   adminDailyDigestTemplate: mocks.template,
+  adminServerVersionPausedTemplate: mocks.pausedTemplate,
   adminIssueReportTemplate: vi.fn(),
   adminMaintenanceReportTemplate: vi.fn(),
 }));
@@ -106,6 +108,7 @@ beforeEach(() => {
   mocks.shouldSendAdminSystemEmail.mockResolvedValue({ send: true, mode: "content_only" });
   mocks.sendEmail.mockResolvedValue({ status: "sent" });
   mocks.template.mockImplementation((input: unknown) => JSON.stringify(input));
+  mocks.pausedTemplate.mockImplementation((input: unknown) => JSON.stringify({ paused: input }));
 });
 
 describe("sendAdminDailyDigestAlert without a version entry", () => {
@@ -148,17 +151,20 @@ describe("sendAdminDailyDigestAlert with a version entry", () => {
     expect(sends[0].templateData.serverVersionNote).toMatch(/built for server version 2\.0 and the server reports 2\.1/);
   });
 
-  it("gives a Lodge-only editor the entry ALONE: no count key in the render input or templateData", async () => {
+  it("gives a Lodge-only editor the entry ALONE, as its own template: no count key in the render input or templateData", async () => {
     await sendAdminDailyDigestAlert({ sections: COUNTS, serverVersion: VERSION });
 
     const sends = sendsTo("hut.warden@club.test");
     expect(sends).toHaveLength(1);
     const [send] = sends;
-    // Same template name, so the club's delivery rules and override apply.
-    expect(send.templateName).toBe("admin-daily-digest");
-    // The render was given the entry and nothing else - not even a zero.
-    expect(mocks.template).toHaveBeenCalledWith({ serverVersion: VERSION });
+    // Its OWN template name and a static subject (owner decision "second
+    // template"): the digest's delivery rule and override do not reach it.
+    expect(send.templateName).toBe("admin-server-version-paused");
+    expect(send.subject).toBe("Alpine Central Server version differs - syncing is paused");
+    // Rendered by the paused template, given the entry and nothing else.
+    expect(mocks.pausedTemplate).toHaveBeenCalledWith(VERSION);
     const rendered = JSON.parse(send.html) as Record<string, unknown>;
+    expect(rendered).toEqual({ paused: VERSION });
     for (const key of COUNT_KEYS) expect(rendered).not.toHaveProperty(key);
     // And the override data carries exactly the three version tokens.
     expect(Object.keys(send.templateData).sort()).toEqual([
@@ -168,6 +174,29 @@ describe("sendAdminDailyDigestAlert with a version entry", () => {
     ]);
     expect(send.templateData).not.toHaveProperty("totalAlerts");
     expect(send.templateData).not.toHaveProperty("count");
+  });
+
+  it("is untouched by anything done to admin-daily-digest: the digest template is never asked for the lodge-only render", async () => {
+    // A club override of admin-daily-digest is applied by sendEmail against the
+    // template NAME, so the only way it could reach the lodge-only email is
+    // through that name or that render function. Neither is used for it.
+    await sendAdminDailyDigestAlert({ sections: COUNTS, serverVersion: VERSION });
+    const lodgeOnly = sendsTo("hut.warden@club.test")[0];
+    expect(lodgeOnly.templateName).not.toBe("admin-daily-digest");
+    expect(mocks.template).toHaveBeenCalledTimes(1);
+    expect(mocks.template).toHaveBeenCalledWith({ ...COUNTS, serverVersion: VERSION });
+    expect(mocks.pausedTemplate).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the club mute the paused notice on its own without touching the digest", async () => {
+    mocks.shouldSendAdminSystemEmail.mockImplementation(async ({ templateName }: { templateName: string }) =>
+      templateName === "admin-server-version-paused"
+        ? { send: false, mode: "disabled", reason: "disabled" }
+        : { send: true, mode: "always" },
+    );
+    await sendAdminDailyDigestAlert({ sections: COUNTS, serverVersion: VERSION });
+    expect(sendsTo("full.admin@club.test")).toHaveLength(1);
+    expect(sendsTo("hut.warden@club.test")).toHaveLength(0);
   });
 
   it("sends nothing to an officer who holds neither audience", async () => {

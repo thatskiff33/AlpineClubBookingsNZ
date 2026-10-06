@@ -378,6 +378,10 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Refund Appeal Update — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Refund Appeal Update\n\nHi {{firstName}},\n\nYour refund appeal for your booking ({{checkIn}} - {{checkOut}}) was not approved at this time.\n\n{{adminNotesLine}}If you have questions, contact the club at {{SUPPORT_EMAIL}}."
   },
+  "admin-server-version-paused": {
+    "defaultSubject": "Alpine Central Server version differs - syncing is paused",
+    "defaultBody": "Central Server Version\n\nA daily notice while syncing with the Alpine Central Server is paused.\n\n{{serverVersionNote}}\n\nThis site is built for server version {{serverVersionExpected}}; the server reports {{serverVersionActual}}.\n\nOpen Alpine Central Server setup: {{BASE_URL}}/admin/alpine-server/setup"
+  },
   "admin-maintenance-report": {
     "defaultSubject": "Maintenance report: {{lodgeName}}",
     "defaultBody": "Maintenance Report Lodged\n\nSomething needs attention at {{lodgeName}}.\n\nLodge: {{lodgeName}}\nReported by: {{reportedBy}}\nHow it was sent: {{sourceLabel}}\nPhoto: {{photoLabel}}\n\n{{summary}}\n\n{{answersText}}\n\nReview Maintenance Report: {{maintenanceReportUrl}}"
