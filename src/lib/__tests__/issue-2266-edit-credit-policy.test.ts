@@ -223,7 +223,7 @@ vi.mock("@/lib/cancellation", () => ({
   getNonMemberHoldPolicy: (...args: unknown[]) => mockGetHoldPolicy(...args),
 }));
 vi.mock("@/lib/booking-payment-state", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@/lib/booking-payment-state")>();
+  const real = (await importOriginal()) as typeof import("@/lib/booking-payment-state");
   return {
   getRemainingRefundableCents: vi.fn(),
   hasCapturedPayment: vi.fn(),

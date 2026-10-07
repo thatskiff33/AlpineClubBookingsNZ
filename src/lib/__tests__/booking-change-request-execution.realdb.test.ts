@@ -829,6 +829,69 @@ function deferred() {
     expect(await prisma.bookingModification.count({ where: { bookingId: BOOKING_ID } })).toBe(0);
   }, 60_000);
 
+  it("#3955 round 3: an invoice built before the fee bills the gap once, unpaid, on the correction — re-checked by the retry", async () => {
+    await seed({
+      secondGuest: true,
+      unpaid: { invoiced: false },
+      requested: { addGuests: [], removeGuests: [{ id: GUEST_2_ID }], summary: "remove Second Guest" },
+    });
+    const fee = STORED_NIGHT_CENTS;
+    expect(await approve(OFFICER_ID)).toMatchObject({ outcome: "executed", changeFeeCents: fee });
+    const [modification] = await prisma.bookingModification.findMany({ where: { bookingId: BOOKING_ID } });
+
+    const gap = await import("@/lib/xero-primary-invoice-fee-gap");
+    const { startXeroSyncOperation } = await import("@/lib/xero-sync");
+    const { buildXeroBookingInvoiceCorrelationKey } = await import("@/lib/xero-booking-invoice-key");
+    const invoices = await import("@/lib/xero-booking-invoices");
+    const invoiceId = "race-3750-gap-invoice";
+    try {
+      // The create whose invoice was built before the fee was recorded (it
+      // bills the remaining guest and no fee): it records what it billed,
+      // persists its link, and dies before its gap check.
+      const key = buildXeroBookingInvoiceCorrelationKey(BOOKING_ID);
+      const operation = await startXeroSyncOperation({
+        direction: "OUTBOUND",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: PAYMENT_ID,
+        idempotencyKey: key,
+        correlationKey: key,
+        requestPayload: { invoices: [] },
+      });
+      await gap.recordPrimaryInvoiceBilledFee(
+        operation.id,
+        gap.primaryInvoiceBilledFee(invoiceId, [
+          { description: "Original Guest", quantity: 1, unitAmount: (2 * STORED_NIGHT_CENTS) / 100 },
+        ]),
+      );
+      await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { xeroInvoiceId: invoiceId } });
+
+      // The retry takes the create's "invoice already exists" exit — twice.
+      await expect(invoices.createXeroInvoiceForBooking(BOOKING_ID, { syncOperationId: operation.id })).resolves.toBe(
+        invoiceId,
+      );
+      await expect(invoices.createXeroInvoiceForBooking(BOOKING_ID)).resolves.toBe(invoiceId);
+
+      const queued = await prisma.xeroSyncOperation.findMany({
+        where: { localModel: "BookingModification", localId: modification.id },
+        select: { status: true, requestPayload: true },
+      });
+      // Once, for the fee alone, raised unpaid like any edit's supplementary invoice.
+      expect(queued).toHaveLength(1);
+      expect(queued[0].status).toBe("PENDING");
+      expect(queued[0].requestPayload).toMatchObject({
+        bookingId: BOOKING_ID,
+        bookingModificationId: modification.id,
+        priceDiffCents: 0,
+        changeFeeCents: fee,
+        recordPayment: false,
+      });
+    } finally {
+      await prisma.xeroObjectLink.deleteMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
+    }
+  }, 60_000);
+
   it("a nights-only change is charged the same-day share of the nights it removes, never the ordinary late fee (owner, 7 Oct)", async () => {
     // A tier that would make moving check-in one day later a "more lenient"
     // move, so the ordinary late-change fee would charge a share of the WHOLE

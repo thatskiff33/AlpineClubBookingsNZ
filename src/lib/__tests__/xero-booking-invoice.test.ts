@@ -192,7 +192,7 @@ const feeGap = vi.hoisted(() => ({
 }));
 const { queuePrimaryInvoiceChangeFeeGap } = feeGap;
 vi.mock("@/lib/xero-primary-invoice-fee-gap", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/xero-primary-invoice-fee-gap")>()),
+  ...((await importOriginal()) as typeof import("@/lib/xero-primary-invoice-fee-gap")),
   ...feeGap,
 }));
 
