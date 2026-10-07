@@ -428,10 +428,19 @@ async function runFinishedStayApproval(
         { id, status: "REQUESTED", keptPending: true, error: result.message },
         { status: 409 },
       );
-    case "quoted": {
-      const { outcome: _outcome, ...figures } = result;
-      return NextResponse.json({ id, quote: figures });
-    }
+    case "quoted":
+      return NextResponse.json({
+        id,
+        quote: {
+          priceDiffCents: result.priceDiffCents,
+          changeFeeCents: result.changeFeeCents,
+          additionalAmountCents: result.additionalAmountCents,
+          refundAmountCents: result.refundAmountCents,
+          accountCreditAmountCents: result.accountCreditAmountCents,
+          capacityOverridden: result.capacityOverridden,
+          settlementMethod: result.settlementMethod,
+        },
+      });
     case "executed":
       break;
   }

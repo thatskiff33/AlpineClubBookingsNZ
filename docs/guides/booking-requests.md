@@ -82,21 +82,36 @@ are listed on the booking for you to relay.
      priced at the stay's own season rates; guests already on the booking keep
      exactly what they paid. Any extra is asked for in the usual way (card, or
      internet banking against a supplementary invoice), and the member gets the
-     ordinary booking-change email with the amount due. Adding guests carries no
-     change fee. A removal is refunded at the cancellation policy's same-day
-     tier, so the club keeps that tier's share. A swap is charged the same
-     share of the removed guests' portion as a change fee, exactly as if they
-     had been removed on their own, and the added guests are charged in full —
-     the two are not netted against each other. A date or stay-range change is
-     priced at the same-day tier. The member can still ask the committee to
-     refund a fee through a refund request. Choose under **If the change lowers the
-     price** whether a refund goes back the way it was paid or to account credit.
-     If the booking has changed since the member asked, the season for those
-     nights has been switched off, or a night is locked in Xero, nothing is
-     applied and the request stays pending with the reason. If the lodge was
-     already full on one of those nights, the card asks you to **Confirm
-     overbooking and apply**; a night held for a whole-lodge booking is always
-     refused.
+     ordinary booking-change email with the amount due. A member named among
+     the added guests goes through the same rules as on the member's own edit —
+     the family boundary, bookability, and a consent request for a member
+     outside the family — and the card links to them.
+   - **The fee.** Adding guests carries no change fee. Anything the change
+     takes away — a removed guest, or nights trimmed off a guest who stays —
+     is charged what the cancellation policy's same-day tier keeps of it,
+     valued at what was actually paid for those nights after any promotion.
+     That charge is the change fee; whatever else comes off the price comes
+     back in full. It is never netted against guests added in the same request,
+     and an unpaid stay is charged it the same as a paid one (it stays on the
+     invoice). The member can still ask the committee to refund a fee through
+     a refund request.
+   - **Check the figures first.** **Check the figures** works out exactly what
+     approving will do — the change fee, and the refund, credit or amount due —
+     without changing anything, and **Approve and apply** stays off until it
+     has. Under **If the change lowers the price** the default is the way the
+     booking was paid; you can choose card or account credit instead.
+   - **When nothing is applied.** If the booking has changed since the member
+     asked, the season for those nights has been switched off, a guest cannot
+     be booked, or the stay is unpaid with no invoice to carry the fee, nothing
+     is applied and the request stays pending with the reason. If the change
+     moves the stay's dates on an unpaid booking whose invoice was issued in a
+     period now locked in Xero, it is refused for the same reason an ordinary
+     date change would be. If the lodge was already full on one of those
+     nights, the figures ask you to **Confirm overbooking**; a night held for a
+     whole-lodge booking is always refused. Past bed allocations are never
+     changed.
+   - If the card was loaded before the stay finished (or the other way round),
+     approving asks you to reload rather than doing something you were not told.
 3. Write **Explanation for the member**. The member reads this verbatim on their
    own booking page, the field says so above the box, and neither decision can be
    sent until it is filled in — so write it for them rather than for the file.
@@ -666,7 +681,7 @@ cannot, so that is an ordinary bit of tidying rather than something to report.
 | --- | --- | --- |
 | Reject is blocked | You left **Admin notes** empty (Approvals), or **Explanation for the member** empty (Changes, where it blocks both decisions) | Add the explanation for the member, then decide |
 | A change I "approved" did not change the booking | For a stay that is still running, approving only acknowledges the review | Open the booking and apply the change on the booking page. A finished stay's approval applies the change itself |
-| **Approve and apply** says the request is still pending | The booking changed since the member asked, the season for those nights is switched off, a night is locked in Xero, or the lodge was full | Nothing was changed. Read the reason on the card: confirm the overbooking, switch the season back on, or reject the request with a note |
+| **Approve and apply** says the request is still pending | The booking changed since the member asked, the season for those nights is switched off, a guest cannot be booked, the stay is unpaid with no invoice, the dates of an unpaid invoiced booking would move into a Xero-locked period, or the lodge was full | Nothing was changed. Read the reason on the card: confirm the overbooking, switch the season back on, or reject the request with a note |
 | A new public request is not on the Approvals tab | Public requests live only on the Public Requests tab | Switch to **Public Requests** and check the **Queue** filter |
 | Approve fails with a capacity message | The lodge is full for one or more nights | The dialog lists the full dates; free capacity or adjust the request |
 | Approving a policy exception says the request "stays pending" | The lodge filled up between the member asking and you deciding | Nothing was created. The queue has already refreshed, so approve it again once beds free up, or refuse it with a reason |

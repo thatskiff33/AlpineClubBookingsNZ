@@ -8,7 +8,7 @@ fee rule, its call guard and the officer's decision handling live in new modules
 decision points they change are added to the two files below.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2823
+lines: 2873
 reason: the finished-stay mode changes four decisions inside the one
   transaction - the edit-policy window, the capacity confirm, the change fee and
   refund tier day (including a swap's same-day fee on the removed portion,
