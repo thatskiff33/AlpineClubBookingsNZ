@@ -1,6 +1,7 @@
 "use client";
 
 import type { PaymentStatus } from "@prisma/client";
+import { RefundsAndCreditsOwedList } from "@/components/admin/refunds-and-credits-owed";
 import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -317,6 +318,8 @@ function settlementKindLabel(kind: string) {
  */
 type PaymentsSummary = {
   netCollectedCents: number;
+  refundsOwedCents: number;
+  creditsOwedCents: number;
   refundedCents: number;
   count: number;
   additionalLedgerGapCents: number;
@@ -325,6 +328,8 @@ type PaymentsSummary = {
 
 const EMPTY_PAYMENTS_SUMMARY: PaymentsSummary = {
   netCollectedCents: 0,
+  refundsOwedCents: 0,
+  creditsOwedCents: 0,
   refundedCents: 0,
   count: 0,
   additionalLedgerGapCents: 0,
@@ -343,6 +348,8 @@ function readPaymentsSummary(raw: unknown): PaymentsSummary {
     typeof value === "number" && Number.isFinite(value) ? value : 0;
   return {
     netCollectedCents: cents(fields.netCollectedCents),
+    refundsOwedCents: cents(fields.refundsOwedCents),
+    creditsOwedCents: cents(fields.creditsOwedCents),
     refundedCents: cents(fields.refundedCents),
     count: cents(fields.count),
     additionalLedgerGapCents: cents(fields.additionalLedgerGapCents),
@@ -1083,7 +1090,7 @@ export default function PaymentsPage() {
         <SummaryCard
           title="Net Collected"
           icon={DollarSign}
-          hint="Payments received, less refunds and credits. Cancelled bookings count only what was kept of what was paid; deleted bookings are left out."
+          hint="Payments received, less refunds and credits and less refunds still owed back by hand. Cancelled bookings count only what was kept of what was paid; deleted bookings are left out."
         >
           {formatCents(summary.netCollectedCents, format)}
         </SummaryCard>
@@ -1102,6 +1109,8 @@ export default function PaymentsPage() {
           {successRate}%
         </SummaryCard>
       </div>
+      {/* #3372 (owner, 7 Oct 2026): beside Net Collected, still owed back as at today. */}
+      <RefundsAndCreditsOwedList owed={summary} formatCents={(cents) => formatCents(cents, format)} />
 
       {netCollectedLedgerGapWarning && (
         <Alert variant="warning">{netCollectedLedgerGapWarning}</Alert>

@@ -1,3 +1,4 @@
+import { readRefundsAndCreditsOwed } from "@/lib/refunds-and-credits-owed";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -108,6 +109,7 @@ export async function GET(request: NextRequest) {
       unpaidMembers,
       overdueMembers,
       newMembers,
+      refundsAndCreditsOwed,
     ] = await Promise.all([
       prisma.booking.findMany({
         where: {
@@ -203,6 +205,8 @@ export async function GET(request: NextRequest) {
           ],
         },
       }),
+      // #3372 (owner, 7 Oct 2026): as at today, club-wide - not this range's.
+      readRefundsAndCreditsOwed(),
     ]);
 
     // 1. Occupancy by date
@@ -330,6 +334,8 @@ export async function GET(request: NextRequest) {
         moneyReconciliation: summarizeBookingMoneyReconciliations(bookings),
         totalRevenueCents,
         netCollectedCents,
+        refundsOwedCents: refundsAndCreditsOwed.refundsOwedCents,
+        creditsOwedCents: refundsAndCreditsOwed.creditsOwedCents,
         // Aggregate warning data only. Transaction rows and booking ids remain
         // server-side evidence and are never exposed by the Reports API.
         additionalLedgerGapCents:

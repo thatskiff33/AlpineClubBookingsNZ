@@ -1,3 +1,4 @@
+import { readRefundsAndCreditsOwed } from "@/lib/refunds-and-credits-owed";
 import type { PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
 import { BOOKING_ISSUED_CREDIT_TYPES } from "@/lib/member-credit-booking-rows";
 import { z } from "zod";
@@ -673,8 +674,12 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
     // over exactly the payments the tile counts.
     const { collected, ledgerGap } =
       summarizeNetCollectedWithLedgerGap(filteredCandidates);
+    // #3372 (owner, 7 Oct 2026): as at today and club-wide, not filtered.
+    const owed = await readRefundsAndCreditsOwed();
     const summary = {
       netCollectedCents: collected.netCollectedCents,
+      refundsOwedCents: owed.refundsOwedCents,
+      creditsOwedCents: owed.creditsOwedCents,
       refundedCents: sumRefundedAndCreditedCents(filteredCandidates),
       count: filteredCandidates.length,
       additionalLedgerGapCents: ledgerGap.additionalLedgerGapCents,

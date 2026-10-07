@@ -100,8 +100,8 @@ export function manualRefundTaskSettlementRefusal(
   return "This item records money the club may not have asked for, so it cannot be closed as an amount settled here - nothing about it moves money. Check the booking's Xero invoices, bill any shortfall by hand, then close it with a note saying what you found and what you billed.";
 }
 
-/** The `ManualRefundTask` fields `openCancellationHandBackOwedCents` reads. */
-export type CancellationHandBackTaskRow = {
+/** The `ManualRefundTask` fields `openHandBackOwedCents` reads. */
+export type HandBackTaskRow = {
   status: ManualRefundTaskStatus | string;
   kind: ManualRefundTaskKind | string | null;
   amountCents: number | null;
@@ -112,34 +112,37 @@ const OPEN_TASK_STATUS = "OPEN" satisfies ManualRefundTaskStatus;
 const HAND_BACK_KIND = "CANCELLED_BOOKING_HAND_BACK" satisfies ManualRefundTaskKind;
 
 /**
- * Owner decision on #3372 (3 Oct 2026, refining the review on PR #3811): THE
- * REFUND A CANCELLED BOOKING STILL OWES BY HAND. It reads a cancelled
- * booking's OPEN hand-back tasks; the caller (`getNetCollectedPaymentParts`)
- * hands it only a cancelled booking's tasks, and only a booking that is not
- * soft-deleted reaches it (the Net Collected scope).
+ * THE REFUND STILL OWED BY HAND: money the club has promised back and not yet
+ * paid. Owner decisions on #3372: 3 Oct 2026 for a cancelled booking ("subtract
+ * the refund owed"), 7 Oct 2026 for a live one ("subtract it immediately":
+ * money promised back isn't the club's). Two readers ask it, so they cannot
+ * disagree: `getNetCollectedCashParts` takes it off a payment's Net Collected
+ * straight away, and the "Refunds owed" figure (`readRefundsAndCreditsOwed`)
+ * sums it club-wide until each task is paid.
  *
- * A cancellation of a payment settled by hand raises a
- * `CANCELLED_BOOKING_HAND_BACK` task for the refund its policy gives back
- * (`booking-cancel.ts`), and only COMPLETING the task writes
- * `refundedAmountCents` (`manual-refund-task-resolution.ts`). The owner's rule
- * is that the refund owed is treated as gone straight away, so a "Net
- * Collected" figure counts only what the policy keeps: this is the amount to
- * take off before the task is completed.
+ * Every task that promises money back by hand is a `CANCELLED_BOOKING_HAND_BACK`:
+ * a cancellation's (`booking-cancel.ts`), and - once epic #3813 reaches this
+ * code - an edit's refund (`INV-PAY-117`) and an approved refund request's
+ * (D-3813-7), which reuse the kind and are told apart only by their occurrence
+ * key. All of them count, on any booking, so this reads no key prefix. Only
+ * COMPLETING a task writes `refundedAmountCents`
+ * (`manual-refund-task-resolution.ts`), so an open one is not yet off the
+ * payment and nothing is taken off twice.
  *
  * - OPEN tasks only: a COMPLETED one is already on `refundedAmountCents`, and a
  *   DISMISSED one moved nothing.
  * - A part-payment review shares the kind but carries no amount and records
  *   money settled in Xero (`isPartPaymentReviewTask`), so it owes nothing here.
  * - A task with no kind (`kind` null) is read as a hand-back: the column was
- *   added on 19 Aug 2026 with no backfill, and on a cancelled booking the only
- *   task raised before then was the cancellation's hand-back (the late-capture
- *   kinds are raised on DELETED bookings, which the scope leaves out).
- * - Every OPEN task of the hand-back kind counts, whatever raised it. A booking
- *   edit's or an appeal's hand-back on a CANCELLED booking is counted on
- *   purpose: it is money the club owes back, so it is not money kept.
+ *   added on 19 Aug 2026 with no backfill, and before then the only task raised
+ *   on a booking that is not deleted was a cancellation's hand-back (the
+ *   late-capture kinds are raised on DELETED bookings).
+ * - Not an `EDIT_FINANCIAL_REVIEW`: its amount is a figure an officer has still
+ *   to price and confirm, and "nothing is due" is a legitimate close
+ *   (DISMISSED), so it is not yet money promised back.
  */
-export function openCancellationHandBackOwedCents(
-  tasks: ReadonlyArray<CancellationHandBackTaskRow>,
+export function openHandBackOwedCents(
+  tasks: ReadonlyArray<HandBackTaskRow>,
 ): number {
   return tasks
     .filter(

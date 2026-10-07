@@ -3,6 +3,8 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
 import { netCollectedBookingSelect, netCollectedCaptureEvidenceSelect } from "@/lib/additional-ledger-gap";
 import { formatNetCollectedBreakdown, summarizeCollectedCash } from "@/lib/payment-net-collected";
+import { readRefundsAndCreditsOwed } from "@/lib/refunds-and-credits-owed";
+import { RefundsAndCreditsOwedList } from "@/components/admin/refunds-and-credits-owed";
 import {
   MemberLifecycleAction,
   MemberLifecycleActionRequestStatus,
@@ -117,6 +119,7 @@ async function getStats() {
     totalBookings,
     activeBookings,
     netCollectedResult,
+    refundsAndCreditsOwed,
     upcomingCheckIns,
     unpaidFinishedStays,
     unsettledAdditionalFinishedStays,
@@ -164,6 +167,9 @@ async function getStats() {
         booking: { select: netCollectedBookingSelect },
       },
     }),
+    // #3372 (owner, 7 Oct 2026): beside Net Collected, what is still owed back
+    // as at today - club-wide, not this month's.
+    readRefundsAndCreditsOwed(),
     // Bookings officer card headline (#2091): check-ins in the next 7 days.
     // Uses UPCOMING_CHECK_IN_BOOKING_STATUSES (not the wider
     // ACTIVE_BOOKING_STATUSES) so the count equals the list the card deep links
@@ -302,6 +308,7 @@ async function getStats() {
     totalBookings,
     activeBookings,
     netCollectedThisMonth,
+    refundsAndCreditsOwed,
     upcomingCheckIns,
     unpaidFinishedStays,
     unsettledAdditionalFinishedStays,
@@ -745,6 +752,12 @@ export default async function AdminDashboardPage() {
                         {netCollectedBreakdown}
                       </p>
                     )}
+                    {/* #3372 (owner, 7 Oct 2026): still owed back, as at today. */}
+                    <RefundsAndCreditsOwedList
+                      owed={stats.refundsAndCreditsOwed}
+                      formatCents={money.cents}
+                      className="mt-1 flex flex-col items-end"
+                    />
                   </div>
                 </CardContent>
               </Card>

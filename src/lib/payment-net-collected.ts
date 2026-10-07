@@ -7,8 +7,8 @@ import {
   paymentShowsCaptureEvidence,
 } from "@/lib/booking-payment-state";
 import {
-  openCancellationHandBackOwedCents,
-  type CancellationHandBackTaskRow,
+  openHandBackOwedCents,
+  type HandBackTaskRow,
 } from "@/lib/manual-refund-task-settlement-rules";
 import {
   cancelledBookingKeptCreditCents,
@@ -33,7 +33,7 @@ export function formatNetCollectedBreakdown(
 ): string | null {
   const extras = [
     summary.handBackOwedCents > 0
-      ? `${formatCents(summary.handBackOwedCents)} owed back on cancellation`
+      ? `${formatCents(summary.handBackOwedCents)} owed back by hand`
       : null,
     summary.keptCreditCents > 0
       ? `plus ${formatCents(summary.keptCreditCents)} account credit kept on cancellation`
@@ -64,9 +64,10 @@ export interface CollectedCashSummary {
    */
   refundedCents: number;
   /**
-   * On CANCELLED bookings, refunds the club still owes by hand on an open
-   * hand-back task, taken off straight away (owner decision on #3372, 3 Oct
-   * 2026; `openCancellationHandBackOwedCents`), capped at what is left of the
+   * Refunds the club still owes by hand on an open hand-back task, taken off
+   * straight away (owner decisions on #3372: 3 Oct 2026 for a cancelled
+   * booking, 7 Oct 2026 for a live one; `openHandBackOwedCents`), capped at
+   * what is left of the
    * payment after `refundedCents`.
    */
   handBackOwedCents: number;
@@ -96,8 +97,9 @@ export interface NetCollectedBookingScopeFields {
 
 /**
  * The booking a payment belongs to, as far as a Net Collected figure needs it:
- * the scope's `deletedAt`, and for a CANCELLED booking the two facts the owner's
- * 3 Oct 2026 decision reads. The relation names are Prisma's, so a select hands
+ * the scope's `deletedAt`, its open hand-back tasks (owner decisions on #3372,
+ * 3 and 7 Oct 2026), and for a CANCELLED booking the credit rows the 3 Oct
+ * decision reads. The relation names are Prisma's, so a select hands
  * them in as loaded (`netCollectedBookingSelect` in `additional-ledger-gap.ts`);
  * each is required, so a surface cannot leave one out and read a smaller figure.
  */
@@ -105,7 +107,7 @@ export interface NetCollectedBookingFields extends NetCollectedBookingScopeField
   status: string;
   creditsApplied: ReadonlyArray<BookingCreditAmountRow>;
   creditsFromCancellation: ReadonlyArray<BookingCreditAmountRow & CreditRestoreEvidence>;
-  manualRefundTasks: ReadonlyArray<CancellationHandBackTaskRow>;
+  manualRefundTasks: ReadonlyArray<HandBackTaskRow>;
 }
 
 const CANCELLED_BOOKING_STATUS = "CANCELLED" satisfies BookingStatus;
@@ -161,7 +163,7 @@ export interface NetCollectedPaymentParts {
   capturedGrossCents: number;
   /** Money it took and still holds: not refunded, credited or owed back. */
   heldCashCents: number;
-  /** A cancelled booking's open hand-back, as far as the money it took covers. */
+  /** The booking's open hand-back, as far as the money it took covers. */
   handBackOwedCents: number;
   /** Applied credit a cancellation kept; 0 unless the booking is cancelled. */
   keptCreditCents: number;
@@ -192,9 +194,10 @@ export type NetCollectedCashRow = Omit<NetCollectedPaymentRow, "booking"> & {
 
 /**
  * THE CASH HALF of the one per-payment rule (`getNetCollectedPaymentParts`):
- * what the payment took, what of it the club still holds, and - on a CANCELLED
- * booking - the open hand-back refund taken off straight away (owner decision
- * on #3372, 3 Oct 2026). Exported for the booking detail's "Non-refundable
+ * what the payment took, what of it the club still holds, and the open
+ * hand-back refund taken off straight away, on a cancelled or a live booking
+ * alike (owner decisions on #3372, 3 and 7 Oct 2026; `openHandBackOwedCents`).
+ * Exported for the booking detail's "Non-refundable
  * amount retained" line, which is this booking's cash part of Net Collected
  * and so can never read higher than what Net Collected counts for it.
  */
@@ -207,10 +210,10 @@ export function getNetCollectedCashParts(
     ? getRemainingRefundableCents({ ...payment, status })
     : 0;
   const capturedGrossCents = captured ? payment.amountCents : 0;
-  const handBackOwedCents =
-    booking.status === CANCELLED_BOOKING_STATUS
-      ? Math.min(openCancellationHandBackOwedCents(booking.manualRefundTasks), remainingCents)
-      : 0;
+  const handBackOwedCents = Math.min(
+    openHandBackOwedCents(booking.manualRefundTasks),
+    remainingCents,
+  );
   return {
     capturedGrossCents,
     heldCashCents: remainingCents - handBackOwedCents,
@@ -225,13 +228,14 @@ export function getNetCollectedCashParts(
  *
  * - Cash (`getNetCollectedCashParts`): what the payment took and has not
  *   refunded or credited back (`getRemainingRefundableCents`): 0 if it never
- *   took money (`netCollectedPaymentTookMoney`), never below 0. On a CANCELLED
- *   booking a hand-back refund still owed by hand is treated as gone straight
- *   away (`openCancellationHandBackOwedCents`), so only what the policy keeps
- *   counts.
+ *   took money (`netCollectedPaymentTookMoney`), never below 0. A hand-back
+ *   refund still owed by hand is treated as gone straight away
+ *   (`openHandBackOwedCents`), on a cancelled booking (3 Oct 2026, so only
+ *   what the policy keeps counts) and on a live one (7 Oct 2026: an edit's
+ *   refund, `INV-PAY-117`, or an approved refund request's).
  * - On a CANCELLED booking, applied account credit the cancellation kept
- *   counts too (`cancelledBookingKeptCreditCents`). A live booking reads
- *   neither: its credit is spent on a stay, not kept, and it owes no hand-back.
+ *   counts too (`cancelledBookingKeptCreditCents`). A live booking's credit is
+ *   spent on a stay, not kept, so it adds none.
  */
 export function getNetCollectedPaymentParts(
   payment: NetCollectedPaymentRow,
@@ -302,12 +306,12 @@ export function sumRefundedAndCreditedCents(
  * then marks it FAILED (`booking-cancel.ts`) - or a refund above its own
  * capture, subtract from OTHER bookings' money.
  *
- * A CANCELLED booking adds two more facts (owner decision on #3372, 3 Oct
- * 2026), both inside `getNetCollectedPaymentParts`: applied account credit the
- * cancellation KEPT counts (credit restored to the member does not), and a
- * hand-back refund still owed by hand counts as gone before its task is
- * completed. A live booking's applied credit is not in `amountCents`
- * (`INV-PAY-047`) and does not count.
+ * Two more facts, both inside `getNetCollectedPaymentParts`: a hand-back
+ * refund still owed by hand counts as gone before its task is completed, on
+ * any booking (owner decisions on #3372, 3 and 7 Oct 2026); and on a CANCELLED
+ * booking applied account credit the cancellation KEPT counts (credit restored
+ * to the member does not). A live booking's applied credit is not in
+ * `amountCents` (`INV-PAY-047`) and does not count.
  *
  * Cash is payment-derived and deliberately NOT allocated over stay nights.
  * `Payment.amountCents` already contains captured additions (#2408); rebuilding

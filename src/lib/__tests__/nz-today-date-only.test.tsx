@@ -40,6 +40,9 @@ vi.mock("@/components/club-identity-provider", () => ({
 
 const financeMocks = vi.hoisted(() => ({
   prisma: {
+    // #3372 (owner, 7 Oct 2026): Refunds owed / Credits owed, as at today.
+    manualRefundTask: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
+    memberCredit: { groupBy: vi.fn(async (): Promise<unknown[]> => []) },
     booking: { findMany: vi.fn() },
     payment: { findMany: vi.fn() },
     lodgeSettings: { findUnique: vi.fn() },

@@ -1,5 +1,6 @@
 import { BOOKING_ISSUED_CREDIT_TYPES } from "@/lib/member-credit-booking-rows";
 import { prisma } from "./prisma";
+import { readMemberCreditBalances, sumOutstandingCreditCents } from "@/lib/member-credit-balances";
 import { isXeroConnected } from "./xero";
 import logger from "@/lib/logger";
 import { reportCronError } from "@/lib/observability-bridge";
@@ -30,24 +31,14 @@ export async function reconcileCreditBalances(): Promise<{
   orphanedAppliedCredits: number;
 }> {
   // Get per-member credit balances from local ledger
-  const balances = await prisma.memberCredit.groupBy({
-    by: ["memberId"],
-    _sum: { amountCents: true },
-  });
+  const balances = await readMemberCreditBalances();
 
-  const membersWithCredit = balances.filter(
-    (b) => (b._sum.amountCents ?? 0) > 0
-  ).length;
+  const membersWithCredit = balances.filter((b) => b.balanceCents > 0).length;
 
-  const totalCreditCents = balances.reduce(
-    (sum, b) => sum + Math.max(0, b._sum.amountCents ?? 0),
-    0
-  );
+  const totalCreditCents = sumOutstandingCreditCents(balances);
 
   // Check for negative balances (should never happen — indicates a bug)
-  const negativeBalances = balances.filter(
-    (b) => (b._sum.amountCents ?? 0) < 0
-  );
+  const negativeBalances = balances.filter((b) => b.balanceCents < 0);
 
   const discrepancies = negativeBalances.length;
 

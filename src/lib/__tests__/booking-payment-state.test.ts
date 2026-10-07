@@ -524,18 +524,22 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
       ).toBe(30_000);
     });
 
-    it("never takes a hand-back off a LIVE booking", () => {
-      expect(
+    it("takes an open hand-back off a LIVE booking straight away (owner decision, 7 Oct 2026)", () => {
+      // The owner's example: $200.00 paid, edited down by $50.00, the refund
+      // (an edit's hand-back, INV-PAY-117) still open - Net Collected $150.00.
+      // Completing it writes `refundedAmountCents`, so the figure holds.
+      const live = (status: string, refundedAmountCents: number) =>
         summarizeCollectedCash([
           {
-            status: "SUCCEEDED",
+            status: refundedAmountCents > 0 ? "PARTIALLY_REFUNDED" : "SUCCEEDED",
             amountCents: 20_000,
-            refundedAmountCents: 0,
+            refundedAmountCents,
             ...cardEvidence,
-            booking: { deletedAt: null, status: "PAID", ...noRows, manualRefundTasks: [handBack("OPEN", 10_000)] },
+            booking: { deletedAt: null, status: "PAID", ...noRows, manualRefundTasks: [handBack(status, 5_000)] },
           },
-        ]).netCollectedCents,
-      ).toBe(20_000);
+        ]);
+      expect(live("OPEN", 0)).toMatchObject({ handBackOwedCents: 5_000, netCollectedCents: 15_000 });
+      expect(live("COMPLETED", 5_000)).toMatchObject({ handBackOwedCents: 0, netCollectedCents: 15_000 });
     });
   });
 
@@ -547,7 +551,7 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
         cents,
       ),
     ).toBe(
-      "$300.00 paid, $150.00 refunded or credited, $75.00 owed back on cancellation, plus $20.00 account credit kept on cancellation",
+      "$300.00 paid, $150.00 refunded or credited, $75.00 owed back by hand, plus $20.00 account credit kept on cancellation",
     );
     expect(
       formatNetCollectedBreakdown(

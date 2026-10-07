@@ -1,3 +1,4 @@
+import { readRefundsAndCreditsOwed } from "@/lib/refunds-and-credits-owed";
 import {
   BookingStatus,
   PaymentStatus,
@@ -280,7 +281,7 @@ interface FinanceBookingMetricsPaymentSummary {
   additionalLedgerGapCents: number;
   additionalLedgerGapBookings: number;
   refundedCents: number;
-  /** Cancelled bookings' open hand-back refunds, taken off at once (#3372, 3 Oct 2026). */
+  /** Open hand-back refunds, taken off at once (#3372, 3 and 7 Oct 2026). */
   handBackOwedCents: number;
   /** Applied account credit cancellations kept (#3372 owner decision, 3 Oct 2026). */
   keptCreditCents: number;
@@ -290,6 +291,12 @@ interface FinanceBookingMetricsPaymentSummary {
    * and additional columns — see `capturedGrossCents` (#2408).
    */
   netCollectedCents: number;
+  /**
+   * #3372 (owner, 7 Oct 2026): beside Net Collected, as at today and
+   * club-wide - NOT narrowed by the window or lodge (`readRefundsAndCreditsOwed`).
+   */
+  refundsOwedCents: number;
+  creditsOwedCents: number;
   creditAppliedCents: number;
   changeFeeCents: number;
 }
@@ -414,6 +421,8 @@ function createZeroPaymentSummary(): FinanceBookingMetricsPaymentSummary {
     handBackOwedCents: 0,
     keptCreditCents: 0,
     netCollectedCents: 0,
+    refundsOwedCents: 0,
+    creditsOwedCents: 0,
     creditAppliedCents: 0,
     changeFeeCents: 0,
   };
@@ -1294,11 +1303,15 @@ export async function getFinanceBookingMetrics(
   const { collected, ledgerGap } = summarizeNetCollectedWithLedgerGap(
     netCollectedCandidates.filter(staysInAWindow),
   );
-  const paymentSummary = summarizePayments(
-    bookings.filter((booking) => contributingBookingIds.has(booking.id)),
-    collected,
-    ledgerGap,
-  );
+  const paymentSummary = {
+    ...summarizePayments(
+      bookings.filter((booking) => contributingBookingIds.has(booking.id)),
+      collected,
+      ledgerGap,
+    ),
+    // #3372 (owner, 7 Oct 2026): as at today, club-wide - not the window's.
+    ...(await readRefundsAndCreditsOwed()),
+  };
   const contributingBookings = bookings.filter((booking) =>
     contributingBookingIds.has(booking.id),
   );

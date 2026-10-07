@@ -10,6 +10,9 @@ const { mockPrisma, mockLogger } = vi.hoisted(() => ({
     booking: {
       findMany: vi.fn(),
     },
+    // #3372 (owner, 7 Oct 2026): Refunds owed / Credits owed, as at today.
+    manualRefundTask: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
+    memberCredit: { groupBy: vi.fn(async (): Promise<unknown[]> => []) },
     // #3637: Net collected cash reads its own payments (every booking in the
     // window, whatever its status), not the status-listed bookings above.
     payment: {
@@ -39,6 +42,9 @@ import { getFinanceBookingMetrics } from "@/lib/finance-booking-metrics";
 import {
   NET_COLLECTED_SCOPE_FIXTURE,
   NET_COLLECTED_SCOPE_PAYMENTS,
+  REFUNDS_AND_CREDITS_OWED_FIXTURE,
+  creditBalanceGroupRows,
+  refundsOwedTaskRows,
   netCollectedFixtureBooking,
   netCollectedFixtureEvidence,
 } from "@/lib/__tests__/helpers/net-collected-scope-fixture";
@@ -176,6 +182,8 @@ function netCollectedPaymentRows(
               checkIn: row.checkIn,
               checkOut: row.checkOut,
               deletedAt: row.deletedAt ?? null,
+              // #3372: open hand-backs are read on every booking (7 Oct 2026).
+              manualRefundTasks: [],
             },
           },
         ]
@@ -404,6 +412,8 @@ describe("finance-booking-metrics", () => {
       handBackOwedCents: 0,
       keptCreditCents: 0,
       netCollectedCents: 40000,
+      refundsOwedCents: 0,
+      creditsOwedCents: 0,
       creditAppliedCents: 1000,
       changeFeeCents: 500,
     });
@@ -1508,6 +1518,8 @@ describe("finance net collected cash: the one Net Collected scope (#3637)", () =
 
   it("reads the same figure as the dashboard, Payments and Reports on the shared fixture", async () => {
     mockBookingRows([]);
+    mockPrisma.manualRefundTask.findMany.mockResolvedValue(refundsOwedTaskRows());
+    mockPrisma.memberCredit.groupBy.mockResolvedValue(creditBalanceGroupRows());
     mockPrisma.payment.findMany.mockResolvedValue(
       NET_COLLECTED_SCOPE_PAYMENTS.map((row) => ({
         status: row.status,
@@ -1525,6 +1537,13 @@ describe("finance net collected cash: the one Net Collected scope (#3637)", () =
 
     expect(metrics.paymentSummary.netCollectedCents).toBe(
       NET_COLLECTED_SCOPE_FIXTURE.expectedNetCollectedCents,
+    );
+    // Beside it, as at today and club-wide, not the window's (owner, 7 Oct 2026).
+    expect(metrics.paymentSummary.refundsOwedCents).toBe(
+      REFUNDS_AND_CREDITS_OWED_FIXTURE.expectedRefundsOwedCents,
+    );
+    expect(metrics.paymentSummary.creditsOwedCents).toBe(
+      REFUNDS_AND_CREDITS_OWED_FIXTURE.expectedCreditsOwedCents,
     );
   });
 });

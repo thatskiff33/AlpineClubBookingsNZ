@@ -1,3 +1,4 @@
+import { REFUNDS_AND_CREDITS_OWED_NOTE } from "@/lib/refunds-and-credits-owed-shared";
 import {
   formatClubDayMonth,
   requireCalendarDate,
@@ -158,13 +159,28 @@ export async function buildBookingsDashboard(
       // status, deleted ones left out), so it answers as the dashboard,
       // Payments and Reports do.
       description:
-        "Captured payments less refunds and credits for bookings in the range, including any collected price increase. Cancelled bookings count only what was kept of what was paid; deleted bookings are left out.",
+        "Captured payments less refunds and credits, and less refunds still owed back by hand, for bookings in the range, including any collected price increase. Cancelled bookings count only what was kept of what was paid; deleted bookings are left out.",
       // #3372 (3 Oct 2026): kept account credit and hand-backs owed come from
       // this app's credit and refund-task rows too, so not "payment-derived".
       footnote:
         ledgerGapBookings > 0
           ? `May understate by ${formatCents(metrics.paymentSummary.additionalLedgerGapCents, format)} - see the warning above. ${NET_COLLECTED_SOURCE_NOTE}`
           : NET_COLLECTED_SOURCE_NOTE,
+    },
+    // #3372 (owner, 7 Oct 2026): beside Net Collected, what is still owed back.
+    {
+      title: "Refunds owed",
+      value: formatDollarsDisplay(metrics.paymentSummary.refundsOwedCents, format),
+      description:
+        "Refunds the club has promised back by hand and not yet paid. Net Collected already takes them off.",
+      footnote: REFUNDS_AND_CREDITS_OWED_NOTE,
+    },
+    {
+      title: "Credits owed",
+      value: formatDollarsDisplay(metrics.paymentSummary.creditsOwedCents, format),
+      description:
+        "Account credit issued to members and not yet used on a booking.",
+      footnote: REFUNDS_AND_CREDITS_OWED_NOTE,
     },
     {
       title: "Forward demand",

@@ -46,6 +46,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // #3372 (owner, 7 Oct 2026): Refunds owed / Credits owed, as at today.
+    manualRefundTask: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
+    memberCredit: { groupBy: vi.fn(async (): Promise<unknown[]> => []) },
     payment: { findMany: mocks.paymentFindMany },
     xeroSyncOperation: { findMany: mocks.xeroSyncOperationFindMany },
     xeroObjectLink: { findMany: mocks.xeroObjectLinkFindMany },

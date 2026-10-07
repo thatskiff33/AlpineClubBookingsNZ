@@ -5,7 +5,7 @@
  * Finance dashboard's "Net Collected" (#3637) - so each surface's test
  * asserts the SAME expected amount from the SAME payments.
  *
- * Seven payments:
+ * Eight payments:
  *  - a CANCELLED booking that paid $200.00 and was refunded $150.00, so the
  *    club kept $50.00 of money it received. It counts: $50.00.
  *  - a CANCELLED booking that paid $120.00 and was refunded all of it (owner
@@ -24,6 +24,10 @@
  *  - a CANCELLED booking marked paid by hand for $100.00 whose $75.00 refund
  *    is still an OPEN hand-back task (same decision: the refund owed is gone
  *    straight away). It counts: $25.00, not $100.00.
+ *  - a LIVE (PAID) booking that paid $200.00 by card and was edited down by
+ *    $50.00, with that refund still an OPEN hand-back task (owner decision on
+ *    #3372, 7 Oct 2026: "subtract it immediately"; an edit's refund,
+ *    `INV-PAY-117`). It counts: $150.00.
  *  - a LIVE booking's never-paid Internet Banking payment, created PENDING at
  *    its $450.00 price, that the inbound reconcile folded a $50.00
  *    modification credit note into and marked PARTIALLY_REFUNDED (owner's
@@ -34,7 +38,7 @@
  * Each surface used to answer differently: the payments tile, Reports and
  * Finance left cancelled bookings out, the dashboard counted the deleted
  * booking too. Under the one scope and the one per-payment rule all four read
- * $95.00.
+ * $245.00.
  *
  * `source` and `capturedLedgerRows` are each payment's capture evidence
  * (`netCollectedCaptureEvidenceSelect`); a surface's mock hands them in through
@@ -166,11 +170,31 @@ export const NET_COLLECTED_SCOPE_FIXTURE = {
     deletedAt: null,
     ...noCreditOrTask,
   },
-  /** What every Net Collected figure must read over the seven payments above. */
-  expectedNetCollectedCents: 9_500,
+  liveEditRefundOpen: {
+    bookingId: "b-live-edit-refund-open",
+    bookingStatus: "PAID",
+    status: "SUCCEEDED",
+    amountCents: 20_000,
+    refundedAmountCents: 0,
+    source: "STRIPE",
+    capturedLedgerRows: 1,
+    deletedAt: null,
+    creditsApplied: [],
+    creditsFromCancellation: [],
+    manualRefundTasks: [
+      {
+        status: "OPEN",
+        kind: "CANCELLED_BOOKING_HAND_BACK",
+        amountCents: 5_000,
+        partPaymentReviewPaymentId: null,
+      },
+    ],
+  },
+  /** What every Net Collected figure must read over the eight payments above. */
+  expectedNetCollectedCents: 24_500,
 } as const satisfies Record<string, FixtureRow | number>;
 
-/** The fixture's seven payments as a list. */
+/** The fixture's eight payments as a list. */
 export const NET_COLLECTED_SCOPE_PAYMENTS: ReadonlyArray<FixtureRow> = [
   NET_COLLECTED_SCOPE_FIXTURE.keptFee,
   NET_COLLECTED_SCOPE_FIXTURE.fullyRefunded,
@@ -179,7 +203,72 @@ export const NET_COLLECTED_SCOPE_PAYMENTS: ReadonlyArray<FixtureRow> = [
   NET_COLLECTED_SCOPE_FIXTURE.creditKept,
   NET_COLLECTED_SCOPE_FIXTURE.handBackOwed,
   NET_COLLECTED_SCOPE_FIXTURE.foldedUnpaidLive,
+  NET_COLLECTED_SCOPE_FIXTURE.liveEditRefundOpen,
 ];
+
+/**
+ * #3372 (owner, 7 Oct 2026): the "Refunds owed" and "Credits owed" figures
+ * every Net Collected surface shows beside it, as at today and club-wide. ONE
+ * fixture, handed to all four surfaces through the two reads they make
+ * (`manualRefundTask.findMany` for open tasks, `memberCredit.groupBy` for
+ * balances), so each asserts the same totals.
+ *
+ * Open tasks: three refunds still owed by hand - a cancellation's ($75.00), an
+ * edit's refund on a live booking ($50.00) and one with no kind, from before
+ * the column ($10.00) - and four that are not: a part-payment review (no
+ * amount, settled in Xero), an unpriced edit financial review an officer has
+ * still to confirm, a priced one ($40.00, not yet confirmed), and a late
+ * capture awaiting a treasurer.
+ *
+ * Credit ledger: four members' entries. One has $100.00 issued and $40.00 used
+ * ($60.00 left); one $25.00 unused; one used all it had; one is (wrongly)
+ * $5.00 negative, which owes nothing and must not hide the others.
+ */
+export const REFUNDS_AND_CREDITS_OWED_FIXTURE = {
+  openTasks: [
+    { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 7_500, partPaymentReviewPaymentId: null, refundOwed: true },
+    { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 5_000, partPaymentReviewPaymentId: null, refundOwed: true },
+    { status: "OPEN", kind: null, amountCents: 1_000, partPaymentReviewPaymentId: null, refundOwed: true },
+    { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: null, partPaymentReviewPaymentId: "pay-review", refundOwed: false },
+    { status: "OPEN", kind: "EDIT_FINANCIAL_REVIEW", amountCents: null, partPaymentReviewPaymentId: null, refundOwed: false },
+    { status: "OPEN", kind: "EDIT_FINANCIAL_REVIEW", amountCents: 4_000, partPaymentReviewPaymentId: null, refundOwed: false },
+    { status: "OPEN", kind: "DELETED_BOOKING_LATE_CAPTURE", amountCents: 3_000, partPaymentReviewPaymentId: null, refundOwed: false },
+  ],
+  creditEntries: [
+    { memberId: "m-part-used", amountCents: 10_000 },
+    { memberId: "m-part-used", amountCents: -4_000 },
+    { memberId: "m-unused", amountCents: 2_500 },
+    { memberId: "m-all-used", amountCents: 3_000 },
+    { memberId: "m-all-used", amountCents: -3_000 },
+    { memberId: "m-negative", amountCents: -500 },
+  ],
+  expectedRefundsOwedCents: 13_500,
+  expectedCreditsOwedCents: 8_500,
+} as const;
+
+/** The open tasks as `manualRefundTask.findMany` returns them (no test marker). */
+export function refundsOwedTaskRows(): Array<{
+  status: string;
+  kind: string | null;
+  amountCents: number | null;
+  partPaymentReviewPaymentId: string | null;
+}> {
+  return REFUNDS_AND_CREDITS_OWED_FIXTURE.openTasks.map((task) => ({
+    status: task.status,
+    kind: task.kind,
+    amountCents: task.amountCents,
+    partPaymentReviewPaymentId: task.partPaymentReviewPaymentId,
+  }));
+}
+
+/** The ledger as `memberCredit.groupBy({ by: ["memberId"], _sum })` returns it. */
+export function creditBalanceGroupRows() {
+  const byMember = new Map<string, number>();
+  for (const entry of REFUNDS_AND_CREDITS_OWED_FIXTURE.creditEntries) {
+    byMember.set(entry.memberId, (byMember.get(entry.memberId) ?? 0) + entry.amountCents);
+  }
+  return [...byMember].map(([memberId, amountCents]) => ({ memberId, _sum: { amountCents } }));
+}
 
 /** A fixture row's capture evidence, as `netCollectedCaptureEvidenceSelect` loads it. */
 export function netCollectedFixtureEvidence(row: FixtureRow) {

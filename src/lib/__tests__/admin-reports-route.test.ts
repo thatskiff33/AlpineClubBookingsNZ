@@ -21,6 +21,9 @@ import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import {
   NET_COLLECTED_SCOPE_FIXTURE,
   NET_COLLECTED_SCOPE_PAYMENTS,
+  REFUNDS_AND_CREDITS_OWED_FIXTURE,
+  creditBalanceGroupRows,
+  refundsOwedTaskRows,
   netCollectedFixtureBooking,
   netCollectedFixtureEvidence,
 } from "@/lib/__tests__/helpers/net-collected-scope-fixture";
@@ -38,6 +41,9 @@ const EXPECTED_REPORT_STATUS_VALUES = [
 
 const mockLodgeFindUnique = vi.fn();
 const mockPrisma = {
+  // #3372 (owner, 7 Oct 2026): Refunds owed / Credits owed, as at today.
+  manualRefundTask: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
+  memberCredit: { groupBy: vi.fn(async (): Promise<unknown[]> => []) },
   booking: { findMany: vi.fn() },
   // #3372: Net Collected reads its own payments, in the one Net Collected
   // booking scope, not the report cohort's status list.
@@ -174,7 +180,7 @@ function netCollectedPaymentRows(
     .map((booking) => ({
       bookingId: booking.id,
       ...booking.payment,
-      booking: { deletedAt: booking.deletedAt ?? null },
+      booking: { deletedAt: booking.deletedAt ?? null, manualRefundTasks: [] },
     }));
 }
 
@@ -511,6 +517,8 @@ describe("admin reports route", () => {
     that list: the cancelled booking is in no count and no booked revenue.
   */
   it("counts a cancelled booking's kept fee and leaves a deleted booking out, like every Net Collected figure", async () => {
+    mockPrisma.manualRefundTask.findMany.mockResolvedValue(refundsOwedTaskRows());
+    mockPrisma.memberCredit.groupBy.mockResolvedValue(creditBalanceGroupRows());
     mockPrisma.booking.findMany.mockResolvedValue([]);
     mockPrisma.payment.findMany.mockResolvedValue(
       NET_COLLECTED_SCOPE_PAYMENTS.map((payment) => ({
@@ -537,6 +545,17 @@ describe("admin reports route", () => {
 
     expect(data.summary.netCollectedCents).toBe(
       NET_COLLECTED_SCOPE_FIXTURE.expectedNetCollectedCents,
+    );
+    // Beside it, as at today and club-wide - the report's range and "deleted"
+    // view do not narrow them (owner, 7 Oct 2026).
+    expect(data.summary.refundsOwedCents).toBe(
+      REFUNDS_AND_CREDITS_OWED_FIXTURE.expectedRefundsOwedCents,
+    );
+    expect(data.summary.creditsOwedCents).toBe(
+      REFUNDS_AND_CREDITS_OWED_FIXTURE.expectedCreditsOwedCents,
+    );
+    expect(mockPrisma.manualRefundTask.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { status: "OPEN" } }),
     );
     expect(data.summary.totalBookings).toBe(0);
     expect(data.summary.totalRevenueCents).toBe(0);

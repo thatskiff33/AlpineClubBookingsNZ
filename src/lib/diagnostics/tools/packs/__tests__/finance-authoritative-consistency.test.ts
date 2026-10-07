@@ -51,11 +51,11 @@ const { prismaMock } = vi.hoisted(() => {
   const models = {
     booking: { findUnique: vi.fn() },
     payment: { findUnique: vi.fn(), findMany: vi.fn(), count: vi.fn() },
-    memberCredit: { findMany: vi.fn(), aggregate: vi.fn() },
+    memberCredit: { findMany: vi.fn(), aggregate: vi.fn(), groupBy: vi.fn(async (): Promise<unknown[]> => []) },
     xeroSyncOperation: { findMany: vi.fn() },
     xeroObjectLink: { findFirst: vi.fn(), findMany: vi.fn() },
     paymentRecoveryOperation: { findMany: vi.fn() },
-    manualRefundTask: { count: vi.fn() },
+    manualRefundTask: { count: vi.fn(), findMany: vi.fn(async (): Promise<unknown[]> => []) },
     refundRequest: { count: vi.fn() },
   };
   const txMock = { ...models, $executeRaw: vi.fn().mockResolvedValue(0) };
