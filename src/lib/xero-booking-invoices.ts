@@ -97,7 +97,12 @@ import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
 import { asRecord } from "@/lib/xero-json";
 import { isCapturedPaymentStatus, recordedChangeFeeCents } from "@/lib/booking-payment-state";
 import { CHANGE_FEE_LINE_DESCRIPTION, changeFeeLineItem } from "@/lib/xero-modification-line-items";
-import { queuePrimaryInvoiceChangeFeeGap } from "@/lib/xero-primary-invoice-fee-gap";
+import {
+  primaryInvoiceBilledFee,
+  queuePrimaryInvoiceChangeFeeGap,
+  recheckPrimaryInvoiceChangeFeeGap,
+  recordPrimaryInvoiceBilledFee,
+} from "@/lib/xero-primary-invoice-fee-gap";
 
 export interface CreateXeroBookingInvoiceOptions
   extends FindOrCreateXeroContactOptions {
@@ -407,6 +412,14 @@ export async function createXeroInvoiceForBooking(
       xeroObjectNumber: booking.payment.xeroInvoiceNumber ?? null,
       xeroObjectUrl: buildXeroInvoiceUrl(booking.payment.xeroInvoiceId),
       role: "PRIMARY_INVOICE",
+    });
+    // #3955 review X4 (round 3): a prior run that persisted the link but died
+    // before or inside its change-fee gap check re-runs it here, from what the
+    // invoice billed as recorded before the link was persisted. Idempotent.
+    await recheckPrimaryInvoiceChangeFeeGap({
+      bookingId,
+      xeroInvoiceId: booking.payment.xeroInvoiceId,
+      createdByMemberId: options?.createdByMemberId,
     });
     // Retry-safe: a prior run that raised the invoice but failed before/at the
     // applied-credit allocation re-drives the idempotent engine here (#1641).
@@ -1099,19 +1112,25 @@ export async function createXeroInvoiceForBooking(
       }
     }
 
-    // Store the Xero invoice ID and number on the payment record.
-    // #3955 review X4: read back the fee recorded on the payment in the same
-    // statement. A finished-stay correction claims its fee write against the
-    // invoice link it read, so it either landed before this write (and is in
-    // the figure returned) or sees the link and routes its fee to its own
-    // document.
-    const persistedPayment = await prisma.payment.update({
+    // #3955 review X4: what this invoice billed, recorded on the operation
+    // BEFORE the link below is persisted, so a run that dies after persisting
+    // it still has the figure its retry re-checks the change-fee gap from.
+    const billedFee = primaryInvoiceBilledFee(
+      createdInvoice.invoiceID,
+      createdInvoice.lineItems ?? lineItems,
+    );
+    await recordPrimaryInvoiceBilledFee(operationId!, billedFee);
+
+    // Store the Xero invoice ID and number on the payment record. A
+    // finished-stay correction claims its fee write against the invoice link
+    // it read, so once this commits every fee it routed here is recorded and
+    // any later one is refused (#3955 review X4).
+    await prisma.payment.update({
       where: { id: booking.payment.id },
       data: {
         xeroInvoiceId: createdInvoice.invoiceID,
         xeroInvoiceNumber: createdInvoice.invoiceNumber ?? null,
       },
-      select: { changeFeeCents: true },
     });
     await prisma.paymentTransaction.updateMany({
       where: {
@@ -1132,8 +1151,7 @@ export async function createXeroInvoiceForBooking(
     // invoice rather than being lost.
     await queuePrimaryInvoiceChangeFeeGap({
       bookingId,
-      billedLineItems: createdInvoice.lineItems ?? lineItems,
-      recordedChangeFeeCents: recordedChangeFeeCents(persistedPayment),
+      billed: billedFee,
       createdByMemberId: options?.createdByMemberId,
     });
 

@@ -222,6 +222,13 @@ export type FeeAddedToAmountOwed = {
 const FEE_ADDED_TO_AMOUNT_OWED_PATH = ["finishedStayCorrection", "feeAddedToAmountOwed"];
 
 /**
+ * A correction that routed its fee to the booking's PRIMARY invoice: recorded
+ * while no invoice was linked, so it raised no document of its own. The anchor
+ * a primary invoice's fee gap is billed on (`queuePrimaryInvoiceChangeFeeGap`).
+ */
+export const FEE_ON_PRIMARY_INVOICE_PATH = ["finishedStayCorrection", "feeOnPrimaryInvoice"] as const;
+
+/**
  * Records a correction's fee on an unpaid booking's payment, where every pay
  * step reads it. A booking that has never reached its pay step has no payment
  * row yet; this one carries only the fee until it does.
@@ -232,8 +239,9 @@ const FEE_ADDED_TO_AMOUNT_OWED_PATH = ["finishedStayCorrection", "feeAddedToAmou
  * built without the fee, and no document of this edit will carry it, so the
  * edit is refused and nothing is applied. The guard also orders this write
  * against that persist on the payment row: whichever writes second sees the
- * other, and the create reads the recorded fee back in its own write and bills
- * any gap (`queuePrimaryInvoiceChangeFeeGap`).
+ * other, so once the link is persisted every fee routed to it is recorded, and
+ * the create bills any gap on a supplementary invoice anchored on this edit
+ * (`queuePrimaryInvoiceChangeFeeGap`, keyed on {@link FEE_ON_PRIMARY_INVOICE_PATH}).
  */
 export async function recordFinishedStayFeeOwed(
   tx: PrismaTransactionClient,

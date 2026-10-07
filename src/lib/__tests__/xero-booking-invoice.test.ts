@@ -182,11 +182,19 @@ vi.mock("xero-node", () => ({
   },
 }));
 
-// #3955 review X4: the gap check has its own suite; here, what it is handed.
-const queuePrimaryInvoiceChangeFeeGap = vi.hoisted(() =>
-  vi.fn().mockResolvedValue({ gapCents: 0, queueOperationId: null }),
-);
-vi.mock("@/lib/xero-primary-invoice-fee-gap", () => ({ queuePrimaryInvoiceChangeFeeGap }));
+// #3955 review X4: the gap check has its own suite; here, what it is handed
+// and when — the billed figure is recorded before the link is persisted, and a
+// retry through the "invoice already exists" exit re-runs the check.
+const feeGap = vi.hoisted(() => ({
+  queuePrimaryInvoiceChangeFeeGap: vi.fn(),
+  recheckPrimaryInvoiceChangeFeeGap: vi.fn(),
+  recordPrimaryInvoiceBilledFee: vi.fn(),
+}));
+const { queuePrimaryInvoiceChangeFeeGap } = feeGap;
+vi.mock("@/lib/xero-primary-invoice-fee-gap", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/xero-primary-invoice-fee-gap")>()),
+  ...feeGap,
+}));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: mocks.prisma,
@@ -511,22 +519,56 @@ describe("createXeroInvoiceForBooking", () => {
     expect(feeLines).toEqual([expect.objectContaining({ unitAmount: 53.2, quantity: 1 })]);
   });
 
-  it("#3955 X4: hands the gap check the fee read back on persist and the lines Xero returned", async () => {
-    mocks.prisma.payment.update.mockResolvedValueOnce({ changeFeeCents: 7_000 });
-    const returnedLines = [{ description: CHANGE_FEE_LINE_DESCRIPTION, quantity: 1, unitAmount: 20 }];
+  it("#3955 X4: records what Xero's invoice billed before persisting the link, then checks the gap from it", async () => {
+    const returnedLines = [
+      { description: "Jordan - (ADULT, Member) - 2 nights", quantity: 1, unitAmount: 100 },
+      { description: CHANGE_FEE_LINE_DESCRIPTION, quantity: 1, unitAmount: 20 },
+    ];
     mocks.xeroClientInstance.accountingApi.createInvoices.mockResolvedValueOnce({
       body: {
         invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1", total: 0, status: "PAID", lineItems: returnedLines }],
       },
     });
     await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+    const billed = { xeroInvoiceId: "inv_1", billedChangeFeeCents: 2_000, billedTotalCents: 12_000 };
+    expect(feeGap.recordPrimaryInvoiceBilledFee).toHaveBeenCalledWith("op_1", billed);
     expect(queuePrimaryInvoiceChangeFeeGap).toHaveBeenCalledWith(
-      expect.objectContaining({
-        bookingId: "booking_1",
-        billedLineItems: returnedLines,
-        recordedChangeFeeCents: 7_000,
-      }),
+      expect.objectContaining({ bookingId: "booking_1", billed }),
     );
+    // Recorded first, so every persisted link has a figure its retry can read.
+    expect(feeGap.recordPrimaryInvoiceBilledFee.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.prisma.payment.update.mock.invocationCallOrder[0],
+    );
+    expect(mocks.prisma.payment.update.mock.invocationCallOrder[0]).toBeLessThan(
+      queuePrimaryInvoiceChangeFeeGap.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("#3955 round 3: a gap check that throws after the link is persisted is re-run by the retry", async () => {
+    queuePrimaryInvoiceChangeFeeGap.mockRejectedValueOnce(new Error("connection reset"));
+    await expect(createXeroInvoiceForBooking("booking_1", { syncOperationId: "op_1" })).rejects.toThrow(
+      "connection reset",
+    );
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalled();
+    expect(feeGap.recheckPrimaryInvoiceChangeFeeGap).not.toHaveBeenCalled();
+
+    // Retry: the link was persisted, so the create takes its "invoice already
+    // exists" exit — which must re-run the check rather than lose the fee.
+    mocks.xeroClientInstance.accountingApi.createInvoices.mockClear();
+    const fixture = await mocks.prisma.booking.findUnique();
+    mocks.prisma.booking.findUnique.mockResolvedValueOnce({
+      ...fixture,
+      payment: { ...fixture.payment, xeroInvoiceId: "inv_1", xeroInvoiceNumber: "INV-1" },
+    });
+    await expect(
+      createXeroInvoiceForBooking("booking_1", { syncOperationId: "op_1", createdByMemberId: "officer_1" }),
+    ).resolves.toBe("inv_1");
+    expect(mocks.xeroClientInstance.accountingApi.createInvoices).not.toHaveBeenCalled();
+    expect(feeGap.recheckPrimaryInvoiceChangeFeeGap).toHaveBeenCalledWith({
+      bookingId: "booking_1",
+      xeroInvoiceId: "inv_1",
+      createdByMemberId: "officer_1",
+    });
   });
 
   it("resolves the item-code season from the booking's own lodge, not any lodge", async () => {
@@ -685,8 +727,6 @@ describe("createXeroInvoiceForBooking", () => {
         xeroInvoiceId: "inv_1",
         xeroInvoiceNumber: "INV-1",
       },
-      // #3955 review X4: the recorded fee is read back in the same write.
-      select: { changeFeeCents: true },
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
       "op_1",
