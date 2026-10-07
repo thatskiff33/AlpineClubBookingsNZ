@@ -358,15 +358,29 @@ export function parseIssueArgument(argv) {
   return Number(match[1]);
 }
 
+const ISSUE_FIELDS =
+  "number,title,state,url,author,createdAt,updatedAt,labels,assignees,body,comments";
+
+/**
+ * Read the issue. `stateReason` is asked for, but `gh` older than the field
+ * (Ubuntu's packaged 2.46.0, #3912) rejects it with `Unknown JSON field`; that
+ * is retried without it so the state prints alone. Any other failure surfaces.
+ */
+export function fetchIssue(number) {
+  const view = (fields) => ["issue", "view", String(number), "--json", fields];
+  try {
+    return ghJson(view(`${ISSUE_FIELDS},stateReason`));
+  } catch (error) {
+    if (!/Unknown JSON field:?\s*"?stateReason/i.test(String(error?.message))) {
+      throw error;
+    }
+    return ghJson(view(ISSUE_FIELDS));
+  }
+}
+
 function main(argv) {
   const number = parseIssueArgument(argv);
-  const issue = ghJson([
-    "issue",
-    "view",
-    String(number),
-    "--json",
-    "number,title,state,stateReason,url,author,createdAt,updatedAt,labels,assignees,body,comments",
-  ]);
+  const issue = fetchIssue(number);
 
   const comments = issue.comments ?? [];
   const assessment = assessThread({ body: issue.body, comments });
