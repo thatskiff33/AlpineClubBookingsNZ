@@ -11,12 +11,12 @@ import type { RosterDayStatus } from "@/lib/roster-status";
 import {
   addCalendarDays,
   calendarDayOfWeek,
-  formatClubDate,
   formatClubDayMonth,
   formatClubLongWeekdayDayMonth,
   formatClubWeekdayDayMonth,
   requireCalendarDate,
   type ClubDateFormat,
+  formatStayDate,
 } from "@/lib/club-time";
 import { useClubFormat } from "@/components/club-format-provider";
 import { formatDateOnly } from "@/lib/date-only";
@@ -188,7 +188,7 @@ function displayShortDay(dateKey: string, format: ClubDateFormat): string {
 
 function displayWeekRange(weekStart: string, format: ClubDateFormat): string {
   const weekEnd = addDaysToDateKey(weekStart, 6);
-  return `${formatClubDayMonth(requireCalendarDate(weekStart), format)} - ${formatClubDate(requireCalendarDate(weekEnd), format)}`;
+  return `${formatClubDayMonth(requireCalendarDate(weekStart), format)} - ${formatStayDate(weekEnd, format)}`;
 }
 
 export function KioskWeekView({

@@ -54,7 +54,7 @@
  */
 
 import type { AgeTier, BookingGuestNightPriceSource } from "@prisma/client";
-import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
+import { formatStayDateOrNull } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
 import { splitNightsIntoPriceRuns } from "@/lib/night-price-runs";
 import { modificationPromoDeltas } from "@/lib/booking-modification-promo-delta";
@@ -435,8 +435,7 @@ export function describeModificationLineCategory(
 }
 
 function formatDay(day: string, format: ClubFormat): string {
-  const parsed = parseCalendarDate(day);
-  return parsed ? formatClubDate(parsed, format) : day;
+  return formatStayDateOrNull(day, format) ?? day;
 }
 
 /**
