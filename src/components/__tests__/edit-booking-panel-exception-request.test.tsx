@@ -304,7 +304,9 @@ describe("EditBookingPanel — when the request action appears", () => {
     render(<EditBookingPanel booking={booking} onDone={vi.fn()} />);
 
     // Take the promo off AND shorten the stay in one edit — the exact journey.
-    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    // (#3492: the promo card offers its controls once the guest-code lookup
+    // has answered the club's multi-code switch.)
+    fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
     const saveButton = await shortenStayAndWaitForSave();
     fireEvent.click(saveButton);
 

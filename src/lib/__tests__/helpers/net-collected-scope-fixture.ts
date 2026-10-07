@@ -1,3 +1,5 @@
+import { editRefundHandBackOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
+
 /**
  * #3372, owner decision A: ONE fixture for the one Net Collected booking scope,
  * handed to all four surfaces that show a "Net Collected" figure - the
@@ -27,7 +29,7 @@
  *  - a LIVE (PAID) booking that paid $200.00 by card and was edited down by
  *    $50.00, with that refund still an OPEN hand-back task (owner decision on
  *    #3372, 7 Oct 2026: "subtract it immediately"; an edit's refund,
- *    #3827). It counts: $150.00.
+ *    `INV-PAY-117`). It counts: $150.00.
  *  - a LIVE booking's never-paid Internet Banking payment, created PENDING at
  *    its $450.00 price, that the inbound reconcile folded a $50.00
  *    modification credit note into and marked PARTIALLY_REFUNDED (owner's
@@ -66,6 +68,13 @@ type FixtureRow = {
     kind: string | null;
     amountCents: number | null;
     partPaymentReviewPaymentId: string | null;
+    /**
+     * Set only where the writer sets one: an edit's refund carries
+     * `edit-refund-hand-back:<modification>` (`INV-PAY-117`). The Net
+     * Collected reader keys on kind and status alone, so this proves the key
+     * changes nothing.
+     */
+    occurrenceKey?: string | null;
   }>;
 };
 
@@ -187,6 +196,7 @@ export const NET_COLLECTED_SCOPE_FIXTURE = {
         kind: "CANCELLED_BOOKING_HAND_BACK",
         amountCents: 5_000,
         partPaymentReviewPaymentId: null,
+        occurrenceKey: editRefundHandBackOccurrenceKey("mod-live-edit-refund"),
       },
     ],
   },

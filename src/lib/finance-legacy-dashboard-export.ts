@@ -43,7 +43,7 @@ const legacyDashboardBookingExportSelect =
         },
       },
     },
-    promoRedemption: {
+    promoRedemptions: {
       select: {
         priceAdjustmentCents: true,
         allocations: {

@@ -5,52 +5,90 @@
  * `booking-create-types` module, never on the orchestrator, to avoid an import
  * cycle.
  */
-import { PromoCodeType, type FixedNightlyMode, type BookingGuest } from "@prisma/client";
+import type { BookingGuest, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { CalendarDate } from "@/lib/club-time";
 import type { PromoAdjustmentTarget } from "@/lib/night-adjustment-write";
 import {
   GUEST_SELECTION_REQUIRED_MESSAGE,
+  lockPromoCodeRowsForUpdate,
   promoLodgeRestrictionRefusal,
   shouldPersistPromoRedemption,
-  validateAndCalculatePromoDiscount,
   validatePromoCodeRules,
   type PromoBeneficiaryAllocation,
 } from "@/lib/promo";
+import { applyBookingPromotions } from "@/lib/booking-promotions";
+import { guestConsentStatus } from "@/lib/member-guest-consent";
 import {
   assignmentRequiresAssignedBooker,
   assignmentRequiresGuestSelection,
 } from "@/lib/promo-guest-scope";
 import { resolveWorkPartyEventPromoForBooking } from "@/lib/work-party";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { normalizePromoCodeInput, promoCodeListRefusal } from "@/lib/promo-code-list-rules";
 import { type BookingGuestInput, BookingPromoError } from "./booking-create-types";
 
-export interface ResolvedPromo {
+/** One promo code a create request carries, in the booker's order (D-3813-2). */
+export interface PromoCodeRequest {
+  code: string;
+  /** Guest positions the booker chose for a booker-picks-guests code. */
+  promoGuestIndexes?: number[];
+}
+
+/** A code to apply at create: a typed code, or the working bee's internal one. */
+export interface EffectivePromoSource {
+  promoCodeStr: string;
+  allowInternal: boolean;
+  promoGuestIndexes?: number[];
+}
+
+/** What one applied code will persist as its `PromoRedemption`. */
+export interface ResolvedPromoRedemption {
+  promoCodeId: string;
+  /** The code's place in the booking's order (D-3813-2; work party first, D-3813-3). */
+  applicationOrder: number;
+  discountCents: number;
+  priceAdjustmentCents: number;
+  freeNightsUsed: number;
+  eligibleGuestCount: number;
+  allocations: PromoBeneficiaryAllocation[];
+  selectedGuestIndexes?: number[];
+}
+
+/**
+ * Every code a create applies, priced together (#3827). Totals are the sum over
+ * the codes, each its own integer cents; `redemptions` holds only the codes
+ * that persist a row (`shouldPersistPromoRedemption`).
+ */
+export interface ResolvedPromotions {
   discountCents: number;
   promoAdjustmentCents: number;
-  promoFreeNightsUsed: number;
-  promoEligibleGuestCount: number;
-  promoAllocations: PromoBeneficiaryAllocation[];
-  /** #3276: what the promotion took off each night or guest, by guest index. */
+  /** #3276: what each code took off each night or guest, by guest index, naming its code. */
   promoAdjustmentTargets: PromoAdjustmentTarget[];
-  promoSelectedGuestIndexes?: number[];
-  promoShouldPersist: boolean;
-  promoCodeRecord:
-    | {
-        id: string;
-        type: PromoCodeType;
-        valueCents: number | null;
-        percentOff: number | null;
-        freeNightsPerIndividual: number | null;
-        lifetimeFreeNightsCap: number | null;
-        fixedNightlyPriceCents: number | null;
-        fixedNightlyMode: FixedNightlyMode | null;
-        maxGuestsPerBooking: number | null;
-        maxNightlyValueCents: number | null;
-        memberGuestsOnly: boolean;
-        assignedMembersOnlyOwnNights?: boolean | null;
-      }
-    | null;
+  redemptions: ResolvedPromoRedemption[];
+}
+
+export const NO_PROMOTIONS: ResolvedPromotions = Object.freeze({
+  discountCents: 0,
+  promoAdjustmentCents: 0,
+  promoAdjustmentTargets: [],
+  redemptions: [],
+}) as ResolvedPromotions;
+
+/**
+ * The codes a create request carries, in order: the plural `promoCodes` when
+ * sent, else the legacy single `promoCode` with its guest choice (#3827 keeps
+ * the legacy field accepted).
+ */
+export function promoCodeRequestsOf(input: {
+  promoCodes?: PromoCodeRequest[];
+  promoCodeStr?: string;
+  promoGuestIndexes?: number[];
+}): PromoCodeRequest[] {
+  if (input.promoCodes) return input.promoCodes;
+  return input.promoCodeStr
+    ? [{ code: input.promoCodeStr, promoGuestIndexes: input.promoGuestIndexes }]
+    : [];
 }
 
 /**
@@ -86,18 +124,31 @@ export function getPromoTargetBookingGuestIds(
 }
 
 /**
- * Resolve and validate a promo code inside the booking transaction.
- * Locks the row for update so concurrent bookings cannot over-redeem.
- * Throws BookingPromoError on validation failure so the caller can
- * roll back and return a 400.
+ * Resolve, price and validate every code a create applies (#3827), in the
+ * order `resolveEffectivePromoSources` gave — through the one orchestrator
+ * (`applyBookingPromotions`), so a create prices several codes exactly as every
+ * edit re-prices them. Throws BookingPromoError on the first refusal so the
+ * caller rolls back and returns a 400.
  *
- * Internal promos (work party events) are rejected like unknown codes
- * unless allowInternal is set by the work-party resolution path.
+ * LOCKS (`lockRows`, the in-transaction creates): the code rows are resolved
+ * to ids UNLOCKED, locked in ONE sorted call (`lockPromoCodeRowsForUpdate`),
+ * then re-read by id under the lock. A row whose `code` no longer reads as
+ * typed — renamed between the two reads — is refused as "Promo code not found",
+ * the outcome the former code-keyed `FOR UPDATE` gave when its lock matched
+ * nothing; a code created or renamed TO the typed text after the unlocked read
+ * is likewise not found. The caller holds `pg_advisory_xact_lock(1)` and the
+ * per-lodge capacity key, so the order is lodge -> promo rows, sorted by id.
+ * The waitlisted create prices before its transaction and passes
+ * `lockRows: false`, as it always read the code unlocked.
+ *
+ * Internal promos (work party events) are rejected like unknown codes unless
+ * the source came from the work-party resolution.
  */
-export async function resolvePromoInTransaction(
-  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+export async function resolvePromotionsInTransaction(
+  db: Prisma.TransactionClient,
   options: {
-    promoCodeStr: string;
+    sources: readonly EffectivePromoSource[];
+    lockRows: boolean;
     effectiveMemberId: string;
     checkIn: Date;
     guests: BookingGuestInput[];
@@ -105,113 +156,70 @@ export async function resolvePromoInTransaction(
     perNightCentsByGuest: number[][];
     /** #3276: REQUIRED, so an adjustment row can be attributed to a night by date. */
     nightDatesByGuest: Date[][];
-    promoGuestIndexes?: number[];
-    allowInternal?: boolean;
     lodgeId: string;
     /**
      * The club's own calendar day (#3123, `INV-CONFIG-002`), resolved by the
-     * caller BEFORE it opened the transaction whose client arrives as `tx`.
+     * caller BEFORE it opened the transaction whose client arrives as `db`.
      *
      * REQUIRED. `INV-LOCK-004` names the club timezone as one of only two reads
      * that cannot take a transaction client; by this point the caller holds
-     * `pg_advisory_xact_lock(1)`, the per-lodge capacity key and a `FOR UPDATE`
-     * row lock on the promo code itself. It decides the promotion's validity
-     * window, which is whether the member gets the discount at all.
+     * `pg_advisory_xact_lock(1)`, the per-lodge capacity key and the promo row
+     * locks. It decides each promotion's validity window, which is whether the
+     * member gets the discount at all.
      */
     todayAtClub: CalendarDate;
   },
-): Promise<ResolvedPromo> {
-  const {
-    promoCodeStr,
-    effectiveMemberId,
-    checkIn,
-    guests,
-    totalPriceCents,
-    perNightCentsByGuest,
-    nightDatesByGuest,
-    promoGuestIndexes,
-    allowInternal,
-    lodgeId,
-    todayAtClub,
-  } = options;
-  const normalizedCode = normalizePromoCodeInput(promoCodeStr);
+): Promise<ResolvedPromotions> {
+  const { sources, guests, perNightCentsByGuest, nightDatesByGuest } = options;
+  if (sources.length === 0) return NO_PROMOTIONS;
+  const typed = sources.map((source) => normalizePromoCodeInput(source.promoCodeStr));
 
-  // LOCK RAW, READ TYPED (#2289). The raw statement exists ONLY to take the row
-  // lock, so it selects a constant, returns an affected-row count through
-  // `$executeRaw`, and is never read; the promo itself is then read back through
-  // the Prisma model, under that lock, in the same transaction.
-  //
-  // This used to be `$queryRaw<LockedPromoRow[]>\`SELECT * FROM "PromoCode" …\``,
-  // and that is the single most expensive line this repository has written. The
-  // generic is an unchecked CAST: raw SQL returns the PHYSICAL column names while
-  // the hand-written type declared the Prisma ones, and where a deployment's
-  // columns differed the properties simply arrived `undefined` —
-  // `maxRedemptionsTotal` undefined made `!== null` true and `n > undefined`
-  // false, so the total-redemption cap never fired, and
-  // `freeNightsPerIndividual` undefined made `?? 0` yield zero, so FREE_NIGHTS
-  // promos applied NO discount at booking creation while the quote path (an
-  // ordinary mapped Prisma read) showed the member one. Members were quoted a
-  // discount and charged without it, for months, with nothing logged: the cast
-  // silenced the compiler and the mocked tests returned the same wrong shape the
-  // author believed.
-  //
-  // The model read cannot repeat that. Prisma owns the column mapping, so the
-  // names can never drift from what the schema says, and a genuinely missing
-  // column is a startup/query error rather than a silent `undefined`. The cost
-  // is one extra round trip inside a transaction that already makes many.
-  //
-  // THE ZERO-MATCH GUARD IS LOAD-BEARING, not defensive tidiness. Splitting one
-  // statement into two is only behaviour-identical while the lock actually
-  // matches something. `FOR UPDATE` locks NOTHING when it matches nothing, and
-  // this repository runs at PostgreSQL's default READ COMMITTED deliberately
-  // (`member-merge.ts` documents the reliance), so the `findUnique` below takes
-  // a FRESH statement snapshot and can see a `PromoCode` that was INSERTED — or
-  // whose `code` was renamed to this one — after the lock statement ran. That
-  // row would be read, validated and have its redemption slot consumed with no
-  // lock held on it, so two concurrent bookings could both see
-  // `currentRedemptions = 0` and both redeem a `maxRedemptionsTotal: 1` code:
-  // exactly the check-then-consume race the lock exists to close. `code` is the
-  // only MUTABLE natural key any converted site locks on — every other site
-  // keys on an immutable cuid, or materialises its singleton before locking —
-  // so this is the one place it can happen.
-  //
-  // The old single `SELECT * … FOR UPDATE` could not do this: a row it had not
-  // locked could not appear in its result set, so the same interleaving refused
-  // with "Promo code not found". Reproduce that exactly rather than inventing a
-  // new outcome — no lock, no promo. Re-locking by the now-known id would also
-  // be correct, but it adds a second raw statement and a retry path to buy an
-  // outcome (a promo created DURING this transaction being honoured by it) that
-  // the code never had and nobody has asked for.
-  const lockedRowCount =
-    await tx.$executeRaw`SELECT 1 FROM "PromoCode" WHERE "code" = ${normalizedCode} FOR UPDATE`;
-  const promoCode =
-    lockedRowCount > 0
-      ? await tx.promoCode.findUnique({ where: { code: normalizedCode } })
-      : null;
-
-  const hidden = promoCodeVisibilityRefusal(promoCode, allowInternal ?? false);
-  if (hidden) {
-    throw new BookingPromoError(hidden);
+  // LOCK RAW, READ TYPED (#2289), keyed on the IMMUTABLE id (#3827): resolve,
+  // lock in sorted-id order, re-read under the lock. See the docblock.
+  const resolvedIds = await db.promoCode.findMany({
+    where: { code: { in: typed } },
+    select: { id: true, code: true },
+  });
+  if (options.lockRows) {
+    await lockPromoCodeRowsForUpdate(db, resolvedIds.map((row) => row.id));
   }
+  const rows = resolvedIds.length
+    ? await db.promoCode.findMany({ where: { id: { in: resolvedIds.map((row) => row.id) } } })
+    : [];
+  const [assignmentRows, lodgeRows] = rows.length
+    ? await Promise.all([
+        db.promoCodeAssignment.findMany({
+          where: { promoCodeId: { in: rows.map((row) => row.id) } },
+          select: { promoCodeId: true, memberId: true },
+        }),
+        db.promoCodeLodge.findMany({
+          where: { promoCodeId: { in: rows.map((row) => row.id) } },
+          select: { promoCodeId: true, lodgeId: true },
+        }),
+      ])
+    : [[], []];
 
-  let assignedMemberIds: string[] | null = null;
-  let promoLodges: { lodgeId: string }[] = [];
-  if (promoCode) {
-    const [assignments, lodgeRows] = await Promise.all([
-      tx.promoCodeAssignment.findMany({
-        where: { promoCodeId: promoCode.id },
-        select: { memberId: true },
-      }),
-      tx.promoCodeLodge.findMany({
-        where: { promoCodeId: promoCode.id },
-        select: { lodgeId: true },
-      }),
-    ]);
-    if (assignments.length > 0) {
-      assignedMemberIds = assignments.map((a) => a.memberId);
-    }
-    promoLodges = lodgeRows;
-  }
+  const applications = sources.map((source, index) => {
+    const code = typed[index]!;
+    const id = resolvedIds.find((row) => row.code === code)?.id;
+    const promoCode = rows.find((row) => row.id === id && row.code === code) ?? null;
+    const hidden = promoCodeVisibilityRefusal(promoCode, source.allowInternal);
+    if (hidden) throw new BookingPromoError(hidden);
+    if (!promoCode) throw new BookingPromoError("Promo code not found");
+    const assignments = assignmentRows.filter((row) => row.promoCodeId === promoCode.id);
+    return {
+      code: promoCode.code,
+      promoCode: {
+        ...promoCode,
+        lodges: lodgeRows
+          .filter((row) => row.promoCodeId === promoCode.id)
+          .map((row) => ({ lodgeId: row.lodgeId })),
+      },
+      assignedMemberIds: assignments.length > 0 ? assignments.map((row) => row.memberId) : null,
+      selectedGuestIndexes: source.promoGuestIndexes,
+      capOverflow: "reject" as const,
+    };
+  });
 
   // Each guest's own per-night rates, read once. The caller builds this vector
   // for exactly this party, so a guest with no rates would be a promo evaluated
@@ -227,45 +235,81 @@ export async function resolvePromoInTransaction(
       memberId: guest.memberId ?? null,
       isMember: guest.isMember,
       perNightRates,
-      firstNight: guest.stayStart ?? checkIn,
-      // `nightDatesByGuest` is declared `Date[][]`, so the optional chain this
-      // replaces was guarding a parameter that cannot be absent (#3276).
+      firstNight: guest.stayStart ?? options.checkIn,
       nightDates: nightDatesByGuest[index],
+      // D-3813-4: the consent this row is about to be created with. A
+      // cross-family guest added as PENDING takes no code until they accept.
+      consentStatus: guestConsentStatus(guest),
     };
   });
-  const application = await validateAndCalculatePromoDiscount(
-    promoCode ? { ...promoCode, lodges: promoLodges } : null,
-    {
-      memberId: effectiveMemberId,
-      bookingCheckIn: checkIn,
-      totalPriceCents,
-      guests: guestNightRates,
-    },
-    assignedMemberIds,
-    { db: tx, selectedGuestIndexes: promoGuestIndexes, lodgeId, todayAtClub }
-  );
-  if (application.error || !application.discount) {
-    throw new BookingPromoError(application.error ?? "Promo code could not be applied");
-  }
-  const promoResult = application.discount;
+  const priced = await applyBookingPromotions(applications, {
+    memberId: options.effectiveMemberId,
+    bookingCheckIn: options.checkIn,
+    totalPriceCents: options.totalPriceCents,
+    guests: guestNightRates,
+    db,
+    lodgeId: options.lodgeId,
+    todayAtClub: options.todayAtClub,
+  });
 
+  const redemptions: ResolvedPromoRedemption[] = [];
+  for (const { application, applicationOrder, result } of priced.outcomes) {
+    if (result.error || !result.discount) {
+      throw new BookingPromoError(result.error ?? "Promo code could not be applied");
+    }
+    const discount = result.discount;
+    if (!shouldPersistPromoRedemption(discount)) continue;
+    redemptions.push({
+      promoCodeId: application.promoCode.id,
+      applicationOrder,
+      discountCents: discount.discountCents,
+      priceAdjustmentCents: discount.priceAdjustmentCents,
+      freeNightsUsed: discount.freeNightsUsed,
+      eligibleGuestCount: discount.eligibleGuestCount,
+      allocations: discount.allocations,
+      selectedGuestIndexes: result.selectedGuestIndexes,
+    });
+  }
   return {
-    discountCents: promoResult.discountCents,
-    promoAdjustmentCents: promoResult.priceAdjustmentCents,
-    promoFreeNightsUsed: promoResult.freeNightsUsed,
-    promoEligibleGuestCount: promoResult.eligibleGuestCount,
-    promoAllocations: promoResult.allocations,
-    promoAdjustmentTargets: promoResult.adjustmentTargets,
-    promoSelectedGuestIndexes: application.selectedGuestIndexes,
-    promoShouldPersist: shouldPersistPromoRedemption(promoResult),
-    promoCodeRecord: promoCode,
+    discountCents: priced.discountCents,
+    promoAdjustmentCents: priced.priceAdjustmentCents,
+    promoAdjustmentTargets: priced.adjustmentTargets,
+    redemptions,
   };
 }
 
-/** ONE spelling of a typed promo code as it is stored (#3770, `INV-SSOT-001`). */
-export function normalizePromoCodeInput(code: string): string {
-  return code.toUpperCase().trim();
+/**
+ * The codes a create REQUEST carries, in the booker's order (#3827): the plural
+ * `promoCodes` sorted by each entry's `order` — the list's own order where an
+ * entry gives none, and between equals — or the legacy single code with its
+ * guest choice.
+ */
+export function orderedPromoCodeRequests(body: {
+  promoCodes?: Array<PromoCodeRequest & { order?: number }>;
+  promoCodeStr?: string;
+  promoGuestIndexes?: number[];
+}): PromoCodeRequest[] {
+  if (!body.promoCodes) return promoCodeRequestsOf(body);
+  return body.promoCodes
+    .map((entry, position) => ({ entry, position }))
+    .sort(
+      (a, b) =>
+        (a.entry.order ?? a.position) - (b.entry.order ?? b.position) ||
+        a.position - b.position,
+    )
+    .map(({ entry }) => ({
+      code: entry.code,
+      ...(entry.promoGuestIndexes ? { promoGuestIndexes: entry.promoGuestIndexes } : {}),
+    }));
 }
+
+// The code-list refusals live in the leaf `promo-code-list-rules.ts` (#3827),
+// with the stored spelling of a typed code; re-exported here for this module's
+// importers.
+export {
+  DUPLICATE_PROMO_CODE_MESSAGE,
+  ONE_PROMO_CODE_PER_BOOKING_MESSAGE,
+} from "@/lib/promo-code-list-rules";
 
 /**
  * An internal (working-bee) code is "not found" to anyone who typed it; only the
@@ -335,20 +379,21 @@ export async function promoCodeRequestRefusal(options: {
   );
 }
 
-const PROMO_WORK_PARTY_EXCLUSION_MESSAGE =
-  "A promo code cannot be combined with a working bee discount. Please remove one of them and try again.";
-
 /**
- * Resolve the effective promo source for a booking: either the
- * member-entered code or the selected work party event's internal promo.
- * Only one PromoRedemption can exist per booking, so the two are mutually
- * exclusive. Throws BookingPromoError when both are supplied or the event
- * is not bookable for these dates.
+ * Resolve the codes a create applies, in order (#3827): the selected working
+ * bee's internal promo first — it claims its in-window nights before any code
+ * (D-3813-3) — then the member's codes in the order they chose (D-3813-2).
+ *
+ * While the club's `multiPromoCodes` switch is off a booking still holds ONE
+ * code (#3826), so a second source is refused here in words the member reads —
+ * the working bee keeps its own exclusion sentence — before
+ * `redeemPromoCode`'s backstop could refuse it less helpfully. Throws
+ * BookingPromoError when the event is not bookable for these dates.
  */
-export async function resolveEffectivePromoSource(
+export async function resolveEffectivePromoSources(
   db: Parameters<typeof resolveWorkPartyEventPromoForBooking>[0],
   options: {
-    promoCodeStr?: string;
+    promoCodes: readonly PromoCodeRequest[];
     workPartyEventId?: string;
     checkIn: Date;
     checkOut: Date;
@@ -356,9 +401,9 @@ export async function resolveEffectivePromoSource(
     // only discounts stays at its own lodge.
     lodgeId?: string | null;
   }
-): Promise<{ promoCodeStr: string; allowInternal: boolean } | null> {
-  if (!options.workPartyEventId && !options.promoCodeStr) {
-    return null;
+): Promise<EffectivePromoSource[]> {
+  if (!options.workPartyEventId && options.promoCodes.length === 0) {
+    return [];
   }
 
   // Honour the admin module toggles: when a feature is off, its input is ignored
@@ -368,11 +413,17 @@ export async function resolveEffectivePromoSource(
   const workPartyEventId = modules.workParties
     ? options.workPartyEventId
     : undefined;
-  const promoCodeStr = modules.promoCodes ? options.promoCodeStr : undefined;
+  const promoCodes = modules.promoCodes
+    ? options.promoCodes.filter((request) => request.code.trim().length > 0)
+    : [];
 
-  if (workPartyEventId && promoCodeStr) {
-    throw new BookingPromoError(PROMO_WORK_PARTY_EXCLUSION_MESSAGE);
-  }
+  const listRefusal = promoCodeListRefusal({
+    typedCodes: promoCodes.map((request) => normalizePromoCodeInput(request.code)),
+    workPartyApplied: Boolean(workPartyEventId),
+    multiPromoCodes: modules.multiPromoCodes,
+  });
+  if (listRefusal) throw new BookingPromoError(listRefusal);
+  const sources: EffectivePromoSource[] = [];
   if (workPartyEventId) {
     const resolution = await resolveWorkPartyEventPromoForBooking(
       db,
@@ -384,12 +435,16 @@ export async function resolveEffectivePromoSource(
     if (!resolution.ok) {
       throw new BookingPromoError(resolution.error);
     }
-    return { promoCodeStr: resolution.promoCodeStr, allowInternal: true };
+    sources.push({ promoCodeStr: resolution.promoCodeStr, allowInternal: true });
   }
-  if (promoCodeStr) {
-    return { promoCodeStr, allowInternal: false };
+  for (const request of promoCodes) {
+    sources.push({
+      promoCodeStr: request.code,
+      allowInternal: false,
+      ...(request.promoGuestIndexes ? { promoGuestIndexes: request.promoGuestIndexes } : {}),
+    });
   }
-  return null;
+  return sources;
 }
 
 /**

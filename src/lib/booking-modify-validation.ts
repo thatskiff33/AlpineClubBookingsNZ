@@ -2,6 +2,7 @@
 // validation and the shared loaded-booking types for the modification
 // boundary. Code moved verbatim; import via the "@/lib/booking-modify" barrel.
 
+import { requestChangesPromoCodes } from "@/lib/booking-modify-promo-request";
 import type { DependantIdentityDeclaration } from "@/lib/booking-dependant-identity";
 import {
   BookingStatus,
@@ -108,6 +109,18 @@ export type BatchModifyInput = {
   promoGuestIds?: string[];
   promoAddedGuestIndexes?: number[];
   removePromoCode?: boolean;
+  /**
+   * #3827: the COMPLETE list of codes the booking should carry after this edit,
+   * in the booker's order (D-3813-2) — so one field adds, removes and reorders.
+   * A code already on the booking with no guest choice is kept and re-priced; one
+   * sent with a guest choice is re-applied fresh. Supersedes the legacy
+   * `promoCode` / `removePromoCode` pair when present.
+   */
+  promoCodes?: Array<{
+    code: string;
+    promoGuestIds?: string[];
+    promoAddedGuestIndexes?: number[];
+  }>;
   // #2266: the member's credit election, integer cents. The modify path never
   // moves credit itself — it stores the election on the booking
   // (Booking.creditElectionCents, #2265) for the pay step to consume, exactly
@@ -226,7 +239,8 @@ export type LoadedBookingForModify = Booking & {
   >;
   payment: Payment | null;
   member: Member;
-  promoRedemption: LoadedPromoRedemption | null;
+  // #3826: one redemption per promo code; read through booking-promo-redemptions.ts.
+  promoRedemptions: LoadedPromoRedemption[];
 };
 
 type BookingGuestNameEditPayment = Pick<
@@ -413,7 +427,7 @@ export function resolveTargetDates({
         400,
       );
     }
-    if (input.promoCode || input.removePromoCode) {
+    if (requestChangesPromoCodes(input)) {
       throw new ApiError(
         "Promo code changes are not available for in-progress bookings",
         400,
@@ -611,3 +625,4 @@ export async function assertBookingNotQuotePriced(
     throw new ApiError(QUOTE_PRICED_EDIT_BLOCK_MESSAGE, 400);
   }
 }
+

@@ -73,7 +73,10 @@ vi.mock("@/lib/payment-recovery", () => ({
   markBookingCancellationRefundRecoverySucceeded: vi.fn(),
   recordBookingCancellationRefundRecoveryInlineError: vi.fn(),
 }));
-vi.mock("@/lib/promo", () => ({ deletePromoRedemptionAndAdjustCount: vi.fn() }));
+vi.mock("@/lib/promo", () => ({
+  deletePromoRedemptionAndAdjustCount: vi.fn(),
+  releaseBookingPromoRedemptions: vi.fn().mockResolvedValue(0),
+}));
 // Partial: with #3643 merged, the cancel path's import graph reaches `group-late-joiner.ts`
 // (#3672), which reads the real status sets at import time.
 vi.mock("@/lib/booking-status", async (importOriginal) => ({

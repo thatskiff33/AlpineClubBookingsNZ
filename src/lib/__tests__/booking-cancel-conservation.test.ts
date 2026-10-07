@@ -28,7 +28,7 @@ const mocks = vi.hoisted(() => ({
   paymentUpdate: vi.fn(),
   bookingUpdate: vi.fn(),
   bookingUpdateMany: vi.fn(),
-  promoRedemptionFindUnique: vi.fn(),
+  promoRedemptionFindFirst: vi.fn(),
   prismaTransaction: vi.fn(),
   // #3639: the paid path writes its CANCELLED event inside the claim.
   txBookingEventCreate: vi.fn().mockResolvedValue({}),
@@ -74,7 +74,7 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: vi.fn().mockResolvedValue(null),
     },
     promoRedemption: {
-      findUnique: mocks.promoRedemptionFindUnique,
+      findFirst: mocks.promoRedemptionFindFirst,
     },
     promoCode: {
       update: vi.fn(),
@@ -295,7 +295,11 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
           const mockTx = {
             bookingEvent: { create: mocks.txBookingEventCreate },
             // #3835: the reviews settled before the cancel, frozen on its event.
-            manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
+            manualRefundTask: {
+              findMany: vi.fn().mockResolvedValue([]),
+              // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
+              aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
+            },
             // #3809: no edit here ran through the give-back, so no cap.
             bookingModification: { findFirst: vi.fn().mockResolvedValue(null) },
             $executeRaw: vi.fn().mockResolvedValue(undefined),
@@ -339,7 +343,7 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
     mocks.paymentUpdate.mockResolvedValue({});
     mocks.bookingUpdate.mockResolvedValue({});
     mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
-    mocks.promoRedemptionFindUnique.mockResolvedValue(null);
+    mocks.promoRedemptionFindFirst.mockResolvedValue(null);
     mocks.loadCancellationPolicy.mockResolvedValue(POLICY);
     mocks.restoreCreditFromBooking.mockResolvedValue(0);
     mocks.createCancellationCredit.mockResolvedValue(undefined);

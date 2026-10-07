@@ -94,7 +94,7 @@ const bookingMetricsSelect = Prisma.validator<Prisma.BookingSelect>()({
       },
     },
   },
-  promoRedemption: {
+  promoRedemptions: {
     select: {
       priceAdjustmentCents: true,
       allocations: {

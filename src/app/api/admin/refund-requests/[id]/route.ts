@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { PaymentSource } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -18,7 +19,12 @@ import {
   composeOptionalEmailLine,
 } from "@/lib/email-message-notes";
 import logger from "@/lib/logger";
-import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
+import {
+  raiseRefundRequestHandBack,
+  refundAppealHandedBackCents,
+} from "@/lib/edit-refund-hand-back";
+import { getRemainingRefundableCentsNetOf } from "@/lib/booking-payment-state";
+import { refundRequestHandBackOccurrenceKey } from "@/lib/manual-refund-task-settlement-rules";
 import {
   planStripeRefundAllocation,
   refundPaymentTransactions,
@@ -29,6 +35,10 @@ import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { calendarDateOfDateOnlyInstant, formatClubDate } from "@/lib/club-time";
 import { clubFormat } from "@/lib/club-format-server";
 import { renderEmailHtml } from "@/lib/email-theme";
+import { refundRequestApprovedRefundSentence } from "@/lib/booking-modified-email-copy";
+
+/** #3827 (`INV-PAY-118`): thrown inside the approval to roll its claim back. */
+class RefundRequestHandBackNotRaisedError extends Error {}
 
 const reviewSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
@@ -106,71 +116,167 @@ export async function PUT(
     // plan $0, log the drift, tell the member their refund is on its way, and
     // hand nothing back — the exact silent-$0 hazard this feature exists to
     // avoid. Refuse and point at the flow that can actually return the money.
+    //
+    // #3827 (D-3813-7) does NOT lift this, though an approval can now raise a
+    // bank-transfer task and its cap nets the cancellation's own open
+    // hand-back (`INV-PAY-118`): once that task is paid it moves
+    // `refundedAmountCents`, but a dismissed one (the club decided to keep the
+    // money) reads as refundable again, so an appeal here could re-promise
+    // money the treasurer already decided on. Kept for the owner to revisit.
+    // An appeal exists only on a cancelled booking, so the message must not
+    // tell the officer to cancel it.
     if (payment.manuallyMarkedPaidAt) {
       return NextResponse.json(
         {
           error:
-            "This booking was paid in cash or by an off-Xero bank transfer, so there is no card payment to refund. Cancel the booking to raise a manual refund task, then pay the member back and close the task on the payments board.",
+            "This booking was paid in cash or by an off-Xero bank transfer, so there is no card payment to refund and this appeal cannot be approved here. Its cancellation already raised a refund task on the payments board for the money the cancellation policy returns; settle any further refund with the treasurer.",
         },
         { status: 409 }
       );
     }
 
-    const maxRefundable = getRemainingRefundableCents(payment);
-    if (approvedAmountCents > maxRefundable) {
+    // #3827 (`INV-PAY-118`): cap at the refundable cash NET of every refund
+    // still promised back by bank transfer - an edit's, an earlier approved
+    // appeal's (D-3813-7), or a cancellation's own hand-back - and of the
+    // account credit already minted from late cash, or an appeal re-promises
+    // money the member holds or is being sent (paid 200, an edit to 150 leaves
+    // a 50 task OPEN). Read under `lock(1)`, which every writer of those
+    // figures holds; claimed in the same transaction.
+    const capped = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      // What is already handed back is read BEFORE the payment, so a
+      // cancellation hand-back completing in between (it takes no `lock(1)`)
+      // is counted twice and the cap errs low, never high.
+      const handedBackCents = await refundAppealHandedBackCents(tx, {
+        id: payment.id,
+        bookingId: booking.id,
+      });
+      const lockedPayment = await tx.payment.findUnique({
+        where: { id: payment.id },
+        select: {
+          id: true,
+          source: true,
+          status: true,
+          amountCents: true,
+          refundedAmountCents: true,
+        },
+      });
+      const maxRefundable = getRemainingRefundableCentsNetOf(lockedPayment, handedBackCents);
+      if (approvedAmountCents > maxRefundable) {
+        return { kind: "exceeds" as const, maxRefundable };
+      }
+      // Claim the request before moving any money. Winning the PENDING ->
+      // APPROVED transition is what authorises the refund, so two admins
+      // approving the same request concurrently cannot both issue a Stripe
+      // refund — the loser gets a 409 and never calls Stripe (issue #818).
+      const claim = await tx.refundRequest.updateMany({
+        where: { id, status: "PENDING" },
+        data: {
+          status: "APPROVED",
+          adminNotes,
+          approvedAmountCents,
+          reviewedBy: session.user.id,
+          reviewedAt: new Date(),
+        },
+      });
+      if (claim.count !== 1) return { kind: "lost" as const };
+
+      // #1510: freeze the refund allocation the inline attempt will execute and
+      // pass the SAME slices to both the inline refund and the durable recovery
+      // enqueue below, mirroring the booking-cancellation frozen plan (#1349).
+      // For a multi-transaction payment with partial refund progress, deriving a
+      // fresh newest-first plan at replay time — over ledger state the completed
+      // slices have already moved — would compute different slice amounts, and
+      // therefore different `refund_request_<id>_<txn>_<amount>` Stripe
+      // idempotency keys, so the replay would mint NEW refunds instead of
+      // replaying the originals. Freezing the plan makes the replay re-request
+      // byte-identical slices under identical keys, which Stripe answers with the
+      // original refunds (the PaymentRefund ledger dedupes on refund id). This
+      // also makes the inline path deterministic. Planned here, under the lock,
+      // because the part it cannot carry decides the task below.
+      const plan = await planStripeRefundAllocation({
+        paymentId: payment.id,
+        amountCents: approvedAmountCents,
+        store: tx,
+      });
+
+      // #3827 (owner decision D-3813-7, `INV-PAY-118`): on a booking paid by
+      // internet banking, what no card refund can carry (normally all of it)
+      // goes back by bank transfer. ONE officer task, raised here so it is
+      // netted from the refundable cash before the lock is released - a second
+      // appeal cannot be approved against the same money - and keyed on this
+      // request, so it can never be raised twice. Only for that source: a card
+      // payment whose ledger plans short of the approved amount is ledger
+      // drift, logged after the commit and refunded as far as the plan goes,
+      // exactly as before - never turned into a bank transfer nobody chose.
+      const bankTransferCents =
+        lockedPayment?.source === PaymentSource.INTERNET_BANKING
+          ? Math.max(approvedAmountCents - plan.plannedAmountCents, 0)
+          : 0;
+      if (bankTransferCents > 0) {
+        const raised = await raiseRefundRequestHandBack(tx, {
+          bookingId: booking.id,
+          paymentId: payment.id,
+          refundRequestId: id,
+          amountCents: bankTransferCents,
+        });
+        // A row already holds this request's key (left by an earlier approval
+        // of it), so nobody would be asked to send this money. Refuse rather
+        // than promise a transfer with no task behind it; the throw rolls the
+        // claim back with it.
+        if (raised === 0) throw new RefundRequestHandBackNotRaisedError();
+      }
+      return {
+        kind: "claimed" as const,
+        refundPlan: plan.slices,
+        plannedAmountCents: plan.plannedAmountCents,
+        bankTransferCents,
+      };
+    }).catch((err: unknown) => {
+      if (err instanceof RefundRequestHandBackNotRaisedError) {
+        return { kind: "handBackNotRaised" as const };
+      }
+      throw err;
+    });
+
+    if (capped.kind === "exceeds") {
       return NextResponse.json(
         {
-          error: `Amount exceeds maximum refundable of ${money.cents(maxRefundable)}`,
+          error: `Amount exceeds maximum refundable of ${money.cents(capped.maxRefundable)}`,
         },
         { status: 400 }
       );
     }
 
-    // Claim the request before moving any money. Winning the PENDING ->
-    // APPROVED transition is what authorises the refund, so two admins
-    // approving the same request concurrently cannot both issue a Stripe
-    // refund — the loser gets a 409 and never calls Stripe (issue #818).
-    const claim = await prisma.refundRequest.updateMany({
-      where: { id, status: "PENDING" },
-      data: {
-        status: "APPROVED",
-        adminNotes,
-        approvedAmountCents,
-        reviewedBy: session.user.id,
-        reviewedAt: new Date(),
-      },
-    });
-
-    if (claim.count !== 1) {
+    if (capped.kind === "lost") {
       return NextResponse.json(
         { error: "This refund request has already been reviewed" },
         { status: 409 }
       );
     }
 
-    // #1510: freeze the refund allocation the inline attempt will execute and
-    // pass the SAME slices to both the inline refund and the durable recovery
-    // enqueue below, mirroring the booking-cancellation frozen plan (#1349).
-    // For a multi-transaction payment with partial refund progress, deriving a
-    // fresh newest-first plan at replay time — over ledger state the completed
-    // slices have already moved — would compute different slice amounts, and
-    // therefore different `refund_request_<id>_<txn>_<amount>` Stripe
-    // idempotency keys, so the replay would mint NEW refunds instead of
-    // replaying the originals. Freezing the plan makes the replay re-request
-    // byte-identical slices under identical keys, which Stripe answers with the
-    // original refunds (the PaymentRefund ledger dedupes on refund id). This
-    // also makes the inline path deterministic.
-    const { slices: refundPlan, plannedAmountCents } =
-      await planStripeRefundAllocation({
-        paymentId: payment.id,
-        amountCents: approvedAmountCents,
-      });
+    if (capped.kind === "handBackNotRaised") {
+      logger.error(
+        { refundRequestId: id, paymentId: payment.id },
+        "Refund appeal not approved: a bank-transfer task already holds this request's key, so no new task could be raised (#3827)"
+      );
+      return NextResponse.json(
+        {
+          error:
+            "This appeal already has a bank-transfer refund task from an earlier approval, so it was not approved again. Check the payments board before approving it.",
+        },
+        { status: 409 }
+      );
+    }
 
-    if (plannedAmountCents < approvedAmountCents) {
-      // Stripe-refundable is less than the approved amount (e.g. a mixed
-      // Stripe + Internet Banking payment, whose IB portion is settled by the
-      // Xero credit note below, not Stripe): refund what the ledger shows
-      // Stripe-refundable, mirroring the booking-cancel drift log (#1349).
+    const { refundPlan, plannedAmountCents, bankTransferCents } = capped;
+
+    if (bankTransferCents === 0 && plannedAmountCents < approvedAmountCents) {
+      // A card payment whose ledger shows less Stripe-refundable than the
+      // approved amount (e.g. a mixed Stripe + Internet Banking payment, whose
+      // IB portion is settled by the Xero credit note below, not Stripe):
+      // refund what the ledger shows Stripe-refundable, mirroring the
+      // booking-cancel drift log (#1349).
       logger.error(
         {
           refundRequestId: id,
@@ -233,15 +339,29 @@ export async function PUT(
           { err: enqueueErr, refundRequestId: id },
           "Failed to enqueue refund recovery - releasing the claim for manual retry"
         );
-        await prisma.refundRequest
-          .updateMany({
-            where: { id, status: "APPROVED" },
-            data: {
-              status: "PENDING",
-              approvedAmountCents: null,
-              reviewedBy: null,
-              reviewedAt: null,
-            },
+        // #3827 (D-3813-7): the bank-transfer task this approval raised goes
+        // with the claim, in one transaction under the same lock, or a retried
+        // approval would find its key taken and its cash already netted.
+        await prisma
+          .$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+            const released = await tx.refundRequest.updateMany({
+              where: { id, status: "APPROVED" },
+              data: {
+                status: "PENDING",
+                approvedAmountCents: null,
+                reviewedBy: null,
+                reviewedAt: null,
+              },
+            });
+            if (released.count === 1) {
+              await tx.manualRefundTask.deleteMany({
+                where: {
+                  occurrenceKey: refundRequestHandBackOccurrenceKey(id),
+                  status: "OPEN",
+                },
+              });
+            }
           })
           .catch((revertErr) => {
             logger.error(
@@ -256,15 +376,20 @@ export async function PUT(
       }
     }
 
-    // Queue the Xero credit note durably and try to kick the worker.
+    // Queue the Xero credit note durably and try to kick the worker - for the
+    // part refunded through the card only (the whole approval, on a card
+    // payment, exactly as before). The bank-transfer part gets NO note here:
+    // owner decision D-3813-8 (`INV-PAY-118`) queues that request's own note
+    // when the treasurer marks its task paid back, after the money has moved
+    // (`enqueueXeroRefundRequestCreditNoteOperation`).
+    const cardNoteCents = approvedAmountCents - bankTransferCents;
     try {
-      const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
-        payment.id,
-        approvedAmountCents,
-        {
-          createdByMemberId: session.user.id,
-        }
-      );
+      const queuedCreditNote =
+        cardNoteCents > 0
+          ? await enqueueXeroRefundCreditNoteOperation(payment.id, cardNoteCents, {
+              createdByMemberId: session.user.id,
+            })
+          : { queueOperationId: null };
 
       if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
         void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((xeroErr) => {
@@ -310,6 +435,8 @@ export async function PUT(
       metadata: {
         bookingId: booking.id,
         approvedAmountCents,
+        // #3827 (D-3813-7): the part raised as a bank-transfer officer task.
+        bankTransferCents,
         ...notifyAuditFields,
       },
       ipAddress: req.headers.get("x-forwarded-for") ?? "unknown",
@@ -323,6 +450,7 @@ export async function PUT(
         html: await renderEmailHtml(() => refundRequestApprovedTemplate({
           firstName: refundRequest.member.firstName,
           amountCents: approvedAmountCents,
+          bankTransferCents,
           adminNotes: adminNotes ?? null,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
@@ -339,6 +467,13 @@ export async function PUT(
           // #2321: {{status}} is gone — the template name carries the
           // outcome, and a flat body could never have branched on it.
           amount: money.cents(approvedAmountCents),
+          // #3827 (D-3813-7): the refund promised by bank transfer, or reported
+          // to the card - the same sentence the HTML template renders.
+          refundSentence: refundRequestApprovedRefundSentence(
+            approvedAmountCents,
+            bankTransferCents,
+            money.cents,
+          ),
           adminNotes: adminNotes ?? "",
           // #2268: pre-composed optional line — the flat body has no
           // conditional syntax, so a resolution with no admin note must not

@@ -224,16 +224,16 @@ describe("addMemberGuest invalidates exactly what the family path invalidates", 
       expect(result.current.priceQuote).not.toBeNull();
       act(() => {
         result.current.setStep("guests");
-        result.current.setAppliedPromo({
+        result.current.setAppliedPromos([{
           code: "SAVE10",
           discountCents: 100,
-        } as never);
+        }] as never);
         result.current.setUseCredit(true);
       });
     }
 
     const snapshot = () => ({
-      appliedPromo: result.current.appliedPromo,
+      appliedPromos: result.current.appliedPromos,
       priceQuote: result.current.priceQuote,
       useCredit: result.current.useCredit,
       memberNightConflicts: result.current.memberNightConflicts,

@@ -20,11 +20,6 @@ reason: the net tile, its hints, the tolerant summary reader and the
   page; splitting the page is a separate refactor that would move the tiles
   away from the list whose filters decide their figures.
 
-file: src/app/(admin)/admin/refund-requests/page.tsx
-lines: 884
-reason: three lines relabel "Paid" and "Remaining" in place and say which is
-  gross and which is refundable; there is no seam worth cutting for a label.
-
 file: src/app/api/admin/reports/route.ts
 lines: 373
 reason: owner decision A gives Net Collected Cash its own payment read (the

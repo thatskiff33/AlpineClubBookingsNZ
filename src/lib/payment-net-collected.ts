@@ -232,7 +232,7 @@ export function getNetCollectedCashParts(
  *   refund still owed by hand is treated as gone straight away
  *   (`openHandBackOwedCents`), on a cancelled booking (3 Oct 2026, so only
  *   what the policy keeps counts) and on a live one (7 Oct 2026: an edit's
- *   refund (#3827, epic #3813) or an approved refund request's).
+ *   refund (`INV-PAY-117`) or an approved refund request's (`INV-PAY-118`)).
  * - On a CANCELLED booking, applied account credit the cancellation kept
  *   counts too (`cancelledBookingKeptCreditCents`). A live booking's credit is
  *   spent on a stay, not kept, so it adds none.

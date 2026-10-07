@@ -1,8 +1,18 @@
 import "server-only";
 
-import { ManualRefundTaskStatus } from "@prisma/client";
+import { BookingStatus, ManualRefundTaskStatus } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
+import {
+  refundableCashForRefundAppeal,
+  refundableCashNetOfOpenHandBacks,
+} from "@/lib/edit-refund-hand-back";
+import {
+  EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE,
+  isEditRefundHandBackTask,
+  isNonCancellationHandBackTask,
+  isRefundRequestHandBackTask,
+} from "@/lib/manual-refund-task-settlement-rules";
 import { recordManualRefundTaskReopenAudit } from "@/lib/manual-refund-task-reopen-audit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import {
@@ -121,6 +131,15 @@ export const REOPEN_ONLY_OFFICER_DISMISSAL_MESSAGE =
 export const REOPEN_ALREADY_OPEN_MESSAGE =
   "This item is already on the queue.";
 
+/**
+ * #3827 (`INV-PAY-117`): an edit refund hand-back promises cash back. Once it
+ * is dismissed that cash is refundable again, and a later edit or cancellation
+ * may already have promised or returned it, so putting the task back could
+ * promise more than the club took.
+ */
+export const REOPEN_EDIT_REFUND_EXCEEDS_CASH_MESSAGE =
+  "This refund can no longer be put back on the queue: since it was dismissed, the money it would return has been refunded or promised back another way. Check the booking's payments before raising anything further.";
+
 export const REOPEN_RACED_MESSAGE =
   "This item changed while you were putting it back — refresh and try again.";
 
@@ -176,13 +195,17 @@ export async function reopenManualRefundTask({
         id: true,
         bookingId: true,
         kind: true,
+        // #3827: an edit refund hand-back's marker and the cash behind it.
+        occurrenceKey: true,
+        payment: { select: { id: true, bookingId: true, status: true, amountCents: true, refundedAmountCents: true } },
         status: true,
         amountCents: true,
         raisedAmountCents: true,
         note: true,
         completedAt: true,
         completedByMemberId: true,
-        booking: { select: { memberId: true, organisation: { select: { name: true, email: true } } } },
+        // #3827: whether a cancellation has since counted this task out.
+        booking: { select: { memberId: true, status: true, organisation: { select: { name: true, email: true } } } },
       },
     });
     if (!task) {
@@ -199,6 +222,26 @@ export async function reopenManualRefundTask({
         REOPEN_ONLY_OFFICER_DISMISSAL_MESSAGE,
         409,
       );
+    }
+
+    // #3827 (`INV-PAY-117`): a cancellation since the dismissal sized its refund
+    // without this task, so reopening it would promise the same money twice.
+    if (isEditRefundHandBackTask(task) && task.booking.status === BookingStatus.CANCELLED) {
+      throw new ManualBookingPaymentError(EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE, 409);
+    }
+    // #3827 (`INV-PAY-117`): never promise back more cash than was taken - for
+    // an edit's refund and (D-3813-7) an approved appeal's alike, an appeal's
+    // measured by the appeal's own ceiling (`INV-PAY-118`: every open
+    // hand-back and the late-cash credit too). Read under lock(1), which every
+    // edit, acceptance, paid cancel and approval holds.
+    if (
+      isNonCancellationHandBackTask(task) &&
+      (task.amountCents ?? 0) >
+        (isRefundRequestHandBackTask(task)
+          ? await refundableCashForRefundAppeal(tx, task.payment)
+          : await refundableCashNetOfOpenHandBacks(tx, task.payment))
+    ) {
+      throw new ManualBookingPaymentError(REOPEN_EDIT_REFUND_EXCEEDS_CASH_MESSAGE, 409);
     }
 
     /*

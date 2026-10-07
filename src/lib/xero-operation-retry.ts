@@ -39,7 +39,11 @@ import {
 } from "@/lib/xero-sync";
 import logger from "@/lib/logger";
 import { CLUB_NAME } from "@/config/club-identity";
-import { parseRefundMethod, resolveRefundNoteMethod } from "@/lib/xero-refund-method";
+import {
+  parseRefundMethod,
+  readModificationNoteWording,
+  resolveRefundNoteMethod,
+} from "@/lib/xero-refund-method";
 import { queuedReviewTaskId } from "@/lib/xero-review-task-key";
 import { mayRecordAsCanonicalRefundNote } from "@/lib/xero-refund-note-status";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
@@ -57,6 +61,7 @@ import {
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import type { ClubFormat } from "@/lib/club-format";
+import { readRefundRequestIdFromPayload } from "@/lib/refund-request-credit-note";
 
 /**
  * The `@/lib/xero` module namespace, named because an `import()` type written
@@ -784,7 +789,7 @@ function parseRefundCreditNoteRepairInput(
 
 async function repairRefundCreditNoteFollowUpActions(
   operation: Pick<RetryableOperation, "id" | "localId" | "responsePayload" | "xeroObjectNumber"> &
-    Partial<Pick<XeroSyncOperation, "correlationKey" | "idempotencyKey">>,
+    Partial<Pick<XeroSyncOperation, "correlationKey" | "idempotencyKey" | "requestPayload">>,
   xero: XeroModule,
   repair: {
     creditNoteId: string;
@@ -794,8 +799,14 @@ async function repairRefundCreditNoteFollowUpActions(
     refundMethod?: CashRefundMethod;
   },
 ) {
+  // #3827 (D-3813-8): a refund request's own note is an allowed extra, never
+  // the payment's one refund note, so it never takes the payment's pointer.
   // #3880 F1: a per-refund note is repaired, never made the payment's canonical one.
-  if (await mayRecordAsCanonicalRefundNote(operation.localId!, repair.creditNoteId, prisma)) {
+  const refundRequestId = readRefundRequestIdFromPayload(operation.requestPayload);
+  if (
+    !refundRequestId &&
+    (await mayRecordAsCanonicalRefundNote(operation.localId!, repair.creditNoteId, prisma))
+  ) {
     await prisma.payment.update({
       where: { id: operation.localId! },
       data: {
@@ -833,6 +844,7 @@ async function repairRefundCreditNoteFollowUpActions(
       fallbackPaymentDate: async () =>
         xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
       priorResponse,
+      refundRequestId,
     });
     if (outcome.refundPaymentErr) throw outcome.refundPaymentErr;
     return;
@@ -848,6 +860,7 @@ async function repairRefundCreditNoteFollowUpActions(
       refundMethod,
       outcome: recordedRefundNoteOutcome(priorResponse),
       priorResponse,
+      refundRequestId,
     })
   );
 }
@@ -1642,12 +1655,15 @@ export async function retryXeroSyncOperation(
         // #3880 F2: and a review's note is a delta note whatever row carries
         // it - an inline row a requeue created has no queue type, and single-
         // note mode would call the cancellation's note this refund's cover.
+        // #3827 (D-3813-8): a refund request's own note is never a per-delta
+        // note - it is keyed by its request, for exactly its amount.
         const retriedReviewTaskId = queuedReviewTaskId(operation);
-        const deltaWatermarkCents =
-          retryInput.watermarkCents ??
-          (operation.queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE || retriedReviewTaskId
-            ? 0
-            : undefined);
+        const deltaWatermarkCents = retryInput.refundRequestId
+          ? undefined
+          : retryInput.watermarkCents ??
+            (operation.queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE || retriedReviewTaskId
+              ? 0
+              : undefined);
         await xero.createXeroCreditNote(operation.localId!, retryInput.amountCents, {
           createdByMemberId,
           repairExistingLink: true,
@@ -1657,6 +1673,7 @@ export async function retryXeroSyncOperation(
           ...(retryInput.refundMethod ? { refundMethod: retryInput.refundMethod } : {}),
           ...(retryInput.paymentIntentId ? { paymentIntentId: retryInput.paymentIntentId } : {}),
           ...(retryInput.documentDate ? { documentDate: retryInput.documentDate } : {}),
+          ...(retryInput.refundRequestId ? { refundRequestId: retryInput.refundRequestId } : {}),
           ...(options?.requeueOperationId ? { requeueOperationId: options.requeueOperationId } : {}),
           ...(retriedReviewTaskId ? { reviewTaskId: retriedReviewTaskId } : {}),
         });
@@ -1761,6 +1778,11 @@ export async function retryXeroSyncOperation(
       // "account credit", so this note - unlike a payment's refund note - can
       // carry any of the three.
       const modificationRefundMethod = parseRefundMethod(asRecord(operation.requestPayload)?.refundMethod);
+      // #3536: the two booking-edit wordings ride beside the method, so a retry
+      // says what the original attempt would have said.
+      const { noteWording: modificationNoteWording } = readModificationNoteWording(
+        asRecord(operation.requestPayload),
+      );
       await xero.createXeroCreditNoteForModification({
         bookingId: modification.bookingId,
         refundAmountCents,
@@ -1769,6 +1791,7 @@ export async function retryXeroSyncOperation(
         createdByMemberId,
         repairExistingLink: true,
         ...(modificationRefundMethod ? { refundMethod: modificationRefundMethod } : {}),
+        ...(modificationNoteWording ? { noteWording: modificationNoteWording } : {}),
         format,
       });
       return { message: "Retried Xero modification credit note creation." };

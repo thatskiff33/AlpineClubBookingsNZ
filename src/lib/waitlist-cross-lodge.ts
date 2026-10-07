@@ -1,4 +1,5 @@
 import type { AgeTier, Prisma, WaitlistCrossLodgeOrder } from "@prisma/client";
+import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { BookingEventType, BookingStatus } from "@prisma/client";
 import {
   calculateBookingHoldDecision,
@@ -235,7 +236,7 @@ const DUPLICATE_STAY_ERROR =
 type CrossLodgeOfferEntry = Prisma.BookingGetPayload<{
   include: {
     guests: { include: { nights: true } };
-    promoRedemption: { select: { id: true } };
+    promoRedemptions: { select: { id: true } };
   };
 }>;
 
@@ -521,7 +522,7 @@ export async function confirmCrossLodgeWaitlistOffer(
         where: { id: bookingId },
         include: {
           guests: { include: { nights: true } },
-          promoRedemption: { select: { id: true } },
+          promoRedemptions: { select: { id: true } },
         },
       });
       if (!entry) {
@@ -637,7 +638,7 @@ export async function confirmCrossLodgeWaitlistOffer(
           checkIn: entry.checkIn,
           checkOut: entry.checkOut,
           guests: entry.guests,
-          hasPromoRedemption: Boolean(entry.promoRedemption),
+          hasPromoRedemption: bookingPromoRedemptions(entry).length > 0,
         },
         offeredLodgeId,
       );

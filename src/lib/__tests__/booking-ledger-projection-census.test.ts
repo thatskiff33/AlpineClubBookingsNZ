@@ -17,7 +17,7 @@ import { planConfirmationChargeLines } from "@/lib/booking-ledger-confirmation-p
 import { planCreditLines, planHandBackLine } from "@/lib/booking-ledger-credit-posting";
 import { planAgreedAdjustmentLine, planModificationChargeLines } from "@/lib/booking-ledger-modification-posting";
 import { agreedGiveBackKey } from "@/lib/booking-ledger-posting-keys";
-import { evaluateBookingLedgerIdentities, type BookingLedgerIdentity } from "@/lib/booking-ledger-projection-census";
+import { evaluateBookingLedgerIdentities, postConfirmationEditsWithoutLines, type BookingLedgerIdentity } from "@/lib/booking-ledger-projection-census";
 import {
   BOOKING_LEDGER_ACKNOWLEDGEMENT_FILE,
   draftBookingLedgerAcknowledgements,
@@ -1489,6 +1489,76 @@ describe("coverage: the gap before the back-post, named and holding the gate", (
     expect(identity({ ...subject, modifications: [{ ...subject.modifications[0]!, createdAt: EARLIER }] }, "PRICE").status).toBe("DISAGREE");
   });
 
+  it("one rule with the back-post: an unposted edit a later edit with lines has passed is carried; the latest stays awaiting (review M1)", () => {
+    const at = (iso: string) => new Date(iso);
+    const confirmation = { anchorKind: "CONFIRMATION" as const, anchorId: B, postedAt: at("2026-06-01T00:00:00.000Z") };
+    const edits = [
+      { id: "e1", createdAt: at("2026-06-02T00:00:00.000Z") },
+      { id: "e2", createdAt: at("2026-06-03T00:00:00.000Z") },
+      { id: "e3", createdAt: at("2026-06-04T00:00:00.000Z") },
+      { id: "e0", createdAt: at("2026-05-01T00:00:00.000Z") },
+    ];
+    const onE2 = { anchorKind: "MODIFICATION" as const, anchorId: "e2", postedAt: at("2026-06-05T00:00:00.000Z") };
+    expect(postConfirmationEditsWithoutLines(edits, [confirmation])).toEqual({ awaiting: ["e1", "e2", "e3"], carriedByLater: [] });
+    expect(postConfirmationEditsWithoutLines(edits, [confirmation, onE2])).toEqual({ awaiting: ["e3"], carriedByLater: ["e1"] });
+    expect(postConfirmationEditsWithoutLines(edits, [])).toEqual({ awaiting: [], carriedByLater: [] });
+
+    // In the census: with no later posted edit it is coverage; passed by one, too.
+    const unposted = { id: "m9", modificationType: "BATCH_MODIFY", priceDiffCents: 2_500, changeFeeCents: 0, createdAt: LATER, reviewRebase: null };
+    const subject = { ...cardPaid(), booking: { id: B, status: "PAID" as const, deletedAt: null, organiserSettled: false, finalPriceCents: 21_500 }, modifications: [unposted] };
+    expect(identity(subject, "PRICE").status).toBe("COVERAGE");
+    const later = { id: "m10", modificationType: "BATCH_MODIFY", priceDiffCents: 0, changeFeeCents: 500, createdAt: new Date(LATER.getTime() + 60_000), reviewRebase: null };
+    // m10's change fee, as the edit planner posts it (the back-post's own change-fee-only plan).
+    const feePlan = planModificationChargeLines({
+      bookingId: B,
+      lodgeId: "lodge",
+      bookingModificationId: "m10",
+      before: { guests: [], promoAdjustmentCents: 0 },
+      after: { guests: [], promoAdjustmentCents: 0 },
+      changeFeeCents: 500,
+      expectedCents: 500,
+      postedLines: [],
+    });
+    const fee = new Ledger().post(feePlan.kind === "lines" ? feePlan.postings : [], later.createdAt).lines.map((line) => ({ ...line, id: `fee-${line.id}` }));
+    expect(fee).toHaveLength(1);
+    const passed = { ...subject, payment: payment({ ...subject.payment, changeFeeCents: 500 }), modifications: [unposted, later], lines: [...subject.lines, ...fee] };
+    // A live edit never absorbs a refused one, so the carried edit's money is coverage (delta M-1).
+    expect(identity(passed, "PRICE")).toMatchObject({ status: "COVERAGE", deltaCents: 2_500 });
+  });
+
+  it("a refused edit a later posted edit passed, beside one still awaiting, is coverage for both — never a signable disagreement (delta M-1)", () => {
+    const at = (offset: number) => new Date(LATER.getTime() + offset * 60_000);
+    const refusedA = { id: "ma", modificationType: "GUEST_UPDATE", priceDiffCents: 1_000, changeFeeCents: 0, createdAt: at(0), reviewRebase: null };
+    const postedB = { id: "mb", modificationType: "BATCH_MODIFY", priceDiffCents: 0, changeFeeCents: 500, createdAt: at(1), reviewRebase: null };
+    const refusedC = { id: "mc", modificationType: "GUEST_UPDATE", priceDiffCents: 500, changeFeeCents: 0, createdAt: at(2), reviewRebase: null };
+    const feePlan = planModificationChargeLines({
+      bookingId: B,
+      lodgeId: "lodge",
+      bookingModificationId: "mb",
+      before: { guests: [], promoAdjustmentCents: 0 },
+      after: { guests: [], promoAdjustmentCents: 0 },
+      changeFeeCents: 500,
+      expectedCents: 500,
+      postedLines: [],
+    });
+    const fee = new Ledger().post(feePlan.kind === "lines" ? feePlan.postings : [], postedB.createdAt).lines.map((line) => ({ ...line, id: `fee-${line.id}` }));
+    const base = cardPaid();
+    const subject = {
+      ...base,
+      booking: { ...base.booking, finalPriceCents: base.booking.finalPriceCents + 1_500 },
+      payment: payment({ ...base.payment, changeFeeCents: 500 }),
+      modifications: [refusedA, postedB, refusedC],
+      lines: [...base.lines, ...fee],
+    };
+    const evaluation = evaluateBookingLedgerIdentities(subject);
+    expect(identity(subject, "PRICE")).toMatchObject({ status: "COVERAGE", deltaCents: 1_500 });
+    expect(identity(subject, "OWED").status).toBe("COVERAGE");
+    expect(evaluation.coverage).toContain("UNPOSTED_EDIT");
+    // Awaiting alone still wins where it is exact: the carried edit is then on the ledger.
+    expect(identity({ ...subject, booking: { ...subject.booking, finalPriceCents: subject.booking.finalPriceCents - 1_000 } }, "PRICE")).toMatchObject({ status: "COVERAGE", deltaCents: 500 });
+    for (const by of [1, -1]) expect(identity({ ...subject, booking: { ...subject.booking, finalPriceCents: subject.booking.finalPriceCents + by } }, "PRICE").status).toBe("DISAGREE");
+  });
+
   it("UNPOSTED_CHANGE_FEE: a fee charged before confirmation has no line (#3611 V4)", () => {
     const subject = { ...cardPaid(), payment: payment({ changeFeeCents: 500 }), modifications: [{ id: "m0", modificationType: "BATCH_MODIFY", priceDiffCents: 0, changeFeeCents: 500, createdAt: EARLIER, reviewRebase: null }] };
     expect(identity(subject, "CHANGE_FEE")).toMatchObject({ status: "COVERAGE", deltaCents: 500 });
@@ -1785,5 +1855,66 @@ describe("the acknowledgement draft (--write-acknowledgement-draft)", () => {
     const moved = census(draft.entries.map((entry) => (entry.class === "IN_FLIGHT_HAND_BACK" ? { ...entry, cents: entry.cents - 500 } : entry)));
     expect(moved.acknowledged.stale).toEqual([expect.objectContaining({ class: "IN_FLIGHT_HAND_BACK", cents: 9_000, foundCents: [9_500] })]);
     expect(moved.gateClosedBecause.some((reason) => reason.includes("IN_FLIGHT_HAND_BACK"))).toBe(true);
+  });
+});
+
+/*
+  #3829 composed this census with epic #3813's by-hand refunds: an edit's
+  reduction on an internet-banking booking raises a CANCELLED_BOOKING_HAND_BACK
+  marked by its occurrence key (`INV-PAY-117`). On a cancelled booking that open
+  task is money still going back, exactly as the cancellation's own hand-back is,
+  and the ledger has not posted its bank refund yet - so it belongs in
+  IN_FLIGHT_HAND_BACK. Excluding it (as the cancellation-only readers must)
+  would leave its cents unexplained here.
+*/
+describe("an open edit refund hand-back on a cancelled internet-banking booking is in flight (#3829, INV-PAY-117)", () => {
+  /** $190 marked paid, an edit removes a $50 night ($50 hand-back open), cancelled at 50% of the $140 left: $70 kept, $70 handed back. */
+  function editedThenCancelled(): BookingLedgerCensusRow {
+    const ledger = confirmedLedger();
+    const base = row({ lines: [], transactions: [txn("t1", 19_000)], payment: payment({ source: "INTERNET_BANKING" }) });
+    settle(ledger, base, true);
+    const edit = planModificationChargeLines({
+      bookingId: B,
+      lodgeId: LODGE,
+      bookingModificationId: "m1",
+      before: { guests: [guestSide("g1", [[D1, 5_000], [D2, 5_000]]), guestSide("g2", [[D1, 5_000], [D2, 5_000]])], promoAdjustmentCents: -1_000 },
+      after: { guests: [guestSide("g1", [[D1, 5_000], [D2, 5_000]]), guestSide("g2", [[D1, 5_000]])], promoAdjustmentCents: -1_000 },
+      changeFeeCents: 0,
+      expectedCents: -5_000,
+      postedLines: ledger.reversible() as never,
+    });
+    if (edit.kind !== "lines") throw new Error(`edit plan refused: ${edit.reason}`);
+    ledger.post(edit.postings, LATER);
+    const cancel = planCancellationChargeLines({ bookingId: B, lodgeId: LODGE, keptCents: 7_000, chargeLines: ledger.reversible(), adjustmentLines: ledger.adjustments() });
+    if (cancel.kind !== "lines") throw new Error("cancel plan refused");
+    ledger.post(cancel.postings, LATER);
+    const handBack = { kind: "CANCELLED_BOOKING_HAND_BACK" as const, status: "OPEN" as const, settlementDirection: null, paymentId: "pay-3583", lateCaptureApprovalIntentId: null };
+    return {
+      ...base,
+      lines: ledger.lines,
+      booking: { ...base.booking, status: "CANCELLED", finalPriceCents: 14_000 },
+      modifications: [{ id: "m1", modificationType: "BATCH_MODIFY", priceDiffCents: -5_000, changeFeeCents: 0, createdAt: LATER, reviewRebase: null }],
+      tasks: [
+        { ...handBack, id: "task-cancel", amountCents: 7_000 },
+        { ...handBack, id: "task-edit", amountCents: 5_000 },
+      ],
+      cancellation: { refundMethod: "manual", settledAmountCents: 7_000, keptCents: 7_000 },
+    };
+  }
+
+  it("both open hand-backs explain what the member is still owed", () => {
+    expect(identity(editedThenCancelled(), "PRICE")).toMatchObject({
+      status: "CLASSIFIED",
+      deltaCents: 12_000,
+      explainedBy: [{ name: "IN_FLIGHT_HAND_BACK", cents: 12_000 }],
+    });
+  });
+
+  it("MUTATION: without the edit's hand-back the same booking disagrees", () => {
+    const subject = editedThenCancelled();
+    expect(identity({ ...subject, tasks: subject.tasks.filter((task) => task.id !== "task-edit") }, "PRICE")).toMatchObject({
+      status: "DISAGREE",
+      explainedBy: [],
+    });
   });
 });
