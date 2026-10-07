@@ -529,4 +529,5 @@ worker reads the stored row. A redacted key reaches it as `"[REDACTED]"`.
 
 Pinned by `xero-operation-outbox.test.ts`: every queue type's stored payload
 must reach its handler with the same arguments as the payload it was queued
-with.
+with. The retry is pinned by `xero-operation-retry.test.ts` and, against a real
+database, `xero-subscription-invoice-retry.realdb.test.ts`.
