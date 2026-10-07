@@ -188,7 +188,9 @@ Both directions, and nothing member/public-facing (decision 6):
 - **Capacity-status reporting.** `getLodgeHeldNights(lodgeId, checkIn, checkOut)`
   (`src/lib/capacity.ts`) is the admin companion to `getLodgeCapacityStatus`
   (which takes no date range): it reports which nights in a range are
-  whole-lodge-held, reusing the engine's hold-night span logic.
+  whole-lodge-held, reusing the engine's hold-night span logic. The member lodge
+  roster (#3474) is also a consumer, for clubs running it (see the amendment
+  above).
 
 ### Bed-allocation short-circuit — as built (#120, admin-only)
 

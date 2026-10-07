@@ -164,6 +164,7 @@ function LodgeSection({
               <li className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2">
                 <span className="font-medium">
                   Reserved for a private booking
+                  <span className="sr-only">, </span>
                   <span className="ml-2 text-sm font-normal text-muted-foreground">
                     whole lodge
                   </span>

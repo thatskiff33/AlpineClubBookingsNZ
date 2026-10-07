@@ -631,9 +631,8 @@ Enforcement lives in `capacity.ts` (the `wholeLodgeHeld` flag) and
   genuinely full lodge on public surfaces (decision 6). The one member surface
   that says otherwise is the member lodge roster, where a club runs it: it lists
   the held nights as "reserved for a private booking", without naming or
-  counting the party, so its
-  head count cannot be used to tell held from full by subtraction (#3474,
-  `INV-PRIV-017`).
+  counting the party, so its head count cannot be used to tell held from full
+  by subtraction (#3474, `INV-PRIV-017`).
 - **The capacity-warnings cron** — reports a held night as a full lodge, so the
   nightly fullness alert fires (#2681). Before that it had no hold handling at
   all, and a lodge under an exclusive whole-lodge hold never triggered a warning.
@@ -665,7 +664,9 @@ members/public (decision 6):
   `bookingsOverlap` / `sameLodgeNullTolerant` helpers.
 - `getLodgeHeldNights(lodgeId, checkIn, checkOut)` (`capacity.ts`) is the admin
   companion to `getLodgeCapacityStatus` (which takes no date range) for
-  reporting which nights in a range are whole-lodge-held.
+  reporting which nights in a range are whole-lodge-held. The member lodge
+  roster (#3474) is also a consumer, for clubs running it, and lists the held
+  nights without naming or counting the party.
 
 **Bed-allocation short-circuit (#120, admin-only).** A held booking implicitly
 occupies the whole lodge, so it needs no per-bed allocation. The bed-allocation

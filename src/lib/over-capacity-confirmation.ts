@@ -109,8 +109,8 @@ export class InsufficientCapacityError extends ApiError {
  * from a full lodge (decision 6) and they fall through the ordinary no-space /
  * over-capacity-confirm path. (The one member surface that says a night is
  * held is the member lodge roster, in clubs that run it — #3474, INV-PRIV-017
- * — and it never raises or reads this error.) It carries the blocked nights for admin surfacing
- * (issue #119).
+ * — and it never raises or reads this error.) It carries the blocked nights
+ * for admin surfacing (issue #119).
  */
 export class WholeLodgeHoldBlockedError extends ApiError {
   readonly code = "WHOLE_LODGE_HOLD_BLOCKED";
