@@ -13,8 +13,8 @@ import {
   parseInstant,
   type BoundClubTime,
   type ClubDateFormat,
+  formatStayDateOrNull,
 } from "@/lib/club-time";
-import { formatPayloadCalendarDay } from "../_lib/calendar-day";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -133,7 +133,7 @@ function formatInstant(clubTime: BoundClubTime, value: string | null) {
  * one of the mandatory regression anchors on #2870 for exactly that reason.
  */
 function formatDateOfBirth(value: string, format: ClubDateFormat) {
-  return formatPayloadCalendarDay(value, format, value);
+  return formatStayDateOrNull(value, format) ?? value;
 }
 
 function statusLabel(status: ApplicationStatus) {

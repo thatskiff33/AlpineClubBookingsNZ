@@ -257,20 +257,21 @@ export function formatClubLongWeekdayDate(
  * client render that must survive a malformed stored value takes
  * {@link formatStayDateOrNull}.
  *
- * `stay-date-format-census.test.ts` (`INV-SSOT-001`) refuses THAT pair — the
- * serialised decoder beside `formatClubDate` — anywhere else in `src/`, so the
- * next surface imports the rule rather than re-spelling it.
+ * `stay-date-format-census.test.ts` (`INV-SSOT-001`) refuses the decode-then-format
+ * composition of EITHER kernel decoder (`calendarDateOfSerialisedDbDate` or
+ * `calendarDateOfDateOnlyInstant`) with `formatClubDate` anywhere else in
+ * `src/`, and refuses a local `formatStayDay` / `formatDateOnly` /
+ * `formatPayloadCalendarDay` declaration, so the next surface imports the rule
+ * rather than re-spelling it. The `Instant` arm of the signature takes a `Date`
+ * a caller has proved is a stored day first (`requireStoredCalendarDay`).
  *
- * WHAT IS NOT YET CONVERGED, so nobody reads the census as covering it: the
- * `Date`-form spelling, `formatClubDate(calendarDateOfDateOnlyInstant(x))`,
- * is still written out in about a dozen server-side files (several behind a
- * local `formatStayDay`), and `formatPayloadCalendarDay` in
- * `src/app/(admin)/admin/_lib/calendar-day.ts` is a sibling shared helper for
- * the same job with its OWN, pinned rejection semantics — it refuses a
- * time-bearing string this helper's prefix read would accept. The `Instant`
- * arm of the signature exists for the one server caller converted here
- * (`xero-record-activity`); sweeping the rest, and deciding which rejection
- * semantics survive, is #3511 rather than this change.
+ * ONE DECODER (#3511, owner decision "converge, keep fallbacks"): this reads the
+ * date prefix of a serialised value, as `INV-DATE-010` says. The admin
+ * `formatPayloadCalendarDay` and the member/family twins used to answer their
+ * fallback for an offset-less timestamp such as `2026-07-04T13:45:00`; they are
+ * gone and that one value now renders its prefix day. Every other fallback is
+ * unchanged for every value a route actually emits: a surface keeps its own
+ * `?? fallback` on {@link formatStayDateOrNull}.
  */
 export function formatStayDate(
   value: string | Instant,

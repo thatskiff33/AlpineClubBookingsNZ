@@ -6,48 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { ClubIdentity } from "@/config/club-identity-types";
 import {
-  calendarDateOfDateOnlyInstant,
-  formatClubDate,
-  parseInstant,
-  type ClubDateFormat,
+  formatStayDateOrNull,
 } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
-
-/**
- * One night of the stay, rendered as the CALENDAR DAY it is (CT-4, #2870).
- *
- * `checkIn`/`checkOut` arrive over `fetch` as serialised `@db.Date` lodge
- * nights, which are calendar days and take no timezone at all: the kernel
- * decodes the UTC-midnight encoding back to the day it encodes and formats it
- * pinned to `UTC`, so the projection is provably the identity for every club.
- * The old `formatNZDate(new Date(value))` projected it through `APP_TIME_ZONE`,
- * which cancels only because New Zealand is east of Greenwich; a club west of it
- * showed the night BEFORE the stay on a page a member reaches from an email.
- *
- * `parseInstant` rather than a bare `new Date`, and the raw value rather than a
- * throw, because nothing validates this payload on the way in and this is a
- * public token landing page: an unhandled throw in a client render replaces the
- * whole screen with an error boundary. THE PREVIOUS CODE THREW TOO —
- * `Intl.DateTimeFormat.format` on an invalid `Date` is a `RangeError`, not the
- * string "Invalid Date", which only `toLocaleDateString` produces — so this
- * fallback is a FIX rather than a preserved behaviour.
- */
-function formatStayDay(value: string, format: ClubDateFormat): string {
-  // NOT-A-STRING FIRST, and this order is the whole point: `parseInstant` calls
-  // `value.trim()` BEFORE its own nullish check, so `parseInstant(null)` throws a
-  // `TypeError` out of the guard that exists to stop a throw. The premise above
-  // is that nothing validates this payload on the way in, and a missing field is
-  // exactly what an unvalidated payload produces — so the guard has to cover it.
-  if (typeof value !== "string") return "";
-  const instant = parseInstant(value);
-  if (instant === null) return value;
-  try {
-    return formatClubDate(calendarDateOfDateOnlyInstant(instant), format);
-  } catch {
-    return value;
-  }
-}
 
 type Outcome =
   | "idle"
@@ -206,8 +168,8 @@ export function GroupJoinVerifyPageClient({
               {details.checkIn && details.checkOut ? (
                 <div className="rounded-md border bg-card p-3 text-sm text-muted-foreground">
                   <p>
-                    Dates: {formatStayDay(details.checkIn, format)} to{" "}
-                    {formatStayDay(details.checkOut, format)}
+                    Dates: {formatStayDateOrNull(details.checkIn, format) ?? details.checkIn} to{" "}
+                    {formatStayDateOrNull(details.checkOut, format) ?? details.checkOut}
                   </p>
                   {typeof details.guestCount === "number" ? (
                     <p className="mt-1">Guests: {details.guestCount}</p>
