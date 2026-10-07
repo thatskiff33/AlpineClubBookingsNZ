@@ -95,6 +95,8 @@ vi.mock("@/lib/promo", () => ({
     async (_tx: unknown, promoCode: unknown) => promoCode
   ),
   deletePromoRedemptionAndAdjustCount: vi.fn(),
+  releaseBookingPromoRedemptions: vi.fn().mockResolvedValue(0),
+  releasePromoRedemptions: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn(), createAuditLog: vi.fn() }));
 vi.mock("@/lib/email", () => ({
@@ -218,7 +220,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
       additionalPaymentStatus: null,
     },
     member: { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
-    promoRedemption: null,
+    promoRedemptions: [],
     ...overrides,
   };
 }
@@ -296,7 +298,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     season: { findMany: vi.fn().mockResolvedValue(CURRENT_SEASON) },
     lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
     lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
-    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn().mockResolvedValue({}) },
+    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null), update: vi.fn().mockResolvedValue({}) },
     choreAssignment: {
       findMany: vi.fn().mockResolvedValue([]),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),

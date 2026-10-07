@@ -160,7 +160,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     deletedById: null,
     createdAt: new Date("2026-05-27T00:00:00.000Z"),
     updatedAt: new Date("2026-05-27T01:00:00.000Z"),
-    promoRedemption: null,
+    promoRedemptions: [],
     guests: [],
     payment: null,
     modifications: [],
@@ -206,13 +206,13 @@ describe("deleteBooking", () => {
 
   it("hard-deletes an owned draft after durable audit and promo cleanup", async () => {
     const draft = makeBooking({
-      promoRedemption: {
+      promoRedemptions: [{
         id: "redemption-1",
         promoCodeId: "promo-1",
         discountCents: 1000,
         freeNightsUsed: null,
         eligibleGuestCount: 1,
-      },
+      }],
     });
     mocks.bookingFindUnique.mockResolvedValue(draft);
 

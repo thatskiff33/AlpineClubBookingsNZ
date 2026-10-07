@@ -9,7 +9,7 @@ import {
   SCHOOL_CHILD_NAME_PREFIX,
 } from "@/lib/placeholder-guest-names";
 import { buildMemberWholeLodgePlaceholderGuests } from "@/lib/booking-request";
-import { generateSchoolGuests } from "@/lib/school-booking-request";
+import { generateSchoolGuests } from "@/lib/school-booking-constants";
 
 /**
  * #2550 — the detector that decides whether a guest is still carrying the name

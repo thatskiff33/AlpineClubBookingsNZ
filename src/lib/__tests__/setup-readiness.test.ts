@@ -108,6 +108,7 @@ const completeDatabase: SetupDatabaseSnapshot = {
     alpineCentralServer: false,
     commsPortal: false,
     memberLodgeRoster: false,
+    multiPromoCodes: false,
   },
   ageTierSettingCount: 4,
   seasonCount: 2,

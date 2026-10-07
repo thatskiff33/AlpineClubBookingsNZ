@@ -103,7 +103,7 @@ const filesMentioning = (files: string[], token: RegExp): string[] => {
   });
 };
 
-/** The four edit doors, and the service each one settles through. */
+/** The edit doors, and the service each one settles through. */
 const EDIT_DOORS = [
   {
     name: "batch edit (PUT /api/bookings/[id]/modify)",
@@ -127,6 +127,13 @@ const EDIT_DOORS = [
     name: "guest add (POST /api/bookings/[id]/guests)",
     route: "src/app/api/bookings/[id]/guests/route.ts",
     settlesThrough: [],
+  },
+  {
+    // #3827 (D-3813-4): a guest's acceptance re-prices the booking's promo
+    // codes and settles the change through the ordinary edit machinery.
+    name: "guest acceptance (POST /api/bookings/[id]/guests/[guestId]/consent)",
+    route: "src/app/api/bookings/[id]/guests/[guestId]/consent/route.ts",
+    settlesThrough: ["src/lib/booking-guest-acceptance-reprice.ts"],
   },
 ] as const;
 

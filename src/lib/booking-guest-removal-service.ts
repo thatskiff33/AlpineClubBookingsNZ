@@ -1,8 +1,12 @@
 import {
   AdminReviewStatus,
   type AgeTier,
+  type MemberGuestConsentStatus,
   type Prisma,
 } from "@prisma/client";
+import { raiseEditRefundHandBackIfOwed } from "@/lib/edit-refund-hand-back";
+import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
+import { repriceBookingPromotions } from "@/lib/booking-promotions";
 import {
   type SeasonRateData,
 } from "@/lib/pricing";
@@ -10,30 +14,14 @@ import {
   assertMembershipTypeBookingAllowed,
   priceBookingGuestsWithMembershipTypePolicy,
 } from "@/lib/membership-type-policy";
-import {
-  deletePromoRedemptionAndAdjustCount,
-  lockAndRefreshPromoCodeUsage,
-  replacePromoRedemptionAllocations,
-  validateAndCalculatePromoDiscount,
-} from "@/lib/promo";
-import {
-  recordBookingNightAdjustments,
-  type PromoAdjustmentTarget,
-} from "@/lib/night-adjustment-write";
+import { recordBookingNightAdjustments } from "@/lib/night-adjustment-write";
 import {
   d3CompatibleBookingMoneyBuildUpCents,
   readBookingMoneyBuildUp,
   selectBookingMoneyBuildUp,
   selectLoadedBookingMoneyBuildUp,
 } from "@/lib/booking-money-build-up";
-import {
-  describePromoCapCoverage,
-  type PromoCoverageNotice,
-} from "@/lib/promo-cap-coverage";
-import {
-  selectedIndexesForStoredGuestTargets,
-  targetBookingGuestIdsForSelectedIndexes,
-} from "@/lib/promo-stored-guest-targets";
+import type { PromoCoverageNotice } from "@/lib/promo-cap-coverage";
 import {
   toEditTimeGroupDiscountConfig,
   toSeasonRateData,
@@ -421,7 +409,7 @@ export async function removeBookingGuestInTransaction({
       member: true,
       // #3369: the owner may be an Organisation; bookingOwner() reads both.
       organisation: { select: { name: true, email: true } },
-        promoRedemption: {
+        promoRedemptions: {
           include: {
             guestTargets: { select: { bookingGuestId: true } },
             promoCode: {
@@ -841,8 +829,10 @@ export async function removeBookingGuestInTransaction({
     newDiscountCents: booking.discountCents,
     newPromoAdjustmentCents: booking.promoAdjustmentCents,
     promoRemoved: false,
+    releasedPromoCodes: [],
     promoCoverage: null,
     adjustmentTargets: [],
+    remainingPromoCodeLabel: bookingPromoCodeLabel(booking),
   };
 
   if (!parkedFinancialReview) {
@@ -894,6 +884,8 @@ export async function removeBookingGuestInTransaction({
         // included); firstNight remains the booking's check-in so internal
         // work-party promos date their window from the stay start.
         firstNight: booking.checkIn,
+        // #3827 (D-3813-4): a guest still awaiting acceptance takes no code.
+        consentStatus: remainingGuests[index]!.consentStatus,
       };
     });
 
@@ -1136,9 +1128,9 @@ export async function removeBookingGuestInTransaction({
     priceBreakdown === null
       ? { priceLines: null, sides: null }
       : await computeModificationPricing(
-          { bookingId, site: "guest-removal" },
+          { bookingId, site: "guest-removal", promoCodes: { store: tx, before: booking } },
           () => {
-            const promoCode = booking.promoRedemption?.promoCode.code ?? null;
+            const promoCode = bookingPromoCodeLabel(booking);
             return {
               before: pricingSideFromStoredGuests(booking.guests, {
                 promoAdjustmentCents: booking.promoAdjustmentCents,
@@ -1152,7 +1144,7 @@ export async function removeBookingGuestInTransaction({
                 priceBreakdown.guests,
                 {
                   promoAdjustmentCents: promoResult.newPromoAdjustmentCents,
-                  promoCode: promoResult.promoRemoved ? null : promoCode,
+                  promoCode: promoResult.remainingPromoCodeLabel,
                 },
               ),
             };
@@ -1213,6 +1205,16 @@ export async function removeBookingGuestInTransaction({
     bookingModification,
     sides: pricingSides,
     site: "guest-removal",
+  });
+
+  // D-3813-6 (`INV-PAY-117`): a reduction on a booking paid by internet
+  // banking or by hand asks the treasurer to send it back.
+  await raiseEditRefundHandBackIfOwed(tx, {
+    bookingId,
+    paymentId: booking.payment?.id ?? null,
+    bookingModificationId: bookingModification.id,
+    adjusted: paymentImpact,
+    editLabel: "guest removal",
   });
 
   /**
@@ -1421,7 +1423,7 @@ export async function recalculateBookingPromo({
   bookingId: string;
   booking: Prisma.BookingGetPayload<{
     include: {
-          promoRedemption: {
+          promoRedemptions: {
             include: {
               guestTargets: { select: { bookingGuestId: true } };
               promoCode: {
@@ -1443,6 +1445,8 @@ export async function recalculateBookingPromo({
     /** #3276: REQUIRED, so an adjustment row can be attributed to a night by date. */
     nightDates: Date[];
     firstNight?: Date | null;
+    /** #3827 (D-3813-4): REQUIRED — only a guest actually staying can benefit. */
+    consentStatus: MemberGuestConsentStatus | null;
   }>;
   /**
    * The club's own calendar day (#3123, `INV-CONFIG-002`), resolved by whichever
@@ -1455,86 +1459,23 @@ export async function recalculateBookingPromo({
    */
   todayAtClub: CalendarDate;
 }) {
-  let newDiscountCents = 0;
-  let newPromoAdjustmentCents = 0;
-  let promoRemoved = false;
-  let promoCoverage: PromoCoverageNotice | null = null;
-  let adjustmentTargets: PromoAdjustmentTarget[] = [];
-
-  if (booking.promoRedemption?.promoCode) {
-    // Row-lock the promo code and re-read its usage counter before the caps are
-    // checked (#2299). Removing guests can drop the booking's benefit to
-    // nothing and RELEASE a total-redemptions slot, so this transaction is a
-    // promo-counter writer and must serialise with the others. The per-lodge
-    // capacity lock is already held, so the order stays lodge -> promo row.
-    const promo = await lockAndRefreshPromoCodeUsage(
-      tx,
-      booking.promoRedemption.promoCode
-    );
-    const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
-      booking.promoRedemption,
-      guestNightRates
-    );
-    const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
-    const application = await validateAndCalculatePromoDiscount(
-      promo,
-      {
-        memberId: bookingOwner(booking).memberId,
-        bookingCheckIn: booking.checkIn,
-        totalPriceCents: newTotalPriceCents,
-        guests: guestNightRates,
-      },
-      promo.assignments.length > 0
-        ? promo.assignments.map((assignment) => assignment.memberId)
-        : null,
-      {
-        excludeBookingId: bookingId,
-        db: tx,
-        selectedGuestIndexes,
-        lodgeId: bookingLodgeId,
-        // #2390: never refuse the edit over somebody else's cap consumption —
-        // keep whoever is already benefiting and leave out only new people.
-        capOverflow: "coverExisting",
-        // #3123 — resolved outside this transaction by the caller.
-        todayAtClub,
-      },
-    );
-
-    if (application.error || !application.discount) {
-      promoRemoved = true;
-      await deletePromoRedemptionAndAdjustCount(tx, booking.promoRedemption);
-    } else {
-      const discount = application.discount;
-      newDiscountCents = discount.discountCents;
-      newPromoAdjustmentCents = discount.priceAdjustmentCents;
-      adjustmentTargets = discount.adjustmentTargets;
-      promoCoverage = await describePromoCapCoverage(tx, {
-        promoCode: promo.code,
-        capCoverage: application.capCoverage,
-      });
-
-      await replacePromoRedemptionAllocations(
-        tx,
-        booking.promoRedemption,
-        newDiscountCents,
-        newPromoAdjustmentCents,
-        discount.freeNightsUsed,
-        discount.eligibleGuestCount,
-        discount.allocations,
-        targetBookingGuestIdsForSelectedIndexes(
-          guestNightRates,
-          application.selectedGuestIndexes
-        ),
-      );
-    }
-  }
-
-  return {
-    newDiscountCents,
-    newPromoAdjustmentCents,
-    promoRemoved,
-    promoCoverage,
-    // #3276: what the engine took off each night or guest of `guestNightRates`.
-    adjustmentTargets,
-  };
+  // #3827: every code the booking carries, in its stored order, through the
+  // one re-price (`booking-promotions.ts`) — which row-locks every code in one
+  // sorted call and re-reads each counter under it (INV-MONEY-023). The
+  // per-lodge capacity lock is already held, so the order stays lodge -> promo
+  // rows. A code that no longer applies is released on its own.
+  const redemptions = bookingPromoRedemptions(booking).filter(
+    (redemption) => redemption.promoCode,
+  );
+  return repriceBookingPromotions(tx, {
+    bookingId,
+    redemptions,
+    memberId: bookingOwner(booking).memberId,
+    bookingCheckIn: booking.checkIn,
+    totalPriceCents: newTotalPriceCents,
+    guests: guestNightRates,
+    lodgeId:
+      redemptions.length > 0 ? booking.lodgeId ?? (await getDefaultLodgeId(tx)) : booking.lodgeId,
+    todayAtClub,
+  });
 }
