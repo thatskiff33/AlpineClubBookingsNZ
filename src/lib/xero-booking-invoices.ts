@@ -96,6 +96,8 @@ import {
 import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
 import { asRecord } from "@/lib/xero-json";
 import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
+import { loadFeesAddedToAmountOwed } from "@/lib/booking-finished-stay-correction";
+import { changeFeeLineItem } from "@/lib/xero-modification-line-items";
 
 export interface CreateXeroBookingInvoiceOptions
   extends FindOrCreateXeroContactOptions {
@@ -623,6 +625,16 @@ export async function createXeroInvoiceForBooking(
     }),
   );
   const promoLineRecord = promoAdjustmentLineRecord(promoLinePlan);
+
+  // #3750 (owner, 7 Oct 2026, "Add fee to amount owed"): a fee a finished-stay
+  // correction added to what this booking owes, while no invoice had been
+  // issued to carry it, is billed here — the invoice then equals what the pay
+  // step collects (`bookingAmountOwedCents`). Fees an issued invoice's credit
+  // note or supplementary invoice already carried are not billed again.
+  const feeOwedCents = (await loadFeesAddedToAmountOwed(prisma, bookingId))
+    .filter((fee) => fee.onPrimaryInvoice)
+    .reduce((sum, fee) => sum + fee.changeFeeCents, 0);
+  if (feeOwedCents > 0) lineItems.push(changeFeeLineItem(feeOwedCents, hutFeeMapping));
 
   // Read once, outside the closure: `buildInvoice` runs for the recorded
   // request payload and again on every contact-repair attempt, and both must

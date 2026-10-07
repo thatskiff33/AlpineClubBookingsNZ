@@ -3,7 +3,7 @@ import {
   getCancellationSettlementBreakdown,
   getPaymentDisplayStatus,
 } from "@/lib/payment-status-display";
-import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import { bookingAmountOwedCents, hasCapturedPayment } from "@/lib/booking-payment-state";
 import { refundAppealCeiling } from "@/lib/manual-refund-task-settlement-rules";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
 import { savedPaymentMethodForBooking } from "@/lib/saved-payment-method";
@@ -155,8 +155,14 @@ export function resolveBookingDetailPayment({
     creditAppliedCents > 0 &&
     isPaymentOwedBookingStatus(booking.status) &&
     booking.payment?.status !== "SUCCEEDED";
+  // #3750: through the one home, so a change fee recorded on the payment is
+  // part of what the page says is due.
   const amountDueAfterCreditCents = Math.max(
-    booking.finalPriceCents - creditAppliedCents,
+    bookingAmountOwedCents({
+      finalPriceCents: booking.finalPriceCents,
+      changeFeeCents: booking.payment?.changeFeeCents ?? null,
+      appliedCreditCents: creditAppliedCents,
+    }),
     0
   );
 

@@ -1,3 +1,4 @@
+import { CHANGE_FEE_LINE_DESCRIPTION } from "@/lib/xero-modification-line-items";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -38,6 +39,9 @@ const mocks = vi.hoisted(() => {
     // here, so every note in this suite renders its single line as before.
     bookingModification: {
       findUnique: vi.fn().mockResolvedValue(null),
+      // #3750: fees a finished-stay correction added to the amount owed; none
+      // here, so every invoice in this suite is raised exactly as before.
+      findMany: vi.fn().mockResolvedValue([]),
     },
     manualRefundTask: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -480,6 +484,31 @@ describe("createXeroInvoiceForBooking", () => {
           idempotencyKey: null,
         }),
     );
+  });
+
+  it("#3750: bills a fee a finished-stay correction added to what an uninvoiced booking owes, once", async () => {
+    mocks.prisma.bookingModification.findMany.mockResolvedValueOnce([
+      {
+        id: "mod_on_invoice",
+        changeFeeCents: 4_321,
+        newData: { finishedStayCorrection: { feeAddedToAmountOwed: true, feeOnPrimaryInvoice: true } },
+      },
+      {
+        // Already carried by an issued invoice's credit note: not billed again.
+        id: "mod_carried",
+        changeFeeCents: 999,
+        newData: { finishedStayCorrection: { feeAddedToAmountOwed: true, feeOnPrimaryInvoice: false } },
+      },
+    ]);
+    await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+    const [, payload] = mocks.xeroClientInstance.accountingApi.createInvoices.mock.calls.at(-1) as [
+      string,
+      { invoices: Array<{ lineItems: Array<{ description: string; unitAmount: number }> }> },
+    ];
+    const feeLines = payload.invoices[0].lineItems.filter(
+      (line) => line.description === CHANGE_FEE_LINE_DESCRIPTION,
+    );
+    expect(feeLines).toEqual([expect.objectContaining({ unitAmount: 43.21, quantity: 1 })]);
   });
 
   it("resolves the item-code season from the booking's own lodge, not any lodge", async () => {

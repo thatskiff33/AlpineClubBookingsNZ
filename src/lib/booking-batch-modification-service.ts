@@ -156,7 +156,6 @@ import {
   assertFinishedStayCorrectionCall,
   classifyFinishedStayChangeFeeRule,
   finishedStayNoticeDay,
-  FINISHED_STAY_UNPAID_UNINVOICED_MESSAGE,
   finishedStayRemovalFeeCents,
   finishedStayRemovedPortion,
   loadRemovalPromoRows,
@@ -1660,36 +1659,37 @@ export async function modifyBookingBatch({
             settlementMethod: input.settlementMethod ?? "card",
           })
         : 0;
-    // #3750 (owner D3): an unpaid stay still owes the retained share, "as if
-    // they had paid and then were being refunded less the cancellation fee".
-    // Where nothing was captured, the amount owed lives on the issued Xero
-    // invoice, which the edit corrects by the net of the reduction and this fee.
-    // With no captured payment AND no issued invoice there is nothing that
-    // carries the fee — the pay step charges the booking's price alone — so the
-    // correction is refused rather than silently dropping the charge.
-    if (
-      removalFeeCents > 0 &&
-      !hasCapturedPayment(booking.payment) &&
-      !hasIssuedPrimaryXeroInvoice(booking)
-    ) {
-      throw new ApiError(FINISHED_STAY_UNPAID_UNINVOICED_MESSAGE, 409);
-    }
+    // #3750 (owner D3, and "Add fee to amount owed", 7 Oct 2026): an unpaid stay
+    // owes the retained share too, "as if they had paid and then were being
+    // refunded less the cancellation fee". With nothing captured the fee is
+    // recorded on the payment below, so every pay step collects it with the
+    // rest (`bookingAmountOwedCents`); where an invoice was already issued the
+    // edit's credit note or supplementary invoice carries it as well, and
+    // where none was, the primary invoice raised later carries it.
+    const feeAddedToAmountOwed =
+      Boolean(finishedStayCorrection) && removalFeeCents > 0 && !hasCapturedPayment(booking.payment);
+    const feeOnPrimaryInvoice = feeAddedToAmountOwed && !hasIssuedPrimaryXeroInvoice(booking);
 
     // #3232 D2: what this move WOULD attract, before the club's waiver is applied.
     // A parked edit is priced by nobody, so it is zero here for the reason it is
     // zero everywhere else on that path. #3750: an add-only finished-stay
     // correction owes no change fee by owner decision — not a waiver of one.
+    // #3750 (owner, 7 Oct 2026, "Same-day fee on removed nights"): a finished-
+    // stay correction is charged ONLY the same-day retention on what it removes
+    // — never the ordinary late-change fee across the whole booking.
     const chargeableChangeFeeCents =
       parked || finishedStayChangeFeeRule === "ADD_ONLY_NO_FEE"
       ? 0
-      : await calculateModificationChangeFee({
+      : finishedStayCorrection
+        ? removalFeeCents
+        : await calculateModificationChangeFee({
       booking,
       newCheckIn: dates.newCheckIn,
       checkInChanged: dates.checkInChanged,
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
       db: tx, // locked transaction; see `CancellationPolicyDb`
       todayAtClub: moneyTierDay,
-    }) + removalFeeCents;
+    });
     // #3232 D2: `waiveChangeFee` takes the same zero branch a parked edit takes,
     // so the waived fee is genuinely absent from every downstream decision rather
     // than subtracted back out somewhere later.
@@ -1838,6 +1838,21 @@ export async function modifyBookingBatch({
       // applied-credit give-back returns the remaining reduction once, untiered.
       reductionUntiered: finishedStayRemovalCharged,
     });
+    if (feeAddedToAmountOwed) {
+      // Owner decision (7 Oct 2026, "Add fee to amount owed"): recorded where
+      // the pay steps read it. A booking that has never reached its pay step
+      // has no payment row yet; this one carries only the fee until it does.
+      if (booking.payment) {
+        await tx.payment.update({
+          where: { id: booking.payment.id },
+          data: { changeFeeCents: { increment: changeFeeCents } },
+        });
+      } else {
+        await tx.payment.create({
+          data: { bookingId, amountCents: 0, changeFeeCents },
+        });
+      }
+    }
 
     const lifecycle = await applyLifecycleTransitions(tx, {
       booking,
@@ -2107,6 +2122,8 @@ export async function modifyBookingBatch({
                   changeFeeRule: finishedStayChangeFeeRule,
                   removedPortionCents: removedPortion?.netCents ?? 0,
                   removalFeeCents,
+                  feeAddedToAmountOwed,
+                  feeOnPrimaryInvoice,
                   // Both, as the #1668 override records them: what the officer
                   // confirmed, and whether capacity was in fact exceeded.
                   confirmOverCapacity: input.confirmOverCapacity === true,

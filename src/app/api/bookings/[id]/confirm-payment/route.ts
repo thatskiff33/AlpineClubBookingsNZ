@@ -1,3 +1,4 @@
+import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import { NextRequest, NextResponse } from "next/server";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -151,11 +152,20 @@ export async function POST(
     // the full price (legacy in-flight intents). markBookingPaymentSucceeded
     // re-derives and enforces the same split under the capacity lock. The ledger
     // read is skipped for a full-price capture.
+    // #3750: the booking's worth (price plus a recorded change fee) is the
+    // full-price figure; less applied credit it is the effective one.
+    const confirmWorthCents = bookingWorthCents({
+      finalPriceCents: payment.booking.finalPriceCents,
+      changeFeeCents: payment.changeFeeCents,
+    });
     if (
-      pi.amount !== payment.booking.finalPriceCents &&
+      pi.amount !== confirmWorthCents &&
       pi.amount !==
-        payment.booking.finalPriceCents -
-          (await deriveBookingAppliedCreditCents(bookingId, prisma))
+        bookingAmountOwedCents({
+          finalPriceCents: payment.booking.finalPriceCents,
+          changeFeeCents: payment.changeFeeCents,
+          appliedCreditCents: await deriveBookingAppliedCreditCents(bookingId, prisma),
+        })
     ) {
       // Stripe has already confirmed that money moved. An amount drift means
       // we cannot safely promote the booking from the snapshot above, but it

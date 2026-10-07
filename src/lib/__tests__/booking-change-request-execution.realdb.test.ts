@@ -650,17 +650,115 @@ function deferred() {
     expect(notes[0].idempotencyKey).toContain(String(STORED_NIGHT_CENTS));
   }, 60_000);
 
-  it("an unpaid stay with nothing to carry the charge refuses the removal and stays pending", async () => {
-    await seed({
-      secondGuest: true,
-      unpaid: { invoiced: false },
-      requested: { addGuests: [], removeGuests: [{ id: GUEST_2_ID }], summary: "remove Second Guest" },
+  it.each([
+    ["the card pay step", "card"],
+    ["an officer recording the payment (cash or internet banking)", "officer"],
+  ] as const)(
+    "an unpaid stay with no invoice owes the fee on top, and %s collects and reconciles it (owner, 7 Oct)",
+    async (_name, collector) => {
+      await seed({
+        secondGuest: true,
+        unpaid: { invoiced: false },
+        requested: { addGuests: [], removeGuests: [{ id: GUEST_2_ID }], summary: "remove Second Guest" },
+      });
+      const fee = STORED_NIGHT_CENTS; // the same-day tier keeps half of the removed guest
+      expect(await approve(OFFICER_ID)).toMatchObject({ outcome: "executed", changeFeeCents: fee });
+
+      const paymentState = await import("@/lib/booking-payment-state");
+      const booking = await prisma.booking.findUniqueOrThrow({
+        where: { id: BOOKING_ID },
+        include: { payment: true },
+      });
+      // Recorded where every pay step reads it, and owed on top of the price.
+      expect(booking.payment?.changeFeeCents).toBe(fee);
+      const owed = paymentState.bookingAmountOwedCents({
+        finalPriceCents: booking.finalPriceCents,
+        changeFeeCents: booking.payment?.changeFeeCents ?? null,
+        appliedCreditCents: 0,
+      });
+      expect(owed).toBe(2 * STORED_NIGHT_CENTS + fee);
+      // A paid member in the same position would have been refunded half the
+      // removed guest and kept paying the rest: the same total.
+      expect(owed).toBe(4 * STORED_NIGHT_CENTS - STORED_NIGHT_CENTS);
+      const [modification] = await prisma.bookingModification.findMany({ where: { bookingId: BOOKING_ID } });
+      expect(modification.newData).toMatchObject({
+        finishedStayCorrection: { feeAddedToAmountOwed: true, feeOnPrimaryInvoice: true },
+      });
+
+      const reconciliation = await import("@/lib/payment-reconciliation");
+      if (collector === "card") {
+        const settled = await reconciliation.markBookingPaymentSucceeded({
+          bookingId: BOOKING_ID,
+          paymentIntentId: "pi_race_3750_owed",
+          amountCents: owed,
+          paymentMethodId: null,
+          format: CLUB_FORMAT_TEST,
+        });
+        expect(settled.outcome).toBe("paid");
+      } else {
+        const manualState = await import("@/lib/manual-booking-payment-state");
+        const state = await manualState.getBookingManualPaymentState(BOOKING_ID);
+        expect(state?.amountOwingCents).toBe(owed);
+        await reconciliation.markBookingPaymentManuallySettled({
+          bookingId: BOOKING_ID,
+          actingAdminMemberId: OFFICER_ID,
+          note: null,
+          expectedAmountCents: owed,
+          notifyMember: false,
+          format: CLUB_FORMAT_TEST,
+        });
+      }
+
+      const paid = await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true } });
+      expect(paid.status).toBe("PAID");
+      // The ledger's identity: price + recorded fee = cash captured + credit.
+      expect(paid.payment!.amountCents + paid.payment!.creditAppliedCents).toBe(
+        paid.finalPriceCents + paid.payment!.changeFeeCents,
+      );
+      const feeLines = await prisma.bookingLedgerLine.findMany({
+        where: { bookingId: BOOKING_ID, kind: "CHANGE_FEE" },
+        select: { amountCents: true, anchorId: true },
+      });
+      expect(feeLines).toEqual([{ amountCents: fee, anchorId: modification.id }]);
+    },
+    60_000,
+  );
+
+  it("a nights-only change is charged the same-day share of the nights it removes, never the ordinary late fee (owner, 7 Oct)", async () => {
+    // A tier that would make moving check-in one day later a "more lenient"
+    // move, so the ordinary late-change fee would charge a share of the WHOLE
+    // booking. The owner's rule charges only the night actually removed.
+    await prisma.cancellationPolicy.create({
+      data: { id: "race-3750-tier-1", lodgeId: LODGE_ID, daysBeforeStay: 1, refundPercentage: 90, creditRefundPercentage: 90 },
     });
-    const { FINISHED_STAY_UNPAID_UNINVOICED_MESSAGE } = await import("@/lib/booking-finished-stay-correction");
-    await expect(approve(OFFICER_ID)).rejects.toThrow(FINISHED_STAY_UNPAID_UNINVOICED_MESSAGE);
-    expect(await prisma.bookingChangeRequest.findUniqueOrThrow({ where: { id: REQUEST_ID } })).toMatchObject({
-      status: "REQUESTED",
-      version: 1,
+    try {
+      await seed({
+        requested: { addGuests: [], checkIn: "2026-06-11", summary: "check-in to 2026-06-11" },
+      });
+      const result = await approve(OFFICER_ID);
+      expect(result, JSON.stringify(result)).toMatchObject({
+        outcome: "executed",
+        priceDiffCents: -STORED_NIGHT_CENTS,
+        changeFeeCents: STORED_NIGHT_CENTS - Math.round(STORED_NIGHT_CENTS / 2),
+      });
+      const [modification] = await prisma.bookingModification.findMany({ where: { bookingId: BOOKING_ID } });
+      expect(modification.newData).toMatchObject({
+        finishedStayCorrection: { removedPortionCents: STORED_NIGHT_CENTS },
+      });
+    } finally {
+      await prisma.cancellationPolicy.deleteMany({ where: { id: "race-3750-tier-1" } });
+    }
+  }, 60_000);
+
+  it("a nights-only extension is charged the added night normally and no fee", async () => {
+    await seed({
+      requested: { addGuests: [], checkOut: "2026-06-13", summary: "check-out to 2026-06-13" },
+    });
+    const result = await approve(OFFICER_ID);
+    expect(result, JSON.stringify(result)).toMatchObject({
+      outcome: "executed",
+      priceDiffCents: NIGHT_CENTS,
+      changeFeeCents: 0,
     });
   }, 60_000);
 

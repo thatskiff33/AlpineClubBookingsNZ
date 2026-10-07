@@ -1,3 +1,4 @@
+import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { prisma } from "@/lib/prisma";
@@ -537,12 +538,20 @@ async function handlePaymentIntentSucceeded(
   // EFFECTIVE amount, so accept that too (and the full price for legacy in-flight
   // intents). A stale intent from a since-changed price matches neither and is
   // still rejected. The ledger read is skipped for a full-price capture.
+  // #3750: worth (price plus a recorded change fee), or that less applied credit.
   if (
     bookingRecord &&
-    paymentIntent.amount !== bookingRecord.finalPriceCents &&
     paymentIntent.amount !==
-      bookingRecord.finalPriceCents -
-        (await deriveBookingAppliedCreditCents(bookingRecord.id, prisma))
+      bookingWorthCents({
+        finalPriceCents: bookingRecord.finalPriceCents,
+        changeFeeCents: bookingRecord.payment?.changeFeeCents ?? null,
+      }) &&
+    paymentIntent.amount !==
+      bookingAmountOwedCents({
+        finalPriceCents: bookingRecord.finalPriceCents,
+        changeFeeCents: bookingRecord.payment?.changeFeeCents ?? null,
+        appliedCreditCents: await deriveBookingAppliedCreditCents(bookingRecord.id, prisma),
+      })
   ) {
     logger.error(
       {

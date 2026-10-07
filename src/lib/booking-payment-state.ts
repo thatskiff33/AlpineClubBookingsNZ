@@ -397,3 +397,36 @@ export function editReviewRefundIsPaidBackByHand(
   const payment = editReviewRefundSettlementPayment(task);
   return payment !== null && !editReviewRefundGoesBackOnCard(payment);
 }
+
+/**
+ * What a booking is worth to the club: its price plus the change fee recorded
+ * on its payment. The booking-ledger census already reads a booking this way
+ * (`finalPriceCents + changeFeeCents = captured + applied credit`); this is the
+ * one home every pay step reads it from (#3750, owner decision of 7 Oct 2026:
+ * a fee kept on an unpaid finished stay is "added to the amount owed", so the
+ * payment page, the card intent, the internet-banking ask and the officer's
+ * manual settlement all collect it with the rest).
+ *
+ * `changeFeeCents` is the payment's own column. A booking with no Payment row
+ * has had no fee recorded against it, which is a fact rather than a default.
+ */
+export function bookingWorthCents(input: {
+  finalPriceCents: number;
+  changeFeeCents: number | null;
+}): number {
+  return input.finalPriceCents + Math.max(0, input.changeFeeCents ?? 0);
+}
+
+/**
+ * What a booking still owes at its pay step: its worth less the account credit
+ * applied to it (#1641). ONE HOME — every surface that asks a member, or an
+ * officer recording cash, for an unpaid booking's amount reads this, so a fee
+ * added to what is owed cannot be shown on one surface and dropped by another.
+ */
+export function bookingAmountOwedCents(input: {
+  finalPriceCents: number;
+  changeFeeCents: number | null;
+  appliedCreditCents: number;
+}): number {
+  return bookingWorthCents(input) - input.appliedCreditCents;
+}

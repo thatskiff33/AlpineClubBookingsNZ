@@ -201,8 +201,47 @@ export interface RemovalPromoRows {
 export const FINISHED_STAY_UNKNOWN_NIGHT_PRICE_MESSAGE =
   "A night this change removes has no recorded price, so the same-day charge on it cannot be worked out. Nothing has been applied; the request is still pending.";
 
-export const FINISHED_STAY_UNPAID_UNINVOICED_MESSAGE =
-  "This stay is unpaid and has no issued invoice, so there is nothing to carry the same-day charge on the guests or nights this change removes. Nothing has been applied; issue the booking's invoice or take its payment, then approve again.";
+/**
+ * Owner decision (7 Oct 2026, "Add fee to amount owed"): a correction's fee on a
+ * stay with nothing captured is recorded on the booking's payment, so every pay
+ * step — the payment page, the card intent, the internet-banking ask and the
+ * officer's manual settlement — collects it with the rest through
+ * `bookingAmountOwedCents`. The modification row says so, and whether the fee
+ * still needs a line on the primary Xero invoice (none had been issued, so no
+ * credit note or supplementary invoice carried it).
+ */
+export type FeeAddedToAmountOwed = {
+  readonly modificationId: string;
+  readonly changeFeeCents: number;
+  readonly onPrimaryInvoice: boolean;
+};
+
+const FEE_ADDED_TO_AMOUNT_OWED_PATH = ["finishedStayCorrection", "feeAddedToAmountOwed"];
+
+/** The fees a finished-stay correction added to this booking's amount owed. */
+export async function loadFeesAddedToAmountOwed(
+  db: PrismaTransactionClient,
+  bookingId: string,
+): Promise<FeeAddedToAmountOwed[]> {
+  const rows = await db.bookingModification.findMany({
+    where: {
+      bookingId,
+      changeFeeCents: { gt: 0 },
+      newData: { path: FEE_ADDED_TO_AMOUNT_OWED_PATH, equals: true },
+    },
+    select: { id: true, changeFeeCents: true, newData: true },
+    orderBy: { createdAt: "asc" },
+  });
+  return rows.map((row) => {
+    const correction = (row.newData as { finishedStayCorrection?: { feeOnPrimaryInvoice?: unknown } })
+      .finishedStayCorrection;
+    return {
+      modificationId: row.id,
+      changeFeeCents: row.changeFeeCents,
+      onPrimaryInvoice: correction?.feeOnPrimaryInvoice === true,
+    };
+  });
+}
 
 export function finishedStayRemovedPortion(args: {
   readonly storedGuests: ReadonlyArray<StoredGuestForRemoval>;
