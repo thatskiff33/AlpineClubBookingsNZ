@@ -111,15 +111,23 @@ jobs:
   # dependency cache (`setup-node`'s `cache: pnpm`): a cache saved here would be
   # written by an epic branch's install under `main`'s cache scope, where every
   # later `main` run would restore it. Each branch starts from `git clean -ffdx`,
-  # so one branch's `node_modules` or generated client never reaches the next,
-  # and its commands run with the runner's command files (`GITHUB_OUTPUT`,
-  # `GITHUB_ENV`, `GITHUB_PATH`, `GITHUB_STEP_SUMMARY`) unset, so they cannot
-  # set this job's output by the ordinary route. That is hygiene, not a sandbox:
-  # code running on this runner can still find those files on disk and could
-  # forge its own result. So the result means "the composed tree's own censuses
-  # say it composes", which is the correctness question #3513 asks, and never a
-  # security verdict on the epic's code — that is what review of each child
-  # into the epic, and the gated `epic -> main` merge, are for.
+  # which removes the previous branch's `node_modules` and generated client from
+  # the working tree, and its commands run with the runner's command files
+  # (`GITHUB_OUTPUT`, `GITHUB_ENV`, `GITHUB_PATH`, `GITHUB_STEP_SUMMARY`) unset.
+  #
+  # THAT IS HYGIENE, NOT A SANDBOX. Neither step resets `.git/` (hooks, config,
+  # refs), the shared pnpm store, `$HOME` or the runner's temp directory, and
+  # every branch runs as the same user in the same job. So code from any one
+  # composed tree could tamper with a later branch's run, or find the command
+  # files on disk, and could forge any branch's result in this job. What makes
+  # that gain nothing is `sync`: it acts only when the pull request's head and
+  # the remote epic tip, read by `sync` itself, still equal the SHAs this job
+  # reports, so a forged result can at most land a genuine `main` -> epic sync
+  # of exactly those commits unchecked — the pre-#3513 behaviour. The result
+  # therefore means "the composed tree's own censuses say it composes", the
+  # correctness question #3513 asks, and never a security verdict on the epic's
+  # code: review of each child into the epic, and the gated `epic -> main`
+  # merge, are for that.
   censuses:
     name: Fast censuses on each composed main + epic tree
     runs-on: ubuntu-latest
@@ -164,9 +172,22 @@ jobs:
             env -u GITHUB_OUTPUT -u GITHUB_ENV -u GITHUB_PATH -u GITHUB_STEP_SUMMARY "$@"
           }
 
+          # A failed update keeps the previous `results` rather than emptying it:
+          # one branch's bad input must not erase every other branch's result.
+          # The failure is then recorded without its list, so it still counts.
           record() { # branch status main epic failed-json
-            results="$(jq -c --arg b "$1" --arg s "$2" --arg m "$3" --arg e "$4" --argjson f "$5" \
-              '.[$b] = {status: $s, main: $m, epic: $e, failed: $f}' <<<"${results}")"
+            local updated
+            if updated="$(jq -c --arg b "$1" --arg s "$2" --arg m "$3" --arg e "$4" --argjson f "$5" \
+                '.[$b] = {status: $s, main: $m, epic: $e, failed: $f}' <<<"${results}")" \
+              && [ -n "${updated}" ]; then
+              results="${updated}"
+            elif updated="$(jq -c --arg b "$1" --arg m "$3" --arg e "$4" \
+                '.[$b] = {status: "error", main: $m, epic: $e, failed: ["(result could not be recorded)"]}' \
+                <<<"${results}")" && [ -n "${updated}" ]; then
+              results="${updated}"
+            else
+              echo "$1: could not record a result; it stays unchecked."
+            fi
           }
 
           # Check one branch against one `main` SHA and record the result.
@@ -205,7 +226,10 @@ jobs:
                 status="fail"
               fi
               if [ -s "${summary}" ]; then
-                failed="$(jq -c '.failed | map(tostring)' "${summary}")" || failed='["(unreadable summary)"]'
+                # Untrusted and unbounded, so capped here, before it reaches
+                # `--argjson` or the job output: at most 20 names of 200 chars.
+                failed="$(jq -c '.failed[:20] | map(tostring | .[:200])' "${summary}")" \
+                  || failed='["(unreadable summary)"]'
               elif [ "${status}" = "fail" ]; then
                 failed='["(the census runner wrote no summary)"]'
               fi
@@ -474,12 +498,16 @@ jobs:
                   echo "${branch}: the fast censuses FAILED on the composed tree:"
                   printf '%s\n' "${failed_list}"
                   # One comment per tested pair of SHAs, not one every six hours.
+                  # Only this workflow's OWN comments count: anyone can post the
+                  # marker text, and a pre-posted marker would otherwise silence
+                  # the failure report.
                   # Every comment is read (`--paginate`, not the first page) into
                   # a variable first, so `grep -q` closing the pipe early cannot
                   # turn a found marker into a pipefail "not found".
                   marker="<!-- epic-sync-censuses main=${tested_main} epic=${tested_epic} -->"
                   if ! comments="$(gh api --paginate \
-                      "repos/${GITHUB_REPOSITORY}/issues/${existing}/comments" --jq '.[].body')"; then
+                      "repos/${GITHUB_REPOSITORY}/issues/${existing}/comments" \
+                      --jq '.[] | select(.user.login == "github-actions[bot]") | .body')"; then
                     echo "${branch}: could not read #${existing}'s comments; not commenting, to avoid a duplicate."
                   elif ! grep -qF -- "${marker}" <<<"${comments}"; then
                     fence='```'

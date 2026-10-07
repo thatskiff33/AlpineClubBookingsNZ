@@ -243,6 +243,25 @@ describe("epic-branch-sync.yml gates auto-merge on the composed-tree censuses", 
     expect(firstGh).toBeGreaterThan(nameCheck);
   });
 
+  it("counts only this workflow's own comments when looking for the marker", () => {
+    const read = sync.slice(sync.indexOf('comments="$(gh api --paginate'));
+    const call = read.slice(0, read.indexOf(')"; then'));
+    expect(call).toContain(`--jq '.[] | select(.user.login == "github-actions[bot]") | .body'`);
+  });
+
+  it("caps the untrusted failure list before it reaches --argjson, and keeps results when a record fails", () => {
+    expect(censuses).toContain(`failed="$(jq -c '.failed[:20] | map(tostring | .[:200])' "\${summary}")"`);
+    expect(censuses).not.toMatch(/jq -c '\.failed(?!\[:20\])/);
+    const record = censuses.slice(censuses.indexOf("record() {"), censuses.indexOf("check_branch() {"));
+    // Each new value (the full record, then the list-less fallback) is assigned
+    // only after jq succeeded AND produced output.
+    const assignments = record.match(/results="\$\{updated\}"/g) ?? [];
+    const guarded = record.match(/&& \[ -n "\$\{updated\}" \]; then\n\s*results="\$\{updated\}"/g) ?? [];
+    expect(assignments).toHaveLength(2);
+    expect(guarded).toHaveLength(2);
+    expect(record).not.toMatch(/^\s*results="\$\(jq/m);
+  });
+
   it("reads every comment into a variable before looking for the marker", () => {
     expect(sync).toContain('comments="$(gh api --paginate');
     expect(sync).toContain('grep -qF -- "${marker}" <<<"${comments}"');
