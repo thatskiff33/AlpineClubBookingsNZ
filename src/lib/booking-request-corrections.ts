@@ -158,7 +158,7 @@ import {
   normaliseSchoolNameForStorage,
   previewSchoolRecordForName,
 } from "@/lib/school-organisation-preview";
-import { generateSchoolGuests } from "@/lib/school-booking-request";
+import { generateSchoolGuests } from "@/lib/school-booking-constants";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { isPendingSchoolAdultsWriteEnabled } from "@/lib/pending-school-adults-gate";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
