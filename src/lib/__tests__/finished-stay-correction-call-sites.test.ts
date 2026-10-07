@@ -61,6 +61,9 @@ describe("finishedStayCorrection call sites (#3750)", () => {
       "src/lib/booking-batch-modification-service.ts",
       "src/lib/booking-change-request-execution.ts",
       "src/lib/booking-edit-policy.ts",
+      // #3750: reads the modification row's recorded `finishedStayCorrection`
+      // facts (a fee added to the amount owed); it passes the flag nowhere.
+      "src/lib/booking-finished-stay-correction.ts",
       "src/lib/booking-modify-validation.ts",
     ]);
   });

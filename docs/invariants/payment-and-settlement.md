@@ -47,7 +47,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   durable `MEMBER_PAID` / `NON_MEMBER_CONFIRMED` event. It composes a THIRD
   lock tier (global → per-lodge → MEMBER-CREDIT) and derives the settlement
   amount itself: no client-supplied amount is ever accepted, and the mirror
-  `amountCents + creditAppliedCents = finalPriceCents` is asserted explicitly.
+  `amountCents + creditAppliedCents` = the booking's worth (`INV-PAY-119`) is
+  asserted explicitly.
 
 ## INV-PAY-039
 
@@ -2915,3 +2916,22 @@ _Split from `INV-PAY-057` (#3220)._
   (`REFUND_CREDIT_NOTE_UNSETTLED`) and settled only by an operator.
 - Home: `src/lib/xero-refund-note-settlement.ts`. Pinned by
   `xero-refund-note-crash-window.test.ts` and `xero-operation-outbox.test.ts`.
+
+## INV-PAY-119
+
+- **What an unpaid booking owes has one home: its worth less applied credit**
+  (#3750; owner decision of 7 Oct 2026, "Add fee to amount owed"). A booking's
+  worth is `finalPriceCents` plus the change fee recorded on its payment
+  (`bookingWorthCents`), the same figure the booking-ledger census reconciles
+  (`finalPriceCents + changeFeeCents = captured + applied credit`). Every pay
+  step reads `bookingAmountOwedCents`: the payment page, the card intent, the
+  internet-banking switch, the confirm-payment and webhook amount checks, the
+  settle's amount law and payment mirror, and the officer's manual-payment
+  state. A fee a finished-stay correction keeps on a stay with nothing captured
+  is recorded on the payment, so it is collected with the rest; at the settle it
+  posts its `CHANGE_FEE` ledger line under its modification's key, and a primary
+  invoice raised afterwards carries one change-fee line (`changeFeeLineItem`)
+  unless an issued invoice's credit note or supplementary invoice already did.
+- Pinned by `amount-owed-one-home.test.ts` (no pay step subtracts credit from
+  the bare price) and `booking-change-request-execution.realdb.test.ts` (card
+  and officer collection, ledger identity, fee line).

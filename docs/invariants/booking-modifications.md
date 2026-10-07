@@ -723,8 +723,10 @@ on a finished stay (fully past, or `COMPLETED`) applies every part of it through
 approval's executor, never from a request body. Add-only carries no change fee;
 whatever else the correction removes — guests, or nights trimmed off kept
 guests, valued net of promotion — is charged the same-day (0-day) tier's
-retention as its change fee, paid or unpaid, never netted against what is
-added. Member self-service on a finished stay stays refused.
+retention as its change fee, paid or unpaid (on an unpaid stay it is added to
+what is owed, `INV-PAY-119`), never netted against what is added; nights it
+adds are charged normally, and the ordinary late-change fee does not apply.
+Member self-service on a finished stay stays refused.
 
 ## INV-MOD-025
 

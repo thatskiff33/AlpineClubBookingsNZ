@@ -91,10 +91,14 @@ are listed on the booking for you to relay.
      is charged what the cancellation policy's same-day tier keeps of it,
      valued at what was actually paid for those nights after any promotion.
      That charge is the change fee; whatever else comes off the price comes
-     back in full. It is never netted against guests added in the same request,
-     and an unpaid stay is charged it the same as a paid one (it stays on the
-     invoice). The member can still ask the committee to refund a fee through
-     a refund request.
+     back in full. It is never netted against guests added in the same request.
+     A change of dates or nights is charged the same way — only on the nights
+     it removes; nights it adds are charged normally, and there is no separate
+     late-change fee. An unpaid stay is charged it the same as a paid one: it
+     is added to what the member owes, so the payment page, the card or
+     internet-banking payment and an officer recording cash all collect it
+     with the rest (and the invoice shows it). The member can still ask the
+     committee to refund a fee through a refund request.
    - **Check the figures first.** **Check the figures** works out exactly what
      approving will do — the change fee, and the refund, credit or amount due —
      without changing anything, and **Approve and apply** stays off until it
@@ -102,7 +106,7 @@ are listed on the booking for you to relay.
      booking was paid; you can choose card or account credit instead.
    - **When nothing is applied.** If the booking has changed since the member
      asked, the season for those nights has been switched off, a guest cannot
-     be booked, or the stay is unpaid with no invoice to carry the fee, nothing
+     be booked, nothing
      is applied and the request stays pending with the reason. If the change
      moves the stay's dates on an unpaid booking whose invoice was issued in a
      period now locked in Xero, it is refused for the same reason an ordinary
@@ -681,7 +685,7 @@ cannot, so that is an ordinary bit of tidying rather than something to report.
 | --- | --- | --- |
 | Reject is blocked | You left **Admin notes** empty (Approvals), or **Explanation for the member** empty (Changes, where it blocks both decisions) | Add the explanation for the member, then decide |
 | A change I "approved" did not change the booking | For a stay that is still running, approving only acknowledges the review | Open the booking and apply the change on the booking page. A finished stay's approval applies the change itself |
-| **Approve and apply** says the request is still pending | The booking changed since the member asked, the season for those nights is switched off, a guest cannot be booked, the stay is unpaid with no invoice, the dates of an unpaid invoiced booking would move into a Xero-locked period, or the lodge was full | Nothing was changed. Read the reason on the card: confirm the overbooking, switch the season back on, or reject the request with a note |
+| **Approve and apply** says the request is still pending | The booking changed since the member asked, the season for those nights is switched off, a guest cannot be booked, the dates of an unpaid invoiced booking would move into a Xero-locked period, or the lodge was full | Nothing was changed. Read the reason on the card: confirm the overbooking, switch the season back on, or reject the request with a note |
 | A new public request is not on the Approvals tab | Public requests live only on the Public Requests tab | Switch to **Public Requests** and check the **Queue** filter |
 | Approve fails with a capacity message | The lodge is full for one or more nights | The dialog lists the full dates; free capacity or adjust the request |
 | Approving a policy exception says the request "stays pending" | The lodge filled up between the member asking and you deciding | Nothing was created. The queue has already refreshed, so approve it again once beds free up, or refuse it with a reason |

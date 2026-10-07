@@ -732,7 +732,7 @@ LOCKED_PERIOD request, stay finished -> officer approves
        over-capacity past night -> refused until the officer confirms (whole-lodge hold: always refused)
        no active season / member-night clash / a guest who cannot be booked -> refused
        dates moved on an unpaid booking whose invoice is in a Xero-locked period -> refused
-       removal fee on an unpaid stay with no issued invoice -> refused
+       fee on a stay with nothing captured -> recorded on the payment, collected by the pay step
   -> linkedModificationId written
   -> COMMIT, then the ordinary post-commit settlement (ask, refund, Xero, email, audit)
   (a dry run of the same sequence, rolled back before COMMIT, is the officer's quote)

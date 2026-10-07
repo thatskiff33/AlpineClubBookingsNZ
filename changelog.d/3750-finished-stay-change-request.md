@@ -15,7 +15,10 @@
   paid after any promotion — is charged what the cancellation policy's
   same-day tier keeps of it, on a paid and an unpaid stay alike; the rest comes
   back in full, and it is never netted against guests added in the same
-  request. The member can still ask for a fee back through a refund request.
+  request. A change of dates or nights is charged only on the nights it
+  removes, with no separate late-change fee. On an unpaid stay the fee is
+  added to what the member owes, so the payment page, a card or
+  internet-banking payment and an officer recording cash all collect it. The member can still ask for a fee back through a refund request.
   Before approving, the officer sees the exact figures — the fee, and the
   refund, credit or amount due — worked out without changing anything. Added
   member guests go through the same consent and family rules as on the
