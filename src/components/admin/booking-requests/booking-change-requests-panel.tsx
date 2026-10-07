@@ -27,9 +27,12 @@ import {
   decisionToastMessage,
   FinishedStayApprovalNotice,
   FinishedStaySettlementField,
+  FinishedStayQuoteSummary,
   FinishedStayUnlinkedNote,
   OverCapacityConfirmation,
-  type OverCapacityNight,
+  quoteIsCurrent,
+  RequestedGuestAdds,
+  useFinishedStayQuotes,
 } from "@/components/admin/booking-requests/booking-change-request-finished-stay";
 import {
   EMPTY_DECISION_DRAFT,
@@ -152,22 +155,9 @@ export function BookingChangeRequestsPanel({
     });
   }
   const [error, setError] = useState("");
-  /**
-   * #3750: per request, the over-capacity nights an executed approval is
-   * waiting on the officer to confirm. Keyed like the drafts, so a warning on
-   * one card never arms another card's confirmation.
-   */
-  const [capacityConfirmations, setCapacityConfirmations] = useState<
-    Record<string, OverCapacityNight[]>
-  >({});
-  function clearCapacityConfirmation(id: string) {
-    setCapacityConfirmations((current) => {
-      if (!(id in current)) return current;
-      const next = { ...current };
-      delete next[id];
-      return next;
-    });
-  }
+  // #3750 (P2 on #3955): each finished-stay card's dry-run figures, and any
+  // over-capacity night its officer has to confirm, keyed by request id.
+  const quotes = useFinishedStayQuotes(setError);
   const currentPath = buildBookingChangeRequestsPath(
     basePath,
     searchParams.toString(),
@@ -206,7 +196,6 @@ export function BookingChangeRequestsPanel({
   async function reviewRequest(
     request: BookingChangeRequestData,
     status: "APPROVED" | "REJECTED",
-    options: { confirmOverCapacity?: boolean } = {},
   ) {
     if (decisionInFlightRef.current.has(request.id)) return;
     decisionInFlightRef.current.add(request.id);
@@ -237,10 +226,15 @@ export function BookingChangeRequestsPanel({
               ? trimmedModificationId
               : undefined,
           expectedVersion: request.version,
+          // The screen's own answer to "does this apply the change?" (#3955):
+          // the server refuses an approval whose answer has gone stale.
+          ...(status === "APPROVED" ? { execute: executes } : {}),
           ...(executes
             ? {
-                settlementMethod: draft.settlementMethod,
-                ...(options.confirmOverCapacity ? { confirmOverCapacity: true } : {}),
+                ...(draft.settlementMethod ? { settlementMethod: draft.settlementMethod } : {}),
+                ...(quotes.quoteFor(request.id)?.confirmOverCapacity
+                  ? { confirmOverCapacity: true }
+                  : {}),
               }
             : {}),
         }),
@@ -250,14 +244,14 @@ export function BookingChangeRequestsPanel({
         // #3750 decision 3: over-capacity past nights warn, and the officer
         // confirms on this card before the change is applied.
         if (data.needsCapacityConfirmation === true) {
-          setCapacityConfirmations((current) => ({
-            ...current,
-            [request.id]: Array.isArray(data.nightDetails) ? data.nightDetails : [],
-          }));
+          quotes.needsCapacity(
+            request.id,
+            Array.isArray(data.nightDetails) ? data.nightDetails : [],
+          );
         }
         throw new Error(data.error || "Failed to review request");
       }
-      clearCapacityConfirmation(request.id);
+      quotes.clear(request.id);
 
       // Cleared only on SUCCESS, and only THIS row's draft. A failed decision
       // keeps it (#2562 review) so the officer's typed note stays on screen and
@@ -365,7 +359,12 @@ export function BookingChangeRequestsPanel({
             // MEMBER id and is absent for one, which is what the link asks.
             const owner = bookingOwner(request.booking).member;
             // #3750: the nights this card's approval is waiting to have confirmed.
-            const overCapacityNights = capacityConfirmations[request.id];
+            const quote = quotes.quoteFor(request.id);
+            const overCapacityNights = quote?.overCapacityNights ?? null;
+            const quoteCurrent = quoteIsCurrent(
+              quote,
+              decisionDraftFor(request.id).settlementMethod,
+            );
 
             return (
               <Card
@@ -410,6 +409,10 @@ export function BookingChangeRequestsPanel({
 
                   <div className="rounded-md border bg-muted p-3 text-sm">
                     <p className="font-medium text-foreground">{summary}</p>
+                    <RequestedGuestAdds
+                      guests={request.requestedChanges?.requested?.addGuests}
+                      returnTo={(href) => buildHrefWithReturnTo(href, currentPath)}
+                    />
                     {request.reason ? (
                       <p className="mt-2 text-muted-foreground">{request.reason}</p>
                     ) : null}
@@ -526,6 +529,20 @@ export function BookingChangeRequestsPanel({
                             updateDecisionDraft(request.id, { settlementMethod })
                           }
                         />
+                      ) : null}
+                      {request.executesOnApproval ? (
+                        <FinishedStayQuoteSummary
+                          quote={quote}
+                          current={quoteCurrent}
+                          format={format}
+                          canEdit={canEdit}
+                          onCheck={() =>
+                            quotes.requestQuote(request.id, {
+                              settlementMethod: decisionDraftFor(request.id).settlementMethod,
+                              confirmOverCapacity: quote?.confirmOverCapacity === true,
+                            })
+                          }
+                        />
                       ) : (
                       <div className="space-y-1">
                         <Label htmlFor={`linked-modification-${request.id}`}>
@@ -555,14 +572,14 @@ export function BookingChangeRequestsPanel({
                               describeReason={false}
                               size="sm"
                               onClick={() =>
-                                reviewRequest(request, "APPROVED", { confirmOverCapacity: true })
+                                quotes.requestQuote(request.id, {
+                                  settlementMethod: decisionDraftFor(request.id).settlementMethod,
+                                  confirmOverCapacity: true,
+                                })
                               }
-                              disabled={
-                                decisionInFlight.has(request.id) ||
-                                !decisionDraftFor(request.id).adminNotes.trim()
-                              }
+                              disabled={quote?.loading === true}
                             >
-                              Confirm overbooking and apply
+                              Confirm overbooking
                             </ViewOnlyActionButton>
                           }
                         />
@@ -589,7 +606,10 @@ export function BookingChangeRequestsPanel({
                           onClick={() => reviewRequest(request, "APPROVED")}
                           disabled={
                             decisionInFlight.has(request.id) ||
-                            !decisionDraftFor(request.id).adminNotes.trim()
+                            !decisionDraftFor(request.id).adminNotes.trim() ||
+                            // P2: a finished stay is applied only once its
+                            // figures, for this refund choice, are on screen.
+                            (request.executesOnApproval === true && !quoteCurrent)
                           }
                         >
                           {request.executesOnApproval

@@ -22,6 +22,8 @@ export interface BookingChangeRequestData {
   requestedChanges: {
     requested?: {
       summary?: string | null;
+      /** #3750 (owner D1): shown with a link to any member among them. */
+      addGuests?: Array<{ firstName: string; lastName: string; memberId?: string | null }>;
     };
     payment?: {
       id?: string;
@@ -127,5 +129,5 @@ export const EMPTY_DECISION_DRAFT: DecisionDraft = {
   adminNotes: "",
   internalNotes: "",
   linkedModificationId: "",
-  settlementMethod: "card",
+  settlementMethod: "",
 };
