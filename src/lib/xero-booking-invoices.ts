@@ -95,9 +95,9 @@ import {
 } from "@/lib/booking-money-build-up";
 import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
 import { asRecord } from "@/lib/xero-json";
-import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
-import { loadFeesAddedToAmountOwed } from "@/lib/booking-finished-stay-correction";
-import { changeFeeLineItem } from "@/lib/xero-modification-line-items";
+import { isCapturedPaymentStatus, recordedChangeFeeCents } from "@/lib/booking-payment-state";
+import { CHANGE_FEE_LINE_DESCRIPTION, changeFeeLineItem } from "@/lib/xero-modification-line-items";
+import { queuePrimaryInvoiceChangeFeeGap } from "@/lib/xero-primary-invoice-fee-gap";
 
 export interface CreateXeroBookingInvoiceOptions
   extends FindOrCreateXeroContactOptions {
@@ -626,17 +626,12 @@ export async function createXeroInvoiceForBooking(
   );
   const promoLineRecord = promoAdjustmentLineRecord(promoLinePlan);
 
-  // #3750 (owner, 7 Oct 2026, "Add fee to amount owed"): a fee a finished-stay
-  // correction added to what this booking owes, while no invoice had been
-  // issued to carry it, is billed here — the invoice then equals what the pay
-  // step collects (`bookingAmountOwedCents`). Fees an issued invoice's credit
-  // note or supplementary invoice already carried are not billed again.
-  const feeOwedCents =
-    booking.payment.changeFeeCents > 0
-      ? (await loadFeesAddedToAmountOwed(prisma, bookingId))
-          .filter((fee) => fee.onPrimaryInvoice)
-          .reduce((sum, fee) => sum + fee.changeFeeCents, 0)
-      : 0;
+  // #3750 (owner, 7 Oct 2026, "Add fee to amount owed"; #3955 review X2): the
+  // change fee recorded on the payment is billed here in full — the ONE figure
+  // the pay steps collect too (`recordedChangeFeeCents`), so the invoice equals
+  // what the member is charged. No other document can have carried it yet;
+  // the reasoning is on the helper.
+  const feeOwedCents = recordedChangeFeeCents(booking.payment);
   if (feeOwedCents > 0) lineItems.push(changeFeeLineItem(feeOwedCents, hutFeeMapping));
 
   // Read once, outside the closure: `buildInvoice` runs for the recorded
@@ -1104,13 +1099,19 @@ export async function createXeroInvoiceForBooking(
       }
     }
 
-    // Store the Xero invoice ID and number on the payment record
-    await prisma.payment.update({
+    // Store the Xero invoice ID and number on the payment record.
+    // #3955 review X4: read back the fee recorded on the payment in the same
+    // statement. A finished-stay correction claims its fee write against the
+    // invoice link it read, so it either landed before this write (and is in
+    // the figure returned) or sees the link and routes its fee to its own
+    // document.
+    const persistedPayment = await prisma.payment.update({
       where: { id: booking.payment.id },
       data: {
         xeroInvoiceId: createdInvoice.invoiceID,
         xeroInvoiceNumber: createdInvoice.invoiceNumber ?? null,
       },
+      select: { changeFeeCents: true },
     });
     await prisma.paymentTransaction.updateMany({
       where: {
@@ -1122,6 +1123,18 @@ export async function createXeroInvoiceForBooking(
         xeroInvoiceId: createdInvoice.invoiceID,
         xeroInvoiceNumber: createdInvoice.invoiceNumber ?? null,
       },
+    });
+
+    // #3955 review X4: an invoice built before a fee was recorded (an edit
+    // committed while this create was in flight, or a lost response replayed
+    // under the same idempotency key, which returns the ORIGINAL invoice) bills
+    // less fee than the payment records; the gap goes on a supplementary
+    // invoice rather than being lost.
+    await queuePrimaryInvoiceChangeFeeGap({
+      bookingId,
+      billedLineItems: createdInvoice.lineItems ?? lineItems,
+      recordedChangeFeeCents: recordedChangeFeeCents(persistedPayment),
+      createdByMemberId: options?.createdByMemberId,
     });
 
     // #1641 — allocate the member's applied credit against this just-raised card
@@ -1246,7 +1259,10 @@ function mergeBookingInvoiceLineItemDescriptions(
     if (
       normalizedDescription === "discount" ||
       normalizedDescription.startsWith("discount -") ||
-      isPromoAdjustmentLineDescription(description)
+      isPromoAdjustmentLineDescription(description) ||
+      // #3955 review X3: the change-fee line is not a guest's; relabelling it
+      // would put a guest's name on the fee and shift every guest after it.
+      description === CHANGE_FEE_LINE_DESCRIPTION
     ) {
       return nextLineItem;
     }

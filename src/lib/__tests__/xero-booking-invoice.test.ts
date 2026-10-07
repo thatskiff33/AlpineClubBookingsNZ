@@ -182,6 +182,12 @@ vi.mock("xero-node", () => ({
   },
 }));
 
+// #3955 review X4: the gap check has its own suite; here, what it is handed.
+const queuePrimaryInvoiceChangeFeeGap = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ gapCents: 0, queueOperationId: null }),
+);
+vi.mock("@/lib/xero-primary-invoice-fee-gap", () => ({ queuePrimaryInvoiceChangeFeeGap }));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: mocks.prisma,
 }));
@@ -486,25 +492,14 @@ describe("createXeroInvoiceForBooking", () => {
     );
   });
 
-  it("#3750: bills a fee a finished-stay correction added to what an uninvoiced booking owes, once", async () => {
+  it("#3750 (#3955 X2): bills the change fee recorded on the payment in full — the figure the pay steps collect", async () => {
     const fixture = await mocks.prisma.booking.findUnique();
     mocks.prisma.booking.findUnique.mockResolvedValueOnce({
       ...fixture,
+      // An ordinary edit's fee recorded while the booking was paid by hand,
+      // then the payment reversed: owed again, and on no Xero document yet.
       payment: { ...fixture.payment, changeFeeCents: 5_320 },
     });
-    mocks.prisma.bookingModification.findMany.mockResolvedValueOnce([
-      {
-        id: "mod_on_invoice",
-        changeFeeCents: 4_321,
-        newData: { finishedStayCorrection: { feeAddedToAmountOwed: true, feeOnPrimaryInvoice: true } },
-      },
-      {
-        // Already carried by an issued invoice's credit note: not billed again.
-        id: "mod_carried",
-        changeFeeCents: 999,
-        newData: { finishedStayCorrection: { feeAddedToAmountOwed: true, feeOnPrimaryInvoice: false } },
-      },
-    ]);
     await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
     const [, payload] = mocks.xeroClientInstance.accountingApi.createInvoices.mock.calls.at(-1) as [
       string,
@@ -513,7 +508,25 @@ describe("createXeroInvoiceForBooking", () => {
     const feeLines = payload.invoices[0].lineItems.filter(
       (line) => line.description === CHANGE_FEE_LINE_DESCRIPTION,
     );
-    expect(feeLines).toEqual([expect.objectContaining({ unitAmount: 43.21, quantity: 1 })]);
+    expect(feeLines).toEqual([expect.objectContaining({ unitAmount: 53.2, quantity: 1 })]);
+  });
+
+  it("#3955 X4: hands the gap check the fee read back on persist and the lines Xero returned", async () => {
+    mocks.prisma.payment.update.mockResolvedValueOnce({ changeFeeCents: 7_000 });
+    const returnedLines = [{ description: CHANGE_FEE_LINE_DESCRIPTION, quantity: 1, unitAmount: 20 }];
+    mocks.xeroClientInstance.accountingApi.createInvoices.mockResolvedValueOnce({
+      body: {
+        invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1", total: 0, status: "PAID", lineItems: returnedLines }],
+      },
+    });
+    await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+    expect(queuePrimaryInvoiceChangeFeeGap).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking_1",
+        billedLineItems: returnedLines,
+        recordedChangeFeeCents: 7_000,
+      }),
+    );
   });
 
   it("resolves the item-code season from the booking's own lodge, not any lodge", async () => {
@@ -672,6 +685,8 @@ describe("createXeroInvoiceForBooking", () => {
         xeroInvoiceId: "inv_1",
         xeroInvoiceNumber: "INV-1",
       },
+      // #3955 review X4: the recorded fee is read back in the same write.
+      select: { changeFeeCents: true },
     });
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
       "op_1",
@@ -1670,6 +1685,79 @@ describe("createXeroInvoiceForBooking", () => {
         xeroObjectType: "INVOICE",
         xeroObjectId: "inv_1",
       })
+    );
+  });
+
+  it("#3955 X3: never relabels the change-fee line as a guest when the narration is rewritten", async () => {
+    // The invoice carries one guest and the change-fee line; the booking now
+    // has two guests. The second guest's narration must not land on the fee.
+    mocks.prisma.booking.findUnique.mockResolvedValue({
+      id: "booking_1",
+      memberId: "mem_1",
+      member: { id: "mem_1" },
+      checkIn: "2026-08-03T00:00:00.000Z",
+      checkOut: "2026-08-05T00:00:00.000Z",
+      createdAt: "2026-05-15T10:30:00.000Z",
+      discountCents: 0,
+      guests: [
+        { firstName: "Jordan", lastName: "Hartley-Smith", ageTier: "ADULT", isMember: true, priceCents: 10000 },
+        { firstName: "Sam", lastName: "Guest", ageTier: "ADULT", isMember: true, priceCents: 10000 },
+      ],
+      payment: {
+        id: "pay_1",
+        status: "SUCCEEDED",
+        amountCents: 10000,
+        stripePaymentIntentId: "pi_1",
+        xeroInvoiceId: "inv_1",
+        xeroInvoiceNumber: "INV-1",
+      },
+    });
+    const feeLine = {
+      lineItemID: "line_fee",
+      description: CHANGE_FEE_LINE_DESCRIPTION,
+      quantity: 1,
+      unitAmount: 25,
+      taxType: "OUTPUT2",
+      accountCode: "200",
+    };
+    mocks.xeroClientInstance.accountingApi.getInvoice.mockResolvedValue({
+      body: {
+        invoices: [
+          {
+            invoiceID: "inv_1",
+            invoiceNumber: "INV-1",
+            type: "ACCREC",
+            contact: { contactID: "contact_1" },
+            lineAmountTypes: "Inclusive",
+            reference: "Booking booking_",
+            lineItems: [
+              {
+                lineItemID: "line_1",
+                description: "Jordan Hartley-Smith - (ADULT, Member) - 1 night - 2026-07-31 - 2026-08-01",
+                quantity: 1,
+                unitAmount: 100,
+                taxType: "OUTPUT2",
+                accountCode: "200",
+              },
+              feeLine,
+            ],
+          },
+        ],
+      },
+    });
+    mocks.xeroClientInstance.accountingApi.updateInvoice.mockResolvedValue({
+      body: { invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1" }] },
+    });
+
+    await expect(updateXeroBookingInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+
+    const [, , body] = mocks.xeroClientInstance.accountingApi.updateInvoice.mock.calls.at(-1) as [
+      string,
+      string,
+      { invoices: Array<{ lineItems: Array<{ lineItemID?: string; description?: string }> }> },
+    ];
+    expect(body.invoices[0].lineItems.find((line) => line.lineItemID === "line_fee")).toEqual(
+      expect.objectContaining({ description: CHANGE_FEE_LINE_DESCRIPTION, unitAmount: 25 }),
     );
   });
 

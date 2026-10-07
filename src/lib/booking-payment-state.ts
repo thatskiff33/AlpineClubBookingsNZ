@@ -414,7 +414,27 @@ export function bookingWorthCents(input: {
   finalPriceCents: number;
   changeFeeCents: number | null;
 }): number {
-  return input.finalPriceCents + Math.max(0, input.changeFeeCents ?? 0);
+  return input.finalPriceCents + recordedChangeFeeCents({ changeFeeCents: input.changeFeeCents });
+}
+
+/**
+ * THE ONE FIGURE for a booking's change fees (#3955 review X2): the fee
+ * recorded on its payment. The pay steps collect it (through
+ * `bookingWorthCents` above) and the booking's PRIMARY Xero invoice bills it
+ * in full, so what a member is charged and what the invoice says cannot part.
+ *
+ * In full, because no other Xero document can have carried a recorded fee
+ * before the primary invoice exists: an edit's supplementary invoice or credit
+ * note is raised only against an issued primary invoice
+ * (`hasIssuedPrimaryXeroInvoice`), and no booking-payment writer clears that
+ * link once set. An edit racing an in-flight create is the one gap, and the
+ * create closes it by comparing what it billed with this figure once it has
+ * persisted its link (`queuePrimaryInvoiceChangeFeeGap`).
+ */
+export function recordedChangeFeeCents(
+  payment: { changeFeeCents: number | null } | null | undefined,
+): number {
+  return Math.max(0, payment?.changeFeeCents ?? 0);
 }
 
 /**
