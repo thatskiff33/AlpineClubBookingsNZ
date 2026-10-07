@@ -36,6 +36,7 @@ import {
 } from "@/lib/xero-promo-adjustment-lines";
 import { groupSettlementTotalCents } from "@/lib/group-settlement-invoice-binding";
 import { changeFeeLineItem, invoiceLineItemsTotalCents } from "@/lib/xero-modification-line-items";
+import { recordedChangeFeeCents } from "@/lib/booking-payment-state";
 import { completeXeroSyncOperation } from "@/lib/xero-sync";
 import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-alerts";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -137,7 +138,7 @@ export async function buildGroupSettlementInvoiceLines(
     if (promoLineRecord) promoLines.push({ bookingId: child.id, ...promoLineRecord });
     // #3750 (#3955 review F3): the child's recorded change fee is in its worth,
     // so the combined invoice bills it on the one change-fee line.
-    const childFeeCents = child.payment?.changeFeeCents ?? 0;
+    const childFeeCents = recordedChangeFeeCents(child.payment);
     if (childFeeCents > 0) lineItems.push(changeFeeLineItem(childFeeCents, hutFeeMapping));
   }
 

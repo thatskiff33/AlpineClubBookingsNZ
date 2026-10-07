@@ -3,7 +3,12 @@ import {
   getCancellationSettlementBreakdown,
   getPaymentDisplayStatus,
 } from "@/lib/payment-status-display";
-import { bookingAmountOwedCents, bookingWorthCents, hasCapturedPayment } from "@/lib/booking-payment-state";
+import {
+  bookingAmountOwedCents,
+  bookingWorthCents,
+  hasCapturedPayment,
+  recordedChangeFeeCents,
+} from "@/lib/booking-payment-state";
 import { refundAppealCeiling } from "@/lib/manual-refund-task-settlement-rules";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
 import { savedPaymentMethodForBooking } from "@/lib/saved-payment-method";
@@ -170,7 +175,7 @@ export function resolveBookingDetailPayment({
   // breakdown adds up to the amount due.
   const changeFeeOwedCents =
     isPaymentOwedBookingStatus(booking.status) && booking.payment?.status !== "SUCCEEDED"
-      ? Math.max(0, booking.payment?.changeFeeCents ?? 0)
+      ? recordedChangeFeeCents(booking.payment)
       : 0;
   const showAmountBreakdown = showCreditApplied || changeFeeOwedCents > 0;
   // What the pay card charges: net of credit only where the card says so.

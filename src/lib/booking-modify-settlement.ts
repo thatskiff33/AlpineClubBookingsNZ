@@ -32,6 +32,7 @@ import {
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
   isSettledBookingStatus,
+  recordedChangeFeeCents,
 } from "@/lib/booking-payment-state";
 import {
   type BookingModificationSettlementMethod,
@@ -541,11 +542,11 @@ export async function applyLifecycleTransitions(
   // before this edit, plus what this edit recorded — is owed with the price, so
   // the clamp keeps credit up to the booking's WORTH and the $0 decision and
   // stale-intent comparison read what it owes. Read from the one home.
-  const recordedChangeFeeCents =
-    Math.max(0, booking.payment?.changeFeeCents ?? 0) + feeRecordedByThisEditCents;
+  const feeOwedCents =
+    recordedChangeFeeCents(booking.payment) + feeRecordedByThisEditCents;
   const newWorthCents = bookingWorthCents({
     finalPriceCents: newFinalPriceCents,
-    changeFeeCents: recordedChangeFeeCents,
+    changeFeeCents: feeOwedCents,
   });
   if (!skipBookingLifecycleRules && isRepriceablePrePayment) {
     const appliedBeforeClamp = await deriveBookingAppliedCreditCents(
@@ -563,7 +564,7 @@ export async function applyLifecycleTransitions(
   }
   const effectivePriceCents = bookingAmountOwedCents({
     finalPriceCents: newFinalPriceCents,
-    changeFeeCents: recordedChangeFeeCents,
+    changeFeeCents: feeOwedCents,
     appliedCreditCents,
   });
 

@@ -43,25 +43,46 @@ const PAY_STEPS = [
   "src/lib/payment-link-intent.ts",
   "src/lib/cron-confirm-pending.ts",
   "src/lib/group-settlement-invoice-binding.ts",
+  // #3955 round 3: the public pay page's amount, which its intent charges.
+  "src/lib/payment-link-context.ts",
 ];
 // A final price, then a minus, then — within the same expression — anything
-// named for credit. `[^;,{}]` keeps it inside one expression across lines.
-const BARE_PRICE_LESS_CREDIT = /[Ff]inalPriceCents\s*-\s*[^;,{}]{0,120}?[Cc]redit/;
+// named for credit or for what is already applied (#3955 round 3:
+// `verifiedFinalPriceCents - alreadyAppliedCents`). `[^;,{}]` keeps it inside
+// one expression across lines.
+const BARE_PRICE_LESS_CREDIT = /[\w.?!]*[Ff]inalPriceCents\s*-\s*[^;,{}]{0,120}?(?:[Cc]redit|[Aa]pplied)\w*/g;
 // An intent, charge or payment amount that is a bare final price, in a pay step.
 const BARE_PRICE_AMOUNT = /\bamountCents:\s*[\w.?!]*[Ff]inalPriceCents\b(?!\s*[-+])/;
 
 /**
+ * The exact expressions allowed to stay, each pinned by its text (whitespace
+ * collapsed) rather than its file, so a new subtraction in the same file is
+ * still caught (#3955 round 3, finding 8).
+ *
  * The member's edit PREVIEW, not a pay step: each shows what an edit's quote
  * leaves to pay against the credit an election would use, from figures the
  * quote returns (its own fee on its own row). Nothing is charged from them —
  * the pay step reads the one home — and a fee recorded on an unpaid booking's
  * payment comes from an officer's finished-stay correction, on a stay no
  * member can edit.
+ *
+ * And a DIFFERENCE of two owed figures: a review's invoice reduction is
+ * `owedBefore + givenBack - owedAfter`, both owed under the same recorded fee,
+ * so the fee cancels and the bare price is the honest operand.
  */
-const EDIT_PREVIEW_EXCEPTIONS: Readonly<Record<string, true>> = {
-  "src/components/edit-booking/price-summary-card.tsx": true,
-  "src/components/edit-booking-panel.tsx": true,
+const ALLOWED_EXPRESSIONS: Readonly<Record<string, readonly string[]>> = {
+  "src/components/edit-booking/price-summary-card.tsx": [
+    "quote.newFinalPriceCents - displayedAppliedCreditCents",
+  ],
+  "src/components/edit-booking-panel.tsx": ["quoteFinalPriceCents - ledgerAppliedCreditCents"],
+  "src/lib/edit-financial-review-account-credit.ts": [
+    "previousFinalPriceCents - appliedBeforeCents",
+    "finalPriceCents - (appliedBeforeCents",
+  ],
 };
+
+const matchesIn = (text: string) =>
+  [...text.matchAll(BARE_PRICE_LESS_CREDIT)].map((match) => match[0].replace(/\s+/g, " "));
 
 function sourceFiles(dir: string, found: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -99,10 +120,29 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
   });
 
   it("no source file subtracts credit from the bare price any more", () => {
-    const offenders = sourceFiles(path.join(REPO, "src"))
-      .filter((file) => !(file in EDIT_PREVIEW_EXCEPTIONS))
-      .filter((file) => BARE_PRICE_LESS_CREDIT.test(read(file)))
-      .map((file) => `${file}: ${read(file).match(BARE_PRICE_LESS_CREDIT)?.[0].replace(/\s+/g, " ")}`);
+    const offenders = sourceFiles(path.join(REPO, "src")).flatMap((file) => {
+      const allowed = ALLOWED_EXPRESSIONS[file] ?? [];
+      return matchesIn(read(file))
+        .filter((match) => !allowed.includes(match))
+        .map((match) => `${file}: ${match}`);
+    });
     expect(offenders, "INV-PAY-119: read it through bookingAmountOwedCents").toEqual([]);
+  });
+
+  it("every allowed expression is still there, exactly once", () => {
+    for (const [file, allowed] of Object.entries(ALLOWED_EXPRESSIONS)) {
+      expect(matchesIn(read(file)).sort(), file).toEqual([...allowed].sort());
+    }
+  });
+
+  it("catches credit and already-applied operands under any name", () => {
+    for (const expression of [
+      "newFinalPriceCents - clamp.appliedCreditCents",
+      "booking.finalPriceCents -\n (await deriveBookingAppliedCreditCents(id))",
+      "verifiedFinalPriceCents - alreadyAppliedCents",
+    ]) {
+      expect(matchesIn(expression), expression).toHaveLength(1);
+    }
+    expect(matchesIn("newFinalPriceCents - booking.finalPriceCents")).toEqual([]);
   });
 });

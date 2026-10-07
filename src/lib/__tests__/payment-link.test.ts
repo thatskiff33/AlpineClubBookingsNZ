@@ -334,6 +334,43 @@ describe("getPaymentLinkContext", () => {
     expect(mockedUpdate).not.toHaveBeenCalled();
   });
 
+  // #3955 round 3 (`INV-PAY-119`): the page quotes what the link's intent
+  // charges — price plus a recorded change fee, less applied credit.
+  it("quotes the amount owed, not the bare price", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        booking: baseBooking({
+          status: BookingStatus.PAYMENT_PENDING,
+          payment: { id: "pay-1", source: "STRIPE", status: PaymentStatus.PENDING, changeFeeCents: 2500 },
+        }),
+      }) as never
+    );
+    // $30 of account credit applied: 120.00 + 25.00 - 30.00.
+    vi.mocked(prisma.memberCredit.aggregate).mockResolvedValueOnce({ _sum: { amountCents: -3000 } } as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+    expect(context.payable?.amountCents).toBe(11500);
+    expect(context.narrative.message).toContain("$115.00");
+  });
+
+  it("says there is nothing to pay, and offers no payment or fresh link, when credit covers what is owed", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        expiresAt: new Date("2026-06-01T00:00:00.000Z"),
+        booking: baseBooking({ status: BookingStatus.PAYMENT_PENDING }),
+      }) as never
+    );
+    vi.mocked(prisma.memberCredit.aggregate).mockResolvedValueOnce({ _sum: { amountCents: -12000 } } as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+    expect(context.state).toBe("nothing_to_pay");
+    expect(context.payable).toBeNull();
+    expect(context.canRequestFreshLink).toBe(false);
+    expect(context.narrative.headline).toBe("Nothing to pay");
+  });
+
   // #3638 delta D4: a switched booking's link page offers no card and keeps
   // its bank-transfer details, even if the module has since been turned off.
   it("offers card payment on an ordinary payable booking", async () => {

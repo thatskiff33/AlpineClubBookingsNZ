@@ -43,7 +43,9 @@ vi.mock("@/lib/cancellation", () => ({
   loadCancellationPolicy: vi.fn(),
   getNonMemberHoldPolicy: vi.fn(),
 }));
-vi.mock("@/lib/booking-payment-state", () => ({
+vi.mock("@/lib/booking-payment-state", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/booking-payment-state")>();
+  return {
   getRemainingRefundableCents: vi.fn(),
   hasCapturedPayment: vi.fn(),
   hasIssuedPrimaryXeroInvoice: vi.fn(),
@@ -53,16 +55,14 @@ vi.mock("@/lib/booking-payment-state", () => ({
   // status list AT IMPORT TIME. A factory missing it throws before a single test
   // runs, so the real value is handed back rather than a stub - nothing here
   // exercises it, and a wrong list would be a silently different population.
-  CAPTURED_PAYMENT_STATUS_LIST: ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"],
-  // #3750: the real one home of worth and amount owed — pure arithmetic.
-  bookingWorthCents: (input: { finalPriceCents: number; changeFeeCents: number | null }) =>
-    input.finalPriceCents + Math.max(0, input.changeFeeCents ?? 0),
-  bookingAmountOwedCents: (input: {
-    finalPriceCents: number;
-    changeFeeCents: number | null;
-    appliedCreditCents: number;
-  }) => input.finalPriceCents + Math.max(0, input.changeFeeCents ?? 0) - input.appliedCreditCents,
-}));
+  CAPTURED_PAYMENT_STATUS_LIST: real.CAPTURED_PAYMENT_STATUS_LIST,
+  // #3750: the real one home of worth, amount owed and the recorded fee —
+  // pure arithmetic, so the real functions rather than copies of them.
+  bookingWorthCents: real.bookingWorthCents,
+  bookingAmountOwedCents: real.bookingAmountOwedCents,
+  recordedChangeFeeCents: real.recordedChangeFeeCents,
+  };
+});
 vi.mock("@/lib/policies/booking-route-decisions", () => ({
   calculateBookingHoldDecision: vi.fn(),
 }));
