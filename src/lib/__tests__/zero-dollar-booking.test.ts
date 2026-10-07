@@ -75,7 +75,7 @@ const mockTx = {
   },
   season: { findMany: mockTxSeasonFindMany },
   payment: { create: mockTxPaymentCreate, upsert: mockPaymentUpsert },
-  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
   // #3276: the night adjustment build-up writer reads and rewrites these.
   bookingGuestNightAdjustment: {
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -134,6 +134,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     promoRedemption: {
       findUnique: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      findFirst: vi.fn().mockResolvedValue(null),
     },
     payment: {
       create: (...args: unknown[]) => mockPaymentCreate(...args),
@@ -198,6 +200,8 @@ vi.mock("@/lib/promo", () => ({
     async (_tx: unknown, promoCode: unknown) => promoCode
   ),
   deletePromoRedemptionAndAdjustCount: vi.fn(),
+  releaseBookingPromoRedemptions: vi.fn().mockResolvedValue(0),
+  releasePromoRedemptions: vi.fn().mockResolvedValue(undefined),
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 
@@ -333,7 +337,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
       finalPriceCents: 0,
       discountCents: 10000,
       promoAdjustmentCents: -10000,
-      promoRedemption: { promoCode: { code: "FREE100" } },
+      promoRedemptions: [{ promoCode: { code: "FREE100" } }],
     });
     // Pricing returns $0 (e.g. 100% promo applied by calculateBookingPrice + promo reduction)
     mockedCalcPrice.mockReturnValue({
@@ -627,7 +631,7 @@ describe("Cron Confirm Pending: zero-dollar handling", () => {
       promoAdjustmentCents: -10000,
       nonMemberHoldUntil: new Date("2026-08-08"),
       hasNonMembers: true,
-      promoRedemption: { promoCode: { code: "FREE100" } },
+      promoRedemptions: [{ promoCode: { code: "FREE100" } }],
       createdAt: new Date("2026-03-01"),
       member: {
         id: `member_${id}`,

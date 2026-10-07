@@ -39,7 +39,7 @@ function row(overrides: Partial<CensusRow> = {}): CensusRow {
         ],
       },
     ],
-    promoRedemption: null,
+    promoRedemptions: [],
     nightAdjustments: [],
     ...overrides,
   };
@@ -100,7 +100,7 @@ describe("booking money reconciliation store", () => {
         promoAdjustmentCents: -2_000,
         discountCents: 2_000,
         finalPriceCents: 8_000,
-        promoRedemption: promo,
+        promoRedemptions: [promo],
         nightAdjustments: [
           { beneficiaryMemberId: "member-1", amountCents: null },
         ],
@@ -110,12 +110,12 @@ describe("booking money reconciliation store", () => {
         promoAdjustmentCents: -2_000,
         discountCents: 2_000,
         finalPriceCents: 8_000,
-        promoRedemption: {
+        promoRedemptions: [{
           priceAdjustmentCents: -1_000,
           allocations: [
             { memberId: "member-1", priceAdjustmentCents: -1_000 },
           ],
-        },
+        }],
         nightAdjustments: [
           { beneficiaryMemberId: "member-1", amountCents: -1_000 },
         ],

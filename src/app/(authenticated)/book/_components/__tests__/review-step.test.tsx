@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import type { ComponentProps } from "react";
-import { render, screen } from "@/lib/__tests__/support/club-time-render";
+import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
 import { ReviewStep } from "@/app/(authenticated)/book/_components/review-step";
 import type { PriceQuote } from "@/app/(authenticated)/book/_components/types";
@@ -80,8 +80,10 @@ function renderReview(
       handleJoinWaitlist={vi.fn()}
       joiningWaitlist={false}
       perGuestDatesEnabled={false}
-      appliedPromo={null}
-      setAppliedPromo={vi.fn()}
+      appliedPromos={[]}
+      setAppliedPromos={vi.fn()}
+      combineWorkPartyWithCodes={false}
+      setMultiPromoCodes={vi.fn()}
       availableCreditCents={0}
       appliedCreditCents={0}
       remainingToPay={priceQuote.totalPriceCents}
@@ -121,8 +123,6 @@ function renderReview(
       setWorkPartyClearedNotice={vi.fn()}
       availablePromoCodes={[]}
       promoCodesEnabled={false}
-      prefillPromoCode={undefined}
-      setPrefillPromoCode={vi.fn()}
       cancelIfGuestsBumped={false}
       setCancelIfGuestsBumped={vi.fn()}
       setStep={vi.fn()}
@@ -425,7 +425,7 @@ describe("ReviewStep split provisional copy (#1942)", () => {
     // more than the whole total. The rephrased copy anchors on non-member
     // rates instead of "the total above", staying self-consistent.
     renderReview([memberGuest, nonMemberGuest], splitHold, {
-      appliedPromo: {
+      appliedPromos: [{
         code: "SAVE",
         description: null,
         type: "PERCENT",
@@ -433,7 +433,7 @@ describe("ReviewStep split provisional copy (#1942)", () => {
         promoAdjustmentCents: -14000,
         totalPriceCents: 20000,
         finalPriceCents: 6000,
-      },
+      }],
       remainingToPay: 6000,
     });
 
@@ -657,7 +657,7 @@ describe("ReviewStep — the exception-request card (#2562 review)", () => {
   it("shows the undiscounted quote and names the promo as not included", () => {
     renderReview([memberGuest], undefined, {
       exceptionOffer: offer,
-      appliedPromo: {
+      appliedPromos: [{
         code: "WINTER20",
         description: "20% off",
         type: "PERCENT",
@@ -665,7 +665,7 @@ describe("ReviewStep — the exception-request card (#2562 review)", () => {
         promoAdjustmentCents: -6000,
         totalPriceCents: 8000,
         finalPriceCents: 2000,
-      },
+      }],
     });
 
     const card = screen.getByTestId("request-officer-approval");
@@ -686,7 +686,7 @@ describe("ReviewStep — the exception-request card (#2562 review)", () => {
       exceptionOffer: offer,
       attendingWorkParty: true,
       selectedWorkPartyEventId: "event-1",
-      appliedPromo: {
+      appliedPromos: [{
         // A work-party discount never sends its internal code to the client.
         code: null,
         description: "Working bee",
@@ -695,7 +695,7 @@ describe("ReviewStep — the exception-request card (#2562 review)", () => {
         promoAdjustmentCents: -8000,
         totalPriceCents: 8000,
         finalPriceCents: 0,
-      },
+      }],
     });
 
     const card = screen.getByTestId("request-officer-approval");
@@ -740,5 +740,98 @@ describe("ReviewStep expected arrival time (#2621)", () => {
     // clicking its label did nothing.
     const picker = screen.getByLabelText("Expected Arrival Time (optional)");
     expect(picker).toBe(screen.getByTestId("time-picker"));
+  });
+});
+
+/**
+ * #3492 review (correctness 3; D-3813-3): with the club's `multiPromoCodes`
+ * switch on, a working bee and promo codes combine — neither control locks the
+ * other and nothing says "only one discount". Off, the two stay exclusive
+ * exactly as before.
+ */
+describe("ReviewStep working bee beside promo codes", () => {
+  const event = {
+    id: "event-1",
+    name: "Spring bee",
+    startDate: "2026-07-20",
+    endDate: "2026-07-21",
+    discountPercent: 50,
+    description: null,
+    lodgeName: null,
+  };
+  const code = {
+    code: "MINE",
+    description: null,
+    type: "PERCENTAGE",
+    discountCents: 1000,
+    promoAdjustmentCents: -1000,
+    totalPriceCents: 16000,
+    finalPriceCents: 15000,
+  };
+
+  it("keeps them exclusive while the switch is off", () => {
+    renderReview([memberGuest], undefined, {
+      activeWorkPartyEvents: [event],
+      appliedPromos: [code],
+      promoCodesEnabled: true,
+    });
+    expect(screen.getByRole("checkbox", { name: "I am attending a working bee" })).toBeDisabled();
+    expect(screen.getByText(/a booking can only use one discount/)).toBeInTheDocument();
+  });
+
+  it("lets them combine while the switch is on", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ multiPromoCodes: true, guests: [] }), { status: 200 })),
+    );
+    renderReview([memberGuest], undefined, {
+      lodgeId: "lodge-1",
+      activeWorkPartyEvents: [event],
+      appliedPromos: [code],
+      attendingWorkParty: true,
+      selectedWorkPartyEventId: "event-1",
+      promoCodesEnabled: true,
+      combineWorkPartyWithCodes: true,
+    });
+    expect(screen.getByRole("checkbox", { name: "I am attending a working bee" })).toBeEnabled();
+    expect(screen.queryByText(/a booking can only use one discount/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/cannot be combined with a working bee discount/)).not.toBeInTheDocument();
+    expect(screen.getByText(/covers its own nights first/)).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Add another promo code")).toBeEnabled();
+    vi.unstubAllGlobals();
+  });
+
+  it("prices a code added beside the working bee after it, in one preview", async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes("guest-codes")
+        ? new Response(JSON.stringify({ multiPromoCodes: true, guests: [] }), { status: 200 })
+        : new Response(JSON.stringify({ valid: true, codes: [{ code: "NEW", valid: true }] }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const workParty = {
+      ...code,
+      code: null,
+      workPartyEvent: { id: "event-1", name: "Spring bee", discountPercent: 50 },
+    };
+    renderReview([memberGuest], undefined, {
+      lodgeId: "lodge-1",
+      activeWorkPartyEvents: [event],
+      appliedPromos: [workParty],
+      attendingWorkParty: true,
+      selectedWorkPartyEventId: "event-1",
+      promoCodesEnabled: true,
+      combineWorkPartyWithCodes: true,
+    });
+    fireEvent.change(await screen.findByPlaceholderText("Enter promo code"), { target: { value: "new" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/validate"))).toBe(true),
+    );
+    const [, init] = fetchMock.mock.calls.find(([url]) => String(url).includes("/validate")) as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(JSON.parse(String(init.body))).toMatchObject({ workPartyEventId: "event-1", codes: [{ code: "NEW" }] });
+    vi.unstubAllGlobals();
   });
 });

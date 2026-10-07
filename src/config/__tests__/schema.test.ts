@@ -245,6 +245,7 @@ describe("featureFlagsSchema", () => {
         alpineCentralServer: false,
         commsPortal: false,
         memberLodgeRoster: false,
+        multiPromoCodes: false,
       }),
     ).toBeDefined();
   });

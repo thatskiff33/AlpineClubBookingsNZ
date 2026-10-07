@@ -62,6 +62,7 @@ function makeTx(options: { existingAllocationCount?: number } = {}) {
       findMany: vi.fn(async () => []),
     },
     promoRedemption: {
+      findFirst: vi.fn(async () => null),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
         calls.push("promoRedemption.create");
         return { id: "redemption-1", ...data };

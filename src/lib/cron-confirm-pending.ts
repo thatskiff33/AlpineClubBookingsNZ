@@ -31,7 +31,7 @@ import {
   type ClubTimeZone,
 } from "@/lib/payment-link-expiry";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
-import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
+import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import {
   savedPaymentMethodForBooking,
   savedPaymentMethodRowStamp,
@@ -202,7 +202,7 @@ const pendingBookingInclude = {
   // split-guest settlement branch.
   groupBookingJoin: { select: { id: true } },
   originBookingRequest: { select: { id: true } },
-  promoRedemption: {
+  promoRedemptions: {
     include: {
       guestTargets: { select: { bookingGuestId: true } },
       promoCode: {
@@ -578,12 +578,7 @@ async function resolveHoldWindowUnderLock(
         },
       });
 
-      const promoRedemption = await tx.promoRedemption.findUnique({
-        where: { bookingId: booking.id },
-      });
-      if (promoRedemption) {
-        await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
-      }
+      await releaseBookingPromoRedemptions(tx, booking.id);
 
       await revokePaymentLinksForBooking(booking.id, tx);
       // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are
@@ -701,12 +696,7 @@ async function resolveHoldWindowUnderLock(
           // Defensive promo cleanup, matching the capacity-releasing bump path
           // (a request-origin booking is officer-priced and normally carries no
           // promo redemption, but never leak a redemption count if one exists).
-          const promoRedemption = await tx.promoRedemption.findUnique({
-            where: { bookingId: booking.id },
-          });
-          if (promoRedemption) {
-            await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
-          }
+          await releaseBookingPromoRedemptions(tx, booking.id);
 
           await revokePaymentLinksForBooking(booking.id, tx);
           // #3611: nothing was paid, so nothing is kept; the stay's ledger lines are

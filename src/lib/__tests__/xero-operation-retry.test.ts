@@ -1565,6 +1565,36 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  it("replays a stored booking-edit wording with the credit note (#3536)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_cash",
+        requestPayload: {
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          bookingId: "book_123",
+          refundAmountCents: 2500,
+          bookingModificationId: "mod_cash",
+          refundMethod: "internet-banking",
+          noteWording: "cash",
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: -2500,
+      changeFeeCents: 0,
+    });
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith(
+      expect.objectContaining({ refundMethod: "internet-banking", noteWording: "cash" })
+    );
+  });
+
   // #1356: the enqueued policy-limited refund amount wins over any rebuild —
   // the modification row does not record the settlement cap, and the amount
   // is embedded in the Xero idempotency key.
