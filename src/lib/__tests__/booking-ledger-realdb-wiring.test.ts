@@ -150,6 +150,11 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
       "a back-post and a live admin date shift (run %i): one set of lines, census agrees",
       "a back-post and a live card refund (run %i): the refund posts once, census agrees",
       "waits for the global lock(1) a live poster holds",
+      // #3854: the group-settled children.
+      "--apply posts each child's confirmation, share, plan refund and kept figure under the live keys",
+      "a back-post and a live organiser cancel (%s): share, refund and kept post once each, census agrees",
+      "a back-post and a live #3653 refund (%s): the refund posts once, census agrees",
+      "shares that do not add up to the settlement are refused",
     ]) {
       expect(suite).toContain(caseName);
     }
@@ -164,6 +169,8 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
       "src/lib/__tests__/booking-ledger-history-seed.realdb.test.ts",
       "booking-ledger:census --fail-on-gap",
       'grep -q "posted: 0 (0 line(s))"',
+      // Every seeded booking is posted, #3854's group-settled children among them.
+      'grep -q "   cannot post: 0$"',
       "booking-ledger:census --write-acknowledgement-draft",
       "booking-ledger:census --acknowledged",
     ]) {
@@ -187,6 +194,32 @@ describe("the ledger idempotency proof stays wired into CI (#3595)", () => {
     for (const caseName of [
       "THE WORKED EXAMPLE: $80 applied plus a late $120 transfer leaves the member $200 of credit, owed(b) zero, and a replay changes nothing",
       "A CASH-ONLY booking is unchanged: the $120 comes back as credit and no restore row is written",
+    ]) {
+      expect(suite).toContain(caseName);
+    }
+  });
+
+  it("carries #3854's group-settlement proof into the same harness", () => {
+    const harness = source(
+      resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
+    );
+    expect(harness).toContain('import "./booking-ledger-group-settlement.realdb.test";');
+    const suite = source(
+      resolve(REPO_ROOT, "src/lib/__tests__/booking-ledger-group-settlement.realdb.test.ts"),
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    for (const caseName of [
+      "CARD: the real settle confirms each child on the ledger and posts its share under the settlement; owed(b) is zero",
+      "CARD: a replayed webhook, and the poster run again in its own transaction, post nothing more",
+      "#3653: a refund out of the combined card payment posts its card refund from the child's refund row, once",
+      "#3653: a refund Stripe accepted as pending and then failed is reversed on the ledger with its row",
+      "CARD: the organiser's cancel keeps each share less every refund made or owed; once its debts are made, owed(b) is zero",
+      "INTERNET BANKING: the inbound reconcile of the paid combined invoice posts each child's bank receipt; a re-fetch posts nothing more",
+      "INTERNET BANKING: the organiser's cancel posts its frozen plan's bank refund beside each mirror and keeps the rest; owed(b) is zero, and a re-run posts nothing",
+      "FIX ROUND A: an Internet Banking group child cannot take a reduction as account credit; the real credit writer refuses it, so nothing commits",
+      "FIX ROUND F: the pre-#3653 plan's replay posts a mirrored child's refund line by the plan, once",
+      "FIX ROUND A: an ordinary card booking reduced with credit back, then the REAL paid cancel: the kept figure already nets the credit, and owed(b) is zero ($id)",
+      "FIX ROUND H: the census reads AGREE on every group history above, and a corrupted share or plan refund disagrees",
     ]) {
       expect(suite).toContain(caseName);
     }

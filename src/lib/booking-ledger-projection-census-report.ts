@@ -18,10 +18,12 @@ import { z } from "zod";
 import {
   BOOKING_LEDGER_IDENTITIES,
   BOOKING_LEDGER_INTEGRITY_KINDS,
+  GROUP_SETTLEMENT_UNPOSTABLE_REASONS,
   type BookingLedgerEvaluation,
   type BookingLedgerIdentity,
   type BookingLedgerIntegrityFinding,
   type BookingLedgerIntegrityKind,
+  type GroupSettlementUnpostableReason,
 } from "@/lib/booking-ledger-projection-census";
 import {
   BOOKING_LEDGER_CENSUS_CLASSES,
@@ -84,6 +86,8 @@ export type BookingLedgerCensusReport = {
      * settlement proves the invoice paid, else unverified — never "unpaid".
      */
     ibUnallocatedAppliedCredit: { realized: Strand; unverified: Strand };
+    /** The `GROUP_SETTLEMENT_UNPOSTABLE` bookings by why they hold, which says what the operator does (#3854). */
+    groupSettlementUnpostable: Record<GroupSettlementUnpostableReason, string[]>;
   };
   disagreements: Array<{ bookingId: string; identity: BookingLedgerIdentity; columnCents: number; ledgerCents: number; deltaCents: number }>;
   verdict: "GATE_OPEN" | "GATE_CLOSED";
@@ -129,6 +133,7 @@ export function summarizeBookingLedgerCensus(
   const info: BookingLedgerCensusReport["info"] = {
     retainedCollected: { bookings: 0, cents: 0 },
     ibUnallocatedAppliedCredit: { realized: strand(), unverified: strand() },
+    groupSettlementUnpostable: zeroed(GROUP_SETTLEMENT_UNPOSTABLE_REASONS, () => [] as string[]),
   };
   let lines = 0;
   let bookingsWithLines = 0;
@@ -186,6 +191,8 @@ export function summarizeBookingLedgerCensus(
       info.retainedCollected.bookings += 1;
       info.retainedCollected.cents += evaluation.info.retainedCollectedCents;
     }
+    const unpostable = evaluation.info.groupSettlementUnpostable;
+    if (unpostable) info.groupSettlementUnpostable[unpostable].push(evaluation.bookingId);
     const strandInfo = evaluation.info.ibUnallocatedAppliedCredit;
     if (strandInfo) {
       const bucket = strandInfo.evidence === "unverified" ? info.ibUnallocatedAppliedCredit.unverified : info.ibUnallocatedAppliedCredit.realized;
