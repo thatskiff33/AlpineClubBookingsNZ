@@ -9,11 +9,10 @@ import { calculateCancellationPreview } from "@/lib/policies/booking-route-decis
 import { clubTime } from "@/lib/club-time/server";
 import { paymentEligibleForPaidCancelPath, paymentHasCaptureEvidence } from "@/lib/booking-cancel";
 import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
+import { cancelTieredAppliedCreditCents } from "@/lib/booking-payment-state";
+import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 import { refundedPaymentCreditRestore } from "@/lib/cancel-refunded-payment-credit";
-import {
-  OPEN_NON_CANCELLATION_HAND_BACKS_SELECT,
-  sumOpenNonCancellationHandBackCents,
-} from "@/lib/manual-refund-task-settlement-rules";
+import { OPEN_NON_CANCELLATION_HAND_BACKS_SELECT, sumOpenNonCancellationHandBackCents } from "@/lib/manual-refund-task-settlement-rules";
 import { memberCancelRefusal } from "@/lib/booking-cancel-eligibility";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
@@ -177,14 +176,14 @@ export async function GET(
       // #3643: the cash the cancel will record, not the invoice's face value.
       payment: partPayment
         ? { ...booking.payment, amountCents: partPayment.paidCents, refundedAmountCents: 0 }
-        : organiserCard
-          ? {
-              ...booking.payment,
-              refundedAmountCents: organiserCard.settlement
-                ? organiserCard.committedRefundCents
-                : booking.payment.amountCents,
-            }
-          : booking.payment,
+        : {
+            ...booking.payment,
+            ...(organiserCard
+              ? { refundedAmountCents: organiserCard.settlement ? organiserCard.committedRefundCents : booking.payment.amountCents }
+              : {}),
+            // #3836: as the cancel tiers it - a mirror clamped to the card amount reads the ledger.
+            creditAppliedCents: cancelTieredAppliedCreditCents(booking.payment, await deriveBookingAppliedCreditCents(booking.id)),
+          },
       // #3827 (`INV-PAY-117`): cash an earlier edit already promised back by hand.
       openNonCancellationHandBackCents: sumOpenNonCancellationHandBackCents(booking.payment.manualRefundTasks),
       finalPriceCents: booking.finalPriceCents,
