@@ -1475,7 +1475,6 @@ export async function confirmSubscriptionBillingPreview(input: {
           status: "PENDING",
           idempotencyKey: correlationKey,
           correlationKey,
-          // #3971: the charge is `localId`; the payload carries no id.
           requestPayload: { queueType: XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE },
           createdByMemberId: input.confirmedByMemberId ?? null,
           store: tx,

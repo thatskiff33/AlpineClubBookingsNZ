@@ -179,52 +179,28 @@ function keptLateCaptureInvoiceRequeuePayload(
 }
 
 /**
- * #3971: a membership subscription invoice goes back to the outbox on Retry,
- * like the two above, and is never run inline. The payload is rebuilt as the
- * bare queue type: the charge is the row's `localId`, and a row queued before
- * the fix holds a `chargeId` the redactor blanked. Retry keeps the row's
- * correlation key (`membership-charge:<id>:invoice-and-email:v1`), so the
+ * #3971 (`INV-INT-026`): a FAILED membership subscription invoice goes back to
+ * the outbox as its bare queue type - the charge is `localId`, and a pre-fix
+ * row holds a blanked `chargeId`. It keeps its correlation key, so the
  * active-key index refuses it while another attempt for the charge is live.
- * Null for any other row.
  */
-function subscriptionInvoiceRequeuePayload(
-  operation: RetryableOperation,
-): Record<string, unknown> | null {
-  if (
-    operation.direction !== "OUTBOUND" ||
-    operation.entityType !== "INVOICE" ||
-    operation.operationType !== "CREATE" ||
-    !subscriptionInvoiceChargeId(operation)
-  ) {
-    return null;
-  }
-  return operation.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE ||
-    readQueueType(operation.requestPayload) === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE
-    ? { queueType: XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE }
+function subscriptionInvoiceRequeuePayload(operation: RetryableOperation) {
+  const queueType = operation.queueType ?? readQueueType(operation.requestPayload);
+  return operation.direction === "OUTBOUND" && operation.entityType === "INVOICE" &&
+    operation.operationType === "CREATE" && subscriptionInvoiceChargeId(operation) &&
+    queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE
+    ? { queueType }
     : null;
 }
 
-/**
- * #3971: refuse a subscription invoice retry with nothing left to do. A charge
- * that already holds a Xero invoice is never sent back from here, so this
- * screen can never be the path to a second invoice or a second email; a charge
- * that no longer needs an invoice is refused the way its enqueue refuses it.
- */
+/** #3971: never from here a second invoice or email, nor a charge needing none. */
 async function refuseSubscriptionInvoiceRetryWithNothingToDo(chargeId: string): Promise<void> {
   const charge = await prisma.membershipSubscriptionCharge.findUnique({
     where: { id: chargeId },
-    select: {
-      status: true,
-      billingBasis: true,
-      xeroInvoiceId: true,
-      xeroInvoiceNumber: true,
-    },
+    select: { status: true, billingBasis: true, xeroInvoiceId: true, xeroInvoiceNumber: true },
   });
   if (!charge) {
-    throw new XeroOperationRetryError(
-      "The membership subscription charge this operation invoices no longer exists.",
-      404,
-    );
+    throw new XeroOperationRetryError("The membership subscription charge this operation invoices no longer exists.", 404);
   }
   if (charge.xeroInvoiceId) {
     throw new XeroOperationRetryError(
@@ -232,11 +208,7 @@ async function refuseSubscriptionInvoiceRetryWithNothingToDo(chargeId: string): 
       409,
     );
   }
-  if (
-    charge.billingBasis === "NO_INVOICE" ||
-    charge.status === "NOT_REQUIRED" ||
-    charge.status === "VOIDED"
-  ) {
+  if (charge.billingBasis === "NO_INVOICE" || charge.status === "NOT_REQUIRED" || charge.status === "VOIDED") {
     throw new XeroOperationRetryError(
       "This charge no longer needs a Xero invoice, so there is nothing to retry. Mark this operation non-replayable.",
       409,
@@ -1135,6 +1107,8 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
       return { supported: true, reason: null };
     }
 
+    if (subscriptionInvoiceRequeuePayload(operation)) return { supported: true, reason: null }; // #3971
+
     /**
      * #3193 fix round: A SECOND ASK, anchored on the review task whose settled
      * share it bills.
@@ -1161,11 +1135,6 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
      * replayable. The refusal below is what remains: a row whose payload was
      * destroyed some other way. It is deliberately not a rebuild.
      */
-    // #3971: a failed subscription invoice, requeued to the outbox.
-    if (subscriptionInvoiceRequeuePayload(operation)) {
-      return { supported: true, reason: null };
-    }
-
     if (operation.localModel === "ManualRefundTask" && operation.localId) {
       const queuedSecondAsk = readQueuedOutboxPayload(operation.requestPayload);
       return queuedSecondAsk?.queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE &&
@@ -1371,12 +1340,7 @@ export async function retryXeroSyncOperation(
   const subscriptionChargeId = subscriptionInvoiceChargeId(operation);
   if (subscriptionInvoicePayload && subscriptionChargeId && operation.status === "FAILED") {
     await refuseSubscriptionInvoiceRetryWithNothingToDo(subscriptionChargeId);
-    await requeueOutboxRowForRetry(
-      operation.id,
-      subscriptionInvoicePayload,
-      ["FAILED"],
-      "membership subscription invoice",
-    );
+    await requeueOutboxRowForRetry(operation.id, subscriptionInvoicePayload, ["FAILED"], "membership subscription invoice");
     return { message: "Queued the membership subscription invoice for retry." };
   }
 

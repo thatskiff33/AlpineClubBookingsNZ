@@ -2967,13 +2967,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
             { syncOperationId: queuedOperation.id }
           );
         }
-      } else if (
-        payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE &&
-        subscriptionChargeId
-      ) {
-        // #3971: the charge is the row's `localId`, never the stored payload,
-        // whose `chargeId` the persisting redactor blanked.
-        await createXeroMembershipSubscriptionInvoice({
+      } else if (payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE && subscriptionChargeId) {
+        await createXeroMembershipSubscriptionInvoice({ // INV-INT-026
           chargeId: subscriptionChargeId,
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,

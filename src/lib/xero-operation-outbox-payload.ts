@@ -204,34 +204,13 @@ interface QueuedGroupSettlementInvoiceVoidOutboxPayload {
   xeroInvoiceId?: string;
 }
 
-/**
- * #3971: NO CHARGE ID. The charge is the row's own `localId` (anchored on
- * `MembershipSubscriptionCharge`), read through `subscriptionInvoiceChargeId`.
- *
- * The id used to ride here as `chargeId`, and the persisting redactor blanks
- * that key: `charge`/`chargeid` are on its Stripe-charge denylist (#295), so
- * every stored row said `"chargeId": "[REDACTED]"` and every subscription
- * invoice failed looking for a charge of that id. The key is not renamed to
- * dodge the rule - the payload simply has nothing to carry. Rows queued before
- * the fix still hold the blanked key; the parser ignores it.
- */
+// No charge id (`INV-INT-026`, #3971): the redactor blanked `chargeId`.
 interface QueuedSubscriptionInvoiceOutboxPayload {
   queueType: typeof XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE;
 }
-
-/**
- * #3971: the charge a `MEMBERSHIP_SUBSCRIPTION_INVOICE` row invoices - its
- * `localId`, which the redactor never touches, and only when the row is
- * anchored on a charge. The one reading for the worker, its failure path and
- * the Xero Operations retry, so none of them can go back to the payload.
- */
-export function subscriptionInvoiceChargeId(operation: {
-  localModel: string | null;
-  localId: string | null;
-}): string | null {
-  return operation.localModel === "MembershipSubscriptionCharge" && operation.localId
-    ? operation.localId
-    : null;
+/** `INV-INT-026`: the charge is the row's anchor, never its stored payload. */
+export function subscriptionInvoiceChargeId(op: { localModel: string | null; localId: string | null }) {
+  return op.localModel === "MembershipSubscriptionCharge" ? op.localId : null;
 }
 
 /**
@@ -545,10 +524,7 @@ export function readQueuedOutboxPayload(
     return { queueType, settlementId, xeroInvoiceId };
   }
 
-  if (queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE) {
-    // #3971: a legacy `chargeId` (blanked to "[REDACTED]" in storage) is ignored.
-    return { queueType };
-  }
+  if (queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE) return { queueType }; // #3971
 
   if (queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE) {
     const bookingId = readString(payload.bookingId);
