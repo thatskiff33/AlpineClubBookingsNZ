@@ -63,6 +63,14 @@ const h = vi.hoisted(() => {
       }),
     },
     memberCredit: {
+      // #3836: the engine's one batch predicate, over the same rows.
+      groupBy: async ({ where }: { where: { appliedToBookingId: { in: string[] }; type: string; xeroCreditNoteId: null } }) =>
+        where.appliedToBookingId.in.flatMap((appliedToBookingId) => {
+          const rows = state.appliedRows.filter((r) => matchesApplied(r, { appliedToBookingId, type: where.type, xeroCreditNoteId: null }));
+          return rows.length ? [{ appliedToBookingId, _sum: { amountCents: rows.reduce((s, r) => s + r.amountCents, 0) } }] : [];
+        }),
+      // No restore row: the booking is live (#3836).
+      findUnique: async () => null,
       aggregate: async ({
         where,
       }: {

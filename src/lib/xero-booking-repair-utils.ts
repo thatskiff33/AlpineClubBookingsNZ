@@ -9,6 +9,7 @@ import {
 } from "@/lib/xero-operation-outbox-payload";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { isDateOnlyString } from "@/lib/date-only";
+import { isRefundRequestNoteOperation } from "@/lib/refund-request-credit-note";
 
 export function makeLocalKey(localModel: string, localId: string) {
   return `${localModel}:${localId}`;
@@ -121,6 +122,33 @@ export function getOperationQueueTypeHint(operation: {
   }
 
   return null;
+}
+
+/**
+ * The one admissibility test for an operation row that may answer for a
+ * payment- or booking-level Xero document in this tool (#1427, #3827).
+ *
+ * - #1427: a row of a DIFFERENT queueType belongs to another money object
+ *   sharing entityType/operationType (a modification holds both an
+ *   invoice-applied and an account-credit note op); `getOperationQueueTypeHint`
+ *   resolves the kind across every ledger era. Rows with no hint stay
+ *   admissible.
+ * - #3827 (`INV-PAY-118`): a refund request's OWN note never answers for the
+ *   payment's refund note, its account-credit note, or any other document -
+ *   it is a separate note per request, read only by the unsettled-note rows.
+ */
+export function isAdmissibleRepairOperation(
+  operation: Parameters<typeof getOperationQueueTypeHint>[0],
+  payloadQueueType: string | undefined
+): boolean {
+  if (isRefundRequestNoteOperation(operation)) {
+    return false;
+  }
+  if (!payloadQueueType) {
+    return true;
+  }
+  const queueType = getOperationQueueTypeHint(operation);
+  return queueType === null || queueType === payloadQueueType;
 }
 
 export function toIsoDate(value: Date) {

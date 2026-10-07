@@ -34,9 +34,19 @@ describe("promo adjustment line", () => {
     expect(screen.getByText("(-$140.00)")).toBeInTheDocument();
   });
 
-  it("PromoCodeCard shows the kept promo's signed adjustment", () => {
+  it("PromoCodeCard shows the kept promo's signed adjustment", async () => {
+    // #3492: the card waits for the guest-code lookup's switch before it
+    // offers any promo control; answer it "off" (the one-code card).
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ multiPromoCodes: false, guests: [] }), { status: 200 })),
+    );
     render(
       <PromoCodeCard
+        bookingId="booking-1"
+        appliedPromoList={null}
+        onPromoListChange={vi.fn()}
+        onKeepPromoList={vi.fn()}
         promo={{ code: "SAVE", type: "PERCENT", description: null }}
         promoAdjustmentCents={-6000}
         promoAction={{ type: "keep" }}
@@ -59,6 +69,7 @@ describe("promo adjustment line", () => {
         onPromoApplied={vi.fn()}
       />,
     );
-    expect(screen.getByText("(-$60.00)")).toBeInTheDocument();
+    expect(await screen.findByText("(-$60.00)")).toBeInTheDocument();
+    vi.unstubAllGlobals();
   });
 });

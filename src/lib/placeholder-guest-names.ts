@@ -5,7 +5,7 @@
  * coming, so they store generated placeholder names:
  *
  *  - **School / organisation requests** number their children
- *    `School Child 1..N` (`generateSchoolGuests`, src/lib/school-booking-request.ts).
+ *    `School Child 1..N` (`generateSchoolGuests`, src/lib/school-booking-constants.ts).
  *  - **Member whole-lodge requests** number the member's party `Guest 1..N`,
  *    all ADULT, because the member gives only an approximate headcount at
  *    request time (`buildMemberWholeLodgePlaceholderGuests`,

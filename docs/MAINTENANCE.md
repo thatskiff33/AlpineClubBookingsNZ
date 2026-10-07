@@ -1433,6 +1433,37 @@ hand and resolved it in Xero, the app raises no refund note for it, so a refund
 of that capture raises the report-only
 `KEPT_LATE_CAPTURE_REFUND_RECORD_BY_HAND`: record the refund by hand as well.
 
+**Credit-paid card bookings invoiced before #3836.** A card booking paid
+entirely with account credit was invoiced at its full price, but the credit was
+never allocated against the invoice, so Xero shows the whole booking owing and
+its reminders ask the member for money already paid. New bookings are allocated
+by the invoice operation itself. For bookings invoiced before the fix, the tool
+reports `UNALLOCATED_APPLIED_CREDIT` (critical) on a paid booking whose card
+payment captured nothing, whose invoice exists, and whose applied credit has no
+Xero note on record. Its `QUEUE_APPLIED_CREDIT_ALLOCATION` action is safe to
+auto-apply: it queues the same applied-credit allocation operation booking
+creation uses, which allocates the member's floating credit notes (minting one
+for credit that has none) up to what is still applied, and stamps it, so a
+re-run allocates nothing more. Where the booking's invoice or allocation
+operation is unfinished the tool offers that operation's retry instead, or
+waits, and never queues a second one. A cancelled booking is not reported here:
+the `CANCELLED_BOOKING_OPEN_INVOICE` finding clears its invoice with a note, and
+waits while the booking's invoice or allocation operation is unfinished, since
+that operation may still finish allocations the note must not repeat.
+
+If Xero refuses the allocation (a 4xx: typically the invoice was voided, or
+already settled by hand), the operation stays `FAILED` and the report offers its
+retry as a manual action only, never auto-applied, so a sweep does not re-run a
+refusal. An applied-credit operation cannot be marked "resolved in Xero": the
+local credit ledger's fences read only its status, so it is closed by a
+successful run. Read the operation's error, put the cause right in Xero (for
+example, remove a hand-made payment or allocation that already settles the
+invoice, so the member's credit note pays it as the app records), then apply the
+retry by its key: `--apply --apply-action <actionKey>`. Where the invoice was
+voided and must stay voided, leave the operation failed and take the booking to
+a developer: the member's credit note stays unallocated in Xero, and no tool
+here re-raises the invoice.
+
 ### Refund credit notes with no settlement on record (#3548)
 
 Before #3548, a refund credit note whose first attempt died between raising the
@@ -1651,7 +1682,9 @@ owed — against the ledger lines that project them, and prints:
   records, captured transactions and recorded card refunds with no live line
   of their own (`UNPOSTED_SETTLEMENT`), and money handed back before the
   posters existed — a legacy seed's refund, a V3 hand-back — that the balance
-  owed cannot yet see (`UNPOSTED_LEGACY_REFUND`);
+  owed cannot yet see (`UNPOSTED_LEGACY_REFUND`), and a group-settled child
+  with no lines whose planned lines would not agree outright
+  (`GROUP_SETTLEMENT_UNPOSTABLE`, below);
 - **integrity**: reversals that name no line or are not its exact opposite, a
   second live line for one guest-night, an unknown posting-key namespace or one
   on an anchor it never posts under, and a live line its source row (or a
@@ -1749,12 +1782,214 @@ damaged — named by shape, since that path may still be live) holds the gate
 until each is corrected, or written off in the acknowledgement file, and
 `GROUP_SETTLEMENT_OFF_LEDGER` (children whose money moved only through the
 organiser's group settlement — no transaction, refund or credit row of their
-own, no credit, refund or change-fee figure — whose poster is #3854) is listed
-only. Every other class is an expected state, an in-flight refund among them:
+own, no credit, refund or change-fee figure — and that hold no line: since
+#3854 the settle posts them, and the back-post below posts the history) is
+listed only. The census names a child in that class only when the lines the
+back-post would post — which it plans in memory, from the same snapshot,
+through the back-post's own planners — would make it agree outright. Any
+other such child (shares that do not add up to what the settlement collected,
+a #3653 refund still owed whose retry is exhausted or still running, night
+rows that do not make the price) is the coverage gap
+`GROUP_SETTLEMENT_UNPOSTABLE`, which holds the gate and cannot itself be
+acknowledged (#3854). The summary splits it by what to do: **refused** by the
+back-post, or posted but still not agreeing — correct the history, then re-run;
+**posts with a class** (a refund still in flight, say) — run the back-post,
+then acknowledge the class the census then shows. A refund counts as in flight while the recovery runner will still
+make it — pending, processing, or failed with a retry scheduled and attempts
+left; once its retries are exhausted it is not, and the money it owes back
+holds the gate. Every other class is an expected state, an in-flight refund among them:
 acknowledge each instance with its reference, and a figure that moves after
 sign-off goes stale and holds the gate again, so nothing stays "in flight"
 unseen. The census takes no lock, so run it off-peak against
 production; a whole history is read in one transaction, 500 bookings a page.
+
+### Back-post the booking ledger and open the cut-over gate (#3583)
+
+`pnpm run booking-ledger:back-post` (`scripts/backfill-booking-ledger.ts`) posts
+the ledger lines every booking made before #3580–#3582 is missing, so the census
+above can be run over the club's whole history — the cut-over gate (design
+[`booking-ledger.md`](design/booking-ledger.md) §6, §7; owner decision
+D-3532-1). It runs the live posters over each booking, never a second copy of
+how a line is shaped, one transaction per booking, under the locks those posters
+take. It calls no provider (no Stripe, Xero or email) and never edits or deletes
+a line: it only appends, through the one write door.
+
+- **Dry run by default.** Each booking is posted and judged inside a transaction
+  that is then rolled back, so the report is exactly what `--apply` would post
+  and nothing is committed. `--apply` commits each booking on its own.
+- **Never guessed.** After posting, each booking is judged by the census's own
+  evaluation in the same transaction. One that would disagree, keep a coverage
+  gap or show an integrity finding is rolled back — nothing at all is posted
+  for it, not even its payments — and listed `CANNOT POST` with the reason and,
+  for a disagreement, the identity with the column figure, the ledger figure and
+  the delta. A named class (an in-flight hand-back, `KNOWN_DEFECT_HISTORY`, …)
+  is not a refusal: the booking posts and the census lists the class.
+- **Idempotent.** A second `--apply` posts nothing; the summary says
+  `posted: 0 (0 line(s))`.
+- **Safe on a live database**, but run it off-peak: each booking takes the global
+  booking lock briefly, so a settle, cancel or edit on the same booking either
+  finishes first or waits for it; a booking whose rows another writer holds for
+  more than five seconds is rolled back and listed `LOCK_TIMEOUT`, for a re-run.
+  One booking's unexpected error rolls back only that booking and is listed
+  `UNEXPECTED_ERROR` with the message; the run goes on. Each booking is printed
+  as it finishes. Exit status 2 means at least one booking was listed
+  `CANNOT POST`.
+- **It names its target.** It prints the host and database first, and `--apply`
+  refuses unless `--confirm-database <name>` names the database `DATABASE_URL`
+  points at.
+- **Every run can be found again.** `--json` prints the run's id, its start and
+  finish, and per booking the id of every line it inserted. Keep that output
+  with the run.
+
+```bash
+DATABASE_URL=<...> pnpm run booking-ledger:back-post                  # dry run, every booking
+DATABASE_URL=<...> pnpm run booking-ledger:back-post --apply --confirm-database <name>   # post
+DATABASE_URL=<...> pnpm run booking-ledger:back-post --booking <id>   # one booking; repeat for several
+DATABASE_URL=<...> pnpm run booking-ledger:back-post --limit <n>      # the first n bookings by id
+DATABASE_URL=<...> pnpm run booking-ledger:back-post --json           # the report, then the run id, window and line ids as JSON
+```
+
+**Reading the report.** One summary line — bookings, how many it posted (or
+would) and how many lines, how many had nothing to post, how many it cannot
+post — then one line per booking that posts or cannot:
+
+- `POSTED` / `WOULD POST <id>  <n> line(s): …` names the steps: the
+  confirmation (one line per guest-night, an evenly split strand included), an
+  old edit's change fee or the nights it moved, the cancellation with the kept
+  figure, and in brackets any census class the booking now shows. A child a
+  group organiser settled (#3854) also names `group share (<cents>)` and, where
+  the organiser cancelled under a frozen refund plan whose refund was made,
+  `group plan refund (<cents>)`; its kept figure is the organiser cancel's own
+  (the share less every refund made or still owed). A plan refund still being
+  retried is not posted: the census names it `IN_FLIGHT_REFUND`, and the retry
+  posts it when it goes through.
+- `CANNOT POST <id>  <reason>: …`. `UNPRICED_NIGHT` — a strand has a night with
+  no price, which is an open review: close the review, then re-run.
+  `CONFIRMATION_DOES_NOT_RECONCILE` — the night rows and promotion do not make
+  the booking's final price; an officer looks at the booking. `LOCK_TIMEOUT` —
+  another writer held the booking; re-run. `UNEXPECTED_ERROR` — anything else
+  (a legacy negative night price, for one), with its message. `EDIT_NOT_DERIVABLE`,
+  `PRICE_LINES_DISAGREE`, `REBASE_MOVEMENT_UNREADABLE`, `LIVE_LINE_NOT_ONE_NIGHT`
+  — an old edit cannot be re-derived from what the rows hold.
+  `GROUP_SHARES_DO_NOT_RECONCILE` — the payments of the children a group
+  settlement paid do not add up to what it collected, so no share is guessed;
+  an officer looks at the group. A group-settled child (#3854) it refuses,
+  for this or any reason, holds the census's gate as
+  `GROUP_SETTLEMENT_UNPOSTABLE` (refused), or `NO_LINES` if it holds money of
+  its own: correct the history, then re-run. One it posts with a class — a
+  refund still in flight — also held as `GROUP_SETTLEMENT_UNPOSTABLE` (posts
+  with a class) until posted: run the back-post, then acknowledge the class
+  the census shows. `CENSUS_WOULD_NOT_PASS`
+  — the lines it could post would leave the census disagreeing, gapped or
+  finding a line wrong; the figures follow. What the back-post does not
+  reconstruct, and so lists here: a review give-back or stand-in a closure made
+  before #3582, a review refund an officer handed back by hand before #3599,
+  and a legacy refund with no refund row. Each is for an officer to look at;
+  report it on #3583 with the figures printed.
+
+Run the back-post only once the blue/green colour switch to the #3854 release
+is finished, and finish that switch before processing any organiser
+cancellation (the release's deploy note).
+
+**The owner's run.** Agents never touch production. Run it twice: first as a
+rehearsal on a restored backup, then for real.
+
+1. **Rehearse on a restored backup**, never on the live installation (restoring
+   a dump into a live site carries its environment override with it — see the
+   warning under [Quarterly Backup Restore Drill](#quarterly-backup-restore-drill)).
+   Fetch a backup as that section describes, then restore it into a throwaway
+   PostgreSQL bound to loopback, on a port that is not 5432, and bring its schema
+   up to the release you are about to cut over:
+
+   ```bash
+   docker run -d --name ledger-rehearsal -e POSTGRES_PASSWORD=password -p 127.0.0.1:55443:5432 postgres:16
+   gunzip -c /tmp/restore-check.sql.gz | docker exec -i ledger-rehearsal psql -U postgres -v ON_ERROR_STOP=1
+   export DATABASE_URL=postgresql://postgres:password@127.0.0.1:55443/postgres
+   pnpm exec prisma migrate deploy
+
+   pnpm run booking-ledger:census                         # expect GATE_CLOSED, on coverage
+   pnpm run booking-ledger:back-post                      # dry run: read every CANNOT POST
+   pnpm run booking-ledger:back-post --apply --confirm-database postgres --json > ~/ledger-backpost-rehearsal.txt
+   pnpm run booking-ledger:back-post --apply --confirm-database postgres   # must say "posted: 0 (0 line(s))"
+   pnpm run booking-ledger:census
+   pnpm run booking-ledger:census --write-acknowledgement-draft ~/ledger-ack-rehearsal.json
+   #   review the draft line by line (the class-list workflow above)
+   pnpm run booking-ledger:census --acknowledged ~/ledger-ack-rehearsal.json --fail-on-gap
+   ```
+
+   Every `CANNOT POST`, disagreement, coverage gap and integrity finding is a
+   question for #3583, answered before production. Remove the container when
+   done (`docker rm -f ledger-rehearsal`) and delete the dump.
+
+2. **Then production, off-peak**, from the release being cut over. The back-post
+   needs a role that may insert ledger lines (the application's own); the census
+   runs under a SELECT-only role, so the gate's evidence comes from a session
+   that cannot have written anything. Create that role once, as the database
+   owner:
+
+   ```sql
+   CREATE ROLE ledger_census LOGIN PASSWORD '<a strong password from your secret store>';
+   GRANT CONNECT ON DATABASE <database> TO ledger_census;
+   GRANT USAGE ON SCHEMA public TO ledger_census;
+   GRANT SELECT ON ALL TABLES IN SCHEMA public TO ledger_census;
+   -- Every session it opens is read-only, whatever the client asks for.
+   ALTER ROLE ledger_census SET default_transaction_read_only = on;
+   ```
+
+   Keep its password out of the shell history and the URL: put it in a
+   `PGPASSFILE` readable only by you (`host:port:database:ledger_census:password`,
+   `chmod 600`), which the database client reads when the URL carries no
+   password.
+
+   **Take a backup immediately before `--apply`** (Admin → Backups, or the
+   backup job run by hand), and keep the `--json` output of the run beside it.
+
+   ```bash
+   export PGPASSFILE=~/.ledger-census.pgpass         # chmod 600; written with an editor, not echo
+   CENSUS_URL=postgresql://ledger_census@<host>:5432/<database>
+   APP_URL=<the application's DATABASE_URL>
+
+   DATABASE_URL="$CENSUS_URL" pnpm run booking-ledger:census
+   DATABASE_URL="$APP_URL"    pnpm run booking-ledger:back-post             # dry run; compare with the rehearsal
+   #   take the backup now
+   DATABASE_URL="$APP_URL"    pnpm run booking-ledger:back-post --apply --confirm-database <database> --json > ~/ledger-backpost-run.txt
+   DATABASE_URL="$APP_URL"    pnpm run booking-ledger:back-post --apply --confirm-database <database>   # must post nothing
+   DATABASE_URL="$CENSUS_URL" pnpm run booking-ledger:census --write-acknowledgement-draft ~/ledger-ack.json
+   #   review it as in the rehearsal; carry over the reviewed rehearsal entries that still apply
+   DATABASE_URL="$CENSUS_URL" pnpm run booking-ledger:census --acknowledged ~/ledger-ack.json --fail-on-gap
+   ```
+
+   A booking that changed between the rehearsal and production is expected to
+   differ; anything listed on production and not in the rehearsal is read the
+   same way before going on.
+
+**If a run posted something wrong.** Nothing reads a line until #3584, so a
+wrong line costs nothing but holding the gate: the census names the booking.
+Lines are never edited or deleted (`INV-MONEY-032`); a correction is a reversal
+(`reversal:<lineId>`) through the one write door, anchored on the event that
+takes the line back. There is deliberately no command that reverses a whole
+back-post yet: the census accepts a reversal only on an edit, cancellation,
+review, transaction or refund anchor, so reversing a confirmation or a credit
+line would itself be an integrity finding, and a booking whose confirmation is
+reversed cannot be back-posted again under the same keys (its confirmation is
+fenced, design §4.1a). So report the booking on #3583 with the run's `--json`
+(its line ids) and the census figures, and it is corrected by a reviewed change.
+Undoing a whole run is the backup taken just before `--apply`, restored in a
+maintenance window — an owner's decision on #3583, because it also loses every
+write made since.
+
+**What holds the gate**, and so keeps every reader off the ledger (#3584): any
+unclassified disagreement, any coverage gap (a booking the back-post listed
+`CANNOT POST` still has one), any integrity finding, every
+`KNOWN_DEFECT_HISTORY` booking until an officer corrects it or you write it off
+in the acknowledgement file on #3583 (owner decision 1), and every other class
+instance until you acknowledge it to the cent. `GROUP_SETTLEMENT_OFF_LEDGER` is
+listed only; a group-settled child whose planned lines would not agree
+outright — refused by the back-post (correct the history), or posted with a
+class to acknowledge (run the back-post, then acknowledge) — is never in it,
+but the gap `GROUP_SETTLEMENT_UNPOSTABLE`, which holds. The gate is open when `--fail-on-gap` exits 0 and the census prints
+`VERDICT: GATE_OPEN`. CI runs this same sequence on every pull request over a
+seeded history (`scripts/booking-ledger-seed-gate.sh`).
 
 ### Census the booking ledger identity (#3340)
 

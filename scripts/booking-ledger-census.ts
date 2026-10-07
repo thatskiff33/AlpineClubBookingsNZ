@@ -118,6 +118,12 @@ function summary(report: BookingLedgerCensusReport, format: ClubFormat): string 
   out.push("");
   out.push("Coverage (holds the gate):");
   for (const [kind, ids] of Object.entries(report.coverage)) out.push(`  ${kind.padEnd(24)} ${ids.length}${examples(ids)}`);
+  const unpostable = report.info.groupSettlementUnpostable;
+  if (report.coverage.GROUP_SETTLEMENT_UNPOSTABLE.length > 0) {
+    out.push(
+      `    GROUP_SETTLEMENT_UNPOSTABLE: refused by the back-post (correct the history) ${unpostable.REFUSED.length}; posts with a class (run the back-post, then acknowledge it) ${unpostable.POSTS_WITH_CLASS.length}; posts but would not agree (correct the history) ${unpostable.POSTS_NOT_AGREEING.length}`,
+    );
+  }
   out.push("");
   out.push("Integrity (holds the gate):");
   for (const [kind, count] of Object.entries(report.integrity.counts)) out.push(`  ${kind.padEnd(24)} ${count}`);

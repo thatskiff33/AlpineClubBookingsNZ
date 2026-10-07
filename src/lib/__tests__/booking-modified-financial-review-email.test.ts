@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 /**
@@ -66,7 +68,9 @@ function params(overrides: Record<string, unknown> = {}) {
     // explicitly: this is the "no review is open" email every case below is
     // measured against, not an absence the compiler filled in.
     financialReviewPending: false,
+    refundByBankTransfer: false,
     appliedCreditGivenBackCents: 0,
+    refundReturnedToOrganiser: false,
     ...overrides,
   };
 }
@@ -288,6 +292,28 @@ describe("an unresolved adjustment no longer sends a silent money section (#3033
   });
 });
 
+describe("an internet-banking refund is promised, not reported (#3827, D-3813-6)", () => {
+  it("both the HTML and the editable body say the club WILL refund by bank transfer", async () => {
+    const overrides = { refundAmountCents: 6000, refundByBankTransfer: true };
+    const note = await paymentNoteFromSender(overrides);
+    expect(note).toBe("The club will refund $60.00 to you by bank transfer.");
+    const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
+    expect(html).toMatch(/The club will refund \$60\.00 to you by bank transfer\./);
+    expect(html).not.toMatch(/has been processed/);
+  });
+
+  it("a split payment's reduction names the cash refund AND the credit returned (D-3813-5)", async () => {
+    const overrides = { refundAmountCents: 4000, accountCreditAmountCents: 2000 };
+    const note = await paymentNoteFromSender(overrides);
+    expect(note).toBe(
+      "A refund of $40.00 has been processed to your original payment method. Account credit of $20.00 has been added for future bookings.",
+    );
+    const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
+    expect(html).toMatch(/A refund of \$40\.00 has been processed/);
+    expect(html).toMatch(/Account credit of \$20\.00 has been added/);
+  });
+});
+
 /*
   #3809: a change that gave back applied credit says so, in the HTML email and
   in the flat body's {{paymentNote}} alike - and beside a card refund on a
@@ -308,8 +334,84 @@ describe("#3809: applied credit given back is named in the Booking Modified emai
     expect(note).toContain(SENTENCE);
   });
 
+  it("composes with an internet-banking refund promised by bank transfer (#3829: #3827 with #3809)", async () => {
+    const overrides = { refundAmountCents: 6000, refundByBankTransfer: true, appliedCreditGivenBackCents: 5000 };
+    const note = await paymentNoteFromSender(overrides);
+    expect(note).toContain("The club will refund $60.00 to you by bank transfer.");
+    expect(note).toContain(SENTENCE);
+    const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
+    expect(html).toMatch(/The club will refund \$60\.00 to you by bank transfer\./);
+    expect(html).toContain(SENTENCE);
+    expect(html).not.toMatch(/has been processed/);
+  });
+
   it("is absent where nothing came back", async () => {
     expect(await paymentNoteFromSender({})).not.toContain("returned to your account credit");
     expect(bookingModifiedTemplate(params(), CLUB_FORMAT_TEST)).not.toContain("returned to your account credit");
+  });
+});
+
+/*
+  #3916: a joiner's booking the group organiser paid for by card refunds its
+  reduction to the ORGANISER's card (#3653). The email names where the money
+  went on every route, in the HTML email and the flat {{paymentNote}} alike,
+  because both read the one home (`bookingModifiedRefundSentence`).
+
+  MUTATION PROOF. Make `bookingModifiedRefundSentence` ignore its organiser flag in either direction and
+  either "organiser's card" or "own card" fails in both paths; drop the flag at
+  either call site (HTML or sender) and that path's assertion fails.
+*/
+describe("#3916: the Booking Modified refund sentence names where the refund went", () => {
+  const OWN_CARD = "A refund of $45.00 has been processed to your original payment method.";
+  const ORGANISER_CARD =
+    "A refund of $45.00 has been processed to the group organiser's card, because the group organiser paid for this booking.";
+
+  it("organiser's card: names the group organiser's card, never the joiner's payment method", async () => {
+    const overrides = { refundAmountCents: 4500, refundReturnedToOrganiser: true };
+    const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
+    const note = await paymentNoteFromSender(overrides);
+
+    expect(html).toContain(ORGANISER_CARD);
+    expect(html).not.toContain("your original payment method");
+    expect(note).toBe(ORGANISER_CARD);
+  });
+
+  it("own card: the member's original payment method, byte-identical to before", async () => {
+    const overrides = { refundAmountCents: 4500 };
+    expect(bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST)).toContain(OWN_CARD);
+    expect(await paymentNoteFromSender(overrides)).toBe(OWN_CARD);
+  });
+
+  it("bank transfer: an Internet Banking reduction keeps the D-3813-6 bank-transfer promise", async () => {
+    // An organiser who settled by Internet Banking is not `paidByOrganiserCard`,
+    // so its door answers false and the bank-transfer sentence stands.
+    const overrides = { refundAmountCents: 4500, refundByBankTransfer: true };
+    const bank = "The club will refund $45.00 to you by bank transfer.";
+    const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
+    expect(html).toContain(bank);
+    expect(html).not.toContain("organiser's card");
+    expect(await paymentNoteFromSender(overrides)).toBe(bank);
+  });
+
+  it("account credit: names credit, and no card at all", async () => {
+    const overrides = { accountCreditAmountCents: 4500 };
+    const credit = "Account credit of $45.00 has been added for future bookings.";
+    const html = bookingModifiedTemplate(params(overrides), CLUB_FORMAT_TEST);
+    expect(html).toContain(credit);
+    expect(html).not.toMatch(/organiser's card|original payment method/);
+    expect(await paymentNoteFromSender(overrides)).toBe(credit);
+  });
+
+  it("every door that can refund an edit routes the flag from its settlement result, not a recomputation", () => {
+    const repoRoot = resolve(__dirname, "../../..");
+    for (const door of [
+      "src/lib/booking-date-modification-service.ts",
+      "src/lib/booking-batch-modification-service.ts",
+      "src/app/api/bookings/[id]/guests/[guestId]/route.ts",
+      "src/lib/booking-guest-acceptance-reprice.ts",
+    ]) {
+      const source = readFileSync(resolve(repoRoot, door), "utf8");
+      expect(source, door).toMatch(/refundReturnedToOrganiser: (?:result|reprice)\.organiserChildRefund !== null,/);
+    }
   });
 });

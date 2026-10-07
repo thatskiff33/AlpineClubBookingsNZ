@@ -65,7 +65,9 @@ const NAMED_READERS: Record<string, ReaderSite> = {
     resolutions: 1,
     operation: "XERO_PROMO_LINE",
     historySink: /moneyBuildUp:\s*promoMoneyBuildUpSelection\.historyMetadata/,
-    amountSink: /const xeroPromoAdjustmentCents = d3CompatibleBookingMoneyBuildUpCents\([\s\S]{0,100}promoMoneyBuildUpSelection[\s\S]{0,5000}unitAmount: xeroPromoAdjustmentCents \/ 100/,
+    // #3828: the resolved figure is the aggregate the per-code promotion lines
+    // must add up to (`xero-promo-adjustment-lines.ts`), or the one line.
+    amountSink: /const xeroPromoAdjustmentCents = d3CompatibleBookingMoneyBuildUpCents\([\s\S]{0,100}promoMoneyBuildUpSelection[\s\S]{0,5000}planPromoAdjustmentLines\(\{\s*aggregateCents: xeroPromoAdjustmentCents,/,
   },
 };
 
@@ -134,7 +136,7 @@ describe("#3277 canonical stored-money reader census", () => {
     before(xero, "const booking = await prisma.booking.findUnique", "bookingMoneyBuildUpFromProjection(booking");
     before(xero, "bookingMoneyBuildUpFromProjection(booking", "getAuthenticatedXeroClient()");
     expect(xero).toMatch(
-      /promoRedemption:\s*\{\s*include:\s*\{\s*promoCode:\s*true,\s*allocations:\s*true\s*\}\s*\}[\s\S]{0,80}nightAdjustments:\s*true/,
+      /promoRedemptions:\s*\{\s*include:\s*\{\s*promoCode:\s*true,\s*allocations:\s*true\s*\}\s*\}[\s\S]{0,80}nightAdjustments:\s*true/,
     );
     expect(xero).not.toContain("readBookingMoneyBuildUp(prisma");
     expect(xero).toMatch(

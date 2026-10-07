@@ -324,7 +324,7 @@ export async function createXeroInvoiceForGroupSettlement(
   // and a later attempt is never answered with this one's invoice.
   const invoiceIdempotencyKey = groupSettlementInvoiceCreateKey(settlementId, attempt);
   let operationId = options?.syncOperationId ?? null;
-  const requestPayload = { invoices: [buildInvoice(contactId)] };
+  const requestPayload = { invoices: [buildInvoice(contactId)], ...lines.operationRecord };
 
   if (operationId) {
     await prisma.xeroSyncOperation.update({
@@ -356,6 +356,7 @@ export async function createXeroInvoiceForGroupSettlement(
       createdByMemberId: options?.createdByMemberId,
       buildRequestPayload: (resolvedContactId) => ({
         invoices: [buildInvoice(resolvedContactId)],
+        ...lines.operationRecord,
       }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(

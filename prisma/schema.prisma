@@ -1958,7 +1958,9 @@ model Booking {
   guests                      BookingGuest[]
   payment                     Payment?
   choreAssignments            ChoreAssignment[]
-  promoRedemption             PromoRedemption?
+  // #3826 (epic #3813, C1): one redemption PER PROMO CODE, not per booking.
+  // Read it only through `bookingPromoRedemptions()` (booking-promo-redemptions.ts).
+  promoRedemptions            PromoRedemption[]
   promoRedemptionAllocations  PromoRedemptionAllocation[]
   promoRedemptionGuestTargets PromoRedemptionGuestTarget[]
   nightAdjustments            BookingGuestNightAdjustment[]
@@ -2281,6 +2283,12 @@ model BookingGuestNightAdjustment {
   // 63-character identifier limit and would be truncated silently.
   @@unique([bookingGuestNightId, kind, promoRedemptionId], map: "BookingGuestNightAdjustment_night_kind_redemption_key")
   @@unique([bookingGuestId, kind, promoRedemptionId], map: "BookingGuestNightAdjustment_guest_kind_redemption_key")
+  // Plus a raw-SQL PARTIAL unique index Prisma cannot express (#3826, epic
+  // #3813): BookingGuestNightAdjustment_night_kind_unique on
+  // (bookingGuestNightId, kind) WHERE bookingGuestNightId IS NOT NULL, so one
+  // night carries at most one adjustment of a kind across ALL of a booking's
+  // redemptions — "a night is never discounted twice" (#3492) held by the
+  // database. Registered in prisma/partial-unique-indexes.tsv.
   @@index([bookingId])
   @@index([promoRedemptionId])
   @@index([promoCodeId])
@@ -3399,7 +3407,21 @@ model PromoCode {
 model PromoRedemption {
   id                   String   @id @default(cuid())
   promoCodeId          String
-  bookingId            String   @unique
+  // NOT UNIQUE SINCE #3826 (epic #3813, C1): a booking may carry several promo
+  // codes (#3492), one redemption per code — `@@unique([bookingId, promoCodeId])`
+  // below keeps the same code from landing twice. While the
+  // `multiPromoCodes` module switch is off, `redeemPromoCode` refuses a second
+  // redemption on any booking, so the deployed old release (which reads this
+  // as one-to-one) never meets a booking it cannot represent. That refusal is
+  // an unlocked read-then-write, sound only because every caller created the
+  // booking in the same transaction or holds pg_advisory_xact_lock(1)
+  // (`promo-redemption-slot.ts`; call sites pinned by
+  // `redeem-promo-code-call-sites.test.ts`).
+  bookingId            String
+  // The booker's order (D-3813-2): where two codes could cover the same night
+  // the lower order claims it and a later code covers only nights no earlier
+  // code claimed. 0 for every single-code booking.
+  applicationOrder     Int      @default(0)
 
   // OPTIONAL SINCE #3369 (programme #2912, stage 4): the booking this redemption
   // belongs to may be owned by an `Organisation` rather than a member, and a
@@ -3425,6 +3447,7 @@ model PromoRedemption {
   guestTargets PromoRedemptionGuestTarget[]
   nightAdjustments BookingGuestNightAdjustment[]
 
+  @@unique([bookingId, promoCodeId])
   @@index([promoCodeId])
   @@index([memberId])
 }
@@ -5039,6 +5062,14 @@ model ClubModuleSettings {
   // names it. How much of a name is shown is a separate per-lodge dial,
   // Lodge.rosterNameGranularity.
   memberLodgeRoster       Boolean  @default(false)
+  // Several promo codes on one booking (#3826, epic #3813). A ROLLOUT SWITCH,
+  // default OFF: while it is off the server refuses to persist a second
+  // PromoRedemption on any booking, so the previously deployed release — which
+  // reads a booking's redemption as one-to-one — stays correct through a
+  // blue-green cut-over and a rollback. The operator turns it on after
+  // cut-over. Safe to add as a defaulted column because every read narrows to
+  // CLUB_MODULE_SETTINGS_COLUMN_SELECT.
+  multiPromoCodes         Boolean  @default(false)
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @default(now()) @updatedAt
@@ -8382,8 +8413,8 @@ model BookingLedgerLine {
   guestNames           String[]
 
   /// What posted the line — the booking's own confirmation, a modification, a
-  /// review task, a payment transaction, a refund, a member-credit row or a
-  /// cancellation — and that row's id. Not a foreign key: the anchor's model
+  /// review task, a payment transaction, a refund, a member-credit row, a
+  /// cancellation or a group settlement — and that row's id. Not a foreign key: the anchor's model
   /// varies, and a line outlives rows that are deleted with their booking.
   anchorKind LedgerAnchorKind
   anchorId   String
@@ -8487,6 +8518,10 @@ enum LedgerAnchorKind {
   PAYMENT_REFUND
   MEMBER_CREDIT
   CANCELLATION
+  /// A group organiser's `GroupBookingSettlement`, which settles every joiner's
+  /// child booking in one payment (#3854): each child's share, and the refund
+  /// the organiser's cancellation plan hands back on it.
+  GROUP_SETTLEMENT
 }
 
 /// How money moved on a settlement line. Stripe and Internet Banking stay
