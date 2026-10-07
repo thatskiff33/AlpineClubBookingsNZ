@@ -631,9 +631,12 @@ export async function createXeroInvoiceForBooking(
   // issued to carry it, is billed here — the invoice then equals what the pay
   // step collects (`bookingAmountOwedCents`). Fees an issued invoice's credit
   // note or supplementary invoice already carried are not billed again.
-  const feeOwedCents = (await loadFeesAddedToAmountOwed(prisma, bookingId))
-    .filter((fee) => fee.onPrimaryInvoice)
-    .reduce((sum, fee) => sum + fee.changeFeeCents, 0);
+  const feeOwedCents =
+    booking.payment.changeFeeCents > 0
+      ? (await loadFeesAddedToAmountOwed(prisma, bookingId))
+          .filter((fee) => fee.onPrimaryInvoice)
+          .reduce((sum, fee) => sum + fee.changeFeeCents, 0)
+      : 0;
   if (feeOwedCents > 0) lineItems.push(changeFeeLineItem(feeOwedCents, hutFeeMapping));
 
   // Read once, outside the closure: `buildInvoice` runs for the recorded

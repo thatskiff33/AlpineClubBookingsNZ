@@ -880,6 +880,8 @@ async function settleBookingPaymentInTransaction(
         member: true,
         // #3369: the owner may be an Organisation; bookingOwner() reads both.
         organisation: { select: { name: true, email: true } },
+        // #3750: a change fee recorded on the payment is part of the worth.
+        payment: { select: { changeFeeCents: true } },
       },
     });
 
@@ -926,13 +928,7 @@ async function settleBookingPaymentInTransaction(
     // payment, read once here for the mirror and the amount check below.
     const settleWorthCents = bookingWorthCents({
       finalPriceCents: booking.finalPriceCents,
-      changeFeeCents:
-        (
-          await tx.payment.findUnique({
-            where: { bookingId: booking.id },
-            select: { changeFeeCents: true },
-          })
-        )?.changeFeeCents ?? null,
+      changeFeeCents: booking.payment?.changeFeeCents ?? null,
     });
     const mirrorCreditAppliedCents =
       manual !== null
@@ -1623,7 +1619,9 @@ async function settleBookingPaymentInTransaction(
     // ledger to post to; it posts here, beside the confirmation's nights, under
     // its modification's own key, so the ledger's CHANGE_FEE lines equal the
     // payment's recorded fee once the booking is paid.
-    const feeOwedPostings = alreadyConfirmedOnLedger
+    // Read only where a fee was recorded on the payment at all.
+    const feeOwedPostings =
+      alreadyConfirmedOnLedger || !(booking.payment && booking.payment.changeFeeCents > 0)
       ? []
       : (await loadFeesAddedToAmountOwed(tx, booking.id)).map((fee) =>
           modificationChangeFeePosting({

@@ -487,6 +487,11 @@ describe("createXeroInvoiceForBooking", () => {
   });
 
   it("#3750: bills a fee a finished-stay correction added to what an uninvoiced booking owes, once", async () => {
+    const fixture = await mocks.prisma.booking.findUnique();
+    mocks.prisma.booking.findUnique.mockResolvedValueOnce({
+      ...fixture,
+      payment: { ...fixture.payment, changeFeeCents: 5_320 },
+    });
     mocks.prisma.bookingModification.findMany.mockResolvedValueOnce([
       {
         id: "mod_on_invoice",
