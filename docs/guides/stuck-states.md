@@ -11,8 +11,9 @@ signal is grouped by domain, ranked by severity, given an owner, and linked
 straight to the screen where you fix it. Find it at **Admin → Monitoring & Support → Stuck States**
 (`/admin/stuck-states`).
 
-The page is read-only and computed on each visit (it shows when it was
-generated). It complements [System Health](health.md) (which watches services)
+The page is computed on each visit (it shows when it was generated). It is
+read-only apart from one money action: closing a card refund Stripe gave up on
+as **paid another way** (below). It complements [System Health](health.md) (which watches services)
 by watching **data** — see [`ARCHITECTURE.md`](../ARCHITECTURE.md)
 (stuck-state dashboard).
 
@@ -39,6 +40,52 @@ by watching **data** — see [`ARCHITECTURE.md`](../ARCHITECTURE.md)
    owner, and a count. Click **Open** to go straight to the screen that resolves
    it. An empty queue shows "No stuck states found."
 
+### Close a card refund Stripe gave up on
+
+When the club refunds a card and Stripe fails, the app retries the refund
+automatically. After the last retry it stops, and the refund becomes stuck. It
+still counts in **Refunds owed** and still comes off **Net Collected** (owner
+decision on #3372, 7 Oct 2026), because the club still owes the member that
+money.
+
+If you pay the member back another way, for example by bank transfer, close the
+refund here:
+
+1. Under **Card refunds Stripe gave up on**, find the booking. Each row shows
+   how much is still owed and when the refund started. Only someone with
+   **Finance view** access sees this list.
+2. Click **Paid another way**. You need **Finance edit** access, the same access
+   that completes a refund paid back by hand. With view-only access the button
+   is disabled, and the banner above the list says why.
+3. The amount defaults to what is still owed. Change it if you paid back less.
+   It cannot be more than is owed, and it cannot be nil while money is still
+   owed. A refund that replaces a superseded card payment closes only for the
+   whole amount.
+4. Say how you paid the member back. This note is required, and it goes in the
+   [audit log](audit-log.md) under **Payment**.
+5. Click **Close as paid another way**.
+
+The amount is recorded as refunded on the payment, the same way a refund you
+complete by hand is recorded. The refund leaves Refunds owed, and Net Collected
+stays where it was: the money moves from "owed back" to "refunded". Stripe is
+not asked again.
+
+**Xero.** For a cancellation's card refund on an invoiced payment, the app
+queues the refund credit note that a cancellation refunded by bank transfer
+gets, and the confirmation says so. For any other refund it queues nothing. The
+confirmation then asks you to check the refund is recorded in Xero, and you
+raise the note by hand if it is not.
+
+This action does not cover two kinds of refund:
+
+- A group organiser's refund for a member of their group comes out of the
+  organiser's combined card payment, so it is not listed here.
+- An old group cancellation refund belongs to the group as a whole, not to one
+  booking, so it is not listed either.
+
+Those two still show in the **Exhausted recovery operations** count. Ask a
+developer to reconcile them.
+
 ## Settings reference
 
 The page has no settings. What it shows:
@@ -49,6 +96,7 @@ The page has no settings. What it shows:
 | Domain cards | Per-domain (payment, booking, Xero, email, waitlist, bed allocation, lodge) counts and highest severity |
 | Operator Queue | One row per signal: domain, description, severity, owner, count, and an **Open** link to the fix screen |
 | Generated timestamp | When the dashboard was last computed (shown in the header) |
+| Card refunds Stripe gave up on | Each dead card refund still owed, with a **Paid another way** close. Shown to Finance view, closed with Finance edit |
 
 ### Who sees the named rows
 
@@ -72,6 +120,8 @@ without widening who can read the membership roll.
 | A payment/Xero signal is Critical | A settlement or sync didn't complete | Open it and reconcile; see [Payments](payments.md) / [Xero Sync](xero.md) |
 | An email signal shows exhausted failures | Delivery retries ran out | Investigate in [Email Deliverability](email-deliverability.md) |
 | Counts look stale | The dashboard is computed per visit | Reload the page to regenerate |
+| **Paid another way** says the refund "is still being retried" | Stripe has retries left, so the refund is not stuck yet | Wait. It only appears in the list once its last retry has failed |
+| **Paid another way** says the payment "no longer holds that much to refund" | Another refund or credit on the same payment used the money since the page loaded | Reload the page and check the amount still owed |
 
 ## Related links
 

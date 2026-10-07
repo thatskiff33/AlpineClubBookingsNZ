@@ -3224,6 +3224,35 @@ The rule and its stated limits are `INV-PAY-112`; the interleavings are in
 `edit-financial-review-charge-raise-claim.realdb.test.ts` and
 `payment-recovery.test.ts` ("#3402").
 
+### Card refund recovery row: dead, then paid another way (#3372)
+
+A card refund the club decided to make and Stripe has not yet paid is a
+`REFUND_BOOKING_MODIFICATION` or `REFUND_SUPERSEDED_PAYMENT` recovery row. Until
+it closes it counts in "Refunds owed" and comes off Net Collected (owner, 7 Oct
+2026), at its unsent slices: a recorded refund counts toward a slice only if it
+is on that slice's transaction, is exactly the slice's amount, and was recorded
+after the row was raised (`openCardRefundOwedByOperation`).
+
+```text
+PENDING -> PROCESSING (worker claim, attempts < MAX) -> SUCCEEDED (Stripe refunded every slice)
+PROCESSING -> FAILED  (attempts left: retried at nextRetryAt)
+PROCESSING -> FAILED  (attempts spent: DEAD, alerted once; still owed)
+DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), status-guarded
+                       claim on PENDING|FAILED with attempts >= MAX; lastError is
+                       the paid-another-way marker, nextRetryAt null; the amount,
+                       at most what is still owed, is recorded on the payment
+                       with applyLocalRefundAllocation; audited under `payment`)
+```
+
+The close makes no Stripe call. In Xero it mirrors a cancellation's
+bank-transfer hand-back, and only that: a cancellation's card refund on an
+invoiced payment queues that hand-back's refund credit note, and nothing else
+queues anything. It refuses an organiser child's refund (#3653) and a group
+organiser-cancel settlement's refund (`isOwedCardRefundOperation`). The rule is
+`INV-PAY-119`; the lock is registered as `closeCardRefundPaidAnotherWay#1`. To
+verify: `card-refund-paid-another-way.test.ts`, `open-card-refund-owed.test.ts`
+and `card-refund-paid-another-way.realdb.test.ts` (a double click closes once).
+
 ### Confirm-pending saved-card charge (#3268)
 
 `confirmPendingBookings` claims a hold-expired booking (PENDING -> CONFIRMED

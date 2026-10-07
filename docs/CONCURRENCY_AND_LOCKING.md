@@ -4555,6 +4555,26 @@ reads the credit operation's **recorded outcome**, not a recomputed "would this
 credit?", precisely so a one-shot operation that already skipped can never
 excuse the invoice again.
 
+## Closing a dead card refund as paid another way (#3372)
+
+`closeCardRefundPaidAnotherWay` (`src/lib/card-refund-paid-another-way.ts`)
+closes a card refund recovery row whose retries are spent, because the treasurer
+paid the member back another way, and records the money with
+`applyLocalRefundAllocation`. It is a settlement-money transition, so it takes
+`lock(1)` first (`INV-LOCK-001`): it moves a payment's `refundedAmountCents`
+and closes a refund debt in one commit, and every edit, acceptance, paid cancel
+and refund appeal reads those two separately to size a refund net of what is
+promised back. Under the key it re-reads the row and the payment, refuses a row
+that is not dead (a status the worker would claim, with `attempts >= MAX`), and
+claims it with a status-guarded `updateMany` on exactly that before any money
+moves; a lost claim writes nothing. The payment row lock
+(`applyLocalRefundAllocation`) comes after. The worker never claims a dead row,
+the card-refund webhook is lockless and absorbed by the allocation's
+compare-and-set, and the Xero note is an outbox row kicked after the commit, so
+no provider call runs under the key. A double click queues on the key and the
+second reads the row closed (`card-refund-paid-another-way.realdb.test.ts`).
+Registered as `closeCardRefundPaidAnotherWay#1`.
+
 ## Stripe refund-note link repair: deliberately lock-free (#2901)
 
 `applyStripeRefundNoteLinkRepairs` (`src/lib/xero-refund-note-link-repair.ts`,

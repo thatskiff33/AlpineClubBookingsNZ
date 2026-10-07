@@ -775,7 +775,9 @@ narrow them:
   hand-back task in the queue on this page, each card refund Stripe has not
   yet paid, and each late card charge waiting for the treasurer's decision.
   It drops when you mark a task paid back (or dismiss it), when Stripe pays
-  the refund, or when the treasurer keeps or refunds the late charge.
+  the refund, or when the treasurer keeps or refunds the late charge. A card
+  refund Stripe gave up on stays in it until you close it as **Paid another
+  way** on [Stuck States](stuck-states.md#close-a-card-refund-stripe-gave-up-on).
 - **Credits owed** is every member's account credit that has not yet been
   used: the total of their credit balances. It drops as credit is applied to
   a booking.
