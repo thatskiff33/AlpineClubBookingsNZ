@@ -152,3 +152,27 @@ export function creditKey(memberCreditId: string): string {
 export function handBackKey(manualRefundTaskId: string): string {
   return `handback:${manualRefundTaskId}`;
 }
+
+/**
+ * One joiner's share of a group organiser's settlement (#3854). A
+ * `GroupBookingSettlement` settles each of its children at most once — the
+ * settle flips the child CONFIRMED -> PAID under `lock(1)`, and the settlement
+ * SUCCEEDED, exactly once — so the settlement and the child are the whole
+ * identity. The back-post (#3583) reaches a historical child through this same
+ * key, so a child the live settle already posted is skipped.
+ */
+export function groupSettlementShareKey(groupBookingSettlementId: string, childBookingId: string): string {
+  return `group-settlement:${groupBookingSettlementId}:child:${childBookingId}`;
+}
+
+/**
+ * The refund an organiser's cancellation plan hands back on one child of a
+ * group settlement (#3854; the plan is #1236's `refundPlan`). A child is
+ * cancelled once and the plan is frozen once, so the settlement and the child
+ * are the whole identity. A per-child card refund out of the combined payment
+ * (#3653) is not this line: it has a `PaymentRefund` row of its own and posts
+ * under `refundKey`.
+ */
+export function groupSettlementRefundKey(groupBookingSettlementId: string, childBookingId: string): string {
+  return `group-settlement:${groupBookingSettlementId}:refund:${childBookingId}`;
+}

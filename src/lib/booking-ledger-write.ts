@@ -60,7 +60,8 @@ export type BookingLedgerPosting = {
     | "PAYMENT_TRANSACTION"
     | "PAYMENT_REFUND"
     | "MEMBER_CREDIT"
-    | "CANCELLATION";
+    | "CANCELLATION"
+    | "GROUP_SETTLEMENT";
   anchorId: string;
   narration: string;
   /**

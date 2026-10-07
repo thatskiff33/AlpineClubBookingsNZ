@@ -482,6 +482,8 @@ export async function isEditFinancialReviewChargeRecoveryDead(
     select: { status: true, attempts: true, nextRetryAt: true },
   });
   if (!row) return false;
+  // Not `!isPaymentRecoveryOperationInFlight`: a PENDING row with no retry time
+  // or its attempts spent is dead here, in flight there (see its docblock).
   const claimable = (CLAIMABLE_PAYMENT_RECOVERY_STATUSES as readonly PaymentRecoveryOperationStatus[])
     .includes(row.status);
   return claimable && (row.nextRetryAt === null || row.attempts >= MAX_PAYMENT_RECOVERY_ATTEMPTS);
@@ -528,6 +530,8 @@ export async function enqueueRefundRequestRefundRecovery({
 }
 
 import {
+  buildGroupSettlementRefundRecoveryIdempotencyKey,
+  GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX,
   buildBookingCancellationRefundIdempotencyKey,
   buildBookingCancellationRefundMetadata,
   buildBookingModificationRefundMetadata,
@@ -1016,15 +1020,6 @@ export async function recordDuplicateCaptureRefundRecoveryInlineError({
       lastError: message,
     },
   });
-}
-
-const GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX =
-  "group_settlement_refund_recovery_";
-
-function buildGroupSettlementRefundRecoveryIdempotencyKey(
-  settlementId: string,
-) {
-  return `${GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX}${settlementId}`;
 }
 
 /**
