@@ -72,13 +72,17 @@ export async function readRefundsAndCreditsOwed(
     return sum + owed.handBackCents + owed.lateCaptureCents;
   }, 0);
   // One payment, all its open card refunds: the net-out and the cap are per payment.
-  const byPayment = new Map<string, typeof openCardRefunds>();
+  const byPayment = new Map<
+    string,
+    (typeof openCardRefunds)[number]["payment"] & { recoveryOperations: typeof openCardRefunds }
+  >();
   for (const operation of openCardRefunds) {
-    byPayment.set(operation.paymentId, [...(byPayment.get(operation.paymentId) ?? []), operation]);
+    const payment = byPayment.get(operation.paymentId);
+    if (payment) payment.recoveryOperations.push(operation);
+    else byPayment.set(operation.paymentId, { ...operation.payment, recoveryOperations: [operation] });
   }
   const cardRefundOwedCents = [...byPayment.values()].reduce(
-    (sum, operations) =>
-      sum + openCardRefundOwedCents({ ...operations[0].payment, recoveryOperations: operations }),
+    (sum, payment) => sum + openCardRefundOwedCents(payment),
     0,
   );
   return {

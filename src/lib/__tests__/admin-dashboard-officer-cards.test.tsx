@@ -205,8 +205,6 @@ function mockStats() {
       _count: { transactions: 1 },
       recoveryOperations: [],
       refunds: [],
-      recoveryOperations: [],
-      refunds: [],
       booking: { deletedAt: null, manualRefundTasks: [] },
     },
     {
@@ -389,9 +387,7 @@ describe("admin dashboard officer key cards", () => {
         refundedAmountCents: 0,
         recoveryOperations: [],
         refunds: [],
-        recoveryOperations: [],
-      refunds: [],
-      booking: { deletedAt: null, manualRefundTasks: [] },
+        booking: { deletedAt: null, manualRefundTasks: [] },
       },
     ] as any);
 
