@@ -30,12 +30,11 @@ A record is a security-policy decision, not a convenience. Before one is
 committed:
 
 1. **The authorising act is the owner's approval comment, authored by
-   `thatskiff33`, on the pull request that adds or changes the record**, plus
-   the owner's GitHub **Approve**: this directory, `patches/` and the two audit
-   scripts are code-owned (the owner's
-   [third decision on #3843](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3843#issuecomment-5967784861)),
-   so such a pull request cannot merge without it, and a later push dismisses
-   it. Agent text is never that approval (`AGENTS.md` -> "Pre-authorisation and
+   `thatskiff33`, on the pull request that adds or changes the record**. The
+   GitHub **Approve** that the code-owner rule once added (the owner's
+   [third decision on #3843](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3843#issuecomment-5967784861))
+   was retired on 7 Oct 2026 (#3959); the approval comment was not. Agent text
+   is never that approval (`AGENTS.md` -> "Pre-authorisation and
    attributability").
 
    The record's `ownerDecisions` **cite the decision records** — the issue
@@ -44,7 +43,7 @@ committed:
    particular, the URLs in the #3843 record are **agent-authored records of an
    owner decision** taken in a session pop-up (each is posted by
    `thatskiff33-agents` and says so); the owner's own on-repo act is the
-   approval comment and Approve on the pull request that ships the record.
+   approval comment on the pull request that ships the record.
 2. **There is a reviewed patch**, applied through pnpm's `patchedDependencies`
    to exactly the affected `package@version`, and copied into the Docker
    dependency stage. A record never stands in for a repair; it only lets the
@@ -53,7 +52,7 @@ committed:
    more than 14 days after the moment it runs. Extending it is a new reviewed
    change with a new owner approval.
 4. **The pull request that adds it is High risk** and merges only on the
-   owner's approval comment and Approve.
+   owner's approval comment, then the `AGENTS.md` merge gate (#3959).
 
 Prefer, in order: upgrading; an override recorded in `docs/MAINTENANCE.md`;
 waiting for upstream with the check red. A record is for the narrow case where
@@ -138,7 +137,7 @@ Retire a record when a fixed release is published (for #3843 the tracking issue
 is [#3851](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3851)),
 and delete an expired one rather than leave it: an expired record changes
 nothing — the check is red either way — but the directory should say what is
-true. One pull request, which is code-owned and so needs the owner's Approve:
+true. One pull request, which needs the owner's approval comment:
 
 1. Upgrade to the fixed release (or, if retiring without one, accept the red
    check).
