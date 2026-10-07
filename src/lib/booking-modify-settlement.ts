@@ -27,6 +27,8 @@ import {
   type SupersededPrimaryPaymentIntent,
 } from "@/lib/booking-payment-cleanup";
 import {
+  bookingAmountOwedCents,
+  bookingWorthCents,
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
   isSettledBookingStatus,
@@ -416,6 +418,7 @@ export async function applyLifecycleTransitions(
     bookingId,
     newCheckIn,
     newFinalPriceCents,
+    feeRecordedByThisEditCents,
     format,
     guestsForPricing,
     skipBookingLifecycleRules,
@@ -425,6 +428,15 @@ export async function applyLifecycleTransitions(
     bookingId: string;
     newCheckIn: Date;
     newFinalPriceCents: number;
+    /**
+     * #3750 (#3955 review F1): a change fee THIS edit recorded on the payment
+     * of a booking with nothing captured ("Add fee to amount owed"), already
+     * written by the caller. With the fee already on the payment it is what
+     * the booking is worth (`bookingWorthCents`), so the credit clamp, the $0
+     * decision and the stale-intent comparison below all read worth, never the
+     * bare price. Every other edit door records none and passes 0.
+     */
+    feeRecordedByThisEditCents: number;
     format: ClubFormat;
     guestsForPricing: Array<{ isMember: boolean }>;
     skipBookingLifecycleRules: boolean;
@@ -525,6 +537,16 @@ export async function applyLifecycleTransitions(
   const isRepriceablePrePayment =
     newStatus === BookingStatus.PENDING ||
     newStatus === BookingStatus.PAYMENT_PENDING;
+  // #3750 (#3955 review F1, `INV-PAY-119`): the fee recorded on the payment —
+  // before this edit, plus what this edit recorded — is owed with the price, so
+  // the clamp keeps credit up to the booking's WORTH and the $0 decision and
+  // stale-intent comparison read what it owes. Read from the one home.
+  const recordedChangeFeeCents =
+    Math.max(0, booking.payment?.changeFeeCents ?? 0) + feeRecordedByThisEditCents;
+  const newWorthCents = bookingWorthCents({
+    finalPriceCents: newFinalPriceCents,
+    changeFeeCents: recordedChangeFeeCents,
+  });
   if (!skipBookingLifecycleRules && isRepriceablePrePayment) {
     const appliedBeforeClamp = await deriveBookingAppliedCreditCents(
       bookingId,
@@ -532,14 +554,18 @@ export async function applyLifecycleTransitions(
     );
     if (appliedBeforeClamp > 0) {
       const clamp = await clampAppliedCreditToBookingPrice(
-        { memberId: bookingOwner(booking).memberId, bookingId, newFinalPriceCents, format },
+        { memberId: bookingOwner(booking).memberId, bookingId, newWorthCents, format },
         tx,
       );
       appliedCreditCents = clamp.appliedCreditCents;
       refundedExcessCreditCents = clamp.refundedExcessCents;
     }
   }
-  const effectivePriceCents = newFinalPriceCents - appliedCreditCents;
+  const effectivePriceCents = bookingAmountOwedCents({
+    finalPriceCents: newFinalPriceCents,
+    changeFeeCents: recordedChangeFeeCents,
+    appliedCreditCents,
+  });
 
   if (
     !skipBookingLifecycleRules &&

@@ -54,6 +54,14 @@ vi.mock("@/lib/booking-payment-state", () => ({
   // runs, so the real value is handed back rather than a stub - nothing here
   // exercises it, and a wrong list would be a silently different population.
   CAPTURED_PAYMENT_STATUS_LIST: ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"],
+  // #3750: the real one home of worth and amount owed — pure arithmetic.
+  bookingWorthCents: (input: { finalPriceCents: number; changeFeeCents: number | null }) =>
+    input.finalPriceCents + Math.max(0, input.changeFeeCents ?? 0),
+  bookingAmountOwedCents: (input: {
+    finalPriceCents: number;
+    changeFeeCents: number | null;
+    appliedCreditCents: number;
+  }) => input.finalPriceCents + Math.max(0, input.changeFeeCents ?? 0) - input.appliedCreditCents,
 }));
 vi.mock("@/lib/policies/booking-route-decisions", () => ({
   calculateBookingHoldDecision: vi.fn(),
@@ -107,13 +115,14 @@ describe("applyLifecycleTransitions — F20 applied-credit clamp (#1887)", () =>
       bookingId: "bk-1",
       newCheckIn: new Date("2026-08-01"),
       newFinalPriceCents: 3000,
+      feeRecordedByThisEditCents: 0,
       format: CLUB_FORMAT_TEST,
       guestsForPricing: [{ isMember: true }],
       skipBookingLifecycleRules: false,
     });
 
     expect(mockClamp).toHaveBeenCalledWith(
-      { memberId: "member-1", bookingId: "bk-1", newFinalPriceCents: 3000, format: CLUB_FORMAT_TEST },
+      { memberId: "member-1", bookingId: "bk-1", newWorthCents: 3000, format: CLUB_FORMAT_TEST },
       expect.anything(),
     );
     expect(result.newStatus).toBe("PAID");
@@ -154,6 +163,7 @@ describe("applyLifecycleTransitions — F20 applied-credit clamp (#1887)", () =>
       bookingId: "bk-1",
       newCheckIn: new Date("2026-08-01"),
       newFinalPriceCents: 3000,
+      feeRecordedByThisEditCents: 0,
       format: CLUB_FORMAT_TEST,
       guestsForPricing: [{ isMember: true }],
       skipBookingLifecycleRules: false,
@@ -178,6 +188,77 @@ describe("applyLifecycleTransitions — F20 applied-credit clamp (#1887)", () =>
     );
   });
 
+  it("#3750 (#3955 F1): keeps credit up to the WORTH and never settles at $0 while a recorded fee is owed", async () => {
+    // Priced 40000 with 30000 credit applied; a correction removes 20000 and
+    // records a 10000 fee. The bare price (20000) is below the credit, but the
+    // booking is worth 30000 — the credit covers it exactly and nothing is
+    // given back; owed 0 settles it at $0 WITH the fee paid by credit.
+    mockDerive.mockResolvedValue(30000);
+    mockClamp.mockResolvedValue({ appliedCreditCents: 30000, refundedExcessCents: 0 });
+
+    const exact = await applyLifecycleTransitions(makeTx(), {
+      booking: baseBooking({ creditAppliedCents: 30000 }),
+      bookingId: "bk-1",
+      newCheckIn: new Date("2026-08-01"),
+      newFinalPriceCents: 20000,
+      feeRecordedByThisEditCents: 10000,
+      format: CLUB_FORMAT_TEST,
+      guestsForPricing: [{ isMember: true }],
+      skipBookingLifecycleRules: false,
+    });
+    expect(mockClamp).toHaveBeenCalledWith(
+      expect.objectContaining({ newWorthCents: 30000 }),
+      expect.anything(),
+    );
+    expect(exact.appliedCreditCents).toBe(30000);
+    expect(exact.refundedExcessCreditCents).toBe(0);
+
+    // With 25000 credit the same correction leaves 5000 owed: payable, not PAID.
+    vi.clearAllMocks();
+    mockQueueSuperseded.mockResolvedValue([]);
+    mockDerive.mockResolvedValue(25000);
+    mockClamp.mockResolvedValue({ appliedCreditCents: 25000, refundedExcessCents: 0 });
+    const owing = await applyLifecycleTransitions(makeTx(), {
+      booking: { ...baseBooking({ creditAppliedCents: 25000 }), payment: { id: "pay-1", creditAppliedCents: 25000, changeFeeCents: 0 } },
+      bookingId: "bk-1",
+      newCheckIn: new Date("2026-08-01"),
+      newFinalPriceCents: 20000,
+      feeRecordedByThisEditCents: 10000,
+      format: CLUB_FORMAT_TEST,
+      guestsForPricing: [{ isMember: true }],
+      skipBookingLifecycleRules: false,
+    });
+    expect(owing.newStatus).toBe("PAYMENT_PENDING");
+    expect(owing.zeroDollarAutoPaid).toBe(false);
+    expect(mockPaymentUpsert).not.toHaveBeenCalled();
+    // F4: a pending intent is stale unless it asks for what is owed (5000).
+    expect(mockQueueSuperseded).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ newFinalPriceCents: 5000 }),
+    );
+  });
+
+  it("#3750 (#3955 F4): a same-price swap that records a fee supersedes the intent sized before it", async () => {
+    // No credit; the price is unchanged but a fee is now recorded on the
+    // payment, so an intent at the old price is stale.
+    mockDerive.mockResolvedValue(0);
+    await applyLifecycleTransitions(makeTx(), {
+      booking: { ...baseBooking(), payment: { id: "pay-1", creditAppliedCents: 0, changeFeeCents: 1500 } },
+      bookingId: "bk-1",
+      newCheckIn: new Date("2026-08-01"),
+      newFinalPriceCents: 12000,
+      feeRecordedByThisEditCents: 2500,
+      format: CLUB_FORMAT_TEST,
+      guestsForPricing: [{ isMember: true }],
+      skipBookingLifecycleRules: false,
+    });
+    // The fee recorded before this edit (1500) and this edit's (2500) are both owed.
+    expect(mockQueueSuperseded).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ newFinalPriceCents: 16000 }),
+    );
+  });
+
   it("leaves a partially-credit-covered card reprice payable (clamp no-op, no $0 path)", async () => {
     // Applied 4000, reprice to 5000 (still above credit): clamp is a no-op, the
     // booking stays PAYMENT_PENDING with a positive effective price to charge.
@@ -192,6 +273,7 @@ describe("applyLifecycleTransitions — F20 applied-credit clamp (#1887)", () =>
       bookingId: "bk-1",
       newCheckIn: new Date("2026-08-01"),
       newFinalPriceCents: 5000,
+      feeRecordedByThisEditCents: 0,
       format: CLUB_FORMAT_TEST,
       guestsForPricing: [{ isMember: true }],
       skipBookingLifecycleRules: false,
@@ -212,6 +294,7 @@ describe("applyLifecycleTransitions — F20 applied-credit clamp (#1887)", () =>
       bookingId: "bk-1",
       newCheckIn: new Date("2026-08-01"),
       newFinalPriceCents: 3000,
+      feeRecordedByThisEditCents: 0,
       format: CLUB_FORMAT_TEST,
       guestsForPricing: [{ isMember: true }],
       skipBookingLifecycleRules: false,
@@ -238,6 +321,7 @@ describe("applyLifecycleTransitions — F20 applied-credit clamp (#1887)", () =>
       bookingId: "bk-1",
       newCheckIn: new Date("2026-08-01"),
       newFinalPriceCents: 0,
+      feeRecordedByThisEditCents: 0,
       format: CLUB_FORMAT_TEST,
       guestsForPricing: [{ isMember: true }],
       skipBookingLifecycleRules: false,
@@ -285,6 +369,7 @@ describe("applyLifecycleTransitions — stale credit election on a $0 settle (#2
       bookingId: "bk-1",
       newCheckIn: new Date("2026-08-01"),
       newFinalPriceCents: 0,
+      feeRecordedByThisEditCents: 0,
       format: CLUB_FORMAT_TEST,
       guestsForPricing: [{ isMember: true }],
       skipBookingLifecycleRules: false,
@@ -305,6 +390,7 @@ describe("applyLifecycleTransitions — stale credit election on a $0 settle (#2
       bookingId: "bk-1",
       newCheckIn: new Date("2026-08-01"),
       newFinalPriceCents: 9000,
+      feeRecordedByThisEditCents: 0,
       format: CLUB_FORMAT_TEST,
       guestsForPricing: [{ isMember: true }],
       skipBookingLifecycleRules: false,
@@ -324,6 +410,7 @@ describe("applyLifecycleTransitions — stale credit election on a $0 settle (#2
       bookingId: "bk-1",
       newCheckIn: new Date("2026-08-01"),
       newFinalPriceCents: 0,
+      feeRecordedByThisEditCents: 0,
       format: CLUB_FORMAT_TEST,
       guestsForPricing: [{ isMember: true }],
       skipBookingLifecycleRules: false,

@@ -1,12 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   classifyFinishedStayChangeFeeRule,
   defaultCorrectionSettlementMethod,
+  FINISHED_STAY_INVOICE_RAISED_MESSAGE,
   FINISHED_STAY_UNKNOWN_NIGHT_PRICE_MESSAGE,
   finishedStayNoticeDay,
   finishedStayRemovalFeeCents,
   finishedStayRemovedPortion,
+  recordFinishedStayFeeOwed,
   type RemovalPromoRows,
 } from "@/lib/booking-finished-stay-correction";
 import {
@@ -310,5 +312,49 @@ describe("the removed portion a correction is charged on (#3955 F3/F4/F5)", () =
     expect(defaultCorrectionSettlementMethod({ amountCents: 10_000, creditAppliedCents: 0 })).toBe("card");
     expect(defaultCorrectionSettlementMethod({ amountCents: 0, creditAppliedCents: 10_000 })).toBe("credit");
     expect(defaultCorrectionSettlementMethod(null)).toBe("card");
+  });
+});
+
+/**
+ * #3955 review X4: the fee is claimed against the invoice link the edit read,
+ * so a primary invoice persisted mid-edit refuses the write (the request stays
+ * pending) instead of leaving a fee that no invoice and no document carries.
+ */
+describe("recordFinishedStayFeeOwed (#3955 X4)", () => {
+  const txWith = (count: number) => {
+    const updateMany = vi.fn().mockResolvedValue({ count });
+    const create = vi.fn().mockResolvedValue({});
+    return { tx: { payment: { updateMany, create } } as never, updateMany, create };
+  };
+
+  it("increments the fee only while the payment still has the invoice link the edit read", async () => {
+    const { tx, updateMany } = txWith(1);
+    await recordFinishedStayFeeOwed(tx, {
+      bookingId: "bk_1",
+      payment: { id: "pay_1", xeroInvoiceId: null },
+      changeFeeCents: 2_500,
+    });
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "pay_1", xeroInvoiceId: null },
+      data: { changeFeeCents: { increment: 2_500 } },
+    });
+  });
+
+  it("refuses when a primary invoice was persisted since the edit read the payment", async () => {
+    const { tx } = txWith(0);
+    await expect(
+      recordFinishedStayFeeOwed(tx, {
+        bookingId: "bk_1",
+        payment: { id: "pay_1", xeroInvoiceId: null },
+        changeFeeCents: 2_500,
+      }),
+    ).rejects.toThrow(FINISHED_STAY_INVOICE_RAISED_MESSAGE);
+  });
+
+  it("creates a fee-only payment row for a booking that never reached its pay step", async () => {
+    const { tx, create, updateMany } = txWith(1);
+    await recordFinishedStayFeeOwed(tx, { bookingId: "bk_1", payment: null, changeFeeCents: 2_500 });
+    expect(create).toHaveBeenCalledWith({ data: { bookingId: "bk_1", amountCents: 0, changeFeeCents: 2_500 } });
+    expect(updateMany).not.toHaveBeenCalled();
   });
 });

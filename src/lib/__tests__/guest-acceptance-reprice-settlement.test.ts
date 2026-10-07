@@ -237,7 +237,7 @@ describe("the full reduction goes back the way it was paid (D-3813-5)", () => {
     // Read under the member's ledger lock, then returned by the edit's own clamp.
     expect(h.lockMemberCreditLedger).toHaveBeenCalledWith("ann", expect.anything());
     expect(h.clampAppliedCreditToBookingPrice).toHaveBeenCalledWith(
-      expect.objectContaining({ memberId: "ann", bookingId: "booking-1", newFinalPriceCents: 26000 }),
+      expect.objectContaining({ memberId: "ann", bookingId: "booking-1", newWorthCents: 26000 }),
       expect.anything(),
     );
     // The payment's mirror follows the ledger (INV-PAY-024).
@@ -464,7 +464,7 @@ describe("a split payment gets the WHOLE reduction back: cash first, then credit
     });
     expect(h.lockMemberCreditLedger).toHaveBeenCalledWith("ann", expect.anything());
     expect(h.clampAppliedCreditToBookingPrice).toHaveBeenCalledWith(
-      expect.objectContaining({ memberId: "ann", newFinalPriceCents: 26000 }),
+      expect.objectContaining({ memberId: "ann", newWorthCents: 26000 }),
       expect.anything(),
     );
     expect(client.payment.update).toHaveBeenCalledWith({ where: { id: "pay-1" }, data: { creditAppliedCents: 26000 } });

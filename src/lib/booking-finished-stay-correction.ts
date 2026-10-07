@@ -198,6 +198,10 @@ export interface RemovalPromoRows {
   readonly byGuest: ReadonlyMap<string, number | null>;
 }
 
+/** #3955 review X4: the booking's invoice was raised while this change was being applied. */
+export const FINISHED_STAY_INVOICE_RAISED_MESSAGE =
+  "This booking's invoice was raised while the change was being applied. Nothing has been applied; the request is still pending — approve it again.";
+
 export const FINISHED_STAY_UNKNOWN_NIGHT_PRICE_MESSAGE =
   "A night this change removes has no recorded price, so the same-day charge on it cannot be worked out. Nothing has been applied; the request is still pending.";
 
@@ -206,17 +210,53 @@ export const FINISHED_STAY_UNKNOWN_NIGHT_PRICE_MESSAGE =
  * stay with nothing captured is recorded on the booking's payment, so every pay
  * step — the payment page, the card intent, the internet-banking ask and the
  * officer's manual settlement — collects it with the rest through
- * `bookingAmountOwedCents`. The modification row says so, and whether the fee
- * still needs a line on the primary Xero invoice (none had been issued, so no
- * credit note or supplementary invoice carried it).
+ * `bookingAmountOwedCents`, and the primary Xero invoice bills it
+ * (`recordedChangeFeeCents`). The modification row says so; the settle reads
+ * it to post the fee's ledger line under that edit's own key.
  */
 export type FeeAddedToAmountOwed = {
   readonly modificationId: string;
   readonly changeFeeCents: number;
-  readonly onPrimaryInvoice: boolean;
 };
 
 const FEE_ADDED_TO_AMOUNT_OWED_PATH = ["finishedStayCorrection", "feeAddedToAmountOwed"];
+
+/**
+ * Records a correction's fee on an unpaid booking's payment, where every pay
+ * step reads it. A booking that has never reached its pay step has no payment
+ * row yet; this one carries only the fee until it does.
+ *
+ * #3955 review X4: CLAIMED against the invoice link the edit read. The edit
+ * routed its fee on that read (the primary invoice, or its own Xero
+ * document); a primary invoice create that persisted its link since then was
+ * built without the fee, and no document of this edit will carry it, so the
+ * edit is refused and nothing is applied. The guard also orders this write
+ * against that persist on the payment row: whichever writes second sees the
+ * other, and the create reads the recorded fee back in its own write and bills
+ * any gap (`queuePrimaryInvoiceChangeFeeGap`).
+ */
+export async function recordFinishedStayFeeOwed(
+  tx: PrismaTransactionClient,
+  input: {
+    bookingId: string;
+    payment: { id: string; xeroInvoiceId: string | null } | null;
+    changeFeeCents: number;
+  },
+): Promise<void> {
+  if (!input.payment) {
+    await tx.payment.create({
+      data: { bookingId: input.bookingId, amountCents: 0, changeFeeCents: input.changeFeeCents },
+    });
+    return;
+  }
+  const recorded = await tx.payment.updateMany({
+    where: { id: input.payment.id, xeroInvoiceId: input.payment.xeroInvoiceId },
+    data: { changeFeeCents: { increment: input.changeFeeCents } },
+  });
+  if (recorded.count !== 1) {
+    throw new ApiError(FINISHED_STAY_INVOICE_RAISED_MESSAGE, 409);
+  }
+}
 
 /** The fees a finished-stay correction added to this booking's amount owed. */
 export async function loadFeesAddedToAmountOwed(
@@ -229,18 +269,10 @@ export async function loadFeesAddedToAmountOwed(
       changeFeeCents: { gt: 0 },
       newData: { path: FEE_ADDED_TO_AMOUNT_OWED_PATH, equals: true },
     },
-    select: { id: true, changeFeeCents: true, newData: true },
+    select: { id: true, changeFeeCents: true },
     orderBy: { createdAt: "asc" },
   });
-  return rows.map((row) => {
-    const correction = (row.newData as { finishedStayCorrection?: { feeOnPrimaryInvoice?: unknown } })
-      .finishedStayCorrection;
-    return {
-      modificationId: row.id,
-      changeFeeCents: row.changeFeeCents,
-      onPrimaryInvoice: correction?.feeOnPrimaryInvoice === true,
-    };
-  });
+  return rows.map((row) => ({ modificationId: row.id, changeFeeCents: row.changeFeeCents }));
 }
 
 export function finishedStayRemovedPortion(args: {

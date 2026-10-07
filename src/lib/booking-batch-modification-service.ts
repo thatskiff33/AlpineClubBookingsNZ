@@ -157,6 +157,7 @@ import {
   classifyFinishedStayChangeFeeRule,
   finishedStayNoticeDay,
   finishedStayRemovalFeeCents,
+  recordFinishedStayFeeOwed,
   finishedStayRemovedPortion,
   loadRemovalPromoRows,
   type FinishedStayChangeFeeRule,
@@ -1659,17 +1660,6 @@ export async function modifyBookingBatch({
             settlementMethod: input.settlementMethod ?? "card",
           })
         : 0;
-    // #3750 (owner D3, and "Add fee to amount owed", 7 Oct 2026): an unpaid stay
-    // owes the retained share too, "as if they had paid and then were being
-    // refunded less the cancellation fee". With nothing captured the fee is
-    // recorded on the payment below, so every pay step collects it with the
-    // rest (`bookingAmountOwedCents`); where an invoice was already issued the
-    // edit's credit note or supplementary invoice carries it as well, and
-    // where none was, the primary invoice raised later carries it.
-    const feeAddedToAmountOwed =
-      Boolean(finishedStayCorrection) && removalFeeCents > 0 && !hasCapturedPayment(booking.payment);
-    const feeOnPrimaryInvoice = feeAddedToAmountOwed && !hasIssuedPrimaryXeroInvoice(booking);
-
     // #3232 D2: what this move WOULD attract, before the club's waiver is applied.
     // A parked edit is priced by nobody, so it is zero here for the reason it is
     // zero everywhere else on that path. #3750: an add-only finished-stay
@@ -1703,6 +1693,17 @@ export async function modifyBookingBatch({
     // reconciles against the club setting — and puts a waiver in a dragged-along
     // booking's history that nobody granted.
     const changeFeeWaived = waiveChangeFee === true && chargeableChangeFeeCents > 0;
+    // #3750 (owner D3, and "Add fee to amount owed", 7 Oct 2026): an unpaid stay
+    // owes the retained share too, "as if they had paid and then were being
+    // refunded less the cancellation fee". With nothing captured the fee is
+    // recorded on the payment below, so every pay step collects it with the
+    // rest (`bookingAmountOwedCents`); where an invoice was already issued the
+    // edit's credit note or supplementary invoice carries it as well, and
+    // where none was, the primary invoice raised later carries it. Decided on
+    // the fee this edit CHARGES (#3955 review F10), after any waiver.
+    const feeAddedToAmountOwed =
+      Boolean(finishedStayCorrection) && changeFeeCents > 0 && !hasCapturedPayment(booking.payment);
+    const feeOnPrimaryInvoice = feeAddedToAmountOwed && !hasIssuedPrimaryXeroInvoice(booking);
 
     // NULL ON A PARKED EDIT, which is what keeps `applyPaymentAdjustments`
     // inert below rather than a second zero literal beside it: with no options
@@ -1840,18 +1841,13 @@ export async function modifyBookingBatch({
     });
     if (feeAddedToAmountOwed) {
       // Owner decision (7 Oct 2026, "Add fee to amount owed"): recorded where
-      // the pay steps read it. A booking that has never reached its pay step
-      // has no payment row yet; this one carries only the fee until it does.
-      if (booking.payment) {
-        await tx.payment.update({
-          where: { id: booking.payment.id },
-          data: { changeFeeCents: { increment: changeFeeCents } },
-        });
-      } else {
-        await tx.payment.create({
-          data: { bookingId, amountCents: 0, changeFeeCents },
-        });
-      }
+      // the pay steps read it, claimed against the invoice link this edit read
+      // (#3955 review X4) — see `recordFinishedStayFeeOwed`.
+      await recordFinishedStayFeeOwed(tx, {
+        bookingId,
+        payment: booking.payment,
+        changeFeeCents,
+      });
     }
 
     const lifecycle = await applyLifecycleTransitions(tx, {
@@ -1859,6 +1855,8 @@ export async function modifyBookingBatch({
       bookingId,
       newCheckIn: dates.newCheckIn,
       newFinalPriceCents,
+      // #3955 review F1: the fee just recorded is owed with the price.
+      feeRecordedByThisEditCents: feeAddedToAmountOwed ? changeFeeCents : 0,
       format,
       guestsForPricing: guestPlan.guestsForPricing,
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,

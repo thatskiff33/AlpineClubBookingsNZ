@@ -23,6 +23,7 @@ import {
 } from "@/lib/booking-modify";
 import { bookingOwner } from "@/lib/booking-owner";
 import {
+  bookingWorthCents,
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
 } from "@/lib/booking-payment-state";
@@ -370,7 +371,16 @@ export async function repriceBookingAfterGuestAcceptance(
   const creditReturn = returnRoute.kind === "account-credit" ? returnRoute : returnRoute.kind === "money-back" ? returnRoute.creditRemainder : null;
   if (creditReturn) {
     const clamp = await clampAppliedCreditToBookingPrice(
-      { memberId: creditReturn.memberId, bookingId, newFinalPriceCents, format },
+      {
+        memberId: creditReturn.memberId,
+        bookingId,
+        // #3750: credit is kept up to the booking's worth (`INV-PAY-119`).
+        newWorthCents: bookingWorthCents({
+          finalPriceCents: newFinalPriceCents,
+          changeFeeCents: loaded.payment?.changeFeeCents ?? null,
+        }),
+        format,
+      },
       tx,
     );
     if (clamp.refundedExcessCents !== creditReturn.amountCents) {
@@ -393,6 +403,8 @@ export async function repriceBookingAfterGuestAcceptance(
     bookingId,
     newCheckIn: booking.checkIn,
     newFinalPriceCents,
+    // Records no change fee (`INV-PAY-119`).
+    feeRecordedByThisEditCents: 0,
     format,
     guestsForPricing: booking.guests,
     skipBookingLifecycleRules: false,
