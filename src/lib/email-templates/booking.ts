@@ -22,7 +22,9 @@ import {
   unpaidCreditNoteInput,
   unpaidMoneySummaryRows,
 } from "@/lib/booking-money-lines";
+import type { PromoCodeAdjustment } from "@/lib/booking-promo-redemptions";
 import { financialReviewNote } from "@/lib/booking-financial-review-copy";
+import { bookingModifiedRefundSentence } from "@/lib/booking-modified-email-copy";
 import { appliedCreditGiveBackNote } from "@/lib/booking-credit-give-back-copy";
 import { escapeHtml } from "./escape";
 import {
@@ -105,6 +107,7 @@ export function bookingConfirmedTemplate(
     discountCents?: number;
     promoAdjustmentCents?: number;
     promoCode?: string;
+    promoLines?: ReadonlyArray<PromoCodeAdjustment>; // #3828: each code's own row
     // #2328: account credit applied to this booking, read off the ledger by
     // the sender and threaded through unchanged. Absent/zero renders no credit
     // lines and leaves the message byte-for-byte as it was.
@@ -184,10 +187,10 @@ export function bookingConfirmedTemplate(
     promoAdjustmentCents,
     format,
     options?.promoCode,
+    options?.promoLines,
   )) {
-    // The shared rows are unescaped plain text (the flat token path needs them
-    // raw); the promo code inside the label is club-entered data, so escape at
-    // this HTML edge.
+    // The shared rows are raw plain text (the flat token path needs them so); the
+    // club-entered promo code inside the label is escaped at this HTML edge.
     rows.push({ label: escapeHtml(row.label), value: escapeHtml(row.value) });
   }
 
@@ -483,6 +486,10 @@ export function bookingModifiedTemplate(params: {
    * review, the way `confirmedAmountCents` is asked for (`INV-SSOT`).
    */
   financialReviewPending: boolean;
+  refundReturnedToOrganiser: boolean; // #3916: see `sendBookingModifiedEmail`
+  /** #3827 (D-3813-6, `INV-PAY-117`): a bank transfer the club must still send.
+   * REQUIRED, as `financialReviewPending` is (`bookingModifiedRefundSentence`). */
+  refundByBankTransfer: boolean;
 },
   format: ClubFormat,
 ): string {
@@ -567,9 +574,17 @@ export function bookingModifiedTemplate(params: {
   let settlementNote = "";
   if (refundAmountCents > 0) {
     settlementNote = alertBox(
-      `A refund of ${formatCents(refundAmountCents, format)} has been processed to your original payment method.`,
+      bookingModifiedRefundSentence(formatCents(refundAmountCents, format), params.refundByBankTransfer, params.refundReturnedToOrganiser),
       "success"
     );
+    // #3827 (D-3813-5): a split payment's reduction goes back partly as cash and
+    // partly as the credit it was paid with; the member is told both.
+    if (accountCreditAmountCents > 0) {
+      settlementNote += alertBox(
+        `Account credit of ${formatCents(accountCreditAmountCents, format)} has been added for future bookings.`,
+        "success"
+      );
+    }
   } else if (accountCreditAmountCents > 0) {
     settlementNote = alertBox(
       `Account credit of ${formatCents(accountCreditAmountCents, format)} has been added for future bookings.`,
@@ -611,11 +626,7 @@ export function bookingModifiedTemplate(params: {
   `);
 }
 
-export function setupIntentFailedTemplate(data: {
-  firstName: string;
-  checkIn: Date;
-  checkOut: Date;
-}): string {
+export function setupIntentFailedTemplate(data: { firstName: string; checkIn: Date; checkOut: Date }): string {
   // #2256: these had the right locale but no `timeZone`, so they rendered in
   // whatever zone the sending process happened to run in — a 2026-04-15T23:30Z
   // check-in reads as 15 April from a UTC worker and 16 April in New Zealand.
@@ -640,12 +651,7 @@ export function setupIntentFailedTemplate(data: {
  * detail. "Still held for now" is the same reassurance `setupIntentFailedTemplate`
  * gives — the booking has not been cancelled by this.
  */
-export function savedCardChargeFailedTemplate(data: {
-  bookingId: string;
-  firstName: string;
-  checkIn: Date;
-  checkOut: Date;
-}): string {
+export function savedCardChargeFailedTemplate(data: { bookingId: string; firstName: string; checkIn: Date; checkOut: Date }): string {
   const dates = `${emailCalendarDay(data.checkIn)} – ${emailCalendarDay(data.checkOut)}`;
   return layout(`
     ${heading("We Couldn't Charge Your Saved Card")}
@@ -667,7 +673,6 @@ export function savedCardChargeFailedTemplate(data: {
  * changed by this cancellation, never a false "confirmed". No bearer token, so
  * this is not sensitive-log material.
  */
-
 export function splitGuestPortionCancelledTemplate(data: {
   firstName: string;
   checkIn: Date;
@@ -683,12 +688,7 @@ export function splitGuestPortionCancelledTemplate(data: {
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       ...(data.parentBookingReference
-        ? [
-            {
-              label: "Your booking reference",
-              value: escapeHtml(data.parentBookingReference),
-            },
-          ]
+        ? [{ label: "Your booking reference", value: escapeHtml(data.parentBookingReference) }]
         : []),
     ])}
     ${paragraph(ownBookingLine)}

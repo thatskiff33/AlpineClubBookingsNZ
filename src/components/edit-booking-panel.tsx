@@ -36,6 +36,7 @@ import {
 import { countNightsDateOnly, parseDateOnly } from "@/lib/date-only";
 import { promoChangeNotAppliedHeading } from "@/lib/promo-change-not-applied";
 import { type PromoResult } from "@/components/promo-code-input";
+import { promoCodeListEntries } from "@/components/promo-code-list-client";
 import {
   hostingCoverageMutationSignature,
   readHostingCoverageOverridePrompt,
@@ -56,7 +57,7 @@ import {
   renamedGuestsForDependantCheck,
 } from "@/lib/booking-dependant-identity-doors";
 import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
-import { PromoCodeCard } from "@/components/edit-booking/promo-code-card";
+import { hasSeveralPromoCodes, PromoCodeCard } from "@/components/edit-booking/promo-code-card";
 import { ReviewJustificationField } from "@/components/edit-booking/review-justification-field";
 import {
   exceptionProposalSignature,
@@ -97,6 +98,7 @@ import {
   useModificationQuoteState,
 } from "@/components/edit-booking/hooks/use-modification-quote";
 import {
+  promoActionPayload,
   usePromoBeneficiaryReset,
   usePromoSelectionState,
 } from "@/components/edit-booking/hooks/use-promo-selection";
@@ -369,6 +371,9 @@ export function EditBookingPanel({
     : !booking.editPolicy.checkInEditable;
   const isInProgressEdit =
     !overrideEnabled && booking.editPolicy.mode === "in-progress";
+  // In-progress and override edits never touch promo codes. A booking carrying
+  // several codes is NOT locked here: the card shows the list editor where the
+  // club's `multiPromoCodes` switch is on, and C3's read-only card otherwise.
   const promoLocked = isInProgressEdit || overrideEnabled;
 
   function handleCheckInChange(value: string) {
@@ -419,6 +424,8 @@ export function EditBookingPanel({
     setAppliedNewPromo,
     prefillPromoCode,
     setPrefillPromoCode,
+    appliedPromoList,
+    setAppliedPromoList,
     retirePromoSelection,
   } = usePromoSelectionState();
 
@@ -776,35 +783,8 @@ export function EditBookingPanel({
     if (links.length > 0) {
       body.linkGuestToMember = links;
     }
-    if (promoAction.type === "remove") {
-      body.removePromoCode = true;
-    } else if (promoAction.type === "new") {
-      body.promoCode = promoAction.code;
-      // #2266 (MED-4): beneficiary selection for guest-targeted codes, carried
-      // from the shared PromoCodeInput through quote and apply alike. The
-      // input's indexes are positional over [remaining guests..., added
-      // guests...]; convert EXISTING guests to their bookingGuestId so the
-      // server binds people, not positions — a concurrent edit by another
-      // session then refuses loudly instead of redeeming the discount for the
-      // wrong guest. Only TO-BE-ADDED guests (no id yet) stay positional,
-      // relative to this request's addGuests array.
-      if (promoAction.guestIndexes?.length) {
-        const promoGuestIds: string[] = [];
-        const promoAddedGuestIndexes: number[] = [];
-        for (const index of promoAction.guestIndexes) {
-          if (index < remainingGuests.length) {
-            const guest = remainingGuests[index];
-            if (guest) promoGuestIds.push(guest.id);
-          } else {
-            promoAddedGuestIndexes.push(index - remainingGuests.length);
-          }
-        }
-        if (promoGuestIds.length) body.promoGuestIds = promoGuestIds;
-        if (promoAddedGuestIndexes.length) {
-          body.promoAddedGuestIndexes = promoAddedGuestIndexes;
-        }
-      }
-    }
+    // #2266 / #3492: the promo choice, bound to guests the way the server binds them.
+    Object.assign(body, promoActionPayload(promoAction, remainingGuests));
 
     // #2266: the credit election (#2265) — stored on the booking, applied when
     // the member confirms. 0 clears a saved election.
@@ -1081,7 +1061,9 @@ export function EditBookingPanel({
 
   // #2266: the shared PromoCodeInput validated (or cleared) a new code.
   function handleNewPromoApplied(result: PromoResult | null) {
-    if (promoLocked) return;
+    // #3828: the one-code request would release a several-code booking's
+    // other codes (and the server refuses it), so it is never staged there.
+    if (promoLocked || hasSeveralPromoCodes(booking)) return;
     setAppliedNewPromo(result);
     setPrefillPromoCode(undefined);
     if (result?.code) {
@@ -1094,6 +1076,13 @@ export function EditBookingPanel({
       // Cleared: fall back to the stored promo (kept) or no promo at all.
       setPromoAction({ type: "keep" });
     }
+  }
+
+  // #3492: the several-code list changed (add, remove or reorder).
+  function handlePromoListChange(next: PromoResult[]) {
+    if (promoLocked) return;
+    setAppliedPromoList(next);
+    setPromoAction({ type: "list", codes: promoCodeListEntries(next) });
   }
 
   /**
@@ -1811,10 +1800,15 @@ export function EditBookingPanel({
         }
       />
 
-      {/* Promo Code */}
+      {/* Promo Code(s) */}
       {!promoLocked && (
         <PromoCodeCard
+          bookingId={booking.id}
           promo={booking.promo}
+          promoLines={booking.promoLines}
+          appliedPromoList={appliedPromoList}
+          onPromoListChange={handlePromoListChange}
+          onKeepPromoList={retirePromoSelection}
           promoAdjustmentCents={booking.promoAdjustmentCents}
           promoAction={promoAction}
           availablePromoCodes={availablePromoCodes}

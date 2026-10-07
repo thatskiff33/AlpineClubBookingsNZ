@@ -21,19 +21,12 @@ import type { CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
 import { giveBackPaidReductionCredit } from "@/lib/booking-modify-credit-give-back";
 import type { PaidReductionCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
-import {
-  calculateDualRefundAmounts,
-  daysUntilDate,
-  loadCancellationPolicy,
-  getNonMemberHoldPolicy,
-  type CancellationPolicyDb,
-} from "@/lib/cancellation";
+import { getNonMemberHoldPolicy } from "@/lib/cancellation";
 import {
   queueSupersededPrimaryIntentCancellations,
   type SupersededPrimaryPaymentIntent,
 } from "@/lib/booking-payment-cleanup";
 import {
-  getRemainingRefundableCents,
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
   isSettledBookingStatus,
@@ -49,6 +42,7 @@ import {
   deriveBookingAppliedCreditCents,
 } from "@/lib/member-credit";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
+import { refundableCashNetOfOpenHandBacks } from "@/lib/edit-refund-hand-back";
 import { ApiError } from "@/lib/api-error";
 import {
   OrganiserChildRefundRefusedError,
@@ -56,22 +50,6 @@ import {
   type CombinedCardSettlement,
 } from "@/lib/organiser-child-refund";
 import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard } from "@/lib/group-organiser-paid";
-
-export type BookingModificationSettlementOptions = {
-  basisAmountCents: number;
-  cardRefundAmountCents: number;
-  cardRefundPercentage: number;
-  accountCreditAmountCents: number;
-  accountCreditPercentage: number;
-  daysUntilCheckIn: number;
-  requiresSettlementMethod: boolean;
-  /**
-   * #3653: the booking was paid for by its group organiser, so the reduction
-   * goes back to the organiser's card and there is no choice to make - the
-   * joiner paid nothing and is never handed account credit for it.
-   */
-  returnsToOrganiser: boolean;
-};
 
 export type PaymentAdjustmentResult = {
   refundAmountCents: number;
@@ -138,88 +116,16 @@ export function organiserChildChargeRefusal({
 // isSettledBookingStatus moved to booking-payment-state (#1729) so the Xero
 // period lock-date guard shares the hasIssuedPrimaryXeroInvoice derivation.
 
-/**
- * `db` is REQUIRED and reads the cancellation policy set: this module is
- * transaction-scoped and imports no module-level client, so a default would hide
- * a second pooled connection under the caller's locks. `INV-LOCK-004`; see
- * `CancellationPolicyDb` in `cancellation.ts`.
- *
- * `todayAtClub` is REQUIRED for the SAME reason and is the other half of the
- * same rule (#3123). `INV-LOCK-004` names the club timezone as one of only two
- * reads that cannot take a transaction client, so the club's day is resolved by
- * whichever caller opened the transaction, BEFORE it opened it, and arrives here
- * as a value. All four production callers hold the global cohort key and the
- * per-lodge capacity key when they reach this line.
- */
-export async function calculateModificationSettlementOptions({
-  booking,
-  netChargeCents,
-  db,
-  todayAtClub,
-}: {
-  booking: Pick<
-    LoadedBookingForModify,
-    "checkIn" | "status" | "payment" | "lodgeId" | "organiserSettled" | "parentBookingId"
-  >;
-  netChargeCents: number;
-  db: CancellationPolicyDb;
-  /**
-   * The club's own calendar day (`INV-CONFIG-002`), resolved outside this
-   * transaction. It feeds `daysUntilDate` below, which is the refund-tier
-   * boundary: a day early tiers a member's reduction refund one step down from
-   * the club's published policy.
-   */
-  todayAtClub: CalendarDate;
-}): Promise<BookingModificationSettlementOptions | null> {
-  const reductionAmountCents = Math.max(0, -netChargeCents);
-  const remainingRefundableCents = getRemainingRefundableCents(booking.payment);
-  const basisAmountCents = Math.min(
-    reductionAmountCents,
-    remainingRefundableCents,
-  );
-  const hasSettledPayment =
-    isSettledBookingStatus(booking.status) && hasCapturedPayment(booking.payment);
-
-  if (basisAmountCents <= 0 || !hasSettledPayment) {
-    return null;
-  }
-
-  const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, db);
-  const daysUntilCheckIn = daysUntilDate(booking.checkIn, todayAtClub);
-  const {
-    cardRefundAmountCents,
-    cardRefundPercentage,
-    creditRefundAmountCents,
-    creditRefundPercentage,
-  } = calculateDualRefundAmounts(basisAmountCents, daysUntilCheckIn, policy);
-
-  if (paidByOrganiserCard(booking)) {
-    // #3653: one disposition, the organiser's card, so nothing to choose. A
-    // child the organiser settled by Internet Banking keeps the ordinary
-    // options: no card money moved, and that group's settlement is #3642's.
-    return {
-      basisAmountCents,
-      cardRefundAmountCents,
-      cardRefundPercentage,
-      accountCreditAmountCents: 0,
-      accountCreditPercentage: 0,
-      daysUntilCheckIn,
-      requiresSettlementMethod: false,
-      returnsToOrganiser: true,
-    };
-  }
-  return {
-    basisAmountCents,
-    cardRefundAmountCents,
-    cardRefundPercentage,
-    accountCreditAmountCents: creditRefundAmountCents,
-    accountCreditPercentage: creditRefundPercentage,
-    daysUntilCheckIn,
-    requiresSettlementMethod:
-      cardRefundAmountCents > 0 || creditRefundAmountCents > 0,
-    returnsToOrganiser: false,
-  };
-}
+// #3829: the settlement OPTIONS (what a reduction may return, and how) moved
+// to `booking-modify-settlement-options.ts` verbatim, to keep this module inside
+// its size budget once epic #3813 composed with main; re-exported here so no
+// importer or barrel moved.
+export {
+  calculateFullReductionSettlementOptions,
+  calculateModificationSettlementOptions,
+  type BookingModificationSettlementOptions,
+} from "@/lib/booking-modify-settlement-options";
+import type { BookingModificationSettlementOptions } from "@/lib/booking-modify-settlement-options";
 
 // #3232: the settlement-required refusal moved to `booking-modify-settlement-
 // required.ts`, whose only import is `ApiError`, so a caller that needs to
@@ -295,6 +201,7 @@ export async function applyPaymentAdjustments(
     settlementMethod,
     todayAtClub,
     format,
+    appliedCreditReturnedByCaller = false,
   }: {
     booking: LoadedBookingForModify;
     priceDiffCents: number;
@@ -305,6 +212,14 @@ export async function applyPaymentAdjustments(
     todayAtClub: CalendarDate;
     /** #3809: resolved before the transaction, for the give-back's ledger lock. */
     format: ClubFormat;
+    /**
+     * #3827 (owner decision D-3813-5): the caller returns the applied credit
+     * itself, in full and untiered - a guest's acceptance re-price, which is not
+     * a cancellation - so #3809's tiered give-back below must not also run, or
+     * the credit would come back twice (or tiered, against the decision).
+     * Every ordinary edit door omits it and keeps #3809's give-back.
+     */
+    appliedCreditReturnedByCaller?: boolean;
   },
 ): Promise<PaymentAdjustmentResult> {
   const inSettledStatus = isSettledBookingStatus(booking.status);
@@ -313,7 +228,8 @@ export async function applyPaymentAdjustments(
   const hasSucceededPayment =
     hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
-  const remainingRefundableCents = getRemainingRefundableCents(booking.payment);
+  // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
+  const remainingRefundableCents = await refundableCashNetOfOpenHandBacks(tx, booking.payment);
 
   const netAmountCents = priceDiffCents + changeFeeCents;
   const selectedSettlement = resolveSelectedSettlementAmount({
@@ -333,7 +249,7 @@ export async function applyPaymentAdjustments(
   // write here. Its Xero note is that give-back, as a card refund's is the
   // refund; with nothing captured there is then no other note to raise.
   const creditGiveBack =
-    netAmountCents < 0
+    netAmountCents < 0 && !appliedCreditReturnedByCaller
       ? await giveBackPaidReductionCredit(tx, {
           booking,
           reductionCents: -netAmountCents,

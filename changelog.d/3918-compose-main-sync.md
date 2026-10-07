@@ -1,0 +1,1 @@
+- **Several codes on one booking now work with this release's other money changes.** A cancellation after a bank-transfer edit refund gives back the right amount of account credit. A guest's acceptance that lowers an organiser-paid group booking refunds the organiser's card. If that card can't take the full amount, the acceptance still goes through and nothing changes. (#3829)

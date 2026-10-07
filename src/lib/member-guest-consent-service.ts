@@ -7,6 +7,11 @@ import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import {
+  repriceBookingAfterGuestAcceptance,
+  settleGuestAcceptanceRepriceAfterCommit,
+  type GuestAcceptanceReprice,
+} from "@/lib/booking-guest-acceptance-reprice";
+import {
   BookingGuestRemovalError,
   removeBookingGuestInTransaction,
 } from "@/lib/booking-guest-removal-service";
@@ -102,7 +107,11 @@ export type MemberGuestConsentBlockedReason =
   | "OTHER";
 
 export type MemberGuestConsentOutcome =
-  | { outcome: "APPROVED" }
+  | {
+      outcome: "APPROVED";
+      /** #3827: what the acceptance did to the booking's promo codes, if anything. */
+      reprice?: GuestAcceptanceReprice;
+    }
   /**
    * `creditCents` is what the reduction actually settled as account credit, read
    * off the shared removal path's own result rather than recomputed. The outcome
@@ -528,9 +537,8 @@ export async function respondToMemberGuestConsent(params: {
   // RUNTIME reader, not the server binding: this module is reached from
   // `instrumentation.node.ts` through `cron-member-guest-consent-expiry`, where
   // `server-only` is a bare throw at import.
-  const clubTodayDateOnly = dateOnlyInstantOf(
-    clubToday(await readClubTimeZoneOutsideRequest()),
-  );
+  const clubTodayCalendar = clubToday(await readClubTimeZoneOutsideRequest());
+  const clubTodayDateOnly = dateOnlyInstantOf(clubTodayCalendar);
   // #3029 S5 — the dietary seeding toggle, read here for the same reason. A
   // member guest's profile note is NOT copied onto the row while their consent
   // is pending; granting it below fills the row, if still empty (`INV-MOD-059`).
@@ -583,7 +591,25 @@ export async function respondToMemberGuestConsent(params: {
             actorMemberId,
           },
         );
-        return { outcome: "APPROVED" } as const;
+        // #3827 (D-3813-4): the guest is staying now, so the codes the booking
+        // carries are re-priced under the ordinary edit rules — under the
+        // global and per-lodge locks this transaction already holds.
+        const reprice = await repriceBookingAfterGuestAcceptance(tx, {
+          bookingId,
+          acceptedGuestId: guestId,
+          actorMemberId,
+          todayAtClub: clubTodayCalendar,
+          format,
+        });
+        if (!reprice.repriced && reprice.reason !== "NO_PROMOTION") {
+          logger.info(
+            { bookingId, guestId, reason: reprice.reason },
+            "A guest's acceptance left the booking's promo codes as they were (#3827)",
+          );
+        }
+        return reprice.repriced
+          ? ({ outcome: "APPROVED", reprice } as const)
+          : ({ outcome: "APPROVED" } as const);
       }
 
       const claimed = await claimConsentTransition(
@@ -844,6 +870,15 @@ export async function finaliseMemberGuestConsentTransition(params: {
     // The claim was lost. No email, no removal, no bed write, no audit entry —
     // the winner already wrote all of them, and a second set would be a lie.
     return;
+  }
+
+  if (outcome.outcome === "APPROVED" && outcome.reprice?.repriced) {
+    await settleGuestAcceptanceRepriceAfterCommit({
+      bookingId,
+      actorMemberId,
+      reprice: outcome.reprice,
+      format,
+    });
   }
 
   if (outcome.outcome === "APPROVED") {
@@ -1311,3 +1346,4 @@ async function notifyMemberGuestConsentOutcome(params: {
     );
   }
 }
+

@@ -42,6 +42,7 @@ const modulesOn: FeatureFlags = {
   alpineCentralServer: false,
   commsPortal: false,
   memberLodgeRoster: false,
+  multiPromoCodes: false,
 };
 
 function emptyEmailResponses() {

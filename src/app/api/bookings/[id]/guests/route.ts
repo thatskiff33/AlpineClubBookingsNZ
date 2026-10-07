@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
+import { repriceBookingPromotions } from "@/lib/booking-promotions";
 import { bookingOwner } from "@/lib/booking-owner";
 import {
   checkOwnDependantIdentityForParty,
@@ -14,6 +16,7 @@ import {
   PaymentSource,
   type AgeTier,
   type BookingGuest,
+  type MemberGuestConsentStatus,
 } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -43,23 +46,10 @@ import {
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
 import {
-  deletePromoRedemptionAndAdjustCount,
-  lockAndRefreshPromoCodeUsage,
-  replacePromoRedemptionAllocations,
-  validateAndCalculatePromoDiscount,
-} from "@/lib/promo";
-import {
   recordBookingNightAdjustments,
   type PromoAdjustmentTarget,
 } from "@/lib/night-adjustment-write";
-import {
-  describePromoCapCoverage,
-  type PromoCoverageNotice,
-} from "@/lib/promo-cap-coverage";
-import {
-  selectedIndexesForStoredGuestTargets,
-  targetBookingGuestIdsForSelectedIndexes,
-} from "@/lib/promo-stored-guest-targets";
+import type { PromoCoverageNotice } from "@/lib/promo-cap-coverage";
 import { ApiError as SharedApiError } from "@/lib/api-error";
 import { ORGANISER_CHILD_CHARGE_REFUSAL, paidByOrganiserCard } from "@/lib/group-organiser-paid";
 import { logAudit } from "@/lib/audit";
@@ -324,7 +314,7 @@ export async function POST(
           member: true,
           // #3369: the owner may be an Organisation; bookingOwner() reads both.
           organisation: { select: { name: true, email: true } },
-          promoRedemption: {
+          promoRedemptions: {
             include: {
               guestTargets: { select: { bookingGuestId: true } },
               promoCode: {
@@ -341,6 +331,11 @@ export async function POST(
       if (!booking) {
         throw new ApiError("Booking not found", 404);
       }
+
+      // #3827: every code the booking carries, in its stored order.
+      const promoRedemptions = bookingPromoRedemptions(booking).filter(
+        (redemption) => redemption.promoCode,
+      );
 
       if (
         bookingOwner(booking).memberId !== session.user.id &&
@@ -785,6 +780,8 @@ export async function POST(
         perNightRates: ReturnType<typeof pricedPartyMember>["perNightCents"];
         nightDates: ReturnType<typeof pricedPartyMember>["nightDates"];
         firstNight: Date;
+        /** #3827 (D-3813-4): only a guest actually staying can benefit from a code. */
+        consentStatus: MemberGuestConsentStatus | null;
       };
       const newGuestNightRates: PartyGuestNightRate[] = [];
       // #3029: each added row's snapshot, from the linked members' CURRENT
@@ -850,6 +847,7 @@ export async function POST(
           // included); firstNight remains the booking's check-in so internal
           // work-party promos date their window from the stay start.
           firstNight: booking.checkIn,
+          consentStatus: guest.consentStatus,
         });
       }
 
@@ -869,6 +867,7 @@ export async function POST(
             perNightRates: priced.perNightCents,
             nightDates: priced.nightDates,
             firstNight: booking.checkIn,
+            consentStatus: guest.consentStatus,
           };
         }),
         ...newGuestNightRates,
@@ -888,6 +887,7 @@ export async function POST(
       let newPromoAdjustmentCents = 0;
       let promoRemoved = false;
       let promoCoverage: PromoCoverageNotice | null = null;
+      let remainingPromoCodeLabel = bookingPromoCodeLabel(booking);
       // #3276: what the promotion took off each night or guest; empty when the
       // booking carries none.
       let adjustmentTargets: PromoAdjustmentTarget[] = [];
@@ -900,75 +900,34 @@ export async function POST(
         // account for.
         newDiscountCents = booking.discountCents;
         newPromoAdjustmentCents = booking.promoAdjustmentCents;
-      } else if (booking.promoRedemption?.promoCode) {
-        // Row-lock the promo code and re-read its usage counter before the caps
-        // are checked (#2299). Adding a member guest to an assigned promo makes
-        // that member a NEW beneficiary, so this path can take a
-        // total-redemptions slot, not just keep one — two concurrent add-guest
-        // requests on different bookings could otherwise both pass a
-        // "one use left" check. The per-lodge capacity lock is already held, so
-        // the order stays lodge -> promo row.
-        const promo = await lockAndRefreshPromoCodeUsage(
-          tx,
-          booking.promoRedemption.promoCode
-        );
-        const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
-          booking.promoRedemption,
-          guestNightRates
-        );
-        const application = await validateAndCalculatePromoDiscount(
-          promo,
-          {
-            memberId: bookingOwner(booking).memberId,
-            bookingCheckIn: booking.checkIn,
-            totalPriceCents: newTotalPriceCents,
-            guests: guestNightRates,
-          },
-          promo.assignments.length > 0
-            ? promo.assignments.map((assignment) => assignment.memberId)
-            : null,
-          {
-            excludeBookingId: bookingId,
-            db: tx,
-            selectedGuestIndexes,
-            lodgeId: bookingLodgeId,
-            // #2390: adding guests is the edit most likely to outgrow a cap.
-            // Everyone already benefiting keeps the discount; the new arrivals
-            // are priced normally and named in the response.
-            capOverflow: "coverExisting",
-            // #3123 — resolved above, before this transaction opened
-            // (`INV-LOCK-004`).
-            todayAtClub,
-          }
-        );
-
-        if (application.error || !application.discount) {
-          promoRemoved = true;
-          await deletePromoRedemptionAndAdjustCount(tx, booking.promoRedemption);
-        } else {
-          const promoResult = application.discount;
-          newDiscountCents = promoResult.discountCents;
-          newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
-          adjustmentTargets = promoResult.adjustmentTargets;
-          promoCoverage = await describePromoCapCoverage(tx, {
-            promoCode: promo.code,
-            capCoverage: application.capCoverage,
-          });
-
-          await replacePromoRedemptionAllocations(
-            tx,
-            booking.promoRedemption,
-            newDiscountCents,
-            newPromoAdjustmentCents,
-            promoResult.freeNightsUsed,
-            promoResult.eligibleGuestCount,
-            promoResult.allocations,
-            targetBookingGuestIdsForSelectedIndexes(
-              guestNightRates,
-              application.selectedGuestIndexes
-            ),
-          );
-        }
+      } else if (promoRedemptions.length > 0) {
+        // #3827: every code the booking carries, through the one re-price,
+        // which row-locks each code and re-reads its usage counter before the
+        // caps are checked (#2299, INV-MONEY-023). Adding a member guest to an
+        // assigned promo makes that member a NEW beneficiary, so this path can
+        // take a total-redemptions slot, not just keep one. The per-lodge
+        // capacity lock is already held, so the order stays lodge -> promo rows.
+        // #2390: adding guests is the edit most likely to outgrow a cap.
+        // Everyone already benefiting keeps the discount; the new arrivals are
+        // priced normally and named in the response.
+        const repriced = await repriceBookingPromotions(tx, {
+          bookingId,
+          redemptions: promoRedemptions,
+          memberId: bookingOwner(booking).memberId,
+          bookingCheckIn: booking.checkIn,
+          totalPriceCents: newTotalPriceCents,
+          guests: guestNightRates,
+          lodgeId: bookingLodgeId,
+          // #3123 — resolved above, before this transaction opened
+          // (`INV-LOCK-004`).
+          todayAtClub,
+        });
+        newDiscountCents = repriced.newDiscountCents;
+        newPromoAdjustmentCents = repriced.newPromoAdjustmentCents;
+        promoRemoved = repriced.promoRemoved;
+        promoCoverage = repriced.promoCoverage;
+        remainingPromoCodeLabel = repriced.remainingPromoCodeLabel;
+        adjustmentTargets = repriced.adjustmentTargets;
       }
 
       // #3276: after the last night write and the promotion write, record what
@@ -1209,7 +1168,7 @@ export async function POST(
       const { priceLines, sides: pricingSides } = parked
         ? { priceLines: null, sides: null }
         : await computeModificationPricing(
-            { bookingId, site: "guest-add" },
+            { bookingId, site: "guest-add", promoCodes: { store: tx, before: booking } },
             async () => {
               // The re-read is narration's own I/O and runs INSIDE the guard:
               // a failure here stores no lines and fails no edit.
@@ -1225,7 +1184,7 @@ export async function POST(
                   nights: { select: { stayDate: true, priceCents: true } },
                 },
               });
-              const promoCode = booking.promoRedemption?.promoCode?.code ?? null;
+              const promoCode = bookingPromoCodeLabel(booking);
               return {
                 before: pricingSideFromStoredGuests(booking.guests, {
                   promoAdjustmentCents: booking.promoAdjustmentCents,
@@ -1233,7 +1192,7 @@ export async function POST(
                 }),
                 after: pricingSideFromWrittenGuests(writtenGuests, {
                   promoAdjustmentCents: newPromoAdjustmentCents,
-                  promoCode: promoRemoved ? null : promoCode,
+                  promoCode: remainingPromoCodeLabel,
                 }),
               };
             },
@@ -1532,6 +1491,8 @@ export async function POST(
         newFinalPriceCents: result.booking.finalPriceCents,
         changeFeeCents: 0,
         refundAmountCents: 0,
+        // Guest adds never decrease the price, so nothing is refunded.
+        refundByBankTransfer: false,
         appliedCreditGivenBackCents: 0,
         additionalAmountCents: result.additionalAmountCents,
         additionalPaymentMethod:
@@ -1546,6 +1507,7 @@ export async function POST(
         // #2390: same words as the edit preview and the booking history.
         promoCoverageNote: result.promoCoverage?.message ?? null,
         financialReviewPending,
+        refundReturnedToOrganiser: false,
         lodgeId: result.booking.lodgeId,
       }, format).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send booking modified email")

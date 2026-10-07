@@ -1476,6 +1476,7 @@ describe("#3640 / INV-PAY-103 - a card refund adds to the refunded total", () =>
         cancelRefundableBaseCents({
           amountCents: ctx.payment.amountCents,
           refundedAmountCents: ctx.payment.refundedAmountCents,
+          openNonCancellationHandBackCents: 0,
           finalPriceCents,
           changeFeeCents,
         });

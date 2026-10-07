@@ -8,6 +8,7 @@ import { withTimeZoneAsync } from "@/lib/__tests__/helpers/timezone";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { SECOND_INSTRUMENT_SETTLEMENT_CONFLICT_EVENT_KIND } from "@/lib/manual-settlement-reversal-event";
 import { unsettledRefundNoteRows } from "@/lib/xero-refund-note-unsettled";
+import { modificationNoteWording, readModificationNoteWording } from "@/lib/xero-refund-method";
 
 function makeBooking(overrides: Record<string, unknown> = {}) {
   return {
@@ -298,6 +299,8 @@ function createDependencies(state: {
   // #3535: MemberCreditNoteAllocation totals per booking (INV-PAY-017's
   // allocation term). Empty for every pre-existing test.
   allocatedAppliedCreditByBookingId?: Record<string, number>;
+  // #3836: applied credit with no Xero note stamped, per booking.
+  unallocatedAppliedCreditByBookingId?: Record<string, number>;
 }) {
   const links = state.links ?? [];
   const operations = state.operations ?? [];
@@ -492,6 +495,16 @@ function createDependencies(state: {
             }))
         ),
       },
+      memberCredit: {
+        groupBy: vi.fn().mockImplementation(async ({ where }: any) =>
+          (where?.appliedToBookingId?.in ?? [])
+            .filter((bookingId: string) => bookingId in (state.unallocatedAppliedCreditByBookingId ?? {}))
+            .map((bookingId: string) => ({
+              appliedToBookingId: bookingId,
+              _sum: { amountCents: -state.unallocatedAppliedCreditByBookingId![bookingId]! },
+            })),
+        ),
+      },
       // #3187: the settled charge shares a parked booking edit's money lives on.
       manualRefundTask: {
         findMany: vi.fn().mockImplementation(async ({ where }: any) =>
@@ -572,6 +585,10 @@ function createDependencies(state: {
     }),
     enqueueXeroRefundCreditNoteOperation: vi.fn().mockResolvedValue({
       queueOperationId: "queue_refund_credit",
+      message: "queued",
+    }),
+    enqueueXeroAppliedCreditAllocationOperation: vi.fn().mockResolvedValue({
+      queueOperationId: "queue_applied_credit_allocation",
       message: "queued",
     }),
     enqueueXeroCreditNoteAllocationOperation: vi.fn().mockResolvedValue({
@@ -2273,6 +2290,129 @@ describe("runBookingXeroRepair", () => {
     });
   });
 
+  // #3836: a booking paid entirely by credit on the card path, invoiced before
+  // #3836 with its applied credit never allocated, so Xero shows it owing.
+  function creditOnlyCardBooking(overrides: Record<string, unknown> = {}) {
+    return makeBooking({
+      status: "PAID",
+      payment: { ...makeBooking().payment, amountCents: 0, creditAppliedCents: 10000, stripePaymentIntentId: null, stripePaymentMethodId: null, source: "STRIPE" },
+      ...overrides,
+    });
+  }
+  const unallocated = { unallocatedAppliedCreditByBookingId: { booking_1: 10000 } };
+  const appliedCreditAllocationOp = (overrides: Record<string, unknown>) =>
+    makeOperation({
+      id: "op_applied_allocation", localModel: "Payment", localId: "payment_1", entityType: "ALLOCATION", operationType: "ALLOCATE",
+      xeroObjectType: null, xeroObjectId: null, requestPayload: { queueType: "APPLIED_CREDIT_ALLOCATION", bookingId: "booking_1" }, ...overrides,
+    });
+
+  it("MUTATION (#3836): queues the applied-credit allocation for a credit-only card invoice, and --apply queues it once", async () => {
+    const deps = createDependencies({ bookings: [creditOnlyCardBooking()], operations: [makePrimaryInvoiceCreateOperation()], ...unallocated });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.find((finding) => finding.code === "UNALLOCATED_APPLIED_CREDIT")).toMatchObject({
+      severity: "critical",
+      safeToAutoApply: true,
+      details: { paymentId: "payment_1", xeroInvoiceId: "inv_primary", unallocatedAppliedCreditCents: 10000 },
+    });
+    expect(bookingReport.actions.find((action) => action.type === "QUEUE_APPLIED_CREDIT_ALLOCATION")).toMatchObject({
+      key: "queue:applied-credit-allocation:booking_1",
+      payload: { bookingId: "booking_1" },
+    });
+
+    await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+    expect(deps.enqueueXeroAppliedCreditAllocationOperation).toHaveBeenCalledWith("booking_1");
+  });
+
+  it.each([
+    { shape: "the credit is already allocated", state: {}, booking: {} },
+    { shape: "the booking is cancelled (its cancel cleared the invoice)", state: unallocated, booking: { status: "CANCELLED" } },
+    { shape: "the booking has no invoice yet", state: unallocated, booking: { payment: { ...creditOnlyCardBooking().payment, xeroInvoiceId: null } } },
+    { shape: "the card captured cash", state: unallocated, booking: { payment: { ...creditOnlyCardBooking().payment, amountCents: 5000 } } },
+    { shape: "it was a bank transfer (#1620 allocates those)", state: unallocated, booking: { payment: { ...creditOnlyCardBooking().payment, source: "INTERNET_BANKING" } } },
+  ])("MUTATION (#3836): no allocation is queued where $shape", async ({ state, booking }) => {
+    const deps = createDependencies({ bookings: [creditOnlyCardBooking(booking)], operations: [makePrimaryInvoiceCreateOperation()], ...state });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain("UNALLOCATED_APPLIED_CREDIT");
+    expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_APPLIED_CREDIT_ALLOCATION");
+  });
+
+  it.each([
+    { shape: "a pending allocation", operation: appliedCreditAllocationOp({ status: "PENDING", completedAt: null }), retried: false },
+    { shape: "a failed allocation", operation: appliedCreditAllocationOp({ status: "FAILED" }), retried: true },
+    { shape: "the invoice operation, failed after its raise", operation: makePrimaryInvoiceCreateOperation({ id: "op_invoice_failed", status: "FAILED", requestPayload: { queueType: "BOOKING_INVOICE", bookingId: "booking_1" } }), retried: true },
+  ])("MUTATION (#3836): never queues a second allocation beside $shape", async ({ operation, retried }) => {
+    const deps = createDependencies({ bookings: [creditOnlyCardBooking()], operations: [makePrimaryInvoiceCreateOperation(), operation], ...unallocated });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.map((action) => action.type)).not.toContain("QUEUE_APPLIED_CREDIT_ALLOCATION");
+    expect(bookingReport.actions.some((action) => action.key === `retry:${operation.id}`)).toBe(retried);
+  });
+
+  it("MUTATION (#3836 M2): a failed allocation Xero REFUSED (4xx) offers its retry as a manual action only", async () => {
+    const deps = createDependencies({
+      bookings: [creditOnlyCardBooking()],
+      operations: [makePrimaryInvoiceCreateOperation(), appliedCreditAllocationOp({ status: "FAILED", lastErrorCode: "400" })],
+      ...unallocated,
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const retry = report.passes[0].bookings[0].actions.find((action) => action.key === "retry:op_applied_allocation");
+    expect(retry).toMatchObject({ type: "REQUEUE_XERO_OPERATION", safeToAutoApply: false });
+    await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: true, dependencies: deps, scope: { all: true } });
+    expect(deps.enqueueXeroSyncOperationRetry).not.toHaveBeenCalled();
+  });
+
+  it.each(["408", "429", "500", null])("MUTATION (#3836 L-2): a failed allocation with code %s is transient, not a refusal - its retry stays auto-applied", async (lastErrorCode) => {
+    const deps = createDependencies({
+      bookings: [creditOnlyCardBooking()],
+      operations: [makePrimaryInvoiceCreateOperation(), appliedCreditAllocationOp({ status: "FAILED", lastErrorCode })],
+      ...unallocated,
+    });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    expect(report.passes[0].bookings[0].actions.find((action) => action.key === "retry:op_applied_allocation")).toMatchObject({ safeToAutoApply: true });
+  });
+
+  it.each([
+    { shape: "a pending allocation", operation: appliedCreditAllocationOp({ status: "PENDING", completedAt: null }) },
+    { shape: "a failed invoice operation", operation: makePrimaryInvoiceCreateOperation({ id: "op_invoice_failed", status: "FAILED", requestPayload: { queueType: "BOOKING_INVOICE", bookingId: "booking_1" } }) },
+  ])("MUTATION (#3836 H1): a cancelled credit-only booking's clearing note waits beside $shape", async ({ operation }) => {
+    const deps = createDependencies({ bookings: [creditOnlyCardBooking({ status: "CANCELLED" })], operations: [makePrimaryInvoiceCreateOperation(), operation], ...unallocated });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.actions.map((action) => action.key)).not.toContain("queue:cancelled-open-invoice:booking_1");
+    expect(bookingReport.findings.map((finding) => finding.code)).toContain("BLOCKED_BY_XERO_OPERATION");
+  });
+
+  it("MUTATION (#3836 H1): a partial invoice operation nothing can retry (its email failed) will not run again, so the clearing note does not wait for it", async () => {
+    const partialEmail = makePrimaryInvoiceCreateOperation({ id: "op_invoice_partial", status: "PARTIAL", requestPayload: { queueType: "BOOKING_INVOICE", bookingId: "booking_1" } });
+    const deps = createDependencies({ bookings: [creditOnlyCardBooking({ status: "CANCELLED" })], operations: [partialEmail], ...unallocated });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    expect(report.passes[0].bookings[0].actions.map((action) => action.key)).toContain("queue:cancelled-open-invoice:booking_1");
+  });
+
+  it("MUTATION (#3836 H1): with nothing unfinished, the cancelled credit-only booking's invoice is cleared as before", async () => {
+    const deps = createDependencies({ bookings: [creditOnlyCardBooking({ status: "CANCELLED" })], operations: [makePrimaryInvoiceCreateOperation()], ...unallocated });
+
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
+
+    expect(report.passes[0].bookings[0].actions.map((action) => action.key)).toContain("queue:cancelled-open-invoice:booking_1");
+  });
+
   // #3809: a credit-paid booking's reduction settled as applied credit given
   // back, as the edit's history row records. Its note is the give-back - none
   // where the tier gave nothing back - so a note whose post-commit queue failed
@@ -2513,6 +2653,65 @@ describe("runBookingXeroRepair", () => {
       },
     });
   });
+
+  // #3536: the repair re-queues the note the original attempt queued, so it
+  // must say what that attempt said - the officer's "Refunded in cash", or an
+  // unpaid invoice's "Invoice correction" - not fall back to the card default.
+  it.each(["cash", "invoice-correction"] as const)(
+    "re-queues a missing modification credit note with the wording the original attempt recorded (%s, #3536)",
+    async (noteWording) => {
+      const booking = makeBooking({
+        modifications: [
+          {
+            id: "mod_worded",
+            bookingId: "booking_1",
+            modificationType: "GUEST_REMOVE",
+            priceDiffCents: -7300,
+            changeFeeCents: 0,
+            createdAt: new Date("2026-05-02T00:00:00Z"),
+          },
+        ],
+      });
+      const original = {
+        queueType: "MODIFICATION_CREDIT_NOTE",
+        bookingId: "booking_1",
+        bookingModificationId: "mod_worded",
+        refundAmountCents: 7300,
+        ...(noteWording === "cash" ? { refundMethod: "internet-banking" } : {}),
+        noteWording,
+      };
+      const deps = createDependencies({
+        bookings: [booking],
+        operations: [
+          makeOperation({
+            id: "operation_cancelled_worded_note",
+            entityType: "CREDIT_NOTE",
+            operationType: "CREATE",
+            localId: "mod_worded",
+            status: "CANCELLED",
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: null,
+            requestPayload: original,
+          }),
+        ],
+      });
+
+      await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+        apply: true,
+        dependencies: deps,
+        scope: { all: true },
+      });
+
+      const [params] = (deps.enqueueXeroModificationCreditNoteOperation as ReturnType<typeof vi.fn>)
+        .mock.calls[0]!;
+      expect(params).toMatchObject({ bookingModificationId: "mod_worded", refundAmountCents: 7300 });
+      // The same reading the note builder applies, on both records.
+      expect(modificationNoteWording(readModificationNoteWording(params))).toBe(noteWording);
+      expect(modificationNoteWording(readModificationNoteWording(params))).toBe(
+        modificationNoteWording(readModificationNoteWording(original)),
+      );
+    },
+  );
 
   // #1427: an ACCOUNT-credit-note op shares entityType/operationType with
   // the invoice-applied note op on the same modification — its amount must
@@ -6837,5 +7036,173 @@ describe("resolved in Xero is done on every repair retry arm (#3635)", () => {
     const keys = report.passes[0].bookings[0].actions.map((action) => action.key);
     expect(keys).toContain("retry:operation_new_live");
     expect(keys).not.toContain("retry:operation_old_resolved");
+  });
+});
+
+/**
+ * #3827 review F1 (`INV-PAY-118`): a refund request's OWN note is never "the"
+ * payment's refund note. Before the fix its succeeded create was a candidate,
+ * so the tool proposed (auto-apply) pointing `xeroRefundCreditNoteId` at it -
+ * after which the cancellation's note was absorbed as "already linked" - read
+ * it as a conflict beside the real note, and hid a missing cancellation note.
+ */
+describe("a refund request's own note never answers for the payment's refund note (#3827)", () => {
+  const cancelledInternetBanking = () =>
+    makeBooking({
+      status: "CANCELLED",
+      payment: {
+        ...makeBooking().payment,
+        source: "INTERNET_BANKING",
+        stripePaymentIntentId: null,
+        stripePaymentMethodId: null,
+        stripeCustomerId: null,
+        refundedAmountCents: 10000,
+        status: "REFUNDED",
+      },
+    });
+  const requestNote = (overrides: Record<string, unknown> = {}) =>
+    makeOperation({
+      id: "operation_request_note",
+      localModel: "Payment",
+      localId: "payment_1",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      status: "SUCCEEDED",
+      queueType: "REFUND_CREDIT_NOTE",
+      correlationKey: "payment:payment_1:refund-request-credit-note:rr_1:v1",
+      idempotencyKey: "payment:payment_1:refund-request-credit-note:rr_1:v1",
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: "cn_request",
+      requestPayload: {
+        queueType: "REFUND_CREDIT_NOTE",
+        refundAmountCents: 3000,
+        refundMethod: "internet-banking",
+        refundRequestId: "rr_1",
+      },
+      ...overrides,
+    });
+  const requestLink = paymentLink({
+    id: "link_request_note",
+    xeroObjectType: "CREDIT_NOTE",
+    xeroObjectId: "cn_request",
+    role: "REFUND_REQUEST_CREDIT_NOTE",
+    metadata: { amountCents: 3000, refundRequestId: "rr_1" },
+  });
+  // The request's note may still be read back and settled as itself
+  // (`unsettledRefundNoteRows`); no OTHER action may name it.
+  const actionsNamingRequestNote = (actions: Array<{ type: string }>) =>
+    actions.filter(
+      (action) => action.type !== "SETTLE_REFUND_CREDIT_NOTE" && JSON.stringify(action).includes("cn_request")
+    );
+  const run = async (state: { operations: any[]; links?: any[]; payment?: Record<string, unknown> }) => {
+    const booking = cancelledInternetBanking();
+    Object.assign(booking.payment, state.payment ?? {});
+    const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, {
+      dependencies: createDependencies({
+        bookings: [booking],
+        links: state.links ?? [requestLink],
+        operations: [makePrimaryInvoiceCreateOperation(), ...state.operations],
+      }),
+      scope: { all: true },
+    });
+    return report.passes[0].bookings[0];
+  };
+
+  it("proposes nothing for the request's note, and reports the cancellation's note missing for review", async () => {
+    const booking = await run({ operations: [requestNote()] });
+    expect(booking.actions.map((action) => action.type)).not.toContain(
+      "SYNC_PAYMENT_REFUND_CREDIT_NOTE_FIELD"
+    );
+    expect(actionsNamingRequestNote(booking.actions)).toEqual([]);
+    expect(booking.findings.map((finding) => finding.summary)).not.toContain(
+      "Refund credit note references conflict across local fields, links, or past operations."
+    );
+    // Not hidden, and not auto-sized: the refunded total holds the request's
+    // refund too, so the cancellation note's amount goes to a person.
+    expect(booking.findings).toContainEqual(
+      expect.objectContaining({
+        code: "MANUAL_REVIEW_REQUIRED",
+        summary: expect.stringContaining("missing Xero refund note amount cannot be derived"),
+      })
+    );
+    expect(booking.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
+  });
+
+  it("is no conflict beside the payment's real refund note", async () => {
+    const booking = await run({
+      operations: [requestNote()],
+      payment: { xeroRefundCreditNoteId: "cn_cancel" },
+      links: [
+        requestLink,
+        paymentLink({
+          id: "link_cancel_note",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_cancel",
+          role: "REFUND_CREDIT_NOTE",
+        }),
+      ],
+    });
+    expect(booking.findings.map((finding) => finding.summary)).not.toContain(
+      "Refund credit note references conflict across local fields, links, or past operations."
+    );
+    expect(booking.actions.map((action) => action.type)).not.toContain(
+      "SYNC_PAYMENT_REFUND_CREDIT_NOTE_FIELD"
+    );
+  });
+
+  it("names a request's row from its key alone when the payload is gone", async () => {
+    const booking = await run({ operations: [requestNote({ requestPayload: null })] });
+    expect(actionsNamingRequestNote(booking.actions)).toEqual([]);
+  });
+
+  // Review F1 at a19beb492: the refunded total net of each request's own note
+  // is what the cancellation's note answers, so an appeal-only refund is no gap.
+  const ambiguousNote = expect.objectContaining({
+    code: "MANUAL_REVIEW_REQUIRED",
+    summary: expect.stringContaining("missing Xero refund note amount cannot be derived"),
+  });
+
+  it("raises nothing when the request's note answers the whole refunded total", async () => {
+    const booking = await run({ operations: [requestNote()], payment: { refundedAmountCents: 3000 } });
+    expect(booking.findings).not.toContainEqual(ambiguousNote);
+    expect(booking.actions.map((action) => action.type)).not.toContain("QUEUE_REFUND_CREDIT_NOTE");
+  });
+
+  it("recovers the request's amount from its link when the payload is gone", async () => {
+    const booking = await run({
+      operations: [requestNote({ requestPayload: null })],
+      payment: { refundedAmountCents: 3000 },
+    });
+    expect(booking.findings).not.toContainEqual(ambiguousNote);
+  });
+
+  it("sends it to review when a request's amount cannot be recovered", async () => {
+    const booking = await run({
+      operations: [requestNote({ requestPayload: { refundRequestId: "rr_1" } })],
+      links: [{ ...requestLink, metadata: { refundRequestId: "rr_1" } }],
+      payment: { refundedAmountCents: 3000 },
+    });
+    expect(booking.findings).toContainEqual(ambiguousNote);
+  });
+
+  // Review F2 at a19beb492: no other arm reads a request's note, so its own
+  // failed create is reported here, with its Retry and its own wording.
+  it("reports a request's failed note with its Retry", async () => {
+    const booking = await run({
+      operations: [requestNote({ status: "FAILED", xeroObjectId: null, xeroObjectType: null })],
+      links: [],
+      payment: { refundedAmountCents: 3000 },
+    });
+    expect(booking.findings).toContainEqual(
+      expect.objectContaining({
+        code: "BLOCKED_BY_XERO_OPERATION",
+        summary: expect.stringContaining("A refund request's Xero refund credit note failed"),
+        actions: [expect.objectContaining({ key: "retry:operation_request_note" })],
+      })
+    );
+    expect(booking.actions.map((action) => action.key)).toContain("retry:operation_request_note");
+    expect(booking.findings.map((finding) => finding.summary)).not.toContainEqual(
+      expect.stringContaining("cancelled booking cash refund")
+    );
   });
 });

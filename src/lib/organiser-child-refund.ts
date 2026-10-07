@@ -50,6 +50,7 @@ import {
   getRemainingRefundableCents,
   hasCapturedPayment,
 } from "@/lib/booking-payment-state";
+import { openNonCancellationHandBackCents } from "@/lib/edit-refund-hand-back";
 import { organiserHasPaidSettlement, paidByOrganiserCard } from "@/lib/group-organiser-paid";
 import { calculateRefundAmount, type CancellationRule } from "@/lib/cancellation";
 import logger from "@/lib/logger";
@@ -60,6 +61,7 @@ import {
 } from "@/lib/payment-recovery-keys";
 import { EXCLUDED_LEDGER_REFUND_STATUSES } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
+import { organiserChildCommittedRefundFrom, readPerChildRefundPlan } from "@/lib/group-settlement-refund-plan";
 import type { ClubFormat } from "@/lib/club-format";
 import { formatCents } from "@/lib/utils";
 
@@ -94,6 +96,15 @@ export async function findCombinedCardSettlementForChild(
   return { ...settlement, stripePaymentIntentId: settlement.stripePaymentIntentId };
 }
 
+/** The combined card settlement, only while it still holds the organiser's money; the refusal test the plan below throws on. */
+async function findRefundableCombinedCardSettlement(
+  db: Db,
+  booking: { organiserSettled: boolean; parentBookingId: string | null },
+) {
+  const settlement = await findCombinedCardSettlementForChild(db, booking);
+  return settlement && organiserHasPaidSettlement(settlement) ? settlement : null;
+}
+
 /** The refusal an edit gets when its reduction cannot be returned from the combined payment. */
 export class OrganiserChildRefundRefusedError extends ApiError {
   constructor(message: string) {
@@ -119,8 +130,8 @@ export async function planOrganiserChildModificationRefund(
   pendingRefundAmountCents: number,
 ): Promise<{ settlement: CombinedCardSettlement; amountCents: number } | null> {
   if (!paidByOrganiserCard(booking) || pendingRefundAmountCents <= 0) return null;
-  const settlement = await findCombinedCardSettlementForChild(db, booking);
-  if (!settlement || !organiserHasPaidSettlement(settlement)) {
+  const settlement = await findRefundableCombinedCardSettlement(db, booking);
+  if (!settlement) {
     throw new OrganiserChildRefundRefusedError(
       "This booking was paid for by the group organiser, and the organiser's card payment can no longer be refunded, so this reduction cannot be saved. Contact the club to change it.",
     );
@@ -189,11 +200,16 @@ export async function organiserChildRefundedCents(
   db: Db,
   payment: { id: string; refundedAmountCents: number },
 ): Promise<number> {
+  return Math.max(payment.refundedAmountCents, await recordedRefundCents(db, payment.id));
+}
+
+/** Σ the payment's `PaymentRefund` rows that count as money back (`isRecordedRefundStatus`). */
+async function recordedRefundCents(db: Db, paymentId: string): Promise<number> {
   const recorded = await db.paymentRefund.aggregate({
-    where: { paymentId: payment.id, status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES } },
+    where: { paymentId, status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES } },
     _sum: { amountCents: true },
   });
-  return Math.max(payment.refundedAmountCents, recorded._sum.amountCents ?? 0);
+  return recorded._sum.amountCents ?? 0;
 }
 
 /**
@@ -207,11 +223,15 @@ export async function organiserChildCommittedRefundCents(
   payment: { id: string; refundedAmountCents: number },
   paymentIntentId: string,
 ): Promise<number> {
-  const [refundedCents, committed] = await Promise.all([
-    organiserChildRefundedCents(db, payment),
+  const [recorded, committed] = await Promise.all([
+    recordedRefundCents(db, payment.id),
     committedCents(db, paymentIntentId, payment.id),
   ]);
-  return refundedCents + committed.childOwedCents;
+  // The one formula, shared with the booking-ledger census (#3854 F1).
+  return organiserChildCommittedRefundFrom(payment.refundedAmountCents, {
+    recordedRefundCents: recorded,
+    childOwedCents: committed.childOwedCents,
+  });
 }
 
 /**
@@ -303,6 +323,51 @@ export function organiserChildRefundWasReopened(allocationPlan: Prisma.JsonValue
 }
 
 /**
+ * THE ONE ROOM a child refund debt may take (step 1's cap): what the combined
+ * payment still holds after refunds made and owed, and what the child's own
+ * payment can still return after its refunds and its open debts. Read under the
+ * caller's `lock(1)`, like the reservation that sizes from it.
+ */
+async function organiserChildRefundHeadroomCents(
+  db: Db,
+  settlement: CombinedCardSettlement,
+  childPayment: ChildPayment,
+): Promise<number> {
+  const [committed, childRefundedCents] = await Promise.all([
+    committedCents(db, settlement.stripePaymentIntentId, childPayment.id),
+    organiserChildRefundedCents(db, childPayment),
+  ]);
+  return Math.max(
+    0,
+    Math.min(
+      settlement.amountCents - committed.recordedCents - committed.owedCents,
+      getRemainingRefundableCents({ ...childPayment, refundedAmountCents: childRefundedCents }) -
+        committed.childOwedCents,
+    ),
+  );
+}
+
+/**
+ * #3829 (epic #3813, D-3813-5): can the organiser's card return `amountCents`
+ * for this child IN FULL - the plan's settlement test and the reservation's
+ * room, asked before a caller that must not be refused writes anything. A
+ * guest's acceptance re-price asks it, so a reduction the organiser's card
+ * cannot return moves no code instead of failing the acceptance. True for a
+ * booking the organiser did not pay for by card (nothing to ask).
+ */
+export async function organiserCardCanReturnInFull(
+  db: Db,
+  booking: { organiserSettled: boolean; parentBookingId: string | null; payment: { source: string } | null },
+  childPayment: ChildPayment,
+  amountCents: number,
+): Promise<boolean> {
+  if (!paidByOrganiserCard(booking) || amountCents <= 0) return true;
+  const settlement = await findRefundableCombinedCardSettlement(db, booking);
+  if (!settlement) return false;
+  return amountCents <= (await organiserChildRefundHeadroomCents(db, settlement, childPayment));
+}
+
+/**
  * Write one child refund's debt (step 1). The CALLER holds `lock(1)`, which is
  * what makes the headroom read and the insert one decision: every writer of a
  * child refund debt and every recorder of one take it. Idempotent on `key`: an
@@ -315,18 +380,7 @@ export async function reserveOrganiserChildRefund(
   const existing = await db.paymentRecoveryOperation.findUnique({ where: { idempotencyKey: input.key } });
   if (existing) return existing;
 
-  const [committed, childRefundedCents] = await Promise.all([
-    committedCents(db, input.settlement.stripePaymentIntentId, input.childPayment.id),
-    organiserChildRefundedCents(db, input.childPayment),
-  ]);
-  const headroomCents = Math.max(
-    0,
-    Math.min(
-      input.settlement.amountCents - committed.recordedCents - committed.owedCents,
-      getRemainingRefundableCents({ ...input.childPayment, refundedAmountCents: childRefundedCents }) -
-        committed.childOwedCents,
-    ),
-  );
+  const headroomCents = await organiserChildRefundHeadroomCents(db, input.settlement, input.childPayment);
   let amountCents = input.amountCents;
   if (amountCents > headroomCents) {
     if (input.overCap === "refuse") {
@@ -419,6 +473,8 @@ export async function planOrganiserCancelChildRefunds({
       const baseCents = cancelRefundableBaseCents({
         amountCents: payment.amountCents,
         refundedAmountCents: await organiserChildCommittedRefundCents(tx, payment, combined.stripePaymentIntentId),
+        // #3827 (`INV-PAY-117`): cash already promised back by hand is not refunded twice.
+        openNonCancellationHandBackCents: await openNonCancellationHandBackCents(tx, payment.id),
         finalPriceCents: child.finalPriceCents,
         changeFeeCents: payment.changeFeeCents,
       });
@@ -443,47 +499,6 @@ export async function planOrganiserCancelChildRefunds({
     }
     return plan;
   });
-}
-
-/**
- * The settlement's frozen plan, in the shape #3653 writes:
- * `{ perChildRefunds: { childId: cents } }`. The children sit one level down
- * ON PURPOSE: the pre-#3653 reader takes every top-level integer as a child's
- * share of ONE combined refund, so it reads this shape as an empty plan and
- * moves no money, rather than misreading it.
- */
-export function readPerChildRefundPlan(value: unknown): Map<string, number> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const children = (value as Record<string, unknown>).perChildRefunds;
-  if (!children || typeof children !== "object" || Array.isArray(children)) return null;
-  const plan = new Map<string, number>();
-  for (const [childId, cents] of Object.entries(children as Record<string, unknown>)) {
-    if (typeof cents === "number" && Number.isInteger(cents) && cents > 0) plan.set(childId, cents);
-  }
-  return plan;
-}
-
-/**
- * The settlement's frozen plan in the shape a group cancel wrote BEFORE #3653:
- * `{childId: cents}`, each child's share of ONE combined Stripe refund. The one
- * reader of that shape (`INV-SSOT`), for the group cancel that finishes such a
- * plan and the audit that explains the mirrors it wrote. Defensive: only
- * non-negative integer cents survive, and a non-object (or a #3653 per-child
- * plan, whose one key holds an object) reads as empty - the plan is applied
- * verbatim on a re-drive, so a corrupt entry degrades to "no refund for that
- * child" rather than crashing the cleanup.
- */
-export function deserializeRefundPlan(value: unknown): Map<string, number> {
-  const plan = new Map<string, number>();
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return plan;
-  }
-  for (const [childId, cents] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof cents === "number" && Number.isInteger(cents) && cents >= 0) {
-      plan.set(childId, cents);
-    }
-  }
-  return plan;
 }
 
 function serializePerChildRefundPlan(plan: Map<string, number>): Prisma.InputJsonValue {

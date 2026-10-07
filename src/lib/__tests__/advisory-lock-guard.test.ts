@@ -261,6 +261,20 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
       "Switching to Internet Banking with holdBedSlots flips the booking to CONFIRMED — a net-new capacity claim and a money side effect — and re-reads under the locks, because the pre-transaction snapshot was read with no lock at all.",
     invariant: "INV-LOCK-002",
   },
+  {
+    site: "PUT /api/admin/refund-requests/[id]#1",
+    tier: "GLOBAL",
+    reason:
+      "#3827 (INV-PAY-117, INV-PAY-118): a refund appeal's approval caps at the refundable cash NET of the refunds still promised back by bank transfer (an edit's, or an earlier approved appeal's). A hand-back's completion moves the payment's refunded total and closes its task in one commit under this key, and a reopen re-promises one under it, so the cap reads the payment and the open-task sum under the same key, claims the request, plans the card refund and raises the bank-transfer task for the rest in the same transaction - a second approval queues behind it and sees that task. Takes the global key alone; the Stripe refund and Xero note run after the commit.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "PUT /api/admin/refund-requests/[id]#2",
+    tier: "GLOBAL",
+    reason:
+      "#3827 (INV-PAY-118): releasing an approval whose Stripe refund AND recovery enqueue both failed puts the request back to PENDING and deletes the OPEN bank-transfer task the approval raised, in one transaction under the key every reader of the open-task sum and every approval holds, so no approval can size its cap between the two writes. Takes the global key alone; no provider call.",
+    invariant: "INV-LOCK-001",
+  },
 
   // ── Bed allocation: inventory, placement and reconciliation ───────────────
   {
@@ -494,6 +508,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     tier: "GLOBAL",
     reason:
       "#3582: an EDIT_FINANCIAL_REVIEW closure posts booking-ledger lines, and whether the booking is confirmed on the ledger must be asked under the key the settle asks it under, or a closure and a first settle could both see 'not yet' and both post. Taken only for that task kind, as the transaction's first lock — before the claim, the payment-row allocation and the re-price's promotion key — so it orders global before anything narrower as every edit door does; the Stripe refund and the Xero leg run after the commit, so it is never held across a provider round trip. Order: global → member-credit (#3791, account-credit route only).",
+    invariant: "INV-LOCK-002",
+  },
+  {
+    site: "lockBookingForBackPost#1",
+    tier: "GLOBAL",
+    reason:
+      "#3583: the operator back-post posts a historical booking's ledger lines on a live database, and asks the same questions the live posters ask under this key — is the booking confirmed on the ledger, which line is live — so a settle, cancel, edit or closure on the same booking either commits before it reads or waits until it commits; without it both could see 'not yet confirmed' and both post. First lock of each booking's transaction, then a 5s lock_timeout bounding every later wait while it is held, the lodge key, the owner read under it (member merge re-points it holding the lodge key), the member credit-ledger keys and the payment and booking rows; no provider is called.",
     invariant: "INV-LOCK-002",
   },
   {
@@ -1253,7 +1274,6 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   "src/lib/bed-allocation-move.ts": 1,
   "src/lib/bed-allocation-removal.ts": 1,
   "src/lib/requested-room-write.ts": 1,
-  "src/lib/booking-create-promo.ts": 1,
   // Promo usage caps (#2299): `lockPromoCodeRowsForUpdate` takes a
   // `SELECT 1 … FOR UPDATE` on the promo row for the modification paths,
   // which can now RELEASE a cap slot as well as take one. One raw statement
@@ -1263,11 +1283,12 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // re-reads `currentRedemptions` under the lock. That wrapper has four call
   // sites, not three: the batch path also calls it on its no-swap reprice
   // branch, where the lock is already held and the refreshed counter is the
-  // point. Booking creation takes its own lock in booking-create-promo.ts
-  // above, which since #2289 also selects a constant and reads the promo back
-  // through `tx.promoCode.findUnique` — it used to `SELECT *` and read the raw
-  // row, and that unchecked cast is what silently disabled a redemption cap and
-  // a FREE_NIGHTS discount. Ids are sorted and locked one
+  // point. Since #3827 booking creation takes the SAME statement too: it used
+  // to lock its own row by the mutable `code` in booking-create-promo.ts, and
+  // now resolves ids unlocked, locks them here in sorted order and re-reads by
+  // id, so a two-code create orders its rows like every other writer. (#2289:
+  // the read was always typed — a raw `SELECT *` cast is what once silently
+  // disabled a redemption cap and a FREE_NIGHTS discount.) Ids are sorted and locked one
   // statement at a time so a promo swap (outgoing + incoming code in one
   // transaction) can never build a lock cycle with another swap; callers hold
   // the per-lodge capacity lock first, so the order stays lodge -> promo row.
@@ -1287,6 +1308,12 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // docs/CONCURRENCY_AND_LOCKING.md -> "Held-party guest rows before a dietary
   // rebuild".
   "src/lib/booking-guest-row-lock.ts": 1,
+  // #3583: the booking-ledger back-post locks the booking's payment row and then
+  // the booking row (`SELECT 1 … FOR NO KEY UPDATE`, both), after lock(1), the
+  // lodge key and the member credit-ledger keys. Payment first, as the card-
+  // refund writer takes it. See docs/CONCURRENCY_AND_LOCKING.md ->
+  // "Booking-ledger back-post".
+  "src/lib/booking-ledger-back-post.ts": 2,
   // #3635 (review outbox F1/F4): the kept-late-capture enqueue and the
   // worker's send-time decision lock the #3639 approval task's row
   // (`SELECT 1 … FOR UPDATE`), the row the dismissal, reopen and approval

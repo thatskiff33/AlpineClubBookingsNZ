@@ -1,7 +1,8 @@
 import type { Prisma } from "@prisma/client";
 
 import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
-import { cancelAppliedCreditBaseCents } from "@/lib/booking-payment-state";
+import { cancelAppliedCreditBaseCents, cancelTieredAppliedCreditCents } from "@/lib/booking-payment-state";
+import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 import { calculateAppliedCreditRestore, daysUntilDate, loadCancellationPolicy } from "@/lib/cancellation";
 import type { CalendarDate } from "@/lib/club-time";
 
@@ -38,6 +39,7 @@ export async function refundedPaymentCreditRestore(
   {
     bookingId,
     booking,
+    openNonCancellationHandBackCents,
     todayAtClub,
   }: {
     bookingId: string;
@@ -47,14 +49,23 @@ export async function refundedPaymentCreditRestore(
       finalPriceCents: number;
       payment: { amountCents: number; refundedAmountCents: number; changeFeeCents: number; creditAppliedCents: number };
     };
+    /**
+     * The payment's open edit / refund-request hand-backs (#3827, `INV-PAY-117`),
+     * which the cap counts as paid no more than the paid path does.
+     */
+    openNonCancellationHandBackCents: number;
     /** The club's day, resolved before the transaction (`INV-LOCK-004`): the tier boundary. */
     todayAtClub: CalendarDate;
   },
 ): Promise<RefundedPaymentCreditRestore | null> {
-  if (booking.payment.creditAppliedCents <= 0) return null;
+  // #3836: a mirror the old inbound sync clipped to the card amount reads the ledger.
+  const creditAppliedCents = cancelTieredAppliedCreditCents(booking.payment, await deriveBookingAppliedCreditCents(bookingId, tx));
+  if (creditAppliedCents <= 0) return null;
   if (!(await bookingReducedThroughCreditGiveBack(bookingId, tx))) return null;
   const appliedCreditBaseCents = cancelAppliedCreditBaseCents({
     ...booking.payment,
+    creditAppliedCents,
+    openNonCancellationHandBackCents,
     finalPriceCents: booking.finalPriceCents,
     capAtWorth: true,
   });
