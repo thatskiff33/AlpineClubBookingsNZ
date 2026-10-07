@@ -60,6 +60,7 @@ deploy-time setup default **off**; general-purpose modules default **on**):
 | Lodge induction (`induction`) | Induction checklists, signers, and sign-off | On |
 | Work parties (`workParties`) | Volunteer working bees and their booking discounts | On |
 | Promo codes (`promoCodes`) | Discount codes on bookings | On |
+| Several promo codes on one booking (`multiPromoCodes`) | Lets one booking carry more than one promo code, so members sharing a group booking can each use their own. A **rollout switch** (#3826): while it is off a booking holds at most one code, which keeps the previous release safe to roll back to. Turn it on only after the upgrade that added it has fully cut over. Does not travel in a configuration transfer | Off |
 | Hut leaders (`hutLeaders`) | Daily hut-leader assignment and auto-assignment | On |
 | Communications (`communications`) | Admin bulk email to members. Transactional notifications (booking, payment and membership emails) are unaffected | On |
 | Member notices (`memberNotices`) | Committee news notices targeted to member audiences, shown on the dashboard with read/acknowledge tracking | On |

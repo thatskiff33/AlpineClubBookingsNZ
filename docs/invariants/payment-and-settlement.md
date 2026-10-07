@@ -1506,6 +1506,40 @@ total at apply).
   `xero-operation-retry.test.ts`,
   `edit-financial-review-cancelled-refund-xero.realdb.test.ts`.
 
+
+## INV-PAY-116
+
+**Related: `INV-PAY-101`** (the settlement decision).
+
+- **Two booking-edit credit notes carry wordings of their own, as words only**
+  (#3536; owner decisions, 2 and 3 October 2026). A booking change that lowers
+  an UNPAID pay-on-account invoice raises a note that refunds nothing, worded
+  *Invoice correction — nothing refunded*. An edit-review refund paid back by
+  hand (the `local-allocation` route) is worded *Refunded in cash* only when the
+  officer resolving it says it went back in cash. The app never infers cash
+  from "marked paid by hand", which covers bank transfers recorded outside Xero
+  too; with no answer the note keeps the bank-transfer wording. The settle
+  screen asks only where that route applies, and the completion re-chooses the
+  route under its lock. The applied-credit remainder note and the membership
+  cancellation credit note keep their own wordings.
+- **Neither is a refund method, and neither moves a settlement.** A
+  modification credit note is allocated against the original invoice and never
+  settled by a payment. A cash hand-back keeps the internet-banking method for
+  the ledger line and everything else; only the words differ.
+- **The wording travels with the decision.** It rides as `noteWording` beside
+  the method in the outbox payload and on the recorded operation, and is read by
+  the one `readModificationNoteWording`, so a retry, or the repair tool
+  re-queueing a lost note, says what the first attempt did. A row without the field keeps its old wording. A caller's
+  own method, a Stripe refund, or a paid or unstated payment status is never an
+  invoice correction.
+- Home: `src/lib/xero-refund-method.ts`, censused over `src/lib` with the other
+  wordings. Pinned by `xero-booking-edit-settlement.test.ts`,
+  `xero-refund-method-documents.test.ts`, `manual-refund-task.test.ts`,
+  `xero-operation-retry.test.ts`, `xero-booking-repair.test.ts`,
+  `booking-payment-state.test.ts`,
+  `manual-refund-task-queue-financial-review.test.tsx` and
+  `resolve-route.test.ts`.
+
 ## INV-PAY-060
 
 - **A SETTLED occurrence does not suppress the next one of the same identity**
@@ -1824,6 +1858,80 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     `edit-financial-review-charge-sync.ts` and
     `edit-financial-review-charge-recovery.ts`; proven against PostgreSQL by
     `edit-financial-review-charge-raise-claim.realdb.test.ts`.
+
+## INV-PAY-117
+
+- **A price reduction the club returns by hand raises ONE officer refund
+  task** (#3827; owner decision D-3813-6 on #3492). When a batch modify, date
+  change, guest removal or a guest's acceptance re-price lowers a booking whose
+  money was not captured through Stripe (internet banking, or marked paid in
+  cash) and the reduction goes back as money rather than account credit, the
+  edit raises a `ManualRefundTask` for that refund inside its own transaction,
+  under its locks, with no provider call. `raiseEditRefundHandBackIfOwed`
+  (`src/lib/edit-refund-hand-back.ts`) is the one writer and
+  `editRefundGoesBackByHand` the one test. A guest add never lowers a price, so
+  it raises none.
+  - **One task per edit**: occurrence key
+    `edit-refund-hand-back:<BookingModification id>`, unique, inserted
+    `ON CONFLICT DO NOTHING`: a replay neither duplicates it nor aborts the
+    edit.
+  - **Kind `CANCELLED_BOOKING_HAND_BACK`, marked by that key**, reused (as
+    #3639 and #3643 do) so the previous app version reads it as a hand-back.
+    `isEditRefundHandBackTask` and `NOT_NON_CANCELLATION_HAND_BACK_WHERE`
+    (`manual-refund-task-settlement-rules.ts`) are the one spelling; every
+    reader selecting a cancellation's hand-backs by kind spreads the
+    exclusion (`edit-refund-hand-back-readers-census.test.ts`).
+  - **The amount is the edit's refund, fixed at raise.** Completing it is a
+    hand-back's completion: the refund allocation on the payment, the
+    bank-refund ledger line and the `REFUNDED` event, marked
+    `edit_refund_hand_back_completed` so the narrative never reads it as a
+    cancellation's. It queues NO Xero document: the edit's credit note stands.
+  - **Promised cash is not refundable twice.** Until it closes, later edits,
+    acceptances, paid cancels and by-hand reviews size refunds off captured
+    cash less open tasks, `INV-PAY-118`'s too
+    (`refundableCashNetOfOpenHandBacks`); a reopen is refused past that cash. Completing one, or approving an appeal,
+    takes `lock(1)`. Once the booking is cancelled it is only paid: the
+    cancel counted it.
+  - **The member is told the club WILL refund by bank transfer**, never that a
+    refund "has been processed" (`bookingModifiedRefundSentence`).
+
+## INV-PAY-118
+
+- **An approved refund appeal's non-card part raises ONE officer refund task**
+  (#3827; owner decision D-3813-7 on #3492). Approving a refund request plans
+  the Stripe refund inside the approval's own transaction, under `lock(1)`;
+  on an internet-banking payment whatever that plan cannot carry raises a
+  `ManualRefundTask` in the same transaction through
+  `raiseRefundRequestHandBack` (`src/lib/edit-refund-hand-back.ts`), so it is
+  netted before the lock is released. A card payment planned short is drift,
+  logged, never a task. A task that cannot be raised refuses the approval.
+  - **One task per request**: occurrence key
+    `refund-request-hand-back:<RefundRequest id>`, unique, inserted
+    `ON CONFLICT DO NOTHING`. If the approval's claim is released (Stripe and
+    its recovery enqueue both failed), the OPEN task is deleted in the same
+    locked transaction.
+  - **The same kind and marker as an edit's.** `isNonCancellationHandBackTask`
+    and `NOT_NON_CANCELLATION_HAND_BACK_WHERE` cover both. Completion records
+    the refund on the payment, the bank-refund ledger line and a `REFUNDED`
+    event marked `refund_request_hand_back_completed`, outside the narrative's
+    settlement.
+  - **Its Xero note is queued on payout, one per request** (D-3813-8): the
+    approval notes only the card part; completion atomically queues the
+    request's own note for the amount paid back
+    (`enqueueXeroRefundRequestCreditNoteOperation`), keyed by the request and
+    linked as `REFUND_REQUEST_CREDIT_NOTE`, outside `INV-ADDPAY-020`'s one note.
+  - **An appeal's ceiling nets everything already handed back**
+    (`refundableCashForRefundAppeal`; screens `refundAppealCeiling`): every
+    OPEN hand-back on the payment, any kind, and the member credit minted
+    from late cash (`internet-banking-late-cash-credit.ts`). Neither moves
+    `refundedAmountCents`. Edits and cancels still exclude the
+    cancellation's own task.
+  - **Dismissal stays open**, unlike an edit's after a cancel: an appeal
+    exists only on a cancelled booking, so the cancel never counted it.
+  - **A cash-settled payment is still refused**: a dismissed cancellation
+    hand-back reads refundable again, so an appeal could re-promise it.
+  - **The member is told the club WILL refund by bank transfer**
+    (`refundRequestApprovedRefundSentence`); card wording is unchanged.
 
 ## INV-PAY-070
 

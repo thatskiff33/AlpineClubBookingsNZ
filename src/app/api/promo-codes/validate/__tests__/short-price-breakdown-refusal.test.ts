@@ -40,11 +40,14 @@ const mocks = vi.hoisted(() => ({
       findMany: vi.fn(),
     },
     member: { findMany: vi.fn() },
+    familyGroupMember: { findMany: (...args: unknown[]) => mocks.familyGroupMemberFindMany(...args) },
     seasonalMembershipAssignment: { findMany: vi.fn() },
     membershipType: { findMany: vi.fn() },
   },
   priceBookingGuestsWithMembershipTypePolicy: vi.fn(),
   validateAndCalculatePromoDiscount: vi.fn(),
+  loadMemberGuestAddPolicy: vi.fn(),
+  familyGroupMemberFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
@@ -82,6 +85,12 @@ vi.mock("@/lib/membership-type-policy", async (importOriginal) => ({
 vi.mock("@/lib/promo", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/promo")),
   validateAndCalculatePromoDiscount: mocks.validateAndCalculatePromoDiscount,
+}));
+
+// #3827: who awaits acceptance comes from the club's member-guest policy.
+vi.mock("@/lib/member-guest-add-policy", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-guest-add-policy")),
+  loadMemberGuestAddPolicy: mocks.loadMemberGuestAddPolicy,
 }));
 
 import { POST } from "@/app/api/promo-codes/validate/route";
@@ -133,6 +142,12 @@ beforeEach(() => {
   mocks.prisma.member.findMany.mockResolvedValue([]);
   mocks.prisma.seasonalMembershipAssignment.findMany.mockResolvedValue([]);
   mocks.prisma.membershipType.findMany.mockResolvedValue([]);
+  mocks.loadMemberGuestAddPolicy.mockResolvedValue({
+    wideningEnabled: false,
+    approvalRequired: true,
+    pendingHoldExpiryDays: 0,
+  });
+  mocks.familyGroupMemberFindMany.mockResolvedValue([]);
   mocks.validateAndCalculatePromoDiscount.mockResolvedValue({
     error: null,
     discount: {
@@ -140,6 +155,9 @@ beforeEach(() => {
       priceAdjustmentCents: -1000,
       freeNightsUsed: 0,
       eligibleGuestCount: 2,
+      // The engine always states what it took off each target (#3276); the
+      // several-code orchestrator maps them to the caller's guests (#3827).
+      adjustmentTargets: [],
     },
   });
 });
@@ -187,5 +205,73 @@ describe("POST /api/promo-codes/validate with a short price breakdown", () => {
         (guest) => guest.perNightRates,
       ),
     ).toEqual([[7500], [5000]]);
+  });
+});
+
+describe("a guest awaiting acceptance is decided by the server, not the client (#3827, D-3813-4)", () => {
+  function crossFamilyRequest(extra: Record<string, unknown> = {}) {
+    return new NextRequest("http://localhost/api/promo-codes/validate", {
+      method: "POST",
+      body: JSON.stringify({
+        code: "WELCOME",
+        checkIn: "2026-08-01",
+        checkOut: "2026-08-02",
+        guests: [
+          { ageTier: "ADULT", isMember: true, memberId: "member-1" },
+          // Outside the booker's family, and the client says nothing about it.
+          { ageTier: "ADULT", isMember: true, memberId: "member-2", ...extra },
+        ],
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  beforeEach(() => {
+    mocks.priceBookingGuestsWithMembershipTypePolicy.mockResolvedValue({
+      guests: [pricedGuest([7500]), pricedGuest([5000])],
+      totalPriceCents: 12500,
+    });
+  });
+
+  /** The guests the single-code engine was shown. */
+  function shownRates() {
+    const [, application] = mocks.validateAndCalculatePromoDiscount.mock.calls[0] ?? [];
+    return (application as { guests: Array<{ perNightRates: number[] }> }).guests.map(
+      (guest) => guest.perNightRates,
+    );
+  }
+
+  it("leaves a cross-family guest out when the club asks members to accept", async () => {
+    mocks.loadMemberGuestAddPolicy.mockResolvedValue({
+      wideningEnabled: true,
+      approvalRequired: true,
+      pendingHoldExpiryDays: 7,
+      timeZone: "Pacific/Auckland",
+    });
+
+    const response = await POST(crossFamilyRequest());
+
+    expect(response.status).toBe(200);
+    // Only the booker is priced for the code: member-2 awaits acceptance, as the
+    // create would record them.
+    expect(shownRates()).toEqual([[7500]]);
+  });
+
+  it("shows the same guest when the club does not ask members to accept", async () => {
+    mocks.loadMemberGuestAddPolicy.mockResolvedValue({
+      wideningEnabled: true,
+      approvalRequired: false,
+      pendingHoldExpiryDays: 7,
+      timeZone: "Pacific/Auckland",
+    });
+
+    await POST(crossFamilyRequest());
+
+    expect(shownRates()).toEqual([[7500], [5000]]);
+  });
+
+  it("lets the client flag make a guest more pending, never less", async () => {
+    await POST(crossFamilyRequest({ awaitingAcceptance: true }));
+    expect(shownRates()).toEqual([[7500]]);
   });
 });

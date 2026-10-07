@@ -76,6 +76,10 @@ import {
 } from "@/lib/xero-refund-method";
 import type { ClubFormat } from "@/lib/club-format";
 import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
+import {
+  readRefundRequestIdFromPayload,
+  REFUND_REQUEST_CREDIT_NOTE_ROLE,
+} from "@/lib/refund-request-credit-note";
 
 export interface CreateXeroRefundCreditNoteOptions
   extends FindOrCreateXeroContactOptions {
@@ -104,6 +108,22 @@ export interface CreateXeroRefundCreditNoteOptions
   reviewTaskId?: string;
   /** #3635 round-3 R3: the club day the refund left Stripe; omitted, today. */
   documentDate?: string;
+  /**
+   * #3827 (D-3813-8, `INV-PAY-118`): this is that refund request's OWN note,
+   * raised when its task is marked paid back. Keyed by the request, linked
+   * under `REFUND_REQUEST_CREDIT_NOTE_ROLE`, never per-delta and never the
+   * payment's one refund-note pointer.
+   */
+  refundRequestId?: string;
+}
+
+/**
+ * #3827 (D-3813-8): the one key of a refund request's own refund credit note -
+ * its outbox row's correlation and idempotency key and the Xero idempotency
+ * key alike. Keyed by the request, never by the amount.
+ */
+export function refundRequestCreditNoteKey(paymentId: string, refundRequestId: string): string {
+  return buildXeroIdempotencyKey("payment", paymentId, "refund-request-credit-note", refundRequestId, "v1");
 }
 
 /** Stamped on a late-capture refund note the app does not raise (`INV-PAY-110`). */
@@ -195,8 +215,11 @@ export async function createXeroCreditNote(
   if (!originalInvoiceId) {
     throw new Error(`No Xero invoice linked to payment: ${paymentId}`);
   }
+  const refundRequestId = options?.refundRequestId ?? null;
   const watermarkCents = options?.watermarkCents;
+  // #3827 (D-3813-8): a refund request's own note is never per-delta.
   const isDeltaMode =
+    refundRequestId === null &&
     typeof watermarkCents === "number" && Number.isFinite(watermarkCents);
   // #3880: a review's non-Stripe delta note is one of several (`isPerDeltaRefundNoteLink`).
   const perRefundNote = isDeltaMode && payment.source !== PaymentSource.STRIPE && Boolean(options?.reviewTaskId);
@@ -236,6 +259,7 @@ export async function createXeroCreditNote(
           refundMethod,
           refundMethodRecorded,
           fallbackPaymentDate: resolveCreditNoteDate,
+          refundRequestId,
         });
       } catch (error) {
         await failXeroSyncOperation(queuedOperationId, error);
@@ -362,6 +386,24 @@ export async function createXeroCreditNote(
       effectiveRefundAmountCents = Math.min(refundAmountCents, uncoveredCents);
       effectiveWatermarkCents = coveredCents + effectiveRefundAmountCents;
     }
+  } else if (refundRequestId !== null) {
+    // #3827 (D-3813-8): THIS request's own note, and only it, covers this
+    // request. Another request's note, or the payment's one refund note,
+    // never does - that absorption is what the decision removed.
+    const ownNote = (
+      (await prisma.xeroObjectLink.findMany({
+        where: {
+          localModel: "Payment",
+          localId: paymentId,
+          xeroObjectType: "CREDIT_NOTE",
+          role: REFUND_REQUEST_CREDIT_NOTE_ROLE,
+          active: true,
+        },
+        select: { xeroObjectId: true, xeroObjectNumber: true, metadata: true },
+      })) ?? []
+    ).find((link) => readRefundRequestIdFromPayload(link.metadata) === refundRequestId);
+    existingCreditNoteId = ownNote?.xeroObjectId ?? null;
+    existingCreditNoteNumber = ownNote?.xeroObjectNumber ?? null;
   } else {
     const canonicalRefundCreditNote =
       await findCanonicalPaymentRefundCreditNote(paymentId);
@@ -371,8 +413,11 @@ export async function createXeroCreditNote(
     existingCreditNoteNumber =
       canonicalRefundCreditNote?.xeroObjectNumber ?? null;
   }
+  const noteLinkRole = refundRequestId !== null ? REFUND_REQUEST_CREDIT_NOTE_ROLE : "REFUND_CREDIT_NOTE";
 
-  const creditNoteIdempotencyKey = isDeltaMode
+  const creditNoteIdempotencyKey = refundRequestId !== null
+    ? refundRequestCreditNoteKey(paymentId, refundRequestId)
+    : isDeltaMode
     ? buildXeroIdempotencyKey(
         "payment",
         paymentId,
@@ -393,6 +438,9 @@ export async function createXeroCreditNote(
   const recordedPayloadFields = {
     ...(options?.paymentIntentId ? { paymentIntentId: options.paymentIntentId } : {}),
     ...(options?.documentDate ? { documentDate: options.documentDate } : {}),
+    // #3827 (D-3813-8): rides at the top level of the executed payload too, so
+    // a retry or a repair of this row keeps it a request's own note.
+    ...(refundRequestId !== null ? { refundRequestId } : {}),
     ...(options?.reviewTaskId ? { reviewTaskId: options.reviewTaskId } : {}),
     // #3880 F2: a delta run's watermark rides its row, so an operator retry of
     // a row this run created inline (no outbox queue type) re-enters delta
@@ -405,9 +453,11 @@ export async function createXeroCreditNote(
   // This row raised nothing, so it is closed as covered by that note, which
   // carries its own payment outcome (`INV-PAY-111`).
   if (existingCreditNoteId) {
+    // #3827 (D-3813-8): a request's own note never takes the pointer.
     // #3880 F1: a run covered by a per-refund note leaves the field alone - that
     // note is never the payment's canonical one (`mayRecordAsCanonicalRefundNote`).
     if (
+      refundRequestId === null &&
       !perRefundNote &&
       payment.xeroRefundCreditNoteId !== existingCreditNoteId &&
       (await mayRecordAsCanonicalRefundNote(paymentId, existingCreditNoteId, prisma))
@@ -426,7 +476,7 @@ export async function createXeroCreditNote(
       xeroObjectType: "CREDIT_NOTE",
       xeroObjectId: existingCreditNoteId,
       xeroObjectNumber: existingCreditNoteNumber,
-      role: "REFUND_CREDIT_NOTE",
+      role: noteLinkRole,
     });
     if (queuedOperationId) {
       await completeXeroSyncOperation(queuedOperationId, {
@@ -444,7 +494,7 @@ export async function createXeroCreditNote(
             xeroObjectType: "CREDIT_NOTE",
             xeroObjectId: existingCreditNoteId,
             xeroObjectNumber: existingCreditNoteNumber,
-            role: "REFUND_CREDIT_NOTE",
+            role: noteLinkRole,
           },
         ],
       });
@@ -607,12 +657,15 @@ export async function createXeroCreditNote(
         options?.watermarkCents ??
         effectiveRefundAmountCents,
       ...(options?.paymentIntentId ? { paymentIntentId: options.paymentIntentId } : {}),
+      ...(refundRequestId !== null ? { refundRequestId } : {}),
       ...(perRefundNote ? { perDelta: true } : {}),
     };
     const createdNoteId = createdNote.creditNoteID;
     const createdNoteNumber = createdNote.creditNoteNumber ?? null;
     await prisma.$transaction(async (tx) => {
-      if (!perRefundNote) {
+      // #3827 (D-3813-8): a request's own note never takes the pointer, nor
+      // does a per-refund note (#3880 F1).
+      if (refundRequestId === null && !perRefundNote) {
         await tx.payment.update({
           where: { id: paymentId },
           data: { xeroRefundCreditNoteId: createdNoteId },
@@ -625,7 +678,7 @@ export async function createXeroCreditNote(
           xeroObjectType: "CREDIT_NOTE",
           xeroObjectId: createdNoteId,
           xeroObjectNumber: createdNoteNumber,
-          role: "REFUND_CREDIT_NOTE",
+          role: noteLinkRole,
           metadata: noteLinkMetadata,
         },
         { store: tx }
@@ -664,6 +717,7 @@ export async function createXeroCreditNote(
         originalInvoiceId,
         refundMethod,
         outcome,
+        refundRequestId,
       })
     );
 

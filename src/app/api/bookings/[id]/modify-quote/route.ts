@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
+import { applyBookingPromotions, type PromotionApplicationInput } from "@/lib/booking-promotions";
 import type { AgeTier } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
@@ -62,13 +64,23 @@ import {
   getXeroLockGuardErrorResponse,
 } from "@/lib/xero-period-lock-guard";
 import {
-  validateAndCalculatePromoDiscount,
-  validatePromoCodeFull,
-} from "@/lib/promo";
-import {
   describePromoCapCoverage,
+  mergePromoCoverageNotices,
+  promoReleasedNotice,
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
+import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
+import { promoCodeListRefusal } from "@/lib/promo-code-list-rules";
+// Pure readers of the request, from their home rather than the barrel (#3827).
+import {
+  requestChangesPromoCodes,
+  requestedPromoCodeChange,
+  keptStoredPromoRedemption,
+  promoRequestReadsMultiPromoSwitch,
+  oneCodeFieldsOnSeveralCodesRefusal,
+  requestedPromoCodeListFor,
+  splitRequestedPromoCodes,
+} from "@/lib/booking-modify-promo-request";
 import {
   describePromoChangeNotApplied,
   type PromoChangeNotAppliedNotice,
@@ -324,7 +336,7 @@ export async function POST(
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       },
       payment: true,
-      promoRedemption: {
+      promoRedemptions: {
         include: {
           guestTargets: { select: { bookingGuestId: true } },
           promoCode: {
@@ -341,6 +353,11 @@ export async function POST(
   if (!booking) {
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
+
+  // #3827: every code the booking carries, in its stored order.
+  const promoRedemptions = bookingPromoRedemptions(booking).filter(
+    (redemption) => redemption.promoCode,
+  );
 
   if (bookingOwner(booking).memberId !== session.user.id && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -378,10 +395,22 @@ export async function POST(
     promoGuestIds,
     promoAddedGuestIndexes,
     removePromoCode,
+    promoCodes: requestedPromoCodes,
     applyCreditCents,
     pricingMode,
     confirmOverCapacity,
   } = parsed.data;
+  // #3827: the promo change this preview is asked for, read the one way the
+  // save reads it (`requestedPromoCodeList`).
+  const promoRequest = {
+    promoCode: newPromoCode,
+    promoGuestIds,
+    promoAddedGuestIndexes,
+    removePromoCode,
+    promoCodes: requestedPromoCodes,
+  };
+  const promoChangeRequested = requestChangesPromoCodes(promoRequest);
+  const promoChange = requestedPromoCodeChange(promoRequest);
 
   // Issue #1668: admin-only date override. Gate the flags, then compute the
   // edit policy WITH the override so its mode is "admin-override" and every
@@ -537,8 +566,7 @@ export async function POST(
       // The other-lodge rate election re-rates guests for the same reason.
       requestedOtherLodgeId !== undefined ||
       otherLodgeMemberGuestIds !== undefined ||
-      newPromoCode ||
-      removePromoCode,
+      promoChangeRequested,
   );
   const requestIsIdentityOnly =
     !requestedStructuralChange && Boolean(guestUpdates?.length);
@@ -579,8 +607,7 @@ export async function POST(
       addGuests?.length ||
       removeGuestIds?.length ||
       guestStayRanges?.length ||
-      newPromoCode ||
-      removePromoCode
+      promoChangeRequested
     );
   /**
    * The other-lodge re-rate is exempt from the quote-priced edit block on the
@@ -606,6 +633,7 @@ export async function POST(
       guestStayRanges,
       promoCode: newPromoCode,
       removePromoCode,
+      promoCodes: requestedPromoCodes,
     });
   const quotePriced = await isQuotePricedBooking(prisma, bookingId);
   if (
@@ -1016,7 +1044,7 @@ export async function POST(
         { status: 400 }
       );
     }
-    if (newPromoCode || removePromoCode) {
+    if (promoChangeRequested) {
       return NextResponse.json(
         { error: "Promo code changes are not available for in-progress bookings" },
         { status: 400 }
@@ -1383,6 +1411,24 @@ export async function POST(
     }
   }
 
+  // The proposed party's consent, as the save will hold it (D-12): a row
+  // already on the booking by its STORED consentStatus; a row this preview
+  // would ADD by whether it is a cross-family member guest, which is exactly
+  // the add that lands PENDING. Read by the paid-up-adult requirement below and
+  // by the promotion (#3827, D-3813-4: a pending guest takes no code).
+  const consentStatusByGuestId = new Map(
+    booking.guests.map((guest) => [guest.id, guest.consentStatus]),
+  );
+  const previewConsentStatus = (guest: (typeof guestsForPricing)[number]) =>
+    guest.bookingGuestId
+      ? consentStatusByGuestId.get(guest.bookingGuestId) ?? null
+      : guest.crossFamilyMemberGuest === true &&
+          memberGuestPolicy.wideningEnabled &&
+          memberGuestPolicy.approvalRequired &&
+          !isAdmin
+        ? ("PENDING" as const)
+        : null;
+
   // #2543 — the paid-up-adult requirement over the PROPOSED party (remaining +
   // added guests), so the preview refuses exactly what the save would refuse.
   // Skipped for admins, like every other eligibility gate on this route.
@@ -1390,9 +1436,6 @@ export async function POST(
   if (!isAdmin) {
     // The stored D-12 fact for every row already on this booking, read from the
     // rows this route already loaded (no extra query).
-    const consentStatusByGuestId = new Map(
-      booking.guests.map((guest) => [guest.id, guest.consentStatus]),
-    );
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
       mode: subscriptionLockoutMode,
       lodgeId: bookingLodgeId,
@@ -1416,16 +1459,7 @@ export async function POST(
         stayStart: guest.stayStart,
         stayEnd: guest.stayEnd,
         nights: guest.nights,
-        operationallyPresent: guest.bookingGuestId
-          ? isOperationallyPresentConsent(
-              consentStatusByGuestId.get(guest.bookingGuestId) ?? null,
-            )
-          : !(
-              guest.crossFamilyMemberGuest === true &&
-              memberGuestPolicy.wideningEnabled &&
-              memberGuestPolicy.approvalRequired &&
-              !isAdmin
-            ),
+        operationallyPresent: isOperationallyPresentConsent(previewConsentStatus(guest)),
       })),
     });
     if (nonMemberPricing?.violation) {
@@ -1797,9 +1831,8 @@ export async function POST(
       // under way refuses a promo change outright a few hundred lines above,
       // so the reachable case here is the parked one.
       promoChangeNotApplied: describePromoChangeNotApplied({
-        requestedPromoCode: newPromoCode,
-        removePromoCodeRequested: Boolean(removePromoCode),
-        currentPromoCode: booking.promoRedemption?.promoCode?.code,
+        ...promoChange,
+        currentPromoCode: bookingPromoCodeLabel(booking) ?? undefined,
         // The resolved removals, matching the save exactly - a preview that
         // promised "who it covers has not changed" would be contradicted by the
         // save it is previewing.
@@ -2207,6 +2240,8 @@ export async function POST(
   // preview never reaches here — it returns from `parkedQuoteResponse` long
   // before this, and builds the same notice there.)
   let promoChangeNotApplied: PromoChangeNotAppliedNotice | null = null;
+  // #3827: the codes the preview applied, in order, for the line item.
+  let appliedPromoCodeLabel: string | null = null;
 
   // Helper: get per-night rates per guest for promo calculation
   function getGuestNightRates() {
@@ -2219,6 +2254,7 @@ export async function POST(
       // Dates the positional rates so internal work-party promos restrict
       // the discount to the event's night window.
       firstNight: guest.stayStart ?? newCheckIn,
+      consentStatus: previewConsentStatus(guest),
     }));
   }
 
@@ -2240,134 +2276,190 @@ export async function POST(
     // under `isInProgressEdit`, so `AMOUNT_UNDER_REVIEW` here would be a dead
     // arm claiming something untrue if it ever came alive.
     promoChangeNotApplied = describePromoChangeNotApplied({
-      requestedPromoCode: newPromoCode,
-      removePromoCodeRequested: Boolean(removePromoCode),
-      currentPromoCode: booking.promoRedemption?.promoCode?.code,
+      ...promoChange,
+      currentPromoCode: bookingPromoCodeLabel(booking) ?? undefined,
       guestRemovalsRequested: removedGuests.length > 0,
       reason: "STAY_IN_PROGRESS",
       phase: "preview",
     });
     newDiscountCents = inProgressPlan.newDiscountCents;
     newPromoAdjustmentCents = inProgressPlan.newPromoAdjustmentCents;
-  } else if (removePromoCode) {
-    // User wants to remove existing promo (for reuse later)
-    newDiscountCents = 0;
-    newPromoAdjustmentCents = 0;
-    promoValidation = null;
-  } else if (newPromoCode) {
-    // User wants to apply a new promo code. #2266 (MED-4): beneficiaries ride
-    // along bound the same way the apply route (applyPromoCodeChanges)
-    // resolves them — existing guests by bookingGuestId, added guests by
-    // request-local index — so preview and apply can never disagree about who
-    // the code covers, and a stale id 400s here exactly as it would on save.
+  } else {
+    // #3827: the save's reading of the request (`requestedPromoCodeList`) and
+    // the save's pricing (`applyBookingPromotions`), unlocked and read-only, so
+    // the preview and the save cannot tell different stories (#2390). `null`
+    // means no promo change: every code the booking carries is re-priced.
+    // #3826: the switch decides what the request means; the save reads it
+    // the same way (`applyPromoCodeChanges`).
+    const storedCodes = promoRedemptions.map((redemption) => redemption.promoCode);
+    const multiPromoCodes = promoRequestReadsMultiPromoSwitch(promoRequest, storedCodes)
+      ? await multiPromoCodesEnabled(prisma)
+      : true;
+    const requested = requestedPromoCodeListFor(promoRequest, storedCodes, multiPromoCodes);
     const quoteGuestNightRates = getGuestNightRates();
-    let quoteSelectedGuestIndexes: number[] | undefined;
-    try {
-      quoteSelectedGuestIndexes = resolvePromoBeneficiarySelection({
-        guestNightRates: quoteGuestNightRates,
-        addedGuestCount: normalizedAddGuestsWithRanges?.length ?? 0,
-        promoGuestIds,
-        promoAddedGuestIndexes,
+    const existingByCode = new Map(
+      promoRedemptions.map((redemption) => [redemption.promoCode.code, redemption]),
+    );
+    const entries =
+      requested ??
+      promoRedemptions.map((redemption) => ({
+        code: redemption.promoCode.code,
+        reapply: false,
+        promoGuestIds: undefined,
+        promoAddedGuestIndexes: undefined,
+      }));
+    // The save's own refusal (`promoCodeListRefusal`), read the same way.
+    let refusal: string | null = requested
+      ? (oneCodeFieldsOnSeveralCodesRefusal(promoRequest, storedCodes) ??
+        promoCodeListRefusal({
+          ...splitRequestedPromoCodes(requested, promoRedemptions),
+          multiPromoCodes,
+        }))
+      : null;
+    const applications: Array<PromotionApplicationInput & { kept: boolean }> = [];
+    for (const entry of refusal ? [] : entries) {
+      const keptRedemption = keptStoredPromoRedemption(entry, existingByCode);
+      if (keptRedemption) {
+        const promo = keptRedemption.promoCode;
+        applications.push({
+          kept: true,
+          code: promo.code,
+          promoCode: promo,
+          assignedMemberIds: promo.assignments.length
+            ? promo.assignments.map((assignment) => assignment.memberId)
+            : null,
+          selectedGuestIndexes: selectedIndexesForStoredGuestTargets(
+            keptRedemption,
+            quoteGuestNightRates,
+          ),
+          // Same rule as the save's re-price: a kept code narrows its coverage.
+          capOverflow: "coverExisting",
+        });
+        continue;
+      }
+      // #2266 (MED-4): beneficiaries bound the way the save binds them —
+      // existing guests by bookingGuestId, added guests by request-local
+      // index — so a stale id 400s here exactly as it would on save.
+      let selectedGuestIndexes: number[] | undefined;
+      try {
+        selectedGuestIndexes = resolvePromoBeneficiarySelection({
+          guestNightRates: quoteGuestNightRates,
+          addedGuestCount: normalizedAddGuestsWithRanges?.length ?? 0,
+          promoGuestIds: entry.promoGuestIds,
+          promoAddedGuestIndexes: entry.promoAddedGuestIndexes,
+        });
+      } catch (error) {
+        if (error instanceof ApiError) {
+          return NextResponse.json(
+            { error: error.message },
+            { status: error.status },
+          );
+        }
+        throw error;
+      }
+      const promoCode = await prisma.promoCode.findUnique({
+        where: { code: entry.code },
+        include: {
+          assignments: { select: { memberId: true } },
+          lodges: { select: { lodgeId: true } },
+        },
       });
-    } catch (error) {
-      if (error instanceof ApiError) {
-        return NextResponse.json(
-          { error: error.message },
-          { status: error.status },
+      // Internal promos (work party events) cannot be entered as codes.
+      if (!promoCode || promoCode.internal) {
+        refusal = "Promo code not found";
+        break;
+      }
+      applications.push({
+        kept: false,
+        code: promoCode.code,
+        promoCode,
+        assignedMemberIds: promoCode.assignments.length
+          ? promoCode.assignments.map((assignment) => assignment.memberId)
+          : null,
+        selectedGuestIndexes,
+        capOverflow: "reject",
+      });
+    }
+    const priced = refusal
+      ? null
+      : await applyBookingPromotions(applications, {
+          memberId: bookingOwner(booking).memberId,
+          bookingCheckIn: newCheckIn,
+          totalPriceCents: newTotalPriceCents,
+          guests: quoteGuestNightRates,
+          db: prisma,
+          lodgeId: bookingLodgeId,
+          todayAtClub,
+          excludeBookingId: bookingId,
+        });
+    const notices: Array<PromoCoverageNotice | null> = [];
+    for (const { application, result } of priced?.outcomes ?? []) {
+      if (!result.error && result.discount) {
+        if (application.kept) {
+          notices.push(
+            await describePromoCapCoverage(prisma, {
+              promoCode: application.code,
+              capCoverage: result.capCoverage,
+            }),
+          );
+        }
+        continue;
+      }
+      if (!application.kept) {
+        refusal ??= result.error ?? "Promo code could not be applied";
+        continue;
+      }
+      promoStillValid = false;
+      if (promoRedemptions.length > 1 || requested) {
+        notices.push(
+          promoReleasedNotice(application.code, result.error ?? "it no longer applies"),
         );
       }
-      throw error;
     }
-    const validation = await validatePromoCodeFull(newPromoCode, {
-      totalPriceCents: newTotalPriceCents,
-      memberId: bookingOwner(booking).memberId,
-      guests: quoteGuestNightRates,
-    }, todayAtClub, bookingId, bookingLodgeId, {
-      selectedGuestIndexes: quoteSelectedGuestIndexes,
-    });
 
-    if (validation.valid) {
-      newDiscountCents = validation.discountCents ?? 0;
-      newPromoAdjustmentCents = validation.promoAdjustmentCents ?? 0;
-      promoValidation = {
-        valid: true,
-        code: validation.promoCode?.code,
-        discountCents: validation.discountCents ?? 0,
-        promoAdjustmentCents: validation.promoAdjustmentCents ?? 0,
-      };
-    } else {
-      // A guest-targeted code that still needs a selection surfaces here as
-      // its plain error text. The panel does not re-open guest selection from
-      // the quote (INFO-9): PromoCodeInput owns selection via
-      // /api/promo-codes/validate, and the panel resets an applied code
-      // whenever the guest set changes, so the member re-selects there.
-      promoValidation = {
-        valid: false,
-        error: validation.error,
-      };
-      // Invalid new promo — discount stays 0, don't fall back to old promo
-    }
-  } else if (booking.promoRedemption?.promoCode) {
-    // Keep existing promo, recalculate with new price
-    const promo = booking.promoRedemption.promoCode;
-    const guestNightRates = getGuestNightRates();
-    const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
-      booking.promoRedemption,
-      guestNightRates
-    );
-    const application = await validateAndCalculatePromoDiscount(
-      promo,
-      {
-        memberId: bookingOwner(booking).memberId,
-        bookingCheckIn: newCheckIn,
-        totalPriceCents: newTotalPriceCents,
-        guests: guestNightRates,
-      },
-      promo.assignments.length > 0
-        ? promo.assignments.map((assignment) => assignment.memberId)
-        : null,
-      {
-        excludeBookingId: bookingId,
-        db: prisma,
-        selectedGuestIndexes,
-        lodgeId: bookingLodgeId,
-        // Same rule as `applyPromoCodeChanges`' reprice branch, so the preview
-        // and the save cannot tell different stories (#2390).
-        capOverflow: "coverExisting",
-        todayAtClub,
-      },
-    );
-
-    if (application.error || !application.discount) {
-      promoStillValid = false;
-    } else {
-      const promoResult = application.discount;
-      newDiscountCents = promoResult.discountCents;
-      newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
-      promoCoverage = await describePromoCapCoverage(prisma, {
-        promoCode: promo.code,
-        capCoverage: application.capCoverage,
-      });
+    if (requested && refusal) {
+      // Invalid new code — the save refuses the whole edit, so the discount
+      // stays 0 here; don't fall back to the old codes. Checked before the
+      // removal below: a one-code removal on a several-code booking is
+      // refused too (#3828), not previewed as removing every code.
+      promoValidation = { valid: false, error: refusal };
+    } else if (requested && requested.length === 0) {
+      // User wants to remove every code (for reuse later).
+      newDiscountCents = 0;
+      newPromoAdjustmentCents = 0;
+      promoValidation = null;
+    } else if (priced) {
+      newDiscountCents = priced.discountCents;
+      newPromoAdjustmentCents = priced.priceAdjustmentCents;
+      promoCoverage = mergePromoCoverageNotices(notices);
+      appliedPromoCodeLabel =
+        priced.outcomes
+          .filter(({ result }) => !result.error && result.discount)
+          .map(({ application }) => application.code)
+          .join(", ") || null;
+      if (requested) {
+        promoValidation = {
+          valid: true,
+          code: appliedPromoCodeLabel ?? undefined,
+          discountCents: priced.discountCents,
+          promoAdjustmentCents: priced.priceAdjustmentCents,
+        };
+      }
     }
   }
 
   // Add promo line item
   if (newPromoAdjustmentCents !== 0) {
-    const promoLabel = newPromoCode
-      ? `Promo '${newPromoCode.toUpperCase()}'`
-      : booking.promoRedemption?.promoCode
-        ? `Promo '${booking.promoRedemption.promoCode.code}'`
-        : "Promo discount";
     itemizedChanges.push({
-      label: promoLabel,
+      label: appliedPromoCodeLabel ? `Promo '${appliedPromoCodeLabel}'` : "Promo discount",
       amountCents: newPromoAdjustmentCents,
     });
   }
 
   // Show removed promo as the inverse of its previous signed adjustment.
-  if (removePromoCode && booking.promoAdjustmentCents !== 0) {
+  if (promoChange.removePromoCodeRequested && booking.promoAdjustmentCents !== 0) {
     itemizedChanges.push({
-      label: `Removed promo '${booking.promoRedemption?.promoCode?.code || "adjustment"}'`,
+      label: `Removed promo '${bookingPromoCodeLabel(booking) || "adjustment"}'`,
       amountCents: -booking.promoAdjustmentCents,
     });
   }
@@ -2385,7 +2477,7 @@ export async function POST(
   const settlementOptions = await calculateModificationSettlementOptions({
     booking,
     netChargeCents,
-    db: prisma, // advisory quote: no transaction, no lock held
+    db: prisma, // advisory, unlocked; payment and open edit refunds read apart (#3827 stated limit: commit re-reads both under lock(1))
     todayAtClub,
   });
   // #3809: what saving would give back of the booking's applied credit - all of

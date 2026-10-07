@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";
+import { editPromoCodesSchema } from "@/lib/booking-modify-quote-request";
 
 import { AdultMemberHostingRequiredError, buildAdultMemberHostingRefusalBody } from "@/lib/adult-member-hosting-refusal";
 import {
@@ -130,6 +131,8 @@ const batchModifySchema = z.object({
   promoGuestIds: z.array(z.string().min(1)).max(200).optional(),
   promoAddedGuestIndexes: z.array(z.number().int().min(0)).max(200).optional(),
   removePromoCode: z.boolean().optional(),
+  // #3827: the complete list of codes after the edit, in the booker's order.
+  promoCodes: editPromoCodesSchema,
   // #2266: credit election on the edit path — stored on the booking (#2265),
   // never applied here. Bounds mirror the create route's applyCreditCents.
   applyCreditCents: z.number().int().min(0).max(100_000_000).optional(),
@@ -178,6 +181,7 @@ const OVERRIDE_DATE_ONLY_FIELDS = [
   "promoGuestIds",
   "promoAddedGuestIndexes",
   "removePromoCode",
+  "promoCodes",
   // #1746: partner-shared flags ride guest changes, never a date override.
   "partnerSharedGuests",
 ] as const;
