@@ -1863,29 +1863,27 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
 
 - **A price reduction the club returns by hand raises ONE officer refund
   task** (#3827; owner decision D-3813-6 on #3492). When a batch modify, date
-  change, guest removal or a guest's acceptance re-price lowers a booking whose
-  money was not captured through Stripe (internet banking, or marked paid in
-  cash) and the reduction goes back as money rather than account credit, the
+  change, guest removal or acceptance re-price lowers a booking paid outside
+  Stripe (internet banking or cash) and the reduction goes back as money, not
+  credit, the
   edit raises a `ManualRefundTask` for that refund inside its own transaction,
   under its locks, with no provider call. `raiseEditRefundHandBackIfOwed`
   (`src/lib/edit-refund-hand-back.ts`) is the one writer and
-  `editRefundGoesBackByHand` the one test. A guest add never lowers a price, so
-  it raises none.
+  `editRefundGoesBackByHand` the one test. A guest add raises none.
   - **One task per edit**: occurrence key
     `edit-refund-hand-back:<BookingModification id>`, unique, inserted
     `ON CONFLICT DO NOTHING`: a replay neither duplicates it nor aborts the
     edit.
-  - **Kind `CANCELLED_BOOKING_HAND_BACK`, marked by that key**, reused (as
-    #3639 and #3643 do) so the previous app version reads it as a hand-back.
+  - **Kind `CANCELLED_BOOKING_HAND_BACK`, marked by that key**, reused so
+    the previous app version reads it as a hand-back.
     `isEditRefundHandBackTask` and `NOT_NON_CANCELLATION_HAND_BACK_WHERE`
     (`manual-refund-task-settlement-rules.ts`) are the one spelling; every
     reader selecting a cancellation's hand-backs by kind spreads the
     exclusion (`edit-refund-hand-back-readers-census.test.ts`).
-  - **The amount is the edit's refund, fixed at raise.** Completing it is a
-    hand-back's completion: the refund allocation on the payment, the
-    bank-refund ledger line and the `REFUNDED` event, marked
-    `edit_refund_hand_back_completed` so the narrative never reads it as a
-    cancellation's. It queues NO Xero document: the edit's credit note stands.
+  - **The amount is the edit's refund, fixed at raise.** Completing it writes
+    the refund allocation, the bank-refund ledger line and a `REFUNDED` event
+    marked `edit_refund_hand_back_completed`, which the narrative never reads
+    as a cancellation's. It queues NO Xero document: the edit's credit note stands.
   - **Promised cash is not refundable twice.** Until it closes, later edits,
     acceptances, paid cancels and by-hand reviews size refunds off captured
     cash less open tasks, `INV-PAY-118`'s too
@@ -1894,6 +1892,8 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
     cancel counted it.
   - **The member is told the club WILL refund by bank transfer**, never that a
     refund "has been processed" (`bookingModifiedRefundSentence`).
+  - **Owed, not kept** (#3372, 7 Oct 2026): Net Collected subtracts an open one
+    at once; "Refunds owed" counts it until paid (`openTaskOwedCents`).
 
 ## INV-PAY-118
 

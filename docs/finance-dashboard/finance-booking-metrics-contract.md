@@ -110,13 +110,26 @@ The booking metrics response includes:
   before the task is completed, capped at what is left of the payment (owner
   decisions on #3372, 3 Oct 2026 for cancelled bookings, 7 Oct 2026 for live
   ones)
+- `cardRefundOwedCents`: card refunds started and not yet paid by Stripe (an
+  unclosed refund-type `PaymentRecoveryOperation`), net of the slices already
+  recorded on `PaymentRefund`, capped at what is left after the hand-back
+  (`openCardRefundOwedCents`; owner, #3372, 7 Oct 2026)
+- `lateCaptureOwedCents`: late card charges awaiting the treasurer's
+  refund-or-keep decision (`isLateCaptureAwaitingDecisionTask`), capped at what
+  is left; once kept they count as collected (owner, #3372, 7 Oct 2026)
+- `lateCashCreditedCents`: on cancelled bookings, bank-transfer cash that
+  arrived after the cancel and was credited to the member
+  (`sumInternetBankingLateCashCreditCents`), capped at what is left
 - `refundsOwedCents` / `creditsOwedCents`: shown beside Net Collected, **as at
   the request and club-wide** - NOT narrowed by either window or the lodge
-  (`readRefundsAndCreditsOwed`). Refunds owed is every open hand-back task, by
-  the rule `handBackOwedCents` uses, until it is paid back or dismissed;
-  Credits owed is the sum of every member's positive credit-ledger balance
-  (`sumOutstandingCreditCents`), until the credit is used (owner, #3372, 7 Oct
-  2026)
+  (`readRefundsAndCreditsOwed`). Refunds owed is every open hand-back task and
+  late card charge awaiting the treasurer (`openTaskOwedCents`) plus every card
+  refund Stripe has not yet paid (`openCardRefundOwedCents`), until each is
+  paid, dismissed or kept; Credits owed is the sum of every member's positive
+  credit-ledger balance (`sumOutstandingCreditCents`), until the credit is
+  used (owner, #3372, 7 Oct 2026). Null unless the request sets
+  `includeRefundsAndCreditsOwed`: they are the same for every window, so a
+  page reads them once
 - `keptCreditCents`: on cancelled bookings, applied account credit the
   cancellation kept — the booking's `BOOKING_APPLIED` net less its restore row
   (`cancelledBookingKeptCreditCents`). Never a live booking's credit
@@ -158,10 +171,11 @@ The booking metrics response includes:
 - Collected cash is counted once (#2408). `Payment.amountCents` is the gross
   capture — the sum of every captured ledger row — so
   `netCollectedCents = capturedGrossCents - refundedCents - handBackOwedCents
-  + keptCreditCents` (`handBackOwedCents` is a refund still owed on an open
-  hand-back task, on any booking; `keptCreditCents` is zero except on a
-  cancelled booking, for applied account credit the cancellation kept; epic
-  #3372, owner decisions of 3 and 7 Oct 2026), and
+  - cardRefundOwedCents - lateCaptureOwedCents - lateCashCreditedCents +
+  keptCreditCents` (the four owed parts are money still owed back, each taken
+  off its own payment at most once; `lateCashCreditedCents` and
+  `keptCreditCents` are zero except on a cancelled booking; epic #3372, owner
+  decisions of 3 and 7 Oct 2026), and
   `capturedAdditionalCents` is a part of `capturedGrossCents` rather than
   something to add to it. `additionalLedgerGapCents` measures exactly the
   population where that containment cannot be proved from the ledger, and is

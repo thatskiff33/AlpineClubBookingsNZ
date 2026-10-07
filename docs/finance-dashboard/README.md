@@ -45,7 +45,7 @@ The finance-permission **Base Reports** page is a separate, lighter operator
 surface at `/admin/reports`; see the [Reports guide](../guides/reports.md). Its
 booking and booked-revenue figures follow overlapping lodge stay nights, while
 its Net Collected figure (money kept: cash less refunds, plus account credit a
-cancellation kept, less refunds still owed back by hand on any booking) remains
+cancellation kept, less money still owed back on any booking) remains
 explicitly separate, with **Refunds owed** and **Credits owed** beside it as at
 today. The richer
 `/finance` dashboard contracts below continue to own Xero snapshots, comparisons,

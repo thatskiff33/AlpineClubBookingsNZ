@@ -721,27 +721,29 @@ derivation).
   `AWAITING_REVIEW`, and `COMPLETED`, with the same lodge/deleted scope. Count
   bookings once per overlapped bucket. Count guest rows once when their own
   half-open `[stayStart, stayEnd)` envelope overlaps the selected range; sparse
-  explicit guest-night rows do not override that envelope for this metric.
+  guest-night rows do not override it.
   Allocate all integer cents of `finalPriceCents` across the
   booking's complete stay before slicing the report range (100/3 = 34/33/33).
   This is **Booked revenue**, not cash. Net Collected is money kept: captured
-  cash less refunds (a captured addition already inside it; #2408), plus
-  account credit a cancellation kept, less refunds still owed back by hand on
-  any booking. Outstanding additions remain separate (#2350). The
+  cash (a captured addition already inside it; #2408) less refunds and money
+  still owed back, plus account credit a cancellation kept. Outstanding
+  additions remain separate (#2350). The
   #2408 guard is binding here too: a collected-addition claim without captured
   `ADDITIONAL` transaction evidence must not change cash arithmetic or leak
   transaction rows, but must log and expose an aggregate possible-understatement
-  warning in the page, CSV, and PDF. All Reports money presentation preserves
-  exact integer cents.
-  Occupancy is the deliberate exception within the page: it stays limited to
-  PAID/COMPLETED and continues to exclude custodian occupancy (#2286). Net
+  warning in the page, CSV, and PDF. Reports money keeps exact integer cents.
+  Occupancy is the deliberate exception: PAID/COMPLETED only, custodian
+  occupancy excluded (#2286). Net
   Collected is the second: it counts bookings of any status and never a
   deleted one, through `isInNetCollectedBookingScope` (#3372 decision A). Each
   payment adds only money it took and still holds, so a cancelled booking never
-  paid adds nil; any booking loses an open hand-back, and a cancelled one adds
-  credit it kept (`getNetCollectedPaymentParts`; owner, PR #3811 and #3372). A refunded
-  status is money taken only with capture evidence
-  (`paymentShowsCaptureEvidence`), never a Xero-folded mirror alone.
+  paid adds nil. Any booking loses at once an open hand-back, an unpaid card
+  refund and a late charge awaiting the treasurer; a cancelled one loses late
+  bank cash credited back and adds credit it kept
+  (`getNetCollectedPaymentParts`; owner, #3811 and #3372). "Refunds owed" and
+  "Credits owed" beside it are club-wide, as at today. A refunded status is
+  money taken only with capture evidence (`paymentShowsCaptureEvidence`),
+  never a Xero-folded mirror alone.
 
 ## Capacity and allocation
 
