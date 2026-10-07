@@ -156,7 +156,9 @@ import {
   assertFinishedStayCorrectionCall,
   classifyFinishedStayChangeFeeRule,
   finishedStayNoticeDay,
-  finishedStaySwapFeeCents,
+  finishedStayRemovalFeeCents,
+  finishedStayRemovedPortion,
+  loadRemovalPromoRows,
   type FinishedStayChangeFeeRule,
   type FinishedStayCorrection,
 } from "@/lib/booking-finished-stay-correction";
@@ -241,7 +243,10 @@ type BatchModificationTransactionResult =
      * row says why a finished booking moved.
      */
     finishedStayCorrection:
-      | (FinishedStayCorrection & { changeFeeRule: FinishedStayChangeFeeRule })
+      | (FinishedStayCorrection & {
+          changeFeeRule: FinishedStayChangeFeeRule;
+          confirmOverCapacity: boolean;
+        })
       | null;
     notifyMember: boolean;
     capacityOverridden: boolean;
@@ -1526,7 +1531,10 @@ export async function modifyBookingBatch({
           newCheckIn: dates.newCheckIn,
           newTotalPriceCents: pricingResult.newTotalPriceCents,
           guestNightRates: pricingResult.guestNightRates,
-          todayAtClub,
+          // #3750 (F1): a finished stay's codes are judged on its check-in day,
+          // as its fee tiers are — on the real today an expired code would be
+          // released and its discount billed back to the member.
+          todayAtClub: finishedStayCorrection ? finishedStayNoticeDay(booking) : todayAtClub,
         });
 
     /**
@@ -1624,20 +1632,33 @@ export async function modifyBookingBatch({
     const moneyTierDay = finishedStayCorrection
       ? finishedStayNoticeDay(booking)
       : todayAtClub;
-    // #3750: a swap's change fee — the same-day tier's retention on the removed
-    // guests' portion, never netted against the guests added in their place.
-    const isFinishedStaySwap =
-      !parked && finishedStayChangeFeeRule === "SWAP_SAME_DAY_NOTICE";
-    const swapFeeCents = isFinishedStaySwap
-      ? finishedStaySwapFeeCents({
-          removedPortionCents: guestPlan.removedGuests.reduce(
-            (sum, guest) => sum + guest.priceCents,
-            0,
+    // #3750: what a correction REMOVES — removed guests, and nights trimmed off
+    // kept guests — valued net of the promotion it received, is charged the
+    // same-day tier's retention as its change fee, paid or unpaid (owner, 6 and
+    // 7 Oct 2026), and whatever reduction then remains comes back in full, so
+    // the tier is applied once and never netted against what was added.
+    const finishedStayRemovalCharged =
+      Boolean(finishedStayCorrection) &&
+      !parked &&
+      finishedStayChangeFeeRule !== "ADD_ONLY_NO_FEE";
+    const removedPortion = finishedStayRemovalCharged
+      ? finishedStayRemovedPortion({
+          storedGuests: booking.guests,
+          keptStays: new Map(
+            guestPlan.proposedRemainingGuests.map((entry) => [entry.guest.id, entry]),
           ),
-          policyRules: await loadCancellationPolicy(booking.checkIn, booking.lodgeId, tx),
-          settlementMethod: input.settlementMethod ?? "card",
+          booking,
+          promoRows: await loadRemovalPromoRows(tx, bookingId),
         })
-      : 0;
+      : null;
+    const removalFeeCents =
+      removedPortion && removedPortion.netCents > 0
+        ? finishedStayRemovalFeeCents({
+            removedPortionCents: removedPortion.netCents,
+            policyRules: await loadCancellationPolicy(booking.checkIn, booking.lodgeId, tx),
+            settlementMethod: input.settlementMethod ?? "card",
+          })
+        : 0;
 
     // #3232 D2: what this move WOULD attract, before the club's waiver is applied.
     // A parked edit is priced by nobody, so it is zero here for the reason it is
@@ -1653,7 +1674,7 @@ export async function modifyBookingBatch({
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
       db: tx, // locked transaction; see `CancellationPolicyDb`
       todayAtClub: moneyTierDay,
-    }) + swapFeeCents;
+    }) + removalFeeCents;
     // #3232 D2: `waiveChangeFee` takes the same zero branch a parked edit takes,
     // so the waived fee is genuinely absent from every downstream decision rather
     // than subtracted back out somewhere later.
@@ -1675,11 +1696,11 @@ export async function modifyBookingBatch({
     // payment row, and returns zeros for both Xero legs. The existing machinery
     // is what proves nothing moved, rather than a parallel hand-built result
     // that could drift from it.
-    // #3750: a swap already paid the tier in its fee, so what remains of a
+    // #3750: a correction already paid the tier in its fee, so what remains of a
     // reduction comes back in full — the tier applies once, to the removed portion.
     const settlementOptions = parked
       ? null
-      : isFinishedStaySwap
+      : finishedStayRemovalCharged
         ? calculateFullReductionSettlementOptions({
             booking,
             netChargeCents: priceDiffCents + changeFeeCents,
@@ -1798,6 +1819,9 @@ export async function modifyBookingBatch({
       // #3750: the give-back tier is a refund tier too — the same 0-day frame.
       todayAtClub: moneyTierDay,
       format,
+      // #3750 (F2): the tier was already applied in the removal fee, so an
+      // applied-credit give-back returns the remaining reduction once, untiered.
+      reductionUntiered: finishedStayRemovalCharged,
     });
 
     const lifecycle = await applyLifecycleTransitions(tx, {
@@ -1887,14 +1911,18 @@ export async function modifyBookingBatch({
       include: { guests: true, payment: true },
     });
 
-    await reconcileBedAllocationsForBookingWithLodgeLockHeld({
-      bookingId,
-      db: tx,
-      previousRange: {
-        checkIn: booking.checkIn,
-        checkOut: booking.checkOut,
-      },
-    });
+    // #3750 (owner D2, 7 Oct 2026): a finished-stay correction never touches
+    // past beds — no placement for added guests, no pruning, no promotion.
+    if (!finishedStayCorrection) {
+      await reconcileBedAllocationsForBookingWithLodgeLockHeld({
+        bookingId,
+        db: tx,
+        previousRange: {
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+        },
+      });
+    }
 
     /**
      * #3530: the lines behind `priceDiffCents`. BEFORE is the guest snapshot
@@ -2062,6 +2090,11 @@ export async function modifyBookingBatch({
                 finishedStayCorrection: {
                   changeRequestId: finishedStayCorrection.changeRequestId,
                   changeFeeRule: finishedStayChangeFeeRule,
+                  removedPortionCents: removedPortion?.netCents ?? 0,
+                  removalFeeCents,
+                  // Both, as the #1668 override records them: what the officer
+                  // confirmed, and whether capacity was in fact exceeded.
+                  confirmOverCapacity: input.confirmOverCapacity === true,
                   capacityOverridden,
                 },
               }
@@ -2275,6 +2308,7 @@ export async function modifyBookingBatch({
           ? {
               changeRequestId: finishedStayCorrection.changeRequestId,
               changeFeeRule: finishedStayChangeFeeRule,
+              confirmOverCapacity: input.confirmOverCapacity === true,
             }
           : null,
       notifyMember,
@@ -2636,6 +2670,7 @@ async function dispatchBatchPostTransactionSideEffects({
           finishedStayCorrection: {
             changeRequestId: result.finishedStayCorrection.changeRequestId,
             changeFeeRule: result.finishedStayCorrection.changeFeeRule,
+            confirmOverCapacity: result.finishedStayCorrection.confirmOverCapacity,
             capacityOverridden: result.capacityOverridden,
           },
         }

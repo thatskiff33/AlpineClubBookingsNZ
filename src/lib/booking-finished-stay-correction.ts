@@ -129,15 +129,13 @@ function nightKeys(
  * added, nobody is removed, and every guest already on the booking keeps exactly
  * the nights they had.
  *
- * A swap — a removal with an add — is `SWAP_SAME_DAY_NOTICE`: the removed
- * guests' portion is charged the same-day tier's retention exactly as a removal
- * would be ({@link finishedStaySwapFeeCents}), and is NOT netted away against
- * the added guests' price (owner, 6 Oct 2026: "charged fairly").
- *
- * Anything else — a removal, a stay-range or date change — is
- * `SAME_DAY_NOTICE`, and the ordinary fee machinery prices it at
- * {@link finishedStayNoticeDay}: a removal's reduction is refunded at the
- * same-day tier, so the tier keeps its share.
+ * A swap — a removal with an add — is `SWAP_SAME_DAY_NOTICE`, and anything
+ * else — a removal, a trimmed stay, a stay-range or date change — is
+ * `SAME_DAY_NOTICE`. Both are charged the same way: the same-day tier's
+ * retention on everything the correction removes
+ * ({@link finishedStayRemovalFeeCents} over {@link finishedStayRemovedPortion}),
+ * never netted against guests or nights added in its place (owner, 6 Oct 2026:
+ * "charged fairly"). The label only records which shape it was.
  */
 export function classifyFinishedStayChangeFeeRule(plan: {
   readonly addedGuestCount: number;
@@ -161,15 +159,163 @@ export function classifyFinishedStayChangeFeeRule(plan: {
 }
 
 /**
- * The change fee a swap owes: what the club's same-day (0-day) tier would KEEP
- * of the removed guests' portion had they simply been removed — the portion
- * less the tier's refund for the chosen method (percentage and fixed fee, card
- * or credit), exactly `calculateDualRefundAmounts`' rule for a same-day
- * removal. Charged as the edit's change fee; the batch service then settles any
- * remaining reduction in full, so the tier is applied once, to the removed
- * portion, and never netted against the guests added in its place.
+ * What the correction takes OFF the stay: every night a guest no longer holds —
+ * all of a removed guest's nights, and the nights a kept guest's trimmed or
+ * re-ranged stay drops (reviews F3/F4 on #3955) — valued at what was actually
+ * charged for them, net of the promotion they received (F5).
+ *
+ * A stored night's `priceCents` is its sold price before promotions; the
+ * promotion is recorded per night (or per guest) in `BookingGuestNightAdjustment`
+ * (#3276). Where those rows are complete — every amount known and their sum the
+ * booking's recorded `promoAdjustmentCents` — a removed night carries its own
+ * adjustment and a removed guest their guest-scope ones (a trimmed guest's
+ * guest-scope adjustment in proportion to the nights dropped). Where they are
+ * not, the booking's promotion is shared over the removed portion in proportion
+ * to its price, which is the most any record supports.
+ *
+ * A removed night whose sold price is NOT KNOWN (`null`, #3170) cannot be
+ * valued, and the correction is refused rather than priced on a guess.
  */
-export function finishedStaySwapFeeCents(args: {
+export interface StoredGuestForRemoval {
+  readonly id: string;
+  readonly priceCents: number;
+  readonly stayStart: Date;
+  readonly stayEnd: Date;
+  readonly nights?: ReadonlyArray<{ readonly stayDate: Date; readonly priceCents?: number | null }>;
+}
+
+export interface ProposedStay {
+  readonly stayStart: Date;
+  readonly stayEnd: Date;
+  readonly nights?: ReadonlyArray<Date>;
+}
+
+export interface RemovalPromoRows {
+  /** Night-scope adjustment amounts (negative = discount), keyed `guestId|YYYY-MM-DD`. */
+  readonly byNight: ReadonlyMap<string, number | null>;
+  /** Guest-scope adjustment amounts, keyed by guest id. */
+  readonly byGuest: ReadonlyMap<string, number | null>;
+}
+
+export const FINISHED_STAY_UNKNOWN_NIGHT_PRICE_MESSAGE =
+  "A night this change removes has no recorded price, so the same-day charge on it cannot be worked out. Nothing has been applied; the request is still pending.";
+
+export function finishedStayRemovedPortion(args: {
+  readonly storedGuests: ReadonlyArray<StoredGuestForRemoval>;
+  /** The proposed stay of every guest the correction KEEPS; a guest absent here is removed. */
+  readonly keptStays: ReadonlyMap<string, ProposedStay>;
+  readonly booking: { readonly totalPriceCents: number; readonly promoAdjustmentCents: number };
+  readonly promoRows: RemovalPromoRows;
+}): { grossCents: number; netCents: number } {
+  const { booking, promoRows } = args;
+  let gross = 0;
+  let rowPromo = 0;
+  const day = (value: Date) => calendarDateOfDateOnlyInstant(storedDateOnly(value));
+  for (const guest of args.storedGuests) {
+    const kept = args.keptStays.get(guest.id);
+    const storedKeys = nightKeys(
+      guest.stayStart,
+      guest.stayEnd,
+      guest.nights?.map((night) => night.stayDate),
+    );
+    if (storedKeys.length === 0) continue;
+    const keptKeys = kept ? new Set(nightKeys(kept.stayStart, kept.stayEnd, kept.nights)) : new Set<string>();
+    const removedKeys = storedKeys.filter((key) => !keptKeys.has(key));
+    if (removedKeys.length === 0) continue;
+    if (guest.nights && guest.nights.length > 0) {
+      for (const night of guest.nights) {
+        const key = day(night.stayDate);
+        if (!removedKeys.includes(key)) continue;
+        if (night.priceCents === null || night.priceCents === undefined) {
+          throw new ApiError(FINISHED_STAY_UNKNOWN_NIGHT_PRICE_MESSAGE, 409);
+        }
+        gross += night.priceCents;
+        rowPromo += promoRows.byNight.get(`${guest.id}|${key}`) ?? 0;
+      }
+    } else {
+      // A pre-#713 guest with no night rows: their stored price over their nights.
+      gross += Math.round((guest.priceCents * removedKeys.length) / storedKeys.length);
+    }
+    const guestScope = promoRows.byGuest.get(guest.id);
+    if (typeof guestScope === "number") {
+      rowPromo += Math.round((guestScope * removedKeys.length) / storedKeys.length);
+    }
+  }
+  if (gross === 0) return { grossCents: 0, netCents: 0 };
+  if (booking.promoAdjustmentCents === 0) return { grossCents: gross, netCents: gross };
+  const amounts = [...promoRows.byNight.values(), ...promoRows.byGuest.values()];
+  const rowsKnown =
+    amounts.length > 0 &&
+    amounts.every((amount) => amount !== null) &&
+    amounts.reduce<number>((sum, amount) => sum + (amount as number), 0) ===
+      booking.promoAdjustmentCents;
+  const promoShare = rowsKnown
+    ? rowPromo
+    : booking.totalPriceCents > 0
+      ? Math.round((gross * booking.promoAdjustmentCents) / booking.totalPriceCents)
+      : 0;
+  return { grossCents: gross, netCents: Math.max(0, gross + promoShare) };
+}
+
+/** Read the promotion rows `finishedStayRemovedPortion` values removed nights with (#3276). */
+export async function loadRemovalPromoRows(
+  db: {
+    bookingGuestNightAdjustment: {
+      findMany(args: {
+        where: { bookingId: string };
+        select: {
+          bookingGuestId: true;
+          amountCents: true;
+          bookingGuestNight: { select: { bookingGuestId: true; stayDate: true } };
+        };
+      }): Promise<
+        Array<{
+          bookingGuestId: string | null;
+          amountCents: number | null;
+          bookingGuestNight: { bookingGuestId: string; stayDate: Date } | null;
+        }>
+      >;
+    };
+  },
+  bookingId: string,
+): Promise<RemovalPromoRows> {
+  const rows = await db.bookingGuestNightAdjustment.findMany({
+    where: { bookingId },
+    select: {
+      bookingGuestId: true,
+      amountCents: true,
+      bookingGuestNight: { select: { bookingGuestId: true, stayDate: true } },
+    },
+  });
+  const byNight = new Map<string, number | null>();
+  const byGuest = new Map<string, number | null>();
+  const add = (map: Map<string, number | null>, key: string, amount: number | null) => {
+    const prior = map.get(key);
+    map.set(key, prior === undefined ? amount : prior === null || amount === null ? null : prior + amount);
+  };
+  for (const row of rows) {
+    if (row.bookingGuestNight) {
+      const key = `${row.bookingGuestNight.bookingGuestId}|${calendarDateOfDateOnlyInstant(storedDateOnly(row.bookingGuestNight.stayDate))}`;
+      add(byNight, key, row.amountCents);
+    } else if (row.bookingGuestId) {
+      add(byGuest, row.bookingGuestId, row.amountCents);
+    }
+  }
+  return { byNight, byGuest };
+}
+
+/**
+ * The change fee a correction owes for what it removes: what the club's
+ * same-day (0-day) tier would KEEP of the removed portion — the portion less
+ * the tier's refund for the chosen method (percentage and fixed fee, card or
+ * credit), exactly `calculateDualRefundAmounts`' rule for a same-day removal.
+ * Charged as the edit's change fee, for a paid and an unpaid stay alike (owner,
+ * 7 Oct 2026: "as if they had paid and then were being refunded less the
+ * cancellation fee"); the batch service then returns whatever reduction remains
+ * in full, so the tier is applied once, to the removed portion, and never
+ * netted against guests added in its place.
+ */
+export function finishedStayRemovalFeeCents(args: {
   readonly removedPortionCents: number;
   readonly policyRules: CancellationRule[];
   readonly settlementMethod: "card" | "credit";
@@ -181,6 +327,18 @@ export function finishedStaySwapFeeCents(args: {
       ? refunds.creditRefundAmountCents
       : refunds.cardRefundAmountCents;
   return Math.max(0, portion - Math.min(portion, refunded));
+}
+
+/**
+ * Where a correction's reduction goes when the officer did not choose: back the
+ * way the booking was paid (P2 on #3955). A booking paid wholly with account
+ * credit gets credit back; anything paid in money goes back the way it came
+ * (card refund, or the internet-banking hand-back).
+ */
+export function defaultCorrectionSettlementMethod(
+  payment: { readonly amountCents: number; readonly creditAppliedCents: number } | null,
+): "card" | "credit" {
+  return payment && payment.amountCents <= 0 && payment.creditAppliedCents > 0 ? "credit" : "card";
 }
 
 /**

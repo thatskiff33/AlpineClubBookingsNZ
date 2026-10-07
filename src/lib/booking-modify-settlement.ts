@@ -202,6 +202,7 @@ export async function applyPaymentAdjustments(
     todayAtClub,
     format,
     appliedCreditReturnedByCaller = false,
+    reductionUntiered = false,
   }: {
     booking: LoadedBookingForModify;
     priceDiffCents: number;
@@ -220,6 +221,13 @@ export async function applyPaymentAdjustments(
      * Every ordinary edit door omits it and keeps #3809's give-back.
      */
     appliedCreditReturnedByCaller?: boolean;
+    /**
+     * #3750 (F2 on #3955): the caller already charged the cancellation tier in
+     * its change fee (a finished-stay correction), so the applied-credit
+     * give-back returns the remaining reduction in full rather than tiering it
+     * a second time.
+     */
+    reductionUntiered?: boolean;
   },
 ): Promise<PaymentAdjustmentResult> {
   const inSettledStatus = isSettledBookingStatus(booking.status);
@@ -256,6 +264,7 @@ export async function applyPaymentAdjustments(
           cardBasisCents: hasSettledPayment ? Math.min(-netAmountCents, remainingRefundableCents) : 0,
           todayAtClub,
           format,
+          untiered: reductionUntiered,
         })
       : null;
   const xeroRefundAmountCents =

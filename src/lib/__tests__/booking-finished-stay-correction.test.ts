@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   classifyFinishedStayChangeFeeRule,
+  defaultCorrectionSettlementMethod,
+  FINISHED_STAY_UNKNOWN_NIGHT_PRICE_MESSAGE,
   finishedStayNoticeDay,
-  finishedStaySwapFeeCents,
+  finishedStayRemovalFeeCents,
+  finishedStayRemovedPortion,
+  type RemovalPromoRows,
 } from "@/lib/booking-finished-stay-correction";
 import {
   FINISHED_STAY_CORRECTION_FIELD_MESSAGE,
@@ -113,14 +117,14 @@ describe("finished-stay change-fee rule (#3750 owner decision)", () => {
       { daysBeforeStay: 0, refundPercentage: 50, creditRefundPercentage: 80, fixedFeeCents: 500, creditFixedFeeCents: 0 },
     ];
     // Card: 50% of 10,000 back, less the $5 fixed fee -> 4,500 back, 5,500 kept.
-    expect(finishedStaySwapFeeCents({ removedPortionCents: 10_000, policyRules, settlementMethod: "card" })).toBe(5_500);
+    expect(finishedStayRemovalFeeCents({ removedPortionCents: 10_000, policyRules, settlementMethod: "card" })).toBe(5_500);
     // Credit: 80% back -> 2,000 kept.
-    expect(finishedStaySwapFeeCents({ removedPortionCents: 10_000, policyRules, settlementMethod: "credit" })).toBe(2_000);
+    expect(finishedStayRemovalFeeCents({ removedPortionCents: 10_000, policyRules, settlementMethod: "credit" })).toBe(2_000);
     // A club with no tiers keeps it all, as a same-day removal would.
-    expect(finishedStaySwapFeeCents({ removedPortionCents: 10_000, policyRules: [], settlementMethod: "card" })).toBe(10_000);
+    expect(finishedStayRemovalFeeCents({ removedPortionCents: 10_000, policyRules: [], settlementMethod: "card" })).toBe(10_000);
     // A full-refund same-day tier charges nothing.
     expect(
-      finishedStaySwapFeeCents({
+      finishedStayRemovalFeeCents({
         removedPortionCents: 10_000,
         policyRules: [{ daysBeforeStay: 0, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0, creditFixedFeeCents: 0 }],
         settlementMethod: "card",
@@ -221,5 +225,90 @@ describe("resolveTargetDates — finished-stay correction window (#3750)", () =>
         finishedStayCorrection: true,
       }),
     ).toThrow("This booking has no future nights available for self-service changes");
+  });
+});
+
+describe("the removed portion a correction is charged on (#3955 F3/F4/F5)", () => {
+  const NO_PROMO: RemovalPromoRows = { byNight: new Map(), byGuest: new Map() };
+  const nights = (dates: string[], cents: number) =>
+    dates.map((date) => ({ stayDate: day(date), priceCents: cents }));
+  const guest = (id: string, dates: string[], cents = 4_000) => ({
+    id,
+    priceCents: dates.length * cents,
+    stayStart: day(dates[0]),
+    stayEnd: day("2026-06-14"),
+    nights: nights(dates, cents),
+  });
+  const FULL = ["2026-06-10", "2026-06-11", "2026-06-12", "2026-06-13"];
+
+  it("counts a removed guest's every night", () => {
+    expect(
+      finishedStayRemovedPortion({
+        storedGuests: [guest("g1", FULL), guest("g2", FULL)],
+        keptStays: new Map([["g1", { stayStart: day("2026-06-10"), stayEnd: day("2026-06-14") }]]),
+        booking: { totalPriceCents: 32_000, promoAdjustmentCents: 0 },
+        promoRows: NO_PROMO,
+      }),
+    ).toEqual({ grossCents: 16_000, netCents: 16_000 });
+  });
+
+  it("counts the nights a kept guest's trimmed stay drops, so trimming plus adding cannot dodge the fee", () => {
+    expect(
+      finishedStayRemovedPortion({
+        storedGuests: [guest("g1", FULL)],
+        keptStays: new Map([["g1", { stayStart: day("2026-06-10"), stayEnd: day("2026-06-12") }]]),
+        booking: { totalPriceCents: 16_000, promoAdjustmentCents: 0 },
+        promoRows: NO_PROMO,
+      }),
+    ).toEqual({ grossCents: 8_000, netCents: 8_000 });
+  });
+
+  it("values removed nights net of their own recorded promotion when the rows reconcile", () => {
+    const promoRows: RemovalPromoRows = {
+      byNight: new Map([
+        ["g2|2026-06-10", -1_000],
+        ["g2|2026-06-11", -1_000],
+        ["g1|2026-06-10", -500],
+      ]),
+      byGuest: new Map(),
+    };
+    expect(
+      finishedStayRemovedPortion({
+        storedGuests: [guest("g1", ["2026-06-10", "2026-06-11"]), guest("g2", ["2026-06-10", "2026-06-11"])],
+        keptStays: new Map([["g1", { stayStart: day("2026-06-10"), stayEnd: day("2026-06-12") }]]),
+        booking: { totalPriceCents: 16_000, promoAdjustmentCents: -2_500 },
+        promoRows,
+      }),
+    ).toEqual({ grossCents: 8_000, netCents: 6_000 });
+  });
+
+  it("shares the promotion in proportion when its rows do not reconcile", () => {
+    expect(
+      finishedStayRemovedPortion({
+        storedGuests: [guest("g1", ["2026-06-10", "2026-06-11"]), guest("g2", ["2026-06-10", "2026-06-11"])],
+        keptStays: new Map([["g1", { stayStart: day("2026-06-10"), stayEnd: day("2026-06-12") }]]),
+        booking: { totalPriceCents: 16_000, promoAdjustmentCents: -4_000 },
+        promoRows: NO_PROMO,
+      }),
+    ).toEqual({ grossCents: 8_000, netCents: 6_000 });
+  });
+
+  it("refuses to value a removed night whose price is not known", () => {
+    expect(() =>
+      finishedStayRemovedPortion({
+        storedGuests: [
+          { ...guest("g1", ["2026-06-10"]), nights: [{ stayDate: day("2026-06-10"), priceCents: null }] },
+        ],
+        keptStays: new Map(),
+        booking: { totalPriceCents: 4_000, promoAdjustmentCents: 0 },
+        promoRows: NO_PROMO,
+      }),
+    ).toThrow(FINISHED_STAY_UNKNOWN_NIGHT_PRICE_MESSAGE);
+  });
+
+  it("defaults the refund to the way the booking was paid", () => {
+    expect(defaultCorrectionSettlementMethod({ amountCents: 10_000, creditAppliedCents: 0 })).toBe("card");
+    expect(defaultCorrectionSettlementMethod({ amountCents: 0, creditAppliedCents: 10_000 })).toBe("credit");
+    expect(defaultCorrectionSettlementMethod(null)).toBe("card");
   });
 });
