@@ -12,6 +12,10 @@ const mocks = vi.hoisted(() => ({
   xeroSyncOperationFindMany: vi.fn(),
   xeroObjectLinkFindMany: vi.fn(),
   clubTimeSettingsFindUnique: vi.fn(),
+  // #3372: the list reads Refunds owed / Credits owed beside its other reads.
+  manualRefundTaskFindMany: vi.fn(),
+  paymentRecoveryOperationFindMany: vi.fn(),
+  memberCreditGroupBy: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -20,6 +24,9 @@ vi.mock("@/lib/prisma", () => ({
     xeroSyncOperation: { findMany: mocks.xeroSyncOperationFindMany },
     xeroObjectLink: { findMany: mocks.xeroObjectLinkFindMany },
     clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique },
+    manualRefundTask: { findMany: mocks.manualRefundTaskFindMany },
+    paymentRecoveryOperation: { findMany: mocks.paymentRecoveryOperationFindMany },
+    memberCredit: { groupBy: mocks.memberCreditGroupBy },
   },
 }));
 vi.mock("@/lib/logger", () => ({
@@ -43,6 +50,7 @@ const row = {
   updatedAt: new Date("2026-06-15T00:00:00.000Z"),
   transactions: [],
   refunds: [],
+  recoveryOperations: [],
   booking: {
     id: "booking-1",
     status: "CONFIRMED",
@@ -55,6 +63,9 @@ const row = {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.manualRefundTaskFindMany.mockResolvedValue([]);
+  mocks.paymentRecoveryOperationFindMany.mockResolvedValue([]);
+  mocks.memberCreditGroupBy.mockResolvedValue([]);
   mocks.paymentFindMany.mockImplementation(async (args: { where?: { id?: { in?: string[] } } }) =>
     args?.where?.id?.in === undefined ? [row] : [row].filter((r) => args.where!.id!.in!.includes(r.id)),
   );
