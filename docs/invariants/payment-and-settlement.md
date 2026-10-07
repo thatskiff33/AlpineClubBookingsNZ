@@ -1018,8 +1018,8 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `creditAppliedCents = applied`; once a repay generation exists (#1765) the
   mirror aggregates gross captures and the invariant is NET-based:
   `(amountCents − refundedAmountCents) + creditAppliedCents = finalPriceCents`
-  at repay settlement. Every capture/reconciliation guard accepts EITHER the
-  effective price OR the full `finalPriceCents` and rejects any other amount
+  at repay settlement. Every capture/reconciliation guard accepts ONLY the
+  effective price or the full `finalPriceCents`
   (create-payment-intent reuse, `stripe-webhook-service`,
   `payment-reconciliation`, `confirm-payment`). A full-price capture gives the
   applied credit back (`giveBackAppliedCredit`) and mirrors
@@ -1027,18 +1027,21 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   booking's earlier intent is retired (`retireCardIntentBeforeElection`); a live
   capture leaves it unspent. Because a card invoice is raised-and-paid at capture
   (`queueXeroInvoiceForPaidBooking` → `createXeroInvoiceForBooking`), the #1620
-  fire-after-invoice outbox op is NOT used on card; `createXeroInvoiceForBooking`
+  fire-after-invoice outbox op is unused on card; `createXeroInvoiceForBooking`
   records the NET captured Stripe cash — gross captures − refunds, capped at the
   invoice's amount due (#1765: settlement evidence is captured-status + positive
   net cash, never `status === "SUCCEEDED"` alone, which misreads a repay-settled PARTIALLY_REFUNDED aggregate; every skip logs a populated reason) — and then SYNCHRONOUSLY
   re-drives the same allocation engine (gated the same way, plus
   `creditAppliedCents > 0`) so the invoice settles to PAID via effective cash +
-  credit-note allocation. The allocation throws on failure (the invoice op fails
-  and the retry short-circuits on the persisted `xeroInvoiceId`, re-driving the
+  credit-note allocation. The allocation throws on failure (the invoice op fails;
+  the retry short-circuits on the persisted `xeroInvoiceId`, re-driving the
   idempotent engine without re-creating the invoice). A LEGACY full-price card
   capture (`creditAppliedCents = 0`) is settled in full by cash and does NOT
-  allocate; its historical double-pay is repaired by an operator-reviewed LOCAL
-  credit restore, enumerated read-only by `auditCardAppliedCreditDoublePays`.
+  allocate; an operator-reviewed LOCAL credit restore, enumerated read-only by
+  `auditCardAppliedCreditDoublePays`, repairs its historical double-pay.
+  A payment that captured nothing, credit covering it all (#3836), allocates
+  whatever its status; the repair pass (`UNALLOCATED_APPLIED_CREDIT`) queues
+  the allocation for invoices raised before it.
 
 ## INV-PAY-025
 

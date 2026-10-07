@@ -35,6 +35,7 @@ import logger from "@/lib/logger";
 import { cancellationKeptCents, paidCancellationMoney } from "@/lib/paid-cancellation-money";
 import { openNonCancellationHandBackCents } from "@/lib/edit-refund-hand-back";
 import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-back-marker";
+import { cancelTieredAppliedCreditCents } from "@/lib/booking-payment-state";
 import { refundedPaymentCreditRestore } from "@/lib/cancel-refunded-payment-credit";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
 import {
@@ -1618,10 +1619,12 @@ async function performBookingCancellation(
     // computed. The applied rows are read here, under lock(1), for the kept figure.
     const restoreMemberId = bookingOwner(fresh).memberId;
     const appliedCreditCents = await deriveBookingAppliedCreditCents(bookingId, tx);
+    // #3836: a mirror the inbound repair clamped to the card amount reads the ledger.
+    const tieredPayment = { ...payment, creditAppliedCents: cancelTieredAppliedCreditCents(payment, appliedCreditCents) };
     const money = paidCancellationMoney({
       payment: organiserCard
-        ? { ...payment, refundedAmountCents: organiserCard.committedRefundCents }
-        : payment,
+        ? { ...tieredPayment, refundedAmountCents: organiserCard.committedRefundCents }
+        : tieredPayment,
       // #3827 (`INV-PAY-117`): read under lock(1), which every edit that raises
       // such a task also holds, so none can appear before this cancel commits.
       openNonCancellationHandBackCents: await openNonCancellationHandBackCents(tx, payment.id),
@@ -1668,7 +1671,7 @@ async function performBookingCancellation(
     // than the amount paid — would charge a member who paid in full more
     // cancellation fee than one who underpaid, which is worse.
     let creditRestoredCents = 0;
-    if (payment.creditAppliedCents > 0) {
+    if (tieredPayment.creditAppliedCents > 0) {
       // #3369: see above -- no member, no ledger, nothing to restore.
       creditRestoredCents = restoreMemberId
         ? await restoreCreditFromBooking(

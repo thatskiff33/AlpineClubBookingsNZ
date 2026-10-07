@@ -52,7 +52,7 @@ awk -F'\t' '$4 == "yes" && $5 ~ /OLD-CODE CAVEAT|RESIDUAL WINDOW|CAUTION|until c
 
 It **over-collects**, because a caveat can be about the **new** colour rather than the draining one — `20260716140000_xero_member_grouping` and `20260729180000_add_payment_manual_mark_paid` both carry an `OLD-CODE CAVEAT` heading and are genuinely `yes` for the old colour. It can equally **under-collect**, because the wording is not standardised: the `no` row `20260528120000_add_booking_admin_review_workflow` states its incompatibility in prose that matches none of these phrases. The class is what the plan text *says*, not what the grep finds.
 
-Every one of these rows is deliberately left as it was declared rather than rewritten: rewriting would falsify the record of what was declared at the time, and each row's `lock_impact_plan` already carries the real caveat. New rows use `windowed` for both cases.
+Every one of these rows is deliberately left as it was declared rather than rewritten: rewriting would falsify the record of what was declared at the time, and each row's `lock_impact_plan` already carries the real caveat. New rows use `windowed` for both cases: a migration the draining colour would error on, or whose rows the draining colour would keep writing in a form the new runtime cannot read. A data-only backfill whose every written value the old colour already reads (for example a nullable `String` column such as `AuditLog.category`) and which a verbatim post-cutover re-run corrects stays `yes` (`20260923010000_backfill_historical_audit_categories`). A migration with no DDL is filed `phase=metadata-only`, never `expand` (#3468).
 
 ### The first real `windowed` row, and what it demonstrates
 
