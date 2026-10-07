@@ -455,3 +455,13 @@ export function organiserChildRefundReasonForKey(key: string) {
     : "organiser_child_reduction";
 }
 export { ORGANISER_CHILD_REFUND_KEY_PREFIX };
+
+// The organiser cancel's durable retry of a pre-#3653 group settlement refund
+// (F3, #1351): ONE operation for the whole group's plan. Here, not in
+// payment-recovery.ts, so the booking-ledger census (#3854) can find an
+// in-flight one without importing the Prisma client.
+export const GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX = "group_settlement_refund_recovery_";
+
+export function buildGroupSettlementRefundRecoveryIdempotencyKey(settlementId: string) {
+  return `${GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX}${settlementId}`;
+}
