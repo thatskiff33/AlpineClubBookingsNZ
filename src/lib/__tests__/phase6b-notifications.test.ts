@@ -118,6 +118,14 @@ const { mockPrisma, mockTransporter } = vi.hoisted(() => {
       findMany: vi.fn().mockResolvedValue([]),
       upsert: vi.fn().mockResolvedValue({}),
     },
+    // #49: the digest reads the STORED central-server version (no network).
+    // Not connected by default, so no version entry rides these digests.
+    serverNzSettings: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
+    integrationCredential: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
   };
   return { mockPrisma, mockTransporter };
 });

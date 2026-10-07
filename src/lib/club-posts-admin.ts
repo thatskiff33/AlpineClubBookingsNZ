@@ -5,7 +5,10 @@ import { assertValidClubPostContent } from "@/lib/club-posts";
 import logger from "@/lib/logger";
 import { deletePostImage } from "@/lib/post-image-storage";
 import { prisma } from "@/lib/prisma";
-import { withdrawClubPost } from "@/lib/servernz-api";
+import {
+  ServerNzVersionMismatchError,
+  withdrawClubPost,
+} from "@/lib/servernz-api";
 
 /**
  * Moderation for the club message board (#2998, epic #2992).
@@ -286,6 +289,22 @@ export async function removeClubPost(postId: string): Promise<void> {
       // stands, `withdrawnAt` stays null, and that combination is exactly
       // what `retryPendingWithdrawals` sweeps every general-cron cycle and
       // what the moderation screen names until the server confirms.
+      //
+      // A version pause (#49) is the same outcome for the row and a different
+      // one for the log: it is expected, not a fault, so it is recorded at
+      // info with the two numbers rather than as an error with a stack.
+      if (error instanceof ServerNzVersionMismatchError) {
+        logger.info(
+          {
+            postId,
+            serverPostId: post.serverPostId,
+            expected: error.expected,
+            serverVersion: error.serverVersion,
+          },
+          "Removed a shared club post locally; its withdrawal waits until the central server API version matches",
+        );
+        return;
+      }
       logger.error(
         { postId, serverPostId: post.serverPostId, err: error },
         "Removed a shared club post locally but could not withdraw it from the central server; the withdrawal sweep will retry",

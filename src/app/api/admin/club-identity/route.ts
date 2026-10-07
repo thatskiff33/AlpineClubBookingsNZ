@@ -6,6 +6,7 @@ import {
   getAuditRequestContext,
 } from "@/lib/audit";
 import { primeClubIdentitySync } from "@/lib/club-identity-settings";
+import { isHttpUrl } from "@/lib/http-url";
 import { prisma } from "@/lib/prisma";
 import { invalidatePublicClubIdentity } from "@/lib/public-layout-cache";
 import { requireAdmin } from "@/lib/session-guards";
@@ -15,17 +16,8 @@ import { requireAdmin } from "@/lib/session-guards";
 // read, content:edit to write, audited, and it invalidates the tagged identity
 // cache + primes the sync accessor on write. Every field is nullable — clearing
 // one (empty string) restores the club.json / hard-default fallback for that
-// field. facebookUrl additionally requires an http(s) URL shape when non-blank.
-
-/** True for a non-blank http(s) URL — the facebookUrl shape (mirrors publicUrl). */
-function isHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
+// field. facebookUrl additionally requires an http(s) URL shape when non-blank
+// (the shared `isHttpUrl`, the same rule `publicUrl` is held to).
 
 const settingsSchema = z
   .object({

@@ -5162,11 +5162,60 @@ model OtherLodge {
   bookingOfficerEmail String?  @db.VarChar(320)
   bookingOfficerPhone String?  @db.VarChar(50)
   bedCapacity         Int?
+  // Lodge details shared with the Alpine Central Server (#50). Text is capped to
+  // the server's lengths, yes/no fields default to no for every existing row, and
+  // the season starts are calendar dates (INV-DATE-026), never instants.
+  // `siteUrl` is the lodge's non-member booking page; the free-text
+  // `bookingPath` that sat beside it was dropped with server API 2.1.
+  siteUrl                String?   @db.VarChar(500)
+  // Server API 2.1: bed counts and the walk in, whole numbers 0..100000.
+  doubleBeds             Int?
+  singleBeds             Int?
+  minutesWalkToLodge     Int?
+  roomType               OtherLodgeRoomType?
+  skiWorkshopArea        Boolean   @default(false)
+  gamesRoom              Boolean   @default(false)
+  requiresLodgeCustodian Boolean   @default(false)
+  freeWifi               Boolean   @default(false)
+  quietRoom              Boolean   @default(false)
+  dryingRoom             Boolean   @default(false)
+  sharedKitchen          Boolean   @default(false)
+  wheelchairAccessible   Boolean   @default(false)
+  breakfastIncluded      Boolean   @default(false)
+  lunchIncluded          Boolean   @default(false)
+  dinnerIncluded         Boolean   @default(false)
+  cancellationPeriod     String?   @db.VarChar(200)
+  winterSeasonStart      DateTime? @db.Date
+  summerSeasonStart      DateTime? @db.Date
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
+  amenities           Amenity[]
   bookingRequests     BookingRequest[]
   bookings            Booking[]
+}
+
+// Whether an other lodge sleeps guests in private rooms or in dormitories,
+// mirrored from the Alpine Central Server's LodgeRoomType (API 2.1).
+enum OtherLodgeRoomType {
+  ROOM
+  DORMITORY
+}
+
+// A free-form extra an other lodge offers (name plus optional description),
+// mirrored from the Alpine Central Server's Amenity table (#50). Many per lodge,
+// name unique within the lodge, deleted with the lodge. The sync and the admin
+// routes replace a lodge's whole set at once, keyed on (otherLodgeId, name).
+model Amenity {
+  id           String     @id @default(cuid())
+  otherLodgeId String
+  otherLodge   OtherLodge @relation(fields: [otherLodgeId], references: [id], onDelete: Cascade)
+  name         String     @db.VarChar(120)
+  description  String?    @db.VarChar(1000)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([otherLodgeId, name])
 }
 
 // Alpine Central Server (ServerNZ) connection — non-secret settings only. The
@@ -5196,6 +5245,20 @@ model ServerNzSettings {
   // across the central server's HTTP calls.
   otherLodgesSyncStartedAt DateTime?
 
+  // The lodge NAMES the central server says this club owns (#52), as it sends
+  // them on every pull (`ownLodgeNames`): a JSON array of strings, keyed by name
+  // because that is how the registry is keyed. THREE states, and the shape
+  // carries all three: NULL means the server has never said (not connected,
+  // never downloaded, or an older server that does not send the list) and the
+  // panel is read-only; an empty array means the server said the club owns
+  // NOTHING; a non-empty array is the editable set. A server that omits the
+  // field leaves the stored value alone - absent is not "owns nothing". The
+  // admin PATCH route refuses a lodge not in the list and the nightly upload
+  // sends only the lodges in it. `otherLodgesOwnedNamesAt` is when the list was
+  // last received, so an operator can see how stale it is.
+  otherLodgesOwnedNames   Json?
+  otherLodgesOwnedNamesAt DateTime?
+
   // Shared item: the cross-club message board (epic #2992). The cursor is the
   // pair the server's /api/v1/feed/sync hands back — an updatedAt instant plus
   // a tiebreak id — stored as strings because it is THEIR cursor, not a value
@@ -5218,6 +5281,18 @@ model ServerNzSettings {
   // pass applies its page cleanly.
   commsPoisonChangeId String?  @db.VarChar(64)
   commsPoisonCount    Int      @default(0)
+
+  // The central server's API version as last reported by GET /api/v1/version
+  // (#49), and when it was asked. THREE states: NULL means never checked (no
+  // key stored, or the key was replaced and the old answer forgotten); the
+  // literal "unknown" means the server answered 404 - it predates versioning -
+  // which this site treats as a mismatch; otherwise a canonical `major.minor`.
+  // The MISMATCH itself is never stored: it is computed on every read from
+  // this value and `SERVERNZ_EXPECTED_SERVER_VERSION`, so upgrading this site
+  // clears it with no manual step. A failed check leaves both columns as they
+  // were (a network blip must not pause syncing).
+  serverVersion          String?   @db.VarChar(16)
+  serverVersionCheckedAt DateTime?
 
   updatedByMemberId String?
   createdAt         DateTime @default(now())
@@ -6936,6 +7011,12 @@ model NotificationPreference {
   // (ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT), so "the maintenance officer" is
   // whoever the club has given that area to — never a hard-coded address.
   adminMaintenanceReport     Boolean  @default(true)
+  // #49: the Alpine Central Server is on a different API version, so syncing
+  // is paused. Rides the Daily digest template; audience is Lodge Operations
+  // edit (ADMIN_NOTIFICATION_PREFERENCE_REQUIREMENT) in ADDITION to the
+  // digest's own audience, and a lodge-only recipient gets the version entry
+  // alone, never the cross-area counts.
+  adminServerVersion         Boolean  @default(true)
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 

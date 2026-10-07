@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  497
+row-producing sites:  495
 uncategorised:        0
-category values: admin 109, booking 106, xero 39, family 35, payment 52,
+category values: admin 107, booking 106, xero 39, family 35, payment 52,
                  lodge 66, account 19, security 25, privacy 20,
                  communication 21, system 4
 ```
@@ -768,6 +768,16 @@ credit was already restored. #3653 (epic #3503) then added one, disjoint from
 #3792's, so the composed figure is both (`booking` 105 -> 106, 496 -> 497,
 RE-MEASURED on the merged tree): the organiser child refund recovery record,
 `booking.payment.refund_recovered`.
+
+#52 then REMOVED two (`admin` 109 -> 107, 497 -> 495 on the tree composed
+with all of the above; MEASURED with
+`npm run audit:census` on that branch rather than subtracted from the literal):
+`OTHER_LODGE_CREATED` and `OTHER_LODGE_DELETED` went with the create and delete
+handlers of the other-lodges registry, because a site now changes only the lodge
+the central server says it owns and never adds to or removes from the shared
+list. `OTHER_LODGE_UPDATED` stays, still `admin` under INV-PRIV-013's rule, so
+the lodge-gated keep shrinks from nineteen pinned sites to seventeen without
+anyone's readership changing.
 
 #3498 then added one more (`payment` 45 -> 46, 483 -> 484, MEASURED with
 `npm run audit:census` on that branch rather than added to the literal):

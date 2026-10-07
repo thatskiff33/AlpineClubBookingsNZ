@@ -869,6 +869,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-023` | The seeding run: funnel-routed, plan-checked, authoritative-or-nothing |
 | `INV-INT-024` | Erasure leaves Xero alone; a read-only notice names what it left |
 | `INV-INT-025` | Resolved in Xero means done: no automatic retry or re-mint |
+| `INV-INT-026` | Central-server syncing pauses on any API version difference, integer-compared |
 
 ## Operations
 
