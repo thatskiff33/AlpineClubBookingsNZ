@@ -1,6 +1,6 @@
 import { PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
 
-import { OPEN_CARD_REFUND_OPERATION_WHERE } from "@/lib/open-card-refund-owed";
+import { CARD_REFUND_OPERATION_WHERE } from "@/lib/open-card-refund-owed";
 import { netCollectedScopedPayments, summarizeCollectedCash, type CollectedCashSummary, type NetCollectedPaymentRow } from "@/lib/payment-net-collected";
 import {
   CAPTURED_TRANSACTION_STATUS_LIST,
@@ -138,19 +138,23 @@ export const netCollectedCaptureEvidenceSelect = Prisma.validator<Prisma.Payment
 });
 
 /**
- * #3372 (owner, 7 Oct 2026: "count in both"): a payment's card refunds started
- * and not yet paid, and the refunds already recorded on it to net them against
- * (`openCardRefundOwedCents`). Every Net Collected select spreads it (the
- * payments board merges its own `refunds` columns in), and so does the
- * "Refunds owed" read, so the two figures read the same rows. The `where` is
- * an optimisation; the rule re-checks type and status.
+ * #3372 (owner, 7 Oct 2026: "count in both"): a payment's card refund
+ * operations, and the refunds already recorded on it to net the open ones
+ * against (`openCardRefundOwedCents`). Closed operations are loaded too, so a
+ * refund one of them sent is never taken as an open one's progress (#3924
+ * money review, F2). Every Net Collected select spreads it (the payments board
+ * merges its own `refunds` columns in), and so does the "Refunds owed" read, so
+ * the two figures read the same rows. The `where` is an optimisation; the rule
+ * re-checks the type.
  */
 export const netCollectedCardRefundSelect = Prisma.validator<Prisma.PaymentSelect>()({
   recoveryOperations: {
-    where: OPEN_CARD_REFUND_OPERATION_WHERE,
+    where: CARD_REFUND_OPERATION_WHERE,
     select: {
+      id: true,
       type: true,
       status: true,
+      idempotencyKey: true,
       amountCents: true,
       allocationPlan: true,
       paymentTransactionId: true,

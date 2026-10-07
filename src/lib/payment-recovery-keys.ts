@@ -455,3 +455,19 @@ export function organiserChildRefundReasonForKey(key: string) {
     : "organiser_child_reduction";
 }
 export { ORGANISER_CHILD_REFUND_KEY_PREFIX };
+
+// Group organiser-cancel settlement refund (F3, #1351): one row per settlement,
+// keyed on the settlement. Its `paymentId` is only an anchor for the schema FK -
+// the money belongs to the children in the settlement's frozen `{childId: cents}`
+// plan - so a reader of the row's payment must recognise it by this key.
+const GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX = "group_settlement_refund_recovery_";
+export function buildGroupSettlementRefundRecoveryIdempotencyKey(settlementId: string) {
+  return `${GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX}${settlementId}`;
+}
+export function isGroupSettlementRefundRecoveryKey(key: string) {
+  return key.startsWith(GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX);
+}
+/** The settlement a group settlement refund row replays. */
+export function groupSettlementIdForRefundRecoveryKey(key: string) {
+  return key.slice(GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX.length);
+}

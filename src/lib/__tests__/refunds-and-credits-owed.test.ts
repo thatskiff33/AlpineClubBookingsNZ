@@ -21,6 +21,8 @@ import { readRefundsAndCreditsOwed } from "@/lib/refunds-and-credits-owed";
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
+// The scope fixture's open tasks sit on bookings with no payment behind them,
+// so the read takes each at its own amount.
 function fakeDb() {
   return {
     manualRefundTask: { findMany: vi.fn(async (): Promise<unknown[]> => refundsOwedTaskRows()) },
@@ -49,11 +51,11 @@ describe("Refunds owed and Credits owed reconcile to their totals", () => {
       .reduce((sum, task) => sum + (task.amountCents ?? 0), 0);
     expect(owed.refundsOwedCents).toBe(openObligations);
     expect(owed.refundsOwedCents).toBe(REFUNDS_AND_CREDITS_OWED_FIXTURE.expectedRefundsOwedCents);
-    // Read as at today: every OPEN task, no date, lodge or booking filter.
+    // Read as at today, with no date, lodge or booking filter: every OPEN task...
     expect(db.manualRefundTask.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { status: "OPEN" } }),
     );
-    // And every unclosed card refund, whatever booking it is on.
+    // ...and every unclosed card refund, whatever booking it is on.
     expect(db.paymentRecoveryOperation.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
@@ -153,6 +155,38 @@ describe("Net Collected, Refunds owed and Credits owed reconcile to the cent", (
     expect(summarizeCollectedCash(kept.map(owedReconciliationPaymentRow)).netCollectedCents).toBe(
       OWED_RECONCILIATION_EXPECTED.netCollectedCents + 4_000,
     );
+  });
+
+  it("reads, payment by payment, exactly what Net Collected took off (#3924 money review, F5)", async () => {
+    // $200.00 held, a $100.00 hand-back AND the $150.00 card refund: Net
+    // Collected can take only $200.00 off, so "Refunds owed" must say $200.00
+    // too - not the $250.00 an uncapped task sum plus a separately capped card
+    // part would read.
+    const [failed] = OWED_RECONCILIATION_PAYMENTS;
+    const both = owedReconciliationPaymentRow({
+      ...failed,
+      manualRefundTasks: [
+        { status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 10_000, partPaymentReviewPaymentId: null },
+      ],
+    });
+    const db = reconciliationDb();
+    // The payment reaches the read twice - through its open task and its open
+    // card refund - and is counted once.
+    const withId = { id: "pay-both", ...both };
+    db.manualRefundTask.findMany.mockResolvedValue([
+      { ...both.booking.manualRefundTasks[0], booking: { deletedAt: null, payment: withId } },
+    ]);
+    db.paymentRecoveryOperation.findMany.mockResolvedValue([{ payment: withId }]);
+    db.memberCredit.groupBy.mockResolvedValue([]);
+
+    const owed = await readRefundsAndCreditsOwed(db as never);
+    const parts = getNetCollectedPaymentParts(both);
+
+    expect(owed.refundsOwedCents).toBe(20_000);
+    expect(owed.refundsOwedCents).toBe(
+      parts.handBackOwedCents + parts.cardRefundOwedCents + parts.lateCaptureOwedCents,
+    );
+    expect(parts.capturedGrossCents - parts.heldCashCents - owed.refundsOwedCents).toBe(0);
   });
 
   it("never takes one payment's money off twice across a hand-back and a card refund", () => {

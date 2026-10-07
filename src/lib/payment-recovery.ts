@@ -542,6 +542,7 @@ import {
   buildEditFinancialReviewAdditionalIntentStripeKey,
   buildEditFinancialReviewRefundRecoveryIdempotencyKey,
   buildEditFinancialReviewRefundStripeKeyPrefix,
+  buildGroupSettlementRefundRecoveryIdempotencyKey,
   buildLateCaptureApprovalRefundRecoveryIdempotencyKey,
   buildLateCaptureRefundStripeKeyPrefix,
   buildRefundRequestRefundMetadata,
@@ -549,6 +550,8 @@ import {
   bookingModificationIdForAdditionalIntentRecoveryKey,
   bookingModificationRefundReasonForKeyPrefix,
   isEditFinancialReviewAdditionalIntentRecoveryKey,
+  groupSettlementIdForRefundRecoveryKey,
+  isGroupSettlementRefundRecoveryKey,
   isOrganiserChildRefundKey,
   stripeIdempotencyKeyForAskAmount,
 } from "./payment-recovery-keys";
@@ -1018,15 +1021,6 @@ export async function recordDuplicateCaptureRefundRecoveryInlineError({
       lastError: message,
     },
   });
-}
-
-const GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX =
-  "group_settlement_refund_recovery_";
-
-function buildGroupSettlementRefundRecoveryIdempotencyKey(
-  settlementId: string,
-) {
-  return `${GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX}${settlementId}`;
 }
 
 /**
@@ -2025,14 +2019,8 @@ async function processBookingModificationRefundOperation(
   // executor replays the settlement's persisted plan under the inline
   // `group_cancel_refund_<settlementId>` Stripe key and applies the
   // per-child refundedAmountCents mirrors idempotently.
-  if (
-    operation.idempotencyKey.startsWith(
-      GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX,
-    )
-  ) {
-    const settlementId = operation.idempotencyKey.slice(
-      GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX.length,
-    );
+  if (isGroupSettlementRefundRecoveryKey(operation.idempotencyKey)) {
+    const settlementId = groupSettlementIdForRefundRecoveryKey(operation.idempotencyKey);
     // Dynamic import: group-cancel imports this module for the enqueue/mark
     // helpers (same pattern as booking-payment-cleanup above).
     const { executeGroupSettlementRefundPlan } = await import(

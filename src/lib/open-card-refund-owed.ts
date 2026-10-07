@@ -7,6 +7,7 @@ import {
   getRemainingRefundableCents,
   type BookingPaymentState,
 } from "@/lib/booking-payment-state";
+import { isGroupSettlementRefundRecoveryKey } from "@/lib/payment-recovery-keys";
 import { isRecordedRefundStatus } from "@/lib/payment-transaction-status";
 import type { RefundAllocationSlice } from "@/lib/payment-transactions";
 
@@ -16,12 +17,17 @@ import type { RefundAllocationSlice } from "@/lib/payment-transactions";
  * SUCCEEDED - pending, processing, or failed and waiting for a retry or a
  * person - is money the club has decided to send back to a card and has not
  * yet sent. It counts in "Refunds owed" and comes off Net Collected straight
- * away, like a refund owed by hand (`openHandBackOwedCents`).
+ * away, like a refund owed by hand (`openHandBackOwedCents`). A dead one (its
+ * retries spent) keeps counting until the treasurer closes it as paid another
+ * way (owner, #3372, 7 Oct 2026: "Count + add close action";
+ * `closeCardRefundPaidAnotherWay`).
  *
  * That covers a cancellation's card refund, an approved refund request's, an
  * edit's, an edit review's, a treasurer-approved late capture's, an organiser
- * child's (`INV-PAY-114`) and a superseded intent's (#3340). Plain module (a
- * type-only Prisma import), so a client page can import the module that reads it.
+ * child's (`INV-PAY-114`) and a superseded intent's (#3340). Not a group
+ * organiser-cancel settlement's (`isGroupSettlementRefundRecoveryKey`): see
+ * `isOwedCardRefundOperation`. Plain module (a type-only Prisma import), so a
+ * client page can import the module that reads it.
  */
 
 /** The operation types that send money back to a card. */
@@ -31,6 +37,19 @@ export const CARD_REFUND_RECOVERY_OPERATION_TYPES = [
 ] as const satisfies readonly PaymentRecoveryOperationType[];
 
 const SUCCEEDED = "SUCCEEDED" satisfies PaymentRecoveryOperationStatus;
+const SUPERSEDED = "REFUND_SUPERSEDED_PAYMENT" satisfies PaymentRecoveryOperationType;
+
+/**
+ * Every card refund operation, open or closed, as a `PaymentRecoveryOperation`
+ * where clause. The net-out reads the CLOSED ones too: a refund a closed
+ * operation sent is that operation's, and must not be taken as an open one's
+ * (`openCardRefundOwedCents`).
+ */
+export const CARD_REFUND_OPERATION_WHERE: {
+  type: { in: PaymentRecoveryOperationType[] };
+} = {
+  type: { in: [...CARD_REFUND_RECOVERY_OPERATION_TYPES] },
+};
 
 /**
  * The unclosed card refunds, as a `PaymentRecoveryOperation` where clause.
@@ -42,7 +61,7 @@ export const OPEN_CARD_REFUND_OPERATION_WHERE: {
   type: { in: PaymentRecoveryOperationType[] };
 } = {
   status: { not: SUCCEEDED },
-  type: { in: [...CARD_REFUND_RECOVERY_OPERATION_TYPES] },
+  ...CARD_REFUND_OPERATION_WHERE,
 };
 
 /** Parse a persisted allocation plan (#1097); null when absent or malformed. */
@@ -73,8 +92,10 @@ export function parseRefundAllocationPlan(
 
 /** A card refund operation, as the owed figure reads it. */
 export interface CardRefundOperationRow {
+  id: string;
   type: string;
   status: string;
+  idempotencyKey: string;
   amountCents: number;
   allocationPlan: unknown;
   paymentTransactionId: string | null;
@@ -95,70 +116,150 @@ export type CardRefundOwedPaymentRow = BookingPaymentState & {
   refunds: ReadonlyArray<RecordedCardRefundRow>;
 };
 
-function isOpenCardRefundOperation(operation: CardRefundOperationRow): boolean {
+/**
+ * Whether a card refund operation's money belongs to the payment it hangs on.
+ *
+ * NOT A GROUP ORGANISER-CANCEL SETTLEMENT'S (#3924 money review, F3). That row
+ * (`enqueueGroupSettlementRefundRecovery`) is only written for a settlement
+ * whose `{childId: cents}` plan was frozen before #3653 - every later organiser
+ * cancel refunds each child with its own operation, which this does read. Its
+ * `paymentId` is an anchor for the schema FK and nothing else: the refund is one
+ * Stripe refund for the whole group, out of the settlement's combined intent,
+ * owed to the CHILDREN in that plan. Counted against the anchor payment it would
+ * take another booking's money off that booking, capped at whatever that
+ * payment happened to hold. Attributing it per child would need the frozen plan
+ * and every child's refund mirror on every Net Collected read, for a legacy
+ * row; it is left out, and the stuck-states page still lists it if its retries
+ * run out.
+ */
+export function isOwedCardRefundOperation(operation: Pick<CardRefundOperationRow, "type" | "idempotencyKey">): boolean {
   return (
-    operation.status !== SUCCEEDED &&
-    (CARD_REFUND_RECOVERY_OPERATION_TYPES as readonly string[]).includes(operation.type)
+    (CARD_REFUND_RECOVERY_OPERATION_TYPES as readonly string[]).includes(operation.type) &&
+    !isGroupSettlementRefundRecoveryKey(operation.idempotencyKey)
   );
 }
 
-/**
- * The slices an operation refunds: its frozen plan, or a superseded intent's
- * one transaction. A ledger refund with no plan yet has sent nothing (the plan
- * is persisted before its first Stripe call), so it has no slices to net.
- */
-function operationSlices(operation: CardRefundOperationRow): RefundAllocationSlice[] {
-  const plan = parseRefundAllocationPlan(operation.allocationPlan);
-  if (plan) return plan;
-  if (operation.type === "REFUND_SUPERSEDED_PAYMENT" && operation.paymentTransactionId) {
-    return [{ paymentTransactionId: operation.paymentTransactionId, amountCents: operation.amountCents }];
-  }
-  return [];
+/** One slice of an operation, as the net-out fills it. */
+interface OwedSlice {
+  paymentTransactionId: string;
+  amountCents: number;
+  /**
+   * A plan slice is filled only by a refund of EXACTLY its amount: Stripe answers
+   * a slice's key with one refund of the slice's amount, so a refund of any other
+   * amount is not this slice's. A superseded intent's slice is not exact - see
+   * `operationSlices`.
+   */
+  exact: boolean;
+  filledCents: number;
 }
 
 /**
- * What one payment still owes back by card, in cents.
+ * The slices an operation still has to send, with nothing filled yet.
  *
- * NET OF WHAT IS ALREADY RECORDED. A refund's `PaymentRefund` row and its
- * `refundedAmountCents` are written slice by slice, BEFORE the operation is
- * closed (`refundPaymentTransactions`, then `completePaymentRecoveryOperation`),
- * and a partial failure leaves the operation open with some slices sent. So each
- * slice is netted against the refunds recorded on its transaction since the
- * operation was raised, each refund row used once, oldest operation first. A
- * refund made by hand in the Stripe dashboard for a dead operation reaches the
- * same row through `charge.refunded`, so it nets out too.
+ * - A frozen plan (#1097): each slice is replayed under its own Stripe key, so
+ *   what the operation still owes is the plan's unsent slices.
+ * - A superseded intent's refund (#3340): the whole of one transaction goes
+ *   back, and the worker sends whatever that transaction still holds, up to the
+ *   operation's amount (`processRefundSupersededPaymentOperation`). Any refund
+ *   on that transaction after the operation was raised is therefore progress
+ *   on it, whoever made it.
+ * - A ledger refund with no plan yet has sent nothing (the plan is persisted
+ *   before its first Stripe call): one unfillable slice of its amount, which the
+ *   per-payment cap bounds, as the worker's own derivation is.
+ */
+function operationSlices(operation: CardRefundOperationRow): OwedSlice[] {
+  const plan = parseRefundAllocationPlan(operation.allocationPlan);
+  if (plan) {
+    return plan.map((slice) => ({ ...slice, exact: true, filledCents: 0 }));
+  }
+  if (operation.type === SUPERSEDED && operation.paymentTransactionId) {
+    return [
+      {
+        paymentTransactionId: operation.paymentTransactionId,
+        amountCents: operation.amountCents,
+        exact: false,
+        filledCents: 0,
+      },
+    ];
+  }
+  return [{ paymentTransactionId: "", amountCents: operation.amountCents, exact: true, filledCents: 0 }];
+}
+
+/** Whether a slice takes this refund, of which `leftCents` is not yet placed. */
+function sliceTakes(slice: OwedSlice, refund: RecordedCardRefundRow, leftCents: number): boolean {
+  if (slice.paymentTransactionId !== refund.paymentTransactionId) return false;
+  if (slice.filledCents >= slice.amountCents) return false;
+  return slice.exact
+    ? leftCents === refund.amountCents && refund.amountCents === slice.amountCents
+    : true;
+}
+
+/**
+ * What each of one payment's open card refunds still owes, in cents, keyed by
+ * operation id, before the per-payment cap.
  *
- * CAPPED PER PAYMENT at what the payment still holds
- * (`getRemainingRefundableCents`): money cannot be owed back from a payment
- * that no longer has it.
+ * WHICH RECORDED REFUND IS WHOSE (#3924 money review, F1 and F2). A refund's
+ * `PaymentRefund` row and its `refundedAmountCents` are written slice by slice,
+ * BEFORE the operation closes (`refundPaymentTransactions`, then
+ * `completePaymentRecoveryOperation`), and a partial failure leaves an operation
+ * open with some slices sent. A row carries no link to the operation that sent
+ * it, so each is matched by what a slice's own refund must look like: on that
+ * slice's transaction, of exactly its amount, recorded after the operation was
+ * raised (every operation's slices are unsent when it is raised: the refund
+ * request's partial path enqueues only the remainder). Each row fills at most
+ * one slice, and goes to the operation raised MOST RECENTLY before it with a
+ * slice it fits - so a later operation's own refund, open or closed, is never
+ * taken as an older open one's progress. Every card refund operation on the
+ * payment takes part, closed ones included, though only open ones owe.
+ *
+ * So an unrelated later refund of a different amount nets nothing. One of
+ * exactly a still-unsent slice's amount, on its transaction, made with no
+ * operation behind it (a refund in the Stripe dashboard, an inline refund that
+ * succeeded first time) is taken as that slice: for a refund the treasurer made
+ * in the dashboard to settle a dead operation, that is the truth.
+ */
+export function openCardRefundOwedByOperation(payment: CardRefundOwedPaymentRow): Map<string, number> {
+  const operations = payment.recoveryOperations
+    .filter(isOwedCardRefundOperation)
+    .map((operation) => ({ operation, slices: operationSlices(operation) }))
+    .sort((left, right) => left.operation.createdAt.getTime() - right.operation.createdAt.getTime());
+  const owed = new Map<string, number>();
+  if (!operations.some(({ operation }) => operation.status !== SUCCEEDED)) return owed;
+
+  const refunds = payment.refunds
+    .filter((refund) => refund.paymentTransactionId !== null && isRecordedRefundStatus(refund.status))
+    .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+  for (const refund of refunds) {
+    let leftCents = Math.max(0, refund.amountCents);
+    for (let index = operations.length - 1; index >= 0 && leftCents > 0; index -= 1) {
+      const candidate = operations[index];
+      if (!candidate || candidate.operation.createdAt.getTime() > refund.createdAt.getTime()) continue;
+      const slice = candidate.slices.find((each) => sliceTakes(each, refund, leftCents));
+      if (!slice) continue;
+      const takenCents = Math.min(leftCents, slice.amountCents - slice.filledCents);
+      slice.filledCents += takenCents;
+      leftCents -= takenCents;
+    }
+  }
+
+  for (const { operation, slices } of operations) {
+    if (operation.status === SUCCEEDED) continue;
+    owed.set(
+      operation.id,
+      slices.reduce((sum, slice) => sum + Math.max(0, slice.amountCents - slice.filledCents), 0),
+    );
+  }
+  return owed;
+}
+
+/**
+ * What one payment still owes back by card, in cents: its open card refunds'
+ * unsent slices (`openCardRefundOwedByOperation`), CAPPED PER PAYMENT at what
+ * the payment still holds (`getRemainingRefundableCents`): money cannot be owed
+ * back from a payment that no longer has it.
  */
 export function openCardRefundOwedCents(payment: CardRefundOwedPaymentRow): number {
-  const operations = payment.recoveryOperations
-    .filter(isOpenCardRefundOperation)
-    .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
-  if (operations.length === 0) return 0;
-  const used = new Set<RecordedCardRefundRow>();
-  const recorded = payment.refunds.filter((refund) => isRecordedRefundStatus(refund.status));
   let owedCents = 0;
-  for (const operation of operations) {
-    let nettedCents = 0;
-    for (const slice of operationSlices(operation)) {
-      let sliceNetCents = 0;
-      for (const refund of recorded) {
-        if (sliceNetCents >= slice.amountCents) break;
-        if (
-          used.has(refund) ||
-          refund.paymentTransactionId !== slice.paymentTransactionId ||
-          refund.createdAt.getTime() < operation.createdAt.getTime()
-        ) {
-          continue;
-        }
-        used.add(refund);
-        sliceNetCents += Math.max(0, refund.amountCents);
-      }
-      nettedCents += Math.min(sliceNetCents, slice.amountCents);
-    }
-    owedCents += Math.max(0, operation.amountCents - nettedCents);
-  }
+  for (const cents of openCardRefundOwedByOperation(payment).values()) owedCents += cents;
   return Math.min(owedCents, getRemainingRefundableCents(payment));
 }

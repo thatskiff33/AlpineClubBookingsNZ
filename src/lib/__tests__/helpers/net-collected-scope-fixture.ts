@@ -314,8 +314,10 @@ export function netCollectedFixtureBooking(row: FixtureRow) {
 
 /** A card refund operation row, as `netCollectedCardRefundSelect` loads it. */
 type CardRefundOperationFixture = {
+  id: string;
   type: string;
   status: string;
+  idempotencyKey: string;
   amountCents: number;
   allocationPlan: Array<{ paymentTransactionId: string; amountCents: number }> | null;
   paymentTransactionId: string | null;
@@ -380,8 +382,10 @@ export const OWED_RECONCILIATION_PAYMENTS: ReadonlyArray<ReconciliationRow> = [
     manualRefundTasks: [],
     recoveryOperations: [
       {
+        id: "op-card-refund-failed",
         type: "REFUND_BOOKING_MODIFICATION",
         status: "FAILED",
+        idempotencyKey: "booking_cancel_refund_recovery_b-card-refund-failed",
         amountCents: 15_000,
         allocationPlan: [{ paymentTransactionId: "txn-failed", amountCents: 15_000 }],
         paymentTransactionId: null,
@@ -405,8 +409,10 @@ export const OWED_RECONCILIATION_PAYMENTS: ReadonlyArray<ReconciliationRow> = [
     manualRefundTasks: [],
     recoveryOperations: [
       {
+        id: "op-card-refund-part-sent",
         type: "REFUND_BOOKING_MODIFICATION",
         status: "PROCESSING",
+        idempotencyKey: "booking_cancel_refund_recovery_b-card-refund-part-sent",
         amountCents: 25_000,
         allocationPlan: [
           { paymentTransactionId: "txn-b", amountCents: 10_000 },
@@ -532,28 +538,27 @@ export function owedReconciliationPaymentRow(row: ReconciliationRow) {
   };
 }
 
-/** The open tasks over those bookings, as the "Refunds owed" read loads them. */
+/**
+ * The open tasks over those bookings, as the "Refunds owed" read loads them:
+ * each with its booking's `deletedAt` and its payment (`netCollectedPaymentSelect`).
+ */
 export function owedReconciliationTaskRows() {
   return OWED_RECONCILIATION_PAYMENTS.flatMap((row) =>
     row.manualRefundTasks
       .filter((task) => task.status === "OPEN")
-      .map((task) => ({ ...task, booking: { deletedAt: row.deletedAt } })),
+      .map((task) => ({
+        ...task,
+        booking: { deletedAt: row.deletedAt, payment: { id: `pay-${row.bookingId}`, ...owedReconciliationPaymentRow(row) } },
+      })),
   );
 }
 
-/** The open card refunds, as the "Refunds owed" read loads them. */
+/** The open card refunds, as the "Refunds owed" read loads them: each with its payment. */
 export function owedReconciliationCardRefundRows() {
   return OWED_RECONCILIATION_PAYMENTS.flatMap((row) =>
-    row.recoveryOperations.map((operation) => ({
-      paymentId: `pay-${row.bookingId}`,
-      ...operation,
-      payment: {
-        status: row.status,
-        amountCents: row.amountCents,
-        refundedAmountCents: row.refundedAmountCents,
-        refunds: row.refunds,
-      },
-    })),
+    row.recoveryOperations
+      .filter((operation) => operation.status !== "SUCCEEDED")
+      .map(() => ({ payment: { id: `pay-${row.bookingId}`, ...owedReconciliationPaymentRow(row) } })),
   );
 }
 

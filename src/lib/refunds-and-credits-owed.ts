@@ -1,61 +1,55 @@
 import type { Prisma } from "@prisma/client";
-import { netCollectedBookingSelect, netCollectedCardRefundSelect } from "@/lib/additional-ledger-gap";
+import { netCollectedBookingSelect, netCollectedPaymentSelect } from "@/lib/additional-ledger-gap";
 import { openTaskOwedCents } from "@/lib/manual-refund-task-settlement-rules";
 import {
   readMemberCreditBalances,
   sumOutstandingCreditCents,
 } from "@/lib/member-credit-balances";
-import {
-  OPEN_CARD_REFUND_OPERATION_WHERE,
-  openCardRefundOwedCents,
-} from "@/lib/open-card-refund-owed";
+import { OPEN_CARD_REFUND_OPERATION_WHERE } from "@/lib/open-card-refund-owed";
+import { getNetCollectedCashParts, refundsOwedOfCashParts } from "@/lib/payment-net-collected";
 import { prisma } from "@/lib/prisma";
 import type { RefundsAndCreditsOwed } from "@/lib/refunds-and-credits-owed-shared";
 
 /**
- * The open tasks the "Refunds owed" figure reads, in the shape the rule takes,
- * with the booking's `deletedAt` that tells a legacy late capture apart.
+ * A payment that owes anything back, with the very columns Net Collected reads
+ * (`netCollectedPaymentSelect`) and its id to read it once, so its owed parts
+ * come from the one per-payment rule (`getNetCollectedCashParts`).
+ */
+const OWING_PAYMENT_SELECT = { id: true, ...netCollectedPaymentSelect } as const satisfies Prisma.PaymentSelect;
+
+/**
+ * Every open task, each with its booking's `deletedAt` (which tells a legacy
+ * late capture apart) and the booking's payment, if it has one.
  */
 const OPEN_TASK_QUERY = {
   where: { status: "OPEN" },
   select: {
     ...netCollectedBookingSelect.manualRefundTasks.select,
-    booking: { select: { deletedAt: true } },
+    booking: { select: { deletedAt: true, payment: { select: OWING_PAYMENT_SELECT } } },
   },
 } as const satisfies Prisma.ManualRefundTaskFindManyArgs;
 
-/**
- * The card refunds not yet paid, each with its payment's figures and recorded
- * refunds - the same columns Net Collected reads (`netCollectedCardRefundSelect`),
- * so the two cannot disagree. Read from the operations, the small set, and
- * grouped by payment below.
- */
+/** Every unclosed card refund, with the payment it hangs on. */
 const OPEN_CARD_REFUND_QUERY = {
   where: OPEN_CARD_REFUND_OPERATION_WHERE,
-  select: {
-    paymentId: true,
-    ...netCollectedCardRefundSelect.recoveryOperations.select,
-    payment: {
-      select: {
-        status: true,
-        amountCents: true,
-        refundedAmountCents: true,
-        refunds: netCollectedCardRefundSelect.refunds,
-      },
-    },
-  },
+  select: { payment: { select: OWING_PAYMENT_SELECT } },
 } as const satisfies Prisma.PaymentRecoveryOperationFindManyArgs;
 
 /**
  * #3372 (owner, 7 Oct 2026): "Refunds owed" and "Credits owed", as at today and
- * club-wide (`RefundsAndCreditsOwed`). Each part is read by the one rule Net
- * Collected uses to take it off, so the two figures reconcile:
+ * club-wide (`RefundsAndCreditsOwed`).
  *
- * - Refunds owed: every open task's refund owed by hand and late card charge
- *   awaiting the treasurer (`openTaskOwedCents`, one task counted once), plus
- *   every payment's card refunds not yet paid by Stripe
- *   (`openCardRefundOwedCents`, net of what is already recorded, capped per
- *   payment).
+ * - Refunds owed: for every payment that owes anything back - an open task on
+ *   its booking, or an unclosed card refund on it - what Net Collected took off
+ *   it for refunds owed (`refundsOwedOfCashParts` of
+ *   `getNetCollectedCashParts`): its open hand-back and late card charge
+ *   awaiting the treasurer (`openTaskOwedCents`, one task counted once) and its
+ *   card refunds not yet paid by Stripe (`openCardRefundOwedCents`), each capped
+ *   at what the ones before it left of the payment. Computed per payment ONCE,
+ *   by the rule Net Collected uses, so the two figures agree for every payment
+ *   (#3924 money review, F5) - a soft-deleted booking's included, which Net
+ *   Collected leaves out of its scope but whose refund is still owed. Plus open
+ *   tasks on a booking with no payment, which nothing caps.
  * - Credits owed: the members' credit-ledger balances
  *   (`sumOutstandingCreditCents`).
  */
@@ -67,26 +61,26 @@ export async function readRefundsAndCreditsOwed(
     db.paymentRecoveryOperation.findMany(OPEN_CARD_REFUND_QUERY),
     readMemberCreditBalances(db),
   ]);
-  const taskOwedCents = openTasks.reduce((sum, task) => {
+  // One payment, read once, however many tasks and refunds it carries.
+  const owingPayments = new Map<string, Prisma.PaymentGetPayload<{ select: typeof OWING_PAYMENT_SELECT }>>();
+  let paymentlessOwedCents = 0;
+  for (const task of openTasks) {
+    const payment = task.booking.payment;
+    if (payment) {
+      owingPayments.set(payment.id, payment);
+      continue;
+    }
     const owed = openTaskOwedCents([task], task.booking);
-    return sum + owed.handBackCents + owed.lateCaptureCents;
-  }, 0);
-  // One payment, all its open card refunds: the net-out and the cap are per payment.
-  const byPayment = new Map<
-    string,
-    (typeof openCardRefunds)[number]["payment"] & { recoveryOperations: typeof openCardRefunds }
-  >();
-  for (const operation of openCardRefunds) {
-    const payment = byPayment.get(operation.paymentId);
-    if (payment) payment.recoveryOperations.push(operation);
-    else byPayment.set(operation.paymentId, { ...operation.payment, recoveryOperations: [operation] });
+    paymentlessOwedCents += owed.handBackCents + owed.lateCaptureCents;
   }
-  const cardRefundOwedCents = [...byPayment.values()].reduce(
-    (sum, payment) => sum + openCardRefundOwedCents(payment),
-    0,
-  );
+  for (const { payment } of openCardRefunds) owingPayments.set(payment.id, payment);
+
+  let paymentOwedCents = 0;
+  for (const payment of owingPayments.values()) {
+    paymentOwedCents += refundsOwedOfCashParts(getNetCollectedCashParts(payment));
+  }
   return {
-    refundsOwedCents: taskOwedCents + cardRefundOwedCents,
+    refundsOwedCents: paymentOwedCents + paymentlessOwedCents,
     creditsOwedCents: sumOutstandingCreditCents(balances),
   };
 }

@@ -104,12 +104,20 @@ vi.mock("@/lib/payment-recovery", () => ({
 vi.mock("@/lib/payment-transactions", () => ({
   refundPaymentTransactions: mocks.refundPaymentTransactions,
   planStripeRefundAllocation: mocks.planStripeRefundAllocation,
+  // The real class's shape: what the route reads off a partial failure.
   PartialRefundError: class PartialRefundError extends Error {
-    completedRefundCents = 0;
+    completedRefundCents: number;
+    refunds: unknown[];
+    constructor(input: { completedRefundCents: number; refunds: unknown[] }) {
+      super("partial refund");
+      this.completedRefundCents = input.completedRefundCents;
+      this.refunds = input.refunds;
+    }
   },
 }));
 
 import { PUT } from "@/app/api/admin/refund-requests/[id]/route";
+import { PartialRefundError } from "@/lib/payment-transactions";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("PUT /api/admin/refund-requests/[id]", () => {
@@ -815,6 +823,49 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     expect(enqueueArgs.amountCents).toBe(2500);
     // Literally one frozen plan object, shared by both paths.
     expect(enqueueArgs.allocationPlan).toBe(inlineArgs.allocation);
+  });
+
+  // #3924 money review (round 3, F1): a slice the inline attempt refunded AND
+  // recorded is not enqueued again. The operation carries only the unsent
+  // slices, verbatim, so its retry replays exactly their keys and the "Refunds
+  // owed" figure reads only them as owed.
+  it("enqueues only the slices a partial inline refund did not complete", async () => {
+    mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+    mocks.refundRequestUpdateMany.mockResolvedValue({ count: 1 });
+    const frozenPlan = [
+      { paymentTransactionId: "txn_new", amountCents: 1500 },
+      { paymentTransactionId: "txn_old", amountCents: 1000 },
+    ];
+    mocks.planStripeRefundAllocation.mockResolvedValue({
+      slices: frozenPlan,
+      plannedAmountCents: 2500,
+      totalRefundableCents: 8000,
+    });
+    mocks.refundPaymentTransactions.mockRejectedValue(
+      new PartialRefundError({
+        completedRefundCents: 1500,
+        refunds: [{ paymentIntentId: "pi_new", refundId: "re_new", amountCents: 1500 }],
+        cause: new Error("txn_old failed"),
+        format: CLUB_FORMAT_TEST,
+      }),
+    );
+    mocks.enqueueRefundRequestRefundRecovery.mockResolvedValue({ id: "op_1" });
+
+    const response = await PUT(approveRequest(), {
+      params: Promise.resolve({ id: "refund_1" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.enqueueRefundRequestRefundRecovery).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueRefundRequestRefundRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        refundRequestId: "refund_1",
+        amountCents: 1000,
+        // The unsent slice exactly as frozen: same transaction, same amount,
+        // so the replay's `refund_request_<id>_<txn>_<amount>` key is unchanged.
+        allocationPlan: [{ paymentTransactionId: "txn_old", amountCents: 1000 }],
+      }),
+    );
   });
 
   it("falls back to releasing the claim when the recovery enqueue also fails", async () => {

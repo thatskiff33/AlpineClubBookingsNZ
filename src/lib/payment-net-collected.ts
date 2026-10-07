@@ -310,6 +310,20 @@ export function getNetCollectedCashParts(
 }
 
 /**
+ * What one payment still owes back, in cents: the three parts of its cash half
+ * that are refunds owed - by hand, by card not yet paid, and a late card charge
+ * awaiting the treasurer (`getNetCollectedCashParts`). "Refunds owed" sums this
+ * over every payment that owes anything (`readRefundsAndCreditsOwed`), so for
+ * each payment it is the very figure Net Collected took off, caps and all
+ * (#3924 money review, F5): the two cannot disagree about one payment.
+ */
+export function refundsOwedOfCashParts(
+  parts: Pick<NetCollectedPaymentParts, "handBackOwedCents" | "cardRefundOwedCents" | "lateCaptureOwedCents">,
+): number {
+  return parts.handBackOwedCents + parts.cardRefundOwedCents + parts.lateCaptureOwedCents;
+}
+
+/**
  * THE one per-payment rule behind every "Net Collected" figure (owner review on
  * PR #3811 and the owner's decision on #3372, 3 Oct 2026). It does not apply the
  * booking scope; `summarizeCollectedCash` does, before calling it.
