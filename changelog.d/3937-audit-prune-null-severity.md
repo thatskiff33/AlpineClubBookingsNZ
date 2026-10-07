@@ -3,7 +3,7 @@
   unclassified entry once its expiry date passes, unless it is critical. An
   entry whose severity was never set used to be kept indefinitely, because the
   database treats "is this not critical?" as unanswerable when the value is
-  empty. It is now treated as not critical, as the club decided.
+  empty. It is now treated as not critical, as the project decided (#3524).
 
   The first nightly run after upgrading deletes, once, every such entry already
   past its expiry. They are not archived first, so the deletion is permanent.

@@ -277,6 +277,31 @@ describe("matchesWhere — refuses what it does not model", () => {
     expect(matchesWhere(row, { guests: { none: { memberId: "m-9" } } })).toBe(true);
   });
 
+  it("evaluates OR as three-valued logic: any true clause wins over an unknown, in either order", () => {
+    const row = booking({ deletedAt: null });
+    const isNull = { deletedAt: null };
+    const notJuly = { deletedAt: { not: JULY } };
+    expect(matchesWhere(row, { OR: [isNull, notJuly] })).toBe(true);
+    expect(matchesWhere(row, { OR: [notJuly, isNull] })).toBe(true);
+    // A true clause elsewhere in the list also settles it.
+    expect(matchesWhere(row, { OR: [notJuly, { status: "CONFIRMED" }] })).toBe(true);
+    // No true clause and one unknown: the OR is unknown, and still refuses.
+    expect(() => matchesWhere(row, { OR: [notJuly, { status: "PAID" }] })).toThrow(
+      /`not` on deletedAt met a NULL column/,
+    );
+    expect(() => matchesWhere(row, { OR: [{ status: "PAID" }, notJuly] })).toThrow(
+      /`not` on deletedAt met a NULL column/,
+    );
+    // A bare negation over NULL outside such an OR still throws.
+    expect(() => matchesWhere(row, { NOT: { deletedAt: JULY } })).toThrow(
+      /`NOT` on deletedAt met a NULL column/,
+    );
+    // A real failure in a clause is never swallowed as "unknown".
+    expect(() => matchesWhere(row, { OR: [{ status: "PAID" }, { notes: { mode: "insensitive" } }] })).toThrow(
+      /unsupported filter operator "mode"/,
+    );
+  });
+
   it("names the caller when a label is given", () => {
     expect(() =>
       matchesWhere(booking(), { notes: { mode: "insensitive" } }, { label: "audit double" }),

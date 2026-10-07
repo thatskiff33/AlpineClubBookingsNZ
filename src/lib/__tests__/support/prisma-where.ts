@@ -33,7 +33,11 @@
  * operand, and any comparison inside a logical `NOT`, THROW when they meet a
  * NULL column rather than answer either way. `null` / `not: null` (IS NULL / IS
  * NOT NULL) and the relation negations `isNot` / `none` (NOT EXISTS) are
- * two-valued in SQL too and stay ordinary.
+ * two-valued in SQL too and stay ordinary. An `OR` follows SQL's three-valued
+ * rule: any true clause makes it true even when another clause is unknown, so
+ * `OR: [{ severity: null }, { severity: { not: "critical" } }]` holds on a NULL
+ * severity whichever way round it is written; an `OR` with no true clause and an
+ * unknown one is itself unknown and throws like a bare negation.
  *
  * WHAT IT REFUSES, LOUDLY. It THROWS, naming the operator and the column, on: a
  * filter operator it does not implement (`mode`, `every`, `has`, …), a column
@@ -156,8 +160,15 @@ function toList(condition: unknown): WhereInput[] {
   return (Array.isArray(condition) ? condition : [condition]) as WhereInput[];
 }
 
+/**
+ * The evaluator's "unknown": a negation met a NULL column. It is its own class
+ * so an `OR` can tell it from a real failure (an unsupported operator) and
+ * apply SQL's three-valued rule, where any true clause settles the OR.
+ */
+class NullUnderNegationError extends Error {}
+
 function nullUnderNegation(label: string, operator: string, at: string): never {
-  throw new Error(
+  throw new NullUnderNegationError(
     `${label}: \`${operator}\` on ${at} met a NULL column. PostgreSQL evaluates a ` +
       "negated comparison over NULL to unknown and EXCLUDES the row, where a " +
       "two-valued evaluator would include it; give the fixture row an explicit " +
@@ -350,6 +361,31 @@ export function matchesWhere(
   return evaluate(row as WhereRow, where, options, false);
 }
 
+/**
+ * `OR` as SQL's three-valued logic: true if ANY clause is true, even when
+ * another is unknown (a negation over NULL), whatever order they are written in.
+ * Only when no clause is true and one is unknown is the OR itself unknown, and
+ * that still throws — the same refusal a bare negation over NULL gets.
+ */
+function matchesAny(
+  clauses: WhereInput[],
+  record: WhereRow,
+  options: MatchesWhereOptions,
+  negated: boolean,
+): boolean {
+  let unknown: NullUnderNegationError | undefined;
+  for (const clause of clauses) {
+    try {
+      if (evaluate(record, clause, options, negated)) return true;
+    } catch (error) {
+      if (!(error instanceof NullUnderNegationError)) throw error;
+      unknown ??= error;
+    }
+  }
+  if (unknown) throw unknown;
+  return false;
+}
+
 function evaluate(
   record: WhereRow,
   where: WhereInput | undefined | null,
@@ -367,8 +403,7 @@ function evaluate(
       continue;
     }
     if (key === "OR") {
-      if (!toList(condition).some((clause) => evaluate(record, clause, options, negated)))
-        return false;
+      if (!matchesAny(toList(condition), record, options, negated)) return false;
       continue;
     }
     if (key === "NOT") {

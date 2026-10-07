@@ -624,17 +624,6 @@ go back to. That is already true of every booking and payment entry, so it is no
 new; it is worth knowing here because it now also covers the record of a
 **deletion decision**.
 
-**Older entries with no severity are no longer kept by accident (#3524).** An
-old entry that has no retention class and was never given a severity used to
-be kept indefinitely, even after its expiry date had passed. That was a side
-effect of how the database reads an empty value, not a choice anyone made. Such
-an entry is now treated as not critical and is deleted when its expiry date
-passes, like its peers. The first nightly run after the upgrade deletes the
-ones already past their date, once. Entries recorded with **no** expiry date
-are unaffected and are still kept. The
-[retention runbook](../AUDIT_RETENTION_ARCHIVE_RUNBOOK.md#unclassified-rows-with-no-severity-3524)
-has the read-only query that counts them on a copy before you upgrade.
-
 **What that does and does not put at risk**, because it is easy to overstate.
 The deletion *request* itself survives: approving one anonymises the member's own
 record in place rather than deleting it, so the request stays on file — which
@@ -647,6 +636,17 @@ reviewer on it, so the activity entry is the only attribution. Seven years is a
 long time and nothing goes before 2033, but if the club wants that particular
 record kept permanently, it is a one-line change at the writer and it should be
 made deliberately rather than discovered in 2033.
+
+**Older entries with no severity are no longer kept by accident (#3524).** An
+old entry that has no retention class and was never given a severity used to
+be kept indefinitely, even after its expiry date had passed. That was a side
+effect of how the database reads an empty value, not a choice anyone made. Such
+an entry is now treated as not critical and is deleted when its expiry date
+passes, like its peers. The first nightly run after the upgrade deletes the
+ones already past their date, once. Entries recorded with **no** expiry date
+are unaffected and are still kept. The
+[retention runbook](../AUDIT_RETENTION_ARCHIVE_RUNBOOK.md#unclassified-rows-with-no-severity-3524)
+has the read-only query that counts them on a copy before you upgrade.
 
 ### Booking-policy entries
 

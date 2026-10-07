@@ -5,7 +5,7 @@ This runbook covers the production audit-log retention job and the optional arch
 ## Runtime
 
 - The audit retention job runs inside the existing `data-pruning` cron in `src/instrumentation.ts`.
-- Schedule: daily at `03:30 Pacific/Auckland`.
+- Schedule: daily at `03:30` club time, in the club's saved timezone (`INV-CONFIG-002`).
 - The job only runs on app instances with `CRON_ENABLED=true`; blue/green web slots should keep `CRON_ENABLED=false`.
 - Cron run summaries are recorded under the `data-pruning` job name and include anonymized, archived, main-pruned, and archive-pruned counts.
 
@@ -38,6 +38,8 @@ When **no** archive database is configured there is no archive to outrun and now
 
 **What changed.** The prune used to keep an unclassified row whose severity was never set, indefinitely. Nobody chose that: the database reads "is not critical" as *unknown* rather than *yes* when the severity is empty, and an unknown never matches a delete. The owner decided on 6 Oct 2026 ([#3524](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3524)) that such a row counts as **not critical**, so it now ages out on its own `expiresAt` like any other non-critical unclassified row.
 
+**One deliberate asymmetry.** Today's writer, `classifyAuditRetention` in `src/lib/audit.ts`, files a new event with no severity and no special category as `critical` (seven years). A legacy row with no class and no severity is instead pruned at its explicit expiry. The two differ on purpose: the writer's rule governs rows recorded from now on, and #3524 only settles the rows that were recorded before every writer classified its events.
+
 **What the first run after deploy does.** It deletes, once, every row that only this behaviour had kept: no `retentionClass`, no `severity`, and an `expiresAt` already in the past. They are not copied to the archive first (unclassified rows never are), so this is permanent. After that night the rows age out one by one as they reach their expiry, like everything else.
 
 **Count them before you deploy, on a copy.** Run the query below on a **restored copy** of the production database, never on production itself and never on the primary. It only reads, and the transaction is opened read-only so a mistyped edit fails instead of running:
@@ -68,7 +70,7 @@ ORDER BY 4 DESC;
 ROLLBACK;
 ```
 
-`now()` is the moment you run it. The nightly job runs at 03:30 NZ time, so a row whose expiry falls between your count and that run is deleted too; it would have been deleted on that night under the new rule anyway. Rows with no `expiresAt` are not in this count and are not deleted.
+`now()` is the moment you run it. The nightly job runs at 03:30 club time, so a row whose expiry falls between your count and that run is deleted too; it would have been deleted on that night under the new rule anyway. Rows with no `expiresAt` are not in this count and are not deleted.
 
 If the number is larger than you expected, or the breakdown shows entries the club wants to keep, hold the deploy and raise it on the issue before upgrading. Do not edit the audit rows by hand to save them: the audit log is append-only evidence.
 
