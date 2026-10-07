@@ -1,3 +1,4 @@
+import { bookingWorthCents } from "@/lib/booking-payment-state";
 import { PaymentSource, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -86,15 +87,20 @@ export async function loadBookingAppliedCredit(
       where: { id: bookingId },
       select: {
         finalPriceCents: true,
-        payment: { select: { source: true, manuallyMarkedPaidAt: true } },
+        payment: { select: { source: true, manuallyMarkedPaidAt: true, changeFeeCents: true } },
       },
     }),
   ]);
 
+  // #3750: callers print the booking's worth (price plus a recorded change
+  // fee), so that is what a moved price is measured against.
   if (
     expectedTotalCents !== undefined &&
     booking &&
-    booking.finalPriceCents !== expectedTotalCents
+    bookingWorthCents({
+      finalPriceCents: booking.finalPriceCents,
+      changeFeeCents: booking.payment?.changeFeeCents ?? null,
+    }) !== expectedTotalCents
   ) {
     // #2328 (review): the credit figure is read HERE, at send time, while the
     // total was snapshotted by the caller before its settlement transaction —

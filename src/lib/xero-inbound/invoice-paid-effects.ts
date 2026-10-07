@@ -1,3 +1,4 @@
+import { bookingWorthCents } from "@/lib/booking-payment-state";
 import { type Invoice } from "xero-node";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { BookingEventType, BookingStatus, CreditType, ManualRefundTaskKind, PaymentSource, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
@@ -1668,7 +1669,12 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       outcome.payment.booking.checkIn,
       outcome.payment.booking.checkOut,
       outcome.payment.booking.guests.length,
-      outcome.payment.booking.finalPriceCents,
+      // #3955 review F8: what the member paid for — the booking's worth, its
+      // price plus a change fee recorded on the payment (the email nets credit).
+      bookingWorthCents({
+        finalPriceCents: outcome.payment.booking.finalPriceCents,
+        changeFeeCents: outcome.payment.changeFeeCents,
+      }),
       format,
       {
         // Always thread the booking's lodge so the confirmation email carries

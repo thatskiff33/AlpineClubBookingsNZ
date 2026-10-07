@@ -35,6 +35,7 @@
  */
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import type { LineItem } from "xero-node";
+import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
 import {
@@ -68,6 +69,15 @@ import type { ClubFormat } from "@/lib/club-format";
 type PromoDeltaLine = Extract<ModificationLine, { kind: "PROMO_DELTA" }>;
 
 export type ModificationDocumentKind = "SUPPLEMENTARY_INVOICE" | "MODIFICATION_CREDIT_NOTE";
+
+/** A built invoice's total in cents, line by line as Xero will add it. */
+export function invoiceLineItemsTotalCents(lineItems: ReadonlyArray<LineItem>): number {
+  return lineItems.reduce(
+    (sum, line) =>
+      sum + (providerAmountToCents(line.unitAmount) ?? 0) * (line.quantity ?? 1),
+    0
+  );
+}
 
 /** The change-fee line's words, on every document that carries one. */
 export const CHANGE_FEE_LINE_DESCRIPTION = "Late notice booking change fee";

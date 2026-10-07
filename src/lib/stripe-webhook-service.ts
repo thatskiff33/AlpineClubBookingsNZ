@@ -1,4 +1,4 @@
-import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
+import { bookingAmountOwedCents, bookingWorthCents, isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { prisma } from "@/lib/prisma";
@@ -539,23 +539,40 @@ async function handlePaymentIntentSucceeded(
   // intents). A stale intent from a since-changed price matches neither and is
   // still rejected. The ledger read is skipped for a full-price capture.
   // #3750: worth (price plus a recorded change fee), or that less applied credit.
+  //
+  // #3955 review F5: a redelivery of the capture this booking ALREADY settled
+  // with is not a stale intent, whatever the booking has come to owe since (a
+  // later fee, a later edit): comparing it again would refuse a payment that
+  // was taken and recorded, and Stripe would retry it for ever. Its own
+  // transaction row SUCCEEDED and the payment pointing at it is the evidence;
+  // the settle below answers it `already_paid` without re-checking the amount.
+  const alreadySettledWithThisIntent =
+    paymentTransaction.status === PaymentStatus.SUCCEEDED &&
+    bookingRecord?.payment?.stripePaymentIntentId === paymentIntent.id &&
+    isCapturedPaymentStatus(bookingRecord.payment.status);
+  const expectedOwedCents =
+    bookingRecord && !alreadySettledWithThisIntent
+      ? bookingAmountOwedCents({
+          finalPriceCents: bookingRecord.finalPriceCents,
+          changeFeeCents: bookingRecord.payment?.changeFeeCents ?? null,
+          appliedCreditCents: await deriveBookingAppliedCreditCents(bookingRecord.id, prisma),
+        })
+      : null;
   if (
     bookingRecord &&
+    expectedOwedCents !== null &&
     paymentIntent.amount !==
       bookingWorthCents({
         finalPriceCents: bookingRecord.finalPriceCents,
         changeFeeCents: bookingRecord.payment?.changeFeeCents ?? null,
       }) &&
-    paymentIntent.amount !==
-      bookingAmountOwedCents({
-        finalPriceCents: bookingRecord.finalPriceCents,
-        changeFeeCents: bookingRecord.payment?.changeFeeCents ?? null,
-        appliedCreditCents: await deriveBookingAppliedCreditCents(bookingRecord.id, prisma),
-      })
+    paymentIntent.amount !== expectedOwedCents
   ) {
+    // #3955 review F7: the expected figure is what the booking owes.
     logger.error(
       {
         bookingId,
+        expectedOwedCents,
         bookingFinalPriceCents: bookingRecord.finalPriceCents,
         receivedCents: paymentIntent.amount,
         paymentIntentId: paymentIntent.id,
@@ -565,7 +582,7 @@ async function handlePaymentIntentSucceeded(
     await alertPaymentAmountMismatch(
       bookingId,
       paymentIntent.id,
-      bookingRecord.finalPriceCents,
+      expectedOwedCents,
       paymentIntent.amount,
       "Primary booking payment (stale intent: booking was modified after the intent was created)",
       format
@@ -612,7 +629,14 @@ async function handlePaymentIntentSucceeded(
       const booking = await prisma.booking.findUnique({
         where: { id: bookingId },
         // #3369: the owner may be an Organisation; bookingOwner() reads both.
-        include: { member: true, organisation: { select: { name: true, email: true } }, guests: true, promoRedemptions: { include: { promoCode: true } } },
+        include: {
+          member: true,
+          organisation: { select: { name: true, email: true } },
+          guests: true,
+          promoRedemptions: { include: { promoCode: true } },
+          // #3750: a change fee recorded on the payment was paid too.
+          payment: { select: { changeFeeCents: true } },
+        },
       });
       if (booking) {
         // Split-booking parent (#738): describe the provisional non-member
@@ -628,7 +652,12 @@ async function handlePaymentIntentSucceeded(
           booking.checkIn,
           booking.checkOut,
           booking.guests.length,
-          booking.finalPriceCents,
+          // #3955 review F8: what the member paid for — the booking's worth,
+          // its price plus a recorded change fee (the email nets credit).
+          bookingWorthCents({
+            finalPriceCents: booking.finalPriceCents,
+            changeFeeCents: booking.payment?.changeFeeCents ?? null,
+          }),
           format,
           {
             lodgeId: booking.lodgeId,

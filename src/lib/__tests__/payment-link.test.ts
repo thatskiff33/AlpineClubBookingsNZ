@@ -18,6 +18,10 @@ vi.mock("@/lib/prisma", () => ({
     booking: {
       findUnique: vi.fn(),
     },
+    // #3750: the link charges what the booking owes, net of applied credit.
+    memberCredit: {
+      aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }),
+    },
     // #2258: the withheld-send audit row (written at most once per booking).
     emailLog: {
       findFirst: vi.fn().mockResolvedValue(null),
@@ -1479,6 +1483,31 @@ describe("createPaymentIntentForPaymentLink", () => {
         metadata: expect.objectContaining({ bookingId: "booking-1", paymentLinkId: "link-1" }),
       })
     );
+  });
+
+  it("#3955 F2: sizes the intent, its payment row and its transaction at what the booking owes", async () => {
+    // Price 12000, a 2500 fee recorded on the payment by a finished-stay
+    // correction, 1500 of account credit applied: the link charges 13000.
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        booking: baseBooking({
+          payment: { id: "pay-1", status: PaymentStatus.PENDING, changeFeeCents: 2500, stripePaymentIntentId: null },
+        }),
+      }) as never,
+    );
+    vi.mocked(prisma.memberCredit.aggregate).mockResolvedValueOnce({ _sum: { amountCents: -1500 } } as never);
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue(baseBooking({ guests: [{ id: "guest-1" }] }) as never);
+    mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_new",
+      client_secret: "secret_new", currency: "nzd",
+      amount: 13000,
+    } as never);
+    vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
+
+    await createPaymentIntentForPaymentLink(RAW_TOKEN);
+
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 13000 }));
   });
 
   // #3638 (`INV-PAY-102`): the link is the third card door. A booking switched

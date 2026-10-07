@@ -239,7 +239,9 @@ describe("finance-booking-metrics", () => {
           status: PaymentStatus.PENDING,
           amountCents: 8000,
           refundedAmountCents: 0,
-          changeFeeCents: 0,
+          // #3955 F9: a fee added to what an UNPAID booking owes is not income
+          // until it is captured, so the summary below stays at 500.
+          changeFeeCents: 700,
           creditAppliedCents: 0,
           additionalAmountCents: 0,
           additionalPaymentStatus: null,
