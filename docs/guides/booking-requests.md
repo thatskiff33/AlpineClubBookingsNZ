@@ -99,8 +99,9 @@ are listed on the booking for you to relay.
      its own **Change fee** row), the card, a payment link, a saved card, an
      internet-banking payment, an officer recording cash and a group
      organiser's combined payment all collect it with the rest, and the
-     booking's invoice bills it. Account credit already on the booking pays
-     towards it like the rest of the price. If the booking's invoice is raised
+     booking's invoice bills it. Account credit already on the booking, or
+     credit the member chooses to use when paying, pays towards it like the
+     rest of the price. If the booking's invoice is raised
      at the moment you approve, nothing is applied and you are asked to
      approve again. The member can still ask the committee to refund a fee
      through a refund request.

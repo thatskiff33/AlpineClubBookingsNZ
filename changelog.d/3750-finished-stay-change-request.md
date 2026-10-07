@@ -20,8 +20,10 @@
   added to what the member owes, so every way of paying collects it — the
   payment page (with its own **Change fee** row), a card, a payment link, a
   saved card, internet banking, an officer recording cash and a group
-  organiser's combined payment — and account credit on the booking pays
-  towards it rather than being handed back. The booking's Xero invoice bills
+  organiser's combined payment — and account credit on the booking, or
+  credit the member chooses to use when paying, pays towards it rather than
+  being handed back. A payment link says so when credit leaves nothing to
+  pay. The booking's Xero invoice bills
   the fee, and if the invoice happens to be raised while the change is being
   applied, the change is refused (approve again) or the missing fee is billed
   on a supplementary invoice, never lost. Finance reports count the fee as

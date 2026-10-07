@@ -1596,13 +1596,28 @@ invoice update never relabels the fee line.
 
 The one gap is an invoice built before a fee was recorded — an edit committed
 while the create was in flight, or a lost response replayed under the same
-idempotency key, which returns the original invoice. The create reads the
-recorded fee back in the statement that persists its link, compares it with
-the fee lines Xero returned, and bills any shortfall on a supplementary
-invoice anchored on the latest fee-bearing edit
-(`xero-primary-invoice-fee-gap.ts`). A finished-stay correction claims its fee
-write against the invoice link it read, so a link persisted mid-edit refuses
-the correction rather than slipping past the read-back.
+idempotency key, which returns the original invoice
+(`xero-primary-invoice-fee-gap.ts`):
+
+- **Recorded before the link.** The create writes what the returned invoice
+  billed (its fee lines and its total) onto its operation's payload, then
+  persists the payment's link, then compares the fee the payment records with
+  the fee billed. A finished-stay correction claims its fee write against the
+  invoice link it read, so once the link is persisted every fee routed to the
+  primary invoice is recorded, and a later one refuses the correction.
+- **Billed on a supplementary invoice.** The shortfall is anchored on a
+  correction that routed its fee to the primary invoice (`feeOnPrimaryInvoice`
+  on its modification); none of those raised a document of its own. It is
+  raised unpaid, like any edit's supplementary invoice, unless a captured
+  Stripe payment nets the shortfall beyond the primary invoice's total. Any
+  enqueue outcome other than a fresh operation is logged as an error.
+- **Retry-safe.** A run that dies after persisting the link is re-driven
+  through the create's "invoice already exists" exit, which re-runs the check
+  from the recorded figure. A shortfall already queued on one of the anchors
+  is not queued again, and no other edit's queued figure is raised.
+- **Limit (#3980).** The ordinary settled edit's fee increment is not claimed
+  against the link, so its fee racing a create has no anchor: it is logged,
+  not billed.
 
 ## OAuth and token lifecycle (supporting flow)
 
