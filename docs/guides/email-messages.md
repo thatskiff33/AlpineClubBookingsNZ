@@ -112,6 +112,28 @@ it — or nothing whatsoever. Put one of those tokens on its own, with no label 
 your own in front of it, and the email reads correctly whether or not the value
 exists.
 
+`{{paymentNote}}` on the **Booking Modified** message is another: it says what
+happens to the money for the change, and the wording follows how the booking was
+paid. A card refund reads "A refund of $X has been processed to your original
+payment method." A refund on a booking paid by internet banking or in cash reads
+"The club will refund $X to you by bank transfer." — it is promised, not
+reported, because a treasurer still has to send it from the **Money to settle**
+card (see the [payments guide](payments.md#pay-back-a-refund-for-a-cash-booking))
+(#3827). A reduction that goes back partly to the card and partly as account
+credit names both.
+
+`{{refundSentence}}` on the **Refund Appeal Approved** message works the same
+way. A card refund reads "A refund of $X will be processed to your original
+payment method."; on a booking paid by internet banking it reads "The club will
+refund $X to you by bank transfer.", and a booking paid partly by card names
+both parts (#3827). `{{amount}}` is still available to a saved override, but it
+cannot say which way the money goes, so use `{{refundSentence}}`.
+
+`{{promoSummary}}` on a booking that carries several promo codes shows one
+`Promo adjustment (CODE)` line per code, each with its own amount, while
+`{{promoCode}}` names every code, comma-separated (#3828). A booking with one
+code reads exactly as before.
+
 One of these blocks is several lines at once: **`{{ical}}`** on the Booking
 Confirmed message renders a short add-to-calendar section — a link that
 downloads the stay as a calendar file (`.ics`), plus links for Google Calendar

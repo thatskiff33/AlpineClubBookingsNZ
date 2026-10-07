@@ -31,7 +31,7 @@ const mockTx = {
     findUnique: vi.fn(),
   },
   season: { findMany: vi.fn() },
-  promoRedemption: { count: vi.fn(), create: vi.fn(), aggregate: vi.fn(), findUnique: vi.fn().mockResolvedValue(null) },
+  promoRedemption: { count: vi.fn(), create: vi.fn(), aggregate: vi.fn(), findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
   // #3276: the night adjustment build-up writer reads and rewrites these.
   bookingGuestNightAdjustment: {
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -119,6 +119,7 @@ vi.mock("@/lib/prisma", () => ({
     promoRedemption: {
       count: vi.fn(),
       create: vi.fn(),
+      findFirst: vi.fn().mockResolvedValue(null),
     },
     auditLog: {
       create: vi.fn().mockResolvedValue({}),

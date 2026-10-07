@@ -72,6 +72,7 @@ const cancelMoney = (
 ) =>
   paidCancellationMoney({
     payment: { amountCents: cardCents, refundedAmountCents: 0, changeFeeCents, creditAppliedCents: appliedCents },
+    openNonCancellationHandBackCents: 0,
     finalPriceCents: priceCents,
     appliedCreditCents: appliedCents,
     restoresToMemberLedger: true,

@@ -153,6 +153,32 @@ describe("email message registry", () => {
     expect(validation.missingRequiredTokens).toContain("token");
   });
 
+  // #3827 (D-3813-7): an approved appeal goes to the card OR by bank
+  // transfer, and only {{refundSentence}} can say which. An override saved
+  // from the old default fixes "original payment method" around {{amount}},
+  // which is wrong for an internet-banking member - flagged, and not re-savable.
+  it("requires {{refundSentence}} on an approved-appeal override, with guidance", () => {
+    const oldDefault = validateEmailTemplateContent({
+      templateName: "refund-request-approved",
+      subject: "Refund appeal approved",
+      bodyText:
+        "Hi {{firstName}}, your appeal was approved. A refund of {{amount}} will be processed to your original payment method.\n\n{{adminNotes}}",
+    });
+    expect(oldDefault.valid).toBe(false);
+    expect(oldDefault.missingRequiredTokens).toEqual(["refundSentence"]);
+    expect(oldDefault.issues.find((issue) => issue.code === "missing_required_token")?.message).toContain(
+      "keep {{refundSentence}}",
+    );
+
+    const resaved = validateEmailTemplateContent({
+      templateName: "refund-request-approved",
+      subject: "Refund appeal approved",
+      bodyText: "Hi {{firstName}}, your appeal was approved. {{refundSentence}}\n\n{{adminNotes}}",
+    });
+    expect(resaved.valid).toBe(true);
+    expect(getEmailTemplateDefinition("refund-request-approved")?.defaultBody).toContain("{{refundSentence}}");
+  });
+
   it("accepts required tokens that appear only in the body", () => {
     const validation = validateEmailTemplateContent({
       templateName: "booking-confirmed",

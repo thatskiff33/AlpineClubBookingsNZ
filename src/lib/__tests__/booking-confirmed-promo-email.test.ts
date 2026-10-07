@@ -140,6 +140,7 @@ async function captureConfirmedTemplateData(
   options?: {
     promoAdjustmentCents?: number;
     promoCode?: string;
+    promoLines?: Array<{ code: string; amountCents: number }>;
     // Lodge door code for this send; null models a club that records none.
     doorCode?: string | null;
     // #2263: a CONFIRMED-but-unpaid send (member whole-lodge approval).
@@ -243,6 +244,46 @@ describe("booking-confirmed promo summary (#2267)", () => {
     expect(html).toContain(">Promo adjustment (SPRING10)</td>");
     expect(html).toContain(">-$30.00</td>");
     expect(html).toContain(">$270.00</td>");
+  });
+
+  it("names each of several codes on its own row, in both paths (#3828)", async () => {
+    const { templateData, html } = await captureConfirmedTemplateData(25000, {
+      promoAdjustmentCents: -5000,
+      promoCode: "SPRING10, GUESTFREE",
+      promoLines: [
+        { code: "SPRING10", amountCents: -3000 },
+        { code: "GUESTFREE", amountCents: -2000 },
+      ],
+    });
+
+    const rendered = renderDefaultBody("booking-confirmed", templateData);
+
+    expect(rendered).toContain(
+      "Subtotal: $300.00\n" +
+        "Promo adjustment (SPRING10): -$30.00\n" +
+        "Promo adjustment (GUESTFREE): -$20.00\n" +
+        "Total Paid: $250.00",
+    );
+    expectCleanBody(rendered);
+    expect(html).toContain(">Promo adjustment (SPRING10)</td>");
+    expect(html).toContain(">-$30.00</td>");
+    expect(html).toContain(">Promo adjustment (GUESTFREE)</td>");
+    expect(html).toContain(">-$20.00</td>");
+  });
+
+  it("keeps the one combined row when several codes' figures do not add up to the adjustment (#3828)", async () => {
+    const { templateData } = await captureConfirmedTemplateData(25000, {
+      promoAdjustmentCents: -5000,
+      promoCode: "SPRING10, GUESTFREE",
+      promoLines: [
+        { code: "SPRING10", amountCents: -3000 },
+        { code: "GUESTFREE", amountCents: -1000 },
+      ],
+    });
+
+    expect(renderDefaultBody("booking-confirmed", templateData)).toContain(
+      "Subtotal: $300.00\nPromo adjustment (SPRING10, GUESTFREE): -$50.00\nTotal Paid: $250.00",
+    );
   });
 
   it("renders no promo lines at all — not ragged, not empty — without a promo", async () => {
@@ -713,6 +754,7 @@ describe("booking-modified default body (#2267)", () => {
       // #3032: required. This helper is about promo coverage, so the control
       // value keeps the review note out of every assertion here.
       financialReviewPending: false,
+      refundByBankTransfer: false,
       appliedCreditGivenBackCents: 0,
       ...overrides,
     }, CLUB_FORMAT_TEST);

@@ -119,6 +119,7 @@ const MODULES_ON = {
   alpineCentralServer: false,
   commsPortal: false,
   memberLodgeRoster: false,
+  multiPromoCodes: false,
 };
 
 function exceptionRow(overrides: Record<string, unknown> = {}) {

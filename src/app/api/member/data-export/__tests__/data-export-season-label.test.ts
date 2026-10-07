@@ -216,4 +216,53 @@ describe("the member data export names a season the way the screen does", () => 
     // Nor any reason token, anywhere in the payload.
     expect(text).not.toContain("MISMATCH");
   });
+
+  it("names each of several promo codes on a booking, and leaves a one-code booking's discount as it was (#3828)", async () => {
+    const base = {
+      checkIn: new Date("2026-08-01T00:00:00.000Z"),
+      checkOut: new Date("2026-08-02T00:00:00.000Z"),
+      status: "CONFIRMED",
+      totalPriceCents: 10_000,
+      discountCents: 5_000,
+      finalPriceCents: 5_000,
+      hasNonMembers: false,
+      nonMemberHoldUntil: null,
+      notes: null,
+      createdAt: new Date("2026-07-01T00:00:00.000Z"),
+      guests: [],
+      payment: null,
+    };
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        ...base,
+        promoRedemptions: [
+          { id: "r2", applicationOrder: 1, discountCents: 2_000, createdAt: new Date("2026-07-02T00:00:00.000Z"), promoCode: { code: "GUESTFREE" } },
+          { id: "r1", applicationOrder: 0, discountCents: 3_000, createdAt: new Date("2026-07-01T00:00:00.000Z"), promoCode: { code: "SPRING10" } },
+        ],
+      },
+      {
+        ...base,
+        promoRedemptions: [
+          { id: "r3", applicationOrder: 0, discountCents: 5_000, createdAt: new Date("2026-07-01T00:00:00.000Z"), promoCode: { code: "SPRING10" } },
+        ],
+      },
+    ]);
+
+    const body = (await (await dataExportGet()).json()) as {
+      bookings: Array<{ promoDiscount: unknown }>;
+    };
+
+    expect(body.bookings[0]!.promoDiscount).toEqual({
+      discountCents: 5_000,
+      appliedAt: "2026-07-01T00:00:00.000Z",
+      codes: [
+        { code: "SPRING10", discountCents: 3_000, appliedAt: "2026-07-01T00:00:00.000Z" },
+        { code: "GUESTFREE", discountCents: 2_000, appliedAt: "2026-07-02T00:00:00.000Z" },
+      ],
+    });
+    expect(body.bookings[1]!.promoDiscount).toEqual({
+      discountCents: 5_000,
+      appliedAt: "2026-07-01T00:00:00.000Z",
+    });
+  });
 });

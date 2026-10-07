@@ -40,6 +40,7 @@ function makeTx(restrictionLodgeIds: string[]) {
       ),
     },
     promoRedemption: {
+      findFirst: vi.fn(async () => null),
       create: vi.fn(async () => {
         state.createdRedemption = true;
         return { id: "redemption-1" };
