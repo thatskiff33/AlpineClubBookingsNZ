@@ -117,8 +117,9 @@ issue has complete scope and validation commands and does not touch money
 movement, booking capacity, membership lifecycle, live providers, schema,
 production config, or deployment behavior. Such eligible runs may also push,
 monitor CI to green, and merge their own PR with a merge commit per the
-`AGENTS.md` "Completion and Merge" risk gate. High and critical PRs always wait
-for explicit owner approval before merge.
+`AGENTS.md` "Completion and Merge" merge gate (#3959). A High or critical PR
+merges on the same gate, with the lenses its risk requires; an open owner
+decision on it still waits for the owner.
 
 ## Conflict Handling
 
@@ -374,11 +375,10 @@ finding is fixed and CI is green. It is the only post-PR evidence comment:
 - validation run, validation not run and why, manual checks, and stated limits;
 - confirmation that no production credentials, production data, live providers
   or live webhooks were used;
-- whether the PR is eligible for autonomous merge or held for owner approval.
-  On a PR touching a `.github/CODEOWNERS` path, ask for the owner's GitHub
-  **Approve** as well as the approval comment: the agent account cannot merge
-  past a missing Approve (`AGENTS.md` → "Pre-authorisation and
-  attributability").
+- residual risks (none open) and carry-forward issues, filed and linked. Once it
+  is complete and clean, the PR merges under the `AGENTS.md` "Completion and
+  Merge" merge gate (#3959); no owner Approve is needed, and `.github/CODEOWNERS`
+  gates nothing. Name any open owner decision that holds it instead.
 
 With the CLAIM comment it makes the issue thread a full audit trail that reads
 cold, because whoever picks the work up next may be a session that never saw

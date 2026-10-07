@@ -260,7 +260,7 @@ describe("repository agent workflow contract", () => {
     expect(template).toContain(
       "Relevant open/last-10 PR numbers, counterpart writers/tests, and compatibility",
     );
-    expect(template).toContain('Merge handling follows the `AGENTS.md` "Completion and Merge" risk gate');
+    expect(template).toContain('Merge handling follows the `AGENTS.md` "Completion and Merge" merge gate');
 
     const ci = readRepoFile(".github/workflows/ci.yml");
     expect(ci).toContain("Validate PR concurrency declaration");

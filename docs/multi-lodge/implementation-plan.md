@@ -2,8 +2,9 @@
 
 Phased delivery plan for multi-lodge support. Each phase is one or more
 PRs; no phase bundles schema, money-path logic, and UI in a single change.
-Risk labels follow the `AGENTS.md` risk gate: every High/Critical item
-needs owner approval before merge regardless of CI state.
+Risk labels set the review lenses under the `AGENTS.md` merge gate (#3959):
+a High/Critical item gets three lenses, and any open owner decision in it waits
+for the owner.
 
 Phases 0–1 are prerequisites for everything else. Phases 4, 5, and 6 are
 independent of each other once phase 3 lands and can proceed in any order.
