@@ -60,6 +60,7 @@ import {
   FINANCIAL_REVIEW_WORKING_IT_OUT,
 } from "@/lib/booking-financial-review-copy";
 import type { ClubFormat } from "@/lib/club-format";
+import { nothingToPayNarrative } from "@/lib/booking-narrative-nothing-to-pay";
 
 export type BookingNarrativeState =
   | "payable"
@@ -70,11 +71,7 @@ export type BookingNarrativeState =
   | "cancelled_post_payment"
   | "declined"
   | "under_review"
-  /**
-   * #3955 round 3: a payable booking whose applied credit covers everything it
-   * owes. The payment link offers nothing to pay, and says why.
-   */
-  | "nothing_to_pay"
+  | "nothing_to_pay" // #3955: applied credit covers all the booking owes
   /**
    * #3033 (epic #2797): the stay change SAVED and the money for it did not.
    *
@@ -108,13 +105,7 @@ export interface NarrativeEvent {
 export interface NarrativeBooking {
   status: string;
   finalPriceCents: number;
-  /**
-   * What the booking owes at its pay step (`bookingAmountOwedCents`: its price
-   * plus a recorded change fee, less applied credit), where the caller has read
-   * it — the payment link does, because its card charges exactly that
-   * (`INV-PAY-119`). Absent, the payable wording quotes the stored price. At or
-   * below zero there is nothing to pay, and the wording says so.
-   */
+  /** #3955 (`INV-PAY-119`): what its pay step charges, where the caller read it (`bookingAmountOwedCents`). */
   amountDueCents?: number;
   checkIn: Date;
   checkOut: Date;
@@ -402,16 +393,9 @@ function buildPayableNarrative(
   now: Date, format: ClubFormat
 ): BookingNarrative {
   const range = dateRange(booking, format);
-  if (booking.amountDueCents !== undefined && booking.amountDueCents <= 0) {
-    return {
-      state: "nothing_to_pay",
-      headline: "Nothing to pay",
-      message: `Your booking for ${range} has nothing left to pay — the account credit applied to it covers what it owes.`,
-      nextStep:
-        "If your bookings page still shows it as unpaid, contact the club and we'll sort it out.",
-    };
-  }
-  const amountDue = formatCents(booking.amountDueCents ?? booking.finalPriceCents, format);
+  const due = booking.amountDueCents ?? booking.finalPriceCents;
+  if (booking.amountDueCents !== undefined && due <= 0) return nothingToPayNarrative(range);
+  const amountDue = formatCents(due, format);
 
   const linkUnusable =
     link != null &&

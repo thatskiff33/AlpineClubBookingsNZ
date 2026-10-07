@@ -62,12 +62,13 @@ reason: its capture-amount check reads the booking's worth from the one home,
   email quotes the worth (#3955 review F5, F7, F8).
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1581
+lines: 1599
 reason: the primary invoice bills the recorded change fee beside the promo
-  lines it already builds, reads the fee back in the write that persists its
-  link and hands any gap to xero-primary-invoice-fee-gap.ts, and the narration
-  merge skips the fee line (#3955 review X2-X4). The gap logic itself is its
-  own module.
+  lines it already builds, records what it billed before persisting its link
+  and hands any gap to xero-primary-invoice-fee-gap.ts, re-runs that check on
+  its invoice-already-exists exit so a retry cannot lose the fee, and the
+  narration merge skips the fee line (#3955 review X2-X4, round 3). The gap
+  logic itself is its own module.
 
 The #3955 review's second round feeds the recorded fee into the remaining pay
 steps and the edit lifecycle. Each file below gains only the one-home call at
