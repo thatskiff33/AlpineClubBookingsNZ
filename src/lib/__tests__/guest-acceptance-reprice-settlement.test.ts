@@ -495,6 +495,43 @@ describe("a split payment gets the WHOLE reduction back: cash first, then credit
     expect(result).toMatchObject({ repriced: true, refundAmountCents: 2000, accountCreditAmountCents: 4000 });
   });
 
+  it("#3955 round 3: a change fee the card already paid keeps no credit back — the credit is netted to the PRICE", async () => {
+    // $20 on the card plus $300 of credit pay the $320 price; an earlier edit's
+    // $15 change fee was paid by an additional card charge and is recorded on
+    // the payment. The credit pays none of that fee, so the clamp nets it to
+    // the new price: the whole $40 credit share comes back.
+    h.deriveBookingAppliedCreditCents.mockResolvedValue(30000);
+    h.clampAppliedCreditToBookingPrice.mockImplementation(
+      async ({ newWorthCents }: { newWorthCents: number }) => ({
+        appliedCreditCents: newWorthCents,
+        refundedExcessCents: 30000 - newWorthCents,
+      }),
+    );
+    const client = tx(
+      booking({
+        payment: {
+          ...booking().payment,
+          amountCents: 2000,
+          additionalAmountCents: 1500,
+          changeFeeCents: 1500,
+          creditAppliedCents: 30000,
+        },
+      }),
+    );
+    const result = await repriceBookingAfterGuestAcceptance(client as never, {
+      bookingId: "booking-1",
+      acceptedGuestId: "g-cara",
+      actorMemberId: "cara",
+      todayAtClub: TODAY,
+      format: CLUB_FORMAT_TEST,
+    });
+    expect(result).toMatchObject({ repriced: true, refundAmountCents: 2000, accountCreditAmountCents: 4000 });
+    expect(h.clampAppliedCreditToBookingPrice).toHaveBeenCalledWith(
+      expect.objectContaining({ memberId: "ann", newWorthCents: 26000 }),
+      expect.anything(),
+    );
+  });
+
   it("is refused, moving no code, when the cash left and the credit do not make up the price", async () => {
     const { result } = await acceptSplit({ amountCents: 2000, creditAppliedCents: 20000 }, 20000);
     expect(result).toEqual({ repriced: false, reason: "REDUCTION_NOT_FULLY_RETURNABLE" });

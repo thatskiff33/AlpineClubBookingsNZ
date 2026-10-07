@@ -23,7 +23,6 @@ import {
 } from "@/lib/booking-modify";
 import { bookingOwner } from "@/lib/booking-owner";
 import {
-  bookingWorthCents,
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
 } from "@/lib/booking-payment-state";
@@ -374,11 +373,13 @@ export async function repriceBookingAfterGuestAcceptance(
       {
         memberId: creditReturn.memberId,
         bookingId,
-        // #3750: credit is kept up to the booking's worth (`INV-PAY-119`).
-        newWorthCents: bookingWorthCents({
-          finalPriceCents: newFinalPriceCents,
-          changeFeeCents: loaded.payment?.changeFeeCents ?? null,
-        }),
+        // The PRICE, not the worth (#3955 round 3): the return route admitted
+        // this booking only because its applied credit and returnable cash sum
+        // to the price, so no credit here pays a recorded change fee — a fee
+        // the card already paid, or one still owed beside the price. Counting
+        // that fee would keep back credit the reduction returns, and the check
+        // below would fail the guest's acceptance (`INV-PAY-119`).
+        newWorthCents: newFinalPriceCents,
         format,
       },
       tx,
