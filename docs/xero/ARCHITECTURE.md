@@ -32,6 +32,17 @@ the charge is `EMAIL_FAILED`. Retrying enqueues the same charge key; the stored
 `xeroInvoiceId` makes dispatch skip lookup/create and retry only email with its
 stable email idempotency key. Crash recovery follows that same path.
 
+The charge is the operation's `localId` (`subscriptionInvoiceChargeId`), and the
+queued payload is the queue type alone (`INV-INT-026`, #3971). It used to carry
+`chargeId`, which the persisting redactor blanks as a Stripe charge key, so every
+subscription invoice failed with "Membership subscription charge not found:
+[REDACTED]". A FAILED row is retried from Xero Operations: Retry sends the same
+row back to the outbox under the same correlation key, and the active-key index
+refuses it while another attempt for the charge is live. It refuses a charge
+that already has a Xero invoice (resend its email from Subscription billing) or
+no longer needs one, and the worker completes a charge already invoiced and
+emailed without calling Xero.
+
 The frozen recipient name/email are audit evidence. Dispatch deliberately uses
 that recipient member's current Xero contact identity and Xero contact email.
 Inbound invoice changes are joined back through charge coverage so a shared

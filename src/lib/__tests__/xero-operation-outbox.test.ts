@@ -3155,9 +3155,9 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
   });
 
   /**
-   * #3971 GUARD: a queued payload is stored through the persisting redactor
-   * (`sanitizeForJson` -> `redactSensitiveRecord`), and the worker reads the
-   * STORED row, never the object it was queued with. A key the redactor blanks
+   * #3971 GUARD (`INV-INT-026`): a queued payload is stored through the
+   * persisting redactor (`sanitizeForJson` -> `redactSensitiveRecord`), and the
+   * worker reads the STORED row, never the object it was queued with. A key the redactor blanks
    * therefore never reaches the worker: `chargeId` matched the Stripe `charge`
    * rule, and every membership subscription invoice failed looking for a charge
    * of id "[REDACTED]". For every queue type this runs the real sanitizer over
@@ -3187,15 +3187,15 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
 
       expect(
         fromQueued,
-        `#3971: ${queueType} did not reach its handler from the payload it was queued with`
+        `INV-INT-026 (#3971): ${queueType} did not reach its handler from the payload it was queued with`
       ).toHaveLength(1);
       expect(
         fromStored,
-        `#3971: ${queueType}'s worker resolves a different target once its payload is stored through the persisting redactor. A load-bearing id is being blanked; take it from the row's localId or rename the key, never weaken the redactor.`
+        `INV-INT-026 (#3971): ${queueType}'s worker resolves a different target once its payload is stored through the persisting redactor. A load-bearing id is being blanked; take it from the row's localId or rename the key, never weaken the redactor.`
       ).toEqual(fromQueued);
       expect(
         JSON.stringify(fromStored),
-        `#3971: ${queueType}'s handler received a redacted value`
+        `INV-INT-026 (#3971): ${queueType}'s handler received a redacted value`
       ).not.toContain("[REDACTED]");
     }
   });

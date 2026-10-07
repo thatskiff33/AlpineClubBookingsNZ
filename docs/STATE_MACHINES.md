@@ -3184,6 +3184,11 @@ retry claims original FAILED/PARTIAL -> RUNNING -> handler completes it
   queued retry (REQUEUE) -> FAILED, naming the original and its status
 stale RUNNING (> 15 min) -> FAILED by an officer's Mark failed (one row) or
   Reset stale running (all), code ORPHANED_STALE_RUNNING; then retryable
+retry of an outbox-run row (group invoice and its VOIDs, kept late capture,
+  membership subscription invoice) -> the SAME row back to PENDING, same
+  correlation key, status-guarded; the outbox claim runs it. A subscription
+  invoice is refused when its charge already has a Xero invoice or needs none
+  (#3971)
 ```
 
 To verify: status strings, stale processing reset, tenant selection, link

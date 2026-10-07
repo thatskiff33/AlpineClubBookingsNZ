@@ -235,6 +235,7 @@ stored exceptions.
 | --- | --- | --- |
 | The billing panel and Actions column are read-only | Your finance role is view-only | Ask a finance-edit admin |
 | A member stays "Not Invoiced" | They have no Xero contact link | Link or create a Xero contact in [Members](members.md), then run a refresh |
+| A charge stays **Queued** with "Membership subscription charge not found: [REDACTED]" | A fault before this release (#3971) stopped the invoice being raised | Retry its failed operation in **Xero → Operations** (see the [Xero Sync guide](xero.md#troubleshooting)), or press **Retry** on the charge here. Use one or the other: either raises the one invoice |
 | A sync fails | Xero is disconnected or errored | Check the Xero connection in the [Xero Sync guide](xero.md) |
 | **Mark as paid (manual)** isn't offered | The row already has a Xero invoice, is already paid, or is not required | Record the payment against the invoice in Xero instead |
 | A member is missing from the preview | They are already paid, or already hold a live Xero invoice for the season | Check the collapsed **Already invoiced** panel; record payment against the existing invoice in Xero, or void it there to re-bill |
