@@ -7,11 +7,12 @@ breakdown line and the hint that says what it covers, on the surface that
 shows it.
 
 file: src/app/(admin)/admin/dashboard/page.tsx
-lines: 962
+lines: 971
 reason: the Net Collected This Month card's read, its breakdown line and the
   comments that pin what the month and the booking scope mean sit inside the
-  page's one getStats batch; lifting getStats out of the page is a refactor
-  of its own, not part of relabelling a figure.
+  page's one getStats batch, with (#3924) the Refunds owed / Credits owed read
+  beside it and the card stacking on a narrow screen; lifting getStats out of
+  the page is a refactor of its own, not part of relabelling a figure.
 
 file: src/app/(admin)/admin/payments/page.tsx
 lines: 1421

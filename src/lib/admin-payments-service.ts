@@ -158,9 +158,7 @@ type PaymentCandidate = {
   additionalPaymentStatus: string | null;
   updatedAt: Date;
   transactions: Array<{ updatedAt: Date; kind: PaymentTransactionKind; status: PaymentStatus; amountCents: number }>;
-  // #3372 (7 Oct 2026): the list's activity column reads `updatedAt`; Net
-  // Collected nets card refunds not yet paid against the rest.
-  refunds: Array<{ updatedAt: Date } & NetCollectedPaymentRow["refunds"][number]>;
+  refunds: Array<{ updatedAt: Date } & NetCollectedPaymentRow["refunds"][number]>; // activity; card-refund net-out
   recoveryOperations: NetCollectedPaymentRow["recoveryOperations"];
   _count: NetCollectedPaymentRow["_count"]; // #3372: Net Collected's capture evidence
   booking: {
@@ -484,12 +482,9 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         transactions: {
           select: { updatedAt: true, kind: true, status: true, amountCents: true },
         },
-        // #3372 (7 Oct 2026): card refunds not yet paid, and the recorded
-        // refunds that net them, beside this list's own activity column.
+        // #3372 (7 Oct 2026): card refunds not yet paid, and the refunds that net them.
         recoveryOperations: netCollectedCardRefundSelect.recoveryOperations,
-        refunds: {
-          select: { updatedAt: true, ...netCollectedCardRefundSelect.refunds.select },
-        },
+        refunds: { select: { updatedAt: true, ...netCollectedCardRefundSelect.refunds.select } },
         booking: {
           select: {
             id: true,
@@ -522,9 +517,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
     });
 
     const candidatePaymentIds = candidates.map((payment) => payment.id);
-    // #3372 (owner, 7 Oct 2026): Refunds owed and Credits owed are as at
-    // today and club-wide, not filtered, so they are read beside the list's
-    // other reads rather than after them.
+    // #3372 (owner, 7 Oct 2026): Refunds owed / Credits owed, club-wide as at today.
     const [activityOperations, invoiceEvidence, owed] = await Promise.all([
       candidatePaymentIds.length
         ? prisma.xeroSyncOperation.findMany({
@@ -677,20 +670,15 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
           "none",
       }));
 
-    // #3372: "Net Collected" is net of refunds and credits over captured
-    // payments, in the one Net Collected booking scope (owner decision A) -
-    // both applied by `summarizeCollectedCash`, as on the dashboard and
-    // Reports. It was "Total Revenue": gross, pending and failed included,
-    // cancelled bookings left out (#773). `refundedCents` is every matched
-    // row, as the "Refunded / Credited" hint says; the tiles are not a
-    // subtraction of one another. The ledger-gap check is Reports' (#2408),
-    // over exactly the payments the tile counts.
-    const { collected, ledgerGap } =
-      summarizeNetCollectedWithLedgerGap(filteredCandidates);
+    // #3372: "Net Collected" (once gross "Total Revenue", #773) is net over
+    // captured payments in the one booking scope (owner decision A), by
+    // `summarizeCollectedCash` as on the dashboard and Reports. `refundedCents`
+    // is every matched row; the tiles are not a subtraction of one another.
+    // The ledger-gap check is Reports' (#2408), over the payments the tile counts.
+    const { collected, ledgerGap } = summarizeNetCollectedWithLedgerGap(filteredCandidates);
     const summary = {
       netCollectedCents: collected.netCollectedCents,
-      refundsOwedCents: owed.refundsOwedCents,
-      creditsOwedCents: owed.creditsOwedCents,
+      ...owed, // refundsOwedCents, creditsOwedCents
       refundedCents: sumRefundedAndCreditedCents(filteredCandidates),
       count: filteredCandidates.length,
       additionalLedgerGapCents: ledgerGap.additionalLedgerGapCents,
