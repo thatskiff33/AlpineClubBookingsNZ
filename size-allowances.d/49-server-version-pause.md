@@ -1,26 +1,24 @@
 # File-size allowances for #49 - the Alpine Central Server version pause
 
-Four already-over-budget files grow. The rule itself (parser, comparison,
+Three already-over-budget files grow, measured on the tree composed with #50,
+#51, #52 and `main` (the four lanes land as one pull request). The rule itself (parser, comparison,
 status, the one pause sentence) and the check service are NEW modules well
 inside their budgets - `servernz-api-version.ts`, `servernz-version-check.ts` -
-so none of the four below gains the mechanism; each gains only the call site
+so none of the three below gains the mechanism; each gains only the call site
 that has to sit where the thing it governs sits.
 
-file: src/app/(admin)/admin/lodges/_components/other-lodges-panel.tsx
-lines: 803
-reason: one state flag read off the list response and one paragraph, rendered
-  above the two existing read-only notes it belongs beside, saying the list may
-  be stale and linking to setup. The panel's size is the #52 edit popup, which
-  this change does not touch; a note about THIS list, lifted into a component
-  of its own, would be a component with one caller and no second reader.
+`other-lodges-panel.tsx` needs no allowance any more: its editor's form model
+moved into `other-lodge-form.ts`, which put the panel back inside its budget.
 
 file: src/app/api/admin/integrations/credentials/route.ts
-lines: 303
-reason: the stored server version is forgotten at the same verify-reset site
-  that forgets the #52 owned-lodge list, because both were the replaced key's
-  answer - one awaited call to the combined forget writer and the sentence
-  saying so. The reset belongs in `applyVerifyReset` with every other
-  provider's, which is the file's shape.
+lines: 321
+reason: the fourth provider-specific verify-reset (#52: a replaced central-server
+  key forgets the owned-lodge list), and with it the stored server version,
+  because both were the replaced key's answer - one import, one awaited call
+  to the combined forget writer and the sentence saying so, next to the Xero,
+  Stripe and Google resets it mirrors in `applyVerifyReset`, which is the
+  file's shape. One entry for the file: #52's own allowance file is folded in
+  here, because the ratchet allows one allowance per file per change.
 
 `src/lib/servernz-api.ts` is NOT here, deliberately: the version gate and the
 one refusal reader took it from 539 to 754 lines, over its ceiling for the
@@ -33,7 +31,7 @@ gate, the version call and `refuse()` still together where every request is
 built.
 
 file: src/lib/email-message-registry.ts
-lines: 2109
+lines: 2212
 reason: three approved tokens with the comment the approved list requires,
   one EXTRA_TEMPLATE_TOKENS entry, three preview samples, and - owner decision
   "second template" - the `admin-server-version-paused` entry in the admin
