@@ -68,6 +68,12 @@ import "./edit-financial-review-races.realdb.test";
 // removal takes the member's credit-ledger key before any Payment row lock.
 // Its describe stays skipped unless the shared race flag is set.
 import "./credit-paid-reduction.realdb.test";
+// #3836 reuses it to prove a card booking paid entirely by credit has its credit
+// allocated against its invoice by the one engine, through the invoice
+// operation's replay and the repair pass, then deallocated by #3809's reduction
+// and left consistent by the cancel, on a fake Xero switched on only inside its
+// own describe. Its describe stays skipped unless the shared race flag is set.
+import "./credit-only-card-allocation.realdb.test";
 // #2595 reuses the same guarded disposable PostgreSQL to prove that a member
 // merge cannot leave two people sharing a double bed with no confirmed
 // partnership, driving the real `executeMemberMerge` and the real
