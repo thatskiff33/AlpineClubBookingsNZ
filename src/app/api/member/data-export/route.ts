@@ -5,6 +5,7 @@
  * Returns a JSON file containing all personal data the system holds about the
  * authenticated member. Rate limited to 5 exports per day.
  */
+import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -145,10 +146,13 @@ export async function GET() {
             createdAt: true,
           },
         },
-        promoRedemption: {
+        promoRedemptions: {
           select: {
+            id: true,
+            applicationOrder: true,
             discountCents: true,
             createdAt: true,
+            promoCode: { select: { code: true } },
           },
         },
       },
@@ -312,12 +316,7 @@ export async function GET() {
               createdAt: b.payment.createdAt.toISOString(),
             }
           : null,
-        promoDiscount: b.promoRedemption
-          ? {
-              discountCents: b.promoRedemption.discountCents,
-              appliedAt: b.promoRedemption.createdAt.toISOString(),
-            }
-          : null,
+        promoDiscount: memberExportPromoDiscount(bookingPromoRedemptions(b)),
       })),
       choreAssignments: [
         ...choreAssignments.map((c) => ({
@@ -377,4 +376,42 @@ export async function GET() {
     logger.error({ err, memberId: session.user.id }, "Data export failed");
     return NextResponse.json({ error: "Failed to generate data export" }, { status: 500 });
   }
+}
+
+/**
+ * A booking's promo discount in the member's export (#3826). One code reads
+ * exactly as it always did; several (one per code) are summed, applied when the
+ * first of them was, and (#3828) listed one entry per code, naming it, in the
+ * booker's order.
+ */
+function memberExportPromoDiscount(
+  redemptions: ReadonlyArray<{
+    discountCents: number;
+    createdAt: Date;
+    promoCode: { code: string } | null;
+  }>,
+): {
+  discountCents: number;
+  appliedAt: string;
+  codes?: Array<{ code: string | null; discountCents: number; appliedAt: string }>;
+} | null {
+  if (redemptions.length === 0) return null;
+  const appliedAt = redemptions.reduce(
+    (earliest, redemption) =>
+      redemption.createdAt < earliest ? redemption.createdAt : earliest,
+    redemptions[0]!.createdAt,
+  );
+  return {
+    discountCents: redemptions.reduce((sum, redemption) => sum + redemption.discountCents, 0),
+    appliedAt: appliedAt.toISOString(),
+    ...(redemptions.length > 1
+      ? {
+          codes: redemptions.map((redemption) => ({
+            code: redemption.promoCode?.code ?? null,
+            discountCents: redemption.discountCents,
+            appliedAt: redemption.createdAt.toISOString(),
+          })),
+        }
+      : {}),
+  };
 }

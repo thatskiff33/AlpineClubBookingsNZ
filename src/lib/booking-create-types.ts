@@ -66,10 +66,17 @@ interface BaseInput {
   checkOut: Date;
   guests: BookingGuestInput[];
   notes?: string;
+  /**
+   * #3827: the codes the booker chose, in their order (D-3813-2). When sent it
+   * supersedes the legacy single `promoCodeStr` / `promoGuestIndexes`, which
+   * stay accepted (`promoCodeRequestsOf`).
+   */
+  promoCodes?: Array<{ code: string; promoGuestIndexes?: number[] }>;
   promoCodeStr?: string;
   promoGuestIndexes?: number[];
-  // Work party (working bee) event the booker is attending. Mutually
-  // exclusive with promoCodeStr; resolves to the event's internal promo.
+  // Work party (working bee) event the booker is attending. It combines with
+  // codes once `multiPromoCodes` is on, claiming its in-window nights first
+  // (D-3813-3); while the switch is off the two stay exclusive.
   workPartyEventId?: string;
   expectedArrivalTime?: string;
   requestedRoomId?: string;

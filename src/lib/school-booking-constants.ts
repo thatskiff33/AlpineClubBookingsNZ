@@ -6,6 +6,9 @@
  * bundling server-only code.
  */
 
+import type { AgeTier } from "@prisma/client";
+import { SCHOOL_CHILD_NAME_PREFIX } from "@/lib/placeholder-guest-names";
+
 /**
  * Soft cap on a school group's bed count (students + teachers/parent helpers).
  * A club member must stay on to host, so groups above this may be declined
@@ -31,6 +34,70 @@ export const DEFAULT_SCHOOL_GROUP_SOFT_CAP = 25;
 export const SCHOOL_CHILD_TIERS = ["INFANT", "CHILD", "YOUTH"] as const;
 
 export type SchoolChildTier = (typeof SCHOOL_CHILD_TIERS)[number];
+
+/** How many children a school brings in each bulk tier; a missing tier is 0. */
+export type SchoolChildTierCounts = Partial<Record<SchoolChildTier, number>>;
+
+/**
+ * The tiers a generated school row can carry. Drawn from the Prisma enum, so a
+ * renamed tier fails to compile here rather than drifting from the database.
+ */
+export type SchoolGuestAgeTier = Extract<AgeTier, "ADULT" | SchoolChildTier>;
+
+/**
+ * One row of a generated school party. A type alias, not an interface, so it
+ * stays assignable to Prisma's JSON input when the server stores the list.
+ */
+export type GeneratedSchoolGuest = {
+  firstName: string;
+  lastName: string;
+  ageTier: SchoolGuestAgeTier;
+};
+
+/**
+ * Build a school party from its named adults and its child counts: the
+ * teachers/parent helpers first as named ADULT guests, then the children
+ * numbered "School Child 1..N" with ONE running counter across the tiers in
+ * `SCHOOL_CHILD_TIERS` order.
+ *
+ * ONE definition of the composition rule (#3486). The server generates the
+ * stored list from it, and the admin queue panel builds the party the officer
+ * is about to quote from it — which decides the per-guest-night rate boxes the
+ * officer prices and which stored rows a regeneration moves. Two copies of this
+ * rule could only ever disagree on money.
+ *
+ * It lives here, not in `school-booking-request.ts`, so the `"use client"`
+ * panel can import it. `AgeTier` is read as a TYPE only: `"ADULT"` is the
+ * enum's value, checked by the compiler, so the Prisma client never enters the
+ * client bundle.
+ */
+export function generateSchoolGuests(input: {
+  teachers: ReadonlyArray<{ firstName: string; lastName: string }>;
+  childCounts: SchoolChildTierCounts;
+}): GeneratedSchoolGuest[] {
+  const adult: SchoolGuestAgeTier = "ADULT";
+  const teacherGuests: GeneratedSchoolGuest[] = input.teachers.map((teacher) => ({
+    firstName: teacher.firstName,
+    lastName: teacher.lastName,
+    ageTier: adult,
+  }));
+
+  const childGuests: GeneratedSchoolGuest[] = [];
+  let childNumber = 0;
+  for (const tier of SCHOOL_CHILD_TIERS) {
+    const count = input.childCounts[tier] ?? 0;
+    for (let i = 0; i < count; i += 1) {
+      childNumber += 1;
+      childGuests.push({
+        firstName: SCHOOL_CHILD_NAME_PREFIX,
+        lastName: String(childNumber),
+        ageTier: tier,
+      });
+    }
+  }
+
+  return [...teacherGuests, ...childGuests];
+}
 
 /** The three columns a stored guest is compared on. */
 interface ComparableGuest {

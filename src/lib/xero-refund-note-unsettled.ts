@@ -24,6 +24,7 @@ import {
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { resolveRefundNoteMethod } from "@/lib/xero-refund-method";
+import { readRefundRequestIdFromPayload } from "@/lib/refund-request-credit-note";
 import {
   finishRefundCreditNoteSettlement,
   refundNoteSettlementInterrupted,
@@ -243,6 +244,8 @@ export async function applyRefundNoteSettlementRepair(
     fallbackPaymentDate: async () => xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
     priorResponse: asRecord(operation.responsePayload),
     recordOnly: partSettled,
+    // #3827 (D-3813-8): a refund request's own note keeps its own link role.
+    refundRequestId: readRefundRequestIdFromPayload(requestPayload),
   });
   if (outcome.refundPaymentErr) {
     return { status: "failed", message: "The settling payment failed in Xero; the row is PARTIAL for the repair leg." };

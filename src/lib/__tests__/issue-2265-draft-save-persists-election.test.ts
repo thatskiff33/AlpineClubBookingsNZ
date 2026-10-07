@@ -35,7 +35,7 @@ const tx = {
     findMany: vi.fn().mockResolvedValue([]),
     updateMany: vi.fn().mockResolvedValue({ count: 0 }),
   },
-  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
+  promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
   adultMemberHostingPolicy: { findMany: vi.fn().mockResolvedValue([]) },
   season: { findMany: vi.fn().mockResolvedValue([]) },
   memberCredit: { create: mocks.memberCreditCreate, aggregate: vi.fn() },
@@ -85,8 +85,15 @@ vi.mock("@/lib/membership-type-policy", () => ({
   MembershipTypeBookingPolicyError: class extends Error {},
 }));
 vi.mock("@/lib/booking-create-promo", () => ({
-  resolveEffectivePromoSource: vi.fn().mockResolvedValue(null),
-  resolvePromoInTransaction: vi.fn(),
+  // #3827: the plural resolution; no codes, so no promotion.
+  promoCodeRequestsOf: vi.fn().mockReturnValue([]),
+  resolveEffectivePromoSources: vi.fn().mockResolvedValue([]),
+  resolvePromotionsInTransaction: vi.fn().mockResolvedValue({
+    discountCents: 0,
+    promoAdjustmentCents: 0,
+    promoAdjustmentTargets: [],
+    redemptions: [],
+  }),
   getPromoTargetBookingGuestIds: vi.fn().mockReturnValue([]),
   remapPromoIndexesToSubset: vi.fn().mockReturnValue([]),
 }));

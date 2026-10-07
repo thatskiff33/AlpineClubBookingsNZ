@@ -20,6 +20,8 @@ import {
   inWindowNightIndexes,
 } from "@/lib/work-party";
 import { ApiError } from "@/lib/api-error";
+import { compareOrdinal } from "@/lib/ordinal-order";
+import { nextPromoApplicationOrder } from "@/lib/promo-redemption-slot";
 import {
   assignmentRequiresAssignedBooker,
   assignmentRequiresGuestSelection,
@@ -64,37 +66,22 @@ export function promoLodgeRestrictionRefusal(
     : null;
 }
 
-type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
-
-export interface PromoValidationResult {
-  valid: boolean;
-  error?: string;
-  requiresGuestSelection?: boolean;
-  selectableGuestIndexes?: number[];
-  selectedGuestIndexes?: number[];
-  promoCode?: {
-    id: string;
-    code: string;
-    description: string | null;
-    type: PromoCodeType;
-    valueCents: number | null;
-    percentOff: number | null;
-    freeNightsPerIndividual: number | null;
-    lifetimeFreeNightsCap: number | null;
-    fixedNightlyPriceCents: number | null;
-    fixedNightlyMode: FixedNightlyMode | null;
-    maxGuestsPerBooking: number | null;
-    maxNightlyValueCents: number | null;
-    memberGuestsOnly: boolean;
-    assignedMembersOnlyOwnNights: boolean;
-  };
-  discountCents?: number;
-  promoAdjustmentCents?: number;
-  freeNightsUsed?: number;
-  eligibleGuestCount?: number;
-  remainingFreeNights?: number;
-  allocations?: PromoBeneficiaryAllocation[];
+/**
+ * The refusal a booker-picks-guests code gives when more guests are chosen than
+ * `maxGuestsPerBooking` allows, or null. One spelling, read by the engine below
+ * and by the several-code orchestrator (`booking-promotions.ts`), which counts
+ * a choice that includes guests the engine is not shown (#3827).
+ */
+export function promoGuestCountRefusal(
+  maxGuestsPerBooking: number | null | undefined,
+  selectedCount: number,
+): string | null {
+  if (maxGuestsPerBooking === null || maxGuestsPerBooking === undefined) return null;
+  if (selectedCount <= maxGuestsPerBooking) return null;
+  return `Choose no more than ${maxGuestsPerBooking} guest${maxGuestsPerBooking === 1 ? "" : "s"} for this promo code`;
 }
+
+type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 export interface PromoBeneficiaryAllocation {
   memberId: string;
@@ -1169,13 +1156,13 @@ export async function validateAndCalculatePromoDiscount(
         beneficiaryMemberIds: [],
       };
     }
-    if (
-      promoCode.maxGuestsPerBooking !== null &&
-      promoCode.maxGuestsPerBooking !== undefined &&
-      selectedGuestIndexes.indexes.length > promoCode.maxGuestsPerBooking
-    ) {
+    const guestCountRefusal = promoGuestCountRefusal(
+      promoCode.maxGuestsPerBooking,
+      selectedGuestIndexes.indexes.length,
+    );
+    if (guestCountRefusal) {
       return {
-        error: `Choose no more than ${promoCode.maxGuestsPerBooking} guest${promoCode.maxGuestsPerBooking === 1 ? "" : "s"} for this promo code`,
+        error: guestCountRefusal,
         requiresGuestSelection: true,
         selectableGuestIndexes,
         beneficiaryMemberIds: [],
@@ -1578,104 +1565,6 @@ export function promoAdjustmentTargetsFor(params: {
 }
 
 /**
- * Full validation including database lookups for caps and cumulative
- * free-night tracking. Use this in API routes where you need the full
- * validation and discount calculation.
- */
-export async function validatePromoCodeFull(
-  code: string,
-  bookingDetails: BookingDetailsForPromo,
-  /**
-   * The club's own calendar day (#3123), resolved by the caller.
-   *
-   * THIRD AND REQUIRED, ahead of the two optional positionals it now precedes,
-   * so the typechecker enumerates every call site instead of letting one keep
-   * the container's day. That is the shape #2870 used for
-   * `enqueueHostingCoverageReevaluationForMember`'s `today`, and the reasoning
-   * is on {@link validatePromoCodeRules}.
-   */
-  todayAtClub: CalendarDate,
-  excludeBookingId?: string,
-  lodgeId?: string | null,
-  // #2266: guest-targeted codes (assigned + not-own-nights-only) need the
-  // caller's chosen beneficiary indexes, exactly as /api/promo-codes/validate
-  // and the create/modify apply paths pass them. Optional so every existing
-  // caller keeps its behaviour byte-for-byte.
-  options?: { selectedGuestIndexes?: number[] }
-): Promise<PromoValidationResult> {
-  const normalizedCode = code.toUpperCase().trim();
-
-  const promoCode = await prisma.promoCode.findUnique({
-    where: { code: normalizedCode },
-    include: {
-      assignments: { select: { memberId: true } },
-      lodges: { select: { lodgeId: true } },
-    },
-  });
-
-  // Internal promos (work party events) are system-applied only; treat a
-  // manually entered internal code exactly like a nonexistent one.
-  if (!promoCode || promoCode.internal) {
-    return { valid: false, error: "Promo code not found" };
-  }
-
-  const assignedMemberIds = promoCode.assignments.length > 0
-    ? promoCode.assignments.map((a) => a.memberId)
-    : null;
-
-  const application = await validateAndCalculatePromoDiscount(
-    promoCode,
-    bookingDetails,
-    assignedMemberIds,
-    {
-      excludeBookingId,
-      lodgeId,
-      selectedGuestIndexes: options?.selectedGuestIndexes,
-      todayAtClub,
-    }
-  );
-
-  if (application.error || !application.discount) {
-    // A guest-targeted code that needed a selection reports its plain error
-    // text; guest selection itself lives with /api/promo-codes/validate and
-    // PromoCodeInput, not with this validator's callers (#2266, INFO-9).
-    return {
-      valid: false,
-      error: application.error ?? "Promo code could not be applied",
-    };
-  }
-
-  const result = application.discount;
-
-  return {
-    valid: true,
-    promoCode: {
-      id: promoCode.id,
-      code: promoCode.code,
-      description: promoCode.description,
-      type: promoCode.type,
-      valueCents: promoCode.valueCents,
-      percentOff: promoCode.percentOff,
-      freeNightsPerIndividual: promoCode.freeNightsPerIndividual,
-      lifetimeFreeNightsCap: promoCode.lifetimeFreeNightsCap,
-      fixedNightlyPriceCents: promoCode.fixedNightlyPriceCents,
-      fixedNightlyMode: promoCode.fixedNightlyMode,
-      maxGuestsPerBooking: promoCode.maxGuestsPerBooking,
-      maxNightlyValueCents: promoCode.maxNightlyValueCents,
-      memberGuestsOnly: promoCode.memberGuestsOnly,
-      assignedMembersOnlyOwnNights: promoCode.assignedMembersOnlyOwnNights,
-    },
-    discountCents: result.discountCents,
-    promoAdjustmentCents: result.priceAdjustmentCents,
-    freeNightsUsed: result.freeNightsUsed,
-    eligibleGuestCount: result.eligibleGuestCount,
-    remainingFreeNights: application.remainingFreeNights,
-    allocations: result.allocations,
-    selectedGuestIndexes: application.selectedGuestIndexes,
-  };
-}
-
-/**
  * Take a `FOR UPDATE` row lock on every promo code this transaction is about to
  * charge or refund a use against, BEFORE any cap is read and before any
  * `currentRedemptions` write.
@@ -1820,13 +1709,24 @@ export async function redeemPromoCode(
   eligibleGuestCount?: number,
   allocations?: PromoBeneficiaryAllocation[],
   targetBookingGuestIds?: string[],
-  lodgeId?: string | null
+  lodgeId?: string | null,
+  // #3827: the booker's position for this code (D-3813-2), when the writer
+  // priced several codes together; omitted, the code is appended.
+  requestedApplicationOrder?: number
 ): Promise<void> {
   await assertPromoRedeemableAtLodge(tx, promoCodeId, lodgeId);
+  const applicationOrder = await nextPromoApplicationOrder(
+    tx,
+    bookingId,
+    requestedApplicationOrder,
+  );
   const redemption = await tx.promoRedemption.create({
     data: {
       promoCodeId,
       bookingId,
+      // Omitted at 0 (the column default) so a single-code booking's write is
+      // exactly the one it was before #3826.
+      ...(applicationOrder > 0 ? { applicationOrder } : {}),
       memberId,
       discountCents,
       priceAdjustmentCents,
@@ -2013,6 +1913,68 @@ export async function deletePromoRedemptionAndAdjustCount(
     await tx.promoCode.update({
       where: { id: redemption.promoCodeId },
       data: { currentRedemptions: { decrement: allocationCount } },
+    });
+  }
+}
+
+/**
+ * Release EVERY promo redemption a booking carries (#3826): each row deleted and
+ * its code's counter given back, as `deletePromoRedemptionAndAdjustCount` does
+ * for one. Read inside the caller's transaction and released through
+ * `releasePromoRedemptions`, whose ordering note applies. Returns how many were
+ * released.
+ */
+export async function releaseBookingPromoRedemptions(
+  tx: PrismaTx,
+  bookingId: string,
+): Promise<number> {
+  const redemptions = await tx.promoRedemption.findMany({
+    where: { bookingId },
+    select: { id: true, promoCodeId: true },
+  });
+  await releasePromoRedemptions(tx, redemptions);
+  return redemptions.length;
+}
+
+/**
+ * The same release, over redemptions the caller already loaded under its locks.
+ *
+ * ORDER: each release updates its code's row, so the rows are taken in
+ * promo-code-id order (as `lockPromoCodeRowsForUpdate` sorts). That ordering
+ * holds WITHIN ONE CALL only: two calls in one transaction each sort their own
+ * set, so a caller releasing several bookings' redemptions must pass them all
+ * in a single call (as `deleteDraftBookingDependents` does) or it takes code
+ * rows out of order and can deadlock against another writer holding the same
+ * codes. Concurrent releases of one booking are otherwise excluded by the
+ * caller's own locks.
+ */
+export async function releasePromoRedemptions(
+  tx: PrismaTx,
+  redemptions: ReadonlyArray<{ id: string; promoCodeId: string }>,
+): Promise<void> {
+  const ordered = [...redemptions].sort((a, b) => compareOrdinal(a.promoCodeId, b.promoCodeId));
+  for (const redemption of ordered) {
+    await deletePromoRedemptionAndAdjustCount(tx, redemption);
+  }
+}
+
+/**
+ * Record the booker's order for a booking's codes (#3827, D-3813-2: "the order
+ * is stored with the booking and can be changed"). Writes only the rows whose
+ * position moved, and only `applicationOrder` — a column the
+ * `PromoRedemption_sync_allocation_update` trigger does not watch (it fires on
+ * `promoCodeId`, `bookingId`, `memberId`, `discountCents`, `freeNightsUsed`), so
+ * a reorder can never re-create the booker allocation row INV-MONEY-005 removes.
+ */
+export async function writePromoApplicationOrder(
+  tx: PrismaTx,
+  rows: ReadonlyArray<{ id: string; applicationOrder: number; nextOrder: number }>,
+): Promise<void> {
+  for (const row of rows) {
+    if (row.applicationOrder === row.nextOrder) continue;
+    await tx.promoRedemption.update({
+      where: { id: row.id },
+      data: { applicationOrder: row.nextOrder },
     });
   }
 }

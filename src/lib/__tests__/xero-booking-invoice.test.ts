@@ -347,12 +347,15 @@ function withMoneyBuildUpProjection<T extends XeroBookingFixture>(booking: T) {
       booking.totalPriceCents ?? guests.reduce((sum, guest) => sum + guest.priceCents, 0),
     promoAdjustmentCents: booking.promoAdjustmentCents ?? 0,
     guests,
-    promoRedemption: booking.promoRedemption
-      ? {
-          ...booking.promoRedemption,
-          allocations: booking.promoRedemption.allocations ?? [],
-        }
-      : null,
+    // #3826: the fixture names its one redemption; the booking carries a list.
+    promoRedemptions: booking.promoRedemption
+      ? [
+          {
+            ...booking.promoRedemption,
+            allocations: booking.promoRedemption.allocations ?? [],
+          },
+        ]
+      : [],
     nightAdjustments: booking.nightAdjustments ?? [],
   };
 }
@@ -2065,6 +2068,93 @@ describe("createXeroInvoiceForBooking", () => {
     expect(new Date().toISOString()).toBe(frozenTestNow().toISOString());
   });
 
+  it("keeps every promotion line of a several-code invoice untouched and re-narrates only the guest lines (#3828)", async () => {
+    // The update path passes promotion lines through by description, one by
+    // one; a second promotion line must neither be dropped nor consume the
+    // guest line's narration slot.
+    mocks.prisma.booking.findUnique.mockResolvedValue({
+      id: "booking_1",
+      memberId: "mem_1",
+      member: { id: "mem_1" },
+      checkIn: "2026-08-03T00:00:00.000Z",
+      checkOut: "2026-08-05T00:00:00.000Z",
+      createdAt: "2026-05-15T10:30:00.000Z",
+      discountCents: 5000,
+      guests: [
+        { firstName: "Jordan", lastName: "Hartley-Smith", ageTier: "ADULT", isMember: true, priceCents: 10000 },
+      ],
+      payment: {
+        id: "pay_1",
+        status: "SUCCEEDED",
+        amountCents: 5000,
+        stripePaymentIntentId: "pi_1",
+        xeroInvoiceId: "inv_1",
+        xeroInvoiceNumber: "INV-1",
+      },
+    });
+    const summer = {
+      lineItemID: "line_2",
+      description: "Promo adjustment - SUMMER25",
+      quantity: 1,
+      unitAmount: -30,
+      taxType: "OUTPUT2",
+      itemCode: "PROMO-DISC",
+    };
+    const guestFree = {
+      lineItemID: "line_3",
+      description: "Promo adjustment - GUESTFREE",
+      quantity: 1,
+      unitAmount: -20,
+      taxType: "OUTPUT2",
+      itemCode: "FREE-NIGHT",
+      accountCode: "205",
+    };
+    mocks.xeroClientInstance.accountingApi.getInvoice.mockResolvedValue({
+      body: {
+        invoices: [
+          {
+            invoiceID: "inv_1",
+            invoiceNumber: "INV-1",
+            type: "ACCREC",
+            contact: { contactID: "contact_1" },
+            lineAmountTypes: "Inclusive",
+            reference: "Booking booking_",
+            lineItems: [
+              summer,
+              {
+                lineItemID: "line_1",
+                description:
+                  "Jordan Hartley-Smith - (ADULT, Member) - 1 night - 2026-07-31 - 2026-08-01",
+                quantity: 1,
+                unitAmount: 100,
+                taxType: "OUTPUT2",
+                accountCode: "200",
+              },
+              guestFree,
+            ],
+          },
+        ],
+      },
+    });
+    mocks.xeroClientInstance.accountingApi.updateInvoice.mockResolvedValue({
+      body: { invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1" }] },
+    });
+
+    await expect(updateXeroBookingInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+
+    const sent = mocks.xeroClientInstance.accountingApi.updateInvoice.mock.calls[0]![2]
+      .invoices[0].lineItems;
+    expect(sent).toEqual([
+      summer,
+      expect.objectContaining({
+        lineItemID: "line_1",
+        description:
+          "Jordan Hartley-Smith - (ADULT, Member) - 2 nights - 2026-08-03 - 2026-08-05",
+      }),
+      guestFree,
+    ]);
+  });
+
   describe("promo code discount line coding", () => {
     function bookingWithPromo(promo: {
       code: string;
@@ -2290,6 +2380,200 @@ describe("createXeroInvoiceForBooking", () => {
           }),
         }),
       );
+    });
+  });
+
+  describe("several promo codes on one booking (#3828)", () => {
+    function bookingWithTwoCodes(rowAmounts: { summer: number | null; guest: number | null }) {
+      const booking = withMoneyBuildUpProjection({
+        id: "booking_1",
+        memberId: "mem_1",
+        member: { id: "mem_1" },
+        totalPriceCents: 10000,
+        checkIn: "2026-07-31T00:00:00.000Z",
+        checkOut: "2026-08-02T00:00:00.000Z",
+        createdAt: "2026-05-15T10:30:00.000Z",
+        discountCents: 5000,
+        promoAdjustmentCents: -5000,
+        guests: [
+          {
+            id: "guest_1",
+            firstName: "Jordan",
+            lastName: "Hartley-Smith",
+            ageTier: "ADULT",
+            isMember: true,
+            priceCents: 10000,
+            nights: [],
+          },
+        ],
+        payment: {
+          id: "pay_1",
+          status: "SUCCEEDED",
+          amountCents: 5000,
+          stripePaymentIntentId: "pi_1",
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+        },
+        promoRedemption: null,
+        nightAdjustments: [
+          {
+            bookingGuestId: "guest_1",
+            bookingGuestNightId: null,
+            promoRedemptionId: "red_summer",
+            beneficiaryMemberId: "mem_1",
+            amountCents: rowAmounts.summer,
+          },
+          {
+            bookingGuestId: "guest_1",
+            bookingGuestNightId: null,
+            promoRedemptionId: "red_guest",
+            beneficiaryMemberId: "mem_1",
+            amountCents: rowAmounts.guest,
+          },
+        ],
+      });
+      return {
+        ...booking,
+        // Loaded out of order: the invoice follows the booker's order.
+        promoRedemptions: [
+          {
+            id: "red_guest",
+            applicationOrder: 1,
+            priceAdjustmentCents: -2000,
+            allocations: [{ memberId: "mem_1", priceAdjustmentCents: -2000 }],
+            promoCode: { code: "GUESTFREE", xeroItemCode: "FREE-NIGHT", xeroAccountCode: "205" },
+          },
+          {
+            id: "red_summer",
+            applicationOrder: 0,
+            priceAdjustmentCents: -3000,
+            allocations: [{ memberId: "mem_1", priceAdjustmentCents: -3000 }],
+            promoCode: { code: "SUMMER25", xeroItemCode: "PROMO-DISC", xeroAccountCode: null },
+          },
+        ],
+      };
+    }
+
+    function promoLines() {
+      const call = mocks.xeroClientInstance.accountingApi.createInvoices.mock.calls[0];
+      return (call[1].invoices[0].lineItems as Array<Record<string, unknown>>).filter((line) =>
+        String(line.description ?? "").startsWith("Promo adjustment"),
+      );
+    }
+
+    it("raises one coded line per code, in the booker's order, summing to promoAdjustmentCents", async () => {
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        bookingWithTwoCodes({ summer: -3000, guest: -2000 }),
+      );
+
+      await createXeroInvoiceForBooking("booking_1");
+
+      expect(promoLines()).toEqual([
+        {
+          description: "Promo adjustment - SUMMER25",
+          quantity: 1,
+          unitAmount: -30,
+          taxType: "OUTPUT2",
+          itemCode: "PROMO-DISC",
+        },
+        {
+          description: "Promo adjustment - GUESTFREE",
+          quantity: 1,
+          unitAmount: -20,
+          taxType: "OUTPUT2",
+          itemCode: "FREE-NIGHT",
+          accountCode: "205",
+        },
+      ]);
+      expect(
+        promoLines().reduce((sum, line) => sum + Math.round(Number(line.unitAmount) * 100), 0),
+      ).toBe(-5000);
+      expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestPayload: expect.objectContaining({
+            promoLines: {
+              promoLineSource: "PER_CODE",
+              promoLineReason: null,
+              promoLineAggregateCents: -5000,
+              promoLineCodes: [
+                { code: "SUMMER25", amountCents: -3000 },
+                { code: "GUESTFREE", amountCents: -2000 },
+              ],
+            },
+          }),
+        }),
+      );
+    });
+
+    it("falls back to one aggregate line, recorded on the operation, when a code's build-up is not known", async () => {
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        bookingWithTwoCodes({ summer: null, guest: -2000 }),
+      );
+
+      await createXeroInvoiceForBooking("booking_1");
+
+      expect(promoLines()).toEqual([
+        expect.objectContaining({
+          description: "Promo adjustment - SUMMER25, GUESTFREE",
+          quantity: 1,
+          unitAmount: -50,
+          taxType: "OUTPUT2",
+        }),
+      ]);
+      expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestPayload: expect.objectContaining({
+            promoLines: expect.objectContaining({
+              promoLineSource: "AGGREGATE_FALLBACK",
+              promoLineReason: "CODE_BUILDUP_NOT_KNOWN",
+              promoLineAggregateCents: -5000,
+            }),
+          }),
+        }),
+      );
+    });
+
+    it("records nothing new on a one-code booking's operation", async () => {
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        withMoneyBuildUpProjection({
+          id: "booking_1",
+          memberId: "mem_1",
+          member: { id: "mem_1" },
+          totalPriceCents: 10000,
+          checkIn: "2026-07-31T00:00:00.000Z",
+          checkOut: "2026-08-02T00:00:00.000Z",
+          createdAt: "2026-05-15T10:30:00.000Z",
+          discountCents: 5000,
+          promoAdjustmentCents: -5000,
+          guests: [
+            { id: "guest_1", firstName: "Jo", lastName: "Solo", ageTier: "ADULT", isMember: true, priceCents: 10000, nights: [] },
+          ],
+          payment: {
+            id: "pay_1",
+            status: "SUCCEEDED",
+            amountCents: 5000,
+            stripePaymentIntentId: "pi_1",
+            xeroInvoiceId: null,
+            xeroInvoiceNumber: null,
+          },
+          promoRedemption: {
+            promoCode: { code: "SUMMER25", xeroItemCode: null, xeroAccountCode: null },
+            priceAdjustmentCents: -5000,
+            allocations: [{ memberId: "mem_1", priceAdjustmentCents: -5000 }],
+          },
+          nightAdjustments: [
+            { bookingGuestId: "guest_1", beneficiaryMemberId: "mem_1", amountCents: -5000, bookingGuestNight: null },
+          ],
+        }),
+      );
+
+      await createXeroInvoiceForBooking("booking_1");
+
+      const payload = mocks.startXeroSyncOperation.mock.calls[0]![0].requestPayload;
+      expect(Object.keys(payload).sort()).toEqual(["invoices", "moneyBuildUp", "moneyReconciliation"]);
+      expect(promoLines()).toEqual([
+        expect.objectContaining({ description: "Promo adjustment - SUMMER25", unitAmount: -50 }),
+      ]);
     });
   });
 

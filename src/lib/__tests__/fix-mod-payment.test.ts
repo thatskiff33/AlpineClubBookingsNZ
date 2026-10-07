@@ -88,6 +88,8 @@ vi.mock("@/lib/prisma", () => ({
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
     manualRefundTask: {
+      // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
+      aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
       // #3032: the modified email asks whether the club is still working
       // out an amount on this booking (`bookingHasOpenFinancialReview`).
@@ -177,6 +179,8 @@ vi.mock("@/lib/promo", () => ({
     async (_tx: unknown, promoCode: unknown) => promoCode
   ),
   deletePromoRedemptionAndAdjustCount: vi.fn(),
+  releaseBookingPromoRedemptions: vi.fn().mockResolvedValue(0),
+  releasePromoRedemptions: vi.fn().mockResolvedValue(undefined),
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 vi.mock("@/lib/stripe", () => ({
@@ -430,7 +434,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
       additionalPaymentStatus: null,
     },
     member: { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
-    promoRedemption: null,
+    promoRedemptions: [],
     ...overrides,
   };
 }
@@ -541,6 +545,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
     manualRefundTask: {
+      // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
+      aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
       // #3032: the modified email asks whether the club is still working
       // out an amount on this booking (`bookingHasOpenFinancialReview`).
@@ -553,6 +559,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       // as an opaque 400 — which is how a park looks exactly like a refusal.
       findUnique: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({ id: "task-1" }),
+      // #3827 (D-3813-6): an internet-banking reduction's officer refund task.
+      createMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     bookingModification: { create: vi.fn().mockResolvedValue({ id: "mod1" }) },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
@@ -571,7 +579,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
         ],
       }]),
     },
-    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn().mockResolvedValue({}) },
+    promoRedemption: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null), update: vi.fn().mockResolvedValue({}) },
     choreAssignment: {
       findMany: vi.fn().mockResolvedValue([]),
       deleteMany: vi.fn().mockResolvedValue({}),
@@ -973,6 +981,23 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     expect(data.additionalPaymentClientSecret).toBeNull();
     expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
     expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+    // #3827 (D-3813-6, `INV-PAY-117`): the treasurer is asked to send the
+    // $30 back, and the member is told it is coming by bank transfer.
+    expect(tx.manualRefundTask.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          amountCents: 3000,
+          kind: "CANCELLED_BOOKING_HAND_BACK",
+          occurrenceKey: "edit-refund-hand-back:mod1",
+        }),
+      ],
+      skipDuplicates: true,
+    });
+    const { sendBookingModifiedEmail } = await import("@/lib/email");
+    expect(sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 3000, refundByBankTransfer: true }),
+      expect.anything(),
+    );
 
     await Promise.resolve();
     expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
@@ -1137,8 +1162,10 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
         bookingId: "bk1",
         refundAmountCents: 3000,
         bookingModificationId: "mod1",
-        // `INV-PAY-101`: an unpaid invoice corrected for the delta refunds nothing through Stripe; until the owner names a wording for a bare correction (#3536) it carries the bank-transfer one, never the card one.
-        refundMethod: "internet-banking",
+        // `INV-PAY-101` (#3536): an unpaid invoice corrected for the delta refunds
+        // nothing, so the note reads "Invoice correction — nothing refunded" and
+        // names no refund method at all, never the card or bank-transfer one.
+        noteWording: "invoice-correction",
       },
       {
         createdByMemberId: "m1",
