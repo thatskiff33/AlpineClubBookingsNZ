@@ -94,7 +94,7 @@ is a reviewed edit there), `nodeLinker`, `verifyDepsBeforeRun` and
 `enableGlobalVirtualStore`. `.npmrc` exists for npm only.
 
 **Bumping a package that runs an install script.** The `allowBuilds` packages
-(`@prisma/engines`, `@sentry/cli`, `esbuild`, `prisma`, `unrs-resolver`) are
+(`@prisma/engines`, `esbuild`, `prisma`, `unrs-resolver`) are
 approved at one exact version each. Dependabot groups them, and the packages
 that pull them in, into their own `install-scripts` PR, so the ordinary
 minor-and-patch group is not held up. When a bump fails the install with
