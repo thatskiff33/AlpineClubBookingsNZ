@@ -1,14 +1,6 @@
 import { z } from "zod";
+import { isHttpUrl } from "@/lib/http-url";
 import { MODULE_KEYS, type ModuleKey } from "./modules";
-
-function isHttpUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
 
 const bedTypeSchema = z.enum(["dormitory", "private", "shared"]);
 const ageTierIdSchema = z.enum(["INFANT", "CHILD", "YOUTH", "ADULT"]);

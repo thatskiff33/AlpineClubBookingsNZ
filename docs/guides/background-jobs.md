@@ -63,6 +63,7 @@ recorded for this scheduled job") — that is expected, not a fault.
 | Latest failure is recent | The last run errored | Read the run's error; fix the cause and let it retry on schedule |
 | "No cron job runs recorded yet" | The job hasn't run since the last reset/seed | Expected on a fresh environment; wait for its schedule |
 | A disabled-reason or note is shown | The job is intentionally off or conditional | Read the note; enable the related module/config if needed |
+| The Alpine Central Server sync, the message-board mirror sync or the share retry reports **SKIPPED** with `server-version-mismatch` (or `paused` shares) | The central server is on a different software version from this site, so syncing is paused in both directions | Nothing is lost and nothing needs resetting: upgrade whichever side is behind and the next run carries on by itself. Both version numbers are on **Integrations → Alpine Central Server** — see [Integrations](integrations.md#connect-to-the-alpine-central-server) |
 
 ## Related links
 

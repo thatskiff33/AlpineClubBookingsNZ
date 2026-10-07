@@ -635,10 +635,19 @@ const CENSUS_CEILING = {
    * assignment window (`startDate <= day + 1`, `endDate >= day`) over the
    * `@db.Date` day `checkLodgeAuth` already judged, the same window
    * `getKioskAccessTier` uses. Re-measured by RUNNING this suite on this tree.
+   *
+   * 228 -> 229 (#50, composed with main): one importer, `src/lib/other-lodges.ts`, and the
+   * zone-free direction again. The other-lodges registry gains two `@db.Date`
+   * season-start columns that travel as `yyyy-MM-dd` strings, so the shared
+   * field list validates them with `isDateOnlyString`, stores them through
+   * `parseDateOnly` and serialises them with `formatDateOnly` — none of which
+   * takes a `timeZone`, and the file consults no zone anywhere else; the one
+   * comparison it makes between two stored days goes through `storedDateOnly`.
+   * Re-measured by RUNNING this suite on this tree.
    */
   // #3413: booking-request-pending-adult-reservations uses only zone-free
   // lodge-night helpers. Re-measured by this suite on the composed branch.
-  dateOnlyImporters: 228,
+  dateOnlyImporters: 229,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *
