@@ -1,4 +1,4 @@
-import { bookingAmountOwedCents, bookingWorthCents, isCapturedPaymentStatus } from "@/lib/booking-payment-state";
+import { bookingAmountOwedCents, bookingWorthCents } from "@/lib/booking-payment-state";
 import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { prisma } from "@/lib/prisma";
@@ -544,12 +544,12 @@ async function handlePaymentIntentSucceeded(
   // with is not a stale intent, whatever the booking has come to owe since (a
   // later fee, a later edit): comparing it again would refuse a payment that
   // was taken and recorded, and Stripe would retry it for ever. Its own
-  // transaction row SUCCEEDED and the payment pointing at it is the evidence;
-  // the settle below answers it `already_paid` without re-checking the amount.
+  // transaction row SUCCEEDED (a refunded one reads REFUNDED, and the settle
+  // refuses it) and the payment pointing at it is the evidence; the settle
+  // below answers it `already_paid` without re-checking the amount.
   const alreadySettledWithThisIntent =
     paymentTransaction.status === PaymentStatus.SUCCEEDED &&
-    bookingRecord?.payment?.stripePaymentIntentId === paymentIntent.id &&
-    isCapturedPaymentStatus(bookingRecord.payment.status);
+    bookingRecord?.payment?.stripePaymentIntentId === paymentIntent.id;
   const expectedOwedCents =
     bookingRecord && !alreadySettledWithThisIntent
       ? bookingAmountOwedCents({
