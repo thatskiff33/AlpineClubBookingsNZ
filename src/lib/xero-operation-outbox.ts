@@ -74,6 +74,7 @@ import {
   getQueuedOutboxExpectedOperation,
   readQueuedOutboxPayload,
   readQueueType,
+  subscriptionInvoiceChargeId,
   supplementaryInvoiceBilledCents,
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
@@ -2920,6 +2921,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
     const entranceFeeContext = payload
       ? buildPrecomputedEntranceFeeContext(payload)
       : null;
+    const subscriptionChargeId = subscriptionInvoiceChargeId(queuedOperation);
 
     try {
       if (
@@ -2966,10 +2968,13 @@ export async function processQueuedXeroOutboxOperations(options?: {
           );
         }
       } else if (
-        payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE
+        payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE &&
+        subscriptionChargeId
       ) {
+        // #3971: the charge is the row's `localId`, never the stored payload,
+        // whose `chargeId` the persisting redactor blanked.
         await createXeroMembershipSubscriptionInvoice({
-          chargeId: payload.chargeId,
+          chargeId: subscriptionChargeId,
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
         });
@@ -3213,23 +3218,23 @@ export async function processQueuedXeroOutboxOperations(options?: {
           "Xero cooldown refused an outbox operation but the row was not in a returnable state; failing it"
         );
       }
-      if (payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE) {
+      if (payload?.queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE && subscriptionChargeId) {
         const currentCharge = await prisma.membershipSubscriptionCharge.findUnique({
-          where: { id: payload.chargeId },
+          where: { id: subscriptionChargeId },
           select: { xeroInvoiceId: true, status: true },
         }).catch(() => null);
         // #2147: never resurrect a VOIDED charge (its invoice was voided and its
         // coverage released) back to a retryable QUEUED/EMAIL_FAILED state.
         if (currentCharge && currentCharge.status !== "VOIDED") {
           await prisma.membershipSubscriptionCharge.update({
-            where: { id: payload.chargeId },
+            where: { id: subscriptionChargeId },
             data: {
               status: currentCharge.xeroInvoiceId ? "EMAIL_FAILED" : "QUEUED",
               lastErrorCode: currentCharge.xeroInvoiceId ? "EMAIL_FAILED" : "XERO_FAILED",
               lastErrorMessage: error instanceof Error ? error.message : String(error),
             },
           }).catch((chargeError) => {
-            logger.error({ err: chargeError, chargeId: payload.chargeId }, "Failed to expose subscription charge outbox error");
+            logger.error({ err: chargeError, chargeId: subscriptionChargeId }, "Failed to expose subscription charge outbox error");
           });
         }
       }
