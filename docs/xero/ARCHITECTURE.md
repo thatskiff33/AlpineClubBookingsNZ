@@ -1583,6 +1583,27 @@ under `moneyReconciliationOnReplay` instead and leaves the raise-time verdict
 untouched — a retry months later must not be able to restate, or to erase, what
 was true when the money was invoiced.
 
+### The change fee on a booking's primary invoice (#3750, `INV-PAY-119`)
+
+The change fee recorded on a booking's payment (`recordedChangeFeeCents`) is
+the one figure the pay steps collect and the primary invoice bills, in full,
+on the one change-fee line (`changeFeeLineItem`). In full because no other
+document can have carried it first: an edit's supplementary invoice or credit
+note is raised only against an issued primary invoice, and no booking-payment
+writer clears that link once set. The combined group invoice bills each
+joiner's recorded fee the same way, and the guest-narration merge on an
+invoice update never relabels the fee line.
+
+The one gap is an invoice built before a fee was recorded — an edit committed
+while the create was in flight, or a lost response replayed under the same
+idempotency key, which returns the original invoice. The create reads the
+recorded fee back in the statement that persists its link, compares it with
+the fee lines Xero returned, and bills any shortfall on a supplementary
+invoice anchored on the latest fee-bearing edit
+(`xero-primary-invoice-fee-gap.ts`). A finished-stay correction claims its fee
+write against the invoice link it read, so a link persisted mid-edit refuses
+the correction rather than slipping past the read-back.
+
 ## OAuth and token lifecycle (supporting flow)
 
 1. Admin hits `/api/admin/xero/connect` → consent URL with a signed state

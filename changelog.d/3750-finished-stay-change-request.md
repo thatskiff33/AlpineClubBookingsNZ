@@ -17,8 +17,16 @@
   back in full, and it is never netted against guests added in the same
   request. A change of dates or nights is charged only on the nights it
   removes, with no separate late-change fee. On an unpaid stay the fee is
-  added to what the member owes, so the payment page, a card or
-  internet-banking payment and an officer recording cash all collect it. The member can still ask for a fee back through a refund request.
+  added to what the member owes, so every way of paying collects it — the
+  payment page (with its own **Change fee** row), a card, a payment link, a
+  saved card, internet banking, an officer recording cash and a group
+  organiser's combined payment — and account credit on the booking pays
+  towards it rather than being handed back. The booking's Xero invoice bills
+  the fee, and if the invoice happens to be raised while the change is being
+  applied, the change is refused (approve again) or the missing fee is billed
+  on a supplementary invoice, never lost. Finance reports count the fee as
+  income once it is paid. The member can still ask for a fee back through a
+  refund request.
   Before approving, the officer sees the exact figures — the fee, and the
   refund, credit or amount due — worked out without changing anything. Added
   member guests go through the same consent and family rules as on the

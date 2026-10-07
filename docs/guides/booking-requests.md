@@ -95,10 +95,15 @@ are listed on the booking for you to relay.
      A change of dates or nights is charged the same way — only on the nights
      it removes; nights it adds are charged normally, and there is no separate
      late-change fee. An unpaid stay is charged it the same as a paid one: it
-     is added to what the member owes, so the payment page, the card or
-     internet-banking payment and an officer recording cash all collect it
-     with the rest (and the invoice shows it). The member can still ask the
-     committee to refund a fee through a refund request.
+     is added to what the member owes, so the payment page (which shows it as
+     its own **Change fee** row), the card, a payment link, a saved card, an
+     internet-banking payment, an officer recording cash and a group
+     organiser's combined payment all collect it with the rest, and the
+     booking's invoice bills it. Account credit already on the booking pays
+     towards it like the rest of the price. If the booking's invoice is raised
+     at the moment you approve, nothing is applied and you are asked to
+     approve again. The member can still ask the committee to refund a fee
+     through a refund request.
    - **Check the figures first.** **Check the figures** works out exactly what
      approving will do — the change fee, and the refund, credit or amount due —
      without changing anything, and **Approve and apply** stays off until it

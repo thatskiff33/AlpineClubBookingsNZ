@@ -2919,19 +2919,28 @@ _Split from `INV-PAY-057` (#3220)._
 
 ## INV-PAY-119
 
-- **What an unpaid booking owes has one home: its worth less applied credit**
-  (#3750; owner decision of 7 Oct 2026, "Add fee to amount owed"). A booking's
-  worth is `finalPriceCents` plus the change fee recorded on its payment
-  (`bookingWorthCents`), the same figure the booking-ledger census reconciles
-  (`finalPriceCents + changeFeeCents = captured + applied credit`). Every pay
-  step reads `bookingAmountOwedCents`: the payment page, the card intent, the
-  internet-banking switch, the confirm-payment and webhook amount checks, the
-  settle's amount law and payment mirror, and the officer's manual-payment
-  state. A fee a finished-stay correction keeps on a stay with nothing captured
-  is recorded on the payment, so it is collected with the rest; at the settle it
-  posts its `CHANGE_FEE` ledger line under its modification's key, and a primary
-  invoice raised afterwards carries one change-fee line (`changeFeeLineItem`)
-  unless an issued invoice's credit note or supplementary invoice already did.
-- Pinned by `amount-owed-one-home.test.ts` (no pay step subtracts credit from
-  the bare price) and `booking-change-request-execution.realdb.test.ts` (card
-  and officer collection, ledger identity, fee line).
+- **What a booking owes has one home: its worth less applied credit** (#3750;
+  owner decision of 7 Oct 2026, "Add fee to amount owed"). Worth is
+  `finalPriceCents` plus the change fee recorded on the payment
+  (`bookingWorthCents`, `recordedChangeFeeCents`), the figure the ledger census
+  reconciles. Every pay step reads `bookingAmountOwedCents` or worth: the
+  payment page and its fee row, the card intent, the payment link, the
+  saved-card charge, the internet-banking switch, the confirm-payment and
+  webhook checks (mismatches report the amount owed), the settle, the
+  officer's manual payment, and each joiner's share of an organiser's group
+  total and invoice. An edit's credit clamp, zero-dollar decision and
+  stale-intent comparison read worth too, including a fee the edit itself
+  just recorded. Confirmation emails quote worth.
+- A fee a finished-stay correction keeps on a stay with nothing captured is
+  recorded on the payment, claimed against the invoice link the edit read. At
+  the settle it posts its `CHANGE_FEE` line under its modification's key, and
+  counts as income only once captured.
+- **The primary invoice bills the recorded fee in full**: no other document
+  can carry one before it exists. Its create reads the fee back as it persists
+  its link and bills any gap — an edit mid-create, or a lost response replayed
+  under the same key — on a supplementary invoice. A capture already recorded
+  for its intent is not re-checked against a later fee.
+- Pinned by `amount-owed-one-home.test.ts` (no credit subtracted from a bare
+  price, no bare-price amount in a pay step),
+  `booking-change-request-execution.realdb.test.ts` (collection, applied
+  credit, the mid-create refusal) and `xero-primary-invoice-fee-gap.test.ts`.
