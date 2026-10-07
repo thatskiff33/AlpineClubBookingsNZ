@@ -40,9 +40,12 @@ const mocks = vi.hoisted(() => ({
   logAudit: vi.fn(),
   sendBookingModifiedEmail: vi.fn(),
   sendAdminMinorsOnlyReviewAlert: vi.fn(),
-  // #3502: REAL by default (#3341, below); one case replaces it to read what
-  // the removal door hands the minter.
-  createModificationAdditionalPaymentIntent: vi.fn(),
+  // #3502: the minter stays REAL (#3341, below); only the provider calls it
+  // makes are stubbed, so the ask a case reads is the one it WROTE.
+  stripeCreatePaymentIntent: vi.fn(),
+  stripeFindOrCreateCustomer: vi.fn(),
+  upsertPaymentIntentTransaction: vi.fn(),
+  paymentTransactionFindMany: vi.fn(),
 }));
 
 // #3582: an edit's and a review closure's ledger lines are posted by one sync,
@@ -60,6 +63,9 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: mocks.transaction,
     member: { findUnique: mocks.memberFindUnique },
+    // The supersede the real minter runs reads the ledger for other live
+    // ADDITIONAL intents; this booking has none.
+    paymentTransaction: { findMany: mocks.paymentTransactionFindMany },
   },
 }));
 // #3245: PARTIAL, through `importOriginal`. This used to replace the whole
@@ -110,18 +116,23 @@ vi.mock("@/lib/membership-type-policy", () => ({
 // #3341 (`INV-OPS-015`): the minter stays REAL. This file asserts the edit's ask
 // (`additionalAmountCents`) and a stubbed minter would pass whatever it is handed;
 // a removal asks for nothing, so the real one returns before minting.
-vi.mock("@/lib/booking-modification-settlement", async (importOriginal) => {
-  const actual = (await importOriginal()) as typeof import("@/lib/booking-modification-settlement");
-  mocks.createModificationAdditionalPaymentIntent.mockImplementation(
-    actual.createModificationAdditionalPaymentIntent,
-  );
-  return {
-    ...actual,
-    drainSupersededPrimaryIntents: mocks.drainSupersededPrimaryIntents,
-    executeBookingModificationRefund: mocks.executeBookingModificationRefund,
-    createModificationAdditionalPaymentIntent: mocks.createModificationAdditionalPaymentIntent,
-  };
-});
+vi.mock("@/lib/booking-modification-settlement", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/booking-modification-settlement")),
+  drainSupersededPrimaryIntents: mocks.drainSupersededPrimaryIntents,
+  executeBookingModificationRefund: mocks.executeBookingModificationRefund,
+}));
+// #3502: the PROVIDER boundary of the real minter, not the minter. Stripe and the
+// ledger write are stubbed; the sizing, the carried provenance and the supersede
+// all run.
+vi.mock("@/lib/stripe", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe")),
+  createPaymentIntent: mocks.stripeCreatePaymentIntent,
+  findOrCreateCustomer: mocks.stripeFindOrCreateCustomer,
+}));
+vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/payment-transactions")),
+  upsertPaymentIntentTransaction: mocks.upsertPaymentIntentTransaction,
+}));
 vi.mock("@/lib/bed-allocation-lifecycle", () => ({
   reconcileBedAllocationsForBookingWithLodgeLockHeld:
     mocks.reconcileBedAllocationsForBooking,
@@ -821,11 +832,13 @@ describe("DELETE guest removal - a credit-paid ($0) booking whose price RISES (#
       totalPriceCents: 10000,
       guests: [{ perNightCents: [10000], nightDates: [CHECK_IN], priceCents: 10000 }],
     });
-    // ONCE, so the real minter is back for every case after this one (#3341).
-    mocks.createModificationAdditionalPaymentIntent.mockResolvedValueOnce({
-      additionalPaymentClientSecret: "pi_removal_secret",
-      additionalPaymentIntentId: "pi_removal",
+    mocks.stripeFindOrCreateCustomer.mockResolvedValue({ id: "cus_removal" });
+    mocks.stripeCreatePaymentIntent.mockResolvedValue({
+      id: "pi_removal",
+      client_secret: "pi_removal_secret",
     });
+    mocks.upsertPaymentIntentTransaction.mockResolvedValue(undefined);
+    mocks.paymentTransactionFindMany.mockResolvedValue([]);
     const tx = {
       ...buildTx([ADULT, CHILD], { payment: zeroDollarPayment(xeroInvoiceId) }),
       payment: { update: vi.fn().mockResolvedValue({}) },
@@ -838,11 +851,22 @@ describe("DELETE guest removal - a credit-paid ($0) booking whose price RISES (#
 
     expect(res.status).toBe(200);
     expect(mocks.applyPaymentAdjustments.mock.calls[0][1].priceDiffCents).toBe(2000);
-    expect(mocks.createModificationAdditionalPaymentIntent).toHaveBeenCalledTimes(1);
-    const minted = mocks.createModificationAdditionalPaymentIntent.mock.calls[0][0];
-    expect(minted.result.hasSucceededPayment).toBe(true);
-    expect(minted.result.paymentId).toBe("pay_1");
-    expect(minted.result.additionalAsk.amountCents).toBe(2000);
+    // The REAL minter wrote a $20 ADDITIONAL card ask against the payment.
+    expect(mocks.stripeCreatePaymentIntent).toHaveBeenCalledTimes(1);
+    expect(mocks.stripeCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 2000,
+        metadata: expect.objectContaining({ bookingId: "b1", type: "modification_additional" }),
+      }),
+    );
+    expect(mocks.upsertPaymentIntentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "pay_1",
+        kind: "ADDITIONAL",
+        paymentIntentId: "pi_removal",
+        amountCents: 2000,
+      }),
+    );
     // With an invoice, the supplementary invoice waits for the card payment
     // rather than billing the member a second time.
     expect(mocks.queueXeroBookingEditSettlement).toHaveBeenCalledWith(
