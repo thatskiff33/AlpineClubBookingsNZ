@@ -504,6 +504,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-002",
   },
   {
+    site: "closeCardRefundPaidAnotherWay#1",
+    tier: "GLOBAL",
+    reason:
+      "#3372 (owner, 7 Oct 2026: 'Count + add close action'): closing a dead card refund as paid another way moves the payment's refundedAmountCents and closes a refund debt in one commit, and every edit, acceptance, paid cancel and refund appeal reads those two separately to size a refund net of what is promised back - under lock(1) the close cannot commit between the two reads. First lock of its transaction, then the operation and payment re-read, the status-guarded claim, and the payment row (applyLocalRefundAllocation); the Xero note is an outbox row kicked after the commit, so no provider call runs under it.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "resolveManualRefundTask#1",
     tier: "GLOBAL",
     reason:

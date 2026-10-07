@@ -1933,6 +1933,30 @@ _Split from `INV-PAY-068` (#3213, PR #3309). "The kind" below is
   - **The member is told the club WILL refund by bank transfer**
     (`refundRequestApprovedRefundSentence`); card wording is unchanged.
 
+## INV-PAY-119
+
+- **A card refund not yet paid is owed until Stripe pays it or the treasurer
+  closes it as paid another way** (#3372, owner 7 Oct 2026: "count in both",
+  then "Count + add close action"). An unclosed card refund recovery row counts
+  in "Refunds owed" and comes off Net Collected at its unsent plan slices, dead
+  ones included (`openCardRefundOwedCents`).
+  - **A recorded refund fills a slice only if it is that slice's own**: on the
+    slice's transaction, exactly its amount, recorded after the row was raised,
+    and not taken by a later card refund row, open or closed. Every row's
+    slices are unsent when raised: an appeal's partial send enqueues only the
+    remainder. A superseded intent's row takes any later refund on its
+    transaction. A group settlement row (pre-#3653) is never owed on its
+    anchor payment.
+  - **"Refunds owed" is Net Collected's own per-payment figure**
+    (`refundsOwedOfCashParts`), so the two agree for every payment.
+  - **"Paid another way"** (`closeCardRefundPaidAnotherWay`, finance:edit)
+    closes a dead row under `lock(1)` with a status-guarded claim to
+    `SUCCEEDED` and the paid-another-way marker, then records at most what
+    is still owed with `applyLocalRefundAllocation`, as a by-hand
+    hand-back does, and audits it under `payment`. No Stripe call; Xero gets
+    only a cancellation hand-back's refund note, for a cancellation's refund
+    on an invoiced payment. An organiser child's row is refused.
+
 ## INV-PAY-070
 
 - **The Xero leg bills the TOTAL, on ONE invoice per edit, enforced rather than

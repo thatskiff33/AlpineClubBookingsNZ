@@ -42,6 +42,8 @@ import {
   type StuckStateSeverity,
 } from "@/lib/stuck-state-dashboard";
 import { cn } from "@/lib/utils";
+import { listDeadCardRefunds } from "@/lib/card-refund-paid-another-way";
+import { DeadCardRefundsPanel } from "@/components/admin/dead-card-refunds-panel";
 
 const domainIcons: Record<StuckStateDomain, typeof CreditCard> = {
   payment: CreditCard,
@@ -186,7 +188,17 @@ export default async function AdminStuckStatesPage() {
   const viewerCanViewMembership = session?.user
     ? hasAdminAreaAccess(session.user, { area: "membership", level: "view" })
     : false;
-  const dashboard = await getStuckStateDashboard({ viewerCanViewMembership });
+  // #3372 (owner, 7 Oct 2026): the card refunds Stripe gave up on, with their
+  // "Paid another way" close. Each names a booking and the money it still owes,
+  // so the list is finance information: shown to finance:view, closed at
+  // finance:edit (the panel's own gate and the route's). Fail closed.
+  const viewerCanViewFinance = session?.user
+    ? hasAdminAreaAccess(session.user, { area: "finance", level: "view" })
+    : false;
+  const [dashboard, deadCardRefunds] = await Promise.all([
+    getStuckStateDashboard({ viewerCanViewMembership }),
+    viewerCanViewFinance ? listDeadCardRefunds() : Promise.resolve([]),
+  ]);
   const clubTime = await resolveClubTime();
 
   return (
@@ -254,6 +266,20 @@ export default async function AdminStuckStatesPage() {
           );
         })}
       </div>
+
+      {deadCardRefunds.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <CreditCard className="h-5 w-5 text-muted-foreground" />
+              Card refunds Stripe gave up on
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <DeadCardRefundsPanel rows={deadCardRefunds} />
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3">

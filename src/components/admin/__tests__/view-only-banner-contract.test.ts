@@ -346,8 +346,13 @@ const FIGURES = {
    * 368 -> 370 (#3416): the School Teacher Hut-Leader Assignments card adds
    * Edit and Save. Cancel remains a plain Button because it only discards the
    * staged choice. MEASURED by re-running this census.
+   *
+   * 370 -> 371 (#3372): the stuck-states page's "Paid another way" close on a
+   * card refund Stripe gave up on. One render site, one per row at run time.
+   * The dialog's confirm is a plain Button, only reachable once the gated row
+   * button opened it. MEASURED by re-running this census.
    */
-  callSites: 370,
+  callSites: 371,
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -377,8 +382,10 @@ const FIGURES = {
    * 312 -> 313 (#3407): so does the setup wizard's Capacity Save and continue.
    * 313 -> 315 (#3416): the new school-teacher policy card heads itself under
    * the existing section banner, so its Edit and Save opt out.
+   * 315 -> 316 (#3372): the dead card refunds panel's "Paid another way" opts
+   * out under its own banner.
    */
-  optOuts: 315,
+  optOuts: 316,
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -441,8 +448,11 @@ const FIGURES = {
    *
    * 279 -> 281 (#3416): the school-teacher card's Edit and Save sit in the
    * same file as its section banner.
+   *
+   * 281 -> 282 (#3372): the dead card refunds panel's "Paid another way" sits
+   * in the same file as its finance banner.
    */
-  staticOptOuts: 281,
+  staticOptOuts: 282,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -517,8 +527,11 @@ const FIGURES = {
    * 97 -> 98 (#3596): the club currency and locale panel, which #3563 built
    * without one because every visitor was a Full Admin. #3596 gave it a view
    * tier. Mounted in all three of its branches (load failed, loading, loaded).
+   *
+   * 98 -> 99 (#3372): the stuck-states page's dead card refunds panel, gated on
+   * finance inside a support page, so it states its own area's reason.
    */
-  bannerComponents: 98,
+  bannerComponents: 99,
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older

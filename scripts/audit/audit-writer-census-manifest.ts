@@ -619,7 +619,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // member-guest finder's lookups. Both disjoint from #3792's and #3653's, so the
   // composed figure is all four. RE-MEASURED with `pnpm run audit:census` on the
   // tree composed by #3829.
-  writeSites: 499,
+  // 499 -> 500 (#3372): `booking-payment.card-refund.paid-another-way`, the
+  // treasurer closing a card refund Stripe gave up on, awaited on the close's
+  // own transaction under `payment`.
+  writeSites: 500,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -800,7 +803,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 137 -> 138 (#3454): the two-factor enrolment / erasure-clear record,
     // awaited on the transaction that changes the second factor.
     // 138 -> 139 (#3792): the refused restored-booking allocation change record.
-    createAuditLog: { total: 139, uncategorised: 0 },
+    // 139 -> 140 (#3372): the paid-another-way close of a dead card refund,
+    // awaited on the close's transaction so the row commits with the money.
+    createAuditLog: { total: 140, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -985,7 +990,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // made and withheld, read by the same people.
     // 49 -> 51 (#3639): the held late capture and its approved refund.
     // 51 -> 52 (#3639 review): the setting-change record.
-    payment: 52,
+    // 52 -> 53 (#3372): the paid-another-way close of a dead card refund - a
+    // refund the club settled outside Stripe, read by the people who reconcile
+    // its money, beside the hand-back completion it mirrors.
+    payment: 53,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

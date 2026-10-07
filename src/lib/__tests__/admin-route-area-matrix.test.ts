@@ -423,6 +423,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // B5 (#2262): the open hand-back queue and the endpoint that closes a task.
   // The /api/admin/payments prefix already resolves to finance, so no
   // SPECIAL_ROUTE_AREA_PATTERNS entry is needed for this one.
+  "/api/admin/payments/card-refunds/[id]/paid-another-way": "finance",
   "/api/admin/payments/manual-refund-tasks": "finance",
   "/api/admin/payments/manual-refund-tasks/[id]": "finance",
   // #3498 (owner decision D2): putting a dismissed money task back on the queue

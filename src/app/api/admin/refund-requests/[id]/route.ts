@@ -315,18 +315,10 @@ export async function PUT(
         { err, refundRequestId: id },
         "Stripe refund failed for approved appeal - enqueueing durable recovery"
       );
-      // Persist the frozen slices the inline attempt did NOT complete (#1510,
-      // #3924 money review F1). Each is persisted verbatim - never a
-      // re-derivation - so the recovery cron replays it under the identical
-      // `refund_request_<id>_<txn>_<amount>` Stripe key: a slice that succeeded
-      // on Stripe without being recorded is replayed by Stripe (not repeated),
-      // and the PaymentRefund ledger dedupes on refund id. A slice the inline
-      // attempt refunded AND recorded (`PartialRefundError.refunds`, the plan's
-      // leading slices, in order) is left out: its money has moved and its row
-      // exists, so the operation owes only the rest, and "Refunds owed" reads it
-      // so (`openCardRefundOwedCents`: an operation's slices are unsent when it
-      // is raised). Any other failure recorded nothing it can name, so the whole
-      // plan is persisted, as before.
+      // Persist, verbatim, the frozen slices the inline attempt did NOT refund and
+      // record (#1510; #3924 F1: the plan's leading `PartialRefundError.refunds` are
+      // done): the cron replays their identical keys, Refunds owed reads only them.
+      // Any other failure keeps the whole plan; Stripe answers a replayed slice.
       const unsentPlan =
         err instanceof PartialRefundError ? refundPlan.slice(err.refunds.length) : refundPlan;
       const unsentCents = unsentPlan.reduce((sum, slice) => sum + slice.amountCents, 0);

@@ -1494,10 +1494,13 @@ export class RefundAllocationRacedError extends Error {
 export async function applyLocalRefundAllocation({
   paymentId,
   amountCents,
+  preferTransactionIds = [],
   store = prisma,
 }: {
   paymentId: string;
   amountCents: number;
+  /** #3372 ("Paid another way"): placed FIRST, in order - the charges an unsent card refund was for. */
+  preferTransactionIds?: readonly string[];
   store?: PaymentStore;
 }) {
   await withStoreTransaction(store, async (db) => {
@@ -1507,9 +1510,15 @@ export async function applyLocalRefundAllocation({
       throw new Error("Payment not found");
     }
 
+    const preferredRank = (id: string) =>
+      preferTransactionIds.includes(id) ? preferTransactionIds.indexOf(id) : preferTransactionIds.length;
     const capturedTransactions = [...payment.transactions]
       .filter((transaction) => isCapturedTransactionStatus(transaction.status))
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      .sort(
+        (a, b) =>
+          preferredRank(a.id) - preferredRank(b.id) ||
+          b.createdAt.getTime() - a.createdAt.getTime()
+      );
 
     const totalRefundableCents = capturedTransactions.reduce(
       (sum, transaction) =>
