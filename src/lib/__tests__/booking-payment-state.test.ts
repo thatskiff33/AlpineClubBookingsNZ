@@ -526,7 +526,7 @@ describe("what a cancelled booking adds to Net Collected (owner review on #3811,
 
     it("takes an open hand-back off a LIVE booking straight away (owner decision, 7 Oct 2026)", () => {
       // The owner's example: $200.00 paid, edited down by $50.00, the refund
-      // (an edit's hand-back, INV-PAY-117) still open - Net Collected $150.00.
+      // (an edit's hand-back, #3827) still open - Net Collected $150.00.
       // Completing it writes `refundedAmountCents`, so the figure holds.
       const live = (status: string, refundedAmountCents: number) =>
         summarizeCollectedCash([

@@ -122,7 +122,7 @@ const HAND_BACK_KIND = "CANCELLED_BOOKING_HAND_BACK" satisfies ManualRefundTaskK
  *
  * Every task that promises money back by hand is a `CANCELLED_BOOKING_HAND_BACK`:
  * a cancellation's (`booking-cancel.ts`), and - once epic #3813 reaches this
- * code - an edit's refund (`INV-PAY-117`) and an approved refund request's
+ * code - an edit's refund (#3827) and an approved refund request's
  * (D-3813-7), which reuse the kind and are told apart only by their occurrence
  * key. All of them count, on any booking, so this reads no key prefix. Only
  * COMPLETING a task writes `refundedAmountCents`

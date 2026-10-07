@@ -104,9 +104,19 @@ The booking metrics response includes:
   captured payment's `refundedAmountCents` (card refunds and account credits
   alike), capped at what that payment took. A refund on a payment that never
   took money is not counted
-- `handBackOwedCents`: on cancelled bookings, the refund still owed on an open
-  `CANCELLED_BOOKING_HAND_BACK` task (`openCancellationHandBackOwedCents`),
-  taken off before the task is completed, capped at what is left of the payment
+- `handBackOwedCents`: on any booking, the refund still owed on an open
+  `CANCELLED_BOOKING_HAND_BACK` task (`openHandBackOwedCents`) - a
+  cancellation's, an edit's refund or an approved refund request's - taken off
+  before the task is completed, capped at what is left of the payment (owner
+  decisions on #3372, 3 Oct 2026 for cancelled bookings, 7 Oct 2026 for live
+  ones)
+- `refundsOwedCents` / `creditsOwedCents`: shown beside Net Collected, **as at
+  the request and club-wide** - NOT narrowed by either window or the lodge
+  (`readRefundsAndCreditsOwed`). Refunds owed is every open hand-back task, by
+  the rule `handBackOwedCents` uses, until it is paid back or dismissed;
+  Credits owed is the sum of every member's positive credit-ledger balance
+  (`sumOutstandingCreditCents`), until the credit is used (owner, #3372, 7 Oct
+  2026)
 - `keptCreditCents`: on cancelled bookings, applied account credit the
   cancellation kept — the booking's `BOOKING_APPLIED` net less its restore row
   (`cancelledBookingKeptCreditCents`). Never a live booking's credit
@@ -148,9 +158,10 @@ The booking metrics response includes:
 - Collected cash is counted once (#2408). `Payment.amountCents` is the gross
   capture — the sum of every captured ledger row — so
   `netCollectedCents = capturedGrossCents - refundedCents - handBackOwedCents
-  + keptCreditCents` (the last two are zero except on a cancelled booking: a
-  refund still owed on an open hand-back task, and applied account credit the
-  cancellation kept; epic #3372, owner decision of 3 Oct 2026), and
+  + keptCreditCents` (`handBackOwedCents` is a refund still owed on an open
+  hand-back task, on any booking; `keptCreditCents` is zero except on a
+  cancelled booking, for applied account credit the cancellation kept; epic
+  #3372, owner decisions of 3 and 7 Oct 2026), and
   `capturedAdditionalCents` is a part of `capturedGrossCents` rather than
   something to add to it. `additionalLedgerGapCents` measures exactly the
   population where that containment cannot be proved from the ledger, and is

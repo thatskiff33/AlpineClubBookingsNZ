@@ -27,7 +27,7 @@
  *  - a LIVE (PAID) booking that paid $200.00 by card and was edited down by
  *    $50.00, with that refund still an OPEN hand-back task (owner decision on
  *    #3372, 7 Oct 2026: "subtract it immediately"; an edit's refund,
- *    `INV-PAY-117`). It counts: $150.00.
+ *    #3827). It counts: $150.00.
  *  - a LIVE booking's never-paid Internet Banking payment, created PENDING at
  *    its $450.00 price, that the inbound reconcile folded a $50.00
  *    modification credit note into and marked PARTIALLY_REFUNDED (owner's

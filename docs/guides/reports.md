@@ -98,7 +98,9 @@ bookings do not silently become revenue.
 **Net Collected** is different: it is the money the club kept on the
 overlapping bookings — captured `Payment.amountCents` less refunds and
 credits, plus account credit a cancellation kept, less refunds still owed back
-on cancelled bookings — and it is not allocated to individual nights.
+by hand on an open hand-back task (a cancellation's, an edit's that lowered the
+price, or an approved refund request's) — and it is not allocated to
+individual nights.
 It does not use the status list above. It counts every overlapping booking in
 the chosen lodge whatever its status, so a cancelled booking counts what the
 club kept of what was paid on it: money not refunded, credited or owed back by
@@ -107,6 +109,15 @@ cancelled before anything was paid), and it leaves deleted bookings out whicheve
 **Deleted** view is chosen. All four Net Collected figures (this card, the
 dashboard's, the Payments page's and the Finance dashboard's Net
 Collected) use that same rule for which bookings count.
+
+Beside it, **Refunds owed** and **Credits owed** say what the club still owes
+back, **as at today and across the club**: neither the dates, the lodge nor
+the **Deleted** view narrows them. **Refunds owed** is every refund promised
+back by hand and not yet paid (each open hand-back task); **Credits owed** is
+every member's account credit not yet used (the total of their credit
+balances). Each stays until it is paid back or the credit is spent. Both are
+in the CSV, labelled "as at today".
+
 A captured later addition is already inside that payment amount and is never
 added again. **Outstanding Additions** remains the booking-level amount still
 owing after an upward change. Do not subtract it from selected stay-night
