@@ -18,6 +18,8 @@ export const BACK_POST_REFUSALS = [
   "LIVE_LINE_NOT_ONE_NIGHT",
   /** The edit planner refused (its reason follows): sum or nothing, as live. */
   "EDIT_NOT_DERIVABLE",
+  /** A group settlement's paid children's payments do not add up to what it collected (#3854): no share is guessed. */
+  "GROUP_SHARES_DO_NOT_RECONCILE",
   /** What was posted would leave the census disagreeing, gapped or finding a line wrong. */
   "CENSUS_WOULD_NOT_PASS",
   /** Another writer held one of the booking's locks past `lock_timeout`; re-run to retry it. */
@@ -35,6 +37,16 @@ export type BackPostDisagreement = {
   deltaCents: number;
 };
 
+/** Why a booking was rolled back, with what the census would still say of it. */
+type BackPostRefused = {
+  bookingId: string;
+  reason: BackPostRefusal;
+  detail: string;
+  disagreements: BackPostDisagreement[];
+  coverage: string[];
+  integrity: string[];
+};
+
 export type BookingBackPostOutcome =
   | { bookingId: string; kind: "NOTHING_TO_POST"; classes: string[] }
   | {
@@ -46,16 +58,7 @@ export type BookingBackPostOutcome =
       steps: string[];
       classes: string[];
     }
-  | { bookingId: string; kind: "LISTED_GROUP_SETTLEMENT_OFF_LEDGER" }
-  | {
-      bookingId: string;
-      kind: "CANNOT_POST";
-      reason: BackPostRefusal;
-      detail: string;
-      disagreements: BackPostDisagreement[];
-      coverage: string[];
-      integrity: string[];
-    };
+  | (BackPostRefused & { kind: "CANNOT_POST" });
 
 export type BookingLedgerBackPostRun = {
   mode: "dry-run" | "apply";
@@ -64,7 +67,7 @@ export type BookingLedgerBackPostRun = {
   startedAt: string;
   finishedAt: string;
   outcomes: BookingBackPostOutcome[];
-  totals: { bookings: number; posted: number; lines: number; nothingToPost: number; cannotPost: number; groupSettlementOffLedger: number };
+  totals: { bookings: number; posted: number; lines: number; nothingToPost: number; cannotPost: number };
 };
 
 /** One booking's report line(s); nothing for a booking with nothing to post. */
@@ -87,9 +90,6 @@ export function formatBookingLedgerBackPostOutcome(
       ...outcome.integrity.map((finding) => `    integrity: ${finding}`),
     ];
   }
-  if (outcome.kind === "LISTED_GROUP_SETTLEMENT_OFF_LEDGER") {
-    return [`LISTED  ${outcome.bookingId}  GROUP_SETTLEMENT_OFF_LEDGER: settled through its organiser; its poster is #3854`];
-  }
   return [];
 }
 
@@ -98,7 +98,7 @@ export function formatBookingLedgerBackPostSummary(run: BookingLedgerBackPostRun
   const verb = run.mode === "apply" ? "posted" : "would post";
   return [
     `Booking ledger back-post (#3583) — ${run.mode === "apply" ? "APPLIED" : "DRY RUN, nothing was committed"}. Run ${run.runId}, ${run.startedAt} to ${run.finishedAt}.`,
-    `Bookings: ${run.totals.bookings}   ${verb}: ${run.totals.posted} (${run.totals.lines} line(s))   nothing to post: ${run.totals.nothingToPost}   cannot post: ${run.totals.cannotPost}   GROUP_SETTLEMENT_OFF_LEDGER (listed only, #3854): ${run.totals.groupSettlementOffLedger}`,
+    `Bookings: ${run.totals.bookings}   ${verb}: ${run.totals.posted} (${run.totals.lines} line(s))   nothing to post: ${run.totals.nothingToPost}   cannot post: ${run.totals.cannotPost}`,
   ].join("\n");
 }
 

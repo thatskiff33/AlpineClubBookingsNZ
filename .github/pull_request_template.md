@@ -118,8 +118,8 @@
 - [ ] I did not use production credentials, production databases, production
       backups, live Stripe, live Xero, live SES, live Sentry, or live provider
       webhooks for exploratory validation.
-- [ ] Merge handling follows the `AGENTS.md` "Completion and Merge" risk gate:
-      eligible Low/Medium-risk PRs may merge (and close their linked issue) once
-      CI is green; Critical or High-risk changes — security, payments, booking,
-      membership, Xero/Stripe/SES/Sentry, schema/migrations, deployment, or data
-      integrity — wait for explicit owner approval. Merge commits only.
+- [ ] Merge handling follows the `AGENTS.md` "Completion and Merge" merge gate
+      (#3959): any risk level merges once complete, green on its exact head,
+      reviewed with the lenses its risk requires, and carrying the full
+      Ready-to-Merge comment; no owner Approve is needed. An open owner
+      decision still waits for the owner. Merge commits only.

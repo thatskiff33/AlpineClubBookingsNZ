@@ -2948,6 +2948,16 @@ mirror, Xero note, settlement status and the debt's close together, so a
 concurrent headroom read sees the debt either owed or recorded. The status-
 guarded recovery claim is the guarded claim before the provider effect.
 
+**#3854 adds booking-ledger lines to this cohort and no lock.** The settle
+posts each child's confirmation and share after its `lock(1)` and the sorted
+child-lodge keys, beside the PAID flips; the organiser cancel's per-child claim
+posts its plan refund and kept figure after its `lock(1)`; the plan's recovery
+replay posts beside the mirror's conditional update; and the #3653 recorder and
+pending-refund sweep converge the child's refund lines after `lock(1)` and the
+`Payment` row. Each is an insert after the locks the transaction already holds
+(global, lodge, row), keyed so a replay inserts nothing; no key, order,
+participant or provider call changes.
+
 **#2700 adds one more, and it is the smallest participant in this cohort.**
 `raiseDeletedBookingModificationRefundTask`
 (`src/lib/deleted-booking-modification-payment.ts`) creates the OPEN

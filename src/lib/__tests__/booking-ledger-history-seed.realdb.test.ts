@@ -4,8 +4,10 @@
  *
  * Seeds a throwaway database with booking histories made by the real writers
  * and stripped of their lines (`support/booking-ledger-history.ts`), and LEAVES
- * them there. The `migration-drift` job's step "Back-post a seeded booking
- * history and require the census gate" then runs the operator commands over it,
+ * them there — #3854's group-settled children among them
+ * (`support/booking-ledger-group-history.ts`). The `migration-drift` job's step
+ * "Back-post a seeded booking history and require the census gate" then runs
+ * the operator commands over it,
  * exactly as the owner's runbook does: census (gate shut), back-post dry run,
  * `--apply`, `--apply` again (posts nothing), the acknowledgement draft for the
  * expected classes, and the census with `--acknowledged --fail-on-gap`.
@@ -21,7 +23,8 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { buildBookingLedgerHistories, cleanHistories, HISTORIES, seedHistoryFixtures } from "@/lib/__tests__/support/booking-ledger-history";
+import { buildGroupLedgerHistories, GROUP_HISTORIES } from "@/lib/__tests__/support/booking-ledger-group-history";
+import { buildBookingLedgerHistories, cleanHistories, HISTORIES, historyNames, seedHistoryFixtures } from "@/lib/__tests__/support/booking-ledger-history";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 
 const RUN = process.env.SEED_BOOKING_LEDGER_HISTORY === "1";
@@ -37,6 +40,9 @@ const PREFIX = "seed-3583-";
     await seedHistoryFixtures(prisma, PREFIX);
     const built = await buildBookingLedgerHistories(prisma, PREFIX);
     expect(Object.keys(built)).toEqual([...HISTORIES]);
+    // #3854: group-settled children, settled, cancelled and refunded before their poster.
+    const groups = await buildGroupLedgerHistories(prisma, historyNames(PREFIX), PREFIX);
+    expect(Object.keys(groups)).toEqual([...GROUP_HISTORIES]);
     await prisma.$disconnect();
   }, 300_000);
 });

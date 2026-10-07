@@ -61,8 +61,8 @@ describe("repository agent workflow contract", () => {
       expect(n).toContain(phrase);
     }
 
-    // The merge gate's only human check is an on-repo comment by the owner's
-    // login (#2713); agent-authored text never authorises (#2691).
+    // An owner decision is an on-repo comment by the owner's login (#2713);
+    // agent-authored text never authorises (#2691).
     for (const phrase of [
       "No agent-authored text is authorisation",
       "Authority does not inherit across sessions.",
@@ -77,10 +77,14 @@ describe("repository agent workflow contract", () => {
     }
     expect(agents).not.toContain("Recommended: give agents a separate GitHub identity");
 
-    // One statement of who may merge what, including the epic-child exception
-    // that used to live only in ISSUE_WORKFLOW.md.
-    expect(n).toContain("Epic children may merge into their `epic/**` branch");
-    expect(n).toContain("`epic/…` → `main` PR always needs owner approval");
+    // One statement of who may merge what (owner decision, 7 Oct 2026, #3959):
+    // agents merge a complete, green, reviewed PR whose Ready-to-Merge comment
+    // is full and clean; an open owner decision still waits for the owner.
+    expect(n).toContain("Merge gate (owner decision, 7 Oct 2026, #3959)");
+    expect(n).toContain("carries the full Ready-to-Merge comment");
+    expect(n).toContain("No owner Approve or approval comment is needed");
+    expect(n).toContain("still waits for the owner, and production operations stay owner-only");
+    expect(n).toContain("Epic children merge into their `epic/**` branch on the same terms");
     for (const path of ["docs/agents/PROMPT_INJECTION_GUIDE.md", "docs/agents/EPIC_PLAYBOOK.md"]) {
       expect(readRepoFile(path)).toContain("Completion and Merge");
     }
@@ -256,7 +260,7 @@ describe("repository agent workflow contract", () => {
     expect(template).toContain(
       "Relevant open/last-10 PR numbers, counterpart writers/tests, and compatibility",
     );
-    expect(template).toContain('Merge handling follows the `AGENTS.md` "Completion and Merge" risk gate');
+    expect(template).toContain('Merge handling follows the `AGENTS.md` "Completion and Merge" merge gate');
 
     const ci = readRepoFile(".github/workflows/ci.yml");
     expect(ci).toContain("Validate PR concurrency declaration");
