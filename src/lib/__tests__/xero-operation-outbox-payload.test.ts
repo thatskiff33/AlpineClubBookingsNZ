@@ -3,6 +3,7 @@ import {
   getQueuedOutboxExpectedOperation,
   readQueuedOutboxPayload,
   readQueueType,
+  subscriptionInvoiceChargeId,
   XERO_OUTBOX_QUEUE_TYPES,
 } from "@/lib/xero-operation-outbox-payload";
 
@@ -260,6 +261,29 @@ describe("xero operation outbox payload parsing", () => {
     expect(new Set(XERO_OUTBOX_QUEUE_TYPES).size).toBe(
       XERO_OUTBOX_QUEUE_TYPES.length
     );
+  });
+
+  // #3971: the payload carries no charge id; a pre-fix row's blanked one is ignored.
+  it("#3971: reads a subscription invoice as its queue type alone, whatever chargeId a stored row holds", () => {
+    for (const stored of [
+      { queueType: "MEMBERSHIP_SUBSCRIPTION_INVOICE" },
+      { queueType: "MEMBERSHIP_SUBSCRIPTION_INVOICE", chargeId: "[REDACTED]" },
+      { queueType: "MEMBERSHIP_SUBSCRIPTION_INVOICE", chargeId: "charge_1" },
+    ]) {
+      expect(readQueuedOutboxPayload(stored)).toEqual({
+        queueType: "MEMBERSHIP_SUBSCRIPTION_INVOICE",
+      });
+    }
+  });
+
+  it("#3971: takes a subscription invoice's charge from the row's localId, only on a charge anchor", () => {
+    expect(
+      subscriptionInvoiceChargeId({ localModel: "MembershipSubscriptionCharge", localId: "charge_1" })
+    ).toBe("charge_1");
+    expect(
+      subscriptionInvoiceChargeId({ localModel: "MembershipSubscriptionCharge", localId: null })
+    ).toBeNull();
+    expect(subscriptionInvoiceChargeId({ localModel: "Member", localId: "member_1" })).toBeNull();
   });
 
   it("#3635: reads a kept late-capture invoice's frozen gross cents and capture day, anchored on the approval task", () => {
