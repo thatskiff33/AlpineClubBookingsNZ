@@ -250,6 +250,26 @@ export function cancelAppliedCreditBaseCents(input: {
 }
 
 /**
+ * #3836: the applied credit a cancellation tiers - the mirror, except where the
+ * inbound credit-note repair clamped it to the card amount before #3836 (the
+ * mirror equals the card amount and the ledger holds more: a credit-only
+ * booking's $0, a card-and-credit booking's card share). There the ledger's
+ * figure stands, so the cancel restores the credit actually applied. A legacy
+ * full-price capture (mirror 0 under a card amount) keeps its mirror: its
+ * double-pay is restored by hand (`INV-PAY-024`), never by the cancel. Still
+ * needed once the sync writes the ledger's figure: mirrors the old cap clipped
+ * stay clipped until a later sync of the same note rewrites them.
+ */
+export function cancelTieredAppliedCreditCents(
+  payment: { amountCents: number; creditAppliedCents: number },
+  ledgerAppliedCreditCents: number,
+): number {
+  return payment.creditAppliedCents === payment.amountCents && ledgerAppliedCreditCents > payment.creditAppliedCents
+    ? ledgerAppliedCreditCents
+    : payment.creditAppliedCents;
+}
+
+/**
  * #1473/#1491: the pre-ledger half of a cancel's capture evidence, for a payment
  * with no captured `PaymentTransaction` row to read. A STRIPE payment's refund
  * mirror is trustworthy there: a Stripe refund needs a captured charge, and the

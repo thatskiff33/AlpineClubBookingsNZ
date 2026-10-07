@@ -19,6 +19,7 @@
 import type { LedgerLineKind, ManualRefundTaskStatus } from "@prisma/client";
 
 import type { BookingLedgerCensusRow, CensusLedgerLine } from "@/lib/booking-ledger-projection-census-row";
+import { inFlightGroupPlanRefundCents } from "@/lib/booking-ledger-projection-census-group";
 import { captureKey, creditKey, refundKey } from "@/lib/booking-ledger-posting-keys";
 import { reviewAdjustmentEvidence } from "@/lib/booking-ledger-projection-census-review-adjustments";
 import { settlementChainWalker } from "@/lib/booking-ledger-settlement-posting";
@@ -28,6 +29,7 @@ import { deriveCardAppliedCreditDoublePayFinding } from "@/lib/card-applied-cred
 import { cancellationCreditDescription } from "@/lib/cancellation-settled-money";
 import { internetBankingSettlementEvidence, type InternetBankingSettlementEvidence } from "@/lib/internet-banking-settlement-evidence";
 import { isCreditAppliedToBooking, isCreditIssuedFromBooking } from "@/lib/member-credit-booking-rows";
+import { isPaymentRecoveryOperationInFlight } from "@/lib/payment-recovery-constants";
 import { buildBookingCancellationRefundIdempotencyKey } from "@/lib/payment-recovery-keys";
 import {
   LEGACY_BACKFILL_REASONS,
@@ -53,7 +55,10 @@ export const BOOKING_LEDGER_CENSUS_GATE_POLICY = {
    * Owner decision 2, A (#3583, 3 Oct 2026): a group-booking child settled
    * through `GroupBookingSettlement` is named `GROUP_SETTLEMENT_OFF_LEDGER` and
    * does not hold the gate; its poster is #3854, which lands before #3584 moves
-   * a reader that shows one. Option B (the poster here) was declined.
+   * a reader that shows one. Option B (the poster here) was declined. The class
+   * is exempt BECAUSE that poster posts the child, so it names only a child
+   * whose lines the poster's own planner would make the census agree on
+   * outright (#3854 F1); any other is `GROUP_SETTLEMENT_UNPOSTABLE`, a coverage gap.
    */
   groupSettlementOffLedgerHoldsGate: false,
 } as const;
@@ -87,7 +92,13 @@ export type BookingLedgerCensusClass = (typeof BOOKING_LEDGER_CENSUS_CLASSES)[nu
  * gate. `UNPOSTED_SETTLEMENT` is a captured transaction or a recorded refund
  * with no live line of its own; `UNPOSTED_LEGACY_REFUND` is money handed back
  * before the posters existed (a legacy seed's refund, a V3 hand-back) that
- * `owed(b)` cannot yet see.
+ * `owed(b)` cannot yet see. `GROUP_SETTLEMENT_UNPOSTABLE` is a group-settled
+ * child with no lines whose lines, planned as the back-post would post them,
+ * would not make the census agree OUTRIGHT (#3854 F1): either the back-post
+ * refuses them (correct the history), or it posts them and the census then
+ * names a class to acknowledge (run the back-post, then acknowledge) — the
+ * evaluation's `groupSettlementUnpostable` says which. The gap itself is
+ * never acknowledgeable, like every gap here.
  */
 export const BOOKING_LEDGER_COVERAGE_KINDS = [
   "NO_LINES",
@@ -97,6 +108,7 @@ export const BOOKING_LEDGER_COVERAGE_KINDS = [
   "UNPOSTED_CREDIT",
   "UNPOSTED_SETTLEMENT",
   "UNPOSTED_LEGACY_REFUND",
+  "GROUP_SETTLEMENT_UNPOSTABLE",
 ] as const;
 export type BookingLedgerCoverageKind = (typeof BOOKING_LEDGER_COVERAGE_KINDS)[number];
 
@@ -110,7 +122,8 @@ export type BookingLedgerCoverageKind = (typeof BOOKING_LEDGER_COVERAGE_KINDS)[n
  *   the gate until the acknowledgement file lists it to the cent, so an
  *   expected state — an in-flight refund included — is signed off, never
  *   waved through, and one that moves goes stale.
- * - `OPEN`: `GROUP_SETTLEMENT_OFF_LEDGER` (owner decision 2), listed only.
+ * - `OPEN`: `GROUP_SETTLEMENT_OFF_LEDGER` (owner decision 2), listed only — a
+ *   child the poster will post and the census will then agree on (#3854 F1).
  */
 export type BookingLedgerClassGateRule = "HOLDS" | "ACKNOWLEDGE" | "OPEN";
 
@@ -558,7 +571,7 @@ export function cancelledOwedComponents(row: BookingLedgerCensusRow): ResidualCo
     .filter(
       (operation) =>
         (operation.type === "REFUND_BOOKING_MODIFICATION" || operation.type === "REFUND_SUPERSEDED_PAYMENT") &&
-        (operation.status === "PENDING" || operation.status === "PROCESSING"),
+        isPaymentRecoveryOperationInFlight(operation),
     )
     .reduce((sum, operation) => sum + operation.amountCents, 0);
   // V5: the card refund plan paid less than the policy refund the snapshot froze.
@@ -572,7 +585,7 @@ export function cancelledOwedComponents(row: BookingLedgerCensusRow): ResidualCo
     [
       { name: "IN_FLIGHT_HAND_BACK", cents: handBacks("OPEN") },
       { name: "D2_DISMISSED_HAND_BACK", cents: handBacks("DISMISSED") },
-      { name: "IN_FLIGHT_REFUND", cents: inFlightRefund },
+      { name: "IN_FLIGHT_REFUND", cents: inFlightRefund + inFlightGroupPlanRefundCents(row) },
       { name: "V5_PLANNED_REFUND_SHORT", cents: v5 },
       { name: "UNPOSTED_CREDIT", cents: unpostedCredits(row).reduce((sum, credit) => sum + credit.amountCents, 0) },
       ...knownDefectHistory(row),
@@ -631,11 +644,13 @@ function knownDefectHistory(row: BookingLedgerCensusRow): ResidualComponent[] {
 }
 
 /**
- * `GROUP_SETTLEMENT_OFF_LEDGER`: money that moved ONLY through the organiser's
- * settlement (owner decision 2 on #3583; its poster is #3854). Any money of the
- * child's own — a transaction, a refund, a credit row, or a credit, refund or
- * change-fee column — is money a poster here should have recorded, so the
- * child is coverage instead.
+ * The SHAPE of `GROUP_SETTLEMENT_OFF_LEDGER`: money that moved ONLY through the
+ * organiser's settlement (owner decision 2 on #3583; its poster is #3854). Any
+ * money of the child's own — a transaction, a refund, a credit row, or a
+ * credit, refund or change-fee column — is money a poster here should have
+ * recorded, so the child is coverage instead. The shape is necessary, not
+ * sufficient: the census names the class only where the group child planner's
+ * lines would agree (`booking-ledger-projection-census.ts`, #3854 F1).
  */
 export function isGroupSettlementOffLedger(row: BookingLedgerCensusRow): boolean {
   const payment = row.payment;
