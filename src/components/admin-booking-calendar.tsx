@@ -20,10 +20,9 @@ import {
   calendarDateParts,
   calendarDayOfWeek,
   daysInCalendarMonth,
-  formatClubDate,
   formatClubMonthYear,
   formatClubWeekdayHeaders,
-  requireCalendarDate,
+  formatStayDate,
 } from "@/lib/club-time";
 
 interface CalendarBooking {
@@ -606,7 +605,7 @@ export function AdminBookingCalendar() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              Bookings on {openDay ? formatClubDate(requireCalendarDate(openDay), clubTime.format) : ""}
+              Bookings on {openDay ? formatStayDate(openDay, clubTime.format) : ""}
             </DialogTitle>
             <DialogDescription>
               All {openDayBookings.length} booking

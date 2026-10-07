@@ -20,7 +20,7 @@ import {
   type MemberExceptionRequestSource,
 } from "@/lib/member-exception-requests";
 import { countNightsDateOnly, parseDateOnly } from "@/lib/date-only";
-import { type ClubDateFormat, formatClubDate, requireCalendarDate } from "@/lib/club-time";
+import { type ClubDateFormat, formatStayDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
 
@@ -157,17 +157,10 @@ export interface RequestOfficerApprovalCardProps {
   requestAreaHref?: string;
 }
 
-/**
- * A date-only lodge night rendered as the calendar day it IS - shifted by NO
- * zone, the viewer's or the club's (CT-4, #2870; INV-DATE-010).
- *
- * WHAT THIS REPLACES pinned the value to UTC midnight and then read it back
- * through `APP_TIME_ZONE`. That round trip is the identity only while the club
- * is east of Greenwich; for a club west of it every lodge night printed a day
- * early. A calendar day has no zone, so the kernel's formatter takes none.
- */
+// A stored calendar day, formatted by the kernel's one stay-date helper (#3511,
+// INV-SSOT-001; INV-DATE-010). No zone is consulted.
 function formatNight(value: string, format: ClubDateFormat) {
-  return formatClubDate(requireCalendarDate(value), format);
+  return formatStayDate(value, format);
 }
 
 /**
