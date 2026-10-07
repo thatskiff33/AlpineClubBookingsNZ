@@ -256,6 +256,12 @@ import "./organiser-child-refund.realdb.test";
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-3854-` fixtures.
 import "./booking-ledger-group-settlement.realdb.test";
+// #3971 reuses it to prove the membership subscription invoice retry: a row
+// stored before the fix comes back PENDING as its bare queue type, two retries
+// requeue it once, and the real active-correlation-key index refuses it while
+// another attempt for the charge is live. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3971-` fixtures.
+import "./xero-subscription-invoice-retry.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database
